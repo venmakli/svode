@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 authors = ["Kamnev Ilya"]
 repository = "https://github.com/venmakli/svode"
-description = "Svode speech recognition process on transcribe.cpp and the client its host drives it with."
+description = "Svode speech recognition process on transcribe.cpp, the client its host drives it with and the release catalog of models with their installation."
 
 [lib]
 path = "src/lib.rs"
@@ -21,10 +21,12 @@ default = ["engine"]
 engine = ["dep:transcribe-cpp"]
 
 [dependencies]
+hound = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
-tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync"] }
+tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync", "fs"] }
 tracing = "0.1"
 
 # Metal is always present on macOS, so the engine links statically. On Windows
@@ -43,7 +45,6 @@ transcribe-cpp = { version = "=0.3.1", default-features = false, optional = true
 serde_json = "1"
 
 [dev-dependencies]
-hound = "3"
 tempfile = "3"
 tokio = { version = "1", features = ["process", "time", "macros", "rt", "rt-multi-thread", "io-util", "sync"] }
 tracing-subscriber = "0.3"

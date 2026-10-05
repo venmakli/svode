@@ -116,7 +116,7 @@ test("appearance rows use labelled selects that show only the selected label", (
   }
 });
 
-test("about is one group of value, update and release rows", async () => {
+test("about has the value, update and release rows and the voice model licenses", async () => {
   setLocale("en", { reload: false });
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
@@ -129,6 +129,9 @@ test("about is one group of value, update and release rows", async () => {
     HTMLElement: dom.window.HTMLElement,
     Node: dom.window.Node,
     localStorage: dom.window.localStorage,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: (callback: () => void) => setTimeout(callback, 0),
+    cancelAnimationFrame: (handle: number) => clearTimeout(handle),
     IS_REACT_ACT_ENVIRONMENT: true,
   };
   const previous = new Map<string, PropertyDescriptor | undefined>();
@@ -149,12 +152,27 @@ test("about is one group of value, update and release rows", async () => {
             version="0.0.8"
             buildCommit="abc123"
             releaseUrl="https://example.test/releases"
+            speechModelLicenses={[
+              {
+                id: "parakeet-tdt-0.6b-v3",
+                name: "parakeet-tdt-0.6b-v3",
+                license: {
+                  name: "CC-BY-4.0",
+                  link: "https://spdx.org/licenses/CC-BY-4.0.html",
+                },
+                upstream: "nvidia/parakeet-tdt-0.6b-v3",
+                repo: "handy-computer/parakeet-tdt-0.6b-v3-gguf",
+              },
+            ]}
           />
         </DogfoodUpdatesProvider>,
       ),
     );
     const document = dom.window.document;
-    const rows = Array.from(document.querySelectorAll('[data-slot="item"]'));
+    const [about, speech] = Array.from(
+      document.querySelectorAll('[data-slot="card"]'),
+    );
+    const rows = Array.from(about.querySelectorAll('[data-slot="item"]'));
     expect(
       rows.map(
         (row) => row.querySelector('[data-slot="item-title"]')?.textContent,
@@ -172,7 +190,39 @@ test("about is one group of value, update and release rows", async () => {
     const link = rows[3].querySelector("a")!;
     expect(link.getAttribute("href")).toBe("https://example.test/releases");
     expect(link.textContent).toBe("Open on GitHub");
-    expect(document.querySelectorAll('[data-slot="card"]').length).toBe(1);
+
+    const titles = () =>
+      Array.from(speech.querySelectorAll('[data-slot="item-title"]')).map(
+        (title) => title.textContent,
+      );
+    expect(speech.closest("section")?.querySelector("h3")?.textContent).toBe(
+      "Voice input models",
+    );
+    expect(titles()).toEqual([
+      "Catalog models (1)",
+      "Reference recording for the measurement",
+    ]);
+    await act(async () =>
+      (speech.querySelector("button") as HTMLButtonElement).click(),
+    );
+    expect(titles()).toEqual([
+      "Catalog models (1)",
+      "parakeet-tdt-0.6b-v3",
+      "Reference recording for the measurement",
+    ]);
+    expect(
+      Array.from(speech.querySelectorAll('[data-slot="item-description"]')).map(
+        (description) => description.textContent,
+      ),
+    ).toEqual([
+      "Based on nvidia/parakeet-tdt-0.6b-v3, GGUF file by handy-computer/parakeet-tdt-0.6b-v3-gguf",
+      "John F. Kennedy's inaugural address (1961), 11 s, from the whisper.cpp samples. Public domain.",
+    ]);
+    const license = speech.querySelector("a")!;
+    expect(license.textContent).toBe("CC-BY-4.0");
+    expect(license.getAttribute("href")).toBe(
+      "https://spdx.org/licenses/CC-BY-4.0.html",
+    );
   } finally {
     await act(async () => root.unmount());
     for (const [key, descriptor] of previous) {

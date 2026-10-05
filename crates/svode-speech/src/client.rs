@@ -22,7 +22,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, watch};
 
-use crate::protocol::{self, Acceleration, Backend, ErrorCode, Language, Request, Response};
+use crate::protocol::{self, Acceleration, Backend, ErrorCode, Request, Response};
 
 /// How long the process stays warm after its last use.
 pub const DEFAULT_IDLE: Duration = Duration::from_secs(5 * 60);
@@ -164,6 +164,89 @@ impl Recognizer {
         self.inner.acceleration_refused.load(Ordering::SeqCst)
     }
 
+    pub fn build_version(&self) -> &str {
+        &self.inner.config.build_version
+    }
+
+    /// The accelerated backend of a GPU the engine finds on this device, if
+    /// any. Asks a short-lived process of its own, so a GPU driver that
+    /// fails while being enumerated ends only that process.
+    pub async fn probe(&self) -> Result<Option<Backend>, RecognizerError> {
+        let mut child = self.command().spawn().map_err(RecognizerError::Spawn)?;
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        let mut stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
+        let probe = async {
+            write_all(&mut stdin, &protocol::line(&Request::Probe)).await?;
+            read_response(&mut stdout).await
+        };
+        let response = tokio::time::timeout(self.inner.config.timeout.base, probe).await;
+        let _ = child.kill().await;
+        match response {
+            Ok(Ok(Response::Probed { gpu })) => {
+                tracing::info!(?gpu, "speech acceleration probed");
+                Ok(gpu)
+            }
+            Ok(Ok(_) | Err(_)) => Err(RecognizerError::Crashed),
+            Err(_) => Err(RecognizerError::TimedOut {
+                limit: self.inner.config.timeout.base,
+            }),
+        }
+    }
+
+    /// Starts the process with `model`, or keeps the running one, and waits
+    /// until the model is loaded: the first load after an update also
+    /// compiles the GPU shaders.
+    pub async fn load(&self, model: &Path) -> Result<Backend, RecognizerError> {
+        self.inner.uses.fetch_add(1, Ordering::SeqCst);
+        let mut stops = self.inner.stops.subscribe();
+        let limit = self.inner.config.timeout.base;
+        let mut slot = self.inner.process.lock().await;
+        self.ensure(&mut slot, model).await?;
+        let process = slot.as_mut().expect("ensured above");
+        let loaded = tokio::select! {
+            loaded = tokio::time::timeout(limit, await_load(process)) => Some(loaded),
+            _ = stops.changed() => None,
+        };
+        let outcome = match loaded {
+            None => {
+                self.stop(slot.take()).await;
+                Err(RecognizerError::Stopped)
+            }
+            Some(Ok(Ok(Ok(backend)))) => Ok(backend),
+            Some(Ok(Ok(Err(error)))) => {
+                tracing::warn!(?error, "speech model load failed");
+                self.backend_failure(process, error);
+                self.stop(slot.take()).await;
+                Err(RecognizerError::Engine(error))
+            }
+            Some(Ok(Err(_))) => {
+                self.crashed(slot.take().expect("process in the slot"))
+                    .await;
+                Err(RecognizerError::Crashed)
+            }
+            Some(Err(_)) => {
+                self.stop(slot.take()).await;
+                Err(RecognizerError::TimedOut { limit })
+            }
+        };
+        drop(slot);
+        self.schedule_idle_stop();
+        outcome
+    }
+
+    /// Stops the process if its model is `path` or lies under it, so the
+    /// file can be replaced or removed (Windows does not rename an open
+    /// file). Waits for a recognition in progress instead of ending it.
+    pub async fn release(&self, path: &Path) {
+        let mut slot = self.inner.process.lock().await;
+        if slot
+            .as_ref()
+            .is_some_and(|process| process.model.starts_with(path))
+        {
+            self.stop(slot.take()).await;
+        }
+    }
+
     /// Starts the process with `model`, or keeps the running one, and lets
     /// the model load without waiting for it.
     pub async fn prepare(&self, model: &Path) -> Result<(), RecognizerError> {
@@ -181,7 +264,7 @@ impl Recognizer {
         &self,
         model: &Path,
         samples: &[f32],
-        language: Option<Language>,
+        language: Option<&str>,
     ) -> Result<Transcription, RecognizerError> {
         self.inner.uses.fetch_add(1, Ordering::SeqCst);
         let mut stops = self.inner.stops.subscribe();
@@ -228,12 +311,8 @@ impl Recognizer {
                 Err(RecognizerError::Engine(error))
             }
             Some(Ok(Err(_))) => {
-                let mut process = slot.take().expect("process in the slot");
-                let status = process.child.wait().await.ok();
-                tracing::warn!(?status, backend = ?process.backend, "speech process crashed");
-                if process.may_be_accelerated() {
-                    self.refuse_acceleration();
-                }
+                self.crashed(slot.take().expect("process in the slot"))
+                    .await;
                 Err(RecognizerError::Crashed)
             }
             Some(Err(_)) => {
@@ -288,11 +367,7 @@ impl Recognizer {
         Ok(())
     }
 
-    async fn spawn(
-        &self,
-        model: &Path,
-        acceleration: Acceleration,
-    ) -> Result<Process, RecognizerError> {
+    fn command(&self) -> Command {
         let config = &self.inner.config;
         let mut command = Command::new(&config.program);
         command
@@ -302,7 +377,15 @@ impl Recognizer {
             .kill_on_drop(true)
             .envs(config.env.iter().map(|(key, value)| (key, value)));
         hide_window(&mut command);
-        let mut child = command.spawn().map_err(RecognizerError::Spawn)?;
+        command
+    }
+
+    async fn spawn(
+        &self,
+        model: &Path,
+        acceleration: Acceleration,
+    ) -> Result<Process, RecognizerError> {
+        let mut child = self.command().spawn().map_err(RecognizerError::Spawn)?;
         let mut stdin = child.stdin.take().expect("piped stdin");
         let stdout = BufReader::new(child.stdout.take().expect("piped stdout"));
         let load = Request::Load {
@@ -332,6 +415,14 @@ impl Recognizer {
     async fn stop(&self, process: Option<Process>) {
         if let Some(mut process) = process {
             let _ = process.child.kill().await;
+        }
+    }
+
+    async fn crashed(&self, mut process: Process) {
+        let status = process.child.wait().await.ok();
+        tracing::warn!(?status, backend = ?process.backend, "speech process crashed");
+        if process.may_be_accelerated() {
+            self.refuse_acceleration();
         }
     }
 
@@ -384,27 +475,36 @@ impl Recognizer {
     }
 }
 
+/// Waits for the load the process started with, once.
+async fn await_load(process: &mut Process) -> std::io::Result<Result<Backend, ErrorCode>> {
+    if let Some(backend) = process.backend {
+        return Ok(Ok(backend));
+    }
+    match read_response(&mut process.stdout).await? {
+        Response::Loaded { backend } => {
+            tracing::info!(
+                ?backend,
+                load_ms = process.started.elapsed().as_millis() as u64,
+                "speech model loaded"
+            );
+            process.backend = Some(backend);
+            Ok(Ok(backend))
+        }
+        Response::Failed { error } => Ok(Err(error)),
+        Response::Transcript { .. } | Response::Probed { .. } => Err(unexpected()),
+    }
+}
+
 async fn exchange(
     process: &mut Process,
     samples: &[f32],
-    language: Option<Language>,
+    language: Option<&str>,
 ) -> std::io::Result<Exchange> {
-    if process.backend.is_none() {
-        match read_response(&mut process.stdout).await? {
-            Response::Loaded { backend } => {
-                tracing::info!(
-                    ?backend,
-                    load_ms = process.started.elapsed().as_millis() as u64,
-                    "speech model loaded"
-                );
-                process.backend = Some(backend);
-            }
-            Response::Failed { error } => return Ok(Exchange::LoadFailed(error)),
-            Response::Transcript { .. } => return Err(unexpected()),
-        }
+    if let Err(error) = await_load(process).await? {
+        return Ok(Exchange::LoadFailed(error));
     }
     let request = Request::Transcribe {
-        language,
+        language: language.map(str::to_string),
         samples: samples.len(),
     };
     let mut bytes = protocol::line(&request);
@@ -415,7 +515,7 @@ async fn exchange(
             Ok(Exchange::Text(text, process.backend.expect("loaded above")))
         }
         Response::Failed { error } => Ok(Exchange::Refused(error)),
-        Response::Loaded { .. } => Err(unexpected()),
+        Response::Loaded { .. } | Response::Probed { .. } => Err(unexpected()),
     }
 }
 

@@ -136,10 +136,12 @@ pub fn run() {
                 app.path().app_config_dir()?,
             );
             app.manage(agent_setup.clone());
-            app.manage(speech::SpeechState::new(
+            let speech = speech::SpeechState::new(
                 &app.path().app_data_dir()?,
                 &app.package_info().version.to_string(),
-            ));
+            );
+            speech.refresh_measurements(speech::commands::events(app.handle()));
+            app.manage(speech);
             app.manage(Arc::new(agent_runtime::connections::AgentConnections::new(
                 app.state::<agent_runtime::AgentRuntimeState>()
                     .runtime()
@@ -450,6 +452,13 @@ pub fn run() {
             mcp::commands::mcp_remove_client,
             mcp::commands::mcp_remove_shared_skill,
             mcp::commands::mcp_run_doctor,
+            speech::commands::speech_models,
+            speech::commands::speech_model_install,
+            speech::commands::speech_model_cancel,
+            speech::commands::speech_model_prepare,
+            speech::commands::speech_model_activate,
+            speech::commands::speech_model_delete,
+            speech::commands::speech_model_licenses,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

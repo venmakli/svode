@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use common::{PHRASE, config, fixture, model, normalized, refuse_acceleration};
 use svode_speech::client::{Recognizer, RecognizerError, TimeoutPolicy};
-use svode_speech::protocol::{Backend, ErrorCode, Language};
+use svode_speech::protocol::{Backend, ErrorCode};
 
 #[tokio::test]
 async fn recognizes_the_fixture_on_the_cpu() {
@@ -22,7 +22,7 @@ async fn recognizes_the_fixture_on_the_cpu() {
     let recognizer = Recognizer::new(config(&dir, None));
 
     let result = recognizer
-        .transcribe(&model, &fixture(), Some(Language::En))
+        .transcribe(&model, &fixture(), Some("en"))
         .await
         .unwrap();
 

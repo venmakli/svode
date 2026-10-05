@@ -13,3 +13,4 @@ export * from "./space-health-api";
 export * from "./space-identity-api";
 export * from "./space-storage-api";
 export * from "./agent-setup-api";
+export * from "./speech-api";

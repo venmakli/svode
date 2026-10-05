@@ -73,6 +73,12 @@ impl From<svode_agents::custom::CustomAgentError> for AppError {
     }
 }
 
+impl From<svode_speech::models::ModelError> for AppError {
+    fn from(error: svode_speech::models::ModelError) -> Self {
+        Self::SpeechModel(error)
+    }
+}
+
 impl From<svode_core::agent_context::AgentContextError> for AppError {
     fn from(error: svode_core::agent_context::AgentContextError) -> Self {
         match error {
@@ -529,6 +535,9 @@ pub enum AppError {
     CustomAgent(svode_agents::custom::CustomAgentError),
 
     #[error("{0}")]
+    SpeechModel(svode_speech::models::ModelError),
+
+    #[error("{0}")]
     General(String),
 }
 
@@ -572,6 +581,7 @@ impl AppError {
             AppError::AgentRuntime(_) => "agent_runtime",
             AppError::AgentAdapter(_) => "agent_adapter",
             AppError::CustomAgent(_) => "custom_agent",
+            AppError::SpeechModel(_) => "speech_model",
             AppError::General(_) => "general",
         }
     }

@@ -1,0 +1,1320 @@
+{
+  "engine": "transcribe.cpp 0.3.1",
+  "models": [
+    {
+      "id": "whisper-large-v3-turbo",
+      "name": "Whisper large-v3-turbo",
+      "family": "whisper",
+      "mark": "accurate",
+      "file": "whisper-large-v3-turbo-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-large-v3-turbo-gguf",
+        "revision": "ceea6c8a94a21ab85be244d311e874a39344dbf5"
+      },
+      "sha256": "b2e30cc286bc9f3aba4db9099fc7403543497c05ce7100d0d83091ddfd25a183",
+      "size": 886381760,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-large-v3-turbo"
+    },
+    {
+      "id": "parakeet-tdt-0.6b-v3",
+      "name": "parakeet-tdt-0.6b-v3",
+      "family": "parakeet",
+      "mark": "fast",
+      "file": "parakeet-tdt-0.6b-v3-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-tdt-0.6b-v3-gguf",
+        "revision": "90f082450fcbacdb54e5900c44ef697c9ea59622"
+      },
+      "sha256": "5859f77944efcd8eafa23a6350731960b2b55b2203df51f319665c807d802cc7",
+      "size": 739508576,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-tdt-0.6b-v3"
+    },
+    {
+      "id": "breeze-asr-25",
+      "name": "breeze-asr-25",
+      "family": "whisper",
+      "file": "Breeze-ASR-25-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Breeze-ASR-25-gguf",
+        "revision": "6b7a53cea9265a2cf2b19e37b3ceadeb2927d3ba"
+      },
+      "sha256": "1650c163cd1623d13b585368ffd87d7e669c5ff23014511e0fa91bb4ce994756",
+      "size": 1667964224,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "MediaTek-Research/Breeze-ASR-25"
+    },
+    {
+      "id": "canary-180m-flash",
+      "name": "canary-180m-flash",
+      "family": "canary",
+      "file": "canary-180m-flash-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/canary-180m-flash-gguf",
+        "revision": "46b86384d1db59108d6e060a0fc00924cb58499f"
+      },
+      "sha256": "f942ab746040b531a29ab78ca3afc8dc9564efd8e4c942b5541e53644be9c408",
+      "size": 218447648,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/canary-180m-flash"
+    },
+    {
+      "id": "canary-1b",
+      "name": "canary-1b",
+      "family": "canary",
+      "file": "canary-1b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/canary-1b-gguf",
+        "revision": "9661a6a5a46f2f2cb6ff7062fef7b0fbbdb31498"
+      },
+      "sha256": "e43f56067a2683a27147c852a26fc352a6791c240535ed6b6813adc9246186ca",
+      "size": 1162740352,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-NC-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-NC-4.0.html"
+      },
+      "upstream": "nvidia/canary-1b"
+    },
+    {
+      "id": "canary-1b-flash",
+      "name": "canary-1b-flash",
+      "family": "canary",
+      "file": "canary-1b-flash-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/canary-1b-flash-gguf",
+        "revision": "bd27c7ef67ca6347ae2f729a130658466beecc85"
+      },
+      "sha256": "b23202a996d716c8d90c2c0da708ef72c9d340eda0e90c9e4a4436064de980ea",
+      "size": 1048131424,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/canary-1b-flash"
+    },
+    {
+      "id": "canary-1b-v2",
+      "name": "canary-1b-v2",
+      "family": "canary",
+      "file": "canary-1b-v2-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/canary-1b-v2-gguf",
+        "revision": "e2d8e6d7f2accc1259dc5497b517b4083047e44b"
+      },
+      "sha256": "224f83d1bc487b3303b495a7d6874912fdece93de19d1a04b550829c30a5d289",
+      "size": 1144290016,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/canary-1b-v2"
+    },
+    {
+      "id": "canary-qwen-2.5b",
+      "name": "canary-qwen-2.5b",
+      "family": "canary_qwen",
+      "file": "canary-qwen-2.5b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/canary-qwen-2.5b-gguf",
+        "revision": "df576c1641eb59bb66bc3c396bbdd8b0b113825a"
+      },
+      "sha256": "d89aad1285d5bd5aa441c464d3a4cf37bd5474f70705408e71558d8627415b34",
+      "size": 2797548928,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/canary-qwen-2.5b"
+    },
+    {
+      "id": "cohere-transcribe-03-2026",
+      "name": "cohere-transcribe-03-2026",
+      "family": "cohere_asr",
+      "file": "cohere-transcribe-03-2026-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/cohere-transcribe-03-2026-gguf",
+        "revision": "ab667acedcb5d8d56837ef3ed3568c3ad50dde47"
+      },
+      "sha256": "931916663432fd895423a4291a8400221802b288967ca2d435fc5e3141c9e71e",
+      "size": 2410655232,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "CohereLabs/cohere-transcribe-03-2026"
+    },
+    {
+      "id": "cohere-transcribe-arabic-07-2026",
+      "name": "cohere-transcribe-arabic-07-2026",
+      "family": "cohere_asr",
+      "file": "cohere-transcribe-arabic-07-2026-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/cohere-transcribe-arabic-07-2026-gguf",
+        "revision": "5e6b33c211458ac69347d297abb6d47a250c328f"
+      },
+      "sha256": "910de5c9c57f9fd8a280e1701f9cd96f63768878c1ca9e4ecf23638a5e0fef16",
+      "size": 2410655136,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "CohereLabs/cohere-transcribe-arabic-07-2026"
+    },
+    {
+      "id": "fun-asr-mlt-nano-2512",
+      "name": "fun-asr-mlt-nano-2512",
+      "family": "funasr_nano",
+      "file": "Fun-ASR-MLT-Nano-2512-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Fun-ASR-MLT-Nano-2512-gguf",
+        "revision": "364640227abd3f786d139ac43b8ac1a98673989d"
+      },
+      "sha256": "d12476d8d9f2baa0ebf738fa955fa05ed33a654f1567289033a810c45d9d9002",
+      "size": 891271232,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "FunASR Model Open Source License Agreement v1.1",
+        "link": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE"
+      },
+      "upstream": "FunAudioLLM/Fun-ASR-MLT-Nano-2512"
+    },
+    {
+      "id": "fun-asr-nano-2512",
+      "name": "fun-asr-nano-2512",
+      "family": "funasr_nano",
+      "file": "Fun-ASR-Nano-2512-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Fun-ASR-Nano-2512-gguf",
+        "revision": "1b60240dda8f895d14b5d5d59a90d1509e27f662"
+      },
+      "sha256": "681caef6df15a2c0e153b40ca7fe4087fdf65751fa5e6fe605d8a75dff969e61",
+      "size": 891270912,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "FunASR Model Open Source License Agreement v1.1",
+        "link": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE"
+      },
+      "upstream": "FunAudioLLM/Fun-ASR-Nano-2512"
+    },
+    {
+      "id": "gigaam-v3-ctc",
+      "name": "gigaam-v3-ctc",
+      "family": "gigaam",
+      "file": "gigaam-v3-ctc-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/gigaam-v3-ctc-gguf",
+        "revision": "696b1bc14be5a4c423090bdc31da27793def4065"
+      },
+      "sha256": "71e5c82890e9e243a6bd7575f129f5d1bd2c3ca3ae79aab75cfb1a6934c6a62b",
+      "size": 271803328,
+      "languages": {
+        "ru": "ru"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "ai-sage/GigaAM-v3"
+    },
+    {
+      "id": "gigaam-v3-e2e-ctc",
+      "name": "gigaam-v3-e2e-ctc",
+      "family": "gigaam",
+      "file": "gigaam-v3-e2e-ctc-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/gigaam-v3-e2e-ctc-gguf",
+        "revision": "ab38ecc31dbd25264cf96e07dd4dbcf744151618"
+      },
+      "sha256": "9ccce4750dc813a493d96ca15ee251712bedec15ac9a02fa3d2bd732f08ae5eb",
+      "size": 272151136,
+      "languages": {
+        "ru": "ru"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "ai-sage/GigaAM-v3"
+    },
+    {
+      "id": "gigaam-v3-e2e-rnnt",
+      "name": "gigaam-v3-e2e-rnnt",
+      "family": "gigaam",
+      "file": "gigaam-v3-e2e-rnnt-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/gigaam-v3-e2e-rnnt-gguf",
+        "revision": "b9b68a835993df09018237a11d2a9b8c1925844d"
+      },
+      "sha256": "78d63b47723b7f8d78c6113a6ef983b5a86e2a86f6c273e1f5cb6967b1c4467a",
+      "size": 273724832,
+      "languages": {
+        "ru": "ru"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "ai-sage/GigaAM-v3"
+    },
+    {
+      "id": "gigaam-v3-rnnt",
+      "name": "gigaam-v3-rnnt",
+      "family": "gigaam",
+      "file": "gigaam-v3-rnnt-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/gigaam-v3-rnnt-gguf",
+        "revision": "bbaea47d3e7b1bfa702ac050127cd93ff778837d"
+      },
+      "sha256": "130d54450be2922144b265d90d453b781fc2b5adaee52a16954b00f3686201f7",
+      "size": 273022880,
+      "languages": {
+        "ru": "ru"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "ai-sage/GigaAM-v3"
+    },
+    {
+      "id": "granite-4.0-1b-speech",
+      "name": "granite-4.0-1b-speech",
+      "family": "granite_speech",
+      "file": "granite-4.0-1b-speech-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/granite-4.0-1b-speech-gguf",
+        "revision": "a323db83c7ad667e8e76be244c55670288d01a62"
+      },
+      "sha256": "86067453be2216487b6895e1a0ebd28dce81afaef2690484f771444f1be84488",
+      "size": 2559878944,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "ibm-granite/granite-4.0-1b-speech"
+    },
+    {
+      "id": "granite-speech-4.1-2b",
+      "name": "granite-speech-4.1-2b",
+      "family": "granite_speech",
+      "file": "granite-speech-4.1-2b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/granite-speech-4.1-2b-gguf",
+        "revision": "5fa89dfac74d52a186f63647553b9e1f7ae36e83"
+      },
+      "sha256": "666d2f7736bfa140f44d67ba7bcb0827aa5718462f13850af294d72c1f09b218",
+      "size": 2559878944,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "ibm-granite/granite-speech-4.1-2b"
+    },
+    {
+      "id": "granite-speech-4.1-2b-nar",
+      "name": "granite-speech-4.1-2b-nar",
+      "family": "granite_speech_nar",
+      "file": "granite-speech-4.1-2b-nar-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/granite-speech-4.1-2b-nar-gguf",
+        "revision": "c186f8d7ed6c67b947b90fd8ed9587be971766fa"
+      },
+      "sha256": "4762df797b9efa1ce0d73d2f5128517c86fdfdba2e9d00cd5cca97e624760b21",
+      "size": 2498105472,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "ibm-granite/granite-speech-4.1-2b-nar"
+    },
+    {
+      "id": "granite-speech-4.1-2b-plus",
+      "name": "granite-speech-4.1-2b-plus",
+      "family": "granite_speech",
+      "file": "granite-speech-4.1-2b-plus-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/granite-speech-4.1-2b-plus-gguf",
+        "revision": "c6bbb513acff2c98c76087e8d1376d1d096fe2d6"
+      },
+      "sha256": "37e018d83a834924d72919e747db0cf5929db5399245a9c5da635db70e06fcbe",
+      "size": 2345973280,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "ibm-granite/granite-speech-4.1-2b-plus"
+    },
+    {
+      "id": "granite-speech-5.0-470m-turboctc",
+      "name": "Granite Speech 5.0 470M TurboCTC",
+      "family": "granite5_ctc",
+      "file": "granite-speech-5.0-470m-turboctc-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/granite-speech-5.0-470m-turboctc-gguf",
+        "revision": "2b0b44d0d6c8b94a2e4f04a2cf3ec6a5c054463b"
+      },
+      "sha256": "0408fe0b33be19af5be423d8ba6b43768608b6f065e1ac97b78c84b55c140738",
+      "size": 505606496,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "ibm-granite/granite-speech-5.0-470m-turboctc"
+    },
+    {
+      "id": "granite-speech-5.0-470m-turboctc-nc",
+      "name": "Granite Speech 5.0 470M TurboCTC NC",
+      "family": "granite5_ctc",
+      "file": "granite-speech-5.0-470m-turboctc-nc-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/granite-speech-5.0-470m-turboctc-nc-gguf",
+        "revision": "fb8091e2c1e50ef67d3e795ee9f84d703343d7c5"
+      },
+      "sha256": "383ab69dc940f441fb7064e8aa41f71ac2d24d5bc4c64b6d17167a044c68c03d",
+      "size": 505885856,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-NC-SA-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-NC-SA-4.0.html"
+      },
+      "upstream": "ibm-granite/granite-speech-5.0-470m-turboctc-nc"
+    },
+    {
+      "id": "medasr",
+      "name": "medasr",
+      "family": "medasr",
+      "file": "medasr-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/medasr-gguf",
+        "revision": "4d7958fe23a9b8046951497f44d4aa67a9883cd3"
+      },
+      "sha256": "5a391a2154416b96241b829ac2c7eed8b64d197f00372512c9bbf63f4849c978",
+      "size": 127712448,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Health AI Developer Foundations",
+        "link": "https://developers.google.com/health-ai-developer-foundations/terms"
+      },
+      "upstream": "google/medasr"
+    },
+    {
+      "id": "moonshine-base",
+      "name": "moonshine-base",
+      "family": "moonshine",
+      "file": "moonshine-base-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/moonshine-base-gguf",
+        "revision": "cb703342553d960a95e2b4b0f48b8142648ddb22"
+      },
+      "sha256": "7f0027dfd857d310b63a85ef57cadf183da712cc374f85a648f8bc18aaa2efc8",
+      "size": 77476480,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "UsefulSensors/moonshine-base"
+    },
+    {
+      "id": "moonshine-streaming-medium",
+      "name": "moonshine-streaming-medium",
+      "family": "moonshine_streaming",
+      "file": "moonshine-streaming-medium-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/moonshine-streaming-medium-gguf",
+        "revision": "0f99e956a9e63d591ddd7f2a20dfead255e96c68"
+      },
+      "sha256": "f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e",
+      "size": 295793568,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "UsefulSensors/moonshine-streaming-medium"
+    },
+    {
+      "id": "moonshine-streaming-small",
+      "name": "moonshine-streaming-small",
+      "family": "moonshine_streaming",
+      "file": "moonshine-streaming-small-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/moonshine-streaming-small-gguf",
+        "revision": "7e32b1b3dfce5d3a38dad59630ffce608f15c4aa"
+      },
+      "sha256": "d03670f69629b649085d0f44a63d97668b4119117cc9611a4e4ad94341713dfc",
+      "size": 198506848,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "UsefulSensors/moonshine-streaming-small"
+    },
+    {
+      "id": "moonshine-streaming-tiny",
+      "name": "moonshine-streaming-tiny",
+      "family": "moonshine_streaming",
+      "file": "moonshine-streaming-tiny-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/moonshine-streaming-tiny-gguf",
+        "revision": "f33fef628bc4d7ddb419384b1cf28ee83b662b06"
+      },
+      "sha256": "930e4622ad3a24158b91406c30c977fa6a26b34cb32d6ac3e57cfb23383a869e",
+      "size": 50462816,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "UsefulSensors/moonshine-streaming-tiny"
+    },
+    {
+      "id": "moonshine-tiny",
+      "name": "moonshine-tiny",
+      "family": "moonshine",
+      "file": "moonshine-tiny-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/moonshine-tiny-gguf",
+        "revision": "83c2af356aebbb3ce6a8371d6fd86cb601003666"
+      },
+      "sha256": "2fd348d7b38f97d309cc3ec6848f3f57f537b80244950f07d2637e463f95a3a1",
+      "size": 35466912,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "MIT",
+        "link": "https://spdx.org/licenses/MIT.html"
+      },
+      "upstream": "UsefulSensors/moonshine-tiny"
+    },
+    {
+      "id": "moss-transcribe-diarize",
+      "name": "moss-transcribe-diarize",
+      "family": "moss",
+      "file": "MOSS-Transcribe-Diarize-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/MOSS-Transcribe-Diarize-gguf",
+        "revision": "535085b2707309ceaa9802ae3078da03b8d2f244"
+      },
+      "sha256": "2f9039f1f06c7795de78f45ec1abea2712e881eb0f5c7ff8a080e66e1a3ce015",
+      "size": 986900160,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "OpenMOSS-Team/MOSS-Transcribe-Diarize"
+    },
+    {
+      "id": "multitalker-parakeet-streaming-0.6b-v1",
+      "name": "multitalker-parakeet-streaming-0.6b-v1",
+      "family": "parakeet",
+      "file": "bundle/multitalker-parakeet-streaming-0.6b-v1-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/multitalker-parakeet-streaming-0.6b-v1-gguf",
+        "revision": "a9a7208d8f205b5816770a6f7fb83afc81a7691b"
+      },
+      "sha256": "cf83cedc6777d2528a4d2a8a4bf476174ef7e5c65b86bc6c955f4cc9f5951ac5",
+      "size": 873443456,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "NVIDIA Open Model License",
+        "link": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
+      },
+      "upstream": "nvidia/multitalker-parakeet-streaming-0.6b-v1"
+    },
+    {
+      "id": "nemotron-3.5-asr-streaming-0.6b",
+      "name": "nemotron-3.5-asr-streaming-0.6b",
+      "family": "parakeet",
+      "file": "nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf",
+        "revision": "8139c4ec14bdc45c361adf8d57c27c28e7478272"
+      },
+      "sha256": "b94545b313b3223fda7b2857a52681da813935c2127643d1e9ff0c23d988089c",
+      "size": 751094240,
+      "languages": {
+        "ru": "ru-RU",
+        "en": "en-US"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "OpenMDW-1.1",
+        "link": "https://openmdw.ai/license/1-1/"
+      },
+      "upstream": "nvidia/nemotron-3.5-asr-streaming-0.6b"
+    },
+    {
+      "id": "nemotron-speech-streaming-en-0.6b",
+      "name": "nemotron-speech-streaming-en-0.6b",
+      "family": "parakeet",
+      "file": "nemotron-speech-streaming-en-0.6b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/nemotron-speech-streaming-en-0.6b-gguf",
+        "revision": "9789e0ebf77277911272f0d9a35e1646b5aa6004"
+      },
+      "sha256": "90d8c89714cd31efc88be62a40c6b2bea57e0cc2063af1ffe2c28f1a228ca110",
+      "size": 729650176,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "NVIDIA Open Model License",
+        "link": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
+      },
+      "upstream": "nvidia/nemotron-speech-streaming-en-0.6b"
+    },
+    {
+      "id": "parakeet-ctc-0.6b",
+      "name": "parakeet-ctc-0.6b",
+      "family": "parakeet",
+      "file": "parakeet-ctc-0.6b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-ctc-0.6b-gguf",
+        "revision": "e9f010196d52a55bf132ca0e14eb2ff5755f8049"
+      },
+      "sha256": "e47ae86c1b34dbaf054334592575c29aee7de3546e75d1f0ccee05904c5c49ae",
+      "size": 722271424,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-ctc-0.6b"
+    },
+    {
+      "id": "parakeet-ctc-1.1b",
+      "name": "parakeet-ctc-1.1b",
+      "family": "parakeet",
+      "file": "parakeet-ctc-1.1b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-ctc-1.1b-gguf",
+        "revision": "38475f86e133e8f81832677af29db1a2c976d1d3"
+      },
+      "sha256": "4f66c66bdef2c6901384a218a01d8a614698010e880bbdfe44f3bcf0b11ae0f2",
+      "size": 1259869216,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-ctc-1.1b"
+    },
+    {
+      "id": "parakeet-primeline",
+      "name": "parakeet-primeline",
+      "family": "parakeet",
+      "file": "parakeet-primeline-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-primeline-gguf",
+        "revision": "7c63545b352e5d410ccc1ea1eb49aa751e65780b"
+      },
+      "sha256": "dbd1ec2985aea64d16550a0068ea9153c0bc01955bf2a5c18b74ca213546d3cd",
+      "size": 739508640,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "primeline/parakeet-primeline"
+    },
+    {
+      "id": "parakeet-rnnt-0.6b",
+      "name": "parakeet-rnnt-0.6b",
+      "family": "parakeet",
+      "file": "parakeet-rnnt-0.6b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-rnnt-0.6b-gguf",
+        "revision": "5287ceee974bed9be19fc4d23b792b163dbd362e"
+      },
+      "sha256": "06da5ba773736984e0513037b27ff9300e95c55eaa2b79dbc688efc34b25df51",
+      "size": 729687456,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-rnnt-0.6b"
+    },
+    {
+      "id": "parakeet-rnnt-1.1b",
+      "name": "parakeet-rnnt-1.1b",
+      "family": "parakeet",
+      "file": "parakeet-rnnt-1.1b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-rnnt-1.1b-gguf",
+        "revision": "a57f23cc9b9fa9bd5561b3746c5077fafa6b39b6"
+      },
+      "sha256": "e1918556aa0e2b857c12cb365cff4f33b0f1cbcc0e0769499ec38948c8363775",
+      "size": 1267285248,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-rnnt-1.1b"
+    },
+    {
+      "id": "parakeet-tdt-0.6b-v2",
+      "name": "parakeet-tdt-0.6b-v2",
+      "family": "parakeet",
+      "file": "parakeet-tdt-0.6b-v2-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-tdt-0.6b-v2-gguf",
+        "revision": "382796e405a9fe37145938dccbabfb25e93e4286"
+      },
+      "sha256": "f0d0e99cebb6d3b83f1f7069b82b5d3c2e39a54545b0da039cb4bafd9c4e5caa",
+      "size": 729574912,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-tdt-0.6b-v2"
+    },
+    {
+      "id": "parakeet-tdt-1.1b",
+      "name": "parakeet-tdt-1.1b",
+      "family": "parakeet",
+      "file": "parakeet-tdt-1.1b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-tdt-1.1b-gguf",
+        "revision": "097c6cba3def8533f8c30e572122b64503ffa995"
+      },
+      "sha256": "8479e1ed0b7244e293ed81f547c69074a38c00e17511d8ecae2d273bc7b2ceda",
+      "size": 1267288736,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-tdt-1.1b"
+    },
+    {
+      "id": "parakeet-tdt_ctc-1.1b",
+      "name": "parakeet-tdt_ctc-1.1b",
+      "family": "parakeet",
+      "file": "parakeet-tdt_ctc-1.1b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-tdt_ctc-1.1b-gguf",
+        "revision": "7c7c26cdbe4f92d319176f83b5131cb15863b8a1"
+      },
+      "sha256": "56e826b96d0a625eb41f18d8f51d8600e8ec5959bf5278fe3929e5efefe787d6",
+      "size": 1267288320,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-tdt_ctc-1.1b"
+    },
+    {
+      "id": "parakeet-tdt_ctc-110m",
+      "name": "parakeet-tdt_ctc-110m",
+      "family": "parakeet",
+      "file": "parakeet-tdt_ctc-110m-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-tdt_ctc-110m-gguf",
+        "revision": "766f172fe70eb66785e3371664f53762e0fbafaa"
+      },
+      "sha256": "7dd44c74a331d788a4e5f8b16913b3feb29ced22cf5613aad0e0f6cd30516296",
+      "size": 135373280,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-tdt_ctc-110m"
+    },
+    {
+      "id": "parakeet-unified-en-0.6b",
+      "name": "Parakeet Unified EN 0.6B",
+      "family": "parakeet",
+      "file": "parakeet-unified-en-0.6b-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/parakeet-unified-en-0.6b-gguf",
+        "revision": "d5249700b2382bf5c5024c2421d101b8db54a629"
+      },
+      "sha256": "4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795",
+      "size": 731357568,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "CC-BY-4.0",
+        "link": "https://spdx.org/licenses/CC-BY-4.0.html"
+      },
+      "upstream": "nvidia/parakeet-unified-en-0.6b"
+    },
+    {
+      "id": "qwen3-asr-0.6b",
+      "name": "qwen3-asr-0.6b",
+      "family": "qwen3_asr",
+      "file": "Qwen3-ASR-0.6B-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+        "revision": "28c66fba077f1359a42b52c55b618a24cdb6e0e7"
+      },
+      "sha256": "f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8",
+      "size": 850423456,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "Qwen/Qwen3-ASR-0.6B"
+    },
+    {
+      "id": "qwen3-asr-1.7b",
+      "name": "qwen3-asr-1.7b",
+      "family": "qwen3_asr",
+      "file": "Qwen3-ASR-1.7B-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Qwen3-ASR-1.7B-gguf",
+        "revision": "3555bd238a8572bbace3ebf60d23b036dc0a5dbe"
+      },
+      "sha256": "9a0d81792dfea2d5f278b8a63deb3ea6e02139ce42c2301f32ea19c4f77526b7",
+      "size": 2185030624,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "Qwen/Qwen3-ASR-1.7B"
+    },
+    {
+      "id": "sensevoice-small",
+      "name": "sensevoice-small",
+      "family": "sensevoice",
+      "file": "SenseVoiceSmall-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/SenseVoiceSmall-gguf",
+        "revision": "3d0e44ad1ba285d09e7c86d6cc07604385082bb4"
+      },
+      "sha256": "6c759ee4c9748c9b3f7a5a60ca74f0f7e685fb9d45d1378fce7cfd62f59adf29",
+      "size": 252684608,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "model-license (FunASR MODEL_LICENSE)",
+        "link": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE"
+      },
+      "upstream": "FunAudioLLM/SenseVoiceSmall"
+    },
+    {
+      "id": "voxtral-mini-3b-2507",
+      "name": "voxtral-mini-3b-2507",
+      "family": "voxtral",
+      "file": "Voxtral-Mini-3B-2507-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Voxtral-Mini-3B-2507-gguf",
+        "revision": "b9e655d7a09a24394edf457e08651163ad22732d"
+      },
+      "sha256": "06b4dd04e32953ccab0d417125bdd728ec031431596ed5e80123c3c66f29ddc2",
+      "size": 5000084128,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "mistralai/Voxtral-Mini-3B-2507"
+    },
+    {
+      "id": "voxtral-mini-4b-realtime-2602",
+      "name": "voxtral-mini-4b-realtime-2602",
+      "family": "voxtral_realtime",
+      "file": "Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf",
+        "revision": "65d1c9408859a0ca0f1c11b025ee951486af21d6"
+      },
+      "sha256": "6fb22249463c1e7a600d920ad732e2dd0a231510e9db59fb8061d3d1d48d0c67",
+      "size": 4731791648,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "mistralai/Voxtral-Mini-4B-Realtime-2602"
+    },
+    {
+      "id": "voxtral-small-24b-2507",
+      "name": "voxtral-small-24b-2507",
+      "family": "voxtral",
+      "file": "Voxtral-Small-24B-2507-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/Voxtral-Small-24B-2507-gguf",
+        "revision": "4ab5a0708a16619b2b5b98f14b20333e0de17943"
+      },
+      "sha256": "ab0964350131990a364dca53e3cac5f4d9cc176dce2f273066be3ef71e252fb2",
+      "size": 25810383328,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "mistralai/Voxtral-Small-24B-2507"
+    },
+    {
+      "id": "whisper-base",
+      "name": "whisper-base",
+      "family": "whisper",
+      "file": "whisper-base-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-base-gguf",
+        "revision": "30c1704968f7540e112bab3ea3cc4b274902c360"
+      },
+      "sha256": "81c069428bc8a24551a8169cf31cf09bcfd9d4cf50389ae281323c9aa9648c81",
+      "size": 84962880,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-base"
+    },
+    {
+      "id": "whisper-base.en",
+      "name": "whisper-base.en",
+      "family": "whisper",
+      "file": "whisper-base.en-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-base.en-gguf",
+        "revision": "f83d8d187299d4fc06e86a6de5084375ceac34bf"
+      },
+      "sha256": "3b46ca40bccbf7609c68d88a36d96077a04ca7c87f2060ede06f129fac3e7652",
+      "size": 84886208,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-base.en"
+    },
+    {
+      "id": "whisper-large",
+      "name": "whisper-large",
+      "family": "whisper",
+      "file": "whisper-large-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-large-gguf",
+        "revision": "cb93fc5b8f7f06658687a624af75e9ca54bc8057"
+      },
+      "sha256": "0b9c63f73c68327d6ba2386e40c4a4dc46a9e7114a78c93a464b48b72c001547",
+      "size": 1667964192,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-large"
+    },
+    {
+      "id": "whisper-large-v2",
+      "name": "whisper-large-v2",
+      "family": "whisper",
+      "file": "whisper-large-v2-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-large-v2-gguf",
+        "revision": "25062d25fc998138a697514d047c30f5a5faa410"
+      },
+      "sha256": "704603cff0f82ddd7f7f51045e12e5c8f85a37a9edec72ab10fd8ede32220702",
+      "size": 1667964224,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-large-v2"
+    },
+    {
+      "id": "whisper-large-v3",
+      "name": "whisper-large-v3",
+      "family": "whisper",
+      "file": "whisper-large-v3-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-large-v3-gguf",
+        "revision": "b33a05f1459f33b0c876f014a57d51618b77d754"
+      },
+      "sha256": "2fa1a5f179f8a511a53e2108db270aa4af3ce08cd976af4180e2854666bb4ba3",
+      "size": 1668741440,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-large-v3"
+    },
+    {
+      "id": "whisper-medium",
+      "name": "whisper-medium",
+      "family": "whisper",
+      "file": "whisper-medium-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-medium-gguf",
+        "revision": "835ad19fff976143d650e35113a6544980cbd983"
+      },
+      "sha256": "09e6a65e7de377aa5b10bae24608bc6f8ca2ed04b3993ef10d4a02bcd9a82adf",
+      "size": 831538144,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-medium"
+    },
+    {
+      "id": "whisper-medium.en",
+      "name": "whisper-medium.en",
+      "family": "whisper",
+      "file": "whisper-medium.en-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-medium.en-gguf",
+        "revision": "f467a42fbc6158c3f6943280b2d243e528658b9a"
+      },
+      "sha256": "03d7257fef498750ce272631bc6a34de322fc2b438aab5c268ff49dfd1b64c49",
+      "size": 831460928,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-medium.en"
+    },
+    {
+      "id": "whisper-small",
+      "name": "whisper-small",
+      "family": "whisper",
+      "file": "whisper-small-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-small-gguf",
+        "revision": "a2073177cb69bd74b9ca9460b852d17fbfd5d68c"
+      },
+      "sha256": "9b9c8811bbcc82a7766f0fb0925614bdacb0923b2cc630daeac17108b655b860",
+      "size": 269751136,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-small"
+    },
+    {
+      "id": "whisper-small.en",
+      "name": "whisper-small.en",
+      "family": "whisper",
+      "file": "whisper-small.en-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-small.en-gguf",
+        "revision": "465682f43898836b623801603ca6432a41275586"
+      },
+      "sha256": "9614e6b7fda2d26018e4f268aece8ca25a83296ea0b534169a585b740bfd71ef",
+      "size": 269674144,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-small.en"
+    },
+    {
+      "id": "whisper-tiny",
+      "name": "whisper-tiny",
+      "family": "whisper",
+      "file": "whisper-tiny-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-tiny-gguf",
+        "revision": "2678cc66038359b97c8e6fd6454c56fc9006d571"
+      },
+      "sha256": "325b9c7997cd1eff81ef709d55766565e71be696130cc3a3d444713798706834",
+      "size": 45981088,
+      "languages": {
+        "ru": "ru",
+        "en": "en"
+      },
+      "detectsLanguage": true,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-tiny"
+    },
+    {
+      "id": "whisper-tiny.en",
+      "name": "whisper-tiny.en",
+      "family": "whisper",
+      "file": "whisper-tiny.en-Q8_0.gguf",
+      "quant": "Q8_0",
+      "source": {
+        "repo": "handy-computer/whisper-tiny.en-gguf",
+        "revision": "f2406b60206a289ed322f1cf8c492c070c042b1f"
+      },
+      "sha256": "e8c9b73c06344307d8b346e07fbe93dd88d894627854bcff31523f1ce44394fa",
+      "size": 45904544,
+      "languages": {
+        "en": "en"
+      },
+      "detectsLanguage": false,
+      "license": {
+        "name": "Apache-2.0",
+        "link": "https://spdx.org/licenses/Apache-2.0.html"
+      },
+      "upstream": "openai/whisper-tiny.en"
+    }
+  ]
+}

@@ -12,9 +12,9 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use svode_speech::protocol::{
-    self, Acceleration, Backend, ErrorCode, Language, MAX_SAMPLES, Request, Response,
+    self, Acceleration, Backend, ErrorCode, MAX_SAMPLES, Request, Response,
 };
-use transcribe_cpp::{Model, ModelOptions, RunOptions, Session};
+use transcribe_cpp::{DeviceType, Model, ModelOptions, RunOptions, Session};
 
 fn main() -> ExitCode {
     transcribe_cpp::disable_logging();
@@ -51,6 +51,7 @@ fn main() -> ExitCode {
                 let samples = protocol::decode_samples(&bytes);
                 (engine.transcribe(&samples, language), true)
             }
+            Ok(Request::Probe) => (engine.probe(), true),
             Err(_) => (failed(ErrorCode::Protocol), false),
         };
         if output.write_all(&protocol::line(&response)).is_err() || output.flush().is_err() {
@@ -116,13 +117,30 @@ impl Engine {
         }
     }
 
-    fn transcribe(&mut self, samples: &[f32], language: Option<Language>) -> Response {
+    /// The engine's `Auto` policy prefers a discrete or integrated GPU; a
+    /// software Vulkan device is a CPU device and does not count.
+    fn probe(&self) -> Response {
+        let gpu = self
+            .backends_ready
+            .then(transcribe_cpp::devices)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|device| matches!(device.device_type, DeviceType::Gpu | DeviceType::Igpu))
+            .find_map(|device| match device.kind.as_str() {
+                "metal" => Some(Backend::Metal),
+                "vulkan" => Some(Backend::Vulkan),
+                _ => None,
+            });
+        Response::Probed { gpu }
+    }
+
+    fn transcribe(&mut self, samples: &[f32], language: Option<String>) -> Response {
         let Some(loaded) = self.loaded.as_mut() else {
             return failed(ErrorCode::NotLoaded);
         };
         fault::before_transcribe(loaded.acceleration);
         let options = RunOptions {
-            language: language.map(|language| language.code().to_string()),
+            language,
             ..RunOptions::default()
         };
         match loaded.session.run(samples, &options) {

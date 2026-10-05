@@ -27,16 +27,10 @@ pub fn model() -> Option<PathBuf> {
     None
 }
 
-/// JFK's inaugural address (public domain), 11 s of 16 kHz mono.
+/// The reference recording: JFK's inaugural address (public domain), 11 s
+/// of 16 kHz mono.
 pub fn fixture() -> Vec<f32> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/jfk.wav");
-    let reader = hound::WavReader::open(path).unwrap();
-    assert_eq!(reader.spec().sample_rate, 16_000);
-    assert_eq!(reader.spec().channels, 1);
-    reader
-        .into_samples::<i16>()
-        .map(|sample| sample.unwrap() as f32 / 32_768.0)
-        .collect()
+    svode_speech::preparation::reference().to_vec()
 }
 
 pub fn config(dir: &tempfile::TempDir, fault: Option<&str>) -> RecognizerConfig {

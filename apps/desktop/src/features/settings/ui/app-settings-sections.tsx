@@ -18,6 +18,7 @@ import {
   SettingsRow,
 } from "./settings-layout";
 import { SettingsSelect } from "./settings-select";
+import { SpeechModelLicensesGroup } from "./speech-model-licenses-group";
 
 type AppSettingsAbout = ReturnType<typeof useAppSettingsAbout>;
 type AppSettingsAppearance = ReturnType<typeof useAppSettingsAppearance>;
@@ -166,46 +167,50 @@ export function AppAboutSection({
   version,
   buildCommit,
   releaseUrl,
+  speechModelLicenses,
 }: AppSettingsAbout) {
   return (
-    <SettingsGroup>
-      <SettingsItem
-        title={m.settings_about_version()}
-        actions={
-          <span className="text-sm text-muted-foreground">
-            {version || "—"}
-          </span>
-        }
-      />
-      <SettingsItem
-        title={m.settings_about_build_commit()}
-        actions={
-          <span
-            className={cn(
-              "text-sm text-muted-foreground break-all",
-              buildCommit && "font-mono",
-            )}
-          >
-            {buildCommit || m.settings_about_build_commit_unavailable()}
-          </span>
-        }
-      />
-      <SettingsItem
-        title={m.updates_status_label()}
-        description={<DogfoodUpdateSettingsStatus />}
-        actions={<DogfoodUpdateSettingsControls />}
-      />
-      <SettingsItem
-        title={m.settings_about_releases()}
-        actions={
-          <Button asChild variant="link" size="sm">
-            <a href={releaseUrl} target="_blank" rel="noopener noreferrer">
-              {m.settings_about_releases_link()}
-              <ArrowUpRight data-icon="inline-end" />
-            </a>
-          </Button>
-        }
-      />
-    </SettingsGroup>
+    <>
+      <SettingsGroup>
+        <SettingsItem
+          title={m.settings_about_version()}
+          actions={
+            <span className="text-sm text-muted-foreground">
+              {version || "—"}
+            </span>
+          }
+        />
+        <SettingsItem
+          title={m.settings_about_build_commit()}
+          actions={
+            <span
+              className={cn(
+                "text-sm text-muted-foreground break-all",
+                buildCommit && "font-mono",
+              )}
+            >
+              {buildCommit || m.settings_about_build_commit_unavailable()}
+            </span>
+          }
+        />
+        <SettingsItem
+          title={m.updates_status_label()}
+          description={<DogfoodUpdateSettingsStatus />}
+          actions={<DogfoodUpdateSettingsControls />}
+        />
+        <SettingsItem
+          title={m.settings_about_releases()}
+          actions={
+            <Button asChild variant="link" size="sm">
+              <a href={releaseUrl} target="_blank" rel="noopener noreferrer">
+                {m.settings_about_releases_link()}
+                <ArrowUpRight data-icon="inline-end" />
+              </a>
+            </Button>
+          }
+        />
+      </SettingsGroup>
+      <SpeechModelLicensesGroup licenses={speechModelLicenses} />
+    </>
   );
 }

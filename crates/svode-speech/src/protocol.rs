@@ -38,23 +38,6 @@ impl Backend {
     }
 }
 
-/// The spoken language. `None` in a request means automatic detection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Language {
-    Ru,
-    En,
-}
-
-impl Language {
-    pub fn code(self) -> &'static str {
-        match self {
-            Language::Ru => "ru",
-            Language::En => "en",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Request {
@@ -63,19 +46,33 @@ pub enum Request {
         model: PathBuf,
         acceleration: Acceleration,
     },
-    /// Recognize the `samples` that follow this line.
+    /// Recognize the `samples` that follow this line. `language` is the
+    /// tag the model takes (see the catalog); `None` is automatic detection.
     Transcribe {
-        language: Option<Language>,
+        language: Option<String>,
         samples: usize,
     },
+    /// Report the GPU the engine would accelerate with, without loading a
+    /// model.
+    Probe,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Response {
-    Loaded { backend: Backend },
-    Transcript { text: String },
-    Failed { error: ErrorCode },
+    Loaded {
+        backend: Backend,
+    },
+    /// The accelerated backend of a GPU the engine found, if any.
+    Probed {
+        gpu: Option<Backend>,
+    },
+    Transcript {
+        text: String,
+    },
+    Failed {
+        error: ErrorCode,
+    },
 }
 
 /// Why the engine refused a request. Codes only: an engine message may quote

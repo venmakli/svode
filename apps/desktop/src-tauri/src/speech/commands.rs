@@ -1,0 +1,196 @@
+//! Thin commands over the speech models. Reading the list starts no
+//! download; install, update and removal are explicit actions.
+
+use std::sync::Arc;
+
+use serde::Serialize;
+use svode_speech::catalog::{CatalogModel, License, Mark, catalog};
+use svode_speech::models::{Installation, InstalledModel, Measurement, ModelStore};
+use svode_speech::preparation::{Recommendation, recommend};
+use tauri::{AppHandle, Emitter, State};
+
+use super::{
+    JobEvents, JobStage, MODEL_PROGRESS_EVENT, MODELS_CHANGED_EVENT, ModelProgress, SpeechState,
+};
+use crate::error::AppError;
+
+struct TauriEvents(AppHandle);
+
+impl JobEvents for TauriEvents {
+    fn changed(&self) {
+        let _ = self.0.emit(MODELS_CHANGED_EVENT, ());
+    }
+
+    fn progress(&self, progress: ModelProgress) {
+        let _ = self.0.emit(MODEL_PROGRESS_EVENT, progress);
+    }
+}
+
+pub fn events(app: &AppHandle) -> Arc<dyn JobEvents> {
+    Arc::new(TauriEvents(app.clone()))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeechModels {
+    /// The catalog of this release, in its order.
+    pub models: Vec<ModelView>,
+    /// Installed models the release dropped: they can only be removed.
+    pub unsupported: Vec<InstalledModel>,
+    /// The active model, when it is installed and supported.
+    pub active_model: Option<String>,
+    pub recommendation: RecommendationView,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelView {
+    #[serde(flatten)]
+    pub model: &'static CatalogModel,
+    pub installation: Option<Installation>,
+    pub installed_size: Option<u64>,
+    /// The last measurement, while it is current (V7).
+    pub measurement: Option<Measurement>,
+    pub job: Option<JobStage>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecommendationView {
+    /// The model recommended for this device.
+    pub model_id: String,
+    #[serde(flatten)]
+    pub recommendation: Recommendation,
+}
+
+pub async fn models(state: &SpeechState) -> SpeechModels {
+    let store = state.store();
+    let recognizer = state.recognizer();
+    let version = recognizer.build_version();
+    let refused = recognizer.acceleration_refused();
+    let catalog = catalog();
+    let settings = store.settings();
+    let installed = store.installed();
+    let current = |id: &str| {
+        settings
+            .measurements
+            .get(id)
+            .filter(|measurement| measurement.is_current(version, refused))
+            .cloned()
+    };
+    let models = catalog
+        .models
+        .iter()
+        .map(|model| {
+            let installed = installed.iter().find(|installed| installed.id == model.id);
+            ModelView {
+                model,
+                installation: installed
+                    .map(|installed| ModelStore::installation(installed, catalog)),
+                installed_size: installed.map(|installed| installed.size),
+                measurement: current(&model.id),
+                job: state.job(&model.id),
+            }
+        })
+        .collect();
+    let accurate = catalog.marked(Mark::Accurate);
+    let gpu = if refused { None } else { state.gpu().await };
+    let recommendation = recommend(gpu, refused, current(&accurate.id).as_ref(), version);
+    SpeechModels {
+        models,
+        unsupported: installed
+            .iter()
+            .filter(|installed| catalog.get(&installed.id).is_none())
+            .cloned()
+            .collect(),
+        active_model: store.active(catalog).map(|model| model.id),
+        recommendation: RecommendationView {
+            model_id: catalog.marked(recommendation.model).id.clone(),
+            recommendation,
+        },
+    }
+}
+
+#[tauri::command]
+pub async fn speech_models(state: State<'_, SpeechState>) -> Result<SpeechModels, AppError> {
+    Ok(models(&state).await)
+}
+
+/// Downloads, installs and prepares a model; progress and the outcome come
+/// as events.
+#[tauri::command]
+pub async fn speech_model_install(
+    app: AppHandle,
+    state: State<'_, SpeechState>,
+    id: String,
+) -> Result<(), AppError> {
+    state.start_install(&id, events(&app))
+}
+
+#[tauri::command]
+pub async fn speech_model_cancel(
+    state: State<'_, SpeechState>,
+    id: String,
+) -> Result<(), AppError> {
+    state.cancel(&id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn speech_model_prepare(
+    app: AppHandle,
+    state: State<'_, SpeechState>,
+    id: String,
+) -> Result<(), AppError> {
+    state.start_preparation(&id, events(&app))
+}
+
+#[tauri::command]
+pub async fn speech_model_activate(
+    app: AppHandle,
+    state: State<'_, SpeechState>,
+    id: String,
+) -> Result<(), AppError> {
+    state.store().activate(&id, catalog())?;
+    let _ = app.emit(MODELS_CHANGED_EVENT, ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn speech_model_delete(
+    app: AppHandle,
+    state: State<'_, SpeechState>,
+    id: String,
+) -> Result<(), AppError> {
+    state.delete(&id).await?;
+    let _ = app.emit(MODELS_CHANGED_EVENT, ());
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelLicense {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub license: &'static License,
+    /// The model the GGUF is converted from.
+    pub upstream: &'static str,
+    /// The repository the file is downloaded from.
+    pub repo: &'static str,
+}
+
+/// License and attribution of every catalog model, for About.
+#[tauri::command]
+pub fn speech_model_licenses() -> Vec<ModelLicense> {
+    catalog()
+        .models
+        .iter()
+        .map(|model| ModelLicense {
+            id: &model.id,
+            name: &model.name,
+            license: &model.license,
+            upstream: &model.upstream,
+            repo: &model.source.repo,
+        })
+        .collect()
+}
