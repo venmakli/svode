@@ -30,6 +30,10 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
+        # The Linux SDK ships no Vulkan loader to link against; the system one
+        # (`libvulkan1` at run time) is what the packaged module loads anyway.
+        sudo apt-get update
+        sudo apt-get install -y libvulkan-dev
         sdk="$HOME/vulkan-sdk/${{ inputs.version }}/x86_64"
         echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
         echo "CMAKE_PREFIX_PATH=$sdk${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"

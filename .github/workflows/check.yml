@@ -59,8 +59,12 @@ jobs:
         run: cargo test -p svode-connect
       - name: Agent runtime tests without the desktop crate
         run: cargo test -p svode-agents
+      # Building the desktop crate copies the sidecar placeholders over the
+      # svode, svode-mcp and svode-launcher binaries their packages' tests
+      # run, so those packages are tested by their own steps above and in
+      # standalone-linux, without the desktop crate.
       - name: Workspace tests
-        run: cargo test --workspace --exclude svode-speech
+        run: cargo test --workspace --exclude svode-speech --exclude svode-cli --exclude svode-mcp --exclude svode-install
       - name: Clippy
         run: |
           cargo clippy --workspace --exclude svode-speech -- \
