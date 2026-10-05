@@ -200,11 +200,42 @@ fn connecting_codex_links_the_shared_skill_and_starts_the_launcher_in_automatic_
     );
     assert!(entry.get("args").is_none());
     assert_eq!(
+        entry["env_vars"].as_array().unwrap(),
+        &[toml::Value::from("SVODE_MCP_ROUTINE_CALLER_TOKEN")]
+    );
+    assert_eq!(
         entry["env"]["SVODE_MCP_MANAGED"].as_str(),
         Some(crate::MARKER)
     );
     assert!(!config.contains("approval"));
     assert!(client(&status(&home.machine(), &[], None), codex_client()).complete);
+}
+
+#[test]
+fn reconcile_makes_a_managed_codex_entry_forward_the_routine_caller_token() {
+    let home = Home::with_desktop();
+    connect(&home.machine(), codex_client()).unwrap();
+    // The managed entry as earlier versions wrote it, without `env_vars`.
+    let earlier = format!(
+        "model = \"gpt-5.5\"\n\n[mcp_servers.svode]\ncommand = \"{}\"\n\n[mcp_servers.svode.env]\nSVODE_MCP_MANAGED = \"{}\"\n",
+        home.launcher().display(),
+        crate::MARKER
+    );
+    home.write(".codex/config.toml", &earlier);
+    let before = client(&status(&home.machine(), &[], None), codex_client());
+    assert_eq!(before.attention_code.as_deref(), Some("incomplete"));
+
+    assert_eq!(reconcile(&home.machine()), (true, Vec::new()));
+    let config: toml::Table = toml::from_str(&home.read(".codex/config.toml")).unwrap();
+    assert_eq!(config["model"].as_str(), Some("gpt-5.5"));
+    assert_eq!(
+        config["mcp_servers"]["svode"]["env_vars"]
+            .as_array()
+            .unwrap(),
+        &[toml::Value::from("SVODE_MCP_ROUTINE_CALLER_TOKEN")]
+    );
+    assert!(client(&status(&home.machine(), &[], None), codex_client()).complete);
+    assert_eq!(reconcile(&home.machine()), (false, Vec::new()));
 }
 
 #[test]

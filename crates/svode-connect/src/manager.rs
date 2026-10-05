@@ -76,9 +76,8 @@ pub(crate) fn complete(machine: &Machine, client: Client, inspection: &Inspectio
     inspection.skill == Link::Managed
         && match client.kit {
             Kit::ClaudePlugin => !inspection.entry.is_svode(),
-            Kit::CodexMcp | Kit::AgentMcp(_) => {
-                entry::is_canonical(&inspection.entry, &stable.launcher_mcp)
-            }
+            Kit::CodexMcp => entry::is_canonical_codex(&inspection.entry, &stable.launcher_mcp),
+            Kit::AgentMcp(_) => entry::is_canonical(&inspection.entry, &stable.launcher_mcp),
             Kit::HermesSkills => {
                 entry::is_canonical(&inspection.entry, Path::new(hermes::SHARED_DIR))
             }
@@ -218,9 +217,10 @@ fn apply(
             entry::remove(machine, client).map(|()| true)
         }
         (Kit::ClaudePlugin, _) => Ok(false),
-        (Kit::CodexMcp | Kit::AgentMcp(_), current)
-            if entry::is_canonical(current, &stable.launcher_mcp) =>
-        {
+        (Kit::CodexMcp, current) if entry::is_canonical_codex(current, &stable.launcher_mcp) => {
+            Ok(false)
+        }
+        (Kit::AgentMcp(_), current) if entry::is_canonical(current, &stable.launcher_mcp) => {
             Ok(false)
         }
         (Kit::CodexMcp, _) => entry::write_codex(machine, &stable.launcher_mcp).map(|()| true),

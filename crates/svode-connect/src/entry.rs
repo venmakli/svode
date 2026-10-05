@@ -21,11 +21,19 @@ pub const MARKER_ENV: &str = "SVODE_MCP_MANAGED";
 pub const MARKER: &str = "svode-connection-v1";
 /// Marker of the MCP-only entry a previous desktop app wrote.
 const PREVIOUS_MARKER: &str = "svode-desktop-bridge-v1";
+/// Caller token of a Routine launch (`SVODE_MCP_ROUTINE_CALLER_TOKEN` of
+/// `svode-tools`). Codex hands a stdio MCP server only a base environment
+/// and the variables its entry names in `env_vars`, so the Codex entry
+/// names it for the Routine origin of `svode-mcp`.
+const ROUTINE_CALLER_TOKEN_ENV: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Launch {
     pub command: String,
     pub args: Vec<String>,
+    /// Variables the client forwards from its own environment (`env_vars`
+    /// of Codex); empty for the other clients.
+    pub env_vars: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,11 +70,23 @@ pub(crate) fn read(machine: &Machine, client: Client) -> Entry {
     }
 }
 
-/// The only entry the manager writes: Codex starts the stable launcher in
-/// automatic mode, without arguments and without approval settings.
+/// The only entry the manager writes: the client starts the stable
+/// launcher in automatic mode, without arguments and without approval
+/// settings.
 pub(crate) fn is_canonical(entry: &Entry, launcher: &Path) -> bool {
+    canonical(entry, launcher, &[])
+}
+
+/// The canonical Codex entry also forwards the Routine caller token.
+pub(crate) fn is_canonical_codex(entry: &Entry, launcher: &Path) -> bool {
+    canonical(entry, launcher, &[ROUTINE_CALLER_TOKEN_ENV])
+}
+
+fn canonical(entry: &Entry, launcher: &Path, env_vars: &[&str]) -> bool {
     matches!(entry, Entry::Managed(Some(launch))
-        if Path::new(&launch.command) == launcher && launch.args.is_empty())
+        if Path::new(&launch.command) == launcher
+            && launch.args.is_empty()
+            && launch.env_vars == env_vars)
 }
 
 pub(crate) fn write_codex(machine: &Machine, launcher: &Path) -> Result<(), ConnectError> {
@@ -79,7 +99,7 @@ pub(crate) fn write_codex(machine: &Machine, launcher: &Path) -> Result<(), Conn
     } else {
         format!("{}\n\n{}", cleaned.trim_end(), block)
     };
-    if !is_canonical(&codex_entry(&after), launcher) {
+    if !is_canonical_codex(&codex_entry(&after), launcher) {
         return Err(unsupported_form(&path));
     }
     write_if_unchanged(&path, &before, &after)
@@ -121,7 +141,7 @@ pub(crate) fn unsupported_form(path: &Path) -> ConnectError {
 /// manager never takes over an entry the user added by hand.
 pub(crate) fn codex_block(launcher: &Path, marked: bool) -> String {
     let mut block = format!(
-        "[mcp_servers.svode]\ncommand = \"{}\"\n",
+        "[mcp_servers.svode]\ncommand = \"{}\"\nenv_vars = [\"{ROUTINE_CALLER_TOKEN_ENV}\"]\n",
         toml_escape(&launcher.to_string_lossy())
     );
     if marked {
@@ -182,7 +202,11 @@ fn json_launch(entry: &Map<String, Value>) -> Option<Launch> {
             .map(|arg| arg.as_str().map(str::to_string))
             .collect::<Option<_>>()?,
     };
-    Some(Launch { command, args })
+    Some(Launch {
+        command,
+        args,
+        env_vars: Vec::new(),
+    })
 }
 
 fn codex_entry(content: &str) -> Entry {
@@ -231,7 +255,24 @@ fn toml_launch(entry: &toml::Table) -> Option<Launch> {
             .map(|arg| arg.as_str().map(str::to_string))
             .collect::<Option<_>>()?,
     };
-    Some(Launch { command, args })
+    // Codex names a forwarded variable by a string or `{ name, source }`.
+    let env_vars = match entry.get("env_vars") {
+        None => Vec::new(),
+        Some(vars) => vars
+            .as_array()?
+            .iter()
+            .map(|var| match var {
+                toml::Value::String(name) => Some(name.clone()),
+                toml::Value::Table(var) => var.get("name")?.as_str().map(str::to_string),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+    };
+    Some(Launch {
+        command,
+        args,
+        env_vars,
+    })
 }
 
 /// An entry by its marker; an unmarked `plain` entry with the launch of a
@@ -466,12 +507,35 @@ mod tests {
     #[test]
     fn the_codex_block_is_canonical_and_carries_no_approval_setting() {
         let block = codex_block(Path::new(LAUNCHER), true);
-        assert!(is_canonical(&codex_entry(&block), Path::new(LAUNCHER)));
+        assert!(is_canonical_codex(
+            &codex_entry(&block),
+            Path::new(LAUNCHER)
+        ));
         assert!(!block.contains("approval"));
         assert!(!block.contains("args"));
         let manual = codex_block(Path::new(LAUNCHER), false);
         assert!(!manual.contains(MARKER_ENV));
         assert_eq!(codex_entry(&manual), Entry::Custom);
+    }
+
+    #[test]
+    fn a_codex_entry_is_canonical_only_when_it_forwards_the_routine_caller_token() {
+        let entry = |env_vars: &str| {
+            codex_entry(&format!(
+                "[mcp_servers.svode]\ncommand = \"{LAUNCHER}\"\n{env_vars}[mcp_servers.svode.env]\n{MARKER_ENV} = \"{MARKER}\"\n"
+            ))
+        };
+        let launcher = Path::new(LAUNCHER);
+        assert!(!is_canonical_codex(&entry(""), launcher));
+        assert!(!is_canonical_codex(
+            &entry("env_vars = [\"OTHER\"]\n"),
+            launcher
+        ));
+        let forwarded = entry(&format!(
+            "env_vars = [{{ name = \"{ROUTINE_CALLER_TOKEN_ENV}\" }}]\n"
+        ));
+        assert!(is_canonical_codex(&forwarded, launcher));
+        assert!(!is_canonical(&forwarded, launcher));
     }
 
     #[test]

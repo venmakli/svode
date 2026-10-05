@@ -205,6 +205,7 @@ fn classify(kind: AgentMcp, entry: &Map<String, Value>) -> Entry {
             Some(Launch {
                 command: command.clone(),
                 args: args.to_vec(),
+                env_vars: Vec::new(),
             })
         }),
         AgentMcp::QwenCode | AgentMcp::Pi | AgentMcp::KimiCode => {
@@ -216,6 +217,7 @@ fn classify(kind: AgentMcp, entry: &Map<String, Value>) -> Entry {
             command.zip(args).map(|(command, args)| Launch {
                 command: command.to_string(),
                 args,
+                env_vars: Vec::new(),
             })
         }
     };
@@ -436,6 +438,7 @@ mod tests {
         let managed = Entry::Managed(Some(Launch {
             command: LAUNCHER.into(),
             args: Vec::new(),
+            env_vars: Vec::new(),
         }));
         let opencode = format!(
             r#"{{

@@ -41,6 +41,7 @@ pub(crate) fn read(machine: &Machine) -> Entry {
         Some(dir) => Entry::Managed(Some(Launch {
             command: dir,
             args: Vec::new(),
+            env_vars: Vec::new(),
         })),
         None => Entry::Absent,
     }
@@ -554,7 +555,8 @@ mod tests {
             read(&machine),
             Entry::Managed(Some(Launch {
                 command: "/old/skills".into(),
-                args: Vec::new()
+                args: Vec::new(),
+                env_vars: Vec::new(),
             }))
         );
         write(&machine).unwrap();
