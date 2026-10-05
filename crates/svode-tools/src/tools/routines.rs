@@ -990,7 +990,7 @@ mod tests {
         let launch = RoutineCaller::Launch {
             routine_run_id: "run-one".into(),
             launch_id: "launch-one".into(),
-            pty_id: "pty-one".into(),
+            pty_id: Some("pty-one".into()),
         };
         // An origin claimed without verification restricts like a verified one.
         for caller in [launch, RoutineCaller::Claimed] {
@@ -1018,6 +1018,28 @@ mod tests {
         assert_eq!(structured["status"], "already_running");
         assert_eq!(structured["routineRunId"], "run-one");
         assert_eq!(structured["agentSessionId"], "codex:session-one");
+
+        // An ACP launch keeps the result's form with a null PTY.
+        let started = dispatch_result(RoutineDispatchResult::Started {
+            routine_id: "routine:one".into(),
+            routine_run_id: "run-one".into(),
+            launch_id: "launch-one".into(),
+            agent_session_id: "codex:session-one".into(),
+            source_session_id: Some("session-one".into()),
+            pty_id: None,
+        });
+        assert_eq!(
+            started.structured_content.unwrap(),
+            json!({
+                "status": "started",
+                "routineId": "routine:one",
+                "routineRunId": "run-one",
+                "launchId": "launch-one",
+                "agentSessionId": "codex:session-one",
+                "sourceSessionId": "session-one",
+                "ptyId": null,
+            })
+        );
 
         let conflict = dispatch_result(RoutineDispatchResult::Blocked {
             routine_id: "routine:one".into(),

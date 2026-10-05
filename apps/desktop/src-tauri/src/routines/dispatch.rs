@@ -3,23 +3,27 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{SecondsFormat, Utc};
+use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager};
 
+use super::acp_launch::{AcpRun, AcpStartFailure, RoutineAcpLaunches};
 use super::host::{self, RoutineGitTarget};
 use super::{RoutineStoreState, lifecycle};
 use crate::AppError;
 use crate::agent_actors;
 use crate::agent_actors::launch::{AgentLaunchResolution, AgentLaunchValidationCode};
 use crate::agent_sessions::types::{AgentSessionResumeCommand, native_writer_key};
+use crate::agent_setup::AgentSetupState;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, require_repository_mutation_paths};
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
 use crate::process::path_env::ProcessPath;
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
+use svode_agents::adapters::{ChatOffer, LaunchUnavailable};
 use svode_agents::registry::{
-    AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, ManualRoutineLaunchInput,
-    SystemRuntimeCommandRunner,
+    AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, AgentLaunchRequest, LaunchTransport,
+    ManualRoutineLaunchInput, SystemRuntimeCommandRunner, TerminalChoice, TerminalReason,
 };
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer};
 use svode_core::agent_adapters::AgentAdapterKind;
@@ -31,7 +35,8 @@ use svode_core::routines::dispatch::{
 };
 use svode_core::routines::model::{
     CollectionEvent, ResolvedRoutineOwner, RoutineAction, RoutineDefinition,
-    RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind,
+    RoutineDispatchBlockedCode, RoutineDispatchResult, RoutineOwnerKind, RoutineRunLaunch,
+    RoutineTerminalChoice,
 };
 use svode_core::routines::operational::{
     self, NewRoutineRun, QueuedRoutineEvent, attach_pty, latest_run_record, record_terminal_outcome,
@@ -286,9 +291,9 @@ pub(super) async fn dispatch_routine(
     let pool = routine_stores
         .get_or_create_for_index(index_state, &owner.index_key)
         .await?;
-    let live_pty_ids = super::runtime::live_evidence(terminal_manager)?;
+    let live = super::runtime::live_evidence(terminal_manager, &app.state::<RoutineAcpLaunches>())?;
     if let Some(run) = latest_run_record(&pool, &owner.descriptor.owner_path, &routine_id).await?
-        && run.blocks_relaunch(live_pty_ids.live_agent_pty_ids())
+        && run.blocks_relaunch(&live)
     {
         return Ok(RoutineDispatchResult::AlreadyRunning {
             routine_id,
@@ -398,14 +403,6 @@ pub(super) async fn dispatch_routine(
             return Ok(dispatch_blocked(routine_id, blocked_code, message));
         }
     };
-    let executable_path = attempts
-        .iter()
-        .find(|attempt| attempt.binding_index == selected_binding_index)
-        .and_then(|attempt| attempt.diagnostic.as_ref())
-        .and_then(|diagnostic| diagnostic.executable_path.as_deref())
-        .ok_or_else(|| {
-            AppError::General("resolved Agent Actor binding has no executable path".into())
-        })?;
     let routine_run_id = match &dispatch_kind {
         DispatchKind::Event {
             execution_run_id, ..
@@ -413,70 +410,272 @@ pub(super) async fn dispatch_routine(
         _ => new_runtime_id(),
     };
     let launch_id = new_runtime_id();
-    let registry = AdapterRuntimeRegistry;
-    let launch = match registry.build_manual_routine_launch(
-        &request,
-        Path::new(executable_path),
-        &ManualRoutineLaunchInput {
-            instruction: definition.body.clone(),
-            launch_id: launch_id.clone(),
-            owner_kind: routine_owner_kind_name(owner.descriptor.kind).to_string(),
-            owner_path: owner.descriptor.owner_path.clone(),
-            event_context: match &dispatch_kind {
-                DispatchKind::Event { payload, .. } => Some(serde_json::to_string(payload)?),
-                _ => None,
-            },
+    let input = ManualRoutineLaunchInput {
+        instruction: definition.body.clone(),
+        launch_id: launch_id.clone(),
+        owner_kind: routine_owner_kind_name(owner.descriptor.kind).to_string(),
+        owner_path: owner.descriptor.owner_path.clone(),
+        event_context: match &dispatch_kind {
+            DispatchKind::Event { payload, .. } => Some(serde_json::to_string(payload)?),
+            _ => None,
         },
-    ) {
-        Ok(launch) => launch,
-        Err(validation) => {
-            let message = validation
-                .issues
-                .first()
-                .map(|issue| issue.message.clone())
-                .unwrap_or_else(|| "Agent Actor binding is unavailable".to_string());
-            return Ok(dispatch_blocked(
-                routine_id,
-                RoutineDispatchBlockedCode::UnavailableExecutor,
-                message,
-            ));
-        }
     };
+    let run = RunContext {
+        app,
+        owner: &owner,
+        pool: &pool,
+        terminal_manager,
+        routine_id: &routine_id,
+        routine_run_id: &routine_run_id,
+        launch_id: &launch_id,
+        trigger_type: match &dispatch_kind {
+            DispatchKind::Manual { .. } => "manual",
+            DispatchKind::Scheduled => "schedule",
+            DispatchKind::Event { .. } => "event",
+        },
+        fingerprint: &candidate.execution_fingerprint,
+        definition_json: &serde_json::to_string(&definition)?,
+        name: &candidate.name,
+        created_at: now_rfc3339(),
+        sink: Arc::new(lifecycle::RoutineRunLifecycleSink::with_invalidation(
+            pool.clone(),
+            routine_stores.core_handle(),
+            owner.index_key.clone(),
+            owner.space_path.clone(),
+            routine_run_id.clone(),
+            app.clone(),
+            &owner,
+        )),
+    };
+    let registry = AdapterRuntimeRegistry;
+    let agent_setup = app.state::<AgentSetupState>();
+    let acp_launches = app.state::<RoutineAcpLaunches>();
+    let mut unavailable = None;
+    let mut acp_failure = None;
+    // The transport is a step of the pre-start policy for each binding it
+    // allows, from its selection on; a binding the agent cannot run in
+    // either transport passes to the next one without a downgrade.
+    for attempt in attempts
+        .iter()
+        .filter(|attempt| attempt.eligible && attempt.binding_index >= selected_binding_index)
+    {
+        let Some(agent) = attempt.binding.adapter.builtin() else {
+            continue;
+        };
+        let request = AgentLaunchRequest {
+            binding: attempt.binding.clone(),
+            ..request.clone()
+        };
+        let diagnostic = attempt.diagnostic.as_ref();
+        let token = new_runtime_id();
+        let (plan, offer) = agent_setup
+            .launch_offer(
+                agent,
+                &owner.space_path,
+                routine_mcp_env(app, &owner.project_path),
+                diagnostic.and_then(|diagnostic| diagnostic.authenticated),
+            )
+            .await;
+        let chat = chat_availability(&plan, offer);
+        let choice = match registry.launch_transport(&request.binding, request.approval_mode, chat)
+        {
+            LaunchTransport::Acp { settings } => {
+                let Ok(launch) = plan else {
+                    unreachable!("the chat is available only with a launch plan")
+                };
+                let started = acp_launches
+                    .start(AcpRun {
+                        pool: &pool,
+                        new_run: run.new_run(agent.id().as_str(), None, "", &RoutineRunLaunch::Acp),
+                        source: agent.id(),
+                        launch,
+                        cwd: Path::new(&request.launch_space_path),
+                        settings,
+                        prompt: registry.acp_routine_prompt(&input),
+                        token,
+                        project_path: &owner.project_path,
+                        sink: run.sink.clone(),
+                    })
+                    .await;
+                match started {
+                    Ok(result) => {
+                        super::emit_owner_invalidation(app, &owner);
+                        return Ok(result);
+                    }
+                    Err(AcpStartFailure::Failed(error)) => return Err(error),
+                    Err(AcpStartFailure::BeforePrompt(detail)) => {
+                        let choice =
+                            TerminalChoice::new(TerminalReason::AcpFailedBeforePrompt, &detail);
+                        if registry
+                            .approval_mapping(&request.binding.adapter, request.approval_mode)
+                            .is_none()
+                        {
+                            acp_failure = Some(choice.detail);
+                            continue;
+                        }
+                        choice
+                    }
+                }
+            }
+            LaunchTransport::Terminal(choice) => choice,
+            LaunchTransport::Unavailable { detail } => {
+                unavailable = Some(detail);
+                continue;
+            }
+        };
+        let executable_path = diagnostic
+            .and_then(|diagnostic| diagnostic.executable_path.as_deref())
+            .ok_or_else(|| {
+                AppError::General("resolved Agent Actor binding has no executable path".into())
+            })?;
+        return start_terminal(&run, &request, Path::new(executable_path), &input, choice).await;
+    }
+    // Every binding failed before its first prompt or has no transport.
+    match acp_failure {
+        Some(message) => {
+            let source = request.binding.adapter.clone();
+            let agent_session_id = format!("{}:launch:{launch_id}", source.as_str());
+            operational::create_run(
+                &pool,
+                run.new_run(
+                    source.as_str(),
+                    None,
+                    &agent_session_id,
+                    &RoutineRunLaunch::Acp,
+                ),
+            )
+            .await?;
+            record_terminal_outcome(
+                &pool,
+                &routine_run_id,
+                svode_core::routines::model::RoutineRunTerminalStatus::Failed,
+                None,
+                &message,
+                &now_rfc3339(),
+            )
+            .await?;
+            super::emit_owner_invalidation(app, &owner);
+            Ok(RoutineDispatchResult::Failed {
+                routine_id,
+                routine_run_id,
+                launch_id,
+                agent_session_id,
+                source_session_id: None,
+                pty_id: None,
+                message,
+            })
+        }
+        None => Ok(dispatch_blocked(
+            routine_id,
+            RoutineDispatchBlockedCode::UnavailableExecutor,
+            unavailable.unwrap_or_else(|| "Agent Actor binding is unavailable".to_string()),
+        )),
+    }
+}
+
+/// One run of a Routine whose launch is decided.
+struct RunContext<'a> {
+    app: &'a AppHandle,
+    owner: &'a ResolvedRoutineOwner,
+    pool: &'a SqlitePool,
+    terminal_manager: &'a TerminalManager,
+    routine_id: &'a str,
+    routine_run_id: &'a str,
+    launch_id: &'a str,
+    trigger_type: &'a str,
+    fingerprint: &'a str,
+    definition_json: &'a str,
+    name: &'a str,
+    created_at: String,
+    sink: Arc<lifecycle::RoutineRunLifecycleSink>,
+}
+
+impl RunContext<'_> {
+    fn new_run<'b>(
+        &'b self,
+        source: &'b str,
+        source_session_id: Option<&'b str>,
+        agent_session_id: &'b str,
+        launch: &'b RoutineRunLaunch,
+    ) -> NewRoutineRun<'b> {
+        NewRoutineRun {
+            routine_run_id: self.routine_run_id,
+            routine_id: self.routine_id,
+            owner_path: &self.owner.descriptor.owner_path,
+            trigger_type: self.trigger_type,
+            definition_fingerprint: self.fingerprint,
+            definition_json: self.definition_json,
+            launch_id: self.launch_id,
+            source,
+            source_session_id,
+            agent_session_id,
+            created_at: &self.created_at,
+            launch,
+        }
+    }
+}
+
+/// The agent CLI of the binding in a managed terminal, with why the launch
+/// is not over ACP.
+async fn start_terminal(
+    run: &RunContext<'_>,
+    request: &AgentLaunchRequest,
+    executable_path: &Path,
+    input: &ManualRoutineLaunchInput,
+    choice: TerminalChoice,
+) -> Result<RoutineDispatchResult, AppError> {
+    let (app, owner, pool) = (run.app, run.owner, run.pool);
+    let terminal_manager = run.terminal_manager;
+    let routine_id = run.routine_id.to_string();
+    let routine_run_id = run.routine_run_id.to_string();
+    let launch_id = run.launch_id.to_string();
+    let launch =
+        match AdapterRuntimeRegistry.build_manual_routine_launch(request, executable_path, input) {
+            Ok(launch) => launch,
+            Err(validation) => {
+                let message = validation
+                    .issues
+                    .first()
+                    .map(|issue| issue.message.clone())
+                    .unwrap_or_else(|| "Agent Actor binding is unavailable".to_string());
+                return Ok(dispatch_blocked(
+                    routine_id,
+                    RoutineDispatchBlockedCode::UnavailableExecutor,
+                    message,
+                ));
+            }
+        };
     let source = launch.adapter.id();
     let source_session_id = launch
         .source_session_id
         .clone()
         .unwrap_or_else(|| format!("launch:{launch_id}"));
     let agent_session_id = format!("{}:{source_session_id}", source.as_str());
-    let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let terminal_launch = RoutineRunLaunch::Terminal {
+        reason: Some(match choice.reason {
+            TerminalReason::ChatUnavailable => RoutineTerminalChoice::ChatUnavailable,
+            TerminalReason::BindingNotAcp => RoutineTerminalChoice::BindingNotAcp,
+            TerminalReason::AcpFailedBeforePrompt => RoutineTerminalChoice::AcpFailedBeforePrompt,
+        }),
+        detail: Some(choice.detail).filter(|detail| !detail.is_empty()),
+    };
 
     operational::create_run(
-        &pool,
-        NewRoutineRun {
-            routine_run_id: &routine_run_id,
-            routine_id: &routine_id,
-            owner_path: &owner.descriptor.owner_path,
-            trigger_type: match &dispatch_kind {
-                DispatchKind::Manual { .. } => "manual",
-                DispatchKind::Scheduled => "schedule",
-                DispatchKind::Event { .. } => "event",
-            },
-            definition_fingerprint: &candidate.execution_fingerprint,
-            definition_json: &serde_json::to_string(&definition)?,
-            launch_id: &launch_id,
-            source: source.as_str(),
-            source_session_id: launch.source_session_id.as_deref(),
-            agent_session_id: &agent_session_id,
-            created_at: &created_at,
-        },
+        pool,
+        run.new_run(
+            source.as_str(),
+            launch.source_session_id.as_deref(),
+            &agent_session_id,
+            &terminal_launch,
+        ),
     )
     .await?;
 
     let command_display = quote_agent_shell_command(&launch.program, &launch.argv);
     let spawn = AgentTerminalSpawn {
         agent_session_id: agent_session_id.clone(),
-        title: Some(candidate.name.clone()),
-        source,
+        title: Some(run.name.to_string()),
+        source: source.clone(),
         source_session_id: source_session_id.clone(),
         command: AgentSessionResumeCommand {
             display: command_display,
@@ -488,17 +687,7 @@ pub(super) async fn dispatch_routine(
         mcp_project_path: Some(owner.project_path.to_string_lossy().into_owned()),
         launch_id: Some(launch_id.clone()),
         routine_run_id: Some(routine_run_id.clone()),
-        lifecycle_sink: Some(Arc::new(
-            lifecycle::RoutineRunLifecycleSink::with_invalidation(
-                pool.clone(),
-                routine_stores.core_handle(),
-                owner.index_key.clone(),
-                owner.space_path.clone(),
-                routine_run_id.clone(),
-                app.clone(),
-                &owner,
-            ),
-        )),
+        lifecycle_sink: Some(run.sink.clone()),
     };
     // A new launch: the pre-assigned session id or, until the source reports
     // it, the launch id holds the writer slot from before the agent starts.
@@ -520,15 +709,15 @@ pub(super) async fn dispatch_routine(
         Err(error) => {
             let message = format!("failed to start agent CLI: {error}");
             record_terminal_outcome(
-                &pool,
+                pool,
                 &routine_run_id,
                 svode_core::routines::model::RoutineRunTerminalStatus::Failed,
                 None,
                 &message,
-                &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+                &now_rfc3339(),
             )
             .await?;
-            super::emit_owner_invalidation(app, &owner);
+            super::emit_owner_invalidation(app, owner);
             return Ok(RoutineDispatchResult::Failed {
                 routine_id,
                 routine_run_id,
@@ -540,14 +729,7 @@ pub(super) async fn dispatch_routine(
             });
         }
     };
-    if let Err(error) = attach_pty(
-        &pool,
-        &routine_run_id,
-        &terminal.pty_id,
-        &Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-    )
-    .await
-    {
+    if let Err(error) = attach_pty(pool, &routine_run_id, &terminal.pty_id, &now_rfc3339()).await {
         let _ = terminal_manager.kill(&terminal.pty_id);
         return Ok(RoutineDispatchResult::Failed {
             routine_id,
@@ -559,7 +741,7 @@ pub(super) async fn dispatch_routine(
             message: format!("failed to persist managed PTY mapping: {error}"),
         });
     }
-    super::emit_owner_invalidation(app, &owner);
+    super::emit_owner_invalidation(app, owner);
 
     Ok(RoutineDispatchResult::Started {
         routine_id,
@@ -567,8 +749,43 @@ pub(super) async fn dispatch_routine(
         launch_id,
         agent_session_id,
         source_session_id: launch.source_session_id,
-        pty_id: terminal.pty_id,
+        pty_id: Some(terminal.pty_id),
     })
+}
+
+/// Whether the chat is available to the agent by the rule of a new session
+/// (Stage 10 `04`), with why not.
+fn chat_availability(
+    plan: &Result<svode_agents::AcpLaunch, LaunchUnavailable>,
+    offer: Option<ChatOffer>,
+) -> Result<(), String> {
+    match (offer, plan) {
+        (Some(ChatOffer::Available | ChatOffer::SignInRequired), _) => Ok(()),
+        (Some(ChatOffer::Unavailable { reason }), _) => Err(reason.to_string()),
+        (None, Err(reason)) => Err(reason.to_string()),
+        (None, Ok(_)) => Err("the agent's chat is deferred".into()),
+    }
+}
+
+/// The Svode MCP context a Routine agent process gets, as in its terminal:
+/// the Desktop discovery file and the Project; the ACP launch adds its
+/// caller token.
+fn routine_mcp_env(app: &AppHandle, project_path: &Path) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::from([(
+        svode_mcp::MCP_PROJECT_PATH_ENV.to_string(),
+        svode_core::system_path::user_facing_path(project_path),
+    )]);
+    if let Ok(discovery_path) = crate::mcp::ipc::discovery_path_for_app(app) {
+        env.insert(
+            svode_mcp::MCP_DISCOVERY_ENV.to_string(),
+            svode_core::system_path::user_facing_path(&discovery_path),
+        );
+    }
+    env
+}
+
+fn now_rfc3339() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn dispatch_blocked(

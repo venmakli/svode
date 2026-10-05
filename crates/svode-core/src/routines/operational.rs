@@ -2,8 +2,8 @@ use sqlx::{Row, SqlitePool};
 
 use super::RoutineStoreError;
 use super::model::{
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineOwnerKind, RoutineRunRecord, RoutineRunRow,
-    RoutineRunTerminalStatus,
+    RoutineCatalogSnapshot, RoutineDefinition, RoutineOwnerKind, RoutineRunLaunch,
+    RoutineRunRecord, RoutineRunRow, RoutineRunTerminalStatus,
 };
 
 pub struct DefinitionRow {
@@ -315,16 +315,24 @@ pub struct NewRoutineRun<'a> {
     pub source_session_id: Option<&'a str>,
     pub agent_session_id: &'a str,
     pub created_at: &'a str,
+    pub launch: &'a RoutineRunLaunch,
 }
 
 pub async fn create_run(pool: &SqlitePool, run: NewRoutineRun<'_>) -> Result<(), sqlx::Error> {
+    let (reason, detail) = match run.launch {
+        RoutineRunLaunch::Acp => (None, None),
+        RoutineRunLaunch::Terminal { reason, detail } => {
+            (reason.map(|reason| reason.as_str()), detail.as_deref())
+        }
+    };
     sqlx::query(
         r#"
         INSERT INTO routine_runs (
             routine_run_id, routine_id, owner_path, trigger_type,
             definition_fingerprint, definition_json, launch_id, source,
-            source_session_id, agent_session_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            source_session_id, agent_session_id, created_at, updated_at,
+            launch_transport, terminal_choice, terminal_choice_detail
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(run.routine_run_id)
@@ -339,6 +347,9 @@ pub async fn create_run(pool: &SqlitePool, run: NewRoutineRun<'_>) -> Result<(),
     .bind(run.agent_session_id)
     .bind(run.created_at)
     .bind(run.created_at)
+    .bind(run.launch.transport())
+    .bind(reason)
+    .bind(detail)
     .execute(pool)
     .await?;
     Ok(())
@@ -420,7 +431,8 @@ pub async fn latest_run(
         r#"
         SELECT routine_run_id, routine_id, owner_path, launch_id, pty_id, source,
                source_session_id, agent_session_id, created_at, terminal_status,
-               terminal_exit_code, terminal_reason, terminal_observed_at, session_status
+               terminal_exit_code, terminal_reason, terminal_observed_at, session_status,
+               launch_transport, terminal_choice, terminal_choice_detail
         FROM routine_runs
         WHERE owner_path = ? AND routine_id = ?
         ORDER BY created_at DESC, routine_run_id DESC
@@ -457,6 +469,7 @@ pub async fn latest_run_record(
             terminal_reason: row.terminal_reason,
             terminal_observed_at: row.terminal_observed_at,
             session_status: row.session_status,
+            launch: row.launch,
         }))
 }
 
@@ -537,6 +550,13 @@ fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRow, s
         terminal_reason: row.try_get("terminal_reason")?,
         terminal_observed_at: row.try_get("terminal_observed_at")?,
         session_status: row.try_get("session_status")?,
+        launch: RoutineRunLaunch::from_columns(
+            row.try_get::<Option<String>, _>("launch_transport")?
+                .as_deref(),
+            row.try_get::<Option<String>, _>("terminal_choice")?
+                .as_deref(),
+            row.try_get("terminal_choice_detail")?,
+        ),
     })
 }
 
@@ -545,7 +565,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::routines::model::{RoutineDiagnostic, RoutineOwnerDescriptor, RoutineRow};
+    use crate::routines::model::{
+        RoutineDiagnostic, RoutineLiveEvidence, RoutineOwnerDescriptor, RoutineRow,
+        RoutineTerminalChoice,
+    };
     use crate::routines::storage;
 
     async fn routines_pool(path: &std::path::Path) -> SqlitePool {
@@ -740,5 +763,141 @@ mod tests {
                 .claimed_by,
             "device-two"
         );
+    }
+
+    fn new_run<'a>(id: &'a str, launch: &'a RoutineRunLaunch) -> NewRoutineRun<'a> {
+        NewRoutineRun {
+            routine_run_id: id,
+            routine_id: "routine-one",
+            owner_path: ".",
+            trigger_type: "schedule",
+            definition_fingerprint: "fingerprint",
+            definition_json: "{}",
+            launch_id: id,
+            source: "codex",
+            source_session_id: Some("source-one"),
+            agent_session_id: "codex:source-one",
+            created_at: id,
+            launch,
+        }
+    }
+
+    #[tokio::test]
+    async fn run_launch_transport_and_terminal_reason_round_trip() {
+        let temp = tempdir().unwrap();
+        let pool = routines_pool(&temp.path().join("routines.db")).await;
+        let launches = [
+            RoutineRunLaunch::Acp,
+            RoutineRunLaunch::Terminal {
+                reason: Some(RoutineTerminalChoice::AcpFailedBeforePrompt),
+                detail: Some("the agent refused mode".into()),
+            },
+            RoutineRunLaunch::Terminal {
+                reason: None,
+                detail: None,
+            },
+        ];
+        for (index, launch) in launches.iter().enumerate() {
+            let id = format!("2026-10-05T10:00:0{index}Z");
+            create_run(&pool, new_run(&id, launch)).await.unwrap();
+            let latest = latest_run_record(&pool, ".", "routine-one")
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&latest.launch, launch);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_store_without_launch_columns_opens_and_reads_terminal_runs() {
+        let temp = tempdir().unwrap();
+        let db_path = temp.path().join("routines.db");
+        let pool = routines_pool(&db_path).await;
+        for column in [
+            "launch_transport",
+            "terminal_choice",
+            "terminal_choice_detail",
+        ] {
+            sqlx::query(&format!("ALTER TABLE routine_runs DROP COLUMN {column}"))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            r#"INSERT INTO routine_runs (
+                routine_run_id, routine_id, owner_path, trigger_type,
+                definition_fingerprint, definition_json, launch_id, pty_id, source,
+                agent_session_id, created_at, updated_at
+            ) VALUES ('run-old', 'routine-one', '.', 'manual', 'fingerprint', '{}',
+                'launch-old', 'pty-old', 'codex', 'codex:launch:launch-old',
+                '2026-09-01T10:00:00Z', '2026-09-01T10:00:00Z')"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let pool = routines_pool(&db_path).await;
+        let old = latest_run_record(&pool, ".", "routine-one")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            old.launch,
+            RoutineRunLaunch::Terminal {
+                reason: None,
+                detail: None,
+            }
+        );
+        assert_eq!(old.pty_id.as_deref(), Some("pty-old"));
+        create_run(
+            &pool,
+            new_run("2026-10-05T10:00:00Z", &RoutineRunLaunch::Acp),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            latest_run_record(&pool, ".", "routine-one")
+                .await
+                .unwrap()
+                .unwrap()
+                .launch,
+            RoutineRunLaunch::Acp
+        );
+    }
+
+    #[tokio::test]
+    async fn a_live_acp_session_blocks_a_relaunch_like_a_live_pty() {
+        use std::collections::HashSet;
+
+        let temp = tempdir().unwrap();
+        let pool = routines_pool(&temp.path().join("routines.db")).await;
+        let id = "2026-10-05T10:00:00Z";
+        create_run(&pool, new_run(id, &RoutineRunLaunch::Acp))
+            .await
+            .unwrap();
+        reconcile_agent_session(&pool, id, "source-one", "codex:source-one", "active", id)
+            .await
+            .unwrap();
+        let run = latest_run_record(&pool, ".", "routine-one")
+            .await
+            .unwrap()
+            .unwrap();
+        let live = RoutineLiveEvidence::new(HashSet::new(), HashSet::from([id.to_string()]));
+        // A PTY with the run's id is no evidence for an ACP launch.
+        let pty_only = RoutineLiveEvidence::new(HashSet::from([id.to_string()]), HashSet::new());
+        assert!(run.blocks_relaunch(&live));
+        assert!(run.to_ref(&live).active);
+        assert!(!run.blocks_relaunch(&pty_only));
+        assert!(!run.blocks_relaunch(&RoutineLiveEvidence::default()));
+
+        reconcile_agent_session(&pool, id, "source-one", "codex:source-one", "done", id)
+            .await
+            .unwrap();
+        let done = latest_run_record(&pool, ".", "routine-one")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!done.blocks_relaunch(&live));
     }
 }

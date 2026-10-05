@@ -52,6 +52,82 @@ pub struct RoutineRunRow {
     pub terminal_reason: Option<String>,
     pub terminal_observed_at: Option<String>,
     pub session_status: Option<String>,
+    pub launch: RoutineRunLaunch,
+}
+
+/// Why a run's agent was launched in a managed terminal instead of ACP: a
+/// closed set (Stage 10 `02` "Routine launch through ACP").
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineTerminalChoice {
+    /// The chat is not available to the agent (Stage 10 `04`).
+    ChatUnavailable,
+    /// The binding has no ACP equivalent of its approval, model or effort.
+    BindingNotAcp,
+    /// The ACP launch failed before its first prompt.
+    AcpFailedBeforePrompt,
+}
+
+impl RoutineTerminalChoice {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ChatUnavailable => "chat_unavailable",
+            Self::BindingNotAcp => "binding_not_acp",
+            Self::AcpFailedBeforePrompt => "acp_failed_before_prompt",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "chat_unavailable" => Some(Self::ChatUnavailable),
+            "binding_not_acp" => Some(Self::BindingNotAcp),
+            "acp_failed_before_prompt" => Some(Self::AcpFailedBeforePrompt),
+            _ => None,
+        }
+    }
+}
+
+/// How a run's agent was launched. Local operational evidence of the run,
+/// never portable; a run recorded without it reads as a terminal launch
+/// without a reason.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "transport",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum RoutineRunLaunch {
+    Acp,
+    Terminal {
+        reason: Option<RoutineTerminalChoice>,
+        /// Bounded text of the agent or connection behind the reason.
+        detail: Option<String>,
+    },
+}
+
+impl RoutineRunLaunch {
+    pub fn transport(&self) -> &'static str {
+        match self {
+            Self::Acp => "acp",
+            Self::Terminal { .. } => "terminal",
+        }
+    }
+
+    /// Reads the persisted columns; unknown values read as a terminal
+    /// launch without a reason.
+    pub fn from_columns(
+        transport: Option<&str>,
+        reason: Option<&str>,
+        detail: Option<String>,
+    ) -> Self {
+        match transport {
+            Some("acp") => Self::Acp,
+            _ => Self::Terminal {
+                reason: reason.and_then(RoutineTerminalChoice::parse),
+                detail,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -371,56 +447,61 @@ pub struct RoutineRunRecord {
     pub terminal_reason: Option<String>,
     pub terminal_observed_at: Option<String>,
     pub session_status: Option<String>,
+    pub launch: RoutineRunLaunch,
 }
 
+/// The host's evidence of live launches: managed PTYs by id, and runs whose
+/// ACP session holds its writer in the writer registry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoutineLiveEvidence {
     live_agent_pty_ids: HashSet<String>,
+    live_acp_run_ids: HashSet<String>,
 }
 
 impl RoutineLiveEvidence {
-    pub fn new(live_agent_pty_ids: HashSet<String>) -> Self {
-        Self { live_agent_pty_ids }
-    }
-
-    pub fn live_agent_pty_ids(&self) -> &HashSet<String> {
-        &self.live_agent_pty_ids
+    pub fn new(live_agent_pty_ids: HashSet<String>, live_acp_run_ids: HashSet<String>) -> Self {
+        Self {
+            live_agent_pty_ids,
+            live_acp_run_ids,
+        }
     }
 }
 
 impl RoutineRunRecord {
-    pub fn has_live_pty(&self, live_pty_ids: &HashSet<String>) -> bool {
-        self.pty_id
-            .as_ref()
-            .is_some_and(|pty_id| live_pty_ids.contains(pty_id))
+    /// A live managed PTY or a live ACP session of this run's launch.
+    pub fn has_live_writer(&self, live: &RoutineLiveEvidence) -> bool {
+        match self.launch {
+            RoutineRunLaunch::Acp => live.live_acp_run_ids.contains(&self.routine_run_id),
+            RoutineRunLaunch::Terminal { .. } => self
+                .pty_id
+                .as_ref()
+                .is_some_and(|pty_id| live.live_agent_pty_ids.contains(pty_id)),
+        }
     }
 
-    pub fn blocks_relaunch(&self, live_pty_ids: &HashSet<String>) -> bool {
+    pub fn blocks_relaunch(&self, live: &RoutineLiveEvidence) -> bool {
         match self.session_status.as_deref() {
-            Some("active") => self.has_live_pty(live_pty_ids),
             Some("done" | "failed" | "stopped") => false,
-            Some("unknown") => self.has_live_pty(live_pty_ids),
-            Some(_) => self.has_live_pty(live_pty_ids),
+            Some(_) => self.has_live_writer(live),
             None => match self.terminal_status {
                 Some(
                     RoutineRunTerminalStatus::Done
                     | RoutineRunTerminalStatus::Failed
                     | RoutineRunTerminalStatus::Stopped,
                 ) => false,
-                Some(RoutineRunTerminalStatus::Unknown) => self.has_live_pty(live_pty_ids),
-                None => self.has_live_pty(live_pty_ids),
+                Some(RoutineRunTerminalStatus::Unknown) | None => self.has_live_writer(live),
             },
         }
     }
 
-    pub fn to_ref(&self, live_pty_ids: &HashSet<String>) -> RoutineRunRef {
+    pub fn to_ref(&self, live: &RoutineLiveEvidence) -> RoutineRunRef {
         RoutineRunRef {
             routine_run_id: self.routine_run_id.clone(),
             launch_id: self.launch_id.clone(),
             agent_session_id: self.agent_session_id.clone(),
             source_session_id: self.source_session_id.clone(),
             pty_id: self.pty_id.clone(),
-            active: self.blocks_relaunch(live_pty_ids),
+            active: self.blocks_relaunch(live),
         }
     }
 }
@@ -497,7 +578,8 @@ pub enum RoutineDispatchResult {
         launch_id: String,
         agent_session_id: String,
         source_session_id: Option<String>,
-        pty_id: String,
+        /// `None` for an ACP launch, which the session ids identify.
+        pty_id: Option<String>,
     },
     AlreadyRunning {
         routine_id: String,
@@ -538,7 +620,8 @@ pub enum RoutineManualDispatchResult {
         launch_id: String,
         agent_session_id: String,
         source_session_id: Option<String>,
-        pty_id: String,
+        /// `None` for an ACP launch, which the session ids identify.
+        pty_id: Option<String>,
     },
     Focused {
         routine_id: String,

@@ -2276,6 +2276,91 @@ async fn an_unconfirmed_mode_is_refused() {
 }
 
 #[tokio::test]
+async fn a_launch_session_moves_the_launch_claim_to_its_canonical_key() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let writers = runtime.writers();
+    let claim = writers.claim_launch("launch-one", Writer::Acp).unwrap();
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_launch_session(
+                    id,
+                    Path::new("/project"),
+                    &[approval("workspace-write")],
+                    claim,
+                )
+                .await
+                .unwrap()
+        },
+        async {
+            agent.initialize(json!({})).await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+            let set = agent.expect("session/set_config_option").await;
+            let mut confirmed = mode_settings("workspace-write");
+            confirmed.as_object_mut().unwrap().remove("sessionId");
+            confirmed.as_object_mut().unwrap().remove("modes");
+            agent.reply(&set, confirmed).await;
+        }
+    );
+    assert_eq!(writers.writer(&key), Some(Writer::Acp));
+    // The launch id no longer holds a slot: the claim moved, not doubled.
+    drop(writers.claim_launch("launch-one", Writer::Pty).unwrap());
+    assert_eq!(
+        writers
+            .claim(
+                &key,
+                Writer::Pty,
+                ExternalLiveness::Free,
+                UnknownLiveness::NotConfirmed
+            )
+            .err(),
+        Some(WriterRefusal::WriterActive {
+            writer: Writer::Acp
+        })
+    );
+    assert_eq!(
+        runtime.watch(&key).unwrap().snapshot.writer,
+        crate::activity::WriterState::Acp
+    );
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_refused_launch_setting_frees_the_launch_for_its_terminal() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let writers = runtime.writers();
+    let claim = writers.claim_launch("launch-one", Writer::Acp).unwrap();
+    let settings = [approval("agent-full-access")];
+    let (created, ()) = tokio::join!(
+        runtime.new_launch_session(id, Path::new("/project"), &settings, claim),
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "close": {} } }))
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent.reply(&new_session, mode_settings("agent")).await;
+            let close = agent.expect("session/close").await;
+            agent.reply(&close, json!({})).await;
+        }
+    );
+    assert!(matches!(
+        created,
+        Err(AgentRuntimeError::SettingRefused {
+            reason: SettingRefusal::NotDeclared,
+            ..
+        })
+    ));
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    assert_eq!(writers.writer(&key), None);
+    // The terminal of the same binding claims the same launch.
+    assert!(writers.claim_launch("launch-one", Writer::Pty).is_ok());
+    agent.silent().await;
+}
+
+#[tokio::test]
 async fn legacy_modes_are_one_mode_setting_changed_by_set_mode() {
     let runtime = AgentRuntime::default();
     let (id, mut agent) = attached(&runtime);

@@ -289,6 +289,54 @@ pub enum FallbackAfterStart {
     Forbidden,
 }
 
+/// Bound of the agent or connection text behind a terminal launch reason,
+/// which the Routine run keeps (Stage 10 `02` C8).
+const LAUNCH_DETAIL_BYTES: usize = 512;
+
+/// Why a Routine or Agent Actor launch runs in the managed terminal instead
+/// of ACP: a closed set (Stage 10 `02` "Routine launch through ACP").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalReason {
+    /// The chat is not available to the agent (Stage 10 `04`).
+    ChatUnavailable,
+    /// The binding has no ACP equivalent of its approval, model or effort.
+    BindingNotAcp,
+    /// The ACP launch failed before its first prompt.
+    AcpFailedBeforePrompt,
+}
+
+/// A terminal launch reason with the bounded text of the agent or
+/// connection behind it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalChoice {
+    pub reason: TerminalReason,
+    pub detail: String,
+}
+
+impl TerminalChoice {
+    pub fn new(reason: TerminalReason, detail: impl AsRef<str>) -> Self {
+        Self {
+            reason,
+            detail: crate::acp::normalize::bounded(detail.as_ref().trim(), LAUNCH_DETAIL_BYTES),
+        }
+    }
+}
+
+/// How a Routine or Agent Actor launch reaches the agent of the binding the
+/// pre-start policy selected; a step of that policy, not a second one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchTransport {
+    /// An ACP session created with these values before its first prompt.
+    Acp { settings: Vec<SettingValue> },
+    /// The agent's managed terminal launch.
+    Terminal(TerminalChoice),
+    /// The agent has neither; the policy moves on to the next binding
+    /// without a downgrade.
+    Unavailable { detail: String },
+}
+
 /// The runtime plane of the adapter registry. Stateless; the identity plane
 /// is `svode_core::agent_adapters::AgentAdapterRegistry`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -392,6 +440,52 @@ impl AdapterRuntimeRegistry {
         mode: ApprovalMode,
     ) -> Option<SettingValue> {
         acp_approval(adapter, mode)
+    }
+
+    /// The session setting values an ACP launch of `binding` applies after
+    /// creating its session and before the first prompt, in order: the
+    /// approval mode, then the model, then the effort the model offers.
+    /// `Err`: the binding has no ACP equivalent, with the reason.
+    pub fn acp_launch_settings(
+        &self,
+        binding: &AgentAdapter,
+        approval: ApprovalMode,
+    ) -> Result<Vec<SettingValue>, String> {
+        acp_launch_settings(binding, approval)
+    }
+
+    /// Chooses the transport of a launch of `binding` (Stage 10 `04`, chat
+    /// and terminal): ACP when the chat is available to the agent (`chat`
+    /// carries why it is not) and the binding has an ACP equivalent, else
+    /// the agent's managed terminal with the reason, else neither.
+    pub fn launch_transport(
+        &self,
+        binding: &AgentAdapter,
+        approval: ApprovalMode,
+        chat: Result<(), String>,
+    ) -> LaunchTransport {
+        let terminal = self.approval_mapping(&binding.adapter, approval).is_some();
+        let terminal_or_none = |reason, detail: String| {
+            if terminal {
+                LaunchTransport::Terminal(TerminalChoice::new(reason, detail))
+            } else {
+                LaunchTransport::Unavailable { detail }
+            }
+        };
+        match chat {
+            Err(detail) => terminal_or_none(TerminalReason::ChatUnavailable, detail),
+            Ok(()) => match acp_launch_settings(binding, approval) {
+                Ok(settings) => LaunchTransport::Acp { settings },
+                Err(detail) => terminal_or_none(TerminalReason::BindingNotAcp, detail),
+            },
+        }
+    }
+
+    /// The first prompt of a Routine launch over ACP: the instruction and
+    /// event context a terminal launch passes, without the launch marker —
+    /// creating the session already returns its canonical id.
+    pub fn acp_routine_prompt(&self, input: &ManualRoutineLaunchInput) -> String {
+        routine_prompt(input, false)
     }
 
     pub fn mark_started(
@@ -1136,6 +1230,50 @@ fn acp_approval(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<Setting
     })
 }
 
+/// E01 (2026-10-01): Codex declares the config options `model` and
+/// `reasoning_effort` (`low` … `max`, `ultra`; no `none`), Claude Code
+/// `model` (the aliases `default`, `opus`, `sonnet`, `haiku` and full ids)
+/// and `effort`, whose values depend on the model, so it follows it. A
+/// value the new session does not declare is refused before the prompt.
+fn acp_launch_settings(
+    binding: &AgentAdapter,
+    approval: ApprovalMode,
+) -> Result<Vec<SettingValue>, String> {
+    let adapter = binding.adapter.builtin().ok_or_else(|| {
+        format!(
+            "{} is not an agent this version of Svode knows",
+            binding.adapter
+        )
+    })?;
+    let name = adapter.display_name();
+    let mut settings = vec![
+        acp_approval(adapter, approval)
+            .ok_or_else(|| format!("{name} has no ACP equivalent of the Actor approval mode"))?,
+    ];
+    let effort_setting = match adapter {
+        AgentAdapterKind::Codex => "reasoning_effort",
+        AgentAdapterKind::ClaudeCode => "effort",
+        _ if binding.model.is_none() && binding.effort.is_none() => return Ok(settings),
+        _ => return Err(format!("{name} has no ACP mapping of a model or effort")),
+    };
+    if let Some(model) = &binding.model {
+        settings.push(SettingValue {
+            setting: "model".into(),
+            value: model.clone(),
+        });
+    }
+    if let Some(effort) = &binding.effort {
+        if adapter == AgentAdapterKind::Codex && effort == "none" {
+            return Err(format!("{name} declares no ACP effort {effort}"));
+        }
+        settings.push(SettingValue {
+            setting: effort_setting.into(),
+            value: effort.clone(),
+        });
+    }
+    Ok(settings)
+}
+
 fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<ApprovalMapping> {
     Some(match (adapter, mode) {
         (AgentAdapterKind::Codex, ApprovalMode::Ask) => ApprovalMapping {
@@ -1247,14 +1385,21 @@ fn build_launch(request: &AgentLaunchRequest, executable_path: &Path) -> Option<
 }
 
 fn manual_routine_prompt(input: &ManualRoutineLaunchInput) -> String {
+    routine_prompt(input, true)
+}
+
+fn routine_prompt(input: &ManualRoutineLaunchInput, launch_marker: bool) -> String {
     let mut prompt = input.instruction.trim().to_string();
     if !prompt.is_empty() {
         prompt.push_str("\n\n");
     }
     prompt.push_str(&format!(
-        "<!-- svode-owner:{}:{} -->\n<!-- svode-launch:{} -->",
-        input.owner_kind, input.owner_path, input.launch_id
+        "<!-- svode-owner:{}:{} -->",
+        input.owner_kind, input.owner_path
     ));
+    if launch_marker {
+        prompt.push_str(&format!("\n<!-- svode-launch:{} -->", input.launch_id));
+    }
     if let Some(context) = input.event_context.as_deref() {
         prompt.push_str("\n<svode-event-context>");
         prompt.push_str(context);
@@ -1399,6 +1544,125 @@ mod tests {
                 "high"
             ]
         );
+    }
+
+    fn setting(setting: &str, value: &str) -> SettingValue {
+        SettingValue {
+            setting: setting.into(),
+            value: value.into(),
+        }
+    }
+
+    #[test]
+    fn acp_launch_settings_map_approval_model_and_effort_in_order() {
+        let registry = AdapterRuntimeRegistry;
+        assert_eq!(
+            registry.acp_launch_settings(
+                &binding(AgentAdapterKind::Codex, Some("gpt-5.6-sol"), Some("high")),
+                ApprovalMode::Ask,
+            ),
+            Ok(vec![
+                setting("mode", "workspace-write"),
+                setting("model", "gpt-5.6-sol"),
+                setting("reasoning_effort", "high"),
+            ])
+        );
+        assert_eq!(
+            registry.acp_launch_settings(
+                &binding(AgentAdapterKind::ClaudeCode, Some("opus"), Some("low")),
+                ApprovalMode::Full,
+            ),
+            Ok(vec![
+                setting("mode", "bypassPermissions"),
+                setting("model", "opus"),
+                setting("effort", "low"),
+            ])
+        );
+        assert_eq!(
+            registry.acp_launch_settings(
+                &binding(AgentAdapterKind::ClaudeCode, None, None),
+                ApprovalMode::Auto,
+            ),
+            Ok(vec![setting("mode", "auto")])
+        );
+        // Codex declares no `none` reasoning effort over ACP.
+        assert!(
+            registry
+                .acp_launch_settings(
+                    &binding(AgentAdapterKind::Codex, None, Some("none")),
+                    ApprovalMode::Auto,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn launch_transport_prefers_acp_and_falls_back_to_the_terminal_with_a_reason() {
+        let registry = AdapterRuntimeRegistry;
+        let codex = binding(AgentAdapterKind::Codex, Some("gpt-5.6"), None);
+        assert_eq!(
+            registry.launch_transport(&codex, ApprovalMode::Ask, Ok(())),
+            LaunchTransport::Acp {
+                settings: vec![
+                    setting("mode", "workspace-write"),
+                    setting("model", "gpt-5.6"),
+                ],
+            }
+        );
+        assert_eq!(
+            registry.launch_transport(
+                &codex,
+                ApprovalMode::Ask,
+                Err("the adapter is not installed".into()),
+            ),
+            LaunchTransport::Terminal(TerminalChoice {
+                reason: TerminalReason::ChatUnavailable,
+                detail: "the adapter is not installed".into(),
+            })
+        );
+        let LaunchTransport::Terminal(choice) = registry.launch_transport(
+            &binding(AgentAdapterKind::Codex, None, Some("none")),
+            ApprovalMode::Ask,
+            Ok(()),
+        ) else {
+            panic!("a binding without an ACP effort runs in the terminal");
+        };
+        assert_eq!(choice.reason, TerminalReason::BindingNotAcp);
+        // An agent without a terminal launch and without an ACP mapping is
+        // skipped, never downgraded.
+        for chat in [Ok(()), Err("deferred".to_string())] {
+            assert!(matches!(
+                registry.launch_transport(
+                    &binding(AgentAdapterKind::Opencode, None, None),
+                    ApprovalMode::Full,
+                    chat,
+                ),
+                LaunchTransport::Unavailable { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn terminal_reason_detail_is_bounded() {
+        let choice = TerminalChoice::new(TerminalReason::AcpFailedBeforePrompt, "é".repeat(600));
+        assert!(choice.detail.len() <= LAUNCH_DETAIL_BYTES);
+        assert!(choice.detail.chars().all(|character| character == 'é'));
+    }
+
+    #[test]
+    fn acp_routine_prompt_carries_instruction_and_event_context_without_launch_marker() {
+        let prompt = AdapterRuntimeRegistry.acp_routine_prompt(&ManualRoutineLaunchInput {
+            instruction: "Review backlog".into(),
+            launch_id: "launch-one".into(),
+            owner_kind: "space".into(),
+            owner_path: ".".into(),
+            event_context: Some("{\"eventType\":\"collection.entry_created\"}".into()),
+        });
+        assert!(prompt.starts_with("Review backlog\n\n<!-- svode-owner:space:. -->"));
+        assert!(prompt.ends_with(
+            "<svode-event-context>{\"eventType\":\"collection.entry_created\"}</svode-event-context>"
+        ));
+        assert!(!prompt.contains("svode-launch"));
     }
 
     #[test]

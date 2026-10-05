@@ -743,6 +743,30 @@ impl AgentRuntime {
         cwd: &Path,
         settings: &[SettingValue],
     ) -> Result<SessionKey, AgentRuntimeError> {
+        self.create_session(id, cwd, settings, None).await
+    }
+
+    /// Creates the session of a launch whose ACP writer was claimed by its
+    /// launch id before the agent started (C7): the claim moves to the
+    /// canonical key once the agent returns the id, and is released with
+    /// the session if a setting is refused.
+    pub async fn new_launch_session(
+        &self,
+        id: ConnectionId,
+        cwd: &Path,
+        settings: &[SettingValue],
+        claim: WriterClaim,
+    ) -> Result<SessionKey, AgentRuntimeError> {
+        self.create_session(id, cwd, settings, Some(claim)).await
+    }
+
+    async fn create_session(
+        &self,
+        id: ConnectionId,
+        cwd: &Path,
+        settings: &[SettingValue],
+        launch_claim: Option<WriterClaim>,
+    ) -> Result<SessionKey, AgentRuntimeError> {
         let connection = self.connection(id)?;
         connection.require_open()?;
         if connection.info.lock().unwrap().is_none() {
@@ -763,16 +787,16 @@ impl AgentRuntime {
         let key = SessionKey::from_acp(&connection.agent, &acp_id, connection.acp_id_is_native);
         // The agent has just created the session: no process outside this
         // connection writes to it.
-        let claim = self
-            .inner
-            .writers
-            .claim(
+        let claim = match launch_claim {
+            Some(mut claim) => claim.bind(&key).map(|()| claim),
+            None => self.inner.writers.claim(
                 &key,
                 Writer::Acp,
                 ExternalLiveness::Free,
                 UnknownLiveness::NotConfirmed,
-            )
-            .map_err(|refusal| AgentRuntimeError::WriterRefused { refusal })?;
+            ),
+        }
+        .map_err(|refusal| AgentRuntimeError::WriterRefused { refusal })?;
         let session = self.session_entry(
             &connection,
             &acp_id,
@@ -1356,6 +1380,18 @@ impl AgentRuntime {
         let session = self.session(key)?;
         session.opened.store(self.next_open(), Ordering::Relaxed);
         let subscription = session.projection.lock().unwrap().subscribe();
+        Ok(SessionSubscription {
+            snapshot: subscription.snapshot,
+            deltas: subscription.deltas,
+        })
+    }
+
+    /// The session's snapshot and its deltas after it for a host that
+    /// records the status elsewhere, such as a Routine run. Unlike
+    /// [`AgentRuntime::subscribe`] it does not open the session in a
+    /// surface; like any subscriber it keeps the connection while held.
+    pub fn watch(&self, key: &SessionKey) -> Result<SessionSubscription, AgentRuntimeError> {
+        let subscription = self.session(key)?.projection.lock().unwrap().subscribe();
         Ok(SessionSubscription {
             snapshot: subscription.snapshot,
             deltas: subscription.deltas,

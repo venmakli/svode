@@ -159,7 +159,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use svode_core::routines::model::{RoutineAction, RoutineDefinition, RoutineTrigger};
+    use svode_core::routines::model::{
+        RoutineAction, RoutineDefinition, RoutineLiveEvidence, RoutineTrigger,
+    };
     use svode_core::routines::operational::{
         NewRoutineRun, attach_pty, create_run, latest_run_record,
     };
@@ -196,6 +198,10 @@ mod tests {
                 source_session_id: None,
                 agent_session_id: "codex:launch:launch-one",
                 created_at: "2026-08-07T10:00:00Z",
+                launch: &svode_core::routines::model::RoutineRunLaunch::Terminal {
+                    reason: None,
+                    detail: None,
+                },
             },
         )
         .await
@@ -208,7 +214,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(before.blocks_relaunch(&HashSet::from(["pty-one".to_string()])));
+        let live = RoutineLiveEvidence::new(HashSet::from(["pty-one".to_string()]), HashSet::new());
+        assert!(before.blocks_relaunch(&live));
 
         reconcile_agent_session(
             &pool,
@@ -237,8 +244,11 @@ mod tests {
             .unwrap();
         assert_eq!(reconciled.source_session_id.as_deref(), Some("source-one"));
         assert_eq!(reconciled.agent_session_id, "codex:source-one");
-        assert!(!reconciled.blocks_relaunch(&HashSet::from(["pty-one".to_string()])));
-        assert_eq!(reconciled.to_ref(&HashSet::new()).launch_id, "launch-one");
+        assert!(!reconciled.blocks_relaunch(&live));
+        assert_eq!(
+            reconciled.to_ref(&RoutineLiveEvidence::default()).launch_id,
+            "launch-one"
+        );
 
         let sink = RoutineRunLifecycleSink::new(
             pool.clone(),

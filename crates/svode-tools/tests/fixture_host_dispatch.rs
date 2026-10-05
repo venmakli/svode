@@ -153,7 +153,7 @@ impl RoutineRunner for FixtureRunner {
                 launch_id: "launch-fixture".to_string(),
                 agent_session_id: "agent:fixture".to_string(),
                 source_session_id: None,
-                pty_id: "pty-fixture".to_string(),
+                pty_id: Some("pty-fixture".to_string()),
             })
         })
     }
@@ -2430,7 +2430,7 @@ fn routine_caller() -> RoutineCaller {
     RoutineCaller::Launch {
         routine_run_id: "run-one".to_string(),
         launch_id: "launch-one".to_string(),
-        pty_id: "pty-one".to_string(),
+        pty_id: Some("pty-one".to_string()),
     }
 }
 

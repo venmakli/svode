@@ -24,6 +24,7 @@ use svode_core::agent_adapters::{AgentAdapterKind, CustomAgentId};
 use crate::agent_runtime::connections::{LaunchPlanner, PlanFuture};
 use crate::error::AppError;
 use crate::process::login_env::LoginEnvironment;
+use crate::process::path_env::ProcessPath;
 
 const ENABLEMENT_FILE: &str = "agents.json";
 const CUSTOM_AGENTS: &str = "customAgents";
@@ -93,8 +94,7 @@ impl AgentSetupState {
         target: &AdapterTarget,
     ) -> Option<ChatOffer> {
         let builtin = AgentAdapterKind::from_id(agent);
-        let deferred = builtin
-            .is_some_and(|kind| AdapterRuntimeRegistry.verdict(kind) == AgentVerdict::Deferred);
+        let deferred = builtin.is_some_and(deferred);
         let plan = self.plan(agent).await;
         let authenticated = match (&plan, builtin) {
             (Ok(_), Some(kind)) if !deferred => {
@@ -106,6 +106,42 @@ impl AgentSetupState {
             _ => None,
         };
         svode_agents::adapters::chat_offer(deferred, &plan, authenticated)
+    }
+
+    /// The ACP launch plan of a Routine or Agent Actor launch of `agent` in
+    /// `space`, whose Space-local executable override applies, with the
+    /// launch provenance `env`, and the chat offer of `chat_offer` for it;
+    /// `authenticated` is the sign-in check the launch already ran. Starts
+    /// no ACP process.
+    pub(crate) async fn launch_offer(
+        &self,
+        agent: AgentAdapterKind,
+        space: &Path,
+        env: BTreeMap<String, String>,
+        authenticated: Option<bool>,
+    ) -> (
+        Result<svode_agents::AcpLaunch, LaunchUnavailable>,
+        Option<ChatOffer>,
+    ) {
+        let context = LaunchContext {
+            target: AdapterTarget {
+                cwd: space.to_path_buf(),
+                search_path: ProcessPath::session().get().await.map(ToOwned::to_owned),
+            },
+            environment: LoginEnvironment::session().get().await,
+            env,
+        };
+        let plan = self
+            .store
+            .launch_plan(
+                agent,
+                self.choice(agent.as_str()),
+                &context,
+                &SystemRuntimeCommandRunner,
+            )
+            .await;
+        let offer = svode_agents::adapters::chat_offer(deferred(agent), &plan, authenticated);
+        (plan, offer)
     }
 
     /// The custom ACP agents in the order the user added them.
@@ -280,6 +316,11 @@ impl LaunchPlanner for AgentSetupState {
             self.plan_custom(&agent, None).await
         })
     }
+}
+
+/// An agent whose verdict defers it is offered to nobody (`03` A8).
+fn deferred(agent: AgentAdapterKind) -> bool {
+    AdapterRuntimeRegistry.verdict(agent) == AgentVerdict::Deferred
 }
 
 /// `agents.json`: `{ "agents": { "<agent id>": { "enabled": bool } } }`.

@@ -54,6 +54,8 @@ pub fn run() {
     let agent_runtime_state = agent_runtime::AgentRuntimeState::new();
     // Managed agent PTYs and ACP sessions share one writer registry.
     let terminal_manager = terminal::TerminalManager::new(agent_runtime_state.runtime().writers());
+    let routine_acp_launches =
+        routines::RoutineAcpLaunches::new(agent_runtime_state.runtime().clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -83,6 +85,7 @@ pub fn run() {
         .manage(mcp::commands::McpConfigState::new())
         .manage(actors::ActorCatalogState::new())
         .manage(terminal_manager)
+        .manage(routine_acp_launches)
         .manage(media::MediaSourceState::new())
         .manage(apps::AppSourceState::new())
         .manage(apps::AppProcessState::new())
@@ -469,6 +472,9 @@ fn shutdown_desktop(app_handle: &tauri::AppHandle) {
     tracing::info!("running desktop shutdown sequence");
     let agent_runtime = app_handle.state::<agent_runtime::AgentRuntimeState>();
     tauri::async_runtime::block_on(agent_runtime.runtime().shutdown());
+    app_handle
+        .state::<routines::RoutineAcpLaunches>()
+        .record_exit();
     let terminal_manager = app_handle.state::<terminal::TerminalManager>();
     terminal_manager.kill_all();
     let app_processes = app_handle.state::<apps::AppProcessState>();

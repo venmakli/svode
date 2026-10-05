@@ -162,6 +162,7 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
                 .core(),
             live_evidence: crate::routines::runtime::live_evidence(
                 &self.app.state::<crate::terminal::TerminalManager>(),
+                &self.app.state::<crate::routines::RoutineAcpLaunches>(),
             )?,
         })
     }
@@ -223,8 +224,13 @@ fn resolve_routine_caller(
             "routine caller provenance has no frozen Svode project context",
         )
     })?;
+    let project_path = Path::new(&context.project_path);
     app.state::<crate::terminal::TerminalManager>()
-        .resolve_routine_mcp_caller(token, Path::new(&context.project_path))?
+        .resolve_routine_mcp_caller(token, project_path)?
+        .or_else(|| {
+            app.state::<crate::routines::RoutineAcpLaunches>()
+                .resolve_caller(token, project_path)
+        })
         .ok_or_else(|| {
             ToolError::new(
                 "ROUTINE_CALLER_PROVENANCE_INVALID",

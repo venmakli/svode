@@ -334,7 +334,7 @@ async fn queue_collection_events_with_columns(
                        ON json_extract(source.payload_json, '$.executionRunId') = run.routine_run_id
                      WHERE run.owner_path = ? AND run.routine_id = ?
                        AND source.entry_path = ? AND run.trigger_type = 'event'
-                       AND run.pty_id IS NOT NULL
+                       AND (run.pty_id IS NOT NULL OR run.launch_transport = 'acp')
                        AND run.terminal_status IS NULL
                        AND (run.session_status IS NULL OR run.session_status IN ('active', 'unknown'))
                    )"#,

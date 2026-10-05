@@ -4,9 +4,9 @@
 //! catalogue is their ACP list, the user's explicit check, an agent chosen
 //! in a new session draft (with the session it creates early where the
 //! agent has evidence for it), the creation of a session and opening one in
-//! the chat; a Routine/Actor launch acquires through the same planner in its
-//! slice. Sharing by launch plan, the provenance split and closing for
-//! idleness belong to the runtime.
+//! the chat; a Routine launch acquires a connection of its own provenance
+//! in `routines::acp_launch`. Sharing by launch plan, the provenance split
+//! and closing for idleness belong to the runtime.
 
 use std::collections::HashMap;
 use std::future::Future;

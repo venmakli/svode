@@ -707,7 +707,7 @@ impl TerminalManager {
                 .launch_id
                 .clone()
                 .expect("matched routine surface has a launch id"),
-            pty_id: surface.pty_id.clone(),
+            pty_id: Some(surface.pty_id.clone()),
         }))
     }
 
@@ -2202,7 +2202,7 @@ mod tests {
             svode_tools::host::RoutineCaller::Launch {
                 routine_run_id: "run-one".into(),
                 launch_id: "launch-one".into(),
-                pty_id: "pty-agent".into(),
+                pty_id: Some("pty-agent".into()),
             }
         );
         assert!(

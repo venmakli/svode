@@ -599,7 +599,7 @@ pub async fn read_catalog(
                 } else if let Some(run) = local {
                     row.last_run_at = Some(run.created_at.clone());
                     row.last_run_origin = Some(RoutineRunOrigin::Local);
-                    row.last_run = Some(run.to_ref(live_evidence.live_agent_pty_ids()));
+                    row.last_run = Some(run.to_ref(live_evidence));
                 }
             }
             snapshot.diagnostics.extend(schedule_diagnostics);
@@ -1523,7 +1523,7 @@ mod tests {
     use crate::routines::model::{
         CollectionEvent, RoutineAction, RoutineActionTarget, RoutineTrigger,
     };
-    use crate::routines::model::{MissedRuns, RoutineTimeBasis};
+    use crate::routines::model::{MissedRuns, RoutineRunLaunch, RoutineTimeBasis};
 
     #[test]
     fn full_create_candidate_is_preserved_and_automatic_routines_are_disabled() {
@@ -2448,6 +2448,10 @@ mod tests {
                 source_session_id: None,
                 agent_session_id: &format!("codex:launch:{launch_id}"),
                 created_at,
+                launch: &RoutineRunLaunch::Terminal {
+                    reason: None,
+                    detail: None,
+                },
             },
         )
         .await
@@ -2649,6 +2653,10 @@ mod tests {
                 source_session_id: Some("source-local"),
                 agent_session_id: "codex:source-local",
                 created_at: "2026-09-19T10:00:00Z",
+                launch: &RoutineRunLaunch::Terminal {
+                    reason: None,
+                    detail: None,
+                },
             },
         )
         .await
@@ -2660,7 +2668,7 @@ mod tests {
         let local = read_catalog(
             &routine_stores,
             &index_state,
-            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()])),
+            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()]), HashSet::new()),
             &owner,
         )
         .await
@@ -2691,7 +2699,7 @@ mod tests {
         let remote = read_catalog(
             &routine_stores,
             &index_state,
-            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()])),
+            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()]), HashSet::new()),
             &owner,
         )
         .await

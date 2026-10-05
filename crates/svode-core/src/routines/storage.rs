@@ -44,10 +44,13 @@ pub async fn open_pool(
 
     match connect(db_path, false).await {
         Ok(pool) => match schema_status(&pool).await {
-            Ok(SchemaStatus::Current) => Ok(OpenOutcome {
-                pool,
-                recovery: None,
-            }),
+            Ok(SchemaStatus::Current) => {
+                add_run_launch_columns(&pool).await?;
+                Ok(OpenOutcome {
+                    pool,
+                    recovery: None,
+                })
+            }
             Ok(SchemaStatus::Unsupported(found)) => {
                 pool.close().await;
                 Err(RoutineStoreError::General(format!(
@@ -74,7 +77,10 @@ pub async fn open_pool(
 pub async fn reopen_current_pool(db_path: &Path) -> Result<SqlitePool, RoutineStoreError> {
     let pool = connect(db_path, false).await?;
     match schema_status(&pool).await? {
-        SchemaStatus::Current => Ok(pool),
+        SchemaStatus::Current => {
+            add_run_launch_columns(&pool).await?;
+            Ok(pool)
+        }
         SchemaStatus::Uninitialized | SchemaStatus::Unsupported(_) => {
             pool.close().await;
             Err(RoutineStoreError::General(format!(
@@ -150,6 +156,33 @@ async fn schema_status(pool: &SqlitePool) -> Result<SchemaStatus, RoutineStoreEr
     })
 }
 
+/// Columns of how a run's agent was launched, added to stores created
+/// without them. The schema version stays, so earlier Svode versions keep
+/// opening the store and ignore the columns; their rows read as terminal
+/// launches without a reason.
+const RUN_LAUNCH_COLUMNS: [&str; 3] = [
+    "launch_transport",
+    "terminal_choice",
+    "terminal_choice_detail",
+];
+
+async fn add_run_launch_columns(pool: &SqlitePool) -> Result<(), RoutineStoreError> {
+    let present =
+        sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('routine_runs')")
+            .fetch_all(pool)
+            .await?;
+    for column in RUN_LAUNCH_COLUMNS {
+        if !present.iter().any(|name| name == column) {
+            sqlx::query(&format!(
+                "ALTER TABLE routine_runs ADD COLUMN {column} TEXT"
+            ))
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn initialize_schema(pool: &SqlitePool) -> Result<(), RoutineStoreError> {
     match schema_status(pool).await? {
         SchemaStatus::Current => return Ok(()),
@@ -199,7 +232,10 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<(), RoutineStoreErro
             terminal_reason TEXT,
             terminal_observed_at TEXT,
             session_status TEXT,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            launch_transport TEXT,
+            terminal_choice TEXT,
+            terminal_choice_detail TEXT
         )
         "#,
         "CREATE INDEX idx_routine_runs_owner_routine ON routine_runs(owner_path, routine_id, created_at DESC)",
