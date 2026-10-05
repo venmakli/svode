@@ -18,9 +18,11 @@ import {
 } from "@/components/ui/collapsible";
 import * as m from "@/paraglide/messages.js";
 
+import { isAgentActorFoundWithoutSignInStatus } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDescriptor,
   AgentActorAdapterDiagnostic,
+  AgentActorApprovalMode,
   AgentActorBinding,
   AgentActorBindingRuntime,
   AgentActorDraft,
@@ -31,6 +33,7 @@ import {
   agentActorDiagnosticStatus,
   agentActorDiagnosticSummary,
   agentActorEffectiveBoundary,
+  agentActorNoModeEquivalent,
   agentActorSelectorLabel,
   agentActorValidationIssueLabel,
 } from "./agent-actor-copy";
@@ -83,6 +86,7 @@ export function AgentActorReadOnlyDetail({
             return (
               <li key={binding.adapter}>
                 <ReadOnlyAdapterCard
+                  approvalMode={draft.approvalMode}
                   binding={binding}
                   checkDisabled={pendingAdapter !== null}
                   descriptor={descriptor}
@@ -131,6 +135,7 @@ function AccessSummary({ mode }: { mode: AgentActorDraft["approvalMode"] }) {
 }
 
 function ReadOnlyAdapterCard({
+  approvalMode,
   binding,
   checkDisabled,
   descriptor,
@@ -140,6 +145,7 @@ function ReadOnlyAdapterCard({
   runtime,
   onCheck,
 }: {
+  approvalMode: AgentActorApprovalMode;
   binding: AgentActorBinding;
   checkDisabled: boolean;
   descriptor?: AgentActorAdapterDescriptor;
@@ -215,6 +221,12 @@ function ReadOnlyAdapterCard({
                     {agentActorEffectiveBoundary(runtime.approval.native)}
                   </AlertDescription>
                 </Alert>
+              ) : descriptor ? (
+                <Alert data-agent-adapter-no-mode-equivalent>
+                  <AlertDescription>
+                    {agentActorNoModeEquivalent(client, approvalMode)}
+                  </AlertDescription>
+                </Alert>
               ) : null
             ) : (
               <p className="text-sm text-muted-foreground" aria-live="polite">
@@ -251,6 +263,11 @@ function statusVariant(
   pending: boolean,
 ) {
   if (pending || !diagnostic) return "secondary" as const;
-  if (diagnostic.status === "ready") return "outline" as const;
+  if (
+    diagnostic.status === "ready" ||
+    isAgentActorFoundWithoutSignInStatus(diagnostic)
+  ) {
+    return "outline" as const;
+  }
   return "destructive" as const;
 }

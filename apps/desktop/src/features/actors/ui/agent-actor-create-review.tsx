@@ -116,7 +116,13 @@ export function AgentActorCreateReview({
                 <ReviewValue
                   key={binding.adapter}
                   label={descriptor?.label ?? binding.adapter}
-                  value={agentActorBoundarySummary(mapping)}
+                  value={agentActorBoundarySummary(
+                    mapping,
+                    descriptor && {
+                      client: descriptor.label,
+                      mode: draft.approvalMode,
+                    },
+                  )}
                 />
               );
             })}

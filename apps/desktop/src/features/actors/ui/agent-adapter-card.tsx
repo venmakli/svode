@@ -36,6 +36,7 @@ import type {
   AgentActorAdapterDescriptor,
   AgentActorAdapterDiagnostic,
   AgentActorApprovalMapping,
+  AgentActorApprovalMode,
   AgentActorBinding,
   AgentActorBindingValidation,
   AgentActorSelectOption,
@@ -44,6 +45,7 @@ import {
   agentActorDiagnosticStatus,
   agentActorDiagnosticSummary,
   agentActorEffectiveBoundary,
+  agentActorNoModeEquivalent,
   agentActorSelectorLabel,
   agentActorValidationIssueLabel,
 } from "./agent-actor-copy";
@@ -52,6 +54,7 @@ const DEFAULT_VALUE = "__client_default__";
 
 export function AgentAdapterCard({
   approvalMapping,
+  approvalMode,
   binding,
   canRemove,
   checkDisabled,
@@ -70,6 +73,7 @@ export function AgentAdapterCard({
   onRemove,
 }: {
   approvalMapping?: AgentActorApprovalMapping | null;
+  approvalMode: AgentActorApprovalMode;
   binding: AgentActorBinding;
   canRemove: boolean;
   checkDisabled: boolean;
@@ -153,6 +157,13 @@ export function AgentAdapterCard({
                 </AlertDescription>
               </Alert>
             ) : null}
+            {approvalMapping === null && descriptor ? (
+              <Alert data-agent-adapter-no-mode-equivalent>
+                <AlertDescription>
+                  {agentActorNoModeEquivalent(descriptor.label, approvalMode)}
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {validation?.issues.map((issue) => (
               <Alert key={`${issue.field}:${issue.code}`} variant="destructive">
                 <AlertDescription>
@@ -232,6 +243,8 @@ function AdapterSelectField({
   value: string | null;
 }) {
   const known = options.some((option) => option.value === value);
+  // An agent without selectors runs with its native default.
+  if (known && options.length <= 1) return null;
   const effectiveOptions =
     !known && value ? [{ label: value, value }, ...options] : options;
   return (

@@ -1,5 +1,6 @@
 import type {
   AgentActorAdapterDiagnostic,
+  AgentActorApprovalMapping,
   AgentActorBinding,
   AgentActorBindingValidation,
   AgentActorDraft,
@@ -135,11 +136,31 @@ export function compareAgentActorsByDefault(
   );
 }
 
+/**
+ * An agent found without a sign-in status command: the launch itself finds
+ * whether the user is signed in, so its binding can run.
+ */
+export function isAgentActorFoundWithoutSignInStatus(
+  diagnostic: AgentActorAdapterDiagnostic | undefined,
+): boolean {
+  return (
+    diagnostic?.status === "unknown" &&
+    diagnostic.code === "auth_status_unavailable"
+  );
+}
+
 export function resolveAgentActorRuntimeStatus({
+  approvals,
   bindings,
   diagnostics,
   validations,
 }: {
+  /** `null`: the agent has no equivalent of the Actor's approval mode. */
+  approvals: Readonly<
+    Partial<
+      Record<AgentActorBinding["adapter"], AgentActorApprovalMapping | null>
+    >
+  >;
   bindings: readonly AgentActorBinding[];
   diagnostics: Readonly<
     Partial<Record<AgentActorBinding["adapter"], AgentActorAdapterDiagnostic>>
@@ -152,7 +173,9 @@ export function resolveAgentActorRuntimeStatus({
   for (const binding of bindings) {
     const validation = validations[binding.adapter];
     if (validation?.status === "unavailable") continue;
+    if (approvals[binding.adapter] === null) continue;
     const diagnostic = diagnostics[binding.adapter];
+    if (isAgentActorFoundWithoutSignInStatus(diagnostic)) return "ready";
     if (!diagnostic || diagnostic.status === "unknown") {
       unchecked = true;
       continue;

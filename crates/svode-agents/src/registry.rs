@@ -25,6 +25,8 @@ use svode_core::agent_adapters::{
 
 const DIAGNOSTIC_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_DIAGNOSTIC_OUTPUT_BYTES: usize = 16 * 1024;
+/// Diagnostic code of an agent found without a sign-in status command.
+const AUTH_STATUS_UNAVAILABLE: &str = "auth_status_unavailable";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,6 +189,54 @@ pub enum NativeApprovalMode {
     ClaudeDefault,
     ClaudeAuto,
     ClaudeBypassPermissions,
+    HermesDefault,
+    HermesAcceptEdits,
+}
+
+impl NativeApprovalMode {
+    /// The value of the agent's session setting `mode` (a config option or
+    /// a legacy session mode) an ACP launch applies before its first prompt.
+    fn acp_value(self) -> &'static str {
+        match self {
+            Self::CodexUserReview => "workspace-write",
+            Self::CodexAutoReview => "agent",
+            Self::CodexFullAccess => "agent-full-access",
+            Self::ClaudeDefault => "default",
+            Self::ClaudeAuto => "auto",
+            Self::ClaudeBypassPermissions => "bypassPermissions",
+            Self::HermesDefault => "default",
+            Self::HermesAcceptEdits => "accept_edits",
+        }
+    }
+
+    /// The approval argv of the agent's managed terminal launch; `None`:
+    /// the agent runs Actors over ACP only (Stage 10 `03` A7).
+    fn terminal_argv(self) -> Option<Vec<String>> {
+        let argv: &[&str] = match self {
+            Self::CodexUserReview => &[
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "on-request",
+                "--config",
+                "approvals_reviewer=\"user\"",
+            ],
+            Self::CodexAutoReview => &[
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "on-request",
+                "--config",
+                "approvals_reviewer=\"auto_review\"",
+            ],
+            Self::CodexFullAccess => &["--dangerously-bypass-approvals-and-sandbox"],
+            Self::ClaudeDefault => &["--permission-mode", "default"],
+            Self::ClaudeAuto => &["--permission-mode", "auto"],
+            Self::ClaudeBypassPermissions => &["--permission-mode", "bypassPermissions"],
+            Self::HermesDefault | Self::HermesAcceptEdits => return None,
+        };
+        Some(argv.iter().map(|arg| arg.to_string()).collect())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -407,28 +457,16 @@ impl AdapterRuntimeRegistry {
         Ok(launch)
     }
 
+    /// Chooses the first binding eligible to start. A binding whose agent
+    /// has no equivalent of the Actor's approval mode on this device is
+    /// skipped like any other unavailable binding, never downgraded.
     pub fn select_pre_start(
-        &self,
-        bindings: &[AgentAdapter],
-        diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
-    ) -> PreStartSelection {
-        select_pre_start(bindings, diagnostics, |_| None)
-    }
-
-    /// Pre-start selection for an ACP launch: a binding whose agent has no
-    /// equivalent of the Actor's approval mode is skipped like any other
-    /// unavailable binding, never downgraded.
-    pub fn select_acp_pre_start(
         &self,
         bindings: &[AgentAdapter],
         approval_mode: ApprovalMode,
         diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
     ) -> PreStartSelection {
-        select_pre_start(bindings, diagnostics, |adapter| {
-            acp_approval(adapter, approval_mode)
-                .is_none()
-                .then(|| "approval_mapping_missing".to_string())
-        })
+        select_pre_start(bindings, approval_mode, diagnostics)
     }
 
     /// The session setting value an Actor approval maps to when the agent
@@ -454,6 +492,13 @@ impl AdapterRuntimeRegistry {
         acp_launch_settings(binding, approval)
     }
 
+    /// Whether the agent runs an Actor with `approval` in its managed
+    /// terminal; an agent without one runs Actors over ACP only.
+    pub fn has_terminal_launch(&self, adapter: &AgentId, approval: ApprovalMode) -> bool {
+        self.approval_mapping(adapter, approval)
+            .is_some_and(|mapping| mapping.native.terminal_argv().is_some())
+    }
+
     /// Chooses the transport of a launch of `binding` (Stage 10 `04`, chat
     /// and terminal): ACP when the chat is available to the agent (`chat`
     /// carries why it is not) and the binding has an ACP equivalent, else
@@ -464,7 +509,7 @@ impl AdapterRuntimeRegistry {
         approval: ApprovalMode,
         chat: Result<(), String>,
     ) -> LaunchTransport {
-        let terminal = self.approval_mapping(&binding.adapter, approval).is_some();
+        let terminal = self.has_terminal_launch(&binding.adapter, approval);
         let terminal_or_none = |reason, detail: String| {
             if terminal {
                 LaunchTransport::Terminal(TerminalChoice::new(reason, detail))
@@ -596,7 +641,7 @@ impl AdapterRuntimeRegistry {
                 executable_path: Some(path.to_string_lossy().into_owned()),
                 version: Some(version),
                 authenticated: None,
-                code: Some("auth_status_unavailable".into()),
+                code: Some(AUTH_STATUS_UNAVAILABLE.into()),
                 message: None,
             };
         };
@@ -1014,6 +1059,9 @@ fn unknown_diagnostic_with_path(
     }
 }
 
+/// An agent an Actor binding can use has an approval mapping (Stage 10 `03`
+/// A7); Codex and Claude Code keep their model selectors, the other agents
+/// run with the native default model and effort.
 fn descriptor(id: AgentAdapterKind) -> Option<AdapterRuntimeDescriptor> {
     let (label, models) = match id {
         AgentAdapterKind::Codex => (
@@ -1035,6 +1083,7 @@ fn descriptor(id: AgentAdapterKind) -> Option<AdapterRuntimeDescriptor> {
             ]
             .as_slice(),
         ),
+        AgentAdapterKind::Hermes => (id.display_name(), [].as_slice()),
         _ => return None,
     };
     Some(AdapterRuntimeDescriptor {
@@ -1164,8 +1213,8 @@ fn validate_binding(binding: &AgentAdapter) -> BindingValidation {
 
 fn select_pre_start(
     bindings: &[AgentAdapter],
+    approval_mode: ApprovalMode,
     diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
-    transport_issue: impl Fn(AgentAdapterKind) -> Option<String>,
 ) -> PreStartSelection {
     let mut selected = None;
     let attempts = bindings
@@ -1180,14 +1229,27 @@ fn select_pre_start(
                 .issues
                 .first()
                 .map(|issue| issue.code.clone())
-                .or_else(|| adapter.and_then(&transport_issue))
-                .or_else(|| match diagnostic.map(|value| value.status) {
-                    Some(AdapterDiagnosticStatus::Ready) => None,
-                    Some(AdapterDiagnosticStatus::Missing) => Some("adapter_missing".into()),
-                    Some(AdapterDiagnosticStatus::Unauthenticated) => {
+                .or_else(|| {
+                    adapter
+                        .and_then(|adapter| approval_mapping(adapter, approval_mode))
+                        .is_none()
+                        .then(|| "approval_mapping_missing".to_string())
+                })
+                .or_else(|| match diagnostic.map(|value| (value.status, value)) {
+                    Some((AdapterDiagnosticStatus::Ready, _)) => None,
+                    // Without a sign-in status command, the launch itself
+                    // finds whether the user is signed in (A5); a failure
+                    // before its first prompt moves on to the next binding.
+                    Some((AdapterDiagnosticStatus::Unknown, value))
+                        if value.code.as_deref() == Some(AUTH_STATUS_UNAVAILABLE) =>
+                    {
+                        None
+                    }
+                    Some((AdapterDiagnosticStatus::Missing, _)) => Some("adapter_missing".into()),
+                    Some((AdapterDiagnosticStatus::Unauthenticated, _)) => {
                         Some("adapter_unauthenticated".into())
                     }
-                    Some(AdapterDiagnosticStatus::Unknown) | None => {
+                    Some((AdapterDiagnosticStatus::Unknown, _)) | None => {
                         Some("adapter_unchecked".into())
                     }
                 });
@@ -1209,24 +1271,12 @@ fn select_pre_start(
     }
 }
 
-/// Live evidence E01 (2026-10-01): claude-agent-acp 0.84.0 with Claude Code
-/// 2.1.286 and codex-acp 2.1.0 with codex-cli 0.159.3 declare these values
-/// of the config option `mode` (also as legacy modes). Codex `ask` and
-/// `auto` match the terminal argv of `build_launch`; a new Codex session
-/// starts in `agent`, so the value is always applied.
+/// The session setting an ACP launch applies for the Actor's approval mode;
+/// `None`: the agent has no equivalent.
 fn acp_approval(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<SettingValue> {
-    let value = match (adapter, mode) {
-        (AgentAdapterKind::Codex, ApprovalMode::Ask) => "workspace-write",
-        (AgentAdapterKind::Codex, ApprovalMode::Auto) => "agent",
-        (AgentAdapterKind::Codex, ApprovalMode::Full) => "agent-full-access",
-        (AgentAdapterKind::ClaudeCode, ApprovalMode::Ask) => "default",
-        (AgentAdapterKind::ClaudeCode, ApprovalMode::Auto) => "auto",
-        (AgentAdapterKind::ClaudeCode, ApprovalMode::Full) => "bypassPermissions",
-        _ => return None,
-    };
-    Some(SettingValue {
+    approval_mapping(adapter, mode).map(|mapping| SettingValue {
         setting: "mode".into(),
-        value: value.into(),
+        value: mapping.native.acp_value().into(),
     })
 }
 
@@ -1274,6 +1324,15 @@ fn acp_launch_settings(
     Ok(settings)
 }
 
+/// Live evidence E01 (2026-10-01): claude-agent-acp 0.84.0 with Claude Code
+/// 2.1.286 and codex-acp 2.1.0 with codex-cli 0.159.3 declare the `mode`
+/// values of `NativeApprovalMode::acp_value` as a config option (also as
+/// legacy modes). Codex `ask` and `auto` match its terminal argv; a new Codex
+/// session starts in `agent`, so the value is always applied. Slice 3.3 live
+/// on Hermes 2026.9.24 (git `7cd77b4`): legacy modes `default`,
+/// `accept_edits` and `dont_ask`, which set only its file edit approvals;
+/// its command approvals follow its own `approvals` config. Slice 3.7, the
+/// user's decision: `auto` is `accept_edits`, `full` has no equivalent.
 fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<ApprovalMapping> {
     Some(match (adapter, mode) {
         (AgentAdapterKind::Codex, ApprovalMode::Ask) => ApprovalMapping {
@@ -1318,6 +1377,20 @@ fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<App
             effective_boundary: "Claude Code bypasses permission checks; native first-run warnings remain visible.".into(),
             danger: true,
         },
+        (AgentAdapterKind::Hermes, ApprovalMode::Ask) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::HermesDefault,
+            label: "Ask".into(),
+            effective_boundary: "Hermes asks before file edits; its command approvals follow its own approvals setting.".into(),
+            danger: false,
+        },
+        (AgentAdapterKind::Hermes, ApprovalMode::Auto) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::HermesAcceptEdits,
+            label: "Accept edits".into(),
+            effective_boundary: "Hermes allows edits in the workspace and temporary directories and still asks for sensitive paths; its command approvals follow its own approvals setting.".into(),
+            danger: false,
+        },
         _ => return None,
     })
 }
@@ -1325,34 +1398,7 @@ fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<App
 fn build_launch(request: &AgentLaunchRequest, executable_path: &Path) -> Option<TypedAgentLaunch> {
     let adapter = request.binding.adapter.builtin()?;
     let approval = approval_mapping(adapter, request.approval_mode)?;
-    let mut argv = match approval.native {
-        NativeApprovalMode::CodexUserReview => vec![
-            "--sandbox".into(),
-            "workspace-write".into(),
-            "--ask-for-approval".into(),
-            "on-request".into(),
-            "--config".into(),
-            "approvals_reviewer=\"user\"".into(),
-        ],
-        NativeApprovalMode::CodexAutoReview => vec![
-            "--sandbox".into(),
-            "workspace-write".into(),
-            "--ask-for-approval".into(),
-            "on-request".into(),
-            "--config".into(),
-            "approvals_reviewer=\"auto_review\"".into(),
-        ],
-        NativeApprovalMode::CodexFullAccess => {
-            vec!["--dangerously-bypass-approvals-and-sandbox".into()]
-        }
-        NativeApprovalMode::ClaudeDefault => {
-            vec!["--permission-mode".into(), "default".into()]
-        }
-        NativeApprovalMode::ClaudeAuto => vec!["--permission-mode".into(), "auto".into()],
-        NativeApprovalMode::ClaudeBypassPermissions => {
-            vec!["--permission-mode".into(), "bypassPermissions".into()]
-        }
-    };
+    let mut argv = approval.native.terminal_argv()?;
     if let Some(model) = &request.binding.model {
         argv.extend(["--model".into(), model.clone()]);
     }
@@ -1465,7 +1511,7 @@ mod tests {
     fn descriptors_and_unknown_selectors_are_fail_closed_without_mutation() {
         let registry = AdapterRuntimeRegistry;
         let descriptors = registry.descriptors();
-        assert_eq!(descriptors.len(), 2);
+        assert_eq!(descriptors.len(), 3);
         assert_eq!(descriptors[0].model_options[0].value, None);
         assert_eq!(
             descriptors[0].model_options[1].value.as_deref(),
@@ -1784,6 +1830,8 @@ mod tests {
                 ApprovalMode::Full,
                 "bypassPermissions",
             ),
+            (AgentAdapterKind::Hermes, ApprovalMode::Ask, "default"),
+            (AgentAdapterKind::Hermes, ApprovalMode::Auto, "accept_edits"),
         ] {
             assert_eq!(
                 registry.acp_approval(adapter, mode),
@@ -1796,9 +1844,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn acp_selection_skips_a_binding_without_approval_mapping() {
-        let ready = |adapter| AdapterDiagnostic {
+    fn ready(adapter: AgentAdapterKind) -> AdapterDiagnostic {
+        AdapterDiagnostic {
             adapter,
             status: AdapterDiagnosticStatus::Ready,
             executable_path: Some("/bin/agent".into()),
@@ -1806,36 +1853,120 @@ mod tests {
             authenticated: Some(true),
             code: None,
             message: None,
-        };
+        }
+    }
+
+    /// Hermes has no sign-in status command (A5).
+    fn found_without_sign_in_status(adapter: AgentAdapterKind) -> AdapterDiagnostic {
+        AdapterDiagnostic {
+            status: AdapterDiagnosticStatus::Unknown,
+            authenticated: None,
+            code: Some(AUTH_STATUS_UNAVAILABLE.into()),
+            ..ready(adapter)
+        }
+    }
+
+    #[test]
+    fn selection_skips_a_binding_without_an_equivalent_of_the_actor_mode() {
         let diagnostics = BTreeMap::from([
             (AgentAdapterKind::Codex, ready(AgentAdapterKind::Codex)),
             (
-                AgentAdapterKind::ClaudeCode,
-                ready(AgentAdapterKind::ClaudeCode),
+                AgentAdapterKind::Hermes,
+                found_without_sign_in_status(AgentAdapterKind::Hermes),
             ),
         ]);
         let bindings = vec![
+            binding(AgentAdapterKind::Hermes, None, None),
             binding(AgentAdapterKind::Codex, None, None),
-            binding(AgentAdapterKind::ClaudeCode, None, None),
         ];
-        let mapped = AdapterRuntimeRegistry.select_acp_pre_start(
-            &bindings,
-            ApprovalMode::Full,
-            &diagnostics,
-        );
-        assert_eq!(mapped.selected_binding_index, Some(0));
-
-        // An agent without an equivalent of the Actor's mode is skipped, the
-        // next binding is selected; nothing is downgraded.
-        let selection = select_pre_start(&bindings, &diagnostics, |adapter| {
-            (adapter == AgentAdapterKind::Codex).then(|| "approval_mapping_missing".to_string())
-        });
+        // Hermes runs with the Actor's ask or auto; its sign-in is found by
+        // the launch itself.
+        for mode in [ApprovalMode::Ask, ApprovalMode::Auto] {
+            let selection = AdapterRuntimeRegistry.select_pre_start(&bindings, mode, &diagnostics);
+            assert_eq!(selection.selected_binding_index, Some(0), "{mode:?}");
+        }
+        // Hermes has no equivalent of full: its binding is skipped, the next
+        // one is selected; nothing is downgraded.
+        let selection =
+            AdapterRuntimeRegistry.select_pre_start(&bindings, ApprovalMode::Full, &diagnostics);
         assert_eq!(selection.selected_binding_index, Some(1));
         assert!(!selection.attempts[0].eligible);
         assert_eq!(
             selection.attempts[0].reason_code.as_deref(),
             Some("approval_mapping_missing")
         );
+
+        // A diagnostic that did not finish stays unchecked.
+        let failed = BTreeMap::from([(
+            AgentAdapterKind::Hermes,
+            AdapterDiagnostic {
+                code: Some("version_failed".into()),
+                ..found_without_sign_in_status(AgentAdapterKind::Hermes)
+            },
+        )]);
+        let selection =
+            AdapterRuntimeRegistry.select_pre_start(&bindings[..1], ApprovalMode::Ask, &failed);
+        assert_eq!(selection.selected_binding_index, None);
+        assert_eq!(
+            selection.attempts[0].reason_code.as_deref(),
+            Some("adapter_unchecked")
+        );
+    }
+
+    #[test]
+    fn hermes_runs_an_actor_over_acp_only_with_native_model_and_effort() {
+        let registry = AdapterRuntimeRegistry;
+        let hermes = binding(AgentAdapterKind::Hermes, None, None);
+        assert_eq!(
+            registry.validate_binding(&hermes).status,
+            BindingValidationStatus::Valid
+        );
+        let descriptor = registry
+            .descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.id == AgentAdapterKind::Hermes)
+            .unwrap();
+        assert_eq!(descriptor.label, "Hermes");
+        assert_eq!(descriptor.model_options.len(), 1);
+        assert_eq!(registry.effort_options(&hermes.adapter, None).len(), 1);
+        // A selector Svode does not map makes the binding unavailable.
+        let with_model = binding(AgentAdapterKind::Hermes, Some("gpt-5.6-luna"), None);
+        assert_eq!(
+            registry.validate_binding(&with_model).issues[0].code,
+            "unknown_model_selector"
+        );
+
+        for (mode, value) in [
+            (ApprovalMode::Ask, "default"),
+            (ApprovalMode::Auto, "accept_edits"),
+        ] {
+            assert!(!registry.has_terminal_launch(&hermes.adapter, mode));
+            assert!(
+                registry
+                    .build_launch(&request(hermes.clone(), mode), Path::new("/bin/hermes"))
+                    .is_err()
+            );
+            assert_eq!(
+                registry.launch_transport(&hermes, mode, Ok(())),
+                LaunchTransport::Acp {
+                    settings: vec![setting("mode", value)],
+                }
+            );
+            // Without the chat there is no terminal to fall back to.
+            assert!(matches!(
+                registry.launch_transport(&hermes, mode, Err("disabled".into())),
+                LaunchTransport::Unavailable { .. }
+            ));
+        }
+        assert_eq!(
+            registry.approval_mapping(&hermes.adapter, ApprovalMode::Full),
+            None
+        );
+        assert!(matches!(
+            registry.launch_transport(&hermes, ApprovalMode::Full, Ok(())),
+            LaunchTransport::Unavailable { .. }
+        ));
+        assert!(registry.has_terminal_launch(&AgentAdapterKind::Codex.id(), ApprovalMode::Full));
     }
 
     #[test]
@@ -1931,7 +2062,7 @@ mod tests {
                 },
             ),
         ]);
-        let selection = registry.select_pre_start(&bindings, &diagnostics);
+        let selection = registry.select_pre_start(&bindings, ApprovalMode::Ask, &diagnostics);
         assert_eq!(selection.selected_binding_index, Some(1));
         let started_request = request(bindings[1].clone(), ApprovalMode::Ask);
         let provenance = registry.mark_started(
@@ -1963,7 +2094,11 @@ mod tests {
                 .iter()
                 .map(|descriptor| descriptor.id)
                 .collect::<Vec<_>>(),
-            [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode]
+            [
+                AgentAdapterKind::Codex,
+                AgentAdapterKind::ClaudeCode,
+                AgentAdapterKind::Hermes
+            ]
         );
         let future = AgentAdapter {
             adapter: AgentId::parse("future-agent").unwrap(),
@@ -2017,6 +2152,7 @@ mod tests {
                 custom,
                 binding(AgentAdapterKind::Codex, None, None),
             ],
+            ApprovalMode::Ask,
             &BTreeMap::from([(AgentAdapterKind::Codex, ready)]),
         );
         assert_eq!(selection.selected_binding_index, Some(3));

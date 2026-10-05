@@ -78,10 +78,49 @@ test("dirty create comparison includes ordered adapter configuration", () => {
   expect(areAgentActorDraftsEqual(initial, same)).toBe(false);
 });
 
+test("a binding without an equivalent of the approval mode does not make the actor ready", () => {
+  const hermes = {
+    adapter: "hermes",
+    authenticated: null,
+    code: "auth_status_unavailable",
+    executablePath: "/bin/hermes",
+    message: null,
+    status: "unknown" as const,
+    version: "2026.9.24",
+  };
+  const bindings = [{ adapter: "hermes", effort: null, model: null }];
+  // Found without a sign-in status command: the launch checks the sign-in.
+  expect(
+    resolveAgentActorRuntimeStatus({
+      approvals: {},
+      bindings,
+      diagnostics: { hermes },
+      validations: {},
+    }),
+  ).toBe("ready");
+  expect(
+    resolveAgentActorRuntimeStatus({
+      approvals: { hermes: null },
+      bindings,
+      diagnostics: { hermes },
+      validations: {},
+    }),
+  ).toBe("attention");
+  expect(
+    resolveAgentActorRuntimeStatus({
+      approvals: {},
+      bindings,
+      diagnostics: { hermes: { ...hermes, code: "version_failed" } },
+      validations: {},
+    }),
+  ).toBe("unchecked");
+});
+
 test("runtime status stays unchecked until valid bindings have evidence", () => {
   const bindings = [{ adapter: "codex" as const, effort: null, model: null }];
   expect(
     resolveAgentActorRuntimeStatus({
+      approvals: {},
       bindings,
       diagnostics: {},
       validations: {},
@@ -89,6 +128,7 @@ test("runtime status stays unchecked until valid bindings have evidence", () => 
   ).toBe("unchecked");
   expect(
     resolveAgentActorRuntimeStatus({
+      approvals: {},
       bindings,
       diagnostics: {
         codex: {
@@ -106,6 +146,7 @@ test("runtime status stays unchecked until valid bindings have evidence", () => 
   ).toBe("ready");
   expect(
     resolveAgentActorRuntimeStatus({
+      approvals: {},
       bindings,
       diagnostics: {},
       validations: {

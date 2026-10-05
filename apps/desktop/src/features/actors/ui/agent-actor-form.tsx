@@ -229,7 +229,13 @@ export function AgentActorForm({
                       {descriptor?.label ?? binding.adapter}
                     </dt>
                     <dd className="text-muted-foreground text-sm">
-                      {agentActorBoundarySummary(mapping)}
+                      {agentActorBoundarySummary(
+                        mapping,
+                        descriptor && {
+                          client: descriptor.label,
+                          mode: draft.approvalMode,
+                        },
+                      )}
                     </dd>
                   </div>
                 );
@@ -268,6 +274,7 @@ export function AgentActorForm({
                 <AgentAdapterCard
                   key={binding.adapter}
                   approvalMapping={approvalMappings[binding.adapter]}
+                  approvalMode={draft.approvalMode}
                   binding={binding}
                   checkDisabled={pendingAdapter !== null}
                   descriptor={descriptor}

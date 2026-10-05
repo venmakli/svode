@@ -109,18 +109,24 @@ fn select_resolved_actor(
     resolved: ResolvedAgentActor,
     diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
 ) -> AgentLaunchResolution {
-    let registry = AdapterRuntimeRegistry;
-    let selection = registry.select_pre_start(&resolved.actor.adapters, diagnostics);
-    let mut attempts = launch_attempts(&resolved.actor.adapters, diagnostics, &selection);
     let launch_space_path = launch_space.to_string_lossy().into_owned();
     let approval_mode =
         match read_local_approval(Path::new(&resolved.owner_path), resolved.actor.id.as_str()) {
             Ok(mode) => mode,
             Err(_) => {
-                for attempt in &mut attempts {
-                    attempt.eligible = false;
-                    attempt.reason_code = Some("approval_mode_unavailable".into());
-                }
+                let attempts = resolved
+                    .actor
+                    .adapters
+                    .iter()
+                    .enumerate()
+                    .map(|(binding_index, binding)| AgentLaunchBindingAttempt {
+                        binding_index,
+                        binding: binding.clone(),
+                        diagnostic: binding_diagnostic(binding, diagnostics),
+                        eligible: false,
+                        reason_code: Some("approval_mode_unavailable".into()),
+                    })
+                    .collect();
                 return AgentLaunchResolution::UnavailableExecutor {
                     code: AgentLaunchValidationCode::UnavailableExecutor,
                     actor_reference: reference.to_string(),
@@ -131,6 +137,12 @@ fn select_resolved_actor(
                 };
             }
         };
+    let selection = AdapterRuntimeRegistry.select_pre_start(
+        &resolved.actor.adapters,
+        approval_mode,
+        diagnostics,
+    );
+    let attempts = launch_attempts(&resolved.actor.adapters, diagnostics, &selection);
 
     let Some(selected_binding_index) = selection.selected_binding_index else {
         return AgentLaunchResolution::UnavailableExecutor {
@@ -177,14 +189,21 @@ fn enrich_attempt(
     AgentLaunchBindingAttempt {
         binding_index: attempt.binding_index,
         binding: binding.clone(),
-        diagnostic: attempt
-            .adapter
-            .builtin()
-            .and_then(|adapter| diagnostics.get(&adapter))
-            .cloned(),
+        diagnostic: binding_diagnostic(binding, diagnostics),
         eligible: attempt.eligible,
         reason_code: attempt.reason_code.clone(),
     }
+}
+
+fn binding_diagnostic(
+    binding: &AgentAdapter,
+    diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
+) -> Option<AdapterDiagnostic> {
+    binding
+        .adapter
+        .builtin()
+        .and_then(|adapter| diagnostics.get(&adapter))
+        .cloned()
 }
 
 #[cfg(test)]
@@ -362,6 +381,56 @@ mod tests {
         assert_eq!(request.approval_mode, ApprovalMode::Full);
         assert_eq!(selected_binding_index, 0);
         assert_eq!(attempts[0].diagnostic, diagnostics.values().next().cloned());
+    }
+
+    #[test]
+    fn a_hermes_binding_runs_with_the_actor_mode_it_has_an_equivalent_of() {
+        let diagnostics = BTreeMap::from([
+            (
+                AgentAdapterKind::Codex,
+                diagnostic(AgentAdapterKind::Codex, AdapterDiagnosticStatus::Ready),
+            ),
+            (
+                AgentAdapterKind::Hermes,
+                // Hermes has no sign-in status command (A5).
+                AdapterDiagnostic {
+                    code: Some("auth_status_unavailable".into()),
+                    version: Some("2026.9.24".into()),
+                    ..diagnostic(AgentAdapterKind::Hermes, AdapterDiagnosticStatus::Unknown)
+                },
+            ),
+        ]);
+        let bindings = vec![
+            binding(AgentAdapterKind::Hermes, None, None),
+            binding(AgentAdapterKind::Codex, None, None),
+        ];
+        for (mode, selected) in [
+            (ApprovalMode::Ask, 0),
+            (ApprovalMode::Auto, 0),
+            (ApprovalMode::Full, 1),
+        ] {
+            let space = tempdir().unwrap();
+            add_actor(&space, bindings.clone(), mode);
+            let AgentLaunchResolution::Ready {
+                selected_binding_index,
+                attempts,
+                ..
+            } = resolve_agent_launch_request(
+                space.path(),
+                None,
+                Some(&actor_reference()),
+                &diagnostics,
+            )
+            else {
+                panic!("an actor with a Codex binding is ready with {mode:?}");
+            };
+            assert_eq!(selected_binding_index, selected, "{mode:?}");
+            assert_eq!(
+                attempts[0].reason_code.as_deref(),
+                (mode == ApprovalMode::Full).then_some("approval_mapping_missing"),
+                "{mode:?}"
+            );
+        }
     }
 
     #[test]

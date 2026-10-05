@@ -211,6 +211,13 @@ pub(crate) async fn scheduled_dispatch_ready(
     else {
         return false;
     };
+    let registry = AdapterRuntimeRegistry;
+    if !registry.has_terminal_launch(&request.binding.adapter, request.approval_mode) {
+        // An agent without a terminal launch runs the Routine over ACP only.
+        return registry
+            .acp_launch_settings(&request.binding, request.approval_mode)
+            .is_ok();
+    }
     let Some(executable_path) = attempts
         .iter()
         .find(|attempt| attempt.binding_index == selected_binding_index)
@@ -219,7 +226,7 @@ pub(crate) async fn scheduled_dispatch_ready(
     else {
         return false;
     };
-    AdapterRuntimeRegistry
+    registry
         .build_manual_routine_launch(
             &request,
             Path::new(executable_path),
@@ -506,9 +513,8 @@ pub(super) async fn dispatch_routine(
                     Err(AcpStartFailure::BeforePrompt(detail)) => {
                         let choice =
                             TerminalChoice::new(TerminalReason::AcpFailedBeforePrompt, &detail);
-                        if registry
-                            .approval_mapping(&request.binding.adapter, request.approval_mode)
-                            .is_none()
+                        if !registry
+                            .has_terminal_launch(&request.binding.adapter, request.approval_mode)
                         {
                             acp_failure = Some(choice.detail);
                             continue;

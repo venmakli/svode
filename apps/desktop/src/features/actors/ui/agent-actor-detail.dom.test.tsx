@@ -31,6 +31,13 @@ const descriptors: readonly AgentActorAdapterDescriptor[] = [
     label: "Claude Code",
     modelOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
   },
+  {
+    defaultEffortLabel: "BACKEND DEFAULT EFFORT",
+    defaultModelLabel: "BACKEND DEFAULT MODEL",
+    id: "hermes",
+    label: "Hermes",
+    modelOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
+  },
 ];
 
 const isolatedDetailDomProcess =
@@ -230,6 +237,84 @@ if (!isolatedDetailDomProcess) {
             expect(content.includes("current adapter settings")).toBe(true);
             expect(content.includes("client was not found")).toBe(true);
           }
+        } finally {
+          await harness.cleanup();
+        }
+      }
+    } finally {
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("a Hermes binding shows its boundary, and its reason without an equivalent of the mode, in en and ru", async () => {
+    const originalLocale = getLocale();
+    // Hermes has no sign-in status command: found, its launch checks the sign-in.
+    const hermes: AgentActorAdapterDiagnostic = {
+      ...diagnostic("hermes", "unknown"),
+      code: "auth_status_unavailable",
+      version: "2026.9.24",
+    };
+    const unmapped: AgentActorBindingRuntime = {
+      ...bindingRuntime("hermes_default", "full"),
+      approval: null,
+    };
+    const cases = [
+      {
+        locale: "en" as const,
+        mode: "auto" as const,
+        runtime: bindingRuntime("hermes_accept_edits", "auto"),
+        status: "Found",
+        expected: "Hermes allows edits in the workspace and temporary folders",
+        toggle: "Show or hide Hermes details",
+      },
+      {
+        locale: "en" as const,
+        mode: "full" as const,
+        runtime: unmapped,
+        status: "Found",
+        expected:
+          "Unavailable: Hermes has no equivalent of “Full access”. The binding stays",
+        toggle: "Show or hide Hermes details",
+      },
+      {
+        locale: "ru" as const,
+        mode: "ask" as const,
+        runtime: bindingRuntime("hermes_default", "ask"),
+        status: "Найден",
+        expected: "Hermes спрашивает перед правкой файлов",
+        toggle: "Показать или скрыть сведения о Hermes",
+      },
+      {
+        locale: "ru" as const,
+        mode: "full" as const,
+        runtime: unmapped,
+        status: "Найден",
+        expected:
+          "Недоступно: у Hermes нет эквивалента режима «Полный доступ».",
+        toggle: "Показать или скрыть сведения о Hermes",
+      },
+    ];
+    try {
+      for (const scenario of cases) {
+        await setLocale(scenario.locale, { reload: false });
+        const harness = await renderDetail({
+          diagnostics: { hermes },
+          draft: draft(scenario.mode, [binding("hermes")]),
+          runtime: { hermes: scenario.runtime },
+        });
+        try {
+          const header = textOf(harness.dom, '[data-agent-adapter="hermes"]');
+          expect(header.includes(scenario.status)).toBe(true);
+          await clickButton(harness.dom, scenario.toggle);
+          const card = textOf(harness.dom, '[data-agent-adapter="hermes"]');
+          expect(card.includes(scenario.expected)).toBe(true);
+          // Found is not a failed check.
+          expect(
+            harness.dom.window.document.querySelector(
+              "[data-agent-adapter-diagnostic]",
+            ),
+          ).toBeNull();
+          expect(card.includes("BACKEND")).toBe(false);
         } finally {
           await harness.cleanup();
         }

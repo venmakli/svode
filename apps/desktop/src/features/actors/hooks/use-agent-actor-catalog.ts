@@ -17,6 +17,7 @@ import {
 import { resolveAgentActorRuntimeStatus } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDiagnostic,
+  AgentActorApprovalMapping,
   AgentActorBindingValidation,
   AgentActorCatalogSnapshot,
   AgentAdapterId,
@@ -174,13 +175,19 @@ export function useAgentActorCatalog(
       const validations: Partial<
         Record<AgentAdapterId, AgentActorBindingValidation>
       > = {};
+      const approvals: Partial<
+        Record<AgentAdapterId, AgentActorApprovalMapping | null>
+      > = {};
       row.adapters.forEach((binding, index) => {
-        const validation = runtime[index]?.validation;
-        if (validation) validations[binding.adapter] = validation;
+        const bindingRuntime = runtime[index];
+        if (!bindingRuntime) return;
+        validations[binding.adapter] = bindingRuntime.validation;
+        approvals[binding.adapter] = bindingRuntime.approval;
       });
       return Object.freeze({
         ...row,
         runtimeStatus: resolveAgentActorRuntimeStatus({
+          approvals,
           bindings: row.adapters,
           diagnostics,
           validations,

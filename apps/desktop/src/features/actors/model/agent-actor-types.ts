@@ -70,7 +70,9 @@ export interface AgentActorApprovalMapping {
     | "codex_full_access"
     | "claude_default"
     | "claude_auto"
-    | "claude_bypass_permissions";
+    | "claude_bypass_permissions"
+    | "hermes_default"
+    | "hermes_accept_edits";
   requested: AgentActorApprovalMode;
 }
 

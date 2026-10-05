@@ -1,5 +1,6 @@
 import * as m from "@/paraglide/messages.js";
 
+import { isAgentActorFoundWithoutSignInStatus } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDiagnostic,
   AgentActorApprovalMapping,
@@ -37,17 +38,38 @@ export function agentActorEffectiveBoundary(
       return m.agent_actors_boundary_claude_auto();
     case "claude_bypass_permissions":
       return m.agent_actors_boundary_claude_bypass_permissions();
+    case "hermes_default":
+      return m.agent_actors_boundary_hermes_default();
+    case "hermes_accept_edits":
+      return m.agent_actors_boundary_hermes_accept_edits();
   }
 }
 
+/** Why a binding of an agent Actors can use is unavailable with `mode`. */
+export function agentActorNoModeEquivalent(
+  client: string,
+  mode: AgentActorDraft["approvalMode"],
+) {
+  return m.agent_actors_binding_no_mode_equivalent({
+    client,
+    mode: agentActorApprovalLabel(mode),
+  });
+}
+
 /**
- * The approval boundary of a binding: its mapping, unavailable without one,
- * or checking while the mapping is not read yet.
+ * The approval boundary of a binding: its mapping, unavailable without one
+ * (with the reason when the agent has no equivalent of the Actor's mode
+ * only), or checking while the mapping is not read yet.
  */
 export function agentActorBoundarySummary(
   mapping: AgentActorApprovalMapping | null | undefined,
+  noEquivalent?: { client: string; mode: AgentActorDraft["approvalMode"] },
 ) {
-  if (mapping === null) return m.agent_actors_binding_unavailable();
+  if (mapping === null) {
+    return noEquivalent
+      ? agentActorNoModeEquivalent(noEquivalent.client, noEquivalent.mode)
+      : m.agent_actors_binding_unavailable();
+  }
   if (!mapping) return m.agent_actors_binding_checking();
   return `${agentActorApprovalLabel(mapping.requested)}: ${agentActorEffectiveBoundary(mapping.native)}`;
 }
@@ -61,6 +83,9 @@ export function agentActorDiagnosticStatus(
   pending = false,
 ) {
   if (pending) return m.agent_actors_status_checking();
+  if (isAgentActorFoundWithoutSignInStatus(diagnostic)) {
+    return m.agent_actors_status_found();
+  }
   if (!diagnostic || diagnostic.status === "unknown") {
     return diagnostic
       ? m.agent_actors_status_attention()
@@ -74,6 +99,7 @@ export function agentActorDiagnosticSummary(
   diagnostic: AgentActorAdapterDiagnostic | undefined,
 ) {
   if (!diagnostic || diagnostic.status === "ready") return null;
+  if (isAgentActorFoundWithoutSignInStatus(diagnostic)) return null;
   if (diagnostic.status === "missing") {
     return m.agent_actors_diagnostic_missing();
   }
