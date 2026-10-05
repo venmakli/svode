@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act } from "react";
+import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
@@ -32,19 +32,22 @@ test("saving space settings keeps the agent section of the config as it was", as
     }
     throw new Error(`Unexpected command: ${command}`);
   });
-  let saveConfig: SaveSpaceConfig | null = null;
+  let saveConfig!: SaveSpaceConfig;
   function Harness() {
-    saveConfig = useSpaceSettingsConfigActions({
+    const actions = useSpaceSettingsConfigActions({
       spacePath: "/project/docs",
       projectPath: "/project",
-    }).saveConfig;
+    });
+    useLayoutEffect(() => {
+      saveConfig = actions.saveConfig;
+    });
     return null;
   }
   const root = createRoot(dom.window.document.getElementById("app")!);
 
   try {
     await act(async () => root.render(<Harness />));
-    expect(await saveConfig!({ name: "Renamed" })).toBe(true);
+    expect(await saveConfig({ name: "Renamed" })).toBe(true);
     expect(saved).toEqual([
       {
         spacePath: "/project/docs",
