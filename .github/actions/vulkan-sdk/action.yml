@@ -1,0 +1,48 @@
+name: Vulkan SDK
+description: >-
+  Install the Vulkan SDK the speech engine's ggml-vulkan module builds with
+  (glslc, headers, SPIRV-Headers) on Linux x64 and Windows x64.
+inputs:
+  version:
+    description: LunarG SDK version; LunarG prunes old downloads, so verify the URL when bumping.
+    default: "1.4.350.0"
+runs:
+  using: composite
+  steps:
+    - name: Restore the Vulkan SDK (Linux)
+      if: runner.os == 'Linux'
+      id: linux-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/vulkan-sdk/${{ inputs.version }}
+        key: vulkan-sdk-linux-${{ inputs.version }}
+
+    - name: Download the Vulkan SDK (Linux)
+      if: runner.os == 'Linux' && steps.linux-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        version="${{ inputs.version }}"
+        mkdir -p ~/vulkan-sdk
+        curl -sSfL "https://sdk.lunarg.com/sdk/download/$version/linux/vulkansdk-linux-x86_64-$version.tar.xz" \
+          | tar -xJ -C ~/vulkan-sdk
+
+    - name: Use the Vulkan SDK (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sdk="$HOME/vulkan-sdk/${{ inputs.version }}/x86_64"
+        echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+        echo "CMAKE_PREFIX_PATH=$sdk${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
+        echo "$sdk/bin" >> "$GITHUB_PATH"
+
+    - name: Install the Vulkan SDK (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $version = "${{ inputs.version }}"
+        $installer = "$env:RUNNER_TEMP\vulkan_sdk.exe"
+        curl.exe -sSfL -o $installer "https://sdk.lunarg.com/sdk/download/$version/windows/vulkan_sdk.exe"
+        $process = Start-Process -FilePath $installer -ArgumentList '--accept-licenses', '--default-answer', '--confirm-command', 'install' -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw "Vulkan SDK install failed ($($process.ExitCode))" }
+        Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$version"
+        Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$version\bin"

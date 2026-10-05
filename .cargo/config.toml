@@ -1,0 +1,4 @@
+[env]
+# The speech engine ships to other machines: build ggml for a portable CPU
+# baseline instead of the build machine's CPU.
+TRANSCRIBE_CMAKE_ARGS = "-DGGML_NATIVE=OFF"

@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const binariesDir = resolve(__dirname, "../src-tauri/binaries");
+// Windows bundles the speech engine libraries as resources, which Tauri's
+// build script requires to exist.
+const speechLibsDir = resolve(__dirname, "../src-tauri/speech-libs");
 
 function rustcHostTriple() {
   const output = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
@@ -35,9 +38,12 @@ function placeholderContent(triple) {
 
 const triple = process.env.TAURI_ENV_TARGET_TRIPLE || rustcHostTriple();
 const suffix = exeSuffixForTarget(triple);
-const sidecars = ["svode-lfs", "svode-mcp", "svode", "svode-launcher"];
+const sidecars = ["svode-lfs", "svode-mcp", "svode", "svode-launcher", "svode-speech"];
 
 mkdirSync(binariesDir, { recursive: true });
+if (triple.includes("windows")) {
+  mkdirSync(speechLibsDir, { recursive: true });
+}
 
 for (const sidecar of sidecars) {
   const dest = resolve(binariesDir, `${sidecar}-${triple}${suffix}`);

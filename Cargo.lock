@@ -2090,6 +2090,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "html5ever"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5385,6 +5391,7 @@ dependencies = [
  "svode-core",
  "svode-install",
  "svode-mcp",
+ "svode-speech",
  "svode-tools",
  "tauri",
  "tauri-build",
@@ -5441,6 +5448,21 @@ dependencies = [
  "svode-tools",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "svode-speech"
+version = "0.0.1"
+dependencies = [
+ "hound",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "transcribe-cpp",
 ]
 
 [[package]]
@@ -6340,6 +6362,27 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "transcribe-cpp"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f06368bb32251b5e93ceb8cae2d6ba9adff6a51693c7ce108449e65522b05c6"
+dependencies = [
+ "log",
+ "thiserror 2.0.18",
+ "transcribe-cpp-sys",
+]
+
+[[package]]
+name = "transcribe-cpp-sys"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fedfadb42719d92e58a2c340ccfb6ef327ac1b846fc1d4716b65384a330513a6"
+dependencies = [
+ "cmake",
+ "serde_json",
 ]
 
 [[package]]

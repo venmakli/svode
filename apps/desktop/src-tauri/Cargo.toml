@@ -19,6 +19,7 @@ svode-core = { path = "../../../crates/svode-core" }
 svode-connect = { path = "../../../crates/svode-connect" }
 svode-install = { path = "../../../crates/svode-install" }
 svode-mcp = { path = "../../../crates/svode-mcp" }
+svode-speech = { path = "../../../crates/svode-speech", default-features = false }
 svode-tools = { path = "../../../crates/svode-tools" }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"

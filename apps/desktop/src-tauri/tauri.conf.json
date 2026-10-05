@@ -39,15 +39,21 @@
       "binaries/svode-lfs",
       "binaries/svode-mcp",
       "binaries/svode",
-      "binaries/svode-launcher"
+      "binaries/svode-launcher",
+      "binaries/svode-speech"
     ],
     "resources": { "payload/svode/": "plugins/svode/" },
     "linux": {
       "deb": {
-        "depends": ["git"]
+        "depends": ["git", "libvulkan1"],
+        "files": { "/usr/lib/Svode/speech": "speech-libs" }
+      },
+      "rpm": {
+        "files": { "/usr/lib/Svode/speech": "speech-libs" }
       },
       "appimage": {
-        "bundleMediaFramework": false
+        "bundleMediaFramework": false,
+        "files": { "/usr/lib/Svode/speech": "speech-libs" }
       }
     },
     "icon": [

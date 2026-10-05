@@ -10,7 +10,8 @@
 // other Svode package. svode-connect, the connection manager that the desktop
 // app, svode and svode-mcp share, reaches only svode-install and svode-core,
 // whose agent registry gives it its clients' ids. svode-agents, the external
-// agent runtime, reaches only svode-core.
+// agent runtime, reaches only svode-core. svode-speech, the speech recognition
+// process and the client Desktop drives it with, reaches no other Svode package.
 
 import { execFileSync } from "node:child_process";
 
@@ -23,6 +24,7 @@ const packages = [
   "svode-lfs",
   "svode-install",
   "svode-connect",
+  "svode-speech",
 ];
 const hostBound = (name) => name === "svode-desktop" || /^tauri(-|$)/.test(name);
 const extraForbidden = {
@@ -32,6 +34,7 @@ const extraForbidden = {
   "svode-cli": ["svode-mcp"],
   "svode-install": ["svode-core", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs", "svode-connect"],
   "svode-connect": ["svode-tools", "svode-mcp", "svode-cli", "svode-lfs"],
+  "svode-speech": ["svode-core", "svode-agents", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs", "svode-install", "svode-connect"],
 };
 const forbidden = (pkg, name) => hostBound(name) || (extraForbidden[pkg] ?? []).includes(name);
 
@@ -72,5 +75,5 @@ if (failed) {
   process.exit(1);
 }
 console.log(
-  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install and svode-core; svode-agents reaches only svode-core`,
+  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install and svode-core; svode-agents reaches only svode-core; svode-speech is self-contained`,
 );

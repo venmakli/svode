@@ -44,7 +44,9 @@ jobs:
       - run: bun run --cwd apps/desktop check:sidecars
       - name: Host-free packages do not depend on Tauri or the desktop crate
         run: bun run check:crates
-      - run: cargo check --workspace --all-targets
+      # svode-speech builds its engine with Vulkan on Linux, which needs the
+      # Vulkan SDK; the speech job below checks and tests it.
+      - run: cargo check --workspace --all-targets --exclude svode-speech
       - name: Core package tests without the desktop crate
         run: cargo test -p svode-core
       - name: Tool surface package tests without the desktop crate
@@ -58,10 +60,10 @@ jobs:
       - name: Agent runtime tests without the desktop crate
         run: cargo test -p svode-agents
       - name: Workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude svode-speech
       - name: Clippy
         run: |
-          cargo clippy --workspace -- \
+          cargo clippy --workspace --exclude svode-speech -- \
             -D warnings \
             -A clippy::collapsible_if \
             -A clippy::type_complexity \
@@ -78,6 +80,45 @@ jobs:
             -A clippy::obfuscated_if_else \
             -A clippy::needless_borrow \
             -A clippy::needless_borrows_for_generic_args
+
+  speech:
+    # The speech recognition process on the OSes checked without a live
+    # device (Stage 10 `06`): built as it ships, with Vulkan and loadable
+    # backend modules, and tested through real processes on runners without
+    # a GPU, where the engine must pick the CPU and recognize a fixture with
+    # a small catalog model.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      SVODE_SPEECH_REQUIRE_MODEL: "1"
+      SVODE_SPEECH_EXPECT_BACKEND: cpu
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: speech
+      - uses: ./.github/actions/vulkan-sdk
+      - name: Restore the speech test model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/speech-test
+          key: speech-test-model-${{ hashFiles('scripts/fetch-speech-test-model.mjs') }}
+      - name: Speech test model
+        shell: bash
+        env:
+          SVODE_SPEECH_TEST_MODEL: ${{ runner.temp }}/speech-test/whisper-tiny-Q8_0.gguf
+        run: echo "SVODE_SPEECH_TEST_MODEL=$(node scripts/fetch-speech-test-model.mjs)" >> "$GITHUB_ENV"
+      - name: Speech process tests
+        run: cargo test -p svode-speech
+      - name: Clippy
+        run: cargo clippy -p svode-speech --all-targets -- -D warnings
 
   standalone-linux:
     # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,

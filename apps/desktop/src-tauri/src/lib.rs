@@ -29,6 +29,7 @@ mod properties;
 mod repo_path;
 mod routines;
 mod space;
+mod speech;
 mod storage;
 mod structure;
 mod terminal;
@@ -135,6 +136,10 @@ pub fn run() {
                 app.path().app_config_dir()?,
             );
             app.manage(agent_setup.clone());
+            app.manage(speech::SpeechState::new(
+                &app.path().app_data_dir()?,
+                &app.package_info().version.to_string(),
+            ));
             app.manage(Arc::new(agent_runtime::connections::AgentConnections::new(
                 app.state::<agent_runtime::AgentRuntimeState>()
                     .runtime()
@@ -461,6 +466,8 @@ fn shutdown_desktop(app_handle: &tauri::AppHandle) {
     tracing::info!("running desktop shutdown sequence");
     let agent_runtime = app_handle.state::<agent_runtime::AgentRuntimeState>();
     tauri::async_runtime::block_on(agent_runtime.runtime().shutdown());
+    let speech = app_handle.state::<speech::SpeechState>();
+    tauri::async_runtime::block_on(speech.shutdown());
     app_handle
         .state::<routines::RoutineAcpLaunches>()
         .record_exit();

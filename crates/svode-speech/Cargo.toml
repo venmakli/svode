@@ -1,0 +1,49 @@
+[package]
+name = "svode-speech"
+version = "0.0.1"
+edition = "2024"
+authors = ["Kamnev Ilya"]
+repository = "https://github.com/venmakli/svode"
+description = "Svode speech recognition process on transcribe.cpp and the client its host drives it with."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "svode-speech"
+path = "src/main.rs"
+required-features = ["engine"]
+
+[features]
+default = ["engine"]
+# The recognition engine. Hosts depend on the library without it: they only
+# speak the protocol to the process.
+engine = ["dep:transcribe-cpp"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync"] }
+tracing = "0.1"
+
+# Metal is always present on macOS, so the engine links statically. On Windows
+# and Linux x64 the compute backends are loadable modules: a machine without a
+# Vulkan loader still starts the process and recognizes on the CPU module.
+[target.'cfg(target_os = "macos")'.dependencies]
+transcribe-cpp = { version = "=0.3.1", default-features = false, features = ["metal"], optional = true }
+
+[target.'cfg(all(any(windows, target_os = "linux"), target_arch = "x86_64"))'.dependencies]
+transcribe-cpp = { version = "=0.3.1", default-features = false, features = ["dynamic-backends", "vulkan"], optional = true }
+
+[target.'cfg(not(any(target_os = "macos", all(any(windows, target_os = "linux"), target_arch = "x86_64"))))'.dependencies]
+transcribe-cpp = { version = "=0.3.1", default-features = false, optional = true }
+
+[build-dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+hound = "3"
+tempfile = "3"
+tokio = { version = "1", features = ["process", "time", "macros", "rt", "rt-multi-thread", "io-util", "sync"] }
+tracing-subscriber = "0.3"
