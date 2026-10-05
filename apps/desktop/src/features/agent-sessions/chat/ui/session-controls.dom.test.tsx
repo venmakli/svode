@@ -136,8 +136,10 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { SessionChat } = await import("./session-chat");
   const { Sheet, SheetContent, SheetTitle } = await import("@/components/ui/sheet");
-  const { AGENT_SESSION_CONTENT_ATTRIBUTE, keepEscapeForSession } =
-    await import("../../lib/session-content");
+  const { AGENT_SESSION_CONTENT_ATTRIBUTE } = await import(
+    "../../lib/session-content"
+  );
+  const { keepLayerOpenOnEscape } = await import("@/shared/lib/escape-key");
   const { NewSessionDraft } = await import("./new-session-draft");
   const { newSessionDraftKey, sessionDraftKey, writeComposerDraft } =
     await import("../model/composer");
@@ -417,7 +419,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       await mount(
         <Sheet open onOpenChange={() => (closed += 1)}>
           <SheetContent
-            onEscapeKeyDown={(event) => keepEscapeForSession(event)}
+            onEscapeKeyDown={(event) => keepLayerOpenOnEscape(event)}
           >
             <SheetTitle>Session</SheetTitle>
             <div {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}>
@@ -448,6 +450,33 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         calls.filter((call) => call.command === "agent_runtime_cancel").length,
       ).toBe(1);
       expect(closed).toBe(0);
+    },
+  );
+
+  controlsTest(
+    "Esc in the main area stops the turn while a closed drawer stays mounted as the top layer",
+    async () => {
+      snapshotFor = (session) => {
+        const value = snapshot(session);
+        return { ...value, turn: { ...value.turn, turnId: "t1", phase: "running" } };
+      };
+      await mount(
+        <>
+          <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />
+          <Sheet open={false} modal={false}>
+            <SheetContent forceMount onEscapeKeyDown={keepLayerOpenOnEscape}>
+              <SheetTitle>Terminal</SheetTitle>
+            </SheetContent>
+          </Sheet>
+        </>,
+      );
+
+      const field = document.querySelector<HTMLElement>(
+        `[aria-label="${m.sessions_chat_composer_label()}"]`,
+      );
+      await act(async () => field?.focus());
+      await pressKey(field, "Escape");
+      expect(lastCall("agent_runtime_cancel")?.session).toEqual(key);
     },
   );
 

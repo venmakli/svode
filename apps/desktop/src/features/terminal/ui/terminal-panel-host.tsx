@@ -7,6 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { keepLayerOpenOnEscape } from "@/shared/lib/escape-key";
 import { cn } from "@/shared/lib/utils";
 import { useTerminalEventBridge } from "@/features/terminal/hooks/use-terminal-event-bridge";
 import { useTerminalRootLifecycle } from "@/features/terminal/hooks/use-terminal-root-lifecycle";
@@ -69,7 +70,9 @@ export function TerminalPanelHost() {
           event.preventDefault();
         }}
         onFocusOutside={(event) => event.preventDefault()}
-        onEscapeKeyDown={(event) => event.preventDefault()}
+        // The drawer stays mounted while closed, so it is the top layer for
+        // every Esc outside a peek; the key still belongs to its target.
+        onEscapeKeyDown={keepLayerOpenOnEscape}
       >
         <SheetTitle className="sr-only">{m.terminal_title()}</SheetTitle>
         <div

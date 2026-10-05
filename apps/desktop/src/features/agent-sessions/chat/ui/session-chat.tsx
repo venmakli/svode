@@ -15,7 +15,8 @@ import {
   type SendRefusal,
 } from "../hooks/use-session-composer";
 import type { ContinueRefusal } from "../hooks/use-session-opening";
-import { isKeyTaken, takeKey } from "../../lib/session-content";
+import { takeEscape } from "@/shared/lib/escape-key";
+import { isKeyTaken } from "../../lib/session-content";
 import { isDraftBlank } from "../model/attachments";
 import type { ChatSessionState } from "../model/interface";
 import { sessionControls } from "../model/session-controls";
@@ -160,7 +161,7 @@ export function SessionChat({
         // and comboboxes had their chance to close.
         if (event.key !== "Escape" || isKeyTaken(event.nativeEvent)) return;
         if (!composer.running) return;
-        takeKey(event.nativeEvent);
+        takeEscape(event.nativeEvent);
         composer.stop();
       }}
     >

@@ -10,10 +10,10 @@ import type {
   AgentSessionTarget,
   NewSessionDraftTarget,
 } from "../model";
+import { keepLayerOpenOnEscape } from "@/shared/lib/escape-key";
 import {
   AGENT_SESSION_CONTENT_ATTRIBUTE,
   isInsideAgentSessionContent,
-  keepEscapeForSession,
 } from "../lib/session-content";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
@@ -92,7 +92,7 @@ export function AgentSessionPeek({
         onEscapeKeyDown={(event) => {
           // Esc inside the session belongs to the agent, e.g. to interrupt a turn.
           if (isInsideAgentSessionContent(event.target))
-            keepEscapeForSession(event);
+            keepLayerOpenOnEscape(event);
         }}
         onOpenAutoFocus={(event) => {
           // The terminal takes focus itself once it is attached.

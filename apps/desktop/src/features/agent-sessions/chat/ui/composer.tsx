@@ -23,7 +23,8 @@ import {
   type DraftPart,
 } from "../model/attachments";
 import type { AgentSessionCommandDto } from "../api/chat";
-import { isKeyTaken, takeKey } from "../../lib/session-content";
+import { takeEscape } from "@/shared/lib/escape-key";
+import { isKeyTaken } from "../../lib/session-content";
 import { composerKeyAction } from "../model/composer";
 import { COMMAND_PLUGINS, SessionCommandsPlugin } from "./composer-commands";
 import {
@@ -157,7 +158,7 @@ export function Composer({
                 event.preventDefault();
                 if (!running && !sendDisabled) onSend();
               } else if (action === "stop") {
-                takeKey(event.nativeEvent);
+                takeEscape(event.nativeEvent);
                 onStop();
               }
             }}
