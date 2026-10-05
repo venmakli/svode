@@ -142,9 +142,9 @@ jobs:
               deb="$(ls ${{ matrix.artifact_path }})"
               dpkg-deb -c "$deb" | grep -Ei 'speech|transcribe|ggml' || true
               dpkg-deb -f "$deb" Depends
-              dpkg-deb -c "$deb" | grep -E ' \./usr/bin/svode-speech$'
-              dpkg-deb -c "$deb" | grep -E '\./usr/lib/Svode/speech/libtranscribe\.so'
-              dpkg-deb -c "$deb" | grep -E '\./usr/lib/Svode/speech/libggml-vulkan\.so'
+              dpkg-deb -c "$deb" | grep -E ' (\./)?usr/bin/svode-speech$'
+              dpkg-deb -c "$deb" | grep -E ' (\./)?usr/lib/Svode/speech/libtranscribe\.so'
+              dpkg-deb -c "$deb" | grep -E ' (\./)?usr/lib/Svode/speech/libggml-vulkan\.so'
               dpkg-deb -f "$deb" Depends | grep -q libvulkan1
               ;;
             windows)
