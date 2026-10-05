@@ -42,6 +42,7 @@ import { NavigationMenuItems } from "@/features/navigation";
 import {
   useRoutineLaunchLinks,
   type RoutineLaunchLink,
+  type RoutineRunLaunch,
 } from "@/features/routines/catalog";
 import { useSpace } from "@/features/space";
 import {
@@ -74,6 +75,7 @@ import { SessionStatusMarker, statusText } from "./session-status";
 import { SessionChat } from "../chat/ui/session-chat";
 import { OpenedSessionChat } from "../chat/ui/opened-session-chat";
 import { ChatUnavailableLine } from "../chat/ui/chat-unavailable-line";
+import { RoutineTerminalLine } from "./routine-terminal-line";
 import { releaseAgentSession, type AgentSessionKeyDto } from "../chat/api/chat";
 import {
   chatInterface,
@@ -264,6 +266,7 @@ export function AgentSessionContent({
             view={view}
             scopeLabel={identityLabel}
             surface={surface}
+            routineLaunch={routine?.launch ?? null}
             onCopyCommand={copyResumeCommand}
             onOpenExternalTerminal={openExternalTerminal}
             onOpenInTerminal={openInTerminal}
@@ -354,6 +357,7 @@ function SessionBody({
   view,
   scopeLabel: sessionScopeLabel,
   surface,
+  routineLaunch,
   onCopyCommand,
   onOpenExternalTerminal,
   onOpenInTerminal,
@@ -365,6 +369,8 @@ function SessionBody({
   view: AgentSessionView;
   scopeLabel: string | null;
   surface: SessionInterface | null;
+  /** How the Routine that launched the session started its agent. */
+  routineLaunch: RoutineRunLaunch | null;
   onCopyCommand: () => void;
   onOpenExternalTerminal: () => void;
   onOpenInTerminal: (session: AgentSessionKeyDto | null) => void;
@@ -430,13 +436,27 @@ function SessionBody({
     );
   }
   if (view.ptyId) {
+    // A Routine's terminal says why it is not the chat while it runs.
+    const terminalChoice =
+      routineLaunch?.transport === "terminal" && routineLaunch.reason
+        ? { reason: routineLaunch.reason, detail: routineLaunch.detail }
+        : null;
     return (
-      <ManagedTerminalSurface
-        ptyId={view.ptyId}
-        title={session?.title ?? m.sessions_title()}
-        autoFocus={view.focusTerminal}
-        containerClassName="pb-0"
-      />
+      <div className="flex h-full min-h-0 flex-col">
+        {terminalChoice && (
+          <div className="mx-auto w-full max-w-3xl shrink-0 px-6 pt-1">
+            <RoutineTerminalLine {...terminalChoice} />
+          </div>
+        )}
+        <div className="min-h-0 flex-1">
+          <ManagedTerminalSurface
+            ptyId={view.ptyId}
+            title={session?.title ?? m.sessions_title()}
+            autoFocus={view.focusTerminal}
+            containerClassName="pb-0"
+          />
+        </div>
+      </div>
     );
   }
   if (!session && !view.terminalFinished) {
@@ -500,10 +520,9 @@ function SessionBody({
 /** The Routine that launched a session, read from the Routines owner. */
 function useSessionRoutine(session: AgentSession | null) {
   const projectPath = useAgentSessionCatalog((state) => state.projectPath);
-  const launchId = session?.launchId ?? null;
-  const launchIds = useMemo(() => (launchId ? [launchId] : []), [launchId]);
-  const routines = useRoutineLaunchLinks(projectPath, launchIds);
-  return launchId ? (routines.get(launchId) ?? null) : null;
+  const sessions = useMemo(() => (session ? [session] : []), [session]);
+  const routineOf = useRoutineLaunchLinks(projectPath, sessions);
+  return session ? routineOf(session) : null;
 }
 
 function SessionActionsMenu({

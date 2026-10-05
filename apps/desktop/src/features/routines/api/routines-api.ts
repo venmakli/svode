@@ -52,8 +52,13 @@ export async function refreshRoutineCatalog(
 export async function loadRoutineLaunchLinks(
   projectPath: string,
   launchIds: readonly string[],
+  sessionIds: readonly string[],
 ): Promise<RoutineLaunchLink[]> {
-  const links = await resolveRoutineLaunchesCommand({ projectPath, launchIds });
+  const links = await resolveRoutineLaunchesCommand({
+    projectPath,
+    launchIds,
+    sessionIds,
+  });
   return links.map(({ ownerKind, ...link }) => ({
     ...link,
     resolvedOwnerKind: ownerKind,

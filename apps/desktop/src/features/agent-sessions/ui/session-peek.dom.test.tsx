@@ -101,6 +101,12 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   const missingPaths = new Set<string>();
   /** Attachments the shell was asked to open. */
   const openedAttachments: string[] = [];
+  /** The Routine runs the Routines owner resolves sessions to. */
+  let routineLinks: {
+    launchId: string;
+    agentSessionId: string;
+    launch: Record<string, unknown>;
+  }[] = [];
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -162,12 +168,21 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     }
     if (command === "path_exists") return !missingPaths.has(String(payload.path));
     if (command === "list_project_openers") return [];
-    if (command === "routines_resolve_launches") return [];
+    if (command === "routines_resolve_launches") {
+      const launchIds = payload.launchIds as string[];
+      const sessionIds = payload.sessionIds as string[];
+      return routineLinks.filter(
+        (link) =>
+          launchIds.includes(link.launchId) ||
+          sessionIds.includes(link.agentSessionId),
+      );
+    }
     if (command.startsWith("plugin:event|")) return 1;
     throw new Error(`unexpected command ${command}`);
   });
 
   const m = await import("@/paraglide/messages.js");
+  const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
   const { sessionDraftKey, writeComposerDraft } = await import(
     "../chat/model/composer"
   );
@@ -882,6 +897,238 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       ).toBe(true);
     },
   );
+
+  peekTest(
+    "a Routine's terminal says why it is not the chat, for each reason, in en and ru",
+    async () => {
+      const original = getLocale();
+      const reasons = [
+        ["chat_unavailable", () => m.sessions_routine_terminal_chat_unavailable()],
+        ["binding_not_acp", () => m.sessions_routine_terminal_binding_not_acp()],
+        ["acp_failed_before_prompt", () => m.sessions_routine_terminal_acp_failed()],
+      ] as const;
+      try {
+        for (const locale of ["en", "ru"] as const) {
+          await setLocale(locale, { reload: false });
+          for (const [reason, text] of reasons) {
+            const id = `codex:${locale}-${reason}`;
+            listed = [
+              session({
+                id,
+                title: "Routine in terminal",
+                launchId: `launch-${locale}-${reason}`,
+                runtime: { live: true, ptyId: `pty-${locale}-${reason}` },
+              }),
+            ];
+            routineLinks = [
+              routineLink(`launch-${locale}-${reason}`, id, {
+                transport: "terminal",
+                reason,
+                detail: "codex declares no ACP effort none",
+              }),
+            ];
+            await mountPeek(`/p-${locale}-${reason}`, {
+              sessionId: id,
+              launchId: `launch-${locale}-${reason}`,
+            });
+
+            expect(terminal()?.dataset.terminal).toBe(`pty-${locale}-${reason}`);
+            expect(document.body.textContent?.includes(text())).toBe(true);
+            expect(
+              document.body.textContent?.includes(
+                "codex declares no ACP effort none",
+              ),
+            ).toBe(true);
+            for (const root of mounted.splice(0)) {
+              await act(async () => root.unmount());
+            }
+            document.body.innerHTML = "";
+          }
+        }
+        expect(String(m.sessions_routine_terminal_chat_unavailable())).toBe(
+          "Рутина запущена в терминале: чат недоступен агенту",
+        );
+      } finally {
+        routineLinks = [];
+        await setLocale(original, { reload: false });
+      }
+    },
+  );
+
+  peekTest(
+    "the reason leaves with the Routine's terminal",
+    async () => {
+      listed = [
+        session({
+          id: "codex:routine-ending",
+          title: "Routine ending",
+          launchId: "launch-ending",
+          runtime: { live: true, ptyId: "pty-routine-ending" },
+        }),
+      ];
+      routineLinks = [
+        routineLink("launch-ending", "codex:routine-ending", {
+          transport: "terminal",
+          reason: "chat_unavailable",
+          detail: null,
+        }),
+      ];
+      try {
+        await mountPeek("/p-routine-ending", {
+          sessionId: "codex:routine-ending",
+          launchId: "launch-ending",
+        });
+        expect(
+          document.body.textContent?.includes(
+            m.sessions_routine_terminal_chat_unavailable(),
+          ),
+        ).toBe(true);
+
+        listed = [
+          session({
+            id: "codex:routine-ending",
+            title: "Routine ending",
+            launchId: "launch-ending",
+          }),
+        ];
+        await act(async () => exitListener?.("pty-routine-ending"));
+        await settle();
+
+        expect(terminal()).toBeNull();
+        expect(
+          document.body.textContent?.includes(
+            m.sessions_routine_terminal_chat_unavailable(),
+          ),
+        ).toBe(false);
+      } finally {
+        routineLinks = [];
+      }
+    },
+  );
+
+  peekTest(
+    "no reason shows for a manual terminal or a Routine run without one",
+    async () => {
+      const reasons = [
+        m.sessions_routine_terminal_chat_unavailable(),
+        m.sessions_routine_terminal_binding_not_acp(),
+        m.sessions_routine_terminal_acp_failed(),
+      ];
+      listed = [
+        session({
+          id: "codex:manual-terminal",
+          title: "Manual terminal",
+          runtime: { live: true, ptyId: "pty-manual" },
+        }),
+        session({
+          id: "codex:old-routine",
+          title: "Old routine",
+          launchId: "launch-old",
+          runtime: { live: true, ptyId: "pty-old" },
+        }),
+      ];
+      routineLinks = [
+        routineLink("launch-old", "codex:old-routine", {
+          transport: "terminal",
+          reason: null,
+          detail: null,
+        }),
+      ];
+      try {
+        await mountPeek("/p-manual-terminal", {
+          sessionId: "codex:manual-terminal",
+          launchId: null,
+        });
+        expect(terminal()?.dataset.terminal).toBe("pty-manual");
+        expect(
+          reasons.some((text) => document.body.textContent?.includes(text)),
+        ).toBe(false);
+        for (const root of mounted.splice(0)) {
+          await act(async () => root.unmount());
+        }
+        document.body.innerHTML = "";
+
+        await mountPeek("/p-old-routine", {
+          sessionId: "codex:old-routine",
+          launchId: "launch-old",
+        });
+        expect(terminal()?.dataset.terminal).toBe("pty-old");
+        expect(
+          reasons.some((text) => document.body.textContent?.includes(text)),
+        ).toBe(false);
+      } finally {
+        routineLinks = [];
+      }
+    },
+  );
+
+  peekTest(
+    "a Routine link opens its ACP session in the chat, which names the Routine without a reason",
+    async () => {
+      const key = {
+        agent: "codex",
+        namespace: "native",
+        sessionId: "routine-acp",
+      } as const;
+      listed = [
+        session({
+          id: "codex:routine-acp",
+          title: "Routine over ACP",
+          runtime: { live: true, acpSession: key },
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      // An ACP launch carries no launch id: the run names its session.
+      routineLinks = [
+        routineLink("launch-acp", "codex:routine-acp", { transport: "acp" }),
+      ];
+      openings.length = 0;
+      snapshotWriter = "acp";
+      snapshotTurn = "none";
+      try {
+        // "Open session" of the Routine addresses the run's launch.
+        await mountPeek("/p-routine-acp", {
+          sessionId: "codex:routine-acp",
+          launchId: "launch-acp",
+        });
+
+        expect(openings).toEqual([]);
+        expect(terminal()).toBeNull();
+        expect(document.body.textContent?.includes("Earlier")).toBe(true);
+        expect(
+          [
+            m.sessions_routine_terminal_chat_unavailable(),
+            m.sessions_routine_terminal_binding_not_acp(),
+            m.sessions_routine_terminal_acp_failed(),
+          ].some((text) => document.body.textContent?.includes(text)),
+        ).toBe(false);
+        await openMenu();
+        expect(
+          Boolean(menuItemContaining(m.sessions_action_open_routine())),
+        ).toBe(true);
+      } finally {
+        routineLinks = [];
+      }
+    },
+  );
+
+  function routineLink(
+    launchId: string,
+    agentSessionId: string,
+    launch: Record<string, unknown>,
+  ) {
+    return {
+      launchId,
+      agentSessionId,
+      launch,
+      routineId: `routine-${launchId}`,
+      ownerKind: "space",
+      spaceId: "docs",
+      ownerPath: ".",
+      name: "Nightly review",
+      definitionPresent: true,
+    };
+  }
 
   function terminal() {
     return document.querySelector<HTMLElement>("[data-terminal]");

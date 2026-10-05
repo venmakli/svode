@@ -203,8 +203,23 @@ export function refreshRoutines(input: RoutineOwnerCommandInput) {
   });
 }
 
+export type RoutineTerminalChoiceDto =
+  | "chat_unavailable"
+  | "binding_not_acp"
+  | "acp_failed_before_prompt";
+
+export type RoutineRunLaunchDto =
+  | { transport: "acp" }
+  | {
+      transport: "terminal";
+      reason: RoutineTerminalChoiceDto | null;
+      detail: string | null;
+    };
+
 export interface RoutineLaunchLinkDto {
   launchId: string;
+  agentSessionId: string;
+  launch: RoutineRunLaunchDto;
   routineId: string;
   ownerKind: RoutineResolvedOwnerKindDto;
   spaceId: string | null;
@@ -216,6 +231,7 @@ export interface RoutineLaunchLinkDto {
 export function resolveRoutineLaunches(input: {
   projectPath: string;
   launchIds: readonly string[];
+  sessionIds: readonly string[];
 }) {
   return invokeCommand<RoutineLaunchLinkDto[]>("routines_resolve_launches", {
     ...input,

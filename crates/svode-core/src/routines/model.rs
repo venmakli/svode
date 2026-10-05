@@ -506,14 +506,19 @@ impl RoutineRunRecord {
     }
 }
 
-/// The Routine that launched a session, resolved by the launch identity the
-/// session carries. `name` is the current definition name; once the
-/// definition can no longer be read it is the last known name and
-/// `definition_present` is false.
+/// The Routine that launched a session, resolved by the launch identity of
+/// the session: its launch id or, for an ACP launch, its catalog id.
+/// `name` is the current definition name; once the definition can no
+/// longer be read it is the last known name and `definition_present` is
+/// false.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutineLaunchLink {
     pub launch_id: String,
+    /// The catalog id the run recorded for its session.
+    pub agent_session_id: String,
+    /// How the run's agent was launched, with the reason for a terminal.
+    pub launch: RoutineRunLaunch,
     pub routine_id: String,
     pub owner_kind: RoutineOwnerKind,
     /// Registered Space of the owner; `None` for the project root.

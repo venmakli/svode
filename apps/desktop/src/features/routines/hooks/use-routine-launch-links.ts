@@ -1,45 +1,65 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   listenRoutineCatalogInvalidated,
   loadRoutineLaunchLinks,
 } from "../api/routines-api";
-import type { RoutineLaunchLink } from "../model/types";
+import type { RoutineLaunchLink, RoutineLaunchSession } from "../model/types";
 
-const NO_LINKS: ReadonlyMap<string, RoutineLaunchLink> = new Map();
+interface ResolvedLinks {
+  byLaunch: ReadonlyMap<string, RoutineLaunchLink>;
+  bySession: ReadonlyMap<string, RoutineLaunchLink>;
+}
+
+const NO_LINKS: ResolvedLinks = { byLaunch: new Map(), bySession: new Map() };
 
 /**
- * The Routines that launched sessions, keyed by launch id. Resolved by the
- * Routines owner whenever the launch set or `revision` changes and whenever a
- * Routine of the project is invalidated; links stay while a reload runs.
+ * The Routines that launched sessions: a session resolves by the launch id
+ * it carries, else by its catalog id, which identifies an ACP launch.
+ * Resolved by the Routines owner whenever the session set or `revision`
+ * changes and whenever a Routine of the project is invalidated; links stay
+ * while a reload runs.
  */
 export function useRoutineLaunchLinks(
   projectPath: string | null,
-  launchIds: readonly string[],
+  sessions: readonly RoutineLaunchSession[],
   revision?: string | null,
-): ReadonlyMap<string, RoutineLaunchLink> {
-  const launchKey = useMemo(
-    () => [...new Set(launchIds)].sort().join("\n"),
-    [launchIds],
-  );
+): (session: RoutineLaunchSession) => RoutineLaunchLink | null {
+  const lookupKey = useMemo(() => {
+    const launchIds = new Set<string>();
+    const sessionIds = new Set<string>();
+    for (const session of sessions) {
+      if (session.launchId) launchIds.add(session.launchId);
+      else sessionIds.add(session.id);
+    }
+    return JSON.stringify([[...launchIds].sort(), [...sessionIds].sort()]);
+  }, [sessions]);
   const [state, setState] = useState<{
     projectPath: string | null;
-    links: ReadonlyMap<string, RoutineLaunchLink>;
+    links: ResolvedLinks;
   }>({ projectPath: null, links: NO_LINKS });
 
   useEffect(() => {
-    if (!projectPath || !launchKey) return;
-    const ids = launchKey.split("\n");
+    const [launchIds, sessionIds] = JSON.parse(lookupKey) as [
+      string[],
+      string[],
+    ];
+    if (!projectPath || (!launchIds.length && !sessionIds.length)) return;
     let disposed = false;
     let generation = 0;
     const load = () => {
       const current = ++generation;
-      loadRoutineLaunchLinks(projectPath, ids).then(
+      loadRoutineLaunchLinks(projectPath, launchIds, sessionIds).then(
         (links) => {
           if (disposed || current !== generation) return;
           setState({
             projectPath,
-            links: new Map(links.map((link) => [link.launchId, link])),
+            links: {
+              byLaunch: new Map(links.map((link) => [link.launchId, link])),
+              bySession: new Map(
+                links.map((link) => [link.agentSessionId, link]),
+              ),
+            },
           });
         },
         (error: unknown) => {
@@ -62,7 +82,14 @@ export function useRoutineLaunchLinks(
       disposed = true;
       unlisten?.();
     };
-  }, [launchKey, projectPath, revision]);
+  }, [lookupKey, projectPath, revision]);
 
-  return state.projectPath === projectPath && launchKey ? state.links : NO_LINKS;
+  const links = state.projectPath === projectPath ? state.links : NO_LINKS;
+  return useCallback(
+    (session) =>
+      (session.launchId
+        ? links.byLaunch.get(session.launchId)
+        : links.bySession.get(session.id)) ?? null,
+    [links],
+  );
 }

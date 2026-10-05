@@ -75,6 +75,8 @@ function routineLink(
 ): RoutineLaunchLink {
   return {
     launchId,
+    agentSessionId: `claude-code:${launchId}`,
+    launch: { transport: "terminal", reason: null, detail: null },
     routineId: `routine-${launchId}`,
     resolvedOwnerKind: "space",
     spaceId: "docs",

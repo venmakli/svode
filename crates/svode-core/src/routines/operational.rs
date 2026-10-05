@@ -473,35 +473,59 @@ pub async fn latest_run_record(
         }))
 }
 
-/// A run found by the launch identity of its session.
+/// A run found by the launch identity of its session: the launch id the
+/// session carries or, for an ACP launch whose prompt carries no launch
+/// marker, the canonical catalog id the run recorded at once.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchedRun {
     pub launch_id: String,
     pub routine_id: String,
     pub owner_path: String,
+    pub agent_session_id: String,
+    pub launch: RoutineRunLaunch,
 }
 
 const LAUNCH_LOOKUP_CHUNK: usize = 500;
 
-pub async fn runs_by_launch_ids(
+/// The runs launched as `launch_ids` or recorded for `agent_session_ids`,
+/// once each.
+pub async fn runs_by_launch_identity(
     pool: &SqlitePool,
     launch_ids: &[String],
+    agent_session_ids: &[String],
+) -> Result<Vec<LaunchedRun>, sqlx::Error> {
+    let mut runs = runs_where(pool, "launch_id", launch_ids).await?;
+    for run in runs_where(pool, "agent_session_id", agent_session_ids).await? {
+        if !runs.iter().any(|known| known.launch_id == run.launch_id) {
+            runs.push(run);
+        }
+    }
+    Ok(runs)
+}
+
+async fn runs_where(
+    pool: &SqlitePool,
+    column: &'static str,
+    values: &[String],
 ) -> Result<Vec<LaunchedRun>, sqlx::Error> {
     let mut runs = Vec::new();
-    for chunk in launch_ids.chunks(LAUNCH_LOOKUP_CHUNK) {
+    for chunk in values.chunks(LAUNCH_LOOKUP_CHUNK) {
         let placeholders = vec!["?"; chunk.len()].join(", ");
         let sql = format!(
-            "SELECT launch_id, routine_id, owner_path FROM routine_runs WHERE launch_id IN ({placeholders})"
+            "SELECT launch_id, routine_id, owner_path, agent_session_id, launch_transport, \
+             terminal_choice, terminal_choice_detail FROM routine_runs WHERE {column} IN ({placeholders})"
         );
         let mut query = sqlx::query(&sql);
-        for launch_id in chunk {
-            query = query.bind(launch_id);
+        for value in chunk {
+            query = query.bind(value);
         }
         for row in query.fetch_all(pool).await? {
             runs.push(LaunchedRun {
                 launch_id: row.try_get("launch_id")?,
                 routine_id: row.try_get("routine_id")?,
                 owner_path: row.try_get("owner_path")?,
+                agent_session_id: row.try_get("agent_session_id")?,
+                launch: launch_from_row(&row)?,
             });
         }
     }
@@ -550,14 +574,18 @@ fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRow, s
         terminal_reason: row.try_get("terminal_reason")?,
         terminal_observed_at: row.try_get("terminal_observed_at")?,
         session_status: row.try_get("session_status")?,
-        launch: RoutineRunLaunch::from_columns(
-            row.try_get::<Option<String>, _>("launch_transport")?
-                .as_deref(),
-            row.try_get::<Option<String>, _>("terminal_choice")?
-                .as_deref(),
-            row.try_get("terminal_choice_detail")?,
-        ),
+        launch: launch_from_row(&row)?,
     })
+}
+
+fn launch_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<RoutineRunLaunch, sqlx::Error> {
+    Ok(RoutineRunLaunch::from_columns(
+        row.try_get::<Option<String>, _>("launch_transport")?
+            .as_deref(),
+        row.try_get::<Option<String>, _>("terminal_choice")?
+            .as_deref(),
+        row.try_get("terminal_choice_detail")?,
+    ))
 }
 
 #[cfg(test)]

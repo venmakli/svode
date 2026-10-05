@@ -327,9 +327,10 @@ pub async fn discover_project_owners(
     Ok(owners)
 }
 
-/// The Routines that launched sessions, resolved by the launch identities the
-/// sessions carry across every Space of an open project. A launch without a
-/// run is not a Routine launch and gets no link. The name follows the current
+/// The Routines that launched sessions, resolved across every Space of an
+/// open project by the launch ids the sessions carry and by their catalog
+/// ids, which identify an ACP launch (Stage 10 `02`, Identity). A session
+/// without a run is not a Routine launch and gets no link. The name follows the current
 /// definition; once the owner or the definition cannot be read, it is the name
 /// of the Routine's newest launch. An unreadable store of one Space leaves only
 /// its launches unresolved.
@@ -338,9 +339,10 @@ pub async fn resolve_launches(
     index_state: &IndexRuntimeState,
     project_path: &Path,
     launch_ids: &[String],
+    session_ids: &[String],
 ) -> Result<Vec<RoutineLaunchLink>, RoutineServiceError> {
     let mut links = Vec::new();
-    if launch_ids.is_empty() {
+    if launch_ids.is_empty() && session_ids.is_empty() {
         return Ok(links);
     }
     for key in index_state.routine_inventory_keys(project_path).await? {
@@ -356,7 +358,8 @@ pub async fn resolve_launches(
                 continue;
             }
         };
-        let runs = match operational::runs_by_launch_ids(&pool, launch_ids).await {
+        let runs = match operational::runs_by_launch_identity(&pool, launch_ids, session_ids).await
+        {
             Ok(runs) => runs,
             Err(error) => {
                 tracing::warn!(space = ?space_id, "failed to read routine launches: {error}");
@@ -396,6 +399,8 @@ pub async fn resolve_launches(
                 owner_kind: RoutineOwnerKind::for_owner_path(&run.owner_path, space_id.is_none()),
                 space_id: space_id.clone(),
                 launch_id: run.launch_id,
+                agent_session_id: run.agent_session_id,
+                launch: run.launch,
                 routine_id: run.routine_id,
                 owner_path: run.owner_path,
                 name,
@@ -1523,7 +1528,9 @@ mod tests {
     use crate::routines::model::{
         CollectionEvent, RoutineAction, RoutineActionTarget, RoutineTrigger,
     };
-    use crate::routines::model::{MissedRuns, RoutineRunLaunch, RoutineTimeBasis};
+    use crate::routines::model::{
+        MissedRuns, RoutineRunLaunch, RoutineTerminalChoice, RoutineTimeBasis,
+    };
 
     #[test]
     fn full_create_candidate_is_preserved_and_automatic_routines_are_disabled() {
@@ -2426,6 +2433,7 @@ mod tests {
         owner: &ResolvedRoutineOwner,
         launch_id: &str,
         created_at: &str,
+        launch: &RoutineRunLaunch,
     ) -> String {
         let snapshot = discover_owner(owner).await.unwrap();
         let routine = &snapshot.routines[0];
@@ -2448,10 +2456,7 @@ mod tests {
                 source_session_id: None,
                 agent_session_id: &format!("codex:launch:{launch_id}"),
                 created_at,
-                launch: &RoutineRunLaunch::Terminal {
-                    reason: None,
-                    detail: None,
-                },
+                launch,
             },
         )
         .await
@@ -2512,6 +2517,10 @@ mod tests {
             &root_owner,
             "launch-root",
             "2026-09-29T10:00:00Z",
+            &RoutineRunLaunch::Terminal {
+                reason: Some(RoutineTerminalChoice::BindingNotAcp),
+                detail: Some("codex has no ACP effort none".into()),
+            },
         )
         .await;
         let sync_id = record_launch(
@@ -2520,23 +2529,35 @@ mod tests {
             &design_owner,
             "launch-design",
             "2026-09-29T10:01:00Z",
+            &RoutineRunLaunch::Acp,
         )
         .await;
-        let launch_ids = [
-            "launch-root".to_string(),
-            "launch-design".to_string(),
-            "launch-manual".to_string(),
+        let launch_ids = ["launch-root".to_string(), "launch-manual".to_string()];
+        // An ACP launch writes no launch marker: its session is found by the
+        // catalog id the run recorded.
+        let session_ids = [
+            "codex:launch:launch-design".to_string(),
+            "codex:launch:launch-root".to_string(),
+            "codex:manual".to_string(),
         ];
 
-        let mut links = resolve_launches(&routine_stores, &index_state, project, &launch_ids)
-            .await
-            .unwrap();
+        let mut links = resolve_launches(
+            &routine_stores,
+            &index_state,
+            project,
+            &launch_ids,
+            &session_ids,
+        )
+        .await
+        .unwrap();
         links.sort_by(|left, right| left.launch_id.cmp(&right.launch_id));
         assert_eq!(
             links,
             vec![
                 RoutineLaunchLink {
                     launch_id: "launch-design".into(),
+                    agent_session_id: "codex:launch:launch-design".into(),
+                    launch: RoutineRunLaunch::Acp,
                     routine_id: sync_id,
                     owner_kind: RoutineOwnerKind::Space,
                     space_id: Some("design".into()),
@@ -2546,6 +2567,11 @@ mod tests {
                 },
                 RoutineLaunchLink {
                     launch_id: "launch-root".into(),
+                    agent_session_id: "codex:launch:launch-root".into(),
+                    launch: RoutineRunLaunch::Terminal {
+                        reason: Some(RoutineTerminalChoice::BindingNotAcp),
+                        detail: Some("codex has no ACP effort none".into()),
+                    },
                     routine_id: review_id.clone(),
                     owner_kind: RoutineOwnerKind::Project,
                     space_id: None,
@@ -2556,7 +2582,7 @@ mod tests {
             ]
         );
         assert!(
-            resolve_launches(&routine_stores, &index_state, project, &[])
+            resolve_launches(&routine_stores, &index_state, project, &[], &[])
                 .await
                 .unwrap()
                 .is_empty()
@@ -2574,6 +2600,7 @@ mod tests {
             &index_state,
             project,
             &["launch-root".to_string()],
+            &[],
         )
         .await
         .unwrap();
@@ -2587,6 +2614,10 @@ mod tests {
             &root_owner,
             "launch-root-later",
             "2026-09-29T11:00:00Z",
+            &RoutineRunLaunch::Terminal {
+                reason: None,
+                detail: None,
+            },
         )
         .await;
         fs::remove_file(project.join(".routines/review.md")).unwrap();
@@ -2595,6 +2626,7 @@ mod tests {
             &index_state,
             project,
             &["launch-root".to_string()],
+            &[],
         )
         .await
         .unwrap();

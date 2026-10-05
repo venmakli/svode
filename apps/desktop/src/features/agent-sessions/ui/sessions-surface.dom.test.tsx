@@ -73,25 +73,48 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   let chatAgents: { agent: string; name: string; offer: { state: string } }[] =
     [];
   const commands: string[] = [];
-  const resolvedLaunches: string[][] = [];
+  const resolvedLaunches: { launchIds: string[]; sessionIds: string[] }[] =
+    [];
   const releasedHolds: number[] = [];
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, payload) => {
     commands.push(command);
     if (command === "routines_resolve_launches") {
-      resolvedLaunches.push([
-        ...(payload as { launchIds: string[] }).launchIds,
-      ]);
+      const { launchIds, sessionIds } = payload as {
+        launchIds: string[];
+        sessionIds: string[];
+      };
+      resolvedLaunches.push({ launchIds, sessionIds });
+      const link = {
+        routineId: "routine-docs",
+        ownerKind: "space",
+        spaceId: "docs",
+        ownerPath: ".",
+        name: "Docs sync",
+        definitionPresent: true,
+      };
       return [
-        {
-          launchId: "launch-docs",
-          routineId: "routine-docs",
-          ownerKind: "space",
-          spaceId: "docs",
-          ownerPath: ".",
-          name: "Docs sync",
-          definitionPresent: true,
-        },
+        ...(launchIds.includes("launch-docs")
+          ? [
+              {
+                ...link,
+                launchId: "launch-docs",
+                agentSessionId: "claude-code:docs",
+                launch: { transport: "terminal", reason: null, detail: null },
+              },
+            ]
+          : []),
+        // An ACP launch carries no launch id: its run names the session.
+        ...(sessionIds.includes("codex:acp-docs")
+          ? [
+              {
+                ...link,
+                launchId: "launch-acp",
+                agentSessionId: "codex:acp-docs",
+                launch: { transport: "acp" },
+              },
+            ]
+          : []),
       ];
     }
     if (command.startsWith("plugin:event|")) return 1;
@@ -223,6 +246,13 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       spaceId: "docs",
       spacePath: "/project/docs",
     }),
+    session({
+      id: "codex:acp-docs",
+      title: "Docs over ACP",
+      scopeKind: "space",
+      spaceId: "docs",
+      spacePath: "/project/docs",
+    }),
   ];
 
   surfaceTest("each Space lists only its own sessions", async () => {
@@ -261,12 +291,17 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
   );
 
   surfaceTest(
-    "a Routine launch shows its routine, read from the Routines owner by launch id",
+    "a Routine launch shows its routine, read from the Routines owner by launch id or, over ACP, by session id",
     async () => {
       await mountSurface("/project/docs", "docs");
 
-      expect(resolvedLaunches).toEqual([["launch-docs"]]);
+      expect(resolvedLaunches).toEqual([
+        { launchIds: ["launch-docs"], sessionIds: ["codex:acp-docs"] },
+      ]);
       expect(row("claude-code:docs")?.textContent.includes("Docs sync")).toBe(
+        true,
+      );
+      expect(row("codex:acp-docs")?.textContent.includes("Docs sync")).toBe(
         true,
       );
     },

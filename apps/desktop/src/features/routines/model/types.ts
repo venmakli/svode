@@ -178,9 +178,38 @@ export type RoutineMutationResult =
   | { status: "name_conflict"; conflict: RoutineNameConflict }
   | { status: "blocked"; message: string };
 
+/** Why a run's agent was launched in its terminal instead of the chat. */
+export type RoutineTerminalChoice =
+  | "chat_unavailable"
+  | "binding_not_acp"
+  | "acp_failed_before_prompt";
+
+/** How a run's agent was launched (Stage 10 `02`, Routine launch through ACP). */
+export type RoutineRunLaunch =
+  | { transport: "acp" }
+  | {
+      transport: "terminal";
+      /** Null for a run launched before the chat existed. */
+      reason: RoutineTerminalChoice | null;
+      /** The agent's or connection's own text behind the reason. */
+      detail: string | null;
+    };
+
+/**
+ * A session whose Routine is resolved: by the launch id it carries or, for
+ * an ACP launch, by its catalog id.
+ */
+export interface RoutineLaunchSession {
+  id: string;
+  launchId?: string | null;
+}
+
 /** The Routine that launched a session, resolved by its launch identity. */
 export interface RoutineLaunchLink {
   launchId: string;
+  /** The catalog id the run recorded for its session. */
+  agentSessionId: string;
+  launch: RoutineRunLaunch;
   routineId: string;
   resolvedOwnerKind: RoutineResolvedOwnerKind;
   /** Registered Space of the owner; `null` for the project root. */

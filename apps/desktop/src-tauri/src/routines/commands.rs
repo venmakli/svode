@@ -107,6 +107,7 @@ pub async fn routines_refresh(
 pub async fn routines_resolve_launches(
     project_path: String,
     launch_ids: Vec<String>,
+    session_ids: Vec<String>,
     routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<RoutineLaunchLink>, AppError> {
@@ -115,6 +116,7 @@ pub async fn routines_resolve_launches(
         &index_state.core,
         Path::new(&project_path),
         &launch_ids,
+        &session_ids,
     )
     .await?)
 }

@@ -39,6 +39,8 @@ import { useAgentSessionScopes } from "./use-agent-session-scopes";
 import { useOpenNewSession } from "./use-open-new-session";
 import * as m from "@/paraglide/messages.js";
 
+const NO_ROWS: readonly AgentSession[] = [];
+
 export interface AgentSessionTerminalClose {
   session: AgentSession;
   ptyId: string;
@@ -111,14 +113,10 @@ export function useAgentSessionsCollection({
     raiseCatalog();
     return load({ force: true });
   }, [load, raiseCatalog]);
-  const launchIds = useMemo(
-    () => (rows ?? []).flatMap((session) => session.launchId ?? []),
-    [rows],
-  );
   // Each list read also re-reads the Routines of its launches.
-  const routines = useRoutineLaunchLinks(
+  const routineOf = useRoutineLaunchLinks(
     owner.projectPath,
-    launchIds,
+    rows ?? NO_ROWS,
     result?.generatedAt,
   );
 
@@ -214,8 +212,7 @@ export function useAgentSessionsCollection({
         });
       });
     },
-    routineOf: (session) =>
-      (session.launchId && routines.get(session.launchId)) || null,
+    routineOf,
     onOpenRoutine,
     onOpenExternalTerminal: (session) => {
       const cwd = session.resumeCommand?.cwd ?? session.cwd;
