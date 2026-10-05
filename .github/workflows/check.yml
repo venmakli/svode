@@ -104,10 +104,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: clippy
+      # Not the target directory: the cache drops the engine DLLs the native
+      # build stages next to the test binaries on Windows, and a fresh build
+      # script does not stage them again.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
           key: speech
+          cache-targets: false
       - uses: ./.github/actions/vulkan-sdk
       - name: Restore the speech test model
         uses: actions/cache@v4

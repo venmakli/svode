@@ -116,6 +116,15 @@ jobs:
           VITE_SVODE_BUILD_COMMIT: ${{ steps.build_meta.outputs.sha }}
         run: bun run --cwd apps/desktop tauri build ${{ matrix.args }}
 
+      - name: Upload installer artifact
+        id: upload_installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 3
+
       - name: The installer carries the speech process and its engine
         shell: bash
         run: |
@@ -131,6 +140,8 @@ jobs:
               ;;
             linux)
               deb="$(ls ${{ matrix.artifact_path }})"
+              dpkg-deb -c "$deb" | grep -Ei 'speech|transcribe|ggml' || true
+              dpkg-deb -f "$deb" Depends
               dpkg-deb -c "$deb" | grep -E ' \./usr/bin/svode-speech$'
               dpkg-deb -c "$deb" | grep -E '\./usr/lib/Svode/speech/libtranscribe\.so'
               dpkg-deb -c "$deb" | grep -E '\./usr/lib/Svode/speech/libggml-vulkan\.so'
@@ -139,20 +150,12 @@ jobs:
             windows)
               installer="$(ls ${{ matrix.artifact_path }})"
               listing="$(7z l "$installer")"
+              grep -Ei 'speech|transcribe|ggml' <<<"$listing" || true
               grep -qi 'svode-speech\.exe' <<<"$listing"
               grep -qi 'transcribe\.dll' <<<"$listing"
               grep -qi 'ggml-vulkan\.dll' <<<"$listing"
               ;;
           esac
-
-      - name: Upload installer artifact
-        id: upload_installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_path }}
-          if-no-files-found: error
-          retention-days: 3
 
       - name: Prepare dogfood feed metadata
         if: ${{ inputs.notify }}
