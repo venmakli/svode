@@ -30,7 +30,6 @@ pub enum SystemCommitKind {
     ReorderSpaces,
     Gitignore,
     AgentInstructions,
-    CliIntegration,
     AssetsStrategy,
 }
 
@@ -41,7 +40,6 @@ impl SystemCommitKind {
             SystemCommitKind::ReorderSpaces => "Reorder spaces",
             SystemCommitKind::Gitignore => "Update .gitignore",
             SystemCommitKind::AgentInstructions => "Update agent instructions",
-            SystemCommitKind::CliIntegration => "Update CLI integration",
             SystemCommitKind::AssetsStrategy => "Update assets strategy",
         }
     }
@@ -53,7 +51,6 @@ impl SystemCommitKind {
             SystemCommitKind::ReorderSpaces => &[".svode/config.json"],
             SystemCommitKind::Gitignore => &[".gitignore"],
             SystemCommitKind::AgentInstructions => &[".svode/AGENTS.md"],
-            SystemCommitKind::CliIntegration => &["CLAUDE.md", ".mcp.json", ".claude"],
             SystemCommitKind::AssetsStrategy => &[
                 ".gitattributes",
                 ".gitignore",
@@ -735,10 +732,7 @@ async fn do_commit_system(
         &paths,
         message,
         intent,
-        matches!(
-            kind,
-            SystemCommitKind::CliIntegration | SystemCommitKind::AssetsStrategy
-        ),
+        matches!(kind, SystemCommitKind::AssetsStrategy),
     )
     .await?;
     drop(guard);
@@ -1680,7 +1674,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn optional_cli_absence_is_not_a_failed_expected_target() {
+    async fn optional_path_absence_is_not_a_failed_expected_target() {
         use crate::git::staging_tests::{cli, git, repo, write};
         let cli = cli();
         let tmp = repo(&cli, true).await;
@@ -1693,20 +1687,27 @@ mod tests {
                 auto_commit_system: true,
             },
         );
-        write(root, "CLAUDE.md", "instructions\n");
-        let paths = SystemCommitKind::CliIntegration
+        write(root, ".gitattributes", "*.png filter=lfs\n");
+        let paths = SystemCommitKind::AssetsStrategy
             .paths()
             .iter()
             .map(|p| p.to_string())
             .collect::<Vec<_>>();
         assert!(
-            commit_prepared_paths(&cli, root, &paths, "CLI", CommitIntent::SystemConfig, true)
-                .await
-                .unwrap()
+            commit_prepared_paths(
+                &cli,
+                root,
+                &paths,
+                "Assets",
+                CommitIntent::SystemConfig,
+                true
+            )
+            .await
+            .unwrap()
         );
         assert_eq!(
-            git(&cli, root, &["show", "HEAD:CLAUDE.md"]).await,
-            "instructions\n"
+            git(&cli, root, &["show", "HEAD:.gitattributes"]).await,
+            "*.png filter=lfs\n"
         );
         assert!(
             commit_prepared_paths(
@@ -1720,14 +1721,14 @@ mod tests {
             .await
             .is_err()
         );
-        std::fs::remove_file(root.join("CLAUDE.md")).unwrap();
-        ops::add(&cli, root, "CLAUDE.md").await.unwrap();
+        std::fs::remove_file(root.join(".gitattributes")).unwrap();
+        ops::add(&cli, root, ".gitattributes").await.unwrap();
         assert!(
             commit_prepared_paths(
                 &cli,
                 root,
                 &paths,
-                "Remove CLI",
+                "Remove assets strategy",
                 CommitIntent::SystemConfig,
                 true
             )
@@ -1737,7 +1738,7 @@ mod tests {
         assert!(
             !git(&cli, root, &["ls-tree", "-r", "--name-only", "HEAD"])
                 .await
-                .contains("CLAUDE.md")
+                .contains(".gitattributes")
         );
     }
 

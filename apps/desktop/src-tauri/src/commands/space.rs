@@ -10,7 +10,7 @@ use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy
 use crate::git::{GitState, require_cli};
 use crate::index::IndexState;
 use crate::project_runtime::ProjectRuntimeState;
-use crate::space::{config, content_tree, project, registry, settings, symlinks, types::*};
+use crate::space::{config, content_tree, project, registry, settings, types::*};
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
 use svode_core::git::{local_repair, ops};
 use svode_core::storage::lfs::LfsState;
@@ -1049,112 +1049,6 @@ pub async fn save_space_config(
             .await
         {
             tracing::warn!("commit_system_now (SpaceConfig) failed: {e}");
-        }
-    }
-    Ok(())
-}
-
-// --- CLI Symlinks ---
-
-#[tauri::command]
-pub async fn setup_cli_symlinks_cmd(
-    app: AppHandle,
-    space_path: String,
-    cli_name: String,
-    project_path: Option<String>,
-    autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Vec<String>, AppError> {
-    let path = Path::new(&space_path);
-    require_repository_mutation(&app, path).await?;
-    let created = symlinks::setup_cli_symlinks(path, &cli_name)?;
-    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        if let Err(e) = autocommit
-            .commit_system_now(
-                PathBuf::from(proj),
-                PathBuf::from(&space_path),
-                SystemCommitKind::CliIntegration,
-            )
-            .await
-        {
-            tracing::warn!("commit_system_now (CliIntegration setup) failed: {e}");
-        }
-    }
-    Ok(created)
-}
-
-#[tauri::command]
-pub async fn teardown_cli_symlinks_cmd(
-    app: AppHandle,
-    space_path: String,
-    cli_name: String,
-    project_path: Option<String>,
-    autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<(), AppError> {
-    let path = Path::new(&space_path);
-    require_repository_mutation(&app, path).await?;
-    symlinks::teardown_cli_symlinks(path, &cli_name)?;
-    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        if let Err(e) = autocommit
-            .commit_system_now(
-                PathBuf::from(proj),
-                PathBuf::from(&space_path),
-                SystemCommitKind::CliIntegration,
-            )
-            .await
-        {
-            tracing::warn!("commit_system_now (CliIntegration teardown) failed: {e}");
-        }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn check_symlink_health(
-    app: AppHandle,
-    space_path: String,
-    cli_name: String,
-) -> Result<symlinks::SymlinkHealthReport, AppError> {
-    let path = Path::new(&space_path);
-    require_repository_mutation(&app, path).await?;
-    symlinks::health_check_symlinks(path, &cli_name)
-}
-
-#[tauri::command]
-pub fn read_agents_md(space_path: String) -> Result<Option<String>, AppError> {
-    let path = Path::new(&space_path).join(".svode").join("AGENTS.md");
-    if path.exists() {
-        Ok(Some(std::fs::read_to_string(&path)?))
-    } else {
-        Ok(None)
-    }
-}
-
-/// Write `.svode/AGENTS.md` and immediately commit it as a System change
-/// (`Update agent instructions`). Stage-3.5 classifies AI-instruction files
-/// as System; a future AI stage may promote them to their own category.
-#[tauri::command]
-pub async fn write_agents_md(
-    app: AppHandle,
-    space_path: String,
-    content: String,
-    project_path: Option<String>,
-    autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<(), AppError> {
-    require_repository_mutation(&app, Path::new(&space_path)).await?;
-    let svode_dir = Path::new(&space_path).join(".svode");
-    std::fs::create_dir_all(&svode_dir)?;
-    std::fs::write(svode_dir.join("AGENTS.md"), content)?;
-
-    if let Some(proj) = project_path.filter(|p| !p.is_empty()) {
-        if let Err(e) = autocommit
-            .commit_system_now(
-                PathBuf::from(proj),
-                PathBuf::from(&space_path),
-                SystemCommitKind::AgentInstructions,
-            )
-            .await
-        {
-            tracing::warn!("commit_system_now (AgentInstructions) failed: {e}");
         }
     }
     Ok(())

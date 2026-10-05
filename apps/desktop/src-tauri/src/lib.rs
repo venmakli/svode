@@ -1,5 +1,4 @@
 mod actors;
-mod agent;
 mod agent_actors;
 mod agent_context;
 mod agent_runtime;
@@ -70,7 +69,6 @@ pub fn run() {
         }))
         .manage(agent_context::AgentContextState::new())
         .manage(files::FileWatcher::new())
-        .manage(agent::AgentSessions::new())
         .manage(agent_sessions::AgentSessionsState::new())
         .manage(agent_runtime_state)
         .manage(Arc::new(svode_core::page::nonce::WriteNonceRegistry::new()))
@@ -323,22 +321,13 @@ pub fn run() {
             app_windows::get_window_open_intent,
             app_windows::release_current_project_window,
             app_windows::set_current_window_title,
-            commands::space::setup_cli_symlinks_cmd,
-            commands::space::teardown_cli_symlinks_cmd,
-            commands::space::check_symlink_health,
-            commands::space::read_agents_md,
-            commands::space::write_agents_md,
             commands::space::clone_missing_space,
             commands::space::remove_missing_space,
             commands::project_openers::list_project_openers,
             commands::project_openers::open_project_in_tool,
             commands::project_openers::list_artifact_openers,
             commands::project_openers::open_artifact_in_tool,
-            agent::commands::agent_send,
-            agent::commands::agent_stop,
             agent_actors::commands::agent_adapters_list_identities,
-            agent::commands::agent_list_models,
-            agent::commands::agent_respond_permission,
             agent_sessions::commands::agent_sessions_list,
             agent_sessions::commands::agent_sessions_refresh,
             agent_sessions::commands::agent_sessions_hot_status,

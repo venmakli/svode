@@ -152,6 +152,33 @@ mod tests {
     }
 
     #[test]
+    fn agent_section_survives_config_round_trip() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let dir = temp.path().join(".svode");
+        std::fs::create_dir_all(&dir).expect("svode dir");
+        let agent = serde_json::json!({
+            "clis": ["claude"],
+            "defaultModel": "sonnet",
+            "systemPrompt": "Be brief.",
+            "maxTurns": 12,
+            "maxTimeout": 300
+        });
+        std::fs::write(
+            dir.join("config.json"),
+            serde_json::json!({ "name": "Legacy", "agent": agent }).to_string(),
+        )
+        .expect("legacy config");
+
+        let config = read_space_config(temp.path()).expect("read config");
+        write_space_config(temp.path(), &config).expect("write config");
+        let value: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("config.json")).expect("config"),
+        )
+        .expect("json");
+        assert_eq!(value["agent"], agent);
+    }
+
+    #[test]
     fn local_config_writes_preserve_agent_actor_overlay() {
         let temp = tempfile::tempdir().expect("temp dir");
         let dir = temp.path().join(".svode");
