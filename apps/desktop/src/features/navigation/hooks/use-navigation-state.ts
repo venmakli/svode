@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from "react";
+import { useContext, useEffect, useLayoutEffect, useState } from "react";
 import { useStore } from "zustand";
 import {
   forgetNavigationItems,
@@ -15,13 +15,16 @@ import {
 } from "../api/navigation";
 import {
   createNavigationStore,
+  type NavigationStateApi,
+  type NavigationStore,
   type NavigationStoreState,
 } from "../model/navigation-store";
+import { NavigationStoreContext } from "./navigation-store-context";
 
 /** File events come in bursts; one read resolves them all. */
 const SOURCE_CHANGE_DEBOUNCE_MS = 400;
 
-const navigationStore = createNavigationStore({
+const navigationApi: NavigationStateApi = {
   read: readNavigationState,
   pin: pinNavigationItem,
   keep: keepNavigationItem,
@@ -29,7 +32,9 @@ const navigationStore = createNavigationStore({
   unkeep: unkeepNavigationItems,
   forget: forgetNavigationItems,
   retitle: retitleNavigationItem,
-});
+};
+
+const navigationStore = createNavigationStore(navigationApi);
 
 /**
  * Binds the navigation state to the open project and reads it again when
@@ -82,10 +87,27 @@ export function useNavigationStateLifecycle(
   }, [projectPath]);
 }
 
+/**
+ * The navigation state of a project other than the open one, through the
+ * same Desktop owner; read when the project is bound and on `refresh`. It
+ * follows no file events: the project has no window here.
+ */
+export function useProjectNavigationStore(
+  projectPath: string,
+): NavigationStore {
+  const [store] = useState(() => createNavigationStore(navigationApi));
+  useLayoutEffect(() => {
+    store.getState().setProject(projectPath);
+  }, [projectPath, store]);
+  return store;
+}
+
+/** The open project's state, or the one a `NavigationStoreProvider` binds. */
 export function useNavigationState<T>(
   selector: (state: NavigationStoreState) => T,
 ): T {
-  return useStore(navigationStore, selector);
+  const store = useContext(NavigationStoreContext) ?? navigationStore;
+  return useStore(store, selector);
 }
 
 export function getNavigationState(): NavigationStoreState {

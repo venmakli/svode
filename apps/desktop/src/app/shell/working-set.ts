@@ -23,7 +23,9 @@ import { useSpace } from "@/features/space";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useMainAreaObject, type MainAreaObject } from "./main-area-object";
 import { isSessionKey } from "./now-model";
+import { useShowProjectChat } from "./show-project-chat";
 import { useShellStore } from "./model";
+import { useShellView } from "./shell-view";
 import * as m from "@/paraglide/messages.js";
 
 /** A created artifact is kept if the main area shows it within this time. */
@@ -152,12 +154,17 @@ export function useKeepEditedObjects() {
   }, [objectId]);
 }
 
-/** Closing actions of the main area object and of Now. */
+/**
+ * Closing actions of the main area object and of Now. On Home a closed
+ * object gives way to a new chat with its project, not to a Space page.
+ */
 export function useWorkingSetActions() {
   const object = useMainAreaObject();
   const activeSessions = useActiveAgentSessions();
   const openContentSurface = useShellStore((state) => state.openContentSurface);
   const closeGraphSurface = useShellStore((state) => state.closeGraphSurface);
+  const home = useShellView() === "home";
+  const showProjectChat = useShowProjectChat();
 
   const isActiveSession = useCallback(
     (key: NavigationKey) =>
@@ -181,15 +188,23 @@ export function useWorkingSetActions() {
     [object],
   );
 
-  /** Closes the display after the guards; the main page of its Space shows. */
+  /**
+   * Closes the display after the guards; the main page of its Space shows,
+   * on Home a new chat with its project.
+   */
   const closeDisplay = useCallback(async () => {
     if ((await prepareActiveContentDeactivation()) === "blocked") return false;
+    if (home) {
+      closeActiveContent();
+      showProjectChat();
+      return true;
+    }
     if (useShellStore.getState().mainSurface === "session") {
       openContentSurface();
     }
     closeActiveContent();
     return true;
-  }, [openContentSurface]);
+  }, [home, openContentSurface, showProjectChat]);
 
   /**
    * ⌘W without a peek: the Graph returns to its object; the main area object
@@ -201,8 +216,10 @@ export function useWorkingSetActions() {
       return;
     }
     if (!object) {
-      // A session the catalog no longer lists still closes.
-      if (useShellStore.getState().mainSurface === "session") {
+      // A session the catalog no longer lists still closes; the new chat of
+      // Home is already what closing would show.
+      const { mainSurface, mainSessionDraft } = useShellStore.getState();
+      if (mainSurface === "session" && !(home && mainSessionDraft)) {
         await closeDisplay();
       }
       return;
@@ -214,7 +231,14 @@ export function useWorkingSetActions() {
     if (kept && !isActiveSession(kept)) {
       await getNavigationState().unkeep([kept]).catch(reportFailure);
     }
-  }, [closeDisplay, closeGraphSurface, isActiveSession, isMainObject, object]);
+  }, [
+    closeDisplay,
+    closeGraphSurface,
+    home,
+    isActiveSession,
+    isMainObject,
+    object,
+  ]);
 
   /** The close button of a Now item; an open item also closes its display. */
   const closeItem = useCallback(

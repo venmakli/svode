@@ -52,6 +52,39 @@ pub async fn agent_sessions_list(
         .await
 }
 
+/// The sessions of a project no window works with (Stage 10 `09`, invariant
+/// 6): the lists this process holds and the ones saved in the project. It
+/// starts no agent connection, reads no list again, repairs no Git and writes
+/// nothing into the project.
+#[tauri::command]
+pub async fn agent_sessions_list_saved(
+    state: State<'_, AgentSessionsState>,
+    terminal_manager: State<'_, TerminalManager>,
+    agent_runtime: State<'_, AgentRuntimeState>,
+    project_path: String,
+) -> Result<AgentSessionsListResult, AppError> {
+    let root = super::scope::normalize_project_path(&project_path)?;
+    let state = state.inner().clone();
+    let terminal_manager = terminal_manager.inner().clone();
+    let runtime = agent_runtime.runtime().clone();
+    let reads = state.reads.clone();
+    reads
+        .run(
+            root.to_string_lossy().into_owned(),
+            AgentSessionsReadKind::Saved,
+            "agent_sessions_list_saved",
+            move || {
+                read_model::list_saved_sessions(
+                    &state,
+                    project_path,
+                    terminal_manager.list_agent_surfaces()?,
+                    runtime.sessions(),
+                )
+            },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn agent_sessions_refresh(
     app: AppHandle,

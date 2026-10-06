@@ -16,6 +16,9 @@ type SharedRefreshResult = Result<AgentSessionsListResult, String>;
 pub(crate) enum AgentSessionsReadKind {
     Discovery,
     FullRefresh,
+    /// A read of a project no window works with; it joins no read of the
+    /// project's window, whose own effects it does not have.
+    Saved,
 }
 
 impl AgentSessionsReadKind {
@@ -23,6 +26,7 @@ impl AgentSessionsReadKind {
         match self {
             Self::Discovery => "discovery",
             Self::FullRefresh => "full-refresh",
+            Self::Saved => "saved",
         }
     }
 

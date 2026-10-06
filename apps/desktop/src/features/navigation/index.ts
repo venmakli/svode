@@ -2,6 +2,7 @@ export {
   getNavigationState,
   useNavigationState,
   useNavigationStateLifecycle,
+  useProjectNavigationStore,
 } from "./hooks/use-navigation-state";
 export { useDescribedNavigationItem } from "./hooks/use-described-item";
 export { useKeepInNow, type KeepInNow } from "./hooks/use-keep-in-now";
@@ -22,9 +23,12 @@ export {
   type NavigationKey,
   type NavigationResolvedItem,
 } from "./model/keys";
+export { describeNavigationItem } from "./api/navigation";
 export { subscribeUserEdits, type UserEdit } from "./model/user-edit-signal";
 export { NavigationSidebarGroup } from "./ui/navigation-sidebar-group";
 export { NavigationSidebarItem } from "./ui/navigation-sidebar-item";
+export { NavigationStoreProvider } from "./ui/navigation-store-provider";
+export type { NavigationStore } from "./model/navigation-store";
 export {
   KeepMenuItem,
   NavigationMenuItems,

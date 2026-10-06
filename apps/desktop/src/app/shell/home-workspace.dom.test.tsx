@@ -75,7 +75,7 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
     guard: 0,
     activate: [] as [string, string][],
   };
-  let requestHandler: ((request: { kind: string }) => void) | null = null;
+  let requestHandler: ((request: object) => void) | null = null;
 
   const space = { ...(await import("@/features/space")) };
   mock.module("@/features/space", () => ({
@@ -102,12 +102,45 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
   const spaceApi = { ...(await import("@/platform/space/space-api")) };
   mock.module("@/platform/space/space-api", () => ({
     ...spaceApi,
-    listenProjectWindowRequest: async (
-      handler: (request: { kind: string }) => void,
-    ) => {
+    listenProjectWindowRequest: async (handler: (request: object) => void) => {
       requestHandler = handler;
       return () => {};
     },
+  }));
+  const opened: string[] = [];
+  const navigation = { ...(await import("@/features/navigation")) };
+  mock.module("@/features/navigation", () => ({
+    ...navigation,
+    describeNavigationItem: async (
+      projectPath: string,
+      item: { key: { path?: string }; title: string },
+    ) =>
+      item.key.path === "gone.md"
+        ? null
+        : { ...item, title: `${projectPath}:${item.title}`, available: true },
+  }));
+  const sidebarItems = { ...(await import("./navigation-sidebar-items")) };
+  mock.module("./navigation-sidebar-items", () => ({
+    ...sidebarItems,
+    useOpenNavigationArtifact: () => async (item: { title: string }) => {
+      opened.push(item.title);
+    },
+  }));
+  const peekHost = { ...(await import("./agent-session-peek-host")) };
+  mock.module("./agent-session-peek-host", () => ({
+    ...peekHost,
+    useOpenSessionInMainArea:
+      () =>
+      async (
+        target: { sessionId: string },
+        _: unknown,
+        options: {
+          guarded?: boolean;
+        },
+      ) => {
+        opened.push(`session:${target.sessionId}:${options.guarded}`);
+        return true;
+      },
   }));
   mock.module("./navigation-guards", () => ({
     passNavigationGuards: async () => {
@@ -134,7 +167,7 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
   function Probe() {
     const start = useStartHomeChat();
     const draftChoices = useHomeDraftSpaceChoices();
-    useProjectWindowRequests();
+    useProjectWindowRequests(() => {});
     useEffect(() => {
       startChat = start;
       choices = draftChoices;
@@ -282,5 +315,25 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
       await settle();
     });
     expect(draftPath()).toBe("/projects/d");
+  });
+
+  test("an object another window hands over opens after this window's guard", async () => {
+    reset("d");
+    otherWindows = [];
+    await render(projects);
+    opened.length = 0;
+    const open = (item: object) =>
+      act(async () => {
+        requestHandler!({ kind: "open", item });
+        await settle();
+      });
+    allow = false;
+    await open({ key: { kind: "page", path: "plan.md" }, title: "Plan" });
+    expect(opened).toEqual([]);
+    allow = true;
+    await open({ key: { kind: "page", path: "plan.md" }, title: "Plan" });
+    await open({ key: { kind: "page", path: "gone.md" }, title: "Gone" });
+    await open({ key: { kind: "session", sessionId: "codex:a" }, title: "A" });
+    expect(opened).toEqual(["/projects/d:Plan", "session:codex:a:true"]);
   });
 }

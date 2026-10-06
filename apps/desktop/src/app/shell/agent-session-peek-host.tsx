@@ -15,8 +15,9 @@ import { useOpenSessionRoutine } from "./open-session-routine";
 
 /**
  * Makes a session the main area object after the guards of the open peek
- * stack and the main area pass. Returns whether it opened. Focus moves into
- * the main area unless the sidebar opened it.
+ * stack and the main area pass, unless the caller passed them (`guarded`).
+ * Returns whether it opened. Focus moves into the main area unless the
+ * sidebar opened it.
  */
 export function useOpenSessionInMainArea() {
   const showSession = useShowSessionInMainArea();
@@ -25,10 +26,11 @@ export function useOpenSessionInMainArea() {
     async (
       sessionTarget: AgentSessionTarget,
       session: AgentSession | null,
-      options?: { focus?: boolean },
+      options?: { focus?: boolean; guarded?: boolean },
     ) => {
-      if (!(await passNavigationGuards())) return false;
-      showSession(sessionTarget, sessionSpaceOf(session), options);
+      const { guarded = false, ...show } = options ?? {};
+      if (!guarded && !(await passNavigationGuards())) return false;
+      showSession(sessionTarget, sessionSpaceOf(session), show);
       return true;
     },
     [showSession],

@@ -14,7 +14,7 @@ import {
   type NavigationResolvedItem,
 } from "@/features/navigation";
 import { openPage } from "@/features/page/navigation";
-import { useSpace } from "@/features/space";
+import { getSpaceSnapshot, useSpace } from "@/features/space";
 
 interface NavigationOpenProps {
   onActivateContent: () => void;
@@ -30,6 +30,8 @@ export function NavigationArtifactItem({
   onClose,
   temporary,
   onKeep,
+  pinned,
+  spaceName: givenSpaceName,
 }: {
   item: NavigationResolvedItem;
   active: boolean;
@@ -38,8 +40,13 @@ export function NavigationArtifactItem({
   onClose?: () => void;
   temporary?: boolean;
   onKeep?: () => void;
+  pinned?: boolean;
+  /** The Space of an artifact of another project than the open one. */
+  spaceName?: string | null;
 }) {
-  const spaceName = useNavigationSpaceName(item.key);
+  const openProjectSpaceName = useNavigationSpaceName(item.key);
+  const spaceName =
+    givenSpaceName === undefined ? openProjectSpaceName : givenSpaceName;
   return (
     <NavigationSidebarItem
       title={item.title}
@@ -52,6 +59,7 @@ export function NavigationArtifactItem({
       onClose={onClose}
       temporary={temporary}
       onKeep={onKeep}
+      pinned={pinned}
     />
   );
 }
@@ -86,22 +94,23 @@ function useNavigationSpaceName(key: NavigationKey): string | null {
 /**
  * Opens an artifact or Space of the sidebar as the main area object, as the
  * tree does: after the navigation guard, in its Space, without revealing it
- * in the tree.
+ * in the tree. The open project is read when it opens, so a project that has
+ * just become active opens its own artifact.
  */
 export function useOpenNavigationArtifact({
   onActivateContent,
   onBeforeNavigation,
 }: NavigationOpenProps) {
-  const activeRootId = useSpace((state) => state.activeRootId);
-  const activeSpaceId = useSpace((state) => state.activeSpaceId);
-  const openSpace = useSpace((state) => state.openSpace);
-  const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
-
   return useCallback(
     async (item: NavigationResolvedItem) => {
       const key = item.key;
       if (key.kind === "session" || key.kind === "sessionLaunch") return;
-      if (!activeRootId || !(await onBeforeNavigation())) return;
+      if (!getSpaceSnapshot().activeRootId || !(await onBeforeNavigation())) {
+        return;
+      }
+      const { activeRootId, activeSpaceId, openSpace, clearActiveSpace } =
+        getSpaceSnapshot();
+      if (!activeRootId) return;
       onActivateContent();
       const spaceId = key.spaceId ?? activeRootId;
       if (!key.spaceId) {
@@ -133,13 +142,6 @@ export function useOpenNavigationArtifact({
         openPage(path, spaceId, { fromSidebar: true });
       }
     },
-    [
-      activeRootId,
-      activeSpaceId,
-      clearActiveSpace,
-      onActivateContent,
-      onBeforeNavigation,
-      openSpace,
-    ],
+    [onActivateContent, onBeforeNavigation],
   );
 }

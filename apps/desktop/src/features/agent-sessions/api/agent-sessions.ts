@@ -2,6 +2,7 @@ import {
   holdAgentSessionCatalog as holdAgentSessionCatalogCommand,
   hotStatusAgentSessions as hotStatusAgentSessionsCommand,
   listAgentSessions as listAgentSessionsCommand,
+  listSavedAgentSessions as listSavedAgentSessionsCommand,
   raiseAgentSessionCatalog as raiseAgentSessionCatalogCommand,
   reenterAgentSession as reenterAgentSessionCommand,
   refreshAgentSessions as refreshAgentSessionsCommand,
@@ -33,6 +34,10 @@ export function listAgentSessions(projectPath: string) {
   return listAgentSessionsCommand(projectPath);
 }
 
+export function listSavedAgentSessions(projectPath: string) {
+  return listSavedAgentSessionsCommand(projectPath);
+}
+
 export function refreshAgentSessions(projectPath: string) {
   return refreshAgentSessionsCommand(projectPath);
 }
@@ -51,9 +56,7 @@ export function holdAgentSessionCatalog(): () => void {
     console.error("Failed to hold the session catalogue:", error);
   });
   return () => {
-    void hold
-      .then((id) => releaseAgentSessionCatalog(id))
-      .catch(() => {});
+    void hold.then((id) => releaseAgentSessionCatalog(id)).catch(() => {});
   };
 }
 

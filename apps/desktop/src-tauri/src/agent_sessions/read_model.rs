@@ -47,6 +47,40 @@ pub(crate) fn list_sessions(
     terminal_surfaces: Vec<AgentTerminalSurface>,
     runtime_sessions: Vec<RuntimeSession>,
 ) -> Result<AgentSessionsListResult, AppError> {
+    list(
+        state,
+        project_path,
+        terminal_surfaces,
+        runtime_sessions,
+        true,
+    )
+}
+
+/// The list of a project no window works with, such as an expanded project
+/// of Home: the same merge over the lists this process already holds and the
+/// lists saved in the project, which it does not write.
+pub(crate) fn list_saved_sessions(
+    state: &AgentSessionsState,
+    project_path: String,
+    terminal_surfaces: Vec<AgentTerminalSurface>,
+    runtime_sessions: Vec<RuntimeSession>,
+) -> Result<AgentSessionsListResult, AppError> {
+    list(
+        state,
+        project_path,
+        terminal_surfaces,
+        runtime_sessions,
+        false,
+    )
+}
+
+fn list(
+    state: &AgentSessionsState,
+    project_path: String,
+    terminal_surfaces: Vec<AgentTerminalSurface>,
+    runtime_sessions: Vec<RuntimeSession>,
+    save_lists: bool,
+) -> Result<AgentSessionsListResult, AppError> {
     let project = normalize_project_path(&project_path)?;
     let scope_index = ScopeIndex::new(&project, load_child_spaces(&project)?)?;
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -63,7 +97,10 @@ pub(crate) fn list_sessions(
         // A custom agent's id is of this device and the agent may be removed:
         // its list is read again once its connection opens, never saved
         // into the project.
-        if let Some(read_at) = catalog.read_at.filter(|_| !catalog.source.is_custom()) {
+        if let Some(read_at) = catalog
+            .read_at
+            .filter(|_| save_lists && !catalog.source.is_custom())
+        {
             let saved = scoped
                 .iter()
                 .map(|session| SavedSession {
@@ -968,6 +1005,62 @@ mod tests {
         assert_eq!(result.status, AgentSessionsListStatus::Partial);
         assert_eq!(result.sources[0].status, AgentSessionSourceStatus::Stale);
         assert!(result.sessions.iter().any(|s| s.id == "codex:saved"));
+    }
+
+    /// Every file under the directory with its contents.
+    fn files_of(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        let mut pending = vec![dir.to_path_buf()];
+        while let Some(current) = pending.pop() {
+            for entry in fs::read_dir(&current).expect("read dir") {
+                let path = entry.expect("entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    let contents = fs::read(&path).expect("read file");
+                    files.push((path, contents));
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    fn list_saved(state: &AgentSessionsState, project: &Path) -> AgentSessionsListResult {
+        list_saved_sessions(
+            state,
+            project.to_string_lossy().into_owned(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("list saved sessions")
+    }
+
+    /// Stage 10 `09`, invariant 6: a project no window works with shows the
+    /// lists this process holds and the ones saved in the project, and its
+    /// read writes nothing into the project.
+    #[test]
+    fn a_saved_read_shows_held_and_saved_lists_and_writes_nothing() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        acp_list(&state, "codex", true, vec![("held", &project, LISTED_AT)]);
+        let before = files_of(&project);
+
+        let held = list_saved(&state, &project);
+
+        assert!(held.sessions.iter().any(|s| s.id == "codex:held"));
+        assert_eq!(
+            files_of(&project),
+            before,
+            "the read writes no saved list into the project"
+        );
+
+        list(&state, &project);
+        let restarted = AgentSessionsState::with_home(home);
+        let saved = list_saved(&restarted, &project);
+
+        assert_eq!(saved.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+        assert!(saved.sessions.iter().any(|s| s.id == "codex:held"));
     }
 
     /// The scanners' catalogue cache of earlier versions holds sessions

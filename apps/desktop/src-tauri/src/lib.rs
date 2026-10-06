@@ -338,6 +338,7 @@ pub fn run() {
             commands::project_openers::open_artifact_in_tool,
             agent_actors::commands::agent_adapters_list_identities,
             agent_sessions::commands::agent_sessions_list,
+            agent_sessions::commands::agent_sessions_list_saved,
             agent_sessions::commands::agent_sessions_refresh,
             agent_sessions::commands::agent_sessions_hot_status,
             agent_sessions::commands::agent_sessions_reenter,

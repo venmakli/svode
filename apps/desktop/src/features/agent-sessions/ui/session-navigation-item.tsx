@@ -28,6 +28,16 @@ interface AgentSessionNavigationItemProps {
   onClose?: () => void;
   temporary?: boolean;
   onKeep?: () => void;
+  /** A pinned session in a list that mixes it with others. */
+  pinned?: boolean;
+  /**
+   * A session of another project than the open one: it is resolved against
+   * that project's list and its Space named by `spaceName`.
+   */
+  project?: {
+    sessions: readonly AgentSession[];
+    spaceName: (session: AgentSession) => string | null;
+  };
 }
 
 /**
@@ -44,11 +54,20 @@ export function AgentSessionNavigationItem({
   onClose,
   temporary,
   onKeep,
+  pinned,
+  project,
 }: AgentSessionNavigationItemProps) {
-  const session = useAgentSessionCatalog((state) =>
-    agentSessionForNavigationKey(navigationKey, state.sessions),
+  const catalogSession = useAgentSessionCatalog((state) =>
+    project
+      ? null
+      : agentSessionForNavigationKey(navigationKey, state.sessions),
   );
-  const space = useAgentSessionSpace(session);
+  const session = project
+    ? agentSessionForNavigationKey(navigationKey, project.sessions)
+    : catalogSession;
+  const catalogSpace = useAgentSessionSpace(project ? null : session);
+  const spaceName =
+    project && session ? project.spaceName(session) : catalogSpace?.name;
   const agents = useAgentAdapterDictionary();
   const active = Boolean(
     session &&
@@ -76,7 +95,7 @@ export function AgentSessionNavigationItem({
             <span>{statusTooltipDetail(session)}</span>
             <span>
               {agents.label(session.source)}
-              {space ? ` · ${space.name}` : ""}
+              {spaceName ? ` · ${spaceName}` : ""}
             </span>
           </>
         )
@@ -90,6 +109,7 @@ export function AgentSessionNavigationItem({
       onClose={onClose}
       temporary={temporary}
       onKeep={onKeep}
+      pinned={pinned}
     />
   );
 }

@@ -5,11 +5,13 @@ export {
   useAgentSessionSpace,
   useListedAgentSessions,
   useResolvedAgentSession,
+  useSavedProjectSessions,
   useSessionTerminals,
   useOpenNewSession,
   useStartAgentSession,
   type AgentSessionSpace,
   type NewSessionOpening,
+  type SavedProjectSessions,
   type SessionTerminals,
 } from "./hooks";
 export {

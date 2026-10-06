@@ -166,6 +166,19 @@ export function listAgentSessions(
   });
 }
 
+/**
+ * The sessions of a project no window works with, from the lists Desktop
+ * holds and the ones saved in the project: no agent connection starts and
+ * the project is not repaired or written.
+ */
+export function listSavedAgentSessions(
+  projectPath: string,
+): Promise<AgentSessionsListResult> {
+  return invoke<AgentSessionsListResult>("agent_sessions_list_saved", {
+    projectPath,
+  });
+}
+
 export function refreshAgentSessions(
   projectPath: string,
 ): Promise<AgentSessionsListResult> {

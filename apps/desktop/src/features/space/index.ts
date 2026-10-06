@@ -27,4 +27,6 @@ export {
   type SpaceTreeSyncState,
 } from "./model/public-space";
 export { useSpaceActions } from "./hooks/use-space-actions";
+/** The registered Spaces of a project, read from its config without opening it. */
+export { listChildSpaces as readProjectSpaces } from "./api/space-store-actions";
 export { CreateSpaceDialog } from "./ui/create-space-dialog";

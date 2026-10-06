@@ -163,6 +163,11 @@ if (process.env.SVODE_HOME_SIDEBAR_DOM !== "1") {
               onBeforeNavigation={async () => true}
               onActivateContent={() => {}}
               onStartChat={(item) => started.push(item.id)}
+              projectItems={(item, availability) => (
+                <li data-testid={`items-${item.id}`}>
+                  {`objects of ${item.id}: ${availability}`}
+                </li>
+              )}
             />
           </SidebarProvider>
         </TooltipProvider>,
@@ -290,6 +295,33 @@ if (process.env.SVODE_HOME_SIDEBAR_DOM !== "1") {
     ].find((button) => button.textContent === m.project_delete_confirm())!;
     await act(async () => confirm.click());
     expect(calls.remove).toEqual([["c", false]]);
+  });
+
+  test("the chevron expands a project in place and the device keeps it", async () => {
+    await render();
+    const items = () => document.querySelector("[data-testid=items-c]");
+    const chevron = () =>
+      document.querySelector<HTMLButtonElement>(
+        `[aria-label='${m.home_project_toggle({ project: "Notes" })}']`,
+      )!;
+    expect(items()).toBeNull();
+    expect(chevron().getAttribute("aria-expanded")).toBe("false");
+    const opened = calls.open.length;
+    await act(async () => chevron().click());
+    expect(items()?.textContent).toBe("objects of c: available");
+    expect(chevron().getAttribute("aria-expanded")).toBe("true");
+    expect(calls.open.length).toBe(opened);
+    // The objects are no part of the project row: hovering one is not
+    // hovering the row.
+    expect(items()!.closest("[data-sidebar=menu-item]")).toBeNull();
+    expect(localStorage.getItem("svode:home-project-expanded:c")).toBe("1");
+
+    await act(async () => root.render(null));
+    await render();
+    expect(items()?.textContent).toBe("objects of c: available");
+    await act(async () => chevron().click());
+    expect(items()).toBeNull();
+    expect(localStorage.getItem("svode:home-project-expanded:c")).toBeNull();
   });
 
   test("⌘N opens Create project", async () => {

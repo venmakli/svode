@@ -6,6 +6,7 @@ export { HomeSidebarHeader } from "./ui/home-sidebar-header";
 export { RootProjectDialogs } from "./ui/root-project-dialogs";
 export { RootProjectMenuBridge } from "./ui/root-project-menu-bridge";
 export { homeProjectUnavailableReason } from "./lib/home-project-reasons";
+export type { HomeProjectAvailability } from "./model/home-projects";
 export { useHomeBootstrap } from "./hooks/use-home-bootstrap";
 export {
   useHomeProjects,

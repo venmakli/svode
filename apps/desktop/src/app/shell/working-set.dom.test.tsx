@@ -2,7 +2,7 @@ import * as bunTest from "bun:test";
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act, useSyncExternalStore } from "react";
+import { act, useEffect, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
@@ -62,7 +62,10 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     agentSessionForNavigationKey: () => null,
     pinnableAgentSessionItem: (session: Session | null) =>
       session
-        ? { key: { kind: "session", sessionId: session.id }, title: session.title }
+        ? {
+            key: { kind: "session", sessionId: session.id },
+            title: session.title,
+          }
         : null,
     useActiveAgentSessions: () => [],
     useListedAgentSessions: () =>
@@ -88,6 +91,9 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
       keep: async (item: { key: Key; title: string }) => {
         kept.push(item);
       },
+      unkeep: async (keys: Key[]) => {
+        unkept.push(keys);
+      },
     }),
     navigationKeyId: keyId,
     subscribeUserEdits: (listener: (edit: unknown) => void) => {
@@ -95,19 +101,42 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
       return () => editListeners.delete(listener);
     },
   }));
+  const unkept: Key[][] = [];
+  const closes = { content: 0, chat: 0, guard: "ready" };
+  let mainObject: { kind: string; item: { key: Key; title: string } } | null =
+    null;
+  let shell = {
+    mainSurface: "content",
+    mainSessionDraft: null as { draftId: string } | null,
+  };
   mock.module("@/features/artifact", () => ({
-    closeActiveContent: () => {},
-    prepareActiveContentDeactivation: async () => "ready",
+    closeActiveContent: () => {
+      closes.content++;
+    },
+    prepareActiveContentDeactivation: async () => closes.guard,
   }));
   mock.module("@/features/space", () => ({
     useSpace: (selector: (state: { activeRootId: string }) => unknown) =>
       selector({ activeRootId: "root" }),
   }));
-  mock.module("./main-area-object", () => ({ useMainAreaObject: () => null }));
+  mock.module("./main-area-object", () => ({
+    useMainAreaObject: () => mainObject,
+  }));
   mock.module("./now-model", () => ({ isSessionKey: () => false }));
-  mock.module("./model", () => ({ useShellStore: () => null }));
+  mock.module("./model", () => {
+    const useShellStore = () => () => {};
+    useShellStore.getState = () => shell;
+    return { useShellStore };
+  });
+  mock.module("./show-project-chat", () => ({
+    useShowProjectChat: () => () => {
+      closes.chat++;
+    },
+  }));
 
-  const { useKeepEditedObjects } = await import("./working-set");
+  const { useKeepEditedObjects, useWorkingSetActions } =
+    await import("./working-set");
+  const { ShellViewContext } = await import("./shell-view");
   function Host() {
     useKeepEditedObjects();
     return null;
@@ -117,7 +146,8 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
 
   const message = async (sessionId: string) => {
     await act(async () => {
-      for (const listener of editListeners) listener({ kind: "message", sessionId });
+      for (const listener of editListeners)
+        listener({ kind: "message", sessionId });
     });
   };
   const keptIds = () => kept.map((item) => item.key.sessionId);
@@ -136,7 +166,10 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     await message("codex:new");
     expect(keptIds()).toEqual([]);
     await act(async () =>
-      setListed([...listed, { id: "codex:new", title: "New", source: "codex" }]),
+      setListed([
+        ...listed,
+        { id: "codex:new", title: "New", source: "codex" },
+      ]),
     );
     expect(keptIds()).toEqual(["codex:new"]);
     await act(async () => setListed([...listed]));
@@ -160,5 +193,51 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
       for (const listener of editListeners) listener({ kind: "edit" });
     });
     expect(keptIds()).toEqual([]);
+  });
+
+  test("⌘W on Home closes the object for a new chat with its project", async () => {
+    let actions: ReturnType<typeof useWorkingSetActions> | null = null;
+    function Actions() {
+      const current = useWorkingSetActions();
+      useEffect(() => {
+        actions = current;
+      });
+      return null;
+    }
+    const page = { key: { kind: "page", sessionId: "plan" }, title: "Plan" };
+    kept.length = 0;
+    kept.push(page);
+    mainObject = { kind: "artifact", item: page };
+    const actionsRoot = createRoot(document.createElement("div"));
+    await act(async () =>
+      actionsRoot.render(
+        <ShellViewContext.Provider value="home">
+          <Actions />
+        </ShellViewContext.Provider>,
+      ),
+    );
+
+    closes.guard = "blocked";
+    await act(async () => actions!.closeMainAreaObject());
+    expect([closes.content, closes.chat, unkept.length]).toEqual([0, 0, 0]);
+
+    closes.guard = "ready";
+    await act(async () => actions!.closeMainAreaObject());
+    expect([closes.content, closes.chat]).toEqual([1, 1]);
+    expect(unkept).toEqual([[page.key]]);
+
+    // The new chat of Home is what closing would show: nothing closes.
+    mainObject = null;
+    shell = { mainSurface: "session", mainSessionDraft: { draftId: "d" } };
+    await act(async () =>
+      actionsRoot.render(
+        <ShellViewContext.Provider value="home">
+          <Actions />
+        </ShellViewContext.Provider>,
+      ),
+    );
+    await act(async () => actions!.closeMainAreaObject());
+    expect([closes.content, closes.chat]).toEqual([1, 1]);
+    await act(async () => actionsRoot.unmount());
   });
 }

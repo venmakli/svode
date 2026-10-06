@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import type { DraftSpaceChoices } from "@/features/agent-sessions";
+import {
+  agentSessionForNavigationKey,
+  agentSessionTargetFor,
+  useListedAgentSessions,
+  type DraftSpaceChoices,
+} from "@/features/agent-sessions";
 import {
   HomeChatUnavailable,
   homeProjectUnavailableReason,
@@ -12,29 +17,15 @@ import {
   useSpaceActions,
   type SpaceInfo,
 } from "@/features/space";
+import {
+  describeNavigationItem,
+  type NavigationItem,
+} from "@/features/navigation";
 import { listenProjectWindowRequest } from "@/platform/space/space-api";
-import { useShellStore } from "./model";
+import { useOpenSessionInMainArea } from "./agent-session-peek-host";
 import { passNavigationGuards } from "./navigation-guards";
-
-/**
- * A new chat with the active project's root as the main area object; focus
- * goes to its composer.
- */
-function useShowProjectChat() {
-  const openSessionDraftMainSurface = useShellStore(
-    (state) => state.openSessionDraftMainSurface,
-  );
-  const clearActiveSpace = useSpace((state) => state.clearActiveSpace);
-  return useCallback(() => {
-    const projectPath = getSpaceSnapshot().activeRootPath;
-    if (!projectPath) return;
-    clearActiveSpace();
-    openSessionDraftMainSurface({
-      draftId: crypto.randomUUID(),
-      spacePath: projectPath,
-    });
-  }, [clearActiveSpace, openSessionDraftMainSurface]);
-}
+import { useOpenNavigationArtifact } from "./navigation-sidebar-items";
+import { useShowProjectChat } from "./show-project-chat";
 
 /**
  * Entering Home shows a new chat with the active project; without one Home
@@ -132,18 +123,21 @@ export function HomeMainPlaceholder() {
 }
 
 /**
- * A chat another window started for this window's project opens here after
- * this window's guards.
+ * A chat or an object another window started for this window's project
+ * opens here after this window's guards.
  */
-export function useProjectWindowRequests() {
+export function useProjectWindowRequests(onActivateContent: () => void) {
   const showProjectChat = useShowProjectChat();
+  const openItem = useOpenRequestedItem(onActivateContent);
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     listenProjectWindowRequest((request) => {
-      if (request.kind !== "newChat") return;
+      if (request.kind === "focus") return;
       void passNavigationGuards().then((passed) => {
-        if (passed) showProjectChat();
+        if (!passed) return;
+        if (request.kind === "newChat") showProjectChat();
+        else void openItem(request.item);
       });
     })
       .then((cleanup) => {
@@ -157,5 +151,52 @@ export function useProjectWindowRequests() {
       disposed = true;
       unlisten?.();
     };
-  }, [showProjectChat]);
+  }, [openItem, showProjectChat]);
 }
+
+/**
+ * Opens an object of this window's project another window asked for, after
+ * the guards: an artifact as its source shows it now, a session as the
+ * catalog lists it. A gone or unlisted object opens nothing.
+ */
+function useOpenRequestedItem(onActivateContent: () => void) {
+  const openArtifact = useOpenNavigationArtifact({
+    onActivateContent,
+    onBeforeNavigation: alreadyGuarded,
+  });
+  const openSession = useOpenSessionInMainArea();
+  const listed = useListedAgentSessions();
+  const listedRef = useRef(listed);
+  useEffect(() => {
+    listedRef.current = listed;
+  });
+
+  return useCallback(
+    async (item: NavigationItem) => {
+      const projectPath = getSpaceSnapshot().activeRootPath;
+      if (!projectPath) return;
+      if (item.key.kind !== "session" && item.key.kind !== "sessionLaunch") {
+        const described = await describeNavigationItem(projectPath, item);
+        if (described && described.available !== false) {
+          await openArtifact(described);
+        }
+        return;
+      }
+      const session = agentSessionForNavigationKey(
+        item.key,
+        listedRef.current ?? [],
+      );
+      const target = session
+        ? agentSessionTargetFor(session)
+        : item.key.kind === "session"
+          ? { sessionId: item.key.sessionId, launchId: null }
+          : null;
+      if (target) {
+        await openSession(target, session, { focus: false, guarded: true });
+      }
+    },
+    [openArtifact, openSession],
+  );
+}
+
+const alreadyGuarded = () => Promise.resolve(true);

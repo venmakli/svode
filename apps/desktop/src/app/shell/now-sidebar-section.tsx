@@ -185,7 +185,7 @@ export function NowSidebarSection({
   );
 }
 
-function TemporaryItem({
+export function TemporaryItem({
   temporary: { item, keepItem },
   mainTarget,
   onClose,
@@ -224,7 +224,7 @@ function TemporaryItem({
   );
 }
 
-function ItemMenu({
+export function ItemMenu({
   item,
   onClose,
   keepable = false,

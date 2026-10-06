@@ -43,6 +43,8 @@ export interface NavigationStoreState {
   /** Objects kept in Now in keep order; never also pinned. */
   kept: NavigationResolvedItem[];
   loaded: boolean;
+  /** The last read failed; the state read before stays shown. */
+  failed: boolean;
   /** Grows with every applied answer: Desktop resolved the sources again. */
   revision: number;
   /** Key ids with a pin, keep or removal in flight. */
@@ -138,6 +140,7 @@ export function createNavigationStore(
       pinned: [],
       kept: [],
       loaded: false,
+      failed: false,
       revision: 0,
       pendingKeyIds: EMPTY_SET,
 
@@ -150,16 +153,25 @@ export function createNavigationStore(
           pinned: [],
           kept: [],
           loaded: false,
+          failed: false,
           pendingKeyIds: EMPTY_SET,
         });
         if (!projectPath) return;
         void get().refresh();
       },
 
-      refresh: () =>
-        run(api.read).catch((error: unknown) => {
-          console.error("Failed to read navigation state:", error);
-        }),
+      refresh: () => {
+        const token = generation;
+        return run(api.read).then(
+          () => {
+            if (token === generation) set({ failed: false });
+          },
+          (error: unknown) => {
+            console.error("Failed to read navigation state:", error);
+            if (token === generation) set({ failed: true });
+          },
+        );
+      },
 
       pin: (item) =>
         run(

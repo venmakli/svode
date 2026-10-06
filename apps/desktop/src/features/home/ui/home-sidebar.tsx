@@ -19,7 +19,10 @@ import * as m from "@/paraglide/messages.js";
 import { useCreateProjectShortcut } from "../hooks/use-create-project-shortcut";
 import { useHomeProjects } from "../hooks/use-home-projects";
 import { useRootProjectWorkflow } from "../hooks/use-root-project-workflow";
-import { homeProjectsWithSharedNames } from "../model/home-projects";
+import {
+  homeProjectsWithSharedNames,
+  type HomeProjectAvailability,
+} from "../model/home-projects";
 import type { CloningProject } from "../model/root-project";
 import { homeShortcuts } from "../model/shortcuts";
 import { HomeProjectRow } from "./home-project-row";
@@ -31,6 +34,11 @@ interface HomeSidebarProps {
   onActivateContent: () => void;
   /** "Start chat": a new chat with the project in the main area. */
   onStartChat: (project: SpaceInfo) => void;
+  /** The pinned and current objects shown under an expanded project. */
+  projectItems: (
+    project: SpaceInfo,
+    availability: HomeProjectAvailability,
+  ) => ReactNode;
 }
 
 /**
@@ -42,6 +50,7 @@ export function HomeSidebar({
   onBeforeNavigation,
   onActivateContent,
   onStartChat,
+  projectItems,
 }: HomeSidebarProps) {
   const workflow = useRootProjectWorkflow({
     beforeRootOpen: onBeforeNavigation,
@@ -117,6 +126,7 @@ export function HomeSidebar({
               onRemove={(deleteFiles) =>
                 void workflow.handleDeleteProject(project.id, deleteFiles)
               }
+              items={projectItems(project, availability(project))}
             />
           ))}
         </NavigationSidebarGroup>

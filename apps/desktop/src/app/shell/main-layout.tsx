@@ -73,6 +73,7 @@ import { NewSessionSidebarRow } from "./new-session-sidebar-row";
 import { AllProjectsSidebarRow } from "./all-projects-sidebar-row";
 import { useOpenSessionRoutine } from "./open-session-routine";
 import { NowSidebarSection } from "./now-sidebar-section";
+import { HomeProjectItems } from "./home-project-items";
 import { PinnedSidebarSection } from "./pinned-sidebar-section";
 import { useKeepEditedObjects } from "./working-set";
 import { passNavigationGuards } from "./navigation-guards";
@@ -125,7 +126,6 @@ export function MainLayout({ view = "space" }: { view?: ShellView }) {
 function MainLayoutRuntime({ view }: { view: ShellView }) {
   const navigate = useNavigate();
   useKeyboardShortcuts();
-  useProjectWindowRequests();
   useKeepEditedObjects();
   useAppGitFocus();
   const {
@@ -156,6 +156,7 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const mainSurface = useShellStore((state) => state.mainSurface);
   const openContentSurface = useShellStore((state) => state.openContentSurface);
+  useProjectWindowRequests(openContentSurface);
   const openGraphSurface = useShellStore((state) => state.openGraphSurface);
   const sidebarWidth = useShellStore((state) => state.sidebarWidth);
   const setCommandPaletteOpen = useOpenCommandPalette();
@@ -282,6 +283,14 @@ function ShellLayoutContent({
         onBeforeNavigation={onBeforeNavigation}
         onActivateContent={onActivateContent}
         onStartChat={(project) => void startHomeChat(project)}
+        projectItems={(project, availability) => (
+          <HomeProjectItems
+            project={project}
+            availability={availability}
+            onActivateContent={onActivateContent}
+            onBeforeNavigation={onBeforeNavigation}
+          />
+        )}
       />
     ) : (
       <SpaceSidebar

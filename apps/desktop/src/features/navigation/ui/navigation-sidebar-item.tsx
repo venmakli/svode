@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { CircleSlash, Ellipsis, X } from "lucide-react";
+import { CircleSlash, Ellipsis, Pin, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,6 +43,8 @@ interface NavigationSidebarItemProps {
   temporary?: boolean;
   /** Double click keeps a temporary row. */
   onKeep?: () => void;
+  /** A pinned object in a list that mixes it with others. */
+  pinned?: boolean;
 }
 
 /** A row of a navigation section of the sidebar. */
@@ -58,6 +60,7 @@ export function NavigationSidebarItem({
   onClose,
   temporary = false,
   onKeep,
+  pinned = false,
 }: NavigationSidebarItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
@@ -85,6 +88,12 @@ export function NavigationSidebarItem({
               {icon}
             </span>
             <span className="min-w-0 flex-1 truncate">{title}</span>
+            {pinned && (
+              <Pin
+                className="!size-3 shrink-0 text-muted-foreground"
+                aria-label={m.navigation_pinned_item()}
+              />
+            )}
             {status && <span className="sr-only">{status.label}</span>}
             {temporary && (
               <span className="sr-only">{m.navigation_temporary()}</span>
@@ -104,6 +113,7 @@ export function NavigationSidebarItem({
           <span className="font-medium">{title}</span>
           {status && <span>{status.label}</span>}
           {tooltip}
+          {pinned && <span>{m.navigation_pinned_item()}</span>}
           {unavailable && <span>{m.navigation_unavailable()}</span>}
           {temporary && <span>{m.navigation_temporary()}</span>}
         </TooltipContent>
