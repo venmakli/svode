@@ -596,6 +596,7 @@ mod tests {
                 "opencode",
                 "hermes",
                 "pi",
+                "qwen-code",
                 "grok-build",
                 on.id.agent_id().as_str()
             ]

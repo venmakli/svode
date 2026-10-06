@@ -50,7 +50,10 @@ export interface AgentActorApprovalMappingDto {
     | "claude_auto"
     | "claude_bypass_permissions"
     | "hermes_default"
-    | "hermes_accept_edits";
+    | "hermes_accept_edits"
+    | "qwen_default"
+    | "qwen_auto_edit"
+    | "qwen_yolo";
   label: string;
   effectiveBoundary: string;
   danger: boolean;

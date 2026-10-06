@@ -82,6 +82,19 @@ impl ScopeIndex {
     }
 }
 
+/// The project folder and the folders of its Spaces, as the scope index
+/// resolves them; a Space list that cannot be read leaves the project only.
+pub(super) fn project_folders(project: &Path) -> Vec<PathBuf> {
+    let spaces = load_child_spaces(project).unwrap_or_default();
+    std::iter::once(project.to_path_buf())
+        .chain(
+            spaces
+                .iter()
+                .filter_map(|space| normalize_existing_or_lexical(Path::new(&space.path))),
+        )
+        .collect()
+}
+
 pub(super) fn load_child_spaces(project: &Path) -> Result<Vec<SpaceInfo>, AppError> {
     match content_tree::list_child_spaces(project) {
         Ok(spaces) => Ok(spaces),

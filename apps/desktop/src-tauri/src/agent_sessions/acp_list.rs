@@ -3,15 +3,19 @@
 //! lives here; reads run off the list response path. A failed or slow read
 //! leaves the other sources and its own last good list untouched and only
 //! marks its source `stale`; an agent without a live connection keeps its
-//! last good list, since closing an idle connection is normal.
+//! last good list, since closing an idle connection is normal. An agent
+//! whose list covers one directory per request is read for every project
+//! and Space folder whose sessions this process listed.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use svode_agents::catalog::{CatalogConnection, ListedSession, SessionList};
+use svode_agents::registry::AdapterRuntimeRegistry;
 use svode_agents::{AgentRuntime, AgentRuntimeError, ConnectionId};
 use svode_core::agent_adapters::AgentId;
 use tauri::async_runtime::JoinHandle;
@@ -30,6 +34,11 @@ pub(crate) trait CatalogLister: Clone + Send + Sync + 'static {
         &self,
         connection: ConnectionId,
     ) -> impl Future<Output = Result<SessionList, AgentRuntimeError>> + Send;
+    fn list_folder_sessions(
+        &self,
+        connection: ConnectionId,
+        folder: PathBuf,
+    ) -> impl Future<Output = Result<SessionList, AgentRuntimeError>> + Send;
 }
 
 impl CatalogLister for AgentRuntime {
@@ -43,6 +52,15 @@ impl CatalogLister for AgentRuntime {
     ) -> impl Future<Output = Result<SessionList, AgentRuntimeError>> + Send {
         AgentRuntime::list_sessions(self, connection)
     }
+
+    fn list_folder_sessions(
+        &self,
+        connection: ConnectionId,
+        folder: PathBuf,
+    ) -> impl Future<Output = Result<SessionList, AgentRuntimeError>> + Send {
+        let runtime = self.clone();
+        async move { runtime.list_folder_sessions(connection, &folder).await }
+    }
 }
 
 #[derive(Default)]
@@ -51,6 +69,8 @@ pub(crate) struct AcpListSources {
     /// Removed agents: neither read nor shown, even while a connection of
     /// theirs is still open or a read of theirs ends.
     forgotten: Mutex<HashSet<String>>,
+    /// The project and Space folders whose sessions this process listed.
+    folders: Mutex<BTreeSet<PathBuf>>,
 }
 
 #[derive(Default)]
@@ -109,6 +129,12 @@ impl AcpListSources {
             .collect()
     }
 
+    /// The folders of a listed project: an agent whose list covers one
+    /// directory per request is read for each of them from now on.
+    pub(crate) fn add_folders(&self, folders: impl IntoIterator<Item = PathBuf>) {
+        self.folders.lock().unwrap().extend(folders);
+    }
+
     /// Reads one agent's list again after the runtime's own work changed it.
     pub(crate) fn refresh_agent(
         self: &Arc<Self>,
@@ -141,10 +167,15 @@ impl AcpListSources {
         only: Option<&str>,
     ) -> Vec<JoinHandle<()>> {
         let connections = lister.catalog_connections();
+        let folders = self.folders.lock().unwrap().clone();
         let mut agents = self.agents.lock().unwrap();
         let mut reads = Vec::new();
         for CatalogConnection { connection, agent } in connections {
             if only.is_some_and(|only| only != agent) || self.is_forgotten(&agent) {
+                continue;
+            }
+            let by_folder = lists_by_folder(&agent);
+            if by_folder && folders.is_empty() {
                 continue;
             }
             let list = agents.entry(agent.clone()).or_default();
@@ -154,9 +185,13 @@ impl AcpListSources {
             list.reading = true;
             let sources = self.clone();
             let lister = lister.clone();
+            let folders = by_folder.then(|| folders.clone());
             reads.push(tauri::async_runtime::spawn(async move {
                 let started = Instant::now();
-                let result = lister.list_sessions(connection).await;
+                let result = match folders {
+                    Some(folders) => list_folders(&lister, connection, folders).await,
+                    None => lister.list_sessions(connection).await,
+                };
                 sources.apply(&agent, result, started.elapsed().as_millis());
             }));
         }
@@ -206,6 +241,29 @@ impl AcpListSources {
         reads.sort_by(|left, right| left.source.cmp(&right.source));
         reads
     }
+}
+
+fn lists_by_folder(agent: &str) -> bool {
+    session_source(agent)
+        .and_then(|source| source.builtin())
+        .is_some_and(|agent| AdapterRuntimeRegistry.lists_by_folder(agent))
+}
+
+/// One list of the folders' lists; a failed folder fails the read, so the
+/// last good list stays.
+async fn list_folders(
+    lister: &impl CatalogLister,
+    connection: ConnectionId,
+    folders: BTreeSet<PathBuf>,
+) -> Result<SessionList, AgentRuntimeError> {
+    let mut list = SessionList::default();
+    for folder in folders {
+        let read = lister.list_folder_sessions(connection, folder).await?;
+        list.sessions.extend(read.sessions);
+        list.truncated |= read.truncated;
+        list.skipped += read.skipped;
+    }
+    Ok(list)
 }
 
 /// Any agent with a session list is a Sessions source under its own id,
@@ -299,6 +357,8 @@ mod tests {
     pub(crate) struct FakeLister {
         pub connections: Arc<Mutex<Vec<CatalogConnection>>>,
         pub results: Arc<Mutex<HashMap<String, Result<SessionList, AgentRuntimeError>>>>,
+        pub folder_results: Arc<Mutex<HashMap<PathBuf, Result<SessionList, AgentRuntimeError>>>>,
+        pub folder_calls: Arc<Mutex<Vec<PathBuf>>>,
         pub calls: Arc<AtomicUsize>,
         pub gate: Option<Arc<Notify>>,
     }
@@ -339,6 +399,18 @@ mod tests {
                     .map(|known| known.agent.clone())
                     .unwrap();
                 this.results.lock().unwrap()[&agent].clone()
+            }
+        }
+
+        fn list_folder_sessions(
+            &self,
+            _connection: ConnectionId,
+            folder: PathBuf,
+        ) -> impl Future<Output = Result<SessionList, AgentRuntimeError>> + Send {
+            let this = self.clone();
+            async move {
+                this.folder_calls.lock().unwrap().push(folder.clone());
+                this.folder_results.lock().unwrap()[&folder].clone()
             }
         }
     }
@@ -460,6 +532,53 @@ mod tests {
         assert_eq!(read.report.status, AgentSessionSourceStatus::Ok);
         assert_eq!(read.sessions.len(), 1);
         assert_eq!(lister.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn an_agent_listing_by_folder_is_read_for_every_listed_project_folder() {
+        let sources = Arc::new(AcpListSources::default());
+        let lister = FakeLister::default();
+        lister.connect("qwen-code", Ok(list_of(Vec::new())));
+        assert!(
+            sources.refresh(&lister).is_empty(),
+            "no folder is listed yet"
+        );
+
+        let (project, space) = (PathBuf::from("/p"), PathBuf::from("/p/space"));
+        lister.folder_results.lock().unwrap().extend([
+            (
+                project.clone(),
+                Ok(list_of(vec![listed("qwen-code", "q1", "/p", true)])),
+            ),
+            (
+                space.clone(),
+                Ok(list_of(vec![listed("qwen-code", "q2", "/p/space", true)])),
+            ),
+        ]);
+        sources.add_folders([project.clone(), space.clone()]);
+        settle(sources.refresh(&lister)).await;
+        assert_eq!(
+            *lister.folder_calls.lock().unwrap(),
+            [project, space.clone()]
+        );
+        assert_eq!(
+            lister.calls.load(Ordering::Relaxed),
+            0,
+            "never the whole list"
+        );
+        let read = &sources.reads()[0];
+        assert_eq!(read.report.status, AgentSessionSourceStatus::Ok);
+        assert_eq!(read.sessions.len(), 2);
+
+        lister
+            .folder_results
+            .lock()
+            .unwrap()
+            .insert(space, Err(AgentRuntimeError::Timeout));
+        settle(sources.refresh(&lister)).await;
+        let read = &sources.reads()[0];
+        assert_eq!(read.report.status, AgentSessionSourceStatus::Stale);
+        assert_eq!(read.sessions.len(), 2, "last good list survives");
     }
 
     #[tokio::test]

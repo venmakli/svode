@@ -370,6 +370,7 @@ fn an_open_collection_keeps_the_agents_whose_acp_list_is_their_catalogue() {
             "opencode",
             "hermes",
             "pi",
+            "qwen-code",
             "grok-build"
         ]
     );
@@ -414,6 +415,11 @@ async fn live_the_acp_lists_are_the_catalogue_with_native_status() {
     let runtime = AgentRuntime::default();
     let connections = Arc::new(AgentConnections::new(runtime.clone(), setup));
     let state = crate::agent_sessions::AgentSessionsState::new();
+    // As the list commands do: an agent listing by folder reads these.
+    let root = crate::agent_sessions::scope::normalize_project_path(&project).unwrap();
+    state
+        .acp_lists
+        .add_folders(crate::agent_sessions::scope::project_folders(&root));
 
     connections.hold_catalog("live");
     let started = std::time::Instant::now();

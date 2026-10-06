@@ -26,6 +26,9 @@ pub async fn agent_sessions_list(
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
     crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
+    state
+        .acp_lists
+        .add_folders(super::scope::project_folders(&root));
     // Off the response path: this read shows the last good lists.
     state.acp_lists.refresh(agent_runtime.runtime());
     let state = state.inner().clone();
@@ -95,6 +98,9 @@ pub async fn agent_sessions_refresh(
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
     crate::git::delivery::repair_scope_best_effort(&app, &root, &root).await;
+    state
+        .acp_lists
+        .add_folders(super::scope::project_folders(&root));
     // Off the response path: this read shows the last good lists.
     state.acp_lists.refresh(agent_runtime.runtime());
     let state = state.inner().clone();

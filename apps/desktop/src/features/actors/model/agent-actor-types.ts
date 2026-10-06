@@ -72,7 +72,10 @@ export interface AgentActorApprovalMapping {
     | "claude_auto"
     | "claude_bypass_permissions"
     | "hermes_default"
-    | "hermes_accept_edits";
+    | "hermes_accept_edits"
+    | "qwen_default"
+    | "qwen_auto_edit"
+    | "qwen_yolo";
   requested: AgentActorApprovalMode;
 }
 

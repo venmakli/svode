@@ -117,13 +117,18 @@ pub(crate) fn set_mode_request(session_id: &str, mode: &str) -> Value {
     json!({ "sessionId": session_id, "modeId": mode })
 }
 
-/// Params of one `session/list` page. No `cwd` filter: its semantics per
+/// Params of one `session/list` page. The `cwd` filter only for an agent
+/// whose list covers one directory per request; otherwise its semantics per
 /// agent are unconfirmed, so the host's scope resolver decides.
-pub(crate) fn list_request(cursor: Option<&str>) -> Value {
-    match cursor {
-        Some(cursor) => json!({ "cursor": cursor }),
-        None => json!({}),
+pub(crate) fn list_request(cursor: Option<&str>, cwd: Option<&Path>) -> Value {
+    let mut params = json!({});
+    if let Some(cursor) = cursor {
+        params["cursor"] = json!(cursor);
     }
+    if let Some(cwd) = cwd {
+        params["cwd"] = json!(cwd);
+    }
+    params
 }
 
 pub(crate) fn list_page(response: Value) -> Result<ListPage, String> {

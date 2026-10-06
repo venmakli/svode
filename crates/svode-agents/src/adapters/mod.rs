@@ -91,8 +91,8 @@ pub struct CliVersionRange {
 /// pinned `codex-acp` declares. opencode, Cursor and pi: the version checked
 /// live in slice 3.2 (2026-10-03), the only one verified with their
 /// entrypoint; Hermes: its release date checked live in slice 3.3; Grok
-/// Build: the version checked live in slice 3.5. `None` until the agent's
-/// range is verified.
+/// Build and Qwen Code: the version checked live in slice 3.5. `None` until
+/// the agent's range is verified.
 pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
     match agent {
         AgentAdapterKind::ClaudeCode => Some(CliVersionRange {
@@ -125,6 +125,11 @@ pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
         AgentAdapterKind::GrokBuild => Some(CliVersionRange {
             minimum: "1.0.46",
             tested_up_to: "1.0.46",
+        }),
+        // `qwen --version` prints `0.24.7`.
+        AgentAdapterKind::QwenCode => Some(CliVersionRange {
+            minimum: "0.24.7",
+            tested_up_to: "0.24.7",
         }),
         _ => None,
     }

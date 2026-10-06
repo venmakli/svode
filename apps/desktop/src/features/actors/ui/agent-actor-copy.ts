@@ -42,6 +42,12 @@ export function agentActorEffectiveBoundary(
       return m.agent_actors_boundary_hermes_default();
     case "hermes_accept_edits":
       return m.agent_actors_boundary_hermes_accept_edits();
+    case "qwen_default":
+      return m.agent_actors_boundary_qwen_default();
+    case "qwen_auto_edit":
+      return m.agent_actors_boundary_qwen_auto_edit();
+    case "qwen_yolo":
+      return m.agent_actors_boundary_qwen_yolo();
   }
 }
 

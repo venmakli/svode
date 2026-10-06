@@ -36,6 +36,14 @@ const hermes: AgentActorAdapterDescriptor = {
   modelOptions: [clientDefault],
 };
 
+const qwen: AgentActorAdapterDescriptor = {
+  defaultEffortLabel: "Client default",
+  defaultModelLabel: "Client default",
+  id: "qwen-code",
+  label: "Qwen Code",
+  modelOptions: [clientDefault],
+};
+
 const isolatedCardDomProcess =
   process.env.SVODE_AGENT_ADAPTER_CARD_DOM_PROCESS === "1";
 
@@ -83,6 +91,29 @@ if (!isolatedCardDomProcess) {
       ).toBeNull();
     } finally {
       await harness.cleanup();
+    }
+  });
+
+  test("each Qwen Code mode shows its boundary in ru", async () => {
+    for (const [native, requested, boundary] of [
+      ["qwen_default", "ask", "спрашивает перед правкой файлов и командами shell"],
+      ["qwen_auto_edit", "auto", "правит файлы без вопроса"],
+      ["qwen_yolo", "full", "одобряет все вызовы инструментов без вопроса"],
+    ] as const) {
+      const harness = await renderCard({
+        approvalMapping: mapping(native, requested),
+        approvalMode: requested,
+        binding: binding("qwen-code"),
+        descriptor: qwen,
+        effortOptions: [clientDefault],
+        locale: "ru",
+      });
+      try {
+        expect(harness.labels()).toEqual([]);
+        expect(harness.text().includes(`Qwen Code ${boundary}`)).toBe(true);
+      } finally {
+        await harness.cleanup();
+      }
     }
   });
 

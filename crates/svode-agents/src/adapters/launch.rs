@@ -446,14 +446,14 @@ mod tests {
         );
         // A described agent that is not found stays missing, an undescribed
         // one is not supported.
-        executable(bin.path(), "qwen");
+        executable(bin.path(), "kimi");
         assert_eq!(
             store
                 .launch_plan(
-                    AgentAdapterKind::QwenCode,
+                    AgentAdapterKind::KimiCode,
                     None,
                     &context(bin.path()),
-                    &opencode("0.24.7"),
+                    &opencode("2.1.1"),
                 )
                 .await
                 .unwrap_err(),

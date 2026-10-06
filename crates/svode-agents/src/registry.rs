@@ -191,6 +191,9 @@ pub enum NativeApprovalMode {
     ClaudeBypassPermissions,
     HermesDefault,
     HermesAcceptEdits,
+    QwenDefault,
+    QwenAutoEdit,
+    QwenYolo,
 }
 
 impl NativeApprovalMode {
@@ -206,6 +209,9 @@ impl NativeApprovalMode {
             Self::ClaudeBypassPermissions => "bypassPermissions",
             Self::HermesDefault => "default",
             Self::HermesAcceptEdits => "accept_edits",
+            Self::QwenDefault => "default",
+            Self::QwenAutoEdit => "auto-edit",
+            Self::QwenYolo => "yolo",
         }
     }
 
@@ -233,7 +239,11 @@ impl NativeApprovalMode {
             Self::ClaudeDefault => &["--permission-mode", "default"],
             Self::ClaudeAuto => &["--permission-mode", "auto"],
             Self::ClaudeBypassPermissions => &["--permission-mode", "bypassPermissions"],
-            Self::HermesDefault | Self::HermesAcceptEdits => return None,
+            Self::HermesDefault
+            | Self::HermesAcceptEdits
+            | Self::QwenDefault
+            | Self::QwenAutoEdit
+            | Self::QwenYolo => return None,
         };
         Some(argv.iter().map(|arg| arg.to_string()).collect())
     }
@@ -718,6 +728,9 @@ impl AdapterRuntimeRegistry {
                     args: &["agent", "stdio"],
                 });
             }
+            AgentAdapterKind::QwenCode => {
+                return Some(AcpEntrypoint::Command { args: &["--acp"] });
+            }
             _ => return None,
         };
         Some(AcpEntrypoint::Adapter {
@@ -734,7 +747,8 @@ impl AdapterRuntimeRegistry {
     /// opencode and pi cover their terminal sessions; the list of Cursor
     /// has only the sessions its ACP entrypoint created. Slice 3.3: so has
     /// the list of Hermes, its CLI and desktop sessions stay out. Slice
-    /// 3.5: the list of Grok Build covers its terminal sessions.
+    /// 3.5: the lists of Grok Build and Qwen Code cover their terminal
+    /// sessions.
     pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
@@ -745,7 +759,16 @@ impl AdapterRuntimeRegistry {
                 | AgentAdapterKind::Hermes
                 | AgentAdapterKind::Pi
                 | AgentAdapterKind::GrokBuild
+                | AgentAdapterKind::QwenCode
         )
+    }
+
+    /// Whether the agent's `session/list` covers one directory per request:
+    /// the `cwd` it is given, else the directory its process runs in. Slice
+    /// 3.5: Qwen Code keeps its sessions by exact directory, so its
+    /// catalogue is read per project and Space folder.
+    pub fn lists_by_folder(&self, adapter: AgentAdapterKind) -> bool {
+        adapter == AgentAdapterKind::QwenCode
     }
 
     /// Whether the agent's ACP `sessionId` is its native session id. E01:
@@ -756,7 +779,9 @@ impl AdapterRuntimeRegistry {
     /// Slice 3.3: an ACP session of Hermes is its `state.db` session, which
     /// `hermes --resume` continues. Slice 3.5: an ACP session of Grok Build
     /// is its session under `~/.grok/sessions`, which `grok --resume`
-    /// continues, and its terminal sessions are listed by their ids.
+    /// continues, and its terminal sessions are listed by their ids. So is
+    /// a session of Qwen Code under `~/.qwen/projects`, which `qwen
+    /// --resume` continues.
     pub fn acp_id_is_native(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
@@ -766,6 +791,7 @@ impl AdapterRuntimeRegistry {
                 | AgentAdapterKind::Hermes
                 | AgentAdapterKind::Pi
                 | AgentAdapterKind::GrokBuild
+                | AgentAdapterKind::QwenCode
         )
     }
 
@@ -809,7 +835,7 @@ impl AdapterRuntimeRegistry {
             lists_catalog: self.lists_catalog(adapter),
             // E01, slices 3.2, 3.3 and 3.5: load and close of these agents
             // change their store at most in service records, which Svode
-            // accepts.
+            // accepts; Qwen Code leaves it unchanged.
             read_only_open: true,
             writer_refusal: match adapter {
                 AgentAdapterKind::Codex => Some("thread_active_writer".into()),
@@ -835,7 +861,7 @@ impl AdapterRuntimeRegistry {
     /// --session` and `pi --session` continue the same session; Cursor
     /// has no such command for its ACP sessions, its `--resume` with such
     /// an id starts an empty chat. Slice 3.3: `hermes --resume`. Slice 3.5:
-    /// `grok --resume`.
+    /// `grok --resume` and `qwen --resume`.
     pub fn terminal_resume_args(
         &self,
         adapter: AgentAdapterKind,
@@ -845,7 +871,8 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Codex => "resume",
             AgentAdapterKind::ClaudeCode
             | AgentAdapterKind::Hermes
-            | AgentAdapterKind::GrokBuild => "--resume",
+            | AgentAdapterKind::GrokBuild
+            | AgentAdapterKind::QwenCode => "--resume",
             AgentAdapterKind::Opencode | AgentAdapterKind::Pi => "--session",
             _ => return None,
         };
@@ -904,13 +931,14 @@ impl AdapterRuntimeRegistry {
     /// opencode: the same with opencode 2.0.22 (slice 3.2). Cursor
     /// 2026.10.01 and pi 1.0.0 with `pi-acp` 0.0.34: limited (slice 3.2).
     /// Hermes 2026.9.24: limited, it lists only its ACP sessions (slice 3.3).
-    /// Grok Build 1.0.46: supported (slice 3.5).
+    /// Grok Build 1.0.46 and Qwen Code 0.24.7: supported (slice 3.5).
     pub fn verdict(&self, adapter: AgentAdapterKind) -> AgentVerdict {
         match adapter {
             AgentAdapterKind::Codex
             | AgentAdapterKind::ClaudeCode
             | AgentAdapterKind::Opencode
-            | AgentAdapterKind::GrokBuild => AgentVerdict::Supported,
+            | AgentAdapterKind::GrokBuild
+            | AgentAdapterKind::QwenCode => AgentVerdict::Supported,
             AgentAdapterKind::Cursor => AgentVerdict::Limited {
                 restrictions: &[
                     AgentRestriction::ExternalSessionsUnlisted,
@@ -937,7 +965,9 @@ impl AdapterRuntimeRegistry {
     /// signs in from its own terminal UI (`/login`), as its `pi-acp` terminal
     /// auth method does. Slice 3.3: `hermes acp --setup`, the Hermes
     /// terminal auth method `hermes-setup`. Slice 3.5: `grok login`; Grok
-    /// Build declares no terminal auth method.
+    /// Build declares no terminal auth method. `qwen --auth-type=openai`,
+    /// the Qwen Code terminal auth method `openai`, opens its provider
+    /// dialog.
     pub fn sign_in_arguments(&self, adapter: AgentAdapterKind) -> Option<Vec<String>> {
         match adapter {
             AgentAdapterKind::Codex | AgentAdapterKind::Cursor | AgentAdapterKind::GrokBuild => {
@@ -948,6 +978,7 @@ impl AdapterRuntimeRegistry {
             }
             AgentAdapterKind::Pi => Some(Vec::new()),
             AgentAdapterKind::Hermes => Some(vec!["acp".into(), "--setup".into()]),
+            AgentAdapterKind::QwenCode => Some(vec!["--auth-type=openai".into()]),
             _ => None,
         }
     }
@@ -1083,7 +1114,7 @@ fn descriptor(id: AgentAdapterKind) -> Option<AdapterRuntimeDescriptor> {
             ]
             .as_slice(),
         ),
-        AgentAdapterKind::Hermes => (id.display_name(), [].as_slice()),
+        AgentAdapterKind::Hermes | AgentAdapterKind::QwenCode => (id.display_name(), [].as_slice()),
         _ => return None,
     };
     Some(AdapterRuntimeDescriptor {
@@ -1333,6 +1364,9 @@ fn acp_launch_settings(
 /// `accept_edits` and `dont_ask`, which set only its file edit approvals;
 /// its command approvals follow its own `approvals` config. Slice 3.7, the
 /// user's decision: `auto` is `accept_edits`, `full` has no equivalent.
+/// Slice 3.5 live on Qwen Code 0.24.7: config option `mode` with `plan`,
+/// `default`, `auto-edit`, `auto` and `yolo`; the user's decision: `ask` is
+/// `default`, `auto` is `auto-edit`, `full` is `yolo`.
 fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<ApprovalMapping> {
     Some(match (adapter, mode) {
         (AgentAdapterKind::Codex, ApprovalMode::Ask) => ApprovalMapping {
@@ -1390,6 +1424,27 @@ fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<App
             label: "Accept edits".into(),
             effective_boundary: "Hermes allows edits in the workspace and temporary directories and still asks for sensitive paths; its command approvals follow its own approvals setting.".into(),
             danger: false,
+        },
+        (AgentAdapterKind::QwenCode, ApprovalMode::Ask) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::QwenDefault,
+            label: "Ask".into(),
+            effective_boundary: "Qwen Code asks before file edits and shell commands.".into(),
+            danger: false,
+        },
+        (AgentAdapterKind::QwenCode, ApprovalMode::Auto) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::QwenAutoEdit,
+            label: "Auto-edit".into(),
+            effective_boundary: "Qwen Code edits files without asking and still asks before shell commands.".into(),
+            danger: false,
+        },
+        (AgentAdapterKind::QwenCode, ApprovalMode::Full) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::QwenYolo,
+            label: "Full access".into(),
+            effective_boundary: "Qwen Code approves every tool call without asking.".into(),
+            danger: true,
         },
         _ => return None,
     })
@@ -1511,7 +1566,7 @@ mod tests {
     fn descriptors_and_unknown_selectors_are_fail_closed_without_mutation() {
         let registry = AdapterRuntimeRegistry;
         let descriptors = registry.descriptors();
-        assert_eq!(descriptors.len(), 3);
+        assert_eq!(descriptors.len(), 4);
         assert_eq!(descriptors[0].model_options[0].value, None);
         assert_eq!(
             descriptors[0].model_options[1].value.as_deref(),
@@ -1803,9 +1858,13 @@ mod tests {
         let claude = registry
             .approval_mapping(&AgentAdapterKind::ClaudeCode.id(), ApprovalMode::Full)
             .unwrap();
+        let qwen = registry
+            .approval_mapping(&AgentAdapterKind::QwenCode.id(), ApprovalMode::Full)
+            .unwrap();
         assert_eq!(codex.native, NativeApprovalMode::CodexFullAccess);
         assert_eq!(claude.native, NativeApprovalMode::ClaudeBypassPermissions);
-        assert!(codex.danger && claude.danger);
+        assert_eq!(qwen.native, NativeApprovalMode::QwenYolo);
+        assert!(codex.danger && claude.danger && qwen.danger);
     }
 
     #[test]
@@ -1832,6 +1891,9 @@ mod tests {
             ),
             (AgentAdapterKind::Hermes, ApprovalMode::Ask, "default"),
             (AgentAdapterKind::Hermes, ApprovalMode::Auto, "accept_edits"),
+            (AgentAdapterKind::QwenCode, ApprovalMode::Ask, "default"),
+            (AgentAdapterKind::QwenCode, ApprovalMode::Auto, "auto-edit"),
+            (AgentAdapterKind::QwenCode, ApprovalMode::Full, "yolo"),
         ] {
             assert_eq!(
                 registry.acp_approval(adapter, mode),
@@ -2097,7 +2159,8 @@ mod tests {
             [
                 AgentAdapterKind::Codex,
                 AgentAdapterKind::ClaudeCode,
-                AgentAdapterKind::Hermes
+                AgentAdapterKind::Hermes,
+                AgentAdapterKind::QwenCode
             ]
         );
         let future = AgentAdapter {
@@ -2174,9 +2237,10 @@ mod tests {
     #[test]
     fn an_agent_without_a_description_has_no_entrypoint_or_catalogue() {
         let registry = AdapterRuntimeRegistry;
-        let agent = AgentAdapterKind::QwenCode;
+        let agent = AgentAdapterKind::KimiCode;
         assert_eq!(registry.acp_entrypoint(agent), None);
         assert!(!registry.lists_catalog(agent));
+        assert!(!registry.lists_by_folder(agent));
         assert!(!registry.acp_id_is_native(agent));
         assert_eq!(registry.terminal_resume_args(agent, "s1"), None);
         assert_eq!(registry.native_session_log(agent), None);
@@ -2481,6 +2545,65 @@ mod tests {
             AdapterRuntimeRegistry.sign_in_arguments(agent),
             Some(vec!["login".to_string()])
         );
+    }
+
+    #[test]
+    fn qwen_code_runs_its_acp_flag_with_native_ids_listed_by_folder() {
+        let agent = AgentAdapterKind::QwenCode;
+        let launch = AdapterRuntimeRegistry
+            .acp_launch(agent, Path::new("/bin/qwen"), None, Path::new("/home"))
+            .unwrap();
+        assert_eq!(launch.program, PathBuf::from("/bin/qwen"));
+        assert_eq!(launch.args, ["--acp"]);
+        assert!(launch.env.is_empty());
+        assert!(launch.lists_catalog);
+        assert!(AdapterRuntimeRegistry.lists_by_folder(agent));
+        assert!(!AdapterRuntimeRegistry.lists_by_folder(AgentAdapterKind::GrokBuild));
+        assert!(launch.acp_id_is_native);
+        assert!(launch.read_only_open);
+        assert_eq!(launch.writer_refusal, None);
+        assert!(!launch.session_per_connection);
+        assert!(!launch.draft_session);
+        assert_eq!(
+            AdapterRuntimeRegistry.terminal_resume_args(agent, "s1"),
+            Some(vec!["--resume".to_string(), "s1".to_string()])
+        );
+        assert_eq!(
+            AdapterRuntimeRegistry.verdict(agent),
+            AgentVerdict::Supported
+        );
+        assert_eq!(
+            AdapterRuntimeRegistry.sign_in_arguments(agent),
+            Some(vec!["--auth-type=openai".to_string()])
+        );
+    }
+
+    #[test]
+    fn qwen_code_runs_an_actor_over_acp_only_with_native_model() {
+        let registry = AdapterRuntimeRegistry;
+        let qwen = binding(AgentAdapterKind::QwenCode, None, None);
+        assert_eq!(
+            registry.validate_binding(&qwen).status,
+            BindingValidationStatus::Valid
+        );
+        let with_model = binding(AgentAdapterKind::QwenCode, Some("qwen3-coder"), None);
+        assert_eq!(
+            registry.validate_binding(&with_model).issues[0].code,
+            "unknown_model_selector"
+        );
+        for (mode, value) in [
+            (ApprovalMode::Ask, "default"),
+            (ApprovalMode::Auto, "auto-edit"),
+            (ApprovalMode::Full, "yolo"),
+        ] {
+            assert!(!registry.has_terminal_launch(&qwen.adapter, mode));
+            assert_eq!(
+                registry.launch_transport(&qwen, mode, Ok(())),
+                LaunchTransport::Acp {
+                    settings: vec![setting("mode", value)],
+                }
+            );
+        }
     }
 
     #[tokio::test]

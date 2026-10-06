@@ -1801,6 +1801,40 @@ fn list_runtime(list: ListBounds) -> AgentRuntime {
 }
 
 #[tokio::test]
+async fn a_folder_list_sends_its_cwd_on_every_page() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &listing("qwen-code"));
+    let (list, ()) = tokio::join!(
+        runtime.list_folder_sessions(id, Path::new("/work/app")),
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "list": {} } }))
+                .await;
+            let first = agent.expect("session/list").await;
+            assert_eq!(first["params"], json!({ "cwd": "/work/app" }));
+            agent
+                .reply(
+                    &first,
+                    json!({ "sessions": [listed_entry("s1", "/work/app")], "nextCursor": "p2" }),
+                )
+                .await;
+            let second = agent.expect("session/list").await;
+            assert_eq!(
+                second["params"],
+                json!({ "cursor": "p2", "cwd": "/work/app" })
+            );
+            agent
+                .reply(
+                    &second,
+                    json!({ "sessions": [listed_entry("s2", "/work/app")] }),
+                )
+                .await;
+        }
+    );
+    assert_eq!(list.unwrap().sessions.len(), 2);
+}
+
+#[tokio::test]
 async fn the_session_list_reads_every_page_into_bounded_entries_without_status() {
     let runtime = AgentRuntime::default();
     let (id, mut agent) = attached_with(&runtime, &listing("hermes"));

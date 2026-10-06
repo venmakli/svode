@@ -650,6 +650,24 @@ impl AgentRuntime {
     /// bounds. The read shares the connection's error model: a failure or
     /// timeout degrades the connection, a lost peer closes it.
     pub async fn list_sessions(&self, id: ConnectionId) -> Result<SessionList, AgentRuntimeError> {
+        self.read_list(id, None).await
+    }
+
+    /// The same read with the `cwd` filter, for an agent whose list covers
+    /// one directory per request (`AdapterRuntimeRegistry::lists_by_folder`).
+    pub async fn list_folder_sessions(
+        &self,
+        id: ConnectionId,
+        folder: &Path,
+    ) -> Result<SessionList, AgentRuntimeError> {
+        self.read_list(id, Some(folder)).await
+    }
+
+    async fn read_list(
+        &self,
+        id: ConnectionId,
+        folder: Option<&Path>,
+    ) -> Result<SessionList, AgentRuntimeError> {
         let connection = self.connection(id)?;
         connection.require_open()?;
         if connection.info.lock().unwrap().is_none() {
@@ -679,7 +697,7 @@ impl AgentRuntime {
             let response = connection
                 .call(
                     acp::SESSION_LIST,
-                    acp::list_request(cursor.as_deref()),
+                    acp::list_request(cursor.as_deref(), folder),
                     Some(remaining),
                 )
                 .await?;
