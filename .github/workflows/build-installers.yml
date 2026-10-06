@@ -40,6 +40,7 @@ jobs:
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      installed: ${{ steps.matrix.outputs.installed }}
     steps:
       - id: matrix
         shell: bash
@@ -49,15 +50,22 @@ jobs:
           linux='{"include":[{"platform":"ubuntu-22.04","feed_platform":"linux","args":"--bundles deb","artifact_name":"Svode-linux-deb","artifact_path":"target/release/bundle/deb/*.deb"}]}'
           all='{"include":[{"platform":"macos-latest","feed_platform":"darwin","args":"--target universal-apple-darwin --bundles dmg","artifact_name":"Svode-macos-dmg","artifact_path":"target/universal-apple-darwin/release/bundle/dmg/*.dmg"},{"platform":"ubuntu-22.04","feed_platform":"linux","args":"--bundles deb","artifact_name":"Svode-linux-deb","artifact_path":"target/release/bundle/deb/*.deb"},{"platform":"windows-latest","feed_platform":"windows","args":"--bundles nsis","artifact_name":"Svode-windows-nsis","artifact_path":"target/release/bundle/nsis/*.exe"}]}'
 
+          windows_installed='{"include":[{"platform":"windows-latest","artifact_name":"Svode-windows-nsis"}]}'
+          linux_installed='{"include":[{"platform":"ubuntu-22.04","artifact_name":"Svode-linux-deb"}]}'
+          all_installed='{"include":[{"platform":"ubuntu-22.04","artifact_name":"Svode-linux-deb"},{"platform":"windows-latest","artifact_name":"Svode-windows-nsis"}]}'
+
           case "${{ inputs.platform }}" in
-            windows) matrix="$windows" ;;
-            macos) matrix="$macos" ;;
-            linux) matrix="$linux" ;;
-            all) matrix="$all" ;;
+            windows) matrix="$windows"; installed="$windows_installed" ;;
+            macos) matrix="$macos"; installed="" ;;
+            linux) matrix="$linux"; installed="$linux_installed" ;;
+            all) matrix="$all"; installed="$all_installed" ;;
             *) echo "Unsupported platform: ${{ inputs.platform }}" >&2; exit 1 ;;
           esac
 
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          {
+            echo "matrix=$matrix"
+            echo "installed=$installed"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     needs: select-matrix
@@ -187,3 +195,96 @@ jobs:
           UPDATE_PUBLISHED_AT: ${{ steps.feed_meta.outputs.published_at }}
           UPDATE_EXPIRES_AT: ${{ steps.feed_meta.outputs.expires_at }}
         run: node scripts/update-dogfood-feed.mjs
+
+  installed:
+    # The speech process of the installed package on the OSes checked without
+    # a live device (Stage 10 `06`): the NSIS installer runs silently on a
+    # runner without the Vulkan SDK, the .deb goes with its declared
+    # dependencies only into clean Ubuntu containers. The installed
+    # svode-speech then installs the compact catalog model from a local file
+    # with its SHA-256 checked, prepares it and recognizes the reference
+    # recording on the CPU, since the runners have no GPU.
+    needs:
+      - select-matrix
+      - build
+    if: needs.select-matrix.outputs.installed != ''
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select-matrix.outputs.installed) }}
+    runs-on: ${{ matrix.platform }}
+    env:
+      SVODE_SPEECH_EXPECT_BACKEND: cpu
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: speech-installed
+
+      # The host library only, without the engine: what runs the engine is
+      # the installed package.
+      - name: Build the check of the installed speech process
+        run: cargo build --release -p svode-speech --no-default-features --example installed
+
+      - name: Restore the speech test model
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/speech-test
+          key: speech-test-model-${{ hashFiles('scripts/fetch-speech-test-model.mjs') }}
+
+      - name: Speech test model
+        shell: bash
+        env:
+          SVODE_SPEECH_TEST_MODEL: ${{ runner.temp }}/speech-test/whisper-tiny-Q8_0.gguf
+        run: echo "SVODE_SPEECH_TEST_MODEL=$(node scripts/fetch-speech-test-model.mjs)" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: installer
+
+      - name: The .deb installs into clean containers and its speech process recognizes on the CPU
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          model_dir="$(dirname "$SVODE_SPEECH_TEST_MODEL")"
+          model_file="$(basename "$SVODE_SPEECH_TEST_MODEL")"
+          for image in ubuntu:22.04 ubuntu:24.04; do
+            echo "::group::$image"
+            docker run --rm \
+              -v "$PWD/installer:/installer:ro" \
+              -v "$PWD/target/release/examples:/check:ro" \
+              -v "$model_dir:/model:ro" \
+              -e SVODE_SPEECH_EXPECT_BACKEND \
+              -e DEBIAN_FRONTEND=noninteractive \
+              "$image" bash -euo pipefail -c "
+                apt-get update -qq
+                apt-get install -y -qq --no-install-recommends /installer/*.deb
+                ldd /usr/bin/svode-speech
+                if ldd /usr/bin/svode-speech | grep -q 'not found'; then exit 1; fi
+                ls /usr/lib/Svode/speech
+                /check/installed /usr/bin/svode-speech /model/$model_file
+              "
+            echo "::endgroup::"
+          done
+
+      - name: The NSIS installer installs silently and its speech process recognizes on the CPU
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem installer -Filter *-setup.exe | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP 'Svode'
+          # /D sets the install directory and must come last, unquoted.
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$dir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "NSIS install failed ($($process.ExitCode))" }
+          Get-ChildItem $dir | Select-Object -ExpandProperty Name
+          Write-Output "Vulkan loader present: $(Test-Path "$env:SystemRoot\System32\vulkan-1.dll")"
+          $speech = Join-Path $dir 'svode-speech.exe'
+          if (-not (Test-Path $speech)) { throw "the installed package has no svode-speech.exe" }
+          & target\release\examples\installed.exe $speech $env:SVODE_SPEECH_TEST_MODEL
+          if ($LASTEXITCODE -ne 0) { throw "the installed speech process check failed" }
