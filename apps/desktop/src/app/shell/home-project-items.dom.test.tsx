@@ -295,14 +295,12 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
   test("an inactive project lists its pins, then active sessions and kept objects, each once", async () => {
     reset({ "/projects/notes": notes() });
     await render("notes");
+    // A pinned row names its pin; the mark shows in the badge slot.
     expect(rows()).toEqual([
-      "roadmap.md",
+      `roadmap.md${m.navigation_pinned_item()}`,
       `Work${m.sessions_status_running()}`,
       "plan.md",
     ]);
-    const pinMark = `[aria-label='${m.navigation_pinned_item()}']`;
-    expect(row("roadmap.md").querySelector(pinMark) === null).toBe(false);
-    expect(row("plan.md").querySelector(pinMark)).toBeNull();
     // The project is read apart from its runtime: no full catalog read.
     const names = commands.map(([command]) => command);
     expect(names.includes("navigation_read")).toBe(true);

@@ -22,8 +22,9 @@ interface NavigationSidebarItemProps {
   /** Type icon of the object. */
   icon: ReactNode;
   /**
-   * Status of the object, e.g. of a session: its marker takes the place of
-   * the row buttons until the row is hovered or focused.
+   * Status of the object, e.g. of a session: its marker, like the pinned
+   * mark, takes the place of the row buttons until the row is hovered or
+   * focused.
    */
   status?: { marker: ReactNode; label: string };
   /** Where the object lives: its Space, and the agent of a session. */
@@ -96,10 +97,7 @@ export function NavigationSidebarItem({
             </span>
             <span className="min-w-0 flex-1 truncate">{title}</span>
             {pinned && (
-              <Pin
-                className="!size-3 shrink-0 text-muted-foreground group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0"
-                aria-label={m.navigation_pinned_item()}
-              />
+              <span className="sr-only">{m.navigation_pinned_item()}</span>
             )}
             {status && <span className="sr-only">{status.label}</span>}
             {temporary && (
@@ -125,12 +123,13 @@ export function NavigationSidebarItem({
           {temporary && <span>{m.navigation_temporary()}</span>}
         </TooltipContent>
       </Tooltip>
-      {status && (
+      {(status || pinned) && (
         <SidebarMenuBadge
           aria-hidden
-          className="hidden group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0 md:flex"
+          className="hidden gap-1 group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0 md:flex"
         >
-          {status.marker}
+          {pinned && <Pin className="size-3 text-muted-foreground" />}
+          {status?.marker}
         </SidebarMenuBadge>
       )}
       {step && (
