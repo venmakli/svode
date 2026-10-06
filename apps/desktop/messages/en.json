@@ -288,7 +288,7 @@
   "home_chat_no_project_unavailable": "The project folders are unavailable.",
   "home_chat_no_project_mixed": "The projects are open in other windows or unavailable.",
   "home_project_toggle": "Objects of “{project}”",
-  "home_project_items_empty": "No pinned or current objects",
+  "home_project_items_empty": "Nothing pinned or open",
   "home_project_items_failed": "Couldn't read the project's objects",
   "project_new_title": "New project",
   "project_name_label": "Name",

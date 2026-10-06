@@ -288,7 +288,7 @@
   "home_chat_no_project_unavailable": "Папки проектов недоступны.",
   "home_chat_no_project_mixed": "Проекты открыты в других окнах или недоступны.",
   "home_project_toggle": "Объекты «{project}»",
-  "home_project_items_empty": "Нет закреплённых и текущих объектов",
+  "home_project_items_empty": "Ничего не закреплено и не открыто",
   "home_project_items_failed": "Не удалось прочитать объекты проекта",
   "project_new_title": "Новый проект",
   "project_name_label": "Название",
