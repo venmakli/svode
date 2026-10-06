@@ -46,9 +46,9 @@ jobs:
         shell: bash
         run: |
           windows='{"include":[{"platform":"windows-latest","feed_platform":"windows","args":"--bundles nsis","artifact_name":"Svode-windows-nsis","artifact_path":"target/release/bundle/nsis/*.exe"}]}'
-          macos='{"include":[{"platform":"macos-latest","feed_platform":"darwin","args":"--target universal-apple-darwin --bundles dmg","artifact_name":"Svode-macos-dmg","artifact_path":"target/universal-apple-darwin/release/bundle/dmg/*.dmg"}]}'
+          macos='{"include":[{"platform":"macos-latest","feed_platform":"darwin","args":"--target universal-apple-darwin --bundles app","artifact_name":"Svode-macos-dmg","artifact_path":"target/universal-apple-darwin/release/bundle/dmg/*.dmg"}]}'
           linux='{"include":[{"platform":"ubuntu-22.04","feed_platform":"linux","args":"--bundles deb","artifact_name":"Svode-linux-deb","artifact_path":"target/release/bundle/deb/*.deb"}]}'
-          all='{"include":[{"platform":"macos-latest","feed_platform":"darwin","args":"--target universal-apple-darwin --bundles dmg","artifact_name":"Svode-macos-dmg","artifact_path":"target/universal-apple-darwin/release/bundle/dmg/*.dmg"},{"platform":"ubuntu-22.04","feed_platform":"linux","args":"--bundles deb","artifact_name":"Svode-linux-deb","artifact_path":"target/release/bundle/deb/*.deb"},{"platform":"windows-latest","feed_platform":"windows","args":"--bundles nsis","artifact_name":"Svode-windows-nsis","artifact_path":"target/release/bundle/nsis/*.exe"}]}'
+          all='{"include":[{"platform":"macos-latest","feed_platform":"darwin","args":"--target universal-apple-darwin --bundles app","artifact_name":"Svode-macos-dmg","artifact_path":"target/universal-apple-darwin/release/bundle/dmg/*.dmg"},{"platform":"ubuntu-22.04","feed_platform":"linux","args":"--bundles deb","artifact_name":"Svode-linux-deb","artifact_path":"target/release/bundle/deb/*.deb"},{"platform":"windows-latest","feed_platform":"windows","args":"--bundles nsis","artifact_name":"Svode-windows-nsis","artifact_path":"target/release/bundle/nsis/*.exe"}]}'
 
           windows_installed='{"include":[{"platform":"windows-latest","artifact_name":"Svode-windows-nsis"}]}'
           linux_installed='{"include":[{"platform":"ubuntu-22.04","artifact_name":"Svode-linux-deb"}]}'
@@ -125,6 +125,13 @@ jobs:
           VITE_SVODE_BUILD_COMMIT: ${{ steps.build_meta.outputs.sha }}
         run: bun run --cwd apps/desktop tauri build ${{ matrix.args }}
 
+      # The ad hoc signature of a plain build changes its requirement every
+      # build, which resets macOS privacy grants on each update; the script pins
+      # it to the bundle identifier and packs the dmg from the signed app.
+      - name: Sign the macOS app with a stable identity and pack the dmg
+        if: matrix.feed_platform == 'darwin'
+        run: node apps/desktop/scripts/macos-package.mjs target/universal-apple-darwin/release/bundle
+
       - name: Upload installer artifact
         id: upload_installer
         uses: actions/upload-artifact@v4
@@ -141,6 +148,8 @@ jobs:
             darwin)
               dmg="$(ls ${{ matrix.artifact_path }})"
               hdiutil attach "$dmg" -mountpoint /tmp/svode-dmg -nobrowse -readonly
+              codesign --verify --deep --strict /tmp/svode-dmg/Svode.app
+              codesign -d -r- /tmp/svode-dmg/Svode.app | grep -qx 'designated => identifier "app.svode.desktop"'
               speech=/tmp/svode-dmg/Svode.app/Contents/MacOS/svode-speech
               test -x "$speech"
               lipo -archs "$speech" | grep -q x86_64

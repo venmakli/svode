@@ -42,16 +42,45 @@ jobs:
   quality:
     uses: ./.github/workflows/check.yml
 
-  build:
+  # One draft release that every platform uploads into, since the macOS app is
+  # packed outside tauri-action.
+  create_release:
     needs:
       - release_notes
       - quality
+    runs-on: ubuntu-22.04
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+    steps:
+      - name: Create the draft release
+        id: create
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ needs.release_notes.outputs.body }}
+        run: |
+          printf '%s\n' "$NOTES" > notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --prerelease \
+            --verify-tag \
+            --title "Svode $GITHUB_REF_NAME" \
+            --notes-file notes.md
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            --jq "[.[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\")][0].id")"
+          test -n "$id"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs:
+      - create_release
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: macos-latest
-            args: "--target universal-apple-darwin --bundles dmg"
+            args: "--target universal-apple-darwin --bundles app"
           - platform: ubuntu-22.04
             args: "--bundles deb"
           - platform: windows-latest
@@ -96,15 +125,32 @@ jobs:
         run: bun install --frozen-lockfile
 
       - uses: tauri-apps/tauri-action@v0
+        if: matrix.platform != 'macos-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_SVODE_BUILD_COMMIT: ${{ steps.build_meta.outputs.sha }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: Svode ${{ github.ref_name }}
-          releaseBody: ${{ needs.release_notes.outputs.body }}
-          releaseDraft: true
-          prerelease: true
+          releaseId: ${{ needs.create_release.outputs.id }}
           includeUpdaterJson: false
           args: ${{ matrix.args }}
+
+      - name: Build the macOS app
+        if: matrix.platform == 'macos-latest'
+        env:
+          VITE_SVODE_BUILD_COMMIT: ${{ steps.build_meta.outputs.sha }}
+        run: bun run --cwd apps/desktop tauri build ${{ matrix.args }}
+
+      # The ad hoc signature of a plain build changes its requirement every
+      # build, which resets macOS privacy grants on each update; the script pins
+      # it to the bundle identifier and packs the dmg from the signed app.
+      - name: Sign the macOS app with a stable identity and pack the dmg
+        if: matrix.platform == 'macos-latest'
+        run: node apps/desktop/scripts/macos-package.mjs target/universal-apple-darwin/release/bundle
+
+      - name: Upload the dmg
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" target/universal-apple-darwin/release/bundle/dmg/*.dmg --clobber
