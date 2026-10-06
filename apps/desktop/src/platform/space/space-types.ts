@@ -126,10 +126,9 @@ export interface SpaceConfigDto {
   assets?: AssetsSpaceConfigDto;
 }
 
-export interface OpenProjectResultDto {
-  config: SpaceConfigDto;
-  project: SpaceInfoDto;
-}
+export type EnterProjectResultDto =
+  | { kind: "opened"; config: SpaceConfigDto; project: SpaceInfoDto }
+  | { kind: "otherWindow" };
 
 export type WindowOpenIntentDto =
   | { kind: "home" }

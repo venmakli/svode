@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, State, Window};
 
+use crate::app_windows::{ProjectWindowRequest, WindowBinding, WindowView};
 use crate::error::AppError;
 use crate::git::access::{RepositoryAccessSnapshot, require_repository_mutation};
 use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy};
@@ -16,11 +17,38 @@ use svode_core::git::{local_repair, ops};
 use svode_core::storage::lfs::LfsState;
 use svode_core::system_path;
 
+/// The window either serves the project now, or the project has another
+/// window, which came forward and took the action.
 #[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenProjectResult {
-    pub config: SpaceConfig,
-    pub project: SpaceInfo,
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum EnterProjectResult {
+    Opened {
+        config: Box<SpaceConfig>,
+        project: SpaceInfo,
+    },
+    OtherWindow,
+}
+
+/// How a window enters a project. Opening shows its Space and records the
+/// project as last opened; Home activation keeps the window on Home and leaves
+/// the registry as is. Both prepare the project and bind the window the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectEntry {
+    Open,
+    HomeActivation,
+}
+
+impl ProjectEntry {
+    fn view(self) -> WindowView {
+        match self {
+            Self::Open => WindowView::Project,
+            Self::HomeActivation => WindowView::Home,
+        }
+    }
+
+    fn records_open(self) -> bool {
+        self == Self::Open
+    }
 }
 
 fn detect_status_for_ref(parent: &Path, sp_ref: &SpaceRef) -> SpaceStatus {
@@ -433,6 +461,7 @@ pub async fn delete_project(
     }
 
     project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))?;
+    crate::app_windows::release_project_window(&app, &id);
     refresh_recent_projects_menu(&app);
     Ok(())
 }
@@ -455,7 +484,56 @@ pub async fn open_project(
     autocommit: State<'_, Arc<AutocommitService>>,
     project_runtime: State<'_, ProjectRuntimeState>,
     id: String,
-) -> Result<OpenProjectResult, AppError> {
+) -> Result<EnterProjectResult, AppError> {
+    enter_project(
+        &app,
+        window.label(),
+        &git_state,
+        &autocommit,
+        &project_runtime,
+        id,
+        ProjectEntry::Open,
+        ProjectWindowRequest::Focus,
+    )
+    .await
+}
+
+/// Makes the project the active project of the Home window; a project bound to
+/// another window gets `request` there instead.
+#[tauri::command]
+pub async fn activate_home_project(
+    app: AppHandle,
+    window: Window,
+    git_state: State<'_, GitState>,
+    autocommit: State<'_, Arc<AutocommitService>>,
+    project_runtime: State<'_, ProjectRuntimeState>,
+    id: String,
+    request: ProjectWindowRequest,
+) -> Result<EnterProjectResult, AppError> {
+    enter_project(
+        &app,
+        window.label(),
+        &git_state,
+        &autocommit,
+        &project_runtime,
+        id,
+        ProjectEntry::HomeActivation,
+        request,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn enter_project(
+    app: &AppHandle,
+    window_label: &str,
+    git_state: &GitState,
+    autocommit: &AutocommitService,
+    project_runtime: &ProjectRuntimeState,
+    id: String,
+    entry: ProjectEntry,
+    request: ProjectWindowRequest,
+) -> Result<EnterProjectResult, AppError> {
     let config_dir = app
         .path()
         .app_config_dir()
@@ -465,17 +543,78 @@ pub async fn open_project(
         .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
     let project_path = PathBuf::from(&sp_ref.path);
 
+    let binding = match crate::app_windows::window_binding(app, window_label, &id) {
+        WindowBinding::OtherWindow(owner) => {
+            crate::app_windows::hand_off_to_project_window(app, &owner, &request)?;
+            return Ok(EnterProjectResult::OtherWindow);
+        }
+        WindowBinding::Unchanged => {
+            crate::app_windows::bind_window_project(app, window_label, &id, entry.view())
+        }
+        WindowBinding::Bound { .. } => {
+            prepare_project(app, git_state, autocommit, &project_path).await?;
+            crate::app_windows::bind_window_project(app, window_label, &id, entry.view())
+        }
+    };
+    if let WindowBinding::OtherWindow(owner) = binding {
+        crate::app_windows::hand_off_to_project_window(app, &owner, &request)?;
+        return Ok(EnterProjectResult::OtherWindow);
+    }
+
+    if entry.records_open() {
+        registry::update_last_active(&config_dir, &id)?;
+        registry::update_last_opened(&config_dir, &id)?;
+        refresh_recent_projects_menu(app);
+    }
+
+    // Open root + every ready child-space pool, spawn full_reindex per pool
+    // (under reindex lock + bounded concurrency). Failure is logged but does
+    // not block project open — the user can always trigger a manual reindex
+    // later. Initial state is not a transit, so no `space:status_changed`
+    // emit is needed: the cache snapshot during open_project covers it.
+    // A window that already serves the project keeps its runtime running.
+    if matches!(binding, WindowBinding::Bound { .. }) {
+        if let Err(e) = project_runtime
+            .open_project(app, id.clone(), project_path.clone())
+            .await
+        {
+            tracing::warn!(
+                "project runtime open failed for {}: {e}",
+                project_path.display()
+            );
+        }
+        crate::app_windows::stop_runtime_unless_served(app, &id);
+    }
+
+    let cfg = config::read_space_config(&project_path)?;
+    let project = root_project_info(id, &project_path, &cfg, sp_ref.last_opened);
+    Ok(EnterProjectResult::Opened {
+        config: Box::new(cfg),
+        project,
+    })
+}
+
+/// Repairs a project before a window serves it, under the repository repair
+/// policy: `.gitignore`, existing submodules and the root README, each with its
+/// system commit.
+async fn prepare_project(
+    app: &AppHandle,
+    git_state: &GitState,
+    autocommit: &AutocommitService,
+    project_path: &Path,
+) -> Result<(), AppError> {
+    let project_path = project_path.to_path_buf();
     let readme_existed_before = project_path.join("README.md").exists();
     let has_git = project_path.join(".git").exists();
-    let repairs_allowed = !has_git || allow_automatic_repository_repairs(&app, &project_path).await;
+    let repairs_allowed = !has_git || allow_automatic_repository_repairs(app, &project_path).await;
     let gitignore_changed = if repairs_allowed {
-        crate::git::delivery::repair_scope(&app, &project_path, &project_path).await?
+        crate::git::delivery::repair_scope(app, &project_path, &project_path).await?
             == local_repair::RepairOutcome::Changed
     } else {
         false
     };
     let imported_submodules = if repairs_allowed {
-        import_existing_submodules_if_possible(&git_state, &project_path).await
+        import_existing_submodules_if_possible(git_state, &project_path).await
     } else {
         0
     };
@@ -519,31 +658,7 @@ pub async fn open_project(
             tracing::warn!("commit README scaffold failed for project open: {e}");
         }
     }
-    registry::update_last_active(&config_dir, &id)?;
-    registry::update_last_opened(&config_dir, &id)?;
-    crate::app_windows::register_current_project_window(&app, &id, window.label());
-    refresh_recent_projects_menu(&app);
-
-    // Open root + every ready child-space pool, spawn full_reindex per pool
-    // (under reindex lock + bounded concurrency). Failure is logged but does
-    // not block project open — the user can always trigger a manual reindex
-    // later. Initial state is not a transit, so no `space:status_changed`
-    // emit is needed: the cache snapshot during open_project covers it.
-    if let Err(e) = project_runtime
-        .open_project(&app, id.clone(), project_path.clone())
-        .await
-    {
-        tracing::warn!(
-            "project runtime open failed for {}: {e}",
-            project_path.display()
-        );
-    }
-
-    let project = root_project_info(id, &project_path, &cfg, sp_ref.last_opened);
-    Ok(OpenProjectResult {
-        config: cfg,
-        project,
-    })
+    Ok(())
 }
 
 // --- Spaces ---
@@ -1223,5 +1338,21 @@ mod tests {
             }),
             repository,
         ));
+    }
+
+    #[test]
+    fn home_activation_keeps_home_and_the_registry_unlike_open() {
+        assert_eq!(ProjectEntry::Open.view(), WindowView::Project);
+        assert!(ProjectEntry::Open.records_open());
+        assert_eq!(ProjectEntry::HomeActivation.view(), WindowView::Home);
+        assert!(!ProjectEntry::HomeActivation.records_open());
+    }
+
+    #[test]
+    fn entry_results_tell_the_window_whether_it_serves_the_project() {
+        assert_eq!(
+            serde_json::to_value(EnterProjectResult::OtherWindow).expect("encode"),
+            serde_json::json!({ "kind": "otherWindow" })
+        );
     }
 }

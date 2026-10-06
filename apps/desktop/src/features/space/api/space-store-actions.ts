@@ -27,8 +27,8 @@ import {
   openProjectWindow,
   openProject,
   openProjectFolder,
-  releaseCurrentProjectWindow,
   reorderSpaces,
+  showHomeInCurrentWindow,
 } from "@/platform/space/space-api";
 import type { SpaceGitType } from "../model/types";
 
@@ -50,8 +50,8 @@ export function getCurrentWindowOpenIntent() {
   return getWindowOpenIntent();
 }
 
-export function releaseCurrentRootProjectWindow() {
-  return releaseCurrentProjectWindow();
+export function showHomeInCurrentRootProjectWindow() {
+  return showHomeInCurrentWindow();
 }
 
 export function createRootSpace(input: {

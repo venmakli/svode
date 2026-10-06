@@ -13,7 +13,7 @@ import type {
   LfsPolicyDiagnosticDto,
   LfsRemoteDiagnosticDto,
   LfsStateDto,
-  OpenProjectResultDto,
+  EnterProjectResultDto,
   SpaceDirtyEventDto,
   SpaceFileEventDto,
   SpaceConfigDto,
@@ -85,8 +85,8 @@ export function listProjects(): Promise<SpaceInfoDto[]> {
   return invokeCommand<SpaceInfoDto[]>("list_projects");
 }
 
-export function openProject(id: string): Promise<OpenProjectResultDto> {
-  return invokeCommand<OpenProjectResultDto>("open_project", { id });
+export function openProject(id: string): Promise<EnterProjectResultDto> {
+  return invokeCommand<EnterProjectResultDto>("open_project", { id });
 }
 
 export function openProjectWindow(projectId: string): Promise<void> {
@@ -101,8 +101,8 @@ export function getWindowOpenIntent(): Promise<WindowOpenIntentDto | null> {
   return invokeCommand<WindowOpenIntentDto | null>("get_window_open_intent");
 }
 
-export function releaseCurrentProjectWindow(): Promise<void> {
-  return invokeCommand<void>("release_current_project_window");
+export function showHomeInCurrentWindow(): Promise<void> {
+  return invokeCommand<void>("show_home_in_current_window");
 }
 
 export interface CreateProjectInput {

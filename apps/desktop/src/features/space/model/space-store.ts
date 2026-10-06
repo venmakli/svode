@@ -148,7 +148,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
   openRoot: async (id: string) => {
     try {
-      const { config, project } = await spaceActions.openRootProject(id);
+      const result = await spaceActions.openRootProject(id);
+      if (result.kind === "otherWindow") return false;
+      const { config, project } = result;
       const projects = get().rootsLoaded
         ? get().rootSpaces
         : await get().loadRootSpaces();
@@ -272,9 +274,9 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       .clearActiveMcpContext()
       .catch((err) => console.warn("mcp_clear_active_context failed:", err));
     spaceActions
-      .releaseCurrentRootProjectWindow()
+      .showHomeInCurrentRootProjectWindow()
       .catch((err) =>
-        console.warn("release_current_project_window failed:", err),
+        console.warn("show_home_in_current_window failed:", err),
       );
   },
 

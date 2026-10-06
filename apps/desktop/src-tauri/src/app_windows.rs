@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::{
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window,
@@ -10,12 +10,15 @@ use tauri::{
 };
 
 use crate::error::AppError;
+use crate::navigation::NavigationItem;
 use crate::space::{config, registry, types::RegistryEntry};
 
 const MENU_NEW_WINDOW: &str = "app:new-window";
 const MENU_OPEN_FOLDER: &str = "app:open-folder";
 const MENU_OPEN_RECENT_PREFIX: &str = "app:open-recent:";
 const EVENT_OPEN_FOLDER: &str = "app-menu:open-folder";
+const EVENT_PROJECT_WINDOWS_CHANGED: &str = "app-windows:projects-changed";
+const EVENT_PROJECT_REQUEST: &str = "app-windows:project-request";
 const DEFAULT_WINDOW_WIDTH: f64 = 1200.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 800.0;
 const MIN_WINDOW_WIDTH: f64 = 800.0;
@@ -31,11 +34,43 @@ pub enum WindowOpenIntent {
     },
 }
 
+/// What the window of a project does for an action started in another window:
+/// the window comes forward and, for an object or a new chat, opens it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProjectWindowRequest {
+    Focus,
+    NewChat,
+    Open { item: NavigationItem },
+}
+
+/// The view a window keeps after it takes a project: the Space of the project,
+/// or Home working with it as the active project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowView {
+    Home,
+    Project,
+}
+
+/// How a window stands to a project it is about to take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowBinding {
+    /// Another window has the project; the action goes to that window.
+    OtherWindow(String),
+    /// The window already serves the project; its runtime keeps running.
+    Unchanged,
+    /// The window takes the project; the runtime of its previous project stops.
+    Bound { previous: Option<String> },
+}
+
 #[derive(Default)]
 pub struct AppWindowState {
     inner: Mutex<AppWindowStateInner>,
 }
 
+/// `project_windows` holds the window of each project, including a project
+/// window still loading; `window_projects` holds the project each window
+/// serves with a running project runtime.
 #[derive(Default)]
 struct AppWindowStateInner {
     project_windows: HashMap<String, String>,
@@ -45,33 +80,87 @@ struct AppWindowStateInner {
     next_home_window: u64,
 }
 
+impl AppWindowStateInner {
+    fn binding_for(&self, label: &str, project_id: &str) -> WindowBinding {
+        if self.window_projects.get(label).map(String::as_str) == Some(project_id) {
+            return WindowBinding::Unchanged;
+        }
+        match self.project_windows.get(project_id) {
+            Some(owner) if owner != label => WindowBinding::OtherWindow(owner.clone()),
+            _ => WindowBinding::Bound {
+                previous: self.window_projects.get(label).cloned(),
+            },
+        }
+    }
+
+    fn set_view(&mut self, label: &str, project_id: &str, view: WindowView) {
+        let intent = match view {
+            WindowView::Home => WindowOpenIntent::Home,
+            WindowView::Project => WindowOpenIntent::Project {
+                project_id: project_id.to_string(),
+            },
+        };
+        self.window_intents.insert(label.to_string(), intent);
+    }
+
+    fn release_window(&mut self, label: &str) -> Option<String> {
+        self.project_windows.retain(|_, owner| owner != label);
+        self.window_projects.remove(label)
+    }
+}
+
 impl AppWindowState {
     pub fn new() -> Self {
         Self::default()
     }
 
+    fn lock(&self) -> std::sync::MutexGuard<'_, AppWindowStateInner> {
+        self.inner.lock().expect("app window mutex poisoned")
+    }
+
     fn next_home_label(&self) -> String {
-        let mut inner = self.inner.lock().expect("app window mutex poisoned");
+        let mut inner = self.lock();
         inner.next_home_window += 1;
         format!("launcher-{}", inner.next_home_window)
     }
 
     fn register_home_window(&self, label: &str) {
-        let mut inner = self.inner.lock().expect("app window mutex poisoned");
+        let mut inner = self.lock();
         inner
             .window_intents
             .insert(label.to_string(), WindowOpenIntent::Home);
         inner.window_projects.remove(label);
     }
 
-    fn register_project_window(&self, project_id: &str, label: &str) {
-        let mut inner = self.inner.lock().expect("app window mutex poisoned");
-        if let Some(previous_project_id) = inner.window_projects.get(label).cloned() {
-            if previous_project_id != project_id
-                && inner.project_windows.get(&previous_project_id) == Some(&label.to_string())
-            {
-                inner.project_windows.remove(&previous_project_id);
-            }
+    /// Reserves the project for a project window that is still loading; the
+    /// window takes it with its runtime when its webview opens the project.
+    fn reserve_project_window(&self, project_id: &str, label: &str) {
+        let mut inner = self.lock();
+        inner
+            .project_windows
+            .insert(project_id.to_string(), label.to_string());
+        inner.set_view(label, project_id, WindowView::Project);
+    }
+
+    /// How the window stands to the project, without changing anything.
+    fn binding_for(&self, label: &str, project_id: &str) -> WindowBinding {
+        self.lock().binding_for(label, project_id)
+    }
+
+    /// Binds the project to the window and sets the window view, unless another
+    /// window has the project: then nothing changes.
+    fn bind_project(&self, label: &str, project_id: &str, view: WindowView) -> WindowBinding {
+        let mut inner = self.lock();
+        let binding = inner.binding_for(label, project_id);
+        if matches!(binding, WindowBinding::OtherWindow(_)) {
+            return binding;
+        }
+        if let WindowBinding::Bound {
+            previous: Some(previous),
+        } = &binding
+            && inner.project_windows.get(previous).map(String::as_str) == Some(label)
+        {
+            inner.project_windows.remove(previous);
         }
         inner
             .project_windows
@@ -79,83 +168,82 @@ impl AppWindowState {
         inner
             .window_projects
             .insert(label.to_string(), project_id.to_string());
-        inner.window_intents.insert(
-            label.to_string(),
-            WindowOpenIntent::Project {
-                project_id: project_id.to_string(),
-            },
-        );
+        inner.set_view(label, project_id, view);
+        binding
+    }
+
+    /// Shows Home in the window; its project stays bound as the active project.
+    fn show_home(&self, label: &str) {
+        self.lock()
+            .window_intents
+            .insert(label.to_string(), WindowOpenIntent::Home);
     }
 
     fn project_window_label(&self, project_id: &str) -> Option<String> {
-        self.inner
-            .lock()
-            .expect("app window mutex poisoned")
-            .project_windows
-            .get(project_id)
-            .cloned()
+        self.lock().project_windows.get(project_id).cloned()
     }
 
-    fn project_id_for_window(&self, label: &str) -> Option<String> {
-        self.inner
+    fn projects_in_other_windows(&self, label: &str) -> Vec<String> {
+        let mut projects = self
             .lock()
-            .expect("app window mutex poisoned")
-            .window_projects
-            .get(label)
-            .cloned()
+            .project_windows
+            .iter()
+            .filter(|(_, owner)| owner.as_str() != label)
+            .map(|(project_id, _)| project_id.clone())
+            .collect::<Vec<_>>();
+        projects.sort();
+        projects
     }
 
     fn focus_window(&self, label: &str) {
-        self.inner
-            .lock()
-            .expect("app window mutex poisoned")
-            .last_focused_window = Some(label.to_string());
+        self.lock().last_focused_window = Some(label.to_string());
     }
 
     fn last_focused_window(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .expect("app window mutex poisoned")
-            .last_focused_window
-            .clone()
+        self.lock().last_focused_window.clone()
     }
 
     fn intent_for_window(&self, label: &str) -> Option<WindowOpenIntent> {
-        self.inner
-            .lock()
-            .expect("app window mutex poisoned")
-            .window_intents
-            .get(label)
-            .cloned()
+        self.lock().window_intents.get(label).cloned()
     }
 
-    fn release_window_project(&self, label: &str) -> Option<String> {
-        let mut inner = self.inner.lock().expect("app window mutex poisoned");
-        let released = inner.window_projects.remove(label);
-        if let Some(project_id) = released.as_ref() {
-            if inner.project_windows.get(project_id) == Some(&label.to_string()) {
-                inner.project_windows.remove(project_id);
-            }
+    /// Frees the window of a project removed from the list; a window showing
+    /// its Space falls back to Home.
+    fn release_project(&self, project_id: &str) -> bool {
+        let mut inner = self.lock();
+        let Some(label) = inner.project_windows.remove(project_id) else {
+            return false;
+        };
+        if inner.window_projects.get(&label).map(String::as_str) == Some(project_id) {
+            inner.window_projects.remove(&label);
         }
+        if matches!(
+            inner.window_intents.get(&label),
+            Some(WindowOpenIntent::Project { project_id: id }) if id == project_id
+        ) {
+            inner.window_intents.insert(label, WindowOpenIntent::Home);
+        }
+        true
+    }
+
+    fn release_stale_window(&self, label: &str) -> Option<String> {
+        let mut inner = self.lock();
         inner
             .window_intents
             .insert(label.to_string(), WindowOpenIntent::Home);
-        released
+        inner.release_window(label)
     }
 
-    fn remove_window(&self, label: &str) -> Option<String> {
-        let mut inner = self.inner.lock().expect("app window mutex poisoned");
-        let released = inner.window_projects.remove(label);
-        if let Some(project_id) = released.as_ref() {
-            if inner.project_windows.get(project_id) == Some(&label.to_string()) {
-                inner.project_windows.remove(project_id);
-            }
-        }
+    /// Forgets a closed window and returns the project whose runtime it served.
+    fn remove_window(&self, label: &str) -> (Option<String>, bool) {
+        let mut inner = self.lock();
+        let had_projects = inner.project_windows.values().any(|owner| owner == label);
+        let released = inner.release_window(label);
         inner.window_intents.remove(label);
         if inner.last_focused_window.as_deref() == Some(label) {
             inner.last_focused_window = None;
         }
-        released
+        (released, had_projects)
     }
 }
 
@@ -178,13 +266,18 @@ pub fn get_window_open_intent(
 }
 
 #[tauri::command]
-pub fn release_current_project_window(app: AppHandle, window: Window) {
-    if let Some(project_id) = app
-        .state::<AppWindowState>()
-        .release_window_project(window.label())
-    {
-        stop_project_runtime(&app, &project_id);
-    }
+pub fn show_home_in_current_window(state: tauri::State<'_, AppWindowState>, window: Window) {
+    state.show_home(window.label());
+}
+
+/// Projects bound to windows other than the calling one; the set changes with
+/// `app-windows:projects-changed`.
+#[tauri::command]
+pub fn list_projects_in_other_windows(
+    state: tauri::State<'_, AppWindowState>,
+    window: Window,
+) -> Vec<String> {
+    state.projects_in_other_windows(window.label())
 }
 
 #[tauri::command]
@@ -311,14 +404,84 @@ pub fn rebuild_app_menu(app: &AppHandle) -> Result<(), AppError> {
         .map_err(|error| AppError::General(error.to_string()))
 }
 
-pub fn register_current_project_window(app: &AppHandle, project_id: &str, window_label: &str) {
+/// How the window stands to the project; a window that closed without its
+/// destroy event no longer holds the project.
+pub fn window_binding(app: &AppHandle, window_label: &str, project_id: &str) -> WindowBinding {
     let state = app.state::<AppWindowState>();
-    if let Some(previous) = state.project_id_for_window(window_label)
-        && previous != project_id
+    let binding = state.binding_for(window_label, project_id);
+    if let WindowBinding::OtherWindow(owner) = &binding
+        && app.get_webview_window(owner).is_none()
     {
-        stop_project_runtime(app, &previous);
+        if let Some(released) = state.release_stale_window(owner) {
+            stop_project_runtime(app, &released);
+        }
+        emit_project_windows_changed(app);
+        return state.binding_for(window_label, project_id);
     }
-    state.register_project_window(project_id, window_label);
+    binding
+}
+
+/// Binds the project to the window and stops the runtime of the project the
+/// window served before; the caller starts the runtime of a newly bound project.
+pub fn bind_window_project(
+    app: &AppHandle,
+    window_label: &str,
+    project_id: &str,
+    view: WindowView,
+) -> WindowBinding {
+    let binding = app
+        .state::<AppWindowState>()
+        .bind_project(window_label, project_id, view);
+    if let WindowBinding::Bound { previous } = &binding {
+        if let Some(previous) = previous {
+            stop_project_runtime(app, previous);
+        }
+        emit_project_windows_changed(app);
+    }
+    binding
+}
+
+/// Stops a project runtime that finished starting after its window had moved
+/// on to another project or closed.
+pub fn stop_runtime_unless_served(app: &AppHandle, project_id: &str) {
+    if app
+        .state::<AppWindowState>()
+        .project_window_label(project_id)
+        .is_none()
+    {
+        stop_project_runtime(app, project_id);
+    }
+}
+
+/// Brings the window of the project forward and hands it the action.
+pub fn hand_off_to_project_window(
+    app: &AppHandle,
+    owner_label: &str,
+    request: &ProjectWindowRequest,
+) -> Result<(), AppError> {
+    let window = app
+        .get_webview_window(owner_label)
+        .ok_or_else(|| AppError::General(format!("window {owner_label} is closed")))?;
+    focus_window(&window)?;
+    if !matches!(request, ProjectWindowRequest::Focus) {
+        window
+            .emit(EVENT_PROJECT_REQUEST, request)
+            .map_err(|error| AppError::General(error.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Frees the window of a project removed from the list.
+pub fn release_project_window(app: &AppHandle, project_id: &str) {
+    if app.state::<AppWindowState>().release_project(project_id) {
+        emit_project_windows_changed(app);
+    }
+}
+
+fn emit_project_windows_changed(app: &AppHandle) {
+    if let Err(error) = app.emit(EVENT_PROJECT_WINDOWS_CHANGED, ()) {
+        tracing::warn!("failed to emit project windows change: {error}");
+    }
 }
 
 pub fn handle_menu_event(app: &AppHandle, id: &str) {
@@ -356,8 +519,12 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
             active_state.focus_window(label);
         }
         WindowEvent::Destroyed => {
-            if let Some(project_id) = window_state.remove_window(&label) {
+            let (released, had_projects) = window_state.remove_window(&label);
+            if let Some(project_id) = released {
                 stop_project_runtime(app, &project_id);
+            }
+            if had_projects {
+                emit_project_windows_changed(app);
             }
             active_state.remove_window(&label);
             app.state::<crate::agent_runtime::AgentRuntimeState>()
@@ -421,11 +588,14 @@ fn open_or_focus_project_window(
             focus_window(&window)?;
             return Ok(window);
         }
-        state.release_window_project(&label);
+        if let Some(released) = state.release_stale_window(&label) {
+            stop_project_runtime(app, &released);
+        }
     }
 
     let label = project_window_label(project_id);
-    state.register_project_window(project_id, &label);
+    state.reserve_project_window(project_id, &label);
+    emit_project_windows_changed(app);
     build_window(app, &label, &format!("{} - Svode", cfg.name))
 }
 
@@ -584,12 +754,23 @@ fn project_window_label(project_id: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn remaps_window_when_current_window_opens_another_project() {
-        let state = AppWindowState::new();
-        state.register_project_window("project-a", "main");
-        state.register_project_window("project-b", "main");
+    fn is_home(state: &AppWindowState, label: &str) -> bool {
+        matches!(state.intent_for_window(label), Some(WindowOpenIntent::Home))
+    }
 
+    #[test]
+    fn opening_another_project_in_a_window_rebinds_it_and_stops_the_previous() {
+        let state = AppWindowState::new();
+        state.bind_project("main", "project-a", WindowView::Project);
+
+        let binding = state.bind_project("main", "project-b", WindowView::Project);
+
+        assert_eq!(
+            binding,
+            WindowBinding::Bound {
+                previous: Some("project-a".to_string())
+            }
+        );
         assert_eq!(state.project_window_label("project-a"), None);
         assert_eq!(
             state.project_window_label("project-b"),
@@ -598,16 +779,204 @@ mod tests {
     }
 
     #[test]
-    fn release_window_project_removes_project_focus_target() {
+    fn home_activation_binds_the_project_and_keeps_the_home_view() {
         let state = AppWindowState::new();
-        state.register_project_window("project-a", "project-project-a");
-        state.release_window_project("project-project-a");
+        state.register_home_window("launcher-1");
 
+        let binding = state.bind_project("launcher-1", "project-a", WindowView::Home);
+
+        assert_eq!(binding, WindowBinding::Bound { previous: None });
+        assert!(is_home(&state, "launcher-1"));
+        assert_eq!(
+            state.project_window_label("project-a"),
+            Some("launcher-1".to_string())
+        );
+    }
+
+    #[test]
+    fn home_activation_of_another_project_stops_the_previous_and_stays_home() {
+        let state = AppWindowState::new();
+        state.register_home_window("launcher-1");
+        state.bind_project("launcher-1", "project-a", WindowView::Home);
+
+        let binding = state.bind_project("launcher-1", "project-b", WindowView::Home);
+
+        assert_eq!(
+            binding,
+            WindowBinding::Bound {
+                previous: Some("project-a".to_string())
+            }
+        );
+        assert!(is_home(&state, "launcher-1"));
         assert_eq!(state.project_window_label("project-a"), None);
+    }
+
+    #[test]
+    fn going_home_from_a_space_keeps_the_project_bound_without_restart() {
+        let state = AppWindowState::new();
+        state.bind_project("main", "project-a", WindowView::Project);
+
+        state.show_home("main");
+
+        assert!(is_home(&state, "main"));
+        assert_eq!(
+            state.project_window_label("project-a"),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            state.bind_project("main", "project-a", WindowView::Home),
+            WindowBinding::Unchanged
+        );
+        assert_eq!(
+            state.bind_project("main", "project-a", WindowView::Project),
+            WindowBinding::Unchanged
+        );
         assert!(matches!(
-            state.intent_for_window("project-project-a"),
-            Some(WindowOpenIntent::Home)
+            state.intent_for_window("main"),
+            Some(WindowOpenIntent::Project { project_id }) if project_id == "project-a"
         ));
+    }
+
+    #[test]
+    fn a_project_of_another_window_is_not_rebound() {
+        let state = AppWindowState::new();
+        state.bind_project("project-project-a", "project-a", WindowView::Project);
+        state.register_home_window("launcher-1");
+        state.bind_project("launcher-1", "project-b", WindowView::Home);
+
+        for view in [WindowView::Home, WindowView::Project] {
+            assert_eq!(
+                state.bind_project("launcher-1", "project-a", view),
+                WindowBinding::OtherWindow("project-project-a".to_string())
+            );
+        }
+        assert_eq!(
+            state.project_window_label("project-a"),
+            Some("project-project-a".to_string())
+        );
+        assert_eq!(
+            state.project_window_label("project-b"),
+            Some("launcher-1".to_string())
+        );
+        assert!(is_home(&state, "launcher-1"));
+    }
+
+    #[test]
+    fn a_loading_project_window_holds_its_project_until_it_opens_it() {
+        let state = AppWindowState::new();
+        state.reserve_project_window("project-a", "project-project-a");
+
+        assert_eq!(
+            state.binding_for("launcher-1", "project-a"),
+            WindowBinding::OtherWindow("project-project-a".to_string())
+        );
+        assert_eq!(
+            state.bind_project("project-project-a", "project-a", WindowView::Project),
+            WindowBinding::Bound { previous: None }
+        );
+        assert_eq!(
+            state.binding_for("project-project-a", "project-a"),
+            WindowBinding::Unchanged
+        );
+    }
+
+    #[test]
+    fn projects_in_other_windows_exclude_the_calling_window() {
+        let state = AppWindowState::new();
+        state.bind_project("launcher-1", "project-a", WindowView::Home);
+        state.bind_project("project-project-b", "project-b", WindowView::Project);
+        state.reserve_project_window("project-c", "project-project-c");
+
+        assert_eq!(
+            state.projects_in_other_windows("launcher-1"),
+            vec!["project-b".to_string(), "project-c".to_string()]
+        );
+        assert_eq!(
+            state.projects_in_other_windows("project-project-b"),
+            vec!["project-a".to_string(), "project-c".to_string()]
+        );
+    }
+
+    #[test]
+    fn closing_a_window_frees_its_project() {
+        let state = AppWindowState::new();
+        state.bind_project("launcher-1", "project-a", WindowView::Home);
+        state.focus_window("launcher-1");
+
+        let (released, had_projects) = state.remove_window("launcher-1");
+
+        assert_eq!(released, Some("project-a".to_string()));
+        assert!(had_projects);
+        assert_eq!(state.project_window_label("project-a"), None);
+        assert_eq!(state.last_focused_window(), None);
+        assert_eq!(
+            state.bind_project("launcher-2", "project-a", WindowView::Home),
+            WindowBinding::Bound { previous: None }
+        );
+    }
+
+    #[test]
+    fn closing_a_loading_project_window_frees_its_reservation() {
+        let state = AppWindowState::new();
+        state.reserve_project_window("project-a", "project-project-a");
+
+        assert_eq!(state.remove_window("project-project-a"), (None, true));
+        assert_eq!(state.project_window_label("project-a"), None);
+    }
+
+    #[test]
+    fn removing_a_project_from_the_list_frees_its_window() {
+        let state = AppWindowState::new();
+        state.bind_project("project-project-a", "project-a", WindowView::Project);
+        state.bind_project("launcher-1", "project-b", WindowView::Home);
+
+        assert!(state.release_project("project-a"));
+        assert!(state.release_project("project-b"));
+        assert!(!state.release_project("project-c"));
+
+        assert!(is_home(&state, "project-project-a"));
+        assert!(is_home(&state, "launcher-1"));
+        assert_eq!(
+            state.binding_for("launcher-1", "project-b"),
+            WindowBinding::Bound { previous: None }
+        );
+    }
+
+    #[test]
+    fn a_stale_window_releases_the_project_it_served() {
+        let state = AppWindowState::new();
+        state.bind_project("project-project-a", "project-a", WindowView::Project);
+
+        assert_eq!(
+            state.release_stale_window("project-project-a"),
+            Some("project-a".to_string())
+        );
+        assert_eq!(state.project_window_label("project-a"), None);
+    }
+
+    #[test]
+    fn serializes_project_window_requests_for_the_target_window() {
+        let open: ProjectWindowRequest = serde_json::from_value(serde_json::json!({
+            "kind": "open",
+            "item": {
+                "key": { "kind": "page", "path": "notes/plan.md" },
+                "title": "Plan"
+            }
+        }))
+        .expect("decode open request");
+        assert!(matches!(
+            &open,
+            ProjectWindowRequest::Open { item } if item.title == "Plan"
+        ));
+        assert_eq!(
+            serde_json::to_value(ProjectWindowRequest::NewChat).expect("encode new chat"),
+            serde_json::json!({ "kind": "newChat" })
+        );
+        assert_eq!(
+            serde_json::from_value::<ProjectWindowRequest>(serde_json::json!({ "kind": "focus" }))
+                .expect("decode focus"),
+            ProjectWindowRequest::Focus
+        );
     }
 
     #[test]
