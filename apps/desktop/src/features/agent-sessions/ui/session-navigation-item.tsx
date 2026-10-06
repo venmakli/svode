@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
 import { BotMessageSquare } from "lucide-react";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import {
   NavigationSidebarItem,
+  type NavigationItem,
   type NavigationKey,
 } from "@/features/navigation";
 import { useAgentSessionCatalog, useAgentSessionSpace } from "../hooks";
@@ -24,7 +24,10 @@ interface AgentSessionNavigationItemProps {
   /** The session shown as the main area object. */
   mainTarget: AgentSessionTarget | null;
   onOpen: (session: AgentSession) => void;
-  menu: ReactNode;
+  /** The object of the row's Pin, Unpin or Keep in Now button. */
+  stepItem: NavigationItem | null;
+  /** An active or temporary session is kept in Now before pinned. */
+  keepable?: boolean;
   onClose?: () => void;
   temporary?: boolean;
   onKeep?: () => void;
@@ -50,7 +53,8 @@ export function AgentSessionNavigationItem({
   fallbackTitle,
   mainTarget,
   onOpen,
-  menu,
+  stepItem,
+  keepable,
   onClose,
   temporary,
   onKeep,
@@ -105,7 +109,8 @@ export function AgentSessionNavigationItem({
       onOpen={() => {
         if (session) onOpen(session);
       }}
-      menu={menu}
+      stepItem={stepItem}
+      keepable={keepable}
       onClose={onClose}
       temporary={temporary}
       onKeep={onKeep}

@@ -149,7 +149,7 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
         active={active}
         unavailable={unavailable}
         onOpen={() => (opened += 1)}
-        menu={null}
+        stepItem={null}
       />
     );
     await render(item(true));
@@ -163,11 +163,7 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
     );
     await act(async () => button.click());
     expect(opened).toBe(0);
-    expect(
-      document
-        .querySelector("[data-sidebar=menu-action]")
-        ?.getAttribute("aria-label"),
-    ).toBe("Actions for “Plan”");
+    expect(document.querySelector("[data-sidebar=menu-action]")).toBeNull();
 
     await render(item(false, true));
     const current = document.querySelector<HTMLButtonElement>(
@@ -178,7 +174,7 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
     expect(opened).toBe(1);
   });
 
-  test("a status marker takes the menu slot and names the status", async () => {
+  test("a status marker takes the buttons' place and names the status", async () => {
     await render(
       <NavigationSidebarItem
         title="Fix login"
@@ -188,7 +184,7 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
         active={false}
         unavailable={false}
         onOpen={() => undefined}
-        menu={null}
+        stepItem={null}
       />,
     );
     const badge = document.querySelector("[data-sidebar=menu-badge]");
@@ -197,9 +193,54 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
     expect(
       document.querySelector("[data-sidebar=menu-button]")?.textContent,
     ).toBe("Fix loginWorking");
-    expect(
-      document.querySelector("[data-sidebar=menu-action]") === null,
-    ).toBe(false);
+    expect(badge?.className.includes("group-hover/menu-item:opacity-0")).toBe(
+      true,
+    );
+  });
+
+  test("the row's next step keeps, then pins, then unpins, and Close stays at the end", async () => {
+    await act(async () => getNavigationState().setProject("/project"));
+    const docs = { key: { kind: "space", spaceId: "docs" }, title: "Docs" } as const;
+    const row = (keepable: boolean) => (
+      <NavigationSidebarItem
+        title="Docs"
+        icon={null}
+        tooltip={null}
+        active={false}
+        unavailable={false}
+        onOpen={() => undefined}
+        stepItem={docs}
+        keepable={keepable}
+        onClose={() => undefined}
+      />
+    );
+    const actions = () =>
+      [...document.querySelectorAll("[data-sidebar=menu-action]")].map(
+        (action) => action.getAttribute("aria-label"),
+      );
+    const step = () =>
+      document.querySelector<HTMLButtonElement>("[data-sidebar=menu-action]")!;
+
+    await render(row(true));
+    expect(actions()).toEqual(["Keep “Docs” in Now", "Close “Docs”"]);
+    await act(async () => step().click());
+    expect(getNavigationState().kept.map((item) => item.title)).toEqual([
+      "Docs",
+    ]);
+    await render(row(true));
+    expect(actions()).toEqual(["Pin “Docs”", "Close “Docs”"]);
+
+    await render(row(false));
+    expect(actions()).toEqual(["Pin “Docs”", "Close “Docs”"]);
+    await act(async () => step().click());
+    expect(getNavigationState().pinned.map((item) => item.title)).toEqual([
+      "Docs",
+    ]);
+    await render(row(false));
+    expect(actions()[0]).toBe("Unpin “Docs”");
+    await act(async () => step().click());
+    expect(getNavigationState().pinned).toEqual([]);
+    root?.unmount();
   });
 
   test("the menu item pins, then unpins, the object", async () => {
@@ -284,7 +325,7 @@ if (process.env.SVODE_NAVIGATION_SIDEBAR_DOM !== "1") {
         active
         unavailable={false}
         onOpen={() => undefined}
-        menu={null}
+        stepItem={null}
         onClose={() => (closed += 1)}
         temporary
         onKeep={() => (keptTimes += 1)}

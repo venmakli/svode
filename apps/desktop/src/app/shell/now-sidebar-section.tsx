@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Ellipsis, SquareX, X } from "lucide-react";
 import {
   DropdownMenu,
@@ -21,14 +21,11 @@ import {
   type SessionTerminals,
 } from "@/features/agent-sessions";
 import {
-  KeepMenuItem,
   NavigationSidebarGroup,
-  PinMenuItem,
   navigationKeyId,
   useDescribedNavigationItem,
   useKeepInNow,
   useNavigationState,
-  type NavigationItem,
 } from "@/features/navigation";
 import { useInteractionWithin } from "@/shared/hooks/use-interaction-within";
 import { useStableOrder } from "@/shared/hooks/use-stable-order";
@@ -136,19 +133,14 @@ export function NowSidebarSection({
               fallbackTitle={session.title}
               mainTarget={mainTarget}
               onOpen={openSessionHere}
-              menu={
-                <>
-                  <PinMenuItem item={item} />
-                  <KeepMenuItem item={item} />
-                </>
-              }
+              stepItem={item}
+              keepable
             />
           );
         })}
         {keptItems.map((item) => {
           const id = navigationKeyId(item.key);
           const close = () => void closeItem(item.key);
-          const menu = <ItemMenu item={item} onClose={close} />;
           if (isSessionKey(item.key)) {
             return (
               <AgentSessionNavigationItem
@@ -157,7 +149,7 @@ export function NowSidebarSection({
                 fallbackTitle={item.title}
                 mainTarget={mainTarget}
                 onOpen={openSessionHere}
-                menu={menu}
+                stepItem={item}
                 onClose={close}
               />
             );
@@ -168,7 +160,6 @@ export function NowSidebarSection({
               item={item}
               active={mainKeyId === id}
               onOpen={() => void openArtifactItem(item)}
-              menu={menu}
               onClose={close}
             />
           );
@@ -196,7 +187,6 @@ export function TemporaryItem({
 }) {
   const { available, keep } = useKeepInNow(keepItem);
   const onKeep = available ? keep : undefined;
-  const menu = <ItemMenu item={keepItem} onClose={onClose} keepable />;
   if (isSessionKey(item.key)) {
     return (
       <AgentSessionNavigationItem
@@ -204,7 +194,8 @@ export function TemporaryItem({
         fallbackTitle={item.title}
         mainTarget={mainTarget}
         onOpen={() => undefined}
-        menu={menu}
+        stepItem={keepItem}
+        keepable
         onClose={onClose}
         temporary
         onKeep={onKeep}
@@ -216,32 +207,11 @@ export function TemporaryItem({
       item={item}
       active
       onOpen={() => undefined}
-      menu={menu}
+      keepable
       onClose={onClose}
       temporary
       onKeep={onKeep}
     />
-  );
-}
-
-export function ItemMenu({
-  item,
-  onClose,
-  keepable = false,
-}: {
-  item: NavigationItem | null;
-  onClose: () => void;
-  keepable?: boolean;
-}): ReactNode {
-  return (
-    <>
-      <PinMenuItem item={item} />
-      {keepable && <KeepMenuItem item={item} />}
-      <DropdownMenuItem onSelect={onClose}>
-        <X />
-        {m.navigation_close()}
-      </DropdownMenuItem>
-    </>
   );
 }
 

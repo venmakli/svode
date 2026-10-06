@@ -1,4 +1,4 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback } from "react";
 import {
   Box,
   Database,
@@ -26,7 +26,7 @@ export function NavigationArtifactItem({
   item,
   active,
   onOpen,
-  menu,
+  keepable,
   onClose,
   temporary,
   onKeep,
@@ -36,7 +36,8 @@ export function NavigationArtifactItem({
   item: NavigationResolvedItem;
   active: boolean;
   onOpen: () => void;
-  menu: ReactNode;
+  /** The row keeps the object in Now before pinning it. */
+  keepable?: boolean;
   onClose?: () => void;
   temporary?: boolean;
   onKeep?: () => void;
@@ -55,7 +56,8 @@ export function NavigationArtifactItem({
       active={active}
       unavailable={item.available === false}
       onOpen={onOpen}
-      menu={menu}
+      stepItem={item}
+      keepable={keepable}
       onClose={onClose}
       temporary={temporary}
       onKeep={onKeep}

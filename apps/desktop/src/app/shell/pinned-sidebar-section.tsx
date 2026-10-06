@@ -4,7 +4,6 @@ import {
 } from "@/features/agent-sessions";
 import {
   NavigationSidebarGroup,
-  PinMenuItem,
   navigationKeyId,
   useNavigationState,
 } from "@/features/navigation";
@@ -48,7 +47,6 @@ export function PinnedSidebarSection({
     <NavigationSidebarGroup id="pinned" label={m.navigation_pinned()}>
       {pinned.map((item) => {
         const id = navigationKeyId(item.key);
-        const menu = <PinMenuItem item={item} />;
         if (item.key.kind === "session" || item.key.kind === "sessionLaunch") {
           return (
             <AgentSessionNavigationItem
@@ -61,7 +59,7 @@ export function PinnedSidebarSection({
                   focus: false,
                 })
               }
-              menu={menu}
+              stepItem={item}
             />
           );
         }
@@ -71,7 +69,6 @@ export function PinnedSidebarSection({
             item={item}
             active={mainKeyId === id}
             onOpen={() => void openArtifactItem(item)}
-            menu={menu}
           />
         );
       })}

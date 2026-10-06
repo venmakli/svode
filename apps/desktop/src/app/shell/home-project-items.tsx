@@ -16,12 +16,11 @@ import {
   type HomeProjectAvailability,
 } from "@/features/home";
 import {
-  KeepMenuItem,
   NavigationStoreProvider,
-  PinMenuItem,
   navigationKeyId,
   useDescribedNavigationItem,
   useNavigationState,
+  type NavigationItem,
   type NavigationKey,
   type NavigationResolvedItem,
 } from "@/features/navigation";
@@ -42,7 +41,7 @@ import {
   useOpenNavigationArtifact,
 } from "./navigation-sidebar-items";
 import { isSessionKey } from "./now-model";
-import { ItemMenu, TemporaryItem } from "./now-sidebar-section";
+import { TemporaryItem } from "./now-sidebar-section";
 import {
   useInactiveProjectItems,
   useOpenInactiveProjectItem,
@@ -269,8 +268,8 @@ function ProjectRows({
   const sessionRow = (
     key: NavigationKey,
     title: string,
-    menu: ReactNode,
-    extra: { onClose?: () => void; pinned?: boolean } = {},
+    stepItem: NavigationItem | null,
+    extra: { onClose?: () => void; pinned?: boolean; keepable?: boolean } = {},
   ) => (
     <AgentSessionNavigationItem
       key={navigationKeyId(key)}
@@ -278,14 +277,13 @@ function ProjectRows({
       fallbackTitle={title}
       mainTarget={mainTarget}
       onOpen={onOpenSession}
-      menu={menu}
+      stepItem={stepItem}
       project={project}
       {...extra}
     />
   );
   const artifactRow = (
     item: NavigationResolvedItem,
-    menu: ReactNode,
     extra: { onClose?: () => void; pinned?: boolean } = {},
   ) => {
     const id = navigationKeyId(item.key);
@@ -295,7 +293,6 @@ function ProjectRows({
         item={item}
         active={mainKeyId === id}
         onOpen={() => onOpenArtifact(item)}
-        menu={menu}
         spaceName={spaceName?.(item.key)}
         {...extra}
       />
@@ -308,32 +305,26 @@ function ProjectRows({
       <li ref={setElement} hidden aria-hidden />
       {ordered.map((row) => {
         switch (row.kind) {
-          case "pinned": {
-            const menu = <PinMenuItem item={row.item} />;
+          case "pinned":
             return isSessionKey(row.item.key)
-              ? sessionRow(row.item.key, row.item.title, menu, { pinned: true })
-              : artifactRow(row.item, menu, { pinned: true });
-          }
+              ? sessionRow(row.item.key, row.item.title, row.item, {
+                  pinned: true,
+                })
+              : artifactRow(row.item, { pinned: true });
           case "active": {
             const item = pinnableAgentSessionItem(row.session);
             const key = agentSessionNavigationKey(row.session);
-            return sessionRow(
-              key,
-              row.session.title,
-              <>
-                <PinMenuItem item={item} />
-                <KeepMenuItem item={item} />
-              </>,
-            );
+            return sessionRow(key, row.session.title, item, {
+              keepable: true,
+            });
           }
           case "kept": {
             const close = () => onClose(row.item.key);
-            const menu = <ItemMenu item={row.item} onClose={close} />;
             return isSessionKey(row.item.key)
-              ? sessionRow(row.item.key, row.item.title, menu, {
+              ? sessionRow(row.item.key, row.item.title, row.item, {
                   onClose: close,
                 })
-              : artifactRow(row.item, menu, { onClose: close });
+              : artifactRow(row.item, { onClose: close });
           }
           case "temporary":
             return (

@@ -97,8 +97,6 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
     }),
   }));
   mock.module("@/features/navigation", () => ({
-    KeepMenuItem: () => null,
-    PinMenuItem: () => null,
     NavigationSidebarGroup: (props: {
       label: string;
       action: ReactNode;
