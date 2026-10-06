@@ -15,8 +15,7 @@ export function useRootProjectWorkflow({
   beforeRootOpen,
   onRootOpened,
 }: UseRootProjectWorkflowInput = {}) {
-  const { rootSpaces, isLoadingRoots, loadRootSpaces, explicitHome } =
-    useSpace();
+  const { loadRootSpaces, explicitHome } = useSpace();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const { openLastProject, openProject } = useRootProjectNavigation({
@@ -58,9 +57,7 @@ export function useRootProjectWorkflow({
     handleDeleteProject,
     handleOpenProjectFolder,
     initializeHome,
-    isLoadingRoots,
     openProject,
-    rootSpaces,
     saveCloneAuthAndRetry: cloneProject.saveAuthAndRetry,
     setCloneAuthOpen: cloneProject.setAuthDialogOpen,
     setCloneDialogOpen,

@@ -3,7 +3,6 @@ import { logTiming, nowMs } from "@/shared/lib/performance";
 import * as spaceActions from "../api/space-store-actions";
 import {
   createEmptyLoadedSpaceTreeState,
-  createEmptySpaceTreeState,
   createSpaceTreeState,
   createTreeActivityPatch,
   hasSpaceExpandedPaths,
@@ -12,7 +11,13 @@ import {
   shouldValidateSpaceTree,
   type SpaceTreeState,
 } from "./space-tree-state";
-import type { SpaceGitType, SpaceInfo, WindowOpenIntent } from "./types";
+import type {
+  ProjectWindowRequest,
+  RootEntry,
+  SpaceGitType,
+  SpaceInfo,
+  WindowOpenIntent,
+} from "./types";
 
 export interface SpaceState extends SpaceTreeState {
   // Root spaces (projects on the home page)
@@ -33,7 +38,13 @@ export interface SpaceState extends SpaceTreeState {
 
   // Root (project) methods
   loadRootSpaces: () => Promise<SpaceInfo[]>;
-  openRoot: (id: string) => Promise<boolean>;
+  /** Opens the project's Space in this window; its active project only records the opening. */
+  openRoot: (id: string) => Promise<RootEntry>;
+  /** Makes the project the active project of Home; `request` goes to its other window. */
+  activateHomeRoot: (
+    id: string,
+    request: ProjectWindowRequest,
+  ) => Promise<RootEntry>;
   openRootWindow: (id: string) => Promise<void>;
   createRoot: (
     name: string,
@@ -144,44 +155,15 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }
   },
 
-  openRoot: async (id: string) => {
-    try {
-      const result = await spaceActions.openRootProject(id);
-      if (result.kind === "otherWindow") return false;
-      const { config, project } = result;
-      const projects = get().rootsLoaded
-        ? get().rootSpaces
-        : await get().loadRootSpaces();
-      const activeProject = project;
-      set({
-        rootSpaces: upsertSpaceSnapshot(projects, project),
-        rootsLoaded: true,
-        activeRootId: id,
-        activeRootName: config.name,
-        activeRootIcon: config.icon,
-        activeRootPath: activeProject.path,
-        activeSpaceId: null,
-        spaces: [],
-        ...createEmptyLoadedSpaceTreeState(),
-        explicitHome: false,
-      });
-      syncMcpContext(get(), null);
-      // Load the root content tree and spaces.
-      // Grant the webview access to this project's `.assets/` via the
-      // Tauri asset protocol. Scope is per-app-session and the call is
-      // idempotent — safe to repeat on every project open.
-      spaceActions
-        .ensureSpaceAssetsScope(activeProject.path)
-        .catch((err) => console.warn("ensure_assets_scope failed:", err));
-      await get().loadTreeChildren(id);
-      await get().loadExpandedPaths(id);
-      await get().loadSpaces(activeProject.path);
-      return true;
-    } catch (err) {
-      console.error("Failed to open project:", err);
-      return false;
-    }
-  },
+  openRoot: (id) =>
+    enterRoot(id, () => spaceActions.openRootProject(id), { records: true }),
+
+  activateHomeRoot: (id, request) =>
+    get().activeRootId === id
+      ? Promise.resolve("opened")
+      : enterRoot(id, () => spaceActions.activateHomeRootProject(id, request), {
+          records: false,
+        }),
 
   openRootWindow: async (id: string) => {
     await spaceActions.openRootProjectWindow(id);
@@ -239,25 +221,12 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }
   },
 
+  // The active project stays active on Home without a restart.
   goHome: () => {
-    set({
-      activeRootId: null,
-      activeRootName: null,
-      activeRootIcon: null,
-      activeRootPath: null,
-      spaces: [],
-      activeSpaceId: null,
-      ...createEmptySpaceTreeState(),
-      explicitHome: true,
-    });
-    spaceActions
-      .clearActiveMcpContext()
-      .catch((err) => console.warn("mcp_clear_active_context failed:", err));
+    set({ explicitHome: true });
     spaceActions
       .showHomeInCurrentRootProjectWindow()
-      .catch((err) =>
-        console.warn("show_home_in_current_window failed:", err),
-      );
+      .catch((err) => console.warn("show_home_in_current_window failed:", err));
   },
 
   loadSpaces: async (rootPath: string) => {
@@ -414,3 +383,60 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }));
   },
 }));
+
+/**
+ * The window enters the project: a project of another window stays there,
+ * the active project keeps its tree and content, another one replaces it.
+ * Only an opening leaves Home.
+ */
+async function enterRoot(
+  id: string,
+  enter: () => ReturnType<typeof spaceActions.openRootProject>,
+  { records }: { records: boolean },
+): Promise<RootEntry> {
+  const store = useSpaceStore;
+  try {
+    const result = await enter();
+    if (result.kind === "otherWindow") return "otherWindow";
+    const { config, project } = result;
+    const projects = store.getState().rootsLoaded
+      ? store.getState().rootSpaces
+      : await store.getState().loadRootSpaces();
+    const leaveHome = records ? { explicitHome: false } : {};
+    if (store.getState().activeRootId === id) {
+      store.setState({
+        rootSpaces: upsertSpaceSnapshot(projects, project),
+        rootsLoaded: true,
+        ...leaveHome,
+      });
+      return "opened";
+    }
+    store.setState({
+      rootSpaces: upsertSpaceSnapshot(projects, project),
+      rootsLoaded: true,
+      activeRootId: id,
+      activeRootName: config.name,
+      activeRootIcon: config.icon,
+      activeRootPath: project.path,
+      activeSpaceId: null,
+      spaces: [],
+      ...createEmptyLoadedSpaceTreeState(),
+      ...leaveHome,
+    });
+    syncMcpContext(store.getState(), null);
+    // Load the root content tree and spaces.
+    // Grant the webview access to this project's `.assets/` via the
+    // Tauri asset protocol. Scope is per-app-session and the call is
+    // idempotent — safe to repeat on every project open.
+    spaceActions
+      .ensureSpaceAssetsScope(project.path)
+      .catch((err) => console.warn("ensure_assets_scope failed:", err));
+    await store.getState().loadTreeChildren(id);
+    await store.getState().loadExpandedPaths(id);
+    await store.getState().loadSpaces(project.path);
+    return "opened";
+  } catch (err) {
+    console.error("Failed to open project:", err);
+    return "failed";
+  }
+}

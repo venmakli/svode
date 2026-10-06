@@ -1,3 +1,5 @@
+import type { ProjectWindowRequestDto } from "@/platform/space/space-types";
+
 export type SpaceGitType = "inline" | "independent" | "submodule";
 
 export type SpaceStatus = "ready" | "missing" | "broken";
@@ -7,6 +9,12 @@ export type LfsState = "n/a" | "ready" | "missing-creds" | "pulling";
 export type WindowOpenIntent =
   | { kind: "home" }
   | { kind: "project"; projectId: string };
+
+/** How a window entered a project: it serves it now, another window took the action, or it failed. */
+export type RootEntry = "opened" | "otherWindow" | "failed";
+
+/** What the window of a project does for an action started in another window. */
+export type ProjectWindowRequest = ProjectWindowRequestDto;
 
 export interface SpaceInfo {
   id: string;

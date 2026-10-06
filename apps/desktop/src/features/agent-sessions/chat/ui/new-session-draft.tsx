@@ -1,5 +1,11 @@
 import { useState, type ReactNode } from "react";
-import { Box, Check, ChevronDown, FolderClosed, SquareTerminal } from "lucide-react";
+import {
+  Box,
+  Check,
+  ChevronDown,
+  FolderClosed,
+  SquareTerminal,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { AgentSignInDialog } from "@/features/settings/agent-sign-in";
@@ -12,7 +18,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useAgentSessionScopes } from "../../hooks/use-agent-session-scopes";
-import type { AgentSessionScopeGroup } from "../../model";
+import type {
+  AgentSessionScopeGroup,
+  DraftSpaceChoice,
+  DraftSpaceChoices,
+} from "../../model";
 import { signInAgent } from "../api/chat";
 import {
   useNewSessionDraft,
@@ -21,10 +31,18 @@ import {
 } from "../hooks/use-new-session-draft";
 import type { DraftAgentState } from "../hooks/use-draft-agent";
 import { sessionControls } from "../model/session-controls";
-import { AgentModelButton, AgentRecovery, unavailableText } from "./agent-button";
+import {
+  AgentModelButton,
+  AgentRecovery,
+  unavailableText,
+} from "./agent-button";
 import { Composer } from "./composer";
 import { ComposerFooter } from "./session-chat";
-import { ContextIndicator, ModeSelect, SettingRefusalLine } from "./session-controls";
+import {
+  ContextIndicator,
+  ModeSelect,
+  SettingRefusalLine,
+} from "./session-controls";
 import * as m from "@/paraglide/messages.js";
 
 /** Built-in agents have their own sign-in command; custom agents do not. */
@@ -42,9 +60,12 @@ export function NewSessionDraft({
   onOpenTerminal,
   onOpenAgentSettings,
   actions,
+  spaceChoices,
 }: {
   /** The Space of the context the draft was opened from. */
   spacePath: string;
+  /** Places to list instead of the Spaces of the active project. */
+  spaceChoices?: DraftSpaceChoices;
   onStarted: (started: StartedSession) => void;
   /** "New session in terminal": a managed terminal in the draft's Space. */
   onOpenTerminal: (spacePath: string) => void;
@@ -59,7 +80,8 @@ export function NewSessionDraft({
     null,
   );
   const readiness = draft.readiness;
-  const ready = readiness.state === "checked" && readiness.check.state === "ready";
+  const ready =
+    readiness.state === "checked" && readiness.check.state === "ready";
   const agent = draft.agent;
 
   const startSignIn =
@@ -123,7 +145,9 @@ export function NewSessionDraft({
               />
             )}
             {draft.draft.notSent && (
-              <p className="text-xs text-destructive">{m.sessions_chat_not_sent()}</p>
+              <p className="text-xs text-destructive">
+                {m.sessions_chat_not_sent()}
+              </p>
             )}
             <Composer
               draftKey={draft.draftKey}
@@ -139,7 +163,9 @@ export function NewSessionDraft({
               autoFocus
               placeholder={
                 agent
-                  ? m.sessions_chat_placeholder_new({ agent: dictionary.label(agent) })
+                  ? m.sessions_chat_placeholder_new({
+                      agent: dictionary.label(agent),
+                    })
                   : m.sessions_chat_placeholder_continue()
               }
               controls={
@@ -165,10 +191,18 @@ export function NewSessionDraft({
         )}
         <ComposerFooter>
           <SpaceSelect
-            scopes={scopes}
+            choices={spaceChoices?.choices ?? scopes.map(scopeChoice)}
             spacePath={draft.spacePath}
             disabled={draft.sending}
-            onChoose={draft.chooseSpace}
+            onChoose={(path) => {
+              if (!spaceChoices) {
+                draft.chooseSpace(path);
+                return;
+              }
+              void spaceChoices.choose(path).then((moved) => {
+                if (moved) draft.chooseSpace(path);
+              });
+            }}
           />
           <div className="ms-auto flex min-w-0 items-center gap-1">
             {readiness.state === "connecting" && (
@@ -209,8 +243,10 @@ function ReadinessLine({
   readiness: DraftAgentState;
   recovery: Parameters<typeof AgentRecovery>[0]["recovery"];
 }) {
-  if (readiness.state === "idle" || readiness.state === "connecting") return null;
-  if (readiness.state === "checked" && readiness.check.state === "ready") return null;
+  if (readiness.state === "idle" || readiness.state === "connecting")
+    return null;
+  if (readiness.state === "checked" && readiness.check.state === "ready")
+    return null;
   return (
     <div className="rounded-lg border px-3 py-2">
       <AgentRecovery readiness={readiness} recovery={recovery} />
@@ -272,18 +308,28 @@ function NoChatAgents({ onOpenSettings }: { onOpenSettings: () => void }) {
   );
 }
 
+function scopeChoice(scope: AgentSessionScopeGroup): DraftSpaceChoice {
+  return {
+    path: scope.path,
+    name: scope.name,
+    icon: scope.icon,
+    kind: scope.kind,
+    unavailable: scope.status === "ready" ? null : "",
+  };
+}
+
 function SpaceSelect({
-  scopes,
+  choices,
   spacePath,
   disabled,
   onChoose,
 }: {
-  scopes: AgentSessionScopeGroup[];
+  choices: DraftSpaceChoice[];
   spacePath: string;
   disabled: boolean;
   onChoose: (path: string) => void;
 }) {
-  const current = scopes.find((scope) => scope.path === spacePath);
+  const current = choices.find((choice) => choice.path === spacePath);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -294,21 +340,30 @@ function SpaceSelect({
           className="-ms-1.5 max-w-64 text-muted-foreground"
           aria-label={m.sessions_chat_space_choose()}
         >
-          {current && <ScopeIcon scope={current} />}
+          {current && <ChoiceIcon choice={current} />}
           <span className="truncate">{current?.name ?? spacePath}</span>
           <ChevronDown />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="max-h-72 min-w-56">
-        {scopes.map((scope) => (
+      <DropdownMenuContent
+        align="start"
+        side="top"
+        className="max-h-72 min-w-56"
+      >
+        {choices.map((choice) => (
           <DropdownMenuItem
-            key={scope.id}
-            disabled={scope.status !== "ready"}
-            onSelect={() => onChoose(scope.path)}
+            key={choice.path}
+            disabled={choice.unavailable !== null}
+            onSelect={() => onChoose(choice.path)}
           >
-            <ScopeIcon scope={scope} />
-            <span className="min-w-0 flex-1 truncate">{scope.name}</span>
-            {scope.path === spacePath && <Check />}
+            <ChoiceIcon choice={choice} />
+            <span className="min-w-0 flex-1 truncate">{choice.name}</span>
+            {choice.unavailable && (
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {choice.unavailable}
+              </span>
+            )}
+            {choice.path === spacePath && <Check />}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -316,13 +371,13 @@ function SpaceSelect({
   );
 }
 
-function ScopeIcon({ scope }: { scope: AgentSessionScopeGroup }) {
-  if (scope.icon) {
+function ChoiceIcon({ choice }: { choice: DraftSpaceChoice }) {
+  if (choice.icon) {
     return (
       <span className="flex size-4 items-center justify-center text-sm leading-none">
-        {scope.icon}
+        {choice.icon}
       </span>
     );
   }
-  return scope.kind === "project" ? <Box /> : <FolderClosed />;
+  return choice.kind === "project" ? <Box /> : <FolderClosed />;
 }

@@ -1,11 +1,10 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type {
+  ComponentProps,
+  CSSProperties,
+  ReactNode,
+  RefObject,
 } from "react";
-import type { CSSProperties, ReactNode, RefObject } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -25,7 +24,11 @@ import {
   CommandPalette,
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
-import { TerminalPanelHost, useNewSpaceTerminal } from "@/features/terminal";
+import {
+  TerminalEventBridge,
+  TerminalPanelHost,
+  useNewSpaceTerminal,
+} from "@/features/terminal";
 import { CollectionDetailPeekHost } from "@/features/collection/app-shell";
 import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
@@ -43,6 +46,7 @@ import {
 } from "@/features/navigation";
 import { type AppSettingsSection } from "@/features/settings";
 import { UserSettingsFooter } from "./user-settings-footer";
+import { HomeSidebar } from "@/features/home";
 import { setCurrentAppWindowTitle } from "@/platform/native/window";
 import {
   SHELL_SIDEBAR_WIDTH_DEFAULT,
@@ -73,6 +77,14 @@ import { PinnedSidebarSection } from "./pinned-sidebar-section";
 import { useKeepEditedObjects } from "./working-set";
 import { passNavigationGuards } from "./navigation-guards";
 import { cn } from "@/shared/lib/utils";
+import { ShellViewContext, useShellView, type ShellView } from "./shell-view";
+import {
+  HomeEntry,
+  HomeMainPlaceholder,
+  useHomeDraftSpaceChoices,
+  useProjectWindowRequests,
+  useStartHomeChat,
+} from "./home-workspace";
 
 type SidebarProviderStyle = CSSProperties & {
   "--sidebar-width": string;
@@ -96,17 +108,24 @@ interface DesktopResizableShellProps {
   onBeforeNavigation: () => Promise<boolean>;
 }
 
-export function MainLayout() {
+/**
+ * The shell of a window: the Space of the active project, or Home with the
+ * projects in its sidebar.
+ */
+export function MainLayout({ view = "space" }: { view?: ShellView }) {
   return (
-    <TooltipProvider delayDuration={300}>
-      <MainLayoutRuntime />
-    </TooltipProvider>
+    <ShellViewContext.Provider value={view}>
+      <TooltipProvider delayDuration={300}>
+        <MainLayoutRuntime view={view} />
+      </TooltipProvider>
+    </ShellViewContext.Provider>
   );
 }
 
-function MainLayoutRuntime() {
+function MainLayoutRuntime({ view }: { view: ShellView }) {
   const navigate = useNavigate();
   useKeyboardShortcuts();
+  useProjectWindowRequests();
   useKeepEditedObjects();
   useAppGitFocus();
   const {
@@ -148,10 +167,6 @@ function MainLayoutRuntime() {
     }),
     [sidebarWidth],
   );
-  useEffect(() => {
-    openContentSurface();
-  }, [openContentSurface]);
-
   // The tree highlights the selected artifact only while the main area
   // shows it; a session or the Graph there hides the highlight.
   useEffect(() => {
@@ -159,14 +174,17 @@ function MainLayoutRuntime() {
   }, [mainSurface]);
 
   useEffect(() => {
-    const title = activeRootName ? `${activeRootName} - Svode` : "Svode";
+    const title =
+      view === "space" && activeRootName
+        ? `${activeRootName} - Svode`
+        : "Svode";
     void setCurrentAppWindowTitle(title).catch((err) =>
       console.warn("set window title failed:", err),
     );
-  }, [activeRootName]);
+  }, [activeRootName, view]);
 
   useEffect(() => {
-    if (activeRootId || bootstrapAttempted.current) return;
+    if (view === "home" || activeRootId || bootstrapAttempted.current) return;
     bootstrapAttempted.current = true;
 
     (async () => {
@@ -182,9 +200,16 @@ function MainLayoutRuntime() {
         navigate({ to: "/" });
       }
     })();
-  }, [activeRootId, explicitHome, getWindowOpenIntent, navigate, openRoot]);
+  }, [
+    activeRootId,
+    explicitHome,
+    getWindowOpenIntent,
+    navigate,
+    openRoot,
+    view,
+  ]);
 
-  if (!activeRootId) {
+  if (view === "space" && !activeRootId) {
     return <div className="h-dvh bg-background" />;
   }
 
@@ -208,15 +233,18 @@ function MainLayoutRuntime() {
         <AgentSessionCatalogHost projectPath={activeRootPath} />
         <CollectionDetailPeekHost />
         <AgentSessionPeekHost />
+        {view === "home" && <HomeEntry />}
       </ChatAttachmentPeekProvider>
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />
-      <CommandPalette
-        onBeforeNavigation={passNavigationGuards}
-        onAfterNavigation={openContentSurface}
-        onOpenGraph={openGraphSurface}
-      />
+      {view === "space" && (
+        <CommandPalette
+          onBeforeNavigation={passNavigationGuards}
+          onAfterNavigation={openContentSurface}
+          onOpenGraph={openGraphSurface}
+        />
+      )}
     </SidebarProvider>
   );
 }
@@ -236,38 +264,49 @@ function ShellLayoutContent({
   const useResizableSidebar = !isMobile && !sidebarHidden;
   const startSessionInPeek = useStartSessionInPeek();
   const newSpaceTerminal = useNewSpaceTerminal();
-
-  const sidebar = (
-    <SpaceSidebar
-      userMenu={
-        <UserSettingsFooter
-          identityName={identityName}
-          identityEmail={identityEmail}
-          onOpenProfile={() => onOpenAppSettings("git-identity")}
-          onOpenSettings={() => onOpenAppSettings()}
-        />
-      }
-      onActivateContent={onActivateContent}
-      onBeforeNavigation={onBeforeNavigation}
-      onOpenSearch={onOpenSearch}
-      onNewSession={startSessionInPeek}
-      onNewTerminal={newSpaceTerminal}
-      allProjectsItem={<AllProjectsSidebarRow />}
-      newSessionItem={<NewSessionSidebarRow />}
-      navigationSections={
-        <>
-          <PinnedSidebarSection
-            onActivateContent={onActivateContent}
-            onBeforeNavigation={onBeforeNavigation}
-          />
-          <NowSidebarSection
-            onActivateContent={onActivateContent}
-            onBeforeNavigation={onBeforeNavigation}
-          />
-        </>
-      }
+  const startHomeChat = useStartHomeChat();
+  const view = useShellView();
+  const userMenu = (
+    <UserSettingsFooter
+      identityName={identityName}
+      identityEmail={identityEmail}
+      onOpenProfile={() => onOpenAppSettings("git-identity")}
+      onOpenSettings={() => onOpenAppSettings()}
     />
   );
+
+  const sidebar =
+    view === "home" ? (
+      <HomeSidebar
+        userMenu={userMenu}
+        onBeforeNavigation={onBeforeNavigation}
+        onActivateContent={onActivateContent}
+        onStartChat={(project) => void startHomeChat(project)}
+      />
+    ) : (
+      <SpaceSidebar
+        userMenu={userMenu}
+        onActivateContent={onActivateContent}
+        onBeforeNavigation={onBeforeNavigation}
+        onOpenSearch={onOpenSearch}
+        onNewSession={startSessionInPeek}
+        onNewTerminal={newSpaceTerminal}
+        allProjectsItem={<AllProjectsSidebarRow />}
+        newSessionItem={<NewSessionSidebarRow />}
+        navigationSections={
+          <>
+            <PinnedSidebarSection
+              onActivateContent={onActivateContent}
+              onBeforeNavigation={onBeforeNavigation}
+            />
+            <NowSidebarSection
+              onActivateContent={onActivateContent}
+              onBeforeNavigation={onBeforeNavigation}
+            />
+          </>
+        }
+      />
+    );
 
   if (!useResizableSidebar) {
     return (
@@ -395,6 +434,8 @@ function ShellMainInset({
     (state) => state.knowledgeGraphOpenRequest,
   );
   const openContentSurface = useShellStore((state) => state.openContentSurface);
+  const view = useShellView();
+  const activeRootId = useSpace((state) => state.activeRootId);
 
   return (
     <SidebarInset
@@ -408,7 +449,9 @@ function ShellMainInset({
       <WindowHeader />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="min-h-0 flex-1 overflow-hidden pb-6">
-          {mainSurface === "session" && mainSessionTarget ? (
+          {view === "home" && !activeRootId ? (
+            <HomeMainPlaceholder />
+          ) : mainSurface === "session" && mainSessionTarget ? (
             <AgentSessionMainSurface
               target={mainSessionTarget}
               focus={mainSessionFocus}
@@ -417,7 +460,7 @@ function ShellMainInset({
               onOpenAgentSettings={() => openAppSettings("providers")}
             />
           ) : mainSurface === "session" && mainSessionDraft ? (
-            <AgentSessionDraftMainSurface
+            <MainSessionDraft
               draft={mainSessionDraft}
               onStarted={(started) =>
                 showStartedSession(started, mainSessionDraft.spacePath)
@@ -439,8 +482,34 @@ function ShellMainInset({
             </UserEditScope>
           )}
         </div>
-        <TerminalPanelHost />
+        {view === "space" ? <TerminalPanelHost /> : <TerminalEventBridge />}
       </div>
     </SidebarInset>
+  );
+}
+
+/** The main area draft; on Home its composer lists the projects. */
+function MainSessionDraft(
+  props: Omit<
+    ComponentProps<typeof AgentSessionDraftMainSurface>,
+    "spaceChoices"
+  >,
+) {
+  return useShellView() === "home" ? (
+    <HomeSessionDraft {...props} />
+  ) : (
+    <AgentSessionDraftMainSurface {...props} />
+  );
+}
+
+function HomeSessionDraft(
+  props: Omit<
+    ComponentProps<typeof AgentSessionDraftMainSurface>,
+    "spaceChoices"
+  >,
+) {
+  const spaceChoices = useHomeDraftSpaceChoices();
+  return (
+    <AgentSessionDraftMainSurface {...props} spaceChoices={spaceChoices} />
   );
 }

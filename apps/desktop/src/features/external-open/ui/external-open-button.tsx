@@ -22,6 +22,7 @@ import * as m from "@/paraglide/messages.js";
 
 import { useExternalOpen } from "../hooks/use-external-open";
 import type { ExternalOpenBinding } from "../model/types";
+import { revealInFileManagerLabel } from "../model/reveal-label";
 import { ExternalAppIcon } from "./external-app-icon";
 
 interface ExternalOpenButtonProps extends ExternalOpenBinding {
@@ -149,7 +150,9 @@ export function ExternalOpenButton({
                 onSelect={() => void reveal()}
               >
                 <FolderOpen aria-hidden className="size-5 shrink-0" />
-                <span className="min-w-0 truncate">{revealLabel()}</span>
+                <span className="min-w-0 truncate">
+                  {revealInFileManagerLabel()}
+                </span>
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </>
@@ -157,12 +160,4 @@ export function ExternalOpenButton({
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
-
-function revealLabel() {
-  const platform =
-    typeof navigator === "undefined" ? "" : navigator.platform.toLowerCase();
-  if (platform.includes("mac")) return m.external_open_reveal_finder();
-  if (platform.includes("win")) return m.external_open_reveal_explorer();
-  return m.external_open_reveal_file_manager();
 }

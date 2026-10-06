@@ -28,7 +28,9 @@ import {
   openProjectFolder,
   reorderSpaces,
   showHomeInCurrentWindow,
+  activateHomeProject,
 } from "@/platform/space/space-api";
+import type { ProjectWindowRequestDto } from "@/platform/space/space-types";
 import type { SpaceGitType } from "../model/types";
 
 export type SpacePageDto = PageDto;
@@ -39,6 +41,13 @@ export function listRootSpaces() {
 
 export function openRootProject(id: string) {
   return openProject(id);
+}
+
+export function activateHomeRootProject(
+  id: string,
+  request: ProjectWindowRequestDto,
+) {
+  return activateHomeProject(id, request);
 }
 
 export function openRootProjectWindow(id: string) {

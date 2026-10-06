@@ -128,9 +128,6 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     ProjectLoadingLogo: () => null,
   }));
   mock.module("@/features/settings", () => ({ useAppVersion: () => "test" }));
-  mock.module("@/features/home/ui/project-list", () => ({
-    ProjectList: () => null,
-  }));
   mock.module("@/features/home/ui/empty-state", () => ({
     EmptyState: () => null,
   }));
@@ -149,7 +146,8 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     }),
   }));
   const { useKeyboardShortcuts } = await import("./use-keyboard-shortcuts");
-  const { HomePage } = await import("@/features/home");
+  const { EmptyHome } = await import("@/features/home");
+  const { ShellViewContext } = await import("../shell-view");
   const { useTerminalPanelToggle } = await import("@/features/terminal");
   let terminalOpen = false;
   function Shell() {
@@ -190,7 +188,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
         root.render(
           <>
             <Shell />
-            <HomePage />
+            <EmptyHome />
           </>,
         );
       });
@@ -243,7 +241,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       allowNavigation = true;
       // Home alone takes no ⌘0.
       await act(async () => {
-        root.render(<HomePage />);
+        root.render(<EmptyHome />);
       });
       await act(async () => {
         expect(fire("Digit0", "0", mac).defaultPrevented).toBe(false);
@@ -262,6 +260,34 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     }
     expect(calls.guard).toBe(5);
     expect(calls.navigate).toBe(3);
+  });
+  test("the Home shell takes no Search, terminal panel or ⌘0", async () => {
+    for (const mac of [true, false]) {
+      Object.defineProperty(navigator, "platform", {
+        configurable: true,
+        value: mac ? "MacIntel" : "Win32",
+      });
+      await act(async () => {
+        root.render(
+          <ShellViewContext.Provider value="home">
+            <Shell />
+          </ShellViewContext.Provider>,
+        );
+      });
+      const { palette, home, guard } = calls;
+      const panel = terminalOpen;
+      await act(async () => {
+        fire("KeyP", "p", mac);
+        expect(
+          fire("Backquote", "`", false, { ctrlKey: true }).defaultPrevented,
+        ).toBe(false);
+        fire("Digit0", "0", mac);
+      });
+      expect(calls.palette).toBe(palette);
+      expect(terminalOpen).toBe(panel);
+      expect(calls.home).toBe(home);
+      expect(calls.guard).toBe(guard);
+    }
   });
   test("⌘W closes the main area object by its physical key, in session terminals only as Cmd", async () => {
     for (const mac of [true, false]) {

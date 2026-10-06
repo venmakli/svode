@@ -37,6 +37,8 @@ export type {
   AgentSessionScopeGroup,
   AgentSessionTarget,
   NewSessionDraftTarget,
+  DraftSpaceChoice,
+  DraftSpaceChoices,
   NewSessionSpaceRef,
 } from "./model";
 export {

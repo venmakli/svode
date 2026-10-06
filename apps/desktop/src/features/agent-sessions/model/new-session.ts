@@ -49,3 +49,22 @@ export function newSessionScopeChoices(
     ...scopes.filter((scope) => scope.scopeId !== current.scopeId),
   ];
 }
+
+/** A place a new session draft can start in, as its composer lists it. */
+export interface DraftSpaceChoice {
+  path: string;
+  name: string;
+  icon: string | null;
+  kind: "project" | "space";
+  /** Why the draft cannot start there; the choice is inactive. */
+  unavailable: string | null;
+}
+
+/**
+ * The places a draft lists instead of the Spaces of the active project,
+ * e.g. the projects of Home. `choose` resolves whether the draft moves.
+ */
+export interface DraftSpaceChoices {
+  choices: DraftSpaceChoice[];
+  choose: (path: string) => Promise<boolean>;
+}

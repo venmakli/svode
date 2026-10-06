@@ -2,10 +2,18 @@ import { useCallback } from "react";
 import * as spaceNotifications from "../effects/space-notifications";
 import { openScopeHomeSelection } from "../effects/space-selection";
 import { useSpaceStore } from "../model";
-import type { SpaceGitType, SpaceInfo } from "../model";
+import type {
+  ProjectWindowRequest,
+  RootEntry,
+  SpaceGitType,
+  SpaceInfo,
+} from "../model";
 
 export function useSpaceActions() {
   const openRootAction = useSpaceStore((state) => state.openRoot);
+  const activateHomeRootAction = useSpaceStore(
+    (state) => state.activateHomeRoot,
+  );
   const openRootWindowAction = useSpaceStore((state) => state.openRootWindow);
   const getWindowOpenIntentAction = useSpaceStore(
     (state) => state.getWindowOpenIntent,
@@ -20,17 +28,26 @@ export function useSpaceActions() {
     openScopeHomeSelection(rootId);
   }, []);
 
+  // The active project keeps the main area object; another one opens on
+  // its home page. A project of another window is no failure.
   const openRoot = useCallback(
     async (id: string): Promise<boolean> => {
-      const opened = await openRootAction(id);
-      if (opened) {
-        selectRootHome(id);
-      } else {
-        spaceNotifications.notifySpaceError();
-      }
-      return opened;
+      const wasActive = useSpaceStore.getState().activeRootId === id;
+      const entry = await openRootAction(id);
+      if (entry === "opened" && !wasActive) selectRootHome(id);
+      if (entry === "failed") spaceNotifications.notifySpaceError();
+      return entry === "opened";
     },
     [openRootAction, selectRootHome],
+  );
+
+  const activateHomeRoot = useCallback(
+    async (id: string, request: ProjectWindowRequest): Promise<RootEntry> => {
+      const entry = await activateHomeRootAction(id, request);
+      if (entry === "failed") spaceNotifications.notifySpaceError();
+      return entry;
+    },
+    [activateHomeRootAction],
   );
 
   const openRootWindow = useCallback(
@@ -115,6 +132,7 @@ export function useSpaceActions() {
   );
 
   return {
+    activateHomeRoot,
     createPage,
     createRoot,
     createSpace,

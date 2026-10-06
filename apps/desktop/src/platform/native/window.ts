@@ -19,3 +19,13 @@ export function listenCurrentAppWindowTrafficLightInset(
     (event) => listener(event.payload),
   );
 }
+
+/** Listens only to events emitted to this window. */
+export function listenCurrentAppWindowEvent<T>(
+  event: string,
+  listener: (payload: T) => void,
+) {
+  return getCurrentWindow().listen<T>(event, (received) =>
+    listener(received.payload),
+  );
+}

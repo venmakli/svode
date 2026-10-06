@@ -18,6 +18,7 @@ const nodeScriptFiles = ["scripts/**/*.mjs", "apps/desktop/scripts/**/*.mjs"];
 
 const routeAppExceptions = new Map([
   ["routes/__root.tsx", new Set(["@/app/providers"])],
+  ["routes/index.tsx", new Set(["@/app/shell"])],
   ["routes/space.tsx", new Set(["@/app/shell"])],
 ]);
 const allowedFeatureSubpathExceptions = new Set([

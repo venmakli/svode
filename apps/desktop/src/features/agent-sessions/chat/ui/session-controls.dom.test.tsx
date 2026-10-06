@@ -762,6 +762,74 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     ).__TAURI_INTERNALS__.runCallback(id, data);
   }
 
+  controlsTest(
+    "a Home draft lists the projects, inactive ones with their reason, and moves once a choice is taken",
+    async () => {
+      const chosen: string[] = [];
+      let allow = false;
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenTerminal={() => undefined}
+          onOpenAgentSettings={() => undefined}
+          spaceChoices={{
+            choices: [
+              {
+                path: "/project",
+                name: "Project",
+                icon: null,
+                kind: "project",
+                unavailable: null,
+              },
+              {
+                path: "/notes",
+                name: "Notes",
+                icon: null,
+                kind: "project",
+                unavailable: null,
+              },
+              {
+                path: "/other",
+                name: "Other",
+                icon: null,
+                kind: "project",
+                unavailable: "Open in another window",
+              },
+            ],
+            choose: async (path) => {
+              chosen.push(path);
+              return allow;
+            },
+          }}
+        />,
+      );
+      await openMenu(buttonByLabel(m.sessions_chat_space_choose()));
+      const items = Array.from(document.querySelectorAll('[role="menuitem"]'));
+      expect(items.map((item) => item.textContent)).toEqual([
+        "Project",
+        "Notes",
+        "OtherOpen in another window",
+      ]);
+      expect(items[2].hasAttribute("data-disabled")).toBe(true);
+      await click(menuItem("Notes"));
+      expect(chosen).toEqual(["/notes"]);
+      expect(buttonByLabel(m.sessions_chat_space_choose())?.textContent).toBe(
+        "Project",
+      );
+      allow = true;
+      await openMenu(buttonByLabel(m.sessions_chat_space_choose()));
+      await click(menuItem("Notes"));
+      expect(buttonByLabel(m.sessions_chat_space_choose())?.textContent).toBe(
+        "Notes",
+      );
+      expect(lastCall("agent_runtime_hold_draft")).toEqual({
+        agent: "codex",
+        cwd: "/notes",
+      });
+    },
+  );
+
   function lastCall(command: string) {
     return calls.filter((call) => call.command === command).at(-1)?.payload;
   }

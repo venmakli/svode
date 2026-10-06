@@ -2,7 +2,6 @@ import { shortcutLabel } from "@/shared/lib/shortcut-description";
 import { sidebarShortcut } from "./model/shortcut-descriptions";
 import { ChangesControl, useMainChangesTarget } from "@/features/changes";
 import { useLayoutEffect, useRef } from "react";
-import { useMatches } from "@tanstack/react-router";
 import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +19,9 @@ import { GitSyncStatusWidget } from "@/features/git/app-shell";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectExternalOpenButton } from "@/features/external-open";
 import { TerminalPanelToggle } from "@/features/terminal";
+import { HomeSidebarHeader } from "@/features/home";
 import { ProjectSwitcher } from "./project-switcher";
+import { useShellView } from "./shell-view";
 import { passNavigationGuards } from "./navigation-guards";
 import {
   AgentSessionBreadcrumbs,
@@ -44,6 +45,7 @@ export function ShellChrome() {
   const isMac = isMacPlatform();
   const reserveTrafficLights = isMac && trafficLightInsetReserved;
   const sidebarShortcutLabel = shortcutLabel(sidebarShortcut);
+  const view = useShellView();
 
   useLayoutEffect(() => {
     const node = chromeRef.current;
@@ -90,7 +92,11 @@ export function ShellChrome() {
           {sidebarShortcut.label()} ({sidebarShortcutLabel})
         </TooltipContent>
       </Tooltip>
-      <ProjectSwitcher className="min-w-0 flex-1" />
+      {view === "home" ? (
+        <HomeSidebarHeader />
+      ) : (
+        <ProjectSwitcher className="min-w-0 flex-1" />
+      )}
     </div>
   );
 }
@@ -108,16 +114,16 @@ export function WindowHeader() {
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const activeSpacePath = useSpace(selectActiveSpacePath);
   const { state } = useSidebar();
-  const matches = useMatches();
+  const view = useShellView();
 
-  // Check if we're on the /space route
-  const isSpaceRoute = matches.some((match) => match.fullPath === "/space");
-  const showBreadcrumbs = isSpaceRoute && mainSurface === "content";
+  // Home without an active project shows no project chrome.
+  const projectShown = activeRootPath !== null;
+  const showBreadcrumbs = projectShown && mainSurface === "content";
   // A session shows Git sync and changes of its own Space only.
   const sessionSpace =
-    isSpaceRoute && mainSessionSpace?.ready ? mainSessionSpace : null;
+    projectShown && mainSessionSpace?.ready ? mainSessionSpace : null;
   const showGitSync =
-    isSpaceRoute &&
+    projectShown &&
     (!mainSessionTarget || sessionSpace?.spacePath === activeSpacePath);
   const sidebarHidden = state === "collapsed";
 
@@ -138,7 +144,7 @@ export function WindowHeader() {
         {showBreadcrumbs && (
           <MainBreadcrumbs onBeforeNavigation={passNavigationGuards} />
         )}
-        {isSpaceRoute && mainSessionTarget && (
+        {projectShown && mainSessionTarget && (
           <AgentSessionBreadcrumbs target={mainSessionTarget} />
         )}
       </div>
@@ -152,7 +158,7 @@ export function WindowHeader() {
             }
           />
         )}
-        {isSpaceRoute &&
+        {projectShown &&
         mainSurface === "content" &&
         changesTarget &&
         selection &&
@@ -182,9 +188,9 @@ export function WindowHeader() {
             }}
           />
         ) : null}
-        {isSpaceRoute && activeRootPath ? (
+        {activeRootPath ? (
           <>
-            <TerminalPanelToggle />
+            {view === "space" && <TerminalPanelToggle />}
             <ProjectExternalOpenButton projectPath={activeRootPath} />
           </>
         ) : null}

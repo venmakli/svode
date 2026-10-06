@@ -1,81 +1,40 @@
-import { matchesPhysicalShortcut } from "@/shared/lib/keyboard-shortcuts";
-import { isTerminalKeyboardEvent } from "@/features/terminal";
-import { useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 import * as m from "@/paraglide/messages.js";
 import { FolderPlus, FolderOpen, FolderGit2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ProjectLoadingLogo } from "@/features/branding";
 import { useAppVersion } from "@/features/settings";
-import { ProjectList } from "./project-list";
 import { EmptyState } from "./empty-state";
 import { RootProjectDialogs } from "./root-project-dialogs";
+import { useCreateProjectShortcut } from "../hooks/use-create-project-shortcut";
 import { useRootProjectWorkflow } from "../hooks/use-root-project-workflow";
 import { useRootProjectWindowTitle } from "../hooks/use-root-project-window-title";
 
-export function HomePage() {
+/** Home without projects: the start screen with the project actions. */
+export function EmptyHome() {
   const version = useAppVersion();
-  const autoOpenAttempted = useRef(false);
-
   const {
     cloneAuthChallenge,
     cloneAuthError,
     cloneAuthOpen,
     cloneAuthSaving,
     cloneDialogOpen,
-    cloningProject,
     createDialogOpen,
-    explicitHome,
     handleCloneProject,
     handleCreateProject,
-    handleDeleteProject,
     handleOpenProjectFolder,
-    initializeHome,
-    isLoadingRoots,
-    openProject,
-    rootSpaces,
     saveCloneAuthAndRetry,
     setCloneAuthOpen,
     setCloneDialogOpen,
     setCreateDialogOpen,
   } = useRootProjectWorkflow();
-  const [homeReady, setHomeReady] = useState(explicitHome);
+  const openCreateDialog = useCallback(
+    () => setCreateDialogOpen(true),
+    [setCreateDialogOpen],
+  );
 
   useRootProjectWindowTitle();
-
-  useEffect(() => {
-    if (autoOpenAttempted.current) return;
-    autoOpenAttempted.current = true;
-    let cancelled = false;
-
-    (async () => {
-      const openedProject = await initializeHome();
-      if (!cancelled && !openedProject) {
-        setHomeReady(true);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [initializeHome]);
-
-  // Keyboard shortcut: Cmd+N to create project
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (!isTerminalKeyboardEvent(e) && matchesPhysicalShortcut(e, "KeyN")) {
-        e.preventDefault();
-        setCreateDialogOpen(true);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setCreateDialogOpen]);
-
-  const hasProjects = rootSpaces.length > 0 || isLoadingRoots;
-
-  if (!homeReady) {
-    return <HomeBootstrapScreen />;
-  }
+  useCreateProjectShortcut(openCreateDialog);
 
   return (
     <div className="flex flex-col h-screen">
@@ -97,7 +56,7 @@ export function HomePage() {
         <div className="flex gap-3 mb-8">
           <Card
             className="flex flex-col justify-between w-40 h-24 p-4 hover:bg-accent transition-colors cursor-pointer"
-            onClick={() => setCreateDialogOpen(true)}
+            onClick={openCreateDialog}
           >
             <FolderPlus className="h-5 w-5 text-muted-foreground" />
             <span className="text-sm font-medium">
@@ -122,17 +81,7 @@ export function HomePage() {
           </Card>
         </div>
 
-        {hasProjects ? (
-          <ProjectList
-            projects={rootSpaces}
-            isLoading={isLoadingRoots}
-            onOpenProject={openProject}
-            onDeleteProject={handleDeleteProject}
-            cloningProject={cloningProject}
-          />
-        ) : (
-          <EmptyState />
-        )}
+        <EmptyState />
       </div>
 
       <RootProjectDialogs
@@ -153,7 +102,7 @@ export function HomePage() {
   );
 }
 
-function HomeBootstrapScreen() {
+export function HomeBootstrapScreen() {
   return (
     <div className="flex h-screen flex-col bg-background">
       <div data-tauri-drag-region className="h-[44px] w-full shrink-0" />

@@ -39,6 +39,7 @@ import {
 } from "@/features/terminal";
 import { useShellStore } from "../model";
 import { useWorkingSetActions } from "../working-set";
+import { useShellView } from "../shell-view";
 import { useGoHome } from "./use-go-home";
 import * as m from "@/paraglide/messages.js";
 import { useCollectionActivePresentationId } from "@/features/collection";
@@ -51,6 +52,8 @@ export function useKeyboardShortcuts() {
   const toggleCommandPalette = useToggleCommandPalette();
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const goHome = useGoHome();
+  // Home has no terminal panel, Search or Graph, and ⌘0 is where it is.
+  const home = useShellView() === "home";
   const activeScopeSpace = useSpace((s) => {
     const scopeSpaceId = activeContentSpaceId ?? s.activeRootId;
     if (!scopeSpaceId) return null;
@@ -71,7 +74,7 @@ export function useKeyboardShortcuts() {
     activeScopeSpace ? `actors:space:${activeScopeSpace.id}` : null,
   );
   const terminalPanel = useTerminalPanelToggle();
-  const terminalAvailable = terminalPanel.available;
+  const terminalAvailable = terminalPanel.available && !home;
   const toggleTerminal = terminalPanel.toggle;
 
   useEffect(() => {
@@ -99,7 +102,7 @@ export function useKeyboardShortcuts() {
       if (matchesPhysicalShortcut(e, "Digit0")) {
         if (isTerminalKeyboardEvent(e) && !isMacKeyboardPlatform()) return;
         e.preventDefault();
-        void goHome();
+        if (!home) void goHome();
         return;
       }
       if (isTerminalKeyboardEvent(e)) return;
@@ -146,7 +149,7 @@ export function useKeyboardShortcuts() {
       }
 
       // Cmd/Ctrl+P - open project command palette.
-      if (activeRootPath && matchesPhysicalShortcut(e, "KeyP")) {
+      if (!home && activeRootPath && matchesPhysicalShortcut(e, "KeyP")) {
         e.preventDefault();
         toggleCommandPalette();
       }
@@ -165,6 +168,7 @@ export function useKeyboardShortcuts() {
     closeMainAreaObject,
     openAppSettings,
     goHome,
+    home,
     terminalAvailable,
     toggleTerminal,
   ]);

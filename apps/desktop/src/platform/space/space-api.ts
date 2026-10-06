@@ -1,5 +1,6 @@
 import type { VariableSourceDto } from "@/platform/settings/app-variables-api";
 import { invokeCommand } from "@/platform/native/invoke";
+import { listenCurrentAppWindowEvent } from "@/platform/native/window";
 import {
   listen,
   type EventCallback,
@@ -14,6 +15,7 @@ import type {
   LfsRemoteDiagnosticDto,
   LfsStateDto,
   EnterProjectResultDto,
+  ProjectWindowRequestDto,
   SpaceDirtyEventDto,
   SpaceFileEventDto,
   SpaceConfigDto,
@@ -103,6 +105,41 @@ export function getWindowOpenIntent(): Promise<WindowOpenIntentDto> {
 
 export function showHomeInCurrentWindow(): Promise<void> {
   return invokeCommand<void>("show_home_in_current_window");
+}
+
+/**
+ * Makes the project the active project of the Home window; a project bound
+ * to another window gets `request` there instead.
+ */
+export function activateHomeProject(
+  id: string,
+  request: ProjectWindowRequestDto,
+): Promise<EnterProjectResultDto> {
+  return invokeCommand<EnterProjectResultDto>("activate_home_project", {
+    id,
+    request,
+  });
+}
+
+/** Projects bound to other windows than this one. */
+export function listProjectsInOtherWindows(): Promise<string[]> {
+  return invokeCommand<string[]>("list_projects_in_other_windows");
+}
+
+export function listenProjectWindowsChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen("app-windows:projects-changed", () => handler());
+}
+
+/** Requests another window hands to the window of its project. */
+export function listenProjectWindowRequest(
+  handler: (request: ProjectWindowRequestDto) => void,
+): Promise<UnlistenFn> {
+  return listenCurrentAppWindowEvent<ProjectWindowRequestDto>(
+    "app-windows:project-request",
+    handler,
+  );
 }
 
 export interface CreateProjectInput {

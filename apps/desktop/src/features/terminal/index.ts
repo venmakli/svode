@@ -1,4 +1,5 @@
 export { TerminalPanelHost } from "./ui/terminal-panel-host";
+export { TerminalEventBridge } from "./ui/terminal-event-bridge";
 export { TerminalPanelToggle } from "./ui/terminal-panel-toggle";
 export { useTerminalPanelToggle } from "./hooks/use-terminal-panel-toggle";
 export { useNewSpaceTerminal } from "./hooks/use-new-space-terminal";

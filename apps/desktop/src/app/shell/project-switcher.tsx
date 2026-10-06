@@ -108,6 +108,7 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
                 {rootSpaces.map((project) => (
                   <DropdownMenuItem
                     key={project.id}
+                    disabled={project.status !== "ready"}
                     onClick={() => void openProject(project.id)}
                   >
                     <span>{project.icon}</span>

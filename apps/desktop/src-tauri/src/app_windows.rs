@@ -5,8 +5,8 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::{
-    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window,
-    WindowEvent,
+    AppHandle, Emitter, EventTarget, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Window, WindowEvent,
 };
 
 use crate::error::AppError;
@@ -533,9 +533,12 @@ pub fn hand_off_to_project_window(
         .ok_or_else(|| AppError::General(format!("window {owner_label} is closed")))?;
     focus_window(&window)?;
     if !matches!(request, ProjectWindowRequest::Focus) {
-        window
-            .emit(EVENT_PROJECT_REQUEST, request)
-            .map_err(|error| AppError::General(error.to_string()))?;
+        app.emit_to(
+            EventTarget::window(owner_label),
+            EVENT_PROJECT_REQUEST,
+            request,
+        )
+        .map_err(|error| AppError::General(error.to_string()))?;
     }
     Ok(())
 }

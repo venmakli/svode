@@ -8,7 +8,11 @@ import {
 } from "@/components/ui/breadcrumb";
 import { useAgentSessionSpace, useResolvedAgentSession } from "../hooks";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
-import type { AgentSessionTarget, NewSessionDraftTarget } from "../model";
+import type {
+  AgentSessionTarget,
+  DraftSpaceChoices,
+  NewSessionDraftTarget,
+} from "../model";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
@@ -56,8 +60,11 @@ export function AgentSessionDraftMainSurface({
   onStarted,
   onOpenTerminal,
   onOpenAgentSettings,
+  spaceChoices,
 }: {
   draft: NewSessionDraftTarget;
+  /** Places to list instead of the Spaces of the active project. */
+  spaceChoices?: DraftSpaceChoices;
   onStarted: (started: StartedSession) => void;
   onOpenTerminal: (spacePath: string) => void;
   onOpenAgentSettings: () => void;
@@ -73,6 +80,7 @@ export function AgentSessionDraftMainSurface({
         onStarted={onStarted}
         onOpenTerminal={onOpenTerminal}
         onOpenAgentSettings={onOpenAgentSettings}
+        spaceChoices={spaceChoices}
       />
     </div>
   );

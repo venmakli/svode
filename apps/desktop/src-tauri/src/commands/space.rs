@@ -236,22 +236,37 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
     let reg = registry::read_registry(&config_dir)?;
-    let mut projects = Vec::new();
-    for sp_ref in &reg.spaces {
-        let sp_path = Path::new(&sp_ref.path);
-        match config::read_space_config(sp_path) {
-            Ok(cfg) => {
-                projects.push(root_project_info(
-                    sp_ref.id.clone(),
-                    sp_path,
-                    &cfg,
-                    sp_ref.last_opened.clone(),
-                ));
-            }
-            Err(_) => continue,
-        }
+    Ok(reg.spaces.iter().map(listed_project_info).collect())
+}
+
+/// A project of the list; one whose folder is gone or whose config cannot be
+/// read stays in the list as missing or broken, named after its folder.
+fn listed_project_info(entry: &RegistryEntry) -> SpaceInfo {
+    let path = Path::new(&entry.path);
+    if let Ok(cfg) = config::read_space_config(path) {
+        return root_project_info(entry.id.clone(), path, &cfg, entry.last_opened.clone());
     }
-    Ok(projects)
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| entry.path.clone());
+    SpaceInfo {
+        id: entry.id.clone(),
+        name,
+        icon: String::new(),
+        description: String::new(),
+        path: system_path::user_facing_path(path),
+        has_spaces: false,
+        has_schema: false,
+        has_app: false,
+        last_opened: entry.last_opened.clone(),
+        status: if path.is_dir() {
+            SpaceStatus::Broken
+        } else {
+            SpaceStatus::Missing
+        },
+        lfs_state: LfsState::NotApplicable,
+    }
 }
 
 #[tauri::command]
@@ -532,6 +547,8 @@ async fn enter_project(
     let sp_ref = registry::find_space(&config_dir, &id)?
         .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
     let project_path = PathBuf::from(&sp_ref.path);
+    // A missing or unreadable project fails before it is prepared or bound.
+    config::read_space_config(&project_path)?;
 
     let binding = match crate::app_windows::window_binding(app, window_label, &id) {
         WindowBinding::OtherWindow(owner) => {
@@ -1336,6 +1353,44 @@ mod tests {
         assert!(ProjectEntry::Open.records_open());
         assert_eq!(ProjectEntry::HomeActivation.view(), WindowView::Home);
         assert!(!ProjectEntry::HomeActivation.records_open());
+    }
+
+    #[test]
+    fn unavailable_projects_stay_in_the_list_as_missing_or_broken() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let ready = temp.path().join("ready");
+        std::fs::create_dir_all(ready.join(".svode")).expect("svode dir");
+        std::fs::write(
+            ready.join(".svode/config.json"),
+            r#"{"name":"Ready","icon":"🚀"}"#,
+        )
+        .expect("config");
+        let broken = temp.path().join("broken");
+        std::fs::create_dir_all(broken.join(".svode")).expect("svode dir");
+        std::fs::write(broken.join(".svode/config.json"), "{").expect("config");
+        let entry = |id: &str, path: &Path| RegistryEntry {
+            id: id.to_string(),
+            last_opened: Some("2026-10-01T00:00:00Z".to_string()),
+            path: path.to_string_lossy().into_owned(),
+        };
+
+        let ready = listed_project_info(&entry("ready", &ready));
+        let broken = listed_project_info(&entry("broken", &broken));
+        let missing = listed_project_info(&entry("missing", &temp.path().join("gone")));
+
+        assert_eq!(
+            (ready.name.as_str(), ready.status),
+            ("Ready", SpaceStatus::Ready)
+        );
+        assert_eq!(
+            (broken.name.as_str(), broken.status),
+            ("broken", SpaceStatus::Broken)
+        );
+        assert_eq!(
+            (missing.name.as_str(), missing.status),
+            ("gone", SpaceStatus::Missing)
+        );
+        assert_eq!(missing.last_opened.as_deref(), Some("2026-10-01T00:00:00Z"));
     }
 
     #[test]

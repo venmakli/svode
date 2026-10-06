@@ -1,3 +1,4 @@
+import type { NavigationItemDto } from "@/platform/navigation/navigation-api";
 export type SpaceGitTypeDto = "inline" | "independent" | "submodule";
 
 export type SpaceStatusDto = "ready" | "missing" | "broken";
@@ -129,6 +130,12 @@ export interface SpaceConfigDto {
 export type EnterProjectResultDto =
   | { kind: "opened"; config: SpaceConfigDto; project: SpaceInfoDto }
   | { kind: "otherWindow" };
+
+/** What the window of a project does for an action started in another window. */
+export type ProjectWindowRequestDto =
+  | { kind: "focus" }
+  | { kind: "newChat" }
+  | { kind: "open"; item: NavigationItemDto };
 
 export type WindowOpenIntentDto =
   | { kind: "home" }

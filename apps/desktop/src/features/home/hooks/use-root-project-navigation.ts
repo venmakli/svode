@@ -31,11 +31,18 @@ export function useRootProjectNavigation({
     [enterRoot, openRoot],
   );
 
+  // A project of another window goes there past this window's guards.
   const openProject = useCallback(
-    async (id: string) => {
+    async (id: string, { otherWindow = false } = {}) => {
       const intent = await getWindowOpenIntent();
       if (!activeRootId || intent?.kind === "home") {
-        if (beforeRootOpen && !(await beforeRootOpen())) {
+        // The active project of Home enters its Space as it is: no guard,
+        // the main area object stays.
+        if (id === activeRootId) {
+          if (await openRoot(id)) navigate({ to: "/space" });
+          return true;
+        }
+        if (!otherWindow && beforeRootOpen && !(await beforeRootOpen())) {
           return false;
         }
         await openProjectInCurrentWindow(id);
@@ -48,7 +55,9 @@ export function useRootProjectNavigation({
       activeRootId,
       beforeRootOpen,
       getWindowOpenIntent,
+      navigate,
       openProjectInCurrentWindow,
+      openRoot,
       openRootWindow,
     ],
   );
