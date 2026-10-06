@@ -14,6 +14,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DICTATION_KEY_CODE,
+  RecordingRow,
+  showsRecordingRow,
+  VoiceInputButton,
+} from "@/features/voice-input";
+import { matchesPhysicalShortcut } from "@/shared/lib/keyboard-shortcuts";
 import { cn } from "@/shared/lib/utils";
 import {
   ATTACHMENT_ELEMENT,
@@ -26,6 +33,7 @@ import type { AgentSessionCommandDto } from "../api/chat";
 import { takeEscape } from "@/shared/lib/escape-key";
 import { isKeyTaken } from "../../lib/session-content";
 import { composerKeyAction } from "../model/composer";
+import { useComposerDictation } from "../hooks/use-composer-dictation";
 import { COMMAND_PLUGINS, SessionCommandsPlugin } from "./composer-commands";
 import {
   AttachMenu,
@@ -49,6 +57,8 @@ const COMPOSER_PLUGINS = [
 ];
 
 export interface ComposerProps {
+  /** The draft's storage key; dictation delivers into it (`06`). */
+  draftKey: string;
   /** Text and attachment badges in order. */
   parts: DraftPart[];
   onPartsChange: (parts: DraftPart[]) => void;
@@ -76,8 +86,11 @@ export interface ComposerProps {
  * Attachments are inline badges where they were added: "+", an `@`
  * search or a paste. Enter sends, Shift+Enter breaks the line, Enter that
  * ends an IME composition only ends it, and Esc stops a running turn.
+ * The microphone dictates into the field; while it records, the recording
+ * row takes the place of the bottom row and Esc cancels the recording.
  */
 export function Composer({
+  draftKey,
   parts,
   onPartsChange,
   onSend,
@@ -96,18 +109,21 @@ export function Composer({
     plugins: COMPOSER_PLUGINS,
     value: draftValue(parts),
   });
-  const draftKey = JSON.stringify(parts);
-  const emittedRef = useRef(draftKey);
+  const partsKey = JSON.stringify(parts);
+  const emittedRef = useRef(partsKey);
 
   // A draft changed outside the field — cleared after a send, restored
   // after one that did not reach the agent — replaces its content.
   useEffect(() => {
-    if (draftKey === emittedRef.current) return;
-    emittedRef.current = draftKey;
-    const next = JSON.parse(draftKey) as DraftPart[];
+    if (partsKey === emittedRef.current) return;
+    emittedRef.current = partsKey;
+    const next = JSON.parse(partsKey) as DraftPart[];
     editor.tf.setValue(draftValue(next));
     if (next.length > 0) editor.tf.select(editor.api.end([]));
-  }, [draftKey, editor]);
+  }, [partsKey, editor]);
+
+  const { dictation, sendAfterRef } = useComposerDictation(editor, draftKey);
+  const dictating = dictation.state.phase !== "idle";
 
   useEffect(() => {
     if (autoFocus) editor.tf.focus({ edge: "end" });
@@ -119,6 +135,31 @@ export function Composer({
 
   const sendDisabled = isDraftBlank(parts) || !canSend || sending;
 
+  /**
+   * The hotkey starts or stops dictation as ■; Esc cancels a recording
+   * rather than the turn. True when the key was dictation's.
+   */
+  const dictationKey = (event: KeyboardEvent) => {
+    if (matchesPhysicalShortcut(event, DICTATION_KEY_CODE, true)) {
+      event.preventDefault();
+      if (!sending) dictation.toggle();
+      return true;
+    }
+    if (event.key === "Escape" && dictating && !isKeyTaken(event)) {
+      takeEscape(event);
+      dictation.cancel();
+      return true;
+    }
+    return false;
+  };
+
+  // ↑ sends once the dictated text is in the draft.
+  useEffect(() => {
+    if (sendAfterRef.current === null || sendAfterRef.current !== partsKey) return;
+    sendAfterRef.current = null;
+    if (!running && !sendDisabled) onSend();
+  }, [onSend, partsKey, running, sendAfterRef, sendDisabled]);
+
   return (
     <InputGroup
       className={cn(
@@ -126,6 +167,8 @@ export function Composer({
         className,
       )}
       data-sending={sending || undefined}
+      // Focus on the recording row's buttons.
+      onKeyDown={(event) => dictationKey(event.nativeEvent)}
     >
       <Plate
         editor={editor}
@@ -152,6 +195,8 @@ export function Composer({
             onKeyDown={(event) => {
               // Enter and Esc in an open `@` or `/` search choose or close
               // it first.
+              // Before the editor's own handling, which takes some keys.
+              if (dictationKey(event.nativeEvent)) return;
               if (isKeyTaken(event.nativeEvent)) return;
               const action = composerKeyAction(event.nativeEvent, running);
               if (action === "send") {
@@ -166,6 +211,13 @@ export function Composer({
         </EditorContainer>
       </Plate>
       <InputGroupAddon align="block-end" className="gap-1 pt-1">
+        {showsRecordingRow(dictation.state) ? (
+          <RecordingRow
+            dictation={dictation}
+            canSend={canSend && !running && !sending}
+          />
+        ) : (
+          <>
         <AttachMenu
           editor={editor}
           disabled={sending}
@@ -178,6 +230,7 @@ export function Composer({
               {m.sessions_chat_sending()}
             </span>
           )}
+          <VoiceInputButton dictation={dictation} disabled={sending} />
           <PrimaryAction
             running={running}
             cancelling={cancelling}
@@ -187,6 +240,8 @@ export function Composer({
             onStop={onStop}
           />
         </div>
+          </>
+        )}
       </InputGroupAddon>
     </InputGroup>
   );

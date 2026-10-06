@@ -367,6 +367,7 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
             {
                 connections.release_webview(&label);
             }
+            crate::speech::commands::release_webview(app, &label);
         }
         _ => {}
     }

@@ -51,13 +51,28 @@ test("app composition contains the full active inventory", () => {
     "next-view",
     "move-view-left",
     "move-view-right",
+    "dictation",
   ];
   expect(commands.map((item) => item.id)).toEqual(expectedIds);
   expect(settingsShortcutGroups.map((group) => group.id)).toEqual([
     "general",
     "editor",
     "collections",
+    "sessions",
   ]);
+});
+
+test("the dictation shortcut is free across the app", () => {
+  const keys = (id: string) =>
+    command(id).keys.map((combination) => combination.join("+"));
+  const dictation = keys("dictation");
+  for (const other of commands.filter((item) => item.id !== "dictation")) {
+    for (const combination of keys(other.id)) {
+      expect(dictation.includes(combination)).toBe(false);
+    }
+  }
+  expect(shortcutLabel(command("dictation"), true)).toBe("⇧⌘M");
+  expect(shortcutLabel(command("dictation"), false)).toBe("Ctrl+Shift+M");
 });
 
 test("published editor keys agree with installed active plugin bindings", () => {

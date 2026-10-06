@@ -14,6 +14,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tempfile = "3"
+# Dictation capture: the default input device of the default host (CoreAudio,
+# WASAPI, ALSA, which reaches PipeWire and PulseAudio through their ALSA
+# plugins).
+cpal = "0.18.2"
 svode-agents = { path = "../../../crates/svode-agents" }
 svode-core = { path = "../../../crates/svode-core" }
 svode-connect = { path = "../../../crates/svode-connect" }

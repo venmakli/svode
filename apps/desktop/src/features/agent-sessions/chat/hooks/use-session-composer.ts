@@ -43,7 +43,8 @@ export function useSessionComposer(
    */
   attach?: () => Promise<boolean>,
 ) {
-  const [draft, updateDraft] = useComposerDraft(sessionDraftKey(sessionId));
+  const draftKey = sessionDraftKey(sessionId);
+  const [draft, updateDraft] = useComposerDraft(draftKey);
   const [refusal, setRefusal] = useState<SendRefusal | null>(null);
   const [answerError, setAnswerError] = useState<string | null>(null);
   const snapshotRef = useRef(snapshot);
@@ -138,6 +139,7 @@ export function useSessionComposer(
   );
 
   return {
+    draftKey,
     draft,
     setParts: (parts: DraftPart[]) => updateDraft({ parts, notSent: false }),
     sending,

@@ -43,9 +43,12 @@
       "binaries/svode-speech"
     ],
     "resources": { "payload/svode/": "plugins/svode/" },
+    "macOS": {
+      "entitlements": "./Entitlements.plist"
+    },
     "linux": {
       "deb": {
-        "depends": ["git", "libvulkan1"],
+        "depends": ["git", "libvulkan1", "libasound2"],
         "files": { "/usr/lib/Svode/speech": "speech-libs" }
       },
       "rpm": {

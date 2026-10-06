@@ -102,7 +102,8 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libsecret-1-dev
+            libsecret-1-dev \
+            libasound2-dev
 
       - name: Install the Vulkan SDK for the speech engine
         if: matrix.platform != 'macos-latest'
@@ -146,6 +147,7 @@ jobs:
               dpkg-deb -c "$deb" | grep -E ' (\./)?usr/lib/Svode/speech/libtranscribe\.so'
               dpkg-deb -c "$deb" | grep -E ' (\./)?usr/lib/Svode/speech/libggml-vulkan\.so'
               dpkg-deb -f "$deb" Depends | grep -q libvulkan1
+              dpkg-deb -f "$deb" Depends | grep -q libasound2
               ;;
             windows)
               installer="$(ls ${{ matrix.artifact_path }})"

@@ -9,12 +9,21 @@
 //! up and measure, V7). The jobs live in memory; the frontend reads them
 //! with the model list and follows [`MODELS_CHANGED_EVENT`] and
 //! [`MODEL_PROGRESS_EVENT`].
+//!
+//! Dictation ([`dictation`]) records the default microphone natively
+//! ([`capture`]) and recognizes the recording with the active model; the
+//! app has one recording at a time.
 
+mod capture;
 pub mod commands;
+pub mod dictation;
 mod download;
+mod microphone;
+mod signal;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -89,6 +98,8 @@ struct Speech {
     http: reqwest::Client,
     gpu: OnceCell<Option<Backend>>,
     jobs: Mutex<HashMap<String, Job>>,
+    dictation: Mutex<dictation::Slot>,
+    dictation_ids: AtomicU64,
 }
 
 impl SpeechState {
@@ -107,6 +118,8 @@ impl SpeechState {
             http: download::client(),
             gpu: OnceCell::new(),
             jobs: Mutex::default(),
+            dictation: Mutex::default(),
+            dictation_ids: AtomicU64::new(0),
         }))
     }
 
@@ -345,6 +358,14 @@ impl SpeechState {
 
     fn jobs(&self) -> std::sync::MutexGuard<'_, HashMap<String, Job>> {
         self.0.jobs.lock().expect("speech jobs lock")
+    }
+
+    fn slot(&self) -> std::sync::MutexGuard<'_, dictation::Slot> {
+        self.0.dictation.lock().expect("dictation lock")
+    }
+
+    fn next_dictation_id(&self) -> u64 {
+        self.0.dictation_ids.fetch_add(1, Ordering::SeqCst) + 1
     }
 }
 

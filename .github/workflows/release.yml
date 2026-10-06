@@ -85,7 +85,8 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libsecret-1-dev
+            libsecret-1-dev \
+            libasound2-dev
 
       - name: Install the Vulkan SDK for the speech engine
         if: matrix.platform != 'macos-latest'

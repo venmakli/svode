@@ -4,6 +4,7 @@ import { collectionShortcuts } from "@/features/collection/app-shell";
 import { gitSaveShortcuts } from "@/features/git/app-shell";
 import { homeShortcuts } from "@/features/home";
 import { settingsShortcut } from "@/features/settings";
+import { dictationShortcut } from "@/features/voice-input";
 import { shellShortcuts } from "../shell/model/shortcut-descriptions";
 import * as m from "@/paraglide/messages.js";
 
@@ -24,5 +25,10 @@ export const settingsShortcutGroups: readonly ShortcutGroup[] = [
     label: m.shortcuts_collections,
     context: m.shortcuts_collection_context,
     commands: collectionShortcuts,
+  },
+  {
+    id: "sessions",
+    label: m.shortcuts_sessions,
+    commands: [dictationShortcut],
   },
 ];

@@ -126,6 +126,7 @@ export function NewSessionDraft({
               <p className="text-xs text-destructive">{m.sessions_chat_not_sent()}</p>
             )}
             <Composer
+              draftKey={draft.draftKey}
               parts={draft.draft.parts}
               onPartsChange={draft.setParts}
               onSend={() => void draft.send()}

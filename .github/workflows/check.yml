@@ -39,7 +39,8 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            libsecret-1-dev
+            libsecret-1-dev \
+            libasound2-dev
       - uses: oven-sh/setup-bun@v2
       - run: bun run --cwd apps/desktop check:sidecars
       - name: Host-free packages do not depend on Tauri or the desktop crate

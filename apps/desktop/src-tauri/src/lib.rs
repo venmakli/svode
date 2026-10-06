@@ -109,6 +109,7 @@ pub fn run() {
                 {
                     connections.release_webview(webview.label());
                 }
+                speech::commands::release_webview(webview.app_handle(), webview.label());
             }
         })
         .on_window_event(|window, event| {
@@ -459,6 +460,11 @@ pub fn run() {
             speech::commands::speech_model_activate,
             speech::commands::speech_model_delete,
             speech::commands::speech_model_licenses,
+            speech::commands::speech_dictation_owner,
+            speech::commands::speech_dictation_start,
+            speech::commands::speech_dictation_finish,
+            speech::commands::speech_dictation_cancel,
+            speech::commands::speech_open_system_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

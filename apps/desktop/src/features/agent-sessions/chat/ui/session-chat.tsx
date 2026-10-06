@@ -211,6 +211,7 @@ export function SessionChat({
               </p>
             )}
             <Composer
+              draftKey={composer.draftKey}
               parts={composer.draft.parts}
               onPartsChange={composer.setParts}
               onSend={send}

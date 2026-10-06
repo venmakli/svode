@@ -43,9 +43,8 @@ export function useNewSessionDraft(
   initialSpacePath: string,
   onStarted: (started: StartedSession) => void,
 ) {
-  const [draft, updateDraft] = useComposerDraft(
-    newSessionDraftKey(initialSpacePath),
-  );
+  const draftKey = newSessionDraftKey(initialSpacePath);
+  const [draft, updateDraft] = useComposerDraft(draftKey);
   const { agents, failed: agentsFailed, reload } = useChatAgents();
   const agent = agents ? draftAgent(agents, draft.agent) : null;
   const spacePath = draft.spacePath ?? initialSpacePath;
@@ -142,6 +141,7 @@ export function useNewSessionDraft(
   ]);
 
   return {
+    draftKey,
     draft,
     setParts: (parts: DraftPart[]) => updateDraft({ parts, notSent: false }),
     agents,

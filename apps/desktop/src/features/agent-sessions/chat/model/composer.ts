@@ -2,7 +2,7 @@ import type {
   AgentSessionSnapshotDto,
   AgentSettingValueDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
-import type { DraftPart } from "./attachments";
+import { normalizeDraftParts, type DraftPart } from "./attachments";
 
 /**
  * A composer draft (Stage 10 `04`): it survives a window reload and moves
@@ -65,6 +65,39 @@ export function writeComposerDraft(key: string, draft: ComposerDraft | null) {
     // Storage can be unavailable in restricted WebViews; the draft then
     // lives only as long as the surface.
   }
+}
+
+const draftListeners = new Map<string, Set<() => void>>();
+
+/** Follows changes made to the stored draft of `key` from outside its hook. */
+export function subscribeComposerDraft(key: string, listener: () => void) {
+  const listeners = draftListeners.get(key) ?? new Set();
+  listeners.add(listener);
+  draftListeners.set(key, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) draftListeners.delete(key);
+  };
+}
+
+/**
+ * Appends text to the end of the stored draft of `key`, as dictation does
+ * when its composer was closed or replaced meanwhile (`06`, stop from
+ * outside). `format` gets the text the draft ends with.
+ */
+export function appendComposerDraftText(
+  key: string,
+  format: (before: string) => string,
+) {
+  const draft = readComposerDraft(key) ?? { parts: [] };
+  const last = draft.parts.at(-1);
+  const text = format(last?.type === "text" ? last.text : "");
+  if (!text) return;
+  writeComposerDraft(key, {
+    ...draft,
+    parts: normalizeDraftParts([...draft.parts, { type: "text", text }]),
+  });
+  for (const listener of draftListeners.get(key) ?? []) listener();
 }
 
 function isEmptyDraft(draft: ComposerDraft): boolean {
