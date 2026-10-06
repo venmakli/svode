@@ -236,6 +236,30 @@ if (process.env.SVODE_COMPOSER_DICTATION_DOM !== "1") {
     expect(Boolean(microphone())).toBe(true);
   });
 
+  dictationTest("in a peek the focus comes back from the peek to the field and Esc stays there", async () => {
+    await render();
+    // A peek's content is focusable, so pressing the microphone in WebKit
+    // leaves the focus on the peek around the composer, not on the page.
+    const peek = document.body.firstElementChild as HTMLElement;
+    peek.tabIndex = -1;
+    let peekEscapes = 0;
+    peek.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && event.target === peek) peekEscapes += 1;
+    });
+    await act(async () => peek.focus());
+    await click(microphone());
+    expect(composerField()?.contains(document.activeElement)).toBe(true);
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    expect(count("speech_dictation_cancel")).toBe(1);
+    expect(peekEscapes).toBe(0);
+    expect(storedText()).toBe("Please");
+  });
+
   dictationTest("the hotkey starts and stops as ■", async () => {
     await render();
     const field = composerField();

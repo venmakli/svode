@@ -33,14 +33,17 @@ export function useComposerDictation(editor: PlateEditor, draftKey: string) {
   });
 
   // The microphone, ■, "Повторить" or ✕ that moved the dictation on goes
-  // with the row it was in, which leaves the focus nowhere: bring it back to
-  // the field, so the hotkey and Esc keep reaching the composer.
+  // with the row it was in, which drops the focus to the page or, in a
+  // session peek, to the peek around the composer: bring it back to the
+  // field, so the hotkey and Esc keep reaching the composer.
   const phase = dictation.state.phase;
   const previousPhase = useRef(phase);
   useEffect(() => {
     if (previousPhase.current === phase) return;
     previousPhase.current = phase;
-    if (document.activeElement !== document.body) return;
+    const focused = document.activeElement;
+    const field = editor.api.toDOMNode(editor);
+    if (!focused || !field || focused === field || !focused.contains(field)) return;
     // Without a caret yet the text goes after the draft, as it would unfocused.
     editor.tf.focus(editor.selection ? undefined : { edge: "endEditor" });
   }, [editor, phase]);
