@@ -18,6 +18,7 @@ use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, require_repository_mutation_paths};
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
+use crate::mcp::project_sessions::ProjectSessions;
 use crate::process::path_env::ProcessPath;
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
 use svode_agents::adapters::{ChatOffer, LaunchUnavailable};
@@ -30,6 +31,7 @@ use svode_core::agent_adapters::AgentAdapterKind;
 use svode_core::collections::engine::EntryFieldBatchIntent;
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::page::write::PageRuntime;
 use svode_core::routines::dispatch::{
     RoutineDispatchRequest, RoutineDispatchSelection, select_dispatch_candidate,
 };
@@ -296,7 +298,7 @@ pub(super) async fn dispatch_routine(
     let executor = candidate.executor.as_deref();
 
     let pool = routine_stores
-        .get_or_create_for_index(index_state, &owner.index_key)
+        .get_or_create(&owner.index_key, &owner.space_path)
         .await?;
     let live = super::runtime::live_evidence(terminal_manager, &app.state::<RoutineAcpLaunches>())?;
     if let Some(run) = latest_run_record(&pool, &owner.descriptor.owner_path, &routine_id).await?
@@ -345,7 +347,36 @@ pub(super) async fn dispatch_routine(
         let project = owner.project_path.to_string_lossy().into_owned();
         let index_updates = app.state::<IndexUpdateState>();
         let nonces = app.state::<Arc<WriteNonceRegistry>>();
-        let mutation = crate::page::update_fields(
+        let cli = crate::git::dates::detected_cli();
+        // The shared index runtime holds no Spaces of a project no window has
+        // open: its write publishes into the session that serves the project
+        // without a window, as a write of Svode MCP does (Stage 10 `09`).
+        let session = app
+            .state::<ProjectSessions>()
+            .get_or_create(&owner.project_path, &index_state.core)
+            .await;
+        let runtime = match &session {
+            Some(session) => {
+                session
+                    .open_project(&owner.project_path)
+                    .await
+                    .map_err(|error| AppError::General(error.to_string()))?;
+                PageRuntime {
+                    index: session.index(),
+                    updates: session.index_updates(),
+                    nonces: session.nonces(),
+                    git_dates: cli.as_ref(),
+                }
+            }
+            None => PageRuntime {
+                index: &index_state.core,
+                updates: index_updates.core(),
+                nonces: &nonces,
+                git_dates: cli.as_ref(),
+            },
+        };
+        let session = session.as_deref();
+        let mutation = svode_core::page::fields::update(
             PageFieldUpdate {
                 space: &space,
                 path: &payload.entry_path,
@@ -353,13 +384,17 @@ pub(super) async fn dispatch_routine(
                 values: set,
                 intent: EntryFieldBatchIntent::Routine,
             },
-            index_state,
-            &index_updates,
-            &nonces,
-            None,
+            runtime,
             |paths| async move {
                 require_repository_mutation_paths(app, paths.clone()).await?;
-                Ok(paths)
+                if let Some(session) = session
+                    && let Err(error) = session.prepare_mutation(&paths).await
+                {
+                    tracing::warn!(
+                        "the index a Routine write publishes into could not be prepared: {error}"
+                    );
+                }
+                Ok::<_, AppError>(paths)
             },
         )
         .await;

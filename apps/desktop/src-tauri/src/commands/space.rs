@@ -11,6 +11,7 @@ use crate::git::commands::{auto_commit_structural_enabled, init_repo_with_policy
 use crate::git::{GitState, require_cli};
 use crate::index::IndexState;
 use crate::project_runtime::ProjectRuntimeState;
+use crate::routines::RoutineSchedulerState;
 use crate::space::{config, content_tree, project, registry, settings, types::*};
 use svode_core::git::autocommit::{AutocommitService, SystemCommitKind};
 use svode_core::git::{local_repair, ops};
@@ -302,6 +303,7 @@ pub async fn create_project(
         sp_path,
     )?;
     refresh_recent_projects_menu(&app);
+    app.state::<RoutineSchedulerState>().sync(&app);
 
     if let Some(cli) = git_state.detected() {
         let lock = git_state.get_lock(sp_path).await;
@@ -352,6 +354,7 @@ pub async fn open_project_folder(
     }
     let (id, mut cfg) = project::open_project_folder(&config_dir, sp_path)?;
     refresh_recent_projects_menu(&app);
+    app.state::<RoutineSchedulerState>().sync(&app);
     let repairs_allowed = !had_git_before
         || !svode_existed_before
         || preauthorized_readme_repair
@@ -468,14 +471,20 @@ pub async fn delete_project(
     // Close the project's pools before any filesystem operations so SQLite
     // releases file handles (Windows would otherwise refuse to remove the
     // directory).
+    let routine_schedulers = app.state::<RoutineSchedulerState>();
     if let Some(sp_ref) = project_ref {
         app_process_state.stop_project(Path::new(&sp_ref.path));
         project_runtime
-            .close_project(&app, &id, Path::new(&sp_ref.path))
+            .close_project(&app, Path::new(&sp_ref.path))
+            .await;
+        routine_schedulers
+            .remove_project(&app, &id, Path::new(&sp_ref.path))
             .await;
     }
 
-    project::delete_project(&config_dir, &id, delete_files.unwrap_or(false))?;
+    let deleted = project::delete_project(&config_dir, &id, delete_files.unwrap_or(false));
+    routine_schedulers.sync(&app);
+    deleted?;
     crate::app_windows::release_project_window(&app, &id);
     refresh_recent_projects_menu(&app);
     Ok(())
@@ -582,7 +591,7 @@ async fn enter_project(
     // A window that already serves the project keeps its runtime running.
     if matches!(binding, WindowBinding::Bound { .. }) {
         if let Err(e) = project_runtime
-            .open_project(app, id.clone(), project_path.clone())
+            .open_project(app, project_path.clone())
             .await
         {
             tracing::warn!(
@@ -985,6 +994,7 @@ pub async fn project_clone(
 
     let (id, mut cfg) = project::open_project_folder(&config_dir, &path)?;
     refresh_recent_projects_menu(&app);
+    app.state::<RoutineSchedulerState>().sync(&app);
     let gitignore_changed = crate::git::delivery::repair_scope(&app, &path, &path).await?
         == local_repair::RepairOutcome::Changed;
     let imported_submodules = import_existing_submodules_if_possible(&git_state, &path).await;

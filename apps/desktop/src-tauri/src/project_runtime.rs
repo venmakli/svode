@@ -9,7 +9,7 @@ use crate::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
 use crate::mcp::project_sessions::ProjectSessions;
-use crate::routines::{RoutineSchedulerState, RoutineStoreState};
+use crate::routines::RoutineStoreState;
 use crate::space::types::SpaceStatus;
 
 #[derive(Default)]
@@ -85,7 +85,6 @@ impl ProjectRuntimeState {
     pub async fn open_project(
         &self,
         app: &AppHandle,
-        project_id: String,
         project_path: PathBuf,
     ) -> Result<(), AppError> {
         self.stop_project_index_tasks(&project_path);
@@ -104,20 +103,16 @@ impl ProjectRuntimeState {
                 }
             }
         }
-        app.state::<RoutineSchedulerState>()
-            .start_project(app.clone(), project_id, project_path);
         let keys = prepared?;
         self.spawn_reconciliation(app, keys);
         Ok(())
     }
 
-    pub async fn close_project(&self, app: &AppHandle, project_id: &str, project_path: &Path) {
-        app.state::<RoutineSchedulerState>()
-            .stop_project(project_id);
+    /// Stops the runtime of a project a window no longer serves. Its Routine
+    /// scheduler and operational stores keep running for every project in
+    /// the list (Stage 10 `09`, Routines of every project).
+    pub async fn close_project(&self, app: &AppHandle, project_path: &Path) {
         self.stop_project_index_tasks(project_path);
-        app.state::<Arc<RoutineStoreState>>()
-            .close_project(project_path)
-            .await;
         app.state::<IndexState>().close_project(project_path).await;
         app.state::<ProjectSessions>().close(project_path).await;
     }

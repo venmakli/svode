@@ -23,6 +23,7 @@ use super::{RoutineStoreError, authority, operational, parser, schedule};
 use crate::git::GitError;
 use crate::git::path::{RootMode, normalize_repo_relative};
 use crate::git::state::GitRepositoryState;
+use crate::index::resolver::{ProjectSpacesCache, SpaceStatus};
 use crate::index::state::IndexRuntimeState;
 use crate::index::{IndexError, IndexKey};
 use crate::page::filename::{self, FilenameProjection};
@@ -292,21 +293,44 @@ pub fn resolve_owner(
     })
 }
 
-/// Every Routine owner of an open project: each inventoried Space and the
-/// Collection owners its operational store already knows.
+/// Every Routine owner of a project, whether a window has it open or not:
+/// the root and each ready child Space from the portable config, and the
+/// Collection owners the operational store of each already knows. It reads
+/// no index and starts no index runtime.
 pub async fn discover_project_owners(
     routine_stores: &RoutineStoreState,
-    index_state: &IndexRuntimeState,
     project_path: &Path,
 ) -> Result<Vec<ResolvedRoutineOwner>, RoutineServiceError> {
     let project_path = project_path.to_path_buf();
+    let spaces = ProjectSpacesCache::from_project(&project_path)?;
+    let mut children = spaces
+        .status_by_id
+        .iter()
+        .filter(|(_, status)| **status == SpaceStatus::Ready)
+        .filter_map(|(space_id, _)| {
+            let folder = spaces.folder_by_id.get(space_id)?;
+            Some((space_id.clone(), project_path.join(folder)))
+        })
+        .collect::<Vec<_>>();
+    children.sort();
+    let scopes = std::iter::once((
+        IndexKey::Root(project_path.clone()),
+        "root".to_string(),
+        project_path.clone(),
+    ))
+    .chain(children.into_iter().map(|(space_id, space_path)| {
+        (
+            IndexKey::Space {
+                project: project_path.clone(),
+                space_id: space_id.clone(),
+            },
+            space_id,
+            space_path,
+        )
+    }));
     let mut owners = Vec::new();
-    for key in index_state.routine_inventory_keys(&project_path).await? {
-        let space_path = index_state.dir_for_key(&key).await?;
-        let space_id = match &key {
-            IndexKey::Root(_) => "root",
-            IndexKey::Space { space_id, .. } => space_id,
-        };
+    for (key, space_id, space_path) in scopes {
+        let space_id = space_id.as_str();
         owners.push(resolve_owner(
             &project_path,
             &space_path,
@@ -314,14 +338,21 @@ pub async fn discover_project_owners(
             ".",
             RoutineOwnerInputKind::RegisteredSpace,
         )?);
+        // A Collection removed while no window watched the project stays in
+        // the store until the next full index; it does not hide the others.
         for owner_path in routine_stores.owner_paths(&key, &space_path).await? {
-            owners.push(resolve_owner(
+            match resolve_owner(
                 &project_path,
                 &space_path,
                 space_id,
                 &owner_path,
                 RoutineOwnerInputKind::CollectionDirectory,
-            )?);
+            ) {
+                Ok(owner) => owners.push(owner),
+                Err(error) => {
+                    tracing::warn!(owner = %owner_path, "routine collection owner is unavailable: {error}")
+                }
+            }
         }
     }
     Ok(owners)
@@ -2473,6 +2504,74 @@ mod tests {
             ),
         )
         .unwrap();
+    }
+
+    /// Stage 10 `09`, Routines of every project: the owners of a project no
+    /// window has open come from its config and operational stores.
+    #[tokio::test]
+    async fn project_owners_are_found_without_an_index_runtime() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = &fs::canonicalize(temp.path()).unwrap();
+        let design = project.join("design");
+        write_space_config(
+            project,
+            "Project",
+            &[("design", "design"), ("gone", "gone")],
+        );
+        write_space_config(&design, "Design", &[]);
+        fs::create_dir_all(project.join("tasks")).unwrap();
+        fs::write(
+            project.join("tasks/schema.yaml"),
+            "columns: []\nviews: []\n",
+        )
+        .unwrap();
+        let routine_stores = RoutineStoreState::new();
+        let root_store = routine_stores
+            .get_or_create(&IndexKey::Root(project.clone()), project)
+            .await
+            .unwrap();
+        for owner in ["tasks", "removed"] {
+            sqlx::query("INSERT INTO routine_owner_roots VALUES (?)")
+                .bind(owner)
+                .execute(&root_store)
+                .await
+                .unwrap();
+        }
+
+        let owners = discover_project_owners(&routine_stores, project)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|owner| {
+                (
+                    owner.descriptor.kind,
+                    owner.descriptor.space_id,
+                    owner.descriptor.owner_path,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            owners,
+            [
+                (RoutineOwnerKind::Project, "root".into(), ".".into()),
+                (RoutineOwnerKind::Collection, "root".into(), "tasks".into()),
+                (RoutineOwnerKind::Space, "design".into(), ".".into()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_project_has_no_owners() {
+        let temp = tempfile::tempdir().unwrap();
+        let routine_stores = RoutineStoreState::new();
+
+        assert!(
+            discover_project_owners(&routine_stores, &temp.path().join("missing"))
+                .await
+                .is_err()
+        );
+        assert!(!temp.path().join("missing").exists());
     }
 
     #[tokio::test]

@@ -6,33 +6,45 @@ use std::time::Duration;
 use chrono::{DateTime, SecondsFormat, TimeDelta, Utc};
 use tauri::{AppHandle, Manager};
 
-use super::dispatch;
+use super::dispatch::{self, EventDispatchPreflight};
 use super::host;
 use crate::AppError;
 use crate::git::access::{
-    RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult, access_store_path,
-    require_repository_mutation_paths,
+    RepositoryAccessSnapshot, RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult,
+    access_store_path, require_repository_mutation_paths,
 };
 use crate::git::{GitState, require_cli};
-use crate::index::IndexState;
 use crate::routines::RoutineStoreState;
 use crate::terminal::TerminalManager;
+use svode_core::git::cli::GitCli;
 use svode_core::routines::dispatch::{event_run_key, schedule_candidates, scheduled_run_key};
 use svode_core::routines::model::{
-    ResolvedRoutineOwner, RoutineDispatchBlockedCode, RoutineDispatchResult,
+    ResolvedRoutineOwner, RoutineDefinition, RoutineDispatchBlockedCode, RoutineDispatchResult,
+    RoutineLiveEvidence,
 };
 use svode_core::routines::operational::{
-    activate_event, claim_local_run, finish_event, latest_remote_claim, latest_run_record,
-    next_pending_event, record_remote_claim, schedule_state, write_schedule_state,
+    QueuedRoutineEvent, activate_event, claim_local_run, finish_event, latest_remote_claim,
+    latest_run_record, next_pending_event, record_remote_claim, schedule_state,
+    write_schedule_state,
 };
 use svode_core::routines::schedule;
+use svode_core::routines::store_state::RoutineStoreState as RoutineStores;
 use svode_core::routines::{authority, service};
 
 const SCHEDULER_INTERVAL: Duration = Duration::from_secs(60);
 
+/// The Routine schedulers of the projects in the registry (Stage 10 `09`,
+/// Routines of every project): one per listed project from the launch of
+/// Desktop until exit, whether a window has the project open or not.
+/// Windows binding, releasing or switching their project do not touch them.
 #[derive(Default)]
 pub struct RoutineSchedulerState {
-    tasks: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+    projects: Mutex<HashMap<String, ProjectScheduler>>,
+}
+
+struct ProjectScheduler {
+    path: PathBuf,
+    task: tauri::async_runtime::JoinHandle<()>,
 }
 
 impl RoutineSchedulerState {
@@ -40,48 +52,327 @@ impl RoutineSchedulerState {
         Self::default()
     }
 
-    pub fn start_project(&self, app: AppHandle, project_id: String, project_path: PathBuf) {
-        self.stop_project(&project_id);
-        let task_project_id = project_id.clone();
-        let task = tauri::async_runtime::spawn(async move {
-            let mut interval = tokio::time::interval(SCHEDULER_INTERVAL);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                interval.tick().await;
-                if let Err(error) = tick_project(&app, &task_project_id, &project_path).await {
-                    tracing::warn!(
-                        project_id = %task_project_id,
-                        "routine scheduler tick failed: {error}"
-                    );
-                }
+    /// Brings the schedulers in line with the project registry: a project
+    /// added to the list gets one, a project no longer listed loses its own
+    /// along with its operational stores.
+    pub fn sync(&self, app: &AppHandle) {
+        let config_dir = match app.path().app_config_dir() {
+            Ok(config_dir) => config_dir,
+            Err(error) => {
+                tracing::warn!("routine schedulers cannot read the project list: {error}");
+                return;
             }
-        });
-        if let Ok(mut tasks) = self.tasks.lock() {
-            tasks.insert(project_id, task);
+        };
+        let listed = match crate::space::registry::read_registry(&config_dir) {
+            Ok(registry) => registry
+                .spaces
+                .into_iter()
+                .map(|project| (project.id, PathBuf::from(project.path)))
+                .collect(),
+            Err(error) => {
+                tracing::warn!("routine schedulers cannot read the project list: {error}");
+                return;
+            }
+        };
+        let removed = self.sync_projects(listed, |path| spawn_project(app.clone(), path));
+        for path in removed {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move { close_stores(&app, &path).await });
         }
     }
 
-    pub fn stop_project(&self, project_id: &str) {
-        if let Ok(mut tasks) = self.tasks.lock()
-            && let Some(task) = tasks.remove(project_id)
+    /// Starts a scheduler for each listed project without one and stops the
+    /// schedulers of the others; returns the paths of the stopped ones.
+    fn sync_projects(
+        &self,
+        listed: Vec<(String, PathBuf)>,
+        mut start: impl FnMut(PathBuf) -> tauri::async_runtime::JoinHandle<()>,
+    ) -> Vec<PathBuf> {
+        let mut projects = self
+            .projects
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut stopped = Vec::new();
+        projects.retain(|id, scheduler| {
+            let kept = listed
+                .iter()
+                .any(|(listed_id, path)| listed_id == id && *path == scheduler.path);
+            if !kept {
+                scheduler.task.abort();
+                stopped.push(scheduler.path.clone());
+            }
+            kept
+        });
+        for (id, path) in listed {
+            projects.entry(id).or_insert_with(|| ProjectScheduler {
+                task: start(path.clone()),
+                path,
+            });
+        }
+        stopped
+    }
+
+    /// Stops the scheduler of a project leaving the list and closes its
+    /// operational stores before its files are removed.
+    pub async fn remove_project(&self, app: &AppHandle, project_id: &str, project_path: &Path) {
+        self.stop_project(project_id);
+        close_stores(app, project_path).await;
+    }
+
+    fn stop_project(&self, project_id: &str) {
+        if let Some(scheduler) = self
+            .projects
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(project_id)
         {
-            task.abort();
+            scheduler.task.abort();
+        }
+    }
+
+    /// Stops every scheduler at exit, before the runtimes it launches into.
+    pub fn stop_all(&self) {
+        let projects = std::mem::take(
+            &mut *self
+                .projects
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        );
+        for scheduler in projects.into_values() {
+            scheduler.task.abort();
         }
     }
 }
 
-async fn tick_project(
-    app: &AppHandle,
-    _project_id: &str,
-    project_path: &Path,
-) -> Result<(), AppError> {
-    let index_state = app.state::<IndexState>();
-    let routine_stores = app.state::<Arc<RoutineStoreState>>();
-    let owners =
-        service::discover_project_owners(routine_stores.core(), &index_state.core, project_path)
+fn spawn_project(app: AppHandle, project_path: PathBuf) -> tauri::async_runtime::JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        let host = AppSchedulerHost { app };
+        let mut interval = tokio::time::interval(SCHEDULER_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if let Err(error) = tick_project(&host, &project_path).await {
+                tracing::warn!(
+                    project = %project_path.display(),
+                    "routine scheduler tick failed: {error}"
+                );
+            }
+        }
+    })
+}
+
+/// Closes the operational stores of a project, opened under its registered
+/// or its canonical path.
+async fn close_stores(app: &AppHandle, project_path: &Path) {
+    let stores = app.state::<Arc<RoutineStoreState>>();
+    stores.close_project(project_path).await;
+    if let Ok(canonical) = std::fs::canonicalize(project_path)
+        && canonical != project_path
+    {
+        stores.close_project(&canonical).await;
+    }
+}
+
+/// Host effects of a scheduler tick: execution evidence, repository access
+/// and claims, dispatch and window invalidation.
+trait SchedulerHost {
+    /// Repository the claims of an owner go to, with its access evidence.
+    type Gate: Send + Sync;
+
+    fn routine_stores(&self) -> &RoutineStores;
+
+    fn live_evidence(&self) -> Result<RoutineLiveEvidence, AppError>;
+
+    async fn dispatch_ready(
+        &self,
+        owner: &ResolvedRoutineOwner,
+        definition: &RoutineDefinition,
+    ) -> bool;
+
+    async fn event_preflight(
+        &self,
+        owner: &ResolvedRoutineOwner,
+        event: &QueuedRoutineEvent,
+    ) -> Option<EventDispatchPreflight>;
+
+    async fn mutation_paths_ready(&self, paths: Vec<PathBuf>) -> bool;
+
+    /// `None` while the repository is neither local nor writable.
+    async fn repository_gate(
+        &self,
+        owner: &ResolvedRoutineOwner,
+    ) -> Result<Option<Self::Gate>, AppError>;
+
+    /// The run key built from the repository identity and its claim; `None`
+    /// while the repository has no identity for claims.
+    async fn claim(
+        &self,
+        gate: &Self::Gate,
+        routine_id: &str,
+        fingerprint: &str,
+        claim_time: i64,
+        run_key: impl FnOnce(&str) -> String + Send,
+    ) -> Result<Option<(String, RoutineClaimResult)>, AppError>;
+
+    async fn dispatch_scheduled(
+        &self,
+        owner: ResolvedRoutineOwner,
+        routine_id: String,
+    ) -> Result<RoutineDispatchResult, AppError>;
+
+    async fn dispatch_event(
+        &self,
+        owner: ResolvedRoutineOwner,
+        event: QueuedRoutineEvent,
+        execution_run_id: String,
+    ) -> Result<RoutineDispatchResult, AppError>;
+
+    fn invalidate(&self, owner: &ResolvedRoutineOwner);
+}
+
+struct AppSchedulerHost {
+    app: AppHandle,
+}
+
+struct RepositoryGate {
+    cli: GitCli,
+    repository: PathBuf,
+    store_path: PathBuf,
+    access: RepositoryAccessSnapshot,
+}
+
+impl SchedulerHost for AppSchedulerHost {
+    type Gate = RepositoryGate;
+
+    fn routine_stores(&self) -> &RoutineStores {
+        self.app.state::<Arc<RoutineStoreState>>().inner().core()
+    }
+
+    fn live_evidence(&self) -> Result<RoutineLiveEvidence, AppError> {
+        super::runtime::live_evidence(
+            &self.app.state::<TerminalManager>(),
+            &self.app.state::<super::RoutineAcpLaunches>(),
+        )
+    }
+
+    async fn dispatch_ready(
+        &self,
+        owner: &ResolvedRoutineOwner,
+        definition: &RoutineDefinition,
+    ) -> bool {
+        dispatch::scheduled_dispatch_ready(owner, definition).await
+    }
+
+    async fn event_preflight(
+        &self,
+        owner: &ResolvedRoutineOwner,
+        event: &QueuedRoutineEvent,
+    ) -> Option<EventDispatchPreflight> {
+        dispatch::event_dispatch_preflight(owner, event).await
+    }
+
+    async fn mutation_paths_ready(&self, paths: Vec<PathBuf>) -> bool {
+        match require_repository_mutation_paths(&self.app, paths).await {
+            Ok(_) => true,
+            Err(error) => {
+                tracing::debug!("event property mutation access is not ready: {error}");
+                false
+            }
+        }
+    }
+
+    async fn repository_gate(
+        &self,
+        owner: &ResolvedRoutineOwner,
+    ) -> Result<Option<RepositoryGate>, AppError> {
+        let git_state = self.app.state::<GitState>();
+        let repository = host::mutation_repository(&git_state, owner).await?;
+        let cli = require_cli(&git_state)?;
+        let store_path = access_store_path(&self.app)?;
+        let access = self
+            .app
+            .state::<RepositoryAccessState>()
+            .snapshot(&cli, &repository, &store_path)
             .await?;
+        Ok(matches!(
+            access.status,
+            RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
+        )
+        .then_some(RepositoryGate {
+            cli,
+            repository,
+            store_path,
+            access,
+        }))
+    }
+
+    async fn claim(
+        &self,
+        gate: &RepositoryGate,
+        routine_id: &str,
+        fingerprint: &str,
+        claim_time: i64,
+        run_key: impl FnOnce(&str) -> String + Send,
+    ) -> Result<Option<(String, RoutineClaimResult)>, AppError> {
+        let access_state = self.app.state::<RepositoryAccessState>();
+        let Some(repository_id) = access_state
+            .routine_repository_id(&gate.cli, &gate.repository, &gate.access)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let run_key = run_key(&repository_id);
+        let claim = access_state
+            .claim_routine(
+                &gate.cli,
+                &gate.repository,
+                &gate.store_path,
+                &gate.access,
+                routine_id,
+                &run_key,
+                fingerprint,
+                claim_time,
+            )
+            .await?;
+        Ok(Some((run_key, claim)))
+    }
+
+    async fn dispatch_scheduled(
+        &self,
+        owner: ResolvedRoutineOwner,
+        routine_id: String,
+    ) -> Result<RoutineDispatchResult, AppError> {
+        dispatch::dispatch_scheduled(&self.app, owner, routine_id).await
+    }
+
+    async fn dispatch_event(
+        &self,
+        owner: ResolvedRoutineOwner,
+        event: QueuedRoutineEvent,
+        execution_run_id: String,
+    ) -> Result<RoutineDispatchResult, AppError> {
+        dispatch::dispatch_event(&self.app, owner, event, execution_run_id).await
+    }
+
+    fn invalidate(&self, owner: &ResolvedRoutineOwner) {
+        super::emit_owner_invalidation(&self.app, owner);
+    }
+}
+
+/// One check of a project, with or without a window: its owners come from
+/// its config and operational stores, never from an index runtime. A
+/// project whose folder is unavailable is skipped until it is back.
+async fn tick_project<H: SchedulerHost>(host: &H, project_path: &Path) -> Result<(), AppError> {
+    if !project_path.join(".svode").join("config.json").is_file() {
+        tracing::debug!(
+            project = %project_path.display(),
+            "routine scheduler skips a project whose folder is unavailable"
+        );
+        return Ok(());
+    }
+    let owners = service::discover_project_owners(host.routine_stores(), project_path).await?;
     for owner in owners {
-        if let Err(error) = tick_owner(app, &owner).await {
+        if let Err(error) = tick_owner(host, &owner).await {
             tracing::warn!(
                 owner = %owner.descriptor.owner_path,
                 "routine schedule owner tick failed: {error}"
@@ -91,12 +382,13 @@ async fn tick_project(
     Ok(())
 }
 
-async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(), AppError> {
-    let index_state = app.state::<IndexState>();
-    let routine_stores = app.state::<Arc<RoutineStoreState>>();
-    let terminal_manager = app.state::<TerminalManager>();
-    let pool = routine_stores
-        .get_or_create_for_index(&index_state, &owner.index_key)
+async fn tick_owner<H: SchedulerHost>(
+    host: &H,
+    owner: &ResolvedRoutineOwner,
+) -> Result<(), AppError> {
+    let pool = host
+        .routine_stores()
+        .get_or_create(&owner.index_key, &owner.space_path)
         .await?;
     let automatic_authority = match authority::read_key(&owner.space_path, &owner.identity()) {
         Ok(enabled) => enabled,
@@ -108,12 +400,9 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             false
         }
     };
-    dispatch_next_event(app, owner, automatic_authority, &pool).await?;
+    dispatch_next_event(host, owner, automatic_authority, &pool).await?;
     let snapshot = service::discover_owner(owner).await?;
-    let live = super::runtime::live_evidence(
-        &terminal_manager,
-        &app.state::<super::RoutineAcpLaunches>(),
-    )?;
+    let live = host.live_evidence()?;
     let now = Utc::now();
 
     for candidate in schedule_candidates(&snapshot) {
@@ -127,7 +416,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             state.filter(|state| state.definition_fingerprint == candidate.execution_fingerprint)
         else {
             if let Err(error) = write_baseline(
-                app,
+                host,
                 &pool,
                 owner,
                 routine_id,
@@ -149,7 +438,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             .map(|value| value.with_timezone(&Utc))
         else {
             if let Err(error) = write_baseline(
-                app,
+                host,
                 &pool,
                 owner,
                 routine_id,
@@ -191,7 +480,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                     &next,
                 )
                 .await?;
-                super::emit_owner_invalidation(app, owner);
+                host.invalidate(owner);
             }
             continue;
         }
@@ -204,7 +493,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             && run.blocks_relaunch(&live)
         {
             advance_checkpoint(
-                app,
+                host,
                 &pool,
                 owner,
                 routine_id,
@@ -215,28 +504,16 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             .await?;
             continue;
         }
-        if !dispatch::scheduled_dispatch_ready(owner, &candidate.definition).await {
+        if !host.dispatch_ready(owner, &candidate.definition).await {
             continue;
         }
-
-        let repository = host::mutation_repository(&app.state::<GitState>(), owner).await?;
-        let git_state = app.state::<GitState>();
-        let cli = require_cli(&git_state)?;
-        let access_state = app.state::<RepositoryAccessState>();
-        let store_path = access_store_path(app)?;
-        let access = access_state
-            .snapshot(&cli, &repository, &store_path)
-            .await?;
-        if !matches!(
-            access.status,
-            RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
-        ) {
+        let Some(gate) = host.repository_gate(owner).await? else {
             continue;
-        }
+        };
 
         let Some(due) = evaluation.due else {
             advance_checkpoint(
-                app,
+                host,
                 &pool,
                 owner,
                 routine_id,
@@ -247,31 +524,25 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             .await?;
             continue;
         };
-        let Some(repository_id) = access_state
-            .routine_repository_id(&cli, &repository, &access)
+        let Some((run_key, claim)) = host
+            .claim(
+                &gate,
+                routine_id,
+                &candidate.execution_fingerprint,
+                now.timestamp(),
+                |repository_id| {
+                    scheduled_run_key(
+                        repository_id,
+                        routine_id,
+                        &time_basis.identity(),
+                        &due.nominal_civil_time,
+                    )
+                },
+            )
             .await?
         else {
             continue;
         };
-        let run_key = scheduled_run_key(
-            &repository_id,
-            routine_id,
-            &time_basis.identity(),
-            &due.nominal_civil_time,
-        );
-        let claim_time = now.timestamp();
-        let claim = access_state
-            .claim_routine(
-                &cli,
-                &repository,
-                &store_path,
-                &access,
-                routine_id,
-                &run_key,
-                &candidate.execution_fingerprint,
-                claim_time,
-            )
-            .await?;
         let should_dispatch = match claim {
             RoutineClaimResult::Local => {
                 let leased_at = now.to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -284,7 +555,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 claimed_at,
             } => {
                 record_claim(
-                    app,
+                    host,
                     &pool,
                     owner,
                     routine_id,
@@ -301,7 +572,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
                 claimed_at,
             } => {
                 record_claim(
-                    app,
+                    host,
                     &pool,
                     owner,
                     routine_id,
@@ -319,7 +590,7 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
             }
         };
         advance_checkpoint(
-            app,
+            host,
             &pool,
             owner,
             routine_id,
@@ -331,7 +602,10 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
         if !should_dispatch {
             continue;
         }
-        match dispatch::dispatch_scheduled(app, owner.clone(), routine_id.to_string()).await? {
+        match host
+            .dispatch_scheduled(owner.clone(), routine_id.to_string())
+            .await?
+        {
             RoutineDispatchResult::Blocked {
                 code: RoutineDispatchBlockedCode::RepositoryAccessDenied,
                 message,
@@ -357,8 +631,8 @@ async fn tick_owner(app: &AppHandle, owner: &ResolvedRoutineOwner) -> Result<(),
     Ok(())
 }
 
-async fn dispatch_next_event(
-    app: &AppHandle,
+async fn dispatch_next_event<H: SchedulerHost>(
+    host: &H,
     owner: &ResolvedRoutineOwner,
     consent: bool,
     pool: &sqlx::SqlitePool,
@@ -369,64 +643,38 @@ async fn dispatch_next_event(
     let Some(event) = next_pending_event(pool, &owner.descriptor.owner_path).await? else {
         return Ok(());
     };
-    let terminal_manager = app.state::<TerminalManager>();
-    let live = super::runtime::live_evidence(
-        &terminal_manager,
-        &app.state::<super::RoutineAcpLaunches>(),
-    )?;
+    let live = host.live_evidence()?;
     if let Some(run) = latest_run_record(pool, &event.owner_path, &event.routine_id).await?
         && run.blocks_relaunch(&live)
     {
         return Ok(());
     }
-    let Some(preflight) = dispatch::event_dispatch_preflight(owner, &event).await else {
+    let Some(preflight) = host.event_preflight(owner, &event).await else {
         finish_event(pool, &event.queue_key, "failed").await?;
         return Ok(());
     };
-    if let dispatch::EventDispatchPreflight::UpdateProperties { mutation_paths } = &preflight
-        && let Err(error) = require_repository_mutation_paths(app, mutation_paths.clone()).await
+    if let EventDispatchPreflight::UpdateProperties { mutation_paths } = &preflight
+        && !host.mutation_paths_ready(mutation_paths.clone()).await
     {
-        tracing::debug!(
-            routine_id = %event.routine_id,
-            "event property mutation access is not ready: {error}"
-        );
         return Ok(());
     }
 
-    let repository = host::mutation_repository(&app.state::<GitState>(), owner).await?;
-    let git_state = app.state::<GitState>();
-    let cli = require_cli(&git_state)?;
-    let access_state = app.state::<RepositoryAccessState>();
-    let store_path = access_store_path(app)?;
-    let access = access_state
-        .snapshot(&cli, &repository, &store_path)
-        .await?;
-    if !matches!(
-        access.status,
-        RepositoryAccessStatus::Local | RepositoryAccessStatus::Writable
-    ) {
+    let Some(gate) = host.repository_gate(owner).await? else {
         return Ok(());
-    }
-    let Some(repository_id) = access_state
-        .routine_repository_id(&cli, &repository, &access)
+    };
+    let now = Utc::now();
+    let Some((run_key, claim)) = host
+        .claim(
+            &gate,
+            &event.routine_id,
+            &event.definition_fingerprint,
+            now.timestamp(),
+            |repository_id| event_run_key(repository_id, &event.routine_id, &event.event_key),
+        )
         .await?
     else {
         return Ok(());
     };
-    let run_key = event_run_key(&repository_id, &event.routine_id, &event.event_key);
-    let now = Utc::now();
-    let claim = access_state
-        .claim_routine(
-            &cli,
-            &repository,
-            &store_path,
-            &access,
-            &event.routine_id,
-            &run_key,
-            &event.definition_fingerprint,
-            now.timestamp(),
-        )
-        .await?;
     let should_dispatch = match claim {
         RoutineClaimResult::Local => {
             claim_local_run(
@@ -443,7 +691,7 @@ async fn dispatch_next_event(
             claimed_at,
         } => {
             record_claim(
-                app,
+                host,
                 pool,
                 owner,
                 &event.routine_id,
@@ -460,7 +708,7 @@ async fn dispatch_next_event(
             claimed_at,
         } => {
             record_claim(
-                app,
+                host,
                 pool,
                 owner,
                 &event.routine_id,
@@ -482,8 +730,9 @@ async fn dispatch_next_event(
     if !activate_event(pool, &event.queue_key, &execution_run_id).await? {
         return Ok(());
     }
-    let result =
-        dispatch::dispatch_event(app, owner.clone(), event.clone(), execution_run_id).await;
+    let result = host
+        .dispatch_event(owner.clone(), event.clone(), execution_run_id)
+        .await;
     let state = match &result {
         Ok(RoutineDispatchResult::Started { .. })
         | Ok(RoutineDispatchResult::AlreadyRunning { .. })
@@ -502,8 +751,9 @@ async fn dispatch_next_event(
     result.map(|_| ())
 }
 
-async fn write_baseline(
-    app: &AppHandle,
+#[allow(clippy::too_many_arguments)]
+async fn write_baseline<H: SchedulerHost>(
+    host: &H,
     pool: &sqlx::SqlitePool,
     owner: &ResolvedRoutineOwner,
     routine_id: &str,
@@ -513,11 +763,11 @@ async fn write_baseline(
     now: DateTime<Utc>,
 ) -> Result<(), AppError> {
     let next = schedule::next_after(cron, time_basis, now).map_err(AppError::General)?;
-    advance_checkpoint(app, pool, owner, routine_id, fingerprint, now, next).await
+    advance_checkpoint(host, pool, owner, routine_id, fingerprint, now, next).await
 }
 
-async fn advance_checkpoint(
-    app: &AppHandle,
+async fn advance_checkpoint<H: SchedulerHost>(
+    host: &H,
     pool: &sqlx::SqlitePool,
     owner: &ResolvedRoutineOwner,
     routine_id: &str,
@@ -534,12 +784,13 @@ async fn advance_checkpoint(
         &next.to_rfc3339_opts(SecondsFormat::Secs, true),
     )
     .await?;
-    super::emit_owner_invalidation(app, owner);
+    host.invalidate(owner);
     Ok(())
 }
 
-async fn record_claim(
-    app: &AppHandle,
+#[allow(clippy::too_many_arguments)]
+async fn record_claim<H: SchedulerHost>(
+    host: &H,
     pool: &sqlx::SqlitePool,
     owner: &ResolvedRoutineOwner,
     routine_id: &str,
@@ -567,7 +818,11 @@ async fn record_claim(
             || previous.claimed_by != claimed_by
             || previous.claimed_at != claimed_at
     }) {
-        super::emit_owner_invalidation(app, owner);
+        host.invalidate(owner);
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "scheduler_tests.rs"]
+mod tests;

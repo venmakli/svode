@@ -155,6 +155,8 @@ pub fn run() {
             if let Err(error) = app_windows::rebuild_app_menu(app.handle()) {
                 tracing::warn!("failed to rebuild app menu during setup: {error}");
             }
+            app.state::<routines::RoutineSchedulerState>()
+                .sync(app.handle());
             #[cfg(target_os = "macos")]
             macos_fullscreen::install(app.handle());
             agent_sessions::follow_acp_catalog_changes(
@@ -482,6 +484,9 @@ pub fn run() {
 
 fn shutdown_desktop(app_handle: &tauri::AppHandle) {
     tracing::info!("running desktop shutdown sequence");
+    app_handle
+        .state::<routines::RoutineSchedulerState>()
+        .stop_all();
     let agent_runtime = app_handle.state::<agent_runtime::AgentRuntimeState>();
     tauri::async_runtime::block_on(agent_runtime.runtime().shutdown());
     let speech = app_handle.state::<speech::SpeechState>();

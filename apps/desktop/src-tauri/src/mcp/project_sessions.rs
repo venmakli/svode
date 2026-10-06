@@ -6,8 +6,9 @@
 //! pools before it answers, a later one checks them again once the last
 //! check is older than a short window. A session starts no watcher, Routine
 //! scheduler or run and delivers nothing to windows. Only an index-backed
-//! read creates it; while it exists, source reads get its index dates and
-//! managed mutations of the project publish into it.
+//! read or a Routine write of the project creates it; while it exists,
+//! source reads get its index dates and managed mutations of the project
+//! publish into it.
 //!
 //! A request picks its runtime once and finishes on it. A session is closed
 //! when a window opens its project, after a period without requests and at
@@ -123,8 +124,9 @@ impl ProjectSessions {
     /// Lease of the session of `project`, created when none exists; `None`
     /// when a window has the project open in `desktop`. The check runs under
     /// the registry lock, so a session is never created after the window's
-    /// handover closed the previous one.
-    async fn get_or_create(
+    /// handover closed the previous one. A Routine write of a project without
+    /// a window publishes into it as well.
+    pub(crate) async fn get_or_create(
         &self,
         project: &Path,
         desktop: &IndexRuntimeState,

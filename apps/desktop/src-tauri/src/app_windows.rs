@@ -624,11 +624,10 @@ fn stop_project_runtime(app: &AppHandle, project_id: &str) {
     app.state::<crate::apps::AppProcessState>()
         .stop_project(Path::new(&project.path));
     let app = app.clone();
-    let project_id = project_id.to_string();
     let project_path = PathBuf::from(project.path);
     tauri::async_runtime::spawn(async move {
         app.state::<crate::project_runtime::ProjectRuntimeState>()
-            .close_project(&app, &project_id, &project_path)
+            .close_project(&app, &project_path)
             .await;
     });
 }
