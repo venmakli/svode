@@ -25,6 +25,7 @@ import {
 import {
   SidebarMenu,
   SidebarMenuAction,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -91,27 +92,15 @@ export function HomeProjectRow({
                 <SidebarMenuButton
                   type="button"
                   className={cn(
-                    "pr-14",
+                    // Both actions show over the row's end on hover and focus.
+                    "group-focus-within/menu-item:pr-14! group-hover/menu-item:pr-14!",
                     unavailable &&
                       "text-sidebar-foreground/50 hover:text-sidebar-foreground/50",
                   )}
                   onClick={onOpen}
                 >
-                  <span
-                    className="flex size-4 shrink-0 items-center justify-center text-sm leading-none"
-                    aria-hidden
-                  >
-                    {project.icon || <Box />}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {project.name}
-                  </span>
-                  {otherWindow && (
-                    <AppWindow
-                      className="!size-3 shrink-0 text-muted-foreground"
-                      aria-label={m.home_project_other_window()}
-                    />
-                  )}
+                  <span aria-hidden>{project.icon || <Box />}</span>
+                  <span className="flex-1 truncate">{project.name}</span>
                 </SidebarMenuButton>
               </TooltipTrigger>
               <TooltipContent
@@ -133,6 +122,17 @@ export function HomeProjectRow({
                 {reason && <span>{reason}</span>}
               </TooltipContent>
             </Tooltip>
+            {otherWindow && (
+              // The actions take the mark's place on hover, focus and while
+              // the menu is open.
+              <SidebarMenuBadge
+                role="img"
+                aria-label={m.home_project_other_window()}
+                className="text-muted-foreground group-focus-within/menu-item:opacity-0 group-hover/menu-item:opacity-0 group-has-[[aria-haspopup=menu][aria-expanded=true]]/menu-item:opacity-0"
+              >
+                <AppWindow className="size-3" />
+              </SidebarMenuBadge>
+            )}
             <CollapsibleTrigger asChild>
               <SidebarMenuAction
                 type="button"
@@ -164,11 +164,7 @@ export function HomeProjectRow({
                   <Ellipsis />
                 </SidebarMenuAction>
               </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                side="right"
-                className="min-w-44"
-              >
+              <DropdownMenuContent align="end" side="bottom">
                 <DropdownMenuItem onSelect={onStartChat}>
                   <MessageSquarePlus />
                   {m.home_project_start_chat()}

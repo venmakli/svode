@@ -212,8 +212,9 @@ if (process.env.SVODE_HOME_SIDEBAR_DOM !== "1") {
     await render();
     const [first, second] = rowButton("Svode");
     const mark = `[aria-label='${m.home_project_other_window()}']`;
-    expect(first.querySelector(mark) === null).toBe(false);
-    expect(second.querySelector(mark)).toBeNull();
+    const item = (row: Element) => row.closest("[data-sidebar=menu-item]")!;
+    expect(item(first).querySelector(mark) === null).toBe(false);
+    expect(item(second).querySelector(mark)).toBeNull();
   });
 
   test("the tooltip adds the path when another project has the same name", async () => {
