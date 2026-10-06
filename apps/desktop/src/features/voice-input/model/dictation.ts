@@ -101,13 +101,16 @@ export function levelHeight(dbfs: number): number {
 }
 
 /**
- * The recognized text as it goes in after `before`, the text left of the
- * cursor: trimmed, and set apart from a word it would otherwise join.
+ * The recognized text as it goes in between `before` and `after`, the text
+ * left and right of the cursor: trimmed, and set apart from a word it would
+ * otherwise join on either side.
  */
-export function dictatedText(text: string, before: string): string {
+export function dictatedText(text: string, before: string, after = ""): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
-  return before && !/\s$/.test(before) ? ` ${trimmed}` : trimmed;
+  const lead = before && !/\s$/.test(before) ? " " : "";
+  const trail = /^[\p{L}\p{N}]/u.test(after) ? " " : "";
+  return `${lead}${trimmed}${trail}`;
 }
 
 /** Whether `owner` is a composer other than `key` of this webview. */

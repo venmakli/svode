@@ -105,12 +105,17 @@ export function VoiceInputButton({
           <PopoverTitle>{m.voice_input_title()}</PopoverTitle>
           <PopoverDescription>{m.voice_input_on_device()}</PopoverDescription>
         </PopoverHeader>
-        {models && modelState && (
+        {models && modelState ? (
           <EnableContent
             models={models}
             state={modelState}
             onClose={() => setEnableOpen(false)}
           />
+        ) : (
+          <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            {m.voice_input_models_loading()}
+          </div>
         )}
       </PopoverContent>
     </Popover>

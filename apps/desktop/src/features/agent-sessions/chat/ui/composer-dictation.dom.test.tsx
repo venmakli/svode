@@ -222,10 +222,10 @@ if (process.env.SVODE_COMPOSER_DICTATION_DOM !== "1") {
   dictationTest("Esc cancels the recording, not the turn, and the draft stays", async () => {
     await render();
     await click(microphone());
-    const field = composerField();
-    await act(async () => field?.focus());
+    // The microphone went with the bottom row; the focus is back in the field.
+    expect(composerField()?.contains(document.activeElement)).toBe(true);
     await act(async () => {
-      field?.dispatchEvent(
+      document.activeElement?.dispatchEvent(
         new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });

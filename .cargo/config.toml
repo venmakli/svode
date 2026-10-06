@@ -1,4 +1,6 @@
 [env]
 # The speech engine ships to other machines: build ggml for a portable CPU
-# baseline instead of the build machine's CPU.
-TRANSCRIBE_CMAKE_ARGS = "-DGGML_NATIVE=OFF"
+# baseline instead of the build machine's CPU, and without a system BLAS the
+# build machine happens to have, which the packages do not carry (as the
+# engine's own release artifacts are built).
+TRANSCRIBE_CMAKE_ARGS = "-DGGML_NATIVE=OFF -DTRANSCRIBE_USE_SYSTEM_BLAS=OFF"

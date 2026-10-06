@@ -109,6 +109,10 @@ test("the dictated text joins the draft at the cursor", () => {
   expect(dictatedText("fix the import", "Please ")).toBe("fix the import");
   expect(dictatedText("next", "line\n")).toBe("next");
   expect(dictatedText("   ", "text")).toBe("");
+  // In the middle of the draft the next word is set apart too.
+  expect(dictatedText("fix the import.", "Please ", "now")).toBe("fix the import. ");
+  expect(dictatedText("fix the import", "Please ", " now")).toBe("fix the import");
+  expect(dictatedText("fix the import", "Please ", ", now")).toBe("fix the import");
 });
 
 test("the microphone waits while another composer of any window records", () => {
