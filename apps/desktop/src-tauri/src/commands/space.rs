@@ -467,16 +467,6 @@ pub async fn delete_project(
 }
 
 #[tauri::command]
-pub fn get_last_active_project(app: AppHandle) -> Result<Option<String>, AppError> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::General(e.to_string()))?;
-    let reg = registry::read_registry(&config_dir)?;
-    Ok(reg.last_active)
-}
-
-#[tauri::command]
 pub async fn open_project(
     app: AppHandle,
     window: Window,

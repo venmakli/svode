@@ -17,7 +17,6 @@ export type SpacePublicState = Pick<
   | "explicitHome"
   | "loadRootSpaces"
   | "openRoot"
-  | "openLastActiveRoot"
   | "createRoot"
   | "openRootFolder"
   | "deleteRoot"
@@ -57,7 +56,6 @@ function selectPublicState(state: SpaceState): SpacePublicState {
     explicitHome: state.explicitHome,
     loadRootSpaces: state.loadRootSpaces,
     openRoot: state.openRoot,
-    openLastActiveRoot: state.openLastActiveRoot,
     createRoot: state.createRoot,
     openRootFolder: state.openRootFolder,
     deleteRoot: state.deleteRoot,

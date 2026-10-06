@@ -13,8 +13,7 @@ export function useRootProjectNavigation({
 }: UseRootProjectNavigationInput = {}) {
   const navigate = useNavigate();
   const activeRootId = useSpace((state) => state.activeRootId);
-  const { getWindowOpenIntent, openLastActiveRoot, openRoot, openRootWindow } =
-    useSpaceActions();
+  const { getWindowOpenIntent, openRoot, openRootWindow } = useSpaceActions();
 
   const enterRoot = useCallback(() => {
     onRootOpened?.();
@@ -54,25 +53,13 @@ export function useRootProjectNavigation({
     ],
   );
 
+  // A window opens in its own view; the first window of a launch gets the
+  // last view from Desktop.
   const openLastProject = useCallback(async () => {
     const intent = await getWindowOpenIntent();
-    if (intent?.kind === "home") return false;
-    if (intent?.kind === "project") {
-      return openProjectInCurrentWindow(intent.projectId);
-    }
-
-    if (await openLastActiveRoot()) {
-      enterRoot();
-      return true;
-    }
-
-    return false;
-  }, [
-    enterRoot,
-    getWindowOpenIntent,
-    openLastActiveRoot,
-    openProjectInCurrentWindow,
-  ]);
+    if (intent?.kind !== "project") return false;
+    return openProjectInCurrentWindow(intent.projectId);
+  }, [getWindowOpenIntent, openProjectInCurrentWindow]);
 
   return {
     openLastProject,

@@ -116,7 +116,7 @@ function MainLayoutRuntime() {
     explicitHome,
     spaces,
   } = useSpace();
-  const { openLastActiveRoot } = useSpaceActions();
+  const { getWindowOpenIntent, openRoot } = useSpaceActions();
   // Pinned Spaces and their artifacts are resolved again when the registered
   // Spaces or their display change.
   const navigationSpacesKey = useMemo(
@@ -174,12 +174,14 @@ function MainLayoutRuntime() {
         return;
       }
 
-      const opened = await openLastActiveRoot();
+      const intent = await getWindowOpenIntent();
+      const opened =
+        intent?.kind === "project" && (await openRoot(intent.projectId));
       if (!opened) {
         navigate({ to: "/" });
       }
     })();
-  }, [activeRootId, explicitHome, navigate, openLastActiveRoot]);
+  }, [activeRootId, explicitHome, getWindowOpenIntent, navigate, openRoot]);
 
   if (!activeRootId) {
     return <div className="h-dvh bg-background" />;

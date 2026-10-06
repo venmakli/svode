@@ -20,7 +20,6 @@ import {
   deleteSpace,
   ensureAssetsScope,
   ensureSpaceScaffold,
-  getLastActiveProject,
   getWindowOpenIntent,
   listProjects,
   listSpaces,
@@ -69,10 +68,6 @@ export function openRootFolderSpace(path: string) {
 
 export function deleteRootSpace(id: string, deleteFiles?: boolean) {
   return deleteProject(id, deleteFiles);
-}
-
-export function getLastActiveRootSpace() {
-  return getLastActiveProject();
 }
 
 export function listChildSpaces(rootPath: string) {

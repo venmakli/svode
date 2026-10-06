@@ -35,7 +35,6 @@ export interface SpaceState extends SpaceTreeState {
   loadRootSpaces: () => Promise<SpaceInfo[]>;
   openRoot: (id: string) => Promise<boolean>;
   openRootWindow: (id: string) => Promise<void>;
-  openLastActiveRoot: () => Promise<boolean>;
   createRoot: (
     name: string,
     icon: string,
@@ -44,7 +43,6 @@ export interface SpaceState extends SpaceTreeState {
   ) => Promise<SpaceInfo>;
   openRootFolder: (path: string) => Promise<SpaceInfo>;
   deleteRoot: (id: string, deleteFiles?: boolean) => Promise<void>;
-  getLastActiveRootId: () => Promise<string | null>;
   getWindowOpenIntent: () => Promise<WindowOpenIntent | null>;
   goHome: () => void;
 
@@ -189,16 +187,6 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     await spaceActions.openRootProjectWindow(id);
   },
 
-  openLastActiveRoot: async () => {
-    const projects = get().rootsLoaded
-      ? get().rootSpaces
-      : await get().loadRootSpaces();
-    const lastActiveId = await get().getLastActiveRootId();
-    if (!lastActiveId) return false;
-    if (!projects.some((w) => w.id === lastActiveId)) return false;
-    return get().openRoot(lastActiveId);
-  },
-
   createRoot: async (name, icon, description, path) => {
     const ws = await spaceActions.createRootSpace({
       name,
@@ -240,14 +228,6 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       spaceActions
         .clearActiveMcpContext()
         .catch((err) => console.warn("mcp_clear_active_context failed:", err));
-    }
-  },
-
-  getLastActiveRootId: async () => {
-    try {
-      return await spaceActions.getLastActiveRootSpace();
-    } catch {
-      return null;
     }
   },
 

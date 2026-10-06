@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::error::AppError;
 use svode_core::system_path;
 
-use super::types::{RegistryEntry, SpaceRegistry};
+use super::types::{LastView, RegistryEntry, SpaceRegistry};
 
 /// Read the space registry from config_dir/spaces.json, creating defaults if missing.
 pub fn read_registry(config_dir: &Path) -> Result<SpaceRegistry, AppError> {
@@ -77,6 +77,64 @@ mod tests {
             r"C:\Users\eeeoo\Documents\pro\mine"
         );
     }
+
+    #[test]
+    fn a_registry_without_the_last_view_reads_as_before() {
+        let dir = tempfile::tempdir().expect("config dir");
+        std::fs::write(
+            dir.path().join("spaces.json"),
+            r#"{ "spaces": [{ "id": "root", "lastOpened": null, "path": "/p" }], "lastActive": "root" }"#,
+        )
+        .expect("write registry");
+
+        let registry = read_registry(dir.path()).expect("read registry");
+
+        assert_eq!(registry.last_active.as_deref(), Some("root"));
+        assert_eq!(registry.last_view, None);
+    }
+
+    #[test]
+    fn the_last_view_is_stored_beside_the_last_active_project() {
+        let dir = tempfile::tempdir().expect("config dir");
+        add_space(dir.path(), "root", "/p").expect("add project");
+        update_last_active(dir.path(), "root").expect("last active");
+
+        update_last_view(dir.path(), LastView::Home).expect("last view");
+
+        let stored: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.path().join("spaces.json")).expect("read file"),
+        )
+        .expect("parse registry");
+        assert_eq!(stored["lastActive"], "root");
+        assert_eq!(stored["lastView"], serde_json::json!({ "kind": "home" }));
+        assert_eq!(stored["spaces"][0]["lastOpened"], serde_json::Value::Null);
+
+        update_last_view(
+            dir.path(),
+            LastView::Project {
+                project_id: "root".to_string(),
+            },
+        )
+        .expect("last view");
+        assert_eq!(
+            read_registry(dir.path()).expect("read registry").last_view,
+            Some(LastView::Project {
+                project_id: "root".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn a_view_of_a_later_version_reads_as_unknown() {
+        let registry: SpaceRegistry = serde_json::from_value(serde_json::json!({
+            "spaces": [],
+            "lastActive": null,
+            "lastView": { "kind": "workspace", "workspaceId": "w" }
+        }))
+        .expect("read registry");
+
+        assert_eq!(registry.last_view, Some(LastView::Unknown));
+    }
 }
 
 /// Find a space ref by id.
@@ -99,6 +157,13 @@ pub fn remove_space(config_dir: &Path, id: &str) -> Result<(), AppError> {
 pub fn update_last_active(config_dir: &Path, id: &str) -> Result<(), AppError> {
     let mut registry = read_registry(config_dir)?;
     registry.last_active = Some(id.to_string());
+    write_registry(config_dir, &registry)
+}
+
+/// Remember the view of the window the user was in last.
+pub fn update_last_view(config_dir: &Path, view: LastView) -> Result<(), AppError> {
+    let mut registry = read_registry(config_dir)?;
+    registry.last_view = Some(view);
     write_registry(config_dir, &registry)
 }
 

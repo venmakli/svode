@@ -97,8 +97,8 @@ export function newProjectWindow(): Promise<void> {
   return invokeCommand<void>("new_project_window");
 }
 
-export function getWindowOpenIntent(): Promise<WindowOpenIntentDto | null> {
-  return invokeCommand<WindowOpenIntentDto | null>("get_window_open_intent");
+export function getWindowOpenIntent(): Promise<WindowOpenIntentDto> {
+  return invokeCommand<WindowOpenIntentDto>("get_window_open_intent");
 }
 
 export function showHomeInCurrentWindow(): Promise<void> {
@@ -134,10 +134,6 @@ export function deleteProject(
   deleteFiles?: boolean,
 ): Promise<void> {
   return invokeCommand<void>("delete_project", { id, deleteFiles });
-}
-
-export function getLastActiveProject(): Promise<string | null> {
-  return invokeCommand<string | null>("get_last_active_project");
 }
 
 export function listSpaces(spacePath: string): Promise<SpaceInfoDto[]> {

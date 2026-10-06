@@ -11,7 +11,10 @@ use tauri::{
 
 use crate::error::AppError;
 use crate::navigation::NavigationItem;
-use crate::space::{config, registry, types::RegistryEntry};
+use crate::space::{
+    config, registry,
+    types::{LastView, RegistryEntry, SpaceRegistry},
+};
 
 const MENU_NEW_WINDOW: &str = "app:new-window";
 const MENU_OPEN_FOLDER: &str = "app:open-folder";
@@ -77,6 +80,7 @@ struct AppWindowStateInner {
     window_projects: HashMap<String, String>,
     window_intents: HashMap<String, WindowOpenIntent>,
     last_focused_window: Option<String>,
+    remembered_view: Option<LastView>,
     next_home_window: u64,
 }
 
@@ -203,6 +207,24 @@ impl AppWindowState {
         self.lock().last_focused_window.clone()
     }
 
+    /// The view of the focused window when it is not the remembered last view
+    /// yet; the caller stores it in the registry.
+    fn view_to_remember(&self) -> Option<LastView> {
+        let mut inner = self.lock();
+        let label = inner.last_focused_window.as_ref()?;
+        let view = match inner.window_intents.get(label)? {
+            WindowOpenIntent::Home => LastView::Home,
+            WindowOpenIntent::Project { project_id } => LastView::Project {
+                project_id: project_id.clone(),
+            },
+        };
+        if inner.remembered_view.as_ref() == Some(&view) {
+            return None;
+        }
+        inner.remembered_view = Some(view.clone());
+        Some(view)
+    }
+
     fn intent_for_window(&self, label: &str) -> Option<WindowOpenIntent> {
         self.lock().window_intents.get(label).cloned()
     }
@@ -257,17 +279,63 @@ pub fn open_project_window(app: AppHandle, project_id: String) -> Result<(), App
     open_or_focus_project_window(&app, &project_id).map(|_| ())
 }
 
+/// The view of the window; the first window of a launch, opened without one,
+/// takes the last view: Home stays its view, a project is opened by its webview.
 #[tauri::command]
-pub fn get_window_open_intent(
-    state: tauri::State<'_, AppWindowState>,
-    window: Window,
-) -> Option<WindowOpenIntent> {
-    state.intent_for_window(window.label())
+pub fn get_window_open_intent(app: AppHandle, window: Window) -> WindowOpenIntent {
+    let state = app.state::<AppWindowState>();
+    if let Some(intent) = state.intent_for_window(window.label()) {
+        return intent;
+    }
+    let intent = match app_config_dir(&app).and_then(|dir| registry::read_registry(&dir)) {
+        Ok(registry) => launch_intent(&registry, |entry| {
+            config::read_space_config(Path::new(&entry.path)).is_ok()
+        }),
+        Err(error) => {
+            tracing::warn!("failed to read the last view for the launch: {error}");
+            WindowOpenIntent::Home
+        }
+    };
+    if matches!(intent, WindowOpenIntent::Home) {
+        state.show_home(window.label());
+        remember_last_view(&app);
+    }
+    intent
+}
+
+/// The last view when its project is still listed and available, else Home. A
+/// registry without a known last view launches into the last active project.
+fn launch_intent(
+    registry: &SpaceRegistry,
+    is_available: impl Fn(&RegistryEntry) -> bool,
+) -> WindowOpenIntent {
+    let project_id = match &registry.last_view {
+        Some(LastView::Home) => None,
+        Some(LastView::Project { project_id }) => Some(project_id),
+        Some(LastView::Unknown) | None => registry.last_active.as_ref(),
+    };
+    project_id
+        .and_then(|id| registry.spaces.iter().find(|entry| &entry.id == id))
+        .filter(|entry| is_available(entry))
+        .map_or(WindowOpenIntent::Home, |entry| WindowOpenIntent::Project {
+            project_id: entry.id.clone(),
+        })
 }
 
 #[tauri::command]
-pub fn show_home_in_current_window(state: tauri::State<'_, AppWindowState>, window: Window) {
-    state.show_home(window.label());
+pub fn show_home_in_current_window(app: AppHandle, window: Window) {
+    app.state::<AppWindowState>().show_home(window.label());
+    remember_last_view(&app);
+}
+
+/// Stores the view of the focused window as the last view when it changed.
+fn remember_last_view(app: &AppHandle) {
+    let Some(view) = app.state::<AppWindowState>().view_to_remember() else {
+        return;
+    };
+    if let Err(error) = app_config_dir(app).and_then(|dir| registry::update_last_view(&dir, view)) {
+        tracing::warn!("failed to remember the last view: {error}");
+    }
 }
 
 /// Projects bound to windows other than the calling one; the set changes with
@@ -438,6 +506,7 @@ pub fn bind_window_project(
         }
         emit_project_windows_changed(app);
     }
+    remember_last_view(app);
     binding
 }
 
@@ -475,6 +544,7 @@ pub fn hand_off_to_project_window(
 pub fn release_project_window(app: &AppHandle, project_id: &str) {
     if app.state::<AppWindowState>().release_project(project_id) {
         emit_project_windows_changed(app);
+        remember_last_view(app);
     }
 }
 
@@ -517,6 +587,7 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
         WindowEvent::Focused(true) => {
             window_state.focus_window(&label);
             active_state.focus_window(label);
+            remember_last_view(app);
         }
         WindowEvent::Destroyed => {
             let (released, had_projects) = window_state.remove_window(&label);
@@ -952,6 +1023,144 @@ mod tests {
             Some("project-a".to_string())
         );
         assert_eq!(state.project_window_label("project-a"), None);
+    }
+
+    fn project_view(project_id: &str) -> LastView {
+        LastView::Project {
+            project_id: project_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_focused_window_gives_its_view_once() {
+        let state = AppWindowState::new();
+        state.register_home_window("launcher-1");
+
+        state.focus_window("launcher-1");
+
+        assert_eq!(state.view_to_remember(), Some(LastView::Home));
+        assert_eq!(state.view_to_remember(), None);
+    }
+
+    #[test]
+    fn the_focused_window_changing_its_view_gives_the_new_view() {
+        let state = AppWindowState::new();
+        state.register_home_window("launcher-1");
+        state.focus_window("launcher-1");
+        state.view_to_remember();
+
+        state.bind_project("launcher-1", "project-a", WindowView::Project);
+        assert_eq!(state.view_to_remember(), Some(project_view("project-a")));
+
+        state.show_home("launcher-1");
+        assert_eq!(state.view_to_remember(), Some(LastView::Home));
+    }
+
+    #[test]
+    fn home_activation_keeps_the_last_view_home() {
+        let state = AppWindowState::new();
+        state.register_home_window("launcher-1");
+        state.focus_window("launcher-1");
+        state.view_to_remember();
+
+        state.bind_project("launcher-1", "project-a", WindowView::Home);
+        state.bind_project("launcher-1", "project-b", WindowView::Home);
+
+        assert_eq!(state.view_to_remember(), None);
+    }
+
+    #[test]
+    fn the_window_focused_last_wins_over_later_changes_in_other_windows() {
+        let state = AppWindowState::new();
+        state.bind_project("project-project-a", "project-a", WindowView::Project);
+        state.register_home_window("launcher-1");
+        state.focus_window("launcher-1");
+        assert_eq!(state.view_to_remember(), Some(LastView::Home));
+
+        state.focus_window("project-project-a");
+        assert_eq!(state.view_to_remember(), Some(project_view("project-a")));
+
+        state.bind_project("launcher-1", "project-b", WindowView::Project);
+        assert_eq!(state.view_to_remember(), None);
+    }
+
+    #[test]
+    fn closing_the_focused_window_keeps_its_view_as_the_last_view() {
+        let state = AppWindowState::new();
+        state.bind_project("project-project-a", "project-a", WindowView::Project);
+        state.focus_window("project-project-a");
+        state.view_to_remember();
+
+        state.remove_window("project-project-a");
+
+        assert_eq!(state.view_to_remember(), None);
+    }
+
+    #[test]
+    fn a_window_without_a_view_gives_nothing_to_remember() {
+        let state = AppWindowState::new();
+        state.focus_window("main");
+
+        assert_eq!(state.view_to_remember(), None);
+    }
+
+    fn registry(last_active: Option<&str>, last_view: Option<LastView>) -> SpaceRegistry {
+        SpaceRegistry {
+            spaces: ["project-a", "project-b", "missing"]
+                .into_iter()
+                .map(|id| RegistryEntry {
+                    id: id.to_string(),
+                    last_opened: None,
+                    path: format!("/{id}"),
+                })
+                .collect(),
+            last_active: last_active.map(str::to_string),
+            last_view,
+        }
+    }
+
+    fn launch(registry: &SpaceRegistry) -> Option<String> {
+        match launch_intent(registry, |entry| entry.id != "missing") {
+            WindowOpenIntent::Home => None,
+            WindowOpenIntent::Project { project_id } => Some(project_id),
+        }
+    }
+
+    #[test]
+    fn the_launch_opens_the_last_view() {
+        assert_eq!(
+            launch(&registry(Some("project-a"), Some(LastView::Home))),
+            None
+        );
+        assert_eq!(
+            launch(&registry(
+                Some("project-a"),
+                Some(project_view("project-b"))
+            )),
+            Some("project-b".to_string())
+        );
+    }
+
+    #[test]
+    fn a_removed_or_unavailable_last_project_launches_home() {
+        assert_eq!(launch(&registry(None, Some(project_view("removed")))), None);
+        assert_eq!(
+            launch(&registry(Some("project-a"), Some(project_view("missing")))),
+            None
+        );
+    }
+
+    #[test]
+    fn a_registry_without_a_known_last_view_launches_the_last_active_project() {
+        assert_eq!(
+            launch(&registry(Some("project-a"), None)),
+            Some("project-a".to_string())
+        );
+        assert_eq!(
+            launch(&registry(Some("project-b"), Some(LastView::Unknown))),
+            Some("project-b".to_string())
+        );
+        assert_eq!(launch(&registry(None, None)), None);
     }
 
     #[test]

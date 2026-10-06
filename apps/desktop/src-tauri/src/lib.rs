@@ -311,7 +311,6 @@ pub fn run() {
             commands::space::open_project,
             commands::space::activate_home_project,
             commands::space::delete_project,
-            commands::space::get_last_active_project,
             commands::space::open_project_folder,
             commands::space::list_spaces,
             commands::space::reorder_spaces,
