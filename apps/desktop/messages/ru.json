@@ -2183,7 +2183,7 @@
   "shortcuts_close_content": "Закрыть активный контент",
   "shortcuts_close_content_context": "При открытом контенте, вне терминала",
   "shortcuts_home": "Все проекты",
-  "shortcuts_outside_terminal": "Вне терминала",
+  "shortcuts_all_projects_context": "В проекте, на macOS — и в терминале",
   "shortcuts_sidebar": "Показать или скрыть боковую панель",
   "shortcuts_outside_input": "Вне текстового ввода и терминала",
   "shortcuts_terminal": "Показать или скрыть терминал",

@@ -194,39 +194,61 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
           </>,
         );
       });
-      for (const [code, key, field, extra] of [
-        ["KeyP", "З", "palette", {}],
-        ["KeyN", "Т", "create", {}],
-        ["KeyO", "Щ", "home", { shiftKey: true }],
+      for (const [code, key, field] of [
+        ["KeyP", "З", "palette"],
+        ["KeyN", "Т", "create"],
+        ["Digit0", "0", "home"],
       ] as const) {
         const before = calls[field];
         await act(async () => {
-          expect(fire(code, key, mac, extra).defaultPrevented).toBe(true);
+          expect(fire(code, key, mac).defaultPrevented).toBe(true);
         });
         expect(calls[field]).toBe(before + 1);
         for (const patch of [
           { altKey: true },
           { isComposing: true },
-          { shiftKey: code !== "KeyO" },
+          { shiftKey: true },
           { metaKey: true, ctrlKey: true },
         ]) {
           await act(async () => {
-            fire(code, key, mac, { ...extra, ...patch });
+            fire(code, key, mac, patch);
           });
           expect(calls[field]).toBe(before + 1);
         }
+        if (code === "Digit0") continue;
         await act(async () => {
-          fire(code, key, mac, extra, document.querySelector("textarea")!);
+          fire(code, key, mac, {}, document.querySelector("textarea")!);
         });
         expect(calls[field]).toBe(before + 1);
       }
+      // ⌘0 goes Home from a terminal on macOS; Ctrl+0 stays with the shell.
+      const home = calls.home;
+      await act(async () => {
+        fire("Digit0", "0", mac, {}, document.querySelector("textarea")!);
+      });
+      expect(calls.home).toBe(mac ? home + 1 : home);
+      // The former hidden ⌘⇧O does nothing.
+      await act(async () => {
+        expect(fire("KeyO", "O", mac, { shiftKey: true }).defaultPrevented).toBe(
+          false,
+        );
+      });
+      expect(calls.home).toBe(mac ? home + 1 : home);
       const before = calls.home;
       allowNavigation = false;
       await act(async () => {
-        fire("KeyO", "O", mac, { shiftKey: true });
+        fire("Digit0", "à", mac);
       });
       expect(calls.home).toBe(before);
       allowNavigation = true;
+      // Home alone takes no ⌘0.
+      await act(async () => {
+        root.render(<HomePage />);
+      });
+      await act(async () => {
+        expect(fire("Digit0", "0", mac).defaultPrevented).toBe(false);
+      });
+      expect(calls.home).toBe(before);
       const palette = calls.palette;
       activeRootPath = null;
       await act(async () => {
@@ -238,8 +260,8 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       expect(calls.palette).toBe(palette);
       activeRootPath = "/project";
     }
-    expect(calls.guard).toBe(4);
-    expect(calls.navigate).toBe(2);
+    expect(calls.guard).toBe(5);
+    expect(calls.navigate).toBe(3);
   });
   test("⌘W closes the main area object by its physical key, in session terminals only as Cmd", async () => {
     for (const mac of [true, false]) {

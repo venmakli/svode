@@ -4,7 +4,6 @@ import {
 } from "@/shared/lib/keyboard-shortcuts";
 import { closeTopPeek } from "@/shared/lib/peek-stack";
 import { useEffect } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   requestActorMailmapSave,
@@ -40,7 +39,7 @@ import {
 } from "@/features/terminal";
 import { useShellStore } from "../model";
 import { useWorkingSetActions } from "../working-set";
-import { passNavigationGuards } from "../navigation-guards";
+import { useGoHome } from "./use-go-home";
 import * as m from "@/paraglide/messages.js";
 import { useCollectionActivePresentationId } from "@/features/collection";
 
@@ -51,7 +50,7 @@ export function useKeyboardShortcuts() {
   const { openAppSettings } = useShellStore();
   const toggleCommandPalette = useToggleCommandPalette();
   const activeRootPath = useSpace((s) => s.activeRootPath);
-  const goHome = useSpace((s) => s.goHome);
+  const goHome = useGoHome();
   const activeScopeSpace = useSpace((s) => {
     const scopeSpaceId = activeContentSpaceId ?? s.activeRootId;
     if (!scopeSpaceId) return null;
@@ -71,7 +70,6 @@ export function useKeyboardShortcuts() {
   const actorsPresentationId = useCollectionActivePresentationId(
     activeScopeSpace ? `actors:space:${activeScopeSpace.id}` : null,
   );
-  const navigate = useNavigate();
   const terminalPanel = useTerminalPanelToggle();
   const terminalAvailable = terminalPanel.available;
   const toggleTerminal = terminalPanel.toggle;
@@ -94,6 +92,14 @@ export function useKeyboardShortcuts() {
         e.preventDefault();
         if (inTerminal && !isInsideAgentSessionContent(e.target)) return;
         if (!closeTopPeek()) void closeMainAreaObject();
+        return;
+      }
+      // ⌘0 goes Home. In a terminal it works only as Cmd: Ctrl+0 belongs to
+      // the shell.
+      if (matchesPhysicalShortcut(e, "Digit0")) {
+        if (isTerminalKeyboardEvent(e) && !isMacKeyboardPlatform()) return;
+        e.preventDefault();
+        void goHome();
         return;
       }
       if (isTerminalKeyboardEvent(e)) return;
@@ -144,16 +150,6 @@ export function useKeyboardShortcuts() {
         e.preventDefault();
         toggleCommandPalette();
       }
-
-      // Cmd+Shift+O — go to home / all projects
-      if (matchesPhysicalShortcut(e, "KeyO", true)) {
-        e.preventDefault();
-        void passNavigationGuards().then((ready) => {
-          if (!ready) return;
-          goHome();
-          navigate({ to: "/" });
-        });
-      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -169,7 +165,6 @@ export function useKeyboardShortcuts() {
     closeMainAreaObject,
     openAppSettings,
     goHome,
-    navigate,
     terminalAvailable,
     toggleTerminal,
   ]);

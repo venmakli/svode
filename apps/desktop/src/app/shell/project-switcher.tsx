@@ -1,5 +1,4 @@
 import { useCallback } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import {
   Check,
   ChevronDown,
@@ -13,6 +12,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -22,19 +22,22 @@ import {
 } from "@/components/ui/sidebar";
 import { RootProjectDialogs, useRootProjectWorkflow } from "@/features/home";
 import { useSpace } from "@/features/space";
+import { shortcutLabel } from "@/shared/lib/shortcut-description";
 import { cn } from "@/shared/lib/utils";
 import { useShellStore } from "./model";
+import { allProjectsShortcut } from "./model/shortcut-descriptions";
 import * as m from "@/paraglide/messages.js";
 import { passNavigationGuards } from "./navigation-guards";
+import { useGoHome } from "./hooks/use-go-home";
 
 interface ProjectSwitcherProps {
   className?: string;
 }
 
 export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
-  const navigate = useNavigate();
-  const { rootSpaces, activeRootId, activeRootName, activeRootIcon, goHome } =
+  const { rootSpaces, activeRootId, activeRootName, activeRootIcon } =
     useSpace();
+  const goHome = useGoHome();
   const openContentSurface = useCallback(() => {
     useShellStore.getState().openContentSurface();
   }, []);
@@ -57,12 +60,6 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
     beforeRootOpen: passNavigationGuards,
     onRootOpened: openContentSurface,
   });
-
-  async function handleHome() {
-    if (!(await passNavigationGuards())) return;
-    goHome();
-    navigate({ to: "/" });
-  }
 
   return (
     <>
@@ -87,9 +84,12 @@ export function ProjectSwitcher({ className }: ProjectSwitcherProps) {
                 side="bottom"
                 sideOffset={4}
               >
-                <DropdownMenuItem onClick={() => void handleHome()}>
+                <DropdownMenuItem onClick={() => void goHome()}>
                   <Home />
                   {m.sidebar_all_projects()}
+                  <DropdownMenuShortcut>
+                    {shortcutLabel(allProjectsShortcut)}
+                  </DropdownMenuShortcut>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => setCreateDialogOpen(true)}>

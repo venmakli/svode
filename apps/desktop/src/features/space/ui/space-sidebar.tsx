@@ -23,6 +23,8 @@ interface SpaceSidebarProps {
   onNewSession?: (spacePath: string) => void;
   /** Opens a new terminal panel tab in the Space at this path. */
   onNewTerminal?: (spacePath: string) => void;
+  /** The "All projects" row, first in the sidebar. */
+  allProjectsItem?: ReactNode;
   /** The "New session" row above Search. */
   newSessionItem?: ReactNode;
   /** Navigation sections between the top actions and the Artifacts tree. */
@@ -36,6 +38,7 @@ export function SpaceSidebar({
   onOpenSearch,
   onNewSession,
   onNewTerminal,
+  allProjectsItem,
   newSessionItem,
   navigationSections,
 }: SpaceSidebarProps) {
@@ -45,6 +48,7 @@ export function SpaceSidebar({
 
       <SidebarContent>
         <TopLevelSidebarActions
+          allProjectsItem={allProjectsItem}
           newSessionItem={newSessionItem}
           onOpenSearch={onOpenSearch}
         />
@@ -63,14 +67,17 @@ export function SpaceSidebar({
 }
 
 function TopLevelSidebarActions({
+  allProjectsItem,
   newSessionItem,
   onOpenSearch,
 }: {
+  allProjectsItem?: ReactNode;
   newSessionItem?: ReactNode;
   onOpenSearch: () => void;
 }) {
   return (
     <SidebarMenu className="px-2 py-2">
+      {allProjectsItem}
       {newSessionItem}
       <SidebarMenuItem>
         <SidebarMenuButton onClick={onOpenSearch}>

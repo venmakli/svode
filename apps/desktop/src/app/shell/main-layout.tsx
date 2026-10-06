@@ -66,6 +66,7 @@ import {
   useStartTerminalSessionInMainArea,
 } from "./agent-session-peek-host";
 import { NewSessionSidebarRow } from "./new-session-sidebar-row";
+import { AllProjectsSidebarRow } from "./all-projects-sidebar-row";
 import { useOpenSessionRoutine } from "./open-session-routine";
 import { NowSidebarSection } from "./now-sidebar-section";
 import { PinnedSidebarSection } from "./pinned-sidebar-section";
@@ -251,6 +252,7 @@ function ShellLayoutContent({
       onOpenSearch={onOpenSearch}
       onNewSession={startSessionInPeek}
       onNewTerminal={newSpaceTerminal}
+      allProjectsItem={<AllProjectsSidebarRow />}
       newSessionItem={<NewSessionSidebarRow />}
       navigationSections={
         <>

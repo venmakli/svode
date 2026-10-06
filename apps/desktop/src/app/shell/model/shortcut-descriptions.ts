@@ -9,6 +9,13 @@ export const sidebarShortcut: ShortcutDescription = {
   context: m.shortcuts_outside_input,
 };
 
+export const allProjectsShortcut: ShortcutDescription = {
+  id: "home",
+  label: m.shortcuts_home,
+  keys: [["Mod", "0"]],
+  context: m.shortcuts_all_projects_context,
+};
+
 export const shellShortcuts = [
   {
     id: "palette",
@@ -22,12 +29,7 @@ export const shellShortcuts = [
     keys: [["Mod", "W"]],
     context: m.shortcuts_close_content_context,
   },
-  {
-    id: "home",
-    label: m.shortcuts_home,
-    keys: [["Mod", "Shift", "O"]],
-    context: m.shortcuts_outside_terminal,
-  },
+  allProjectsShortcut,
   sidebarShortcut,
   terminalToggleShortcut,
   { id: "open-folder", label: m.shortcuts_open_folder, keys: [["Mod", "O"]] },
