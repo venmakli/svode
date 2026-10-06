@@ -143,22 +143,12 @@ export function HomeProjectRow({
                 <ChevronRight />
               </SidebarMenuAction>
             </CollapsibleTrigger>
-            <SidebarMenuAction
-              type="button"
-              showOnHover
-              className="right-7"
-              aria-label={m.home_project_start_chat_in({
-                project: project.name,
-              })}
-              onClick={onStartChat}
-            >
-              <MessageSquarePlus />
-            </SidebarMenuAction>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuAction
                   type="button"
                   showOnHover
+                  className="right-7"
                   aria-label={m.home_project_actions({ project: project.name })}
                 >
                   <Ellipsis />
@@ -201,6 +191,16 @@ export function HomeProjectRow({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <SidebarMenuAction
+              type="button"
+              showOnHover
+              aria-label={m.home_project_start_chat_in({
+                project: project.name,
+              })}
+              onClick={onStartChat}
+            >
+              <MessageSquarePlus />
+            </SidebarMenuAction>
             <RemoveProjectDialog
               open={removeOpen}
               onOpenChange={setRemoveOpen}
