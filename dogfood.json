@@ -5,16 +5,17 @@
     {
       "kind": "ci-build",
       "version": "0.0.9",
-      "commit": "c143bf4139c6bf451ae44eb668999aec7834284c",
+      "commit": "d96216a43172ccbe991ab350997314894511d01f",
       "sourceRef": "main",
-      "runId": 36680702466,
-      "publishedAt": "2026-09-30T07:35:35.626Z",
-      "expiresAt": "2026-10-03T07:35:35.626Z",
+      "runId": 37451089877,
+      "publishedAt": "2026-10-06T11:04:06.545Z",
+      "expiresAt": "2026-10-09T11:04:06.545Z",
+      "reason": "Home как рабочее место",
       "platforms": {
-        "darwin": {
-          "url": "https://github.com/venmakli/svode/actions/runs/36680702466/artifacts/11083142018",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/36680702466",
-          "artifactName": "Svode-macos-dmg"
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/37451089877/artifacts/11407842271",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/37451089877",
+          "artifactName": "Svode-linux-deb"
         }
       }
     }
