@@ -251,6 +251,7 @@ export function SettingsRow({
   error,
   errorId,
   layout = "inline",
+  footer,
   children,
   className,
   ...props
@@ -261,6 +262,8 @@ export function SettingsRow({
   error?: ReactNode;
   errorId?: string;
   layout?: "inline" | "stacked";
+  // Full-width content below the label and control, e.g. a progress.
+  footer?: ReactNode;
   children: ReactNode;
 } & Omit<ComponentProps<typeof Field>, "orientation" | "children">) {
   const stacked = layout === "stacked";
@@ -297,6 +300,9 @@ export function SettingsRow({
         <FieldError id={errorId} className={cn(!stacked && "basis-full")}>
           {error}
         </FieldError>
+      ) : null}
+      {footer ? (
+        <div className={cn("min-w-0", !stacked && "basis-full")}>{footer}</div>
       ) : null}
     </Field>
   );

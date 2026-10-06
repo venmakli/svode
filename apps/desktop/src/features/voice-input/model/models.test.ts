@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
 import type { SpeechModelDto, SpeechModelsDto } from "@/platform/speech/speech-api";
-import { megabytes, slowerModelOffer, voiceModelState, withProgress } from "./models";
+import {
+  activeModelJob,
+  AUTO_LANGUAGE,
+  installedModels,
+  megabytes,
+  slowerModelOffer,
+  speechLanguageChoice,
+  voiceModelState,
+  withProgress,
+} from "./models";
 
 function model(id: string, init: Partial<SpeechModelDto> = {}): SpeechModelDto {
   return {
@@ -27,6 +36,7 @@ function catalog(init: Partial<SpeechModelsDto> = {}, models?: SpeechModelDto[])
     ],
     unsupported: [],
     activeModel: null,
+    language: null,
     recommendation: { modelId: "turbo", model: "accurate", measured: false, accurateSlow: false },
     ...init,
   };
@@ -86,4 +96,78 @@ test("after a slow measurement of the accurate model the fast one is offered", (
 test("sizes are whole megabytes", () => {
   expect(megabytes(886_000_000)).toBe(886);
   expect(megabytes(77_000)).toBe(1);
+});
+
+test("the speech language is limited to the languages of the model", () => {
+  expect(speechLanguageChoice(model("turbo"))).toEqual({
+    kind: "choice",
+    options: [AUTO_LANGUAGE, "ru", "en"],
+  });
+  // Without detection there is no "Авто".
+  expect(speechLanguageChoice(model("canary", { detectsLanguage: false }))).toEqual({
+    kind: "choice",
+    options: ["ru", "en"],
+  });
+  // One language is named, not chosen, even when the model detects.
+  expect(speechLanguageChoice(model("gigaam", { languages: { ru: "ru" }, detectsLanguage: false }))).toEqual({
+    kind: "only",
+    language: "ru",
+  });
+  expect(speechLanguageChoice(model("sensevoice", { languages: { en: "en" } }))).toEqual({
+    kind: "only",
+    language: "en",
+  });
+});
+
+test("installed models list the active, the outdated and the dropped ones with their size", () => {
+  const list = installedModels(
+    catalog(
+      {
+        activeModel: "turbo",
+        unsupported: [{ id: "gone", file: "gone.gguf", size: 100_000_000 }],
+      },
+      [
+        model("turbo", { installation: "current", installedSize: 886_000_000 }),
+        model("parakeet", { installation: "outdated", installedSize: 700_000_000, size: 740_000_000 }),
+        model("tiny"),
+      ],
+    ),
+  );
+  expect(list.models.map((entry) => [entry.id, entry.active, entry.installation, entry.size])).toEqual([
+    ["turbo", true, "current", 886_000_000],
+    ["parakeet", false, "outdated", 700_000_000],
+    ["gone", false, "unsupported", 100_000_000],
+  ]);
+  expect(list.size).toBe(1_686_000_000);
+});
+
+test("the model row shows the job of the active model or of the one being downloaded", () => {
+  const preparing = { stage: "preparing" } as const;
+  const downloading = { stage: "downloading", received: 1, total: 2 } as const;
+  expect(
+    activeModelJob(
+      catalog({ activeModel: "turbo" }, [
+        model("turbo", { installation: "current", job: preparing }),
+        model("tiny", { job: downloading }),
+      ]),
+    )?.model.id,
+  ).toBe("turbo");
+  expect(
+    activeModelJob(
+      catalog({ activeModel: "turbo" }, [
+        model("turbo", { installation: "current" }),
+        model("parakeet", { installation: "outdated", job: downloading }),
+        model("tiny", { job: downloading }),
+      ]),
+    )?.model.id,
+  ).toBe("tiny");
+  // An update of another installed model shows in its own row.
+  expect(
+    activeModelJob(
+      catalog({ activeModel: "turbo" }, [
+        model("turbo", { installation: "current" }),
+        model("parakeet", { installation: "outdated", job: downloading }),
+      ]),
+    ),
+  ).toBeNull();
 });

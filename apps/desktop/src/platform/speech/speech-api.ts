@@ -50,6 +50,11 @@ export interface SpeechModelsDto {
   models: SpeechModelDto[];
   unsupported: { id: string; file: string; size: number }[];
   activeModel: string | null;
+  /**
+   * The speech language the active model recognizes with, or the chosen
+   * one without an active model; null is "Авто".
+   */
+  language: SpeechLanguageDto | null;
   recommendation: {
     /** The model recommended for this device. */
     modelId: string;
@@ -87,6 +92,16 @@ export function prepareSpeechModel(id: string): Promise<void> {
 
 export function activateSpeechModel(id: string): Promise<void> {
   return invokeCommand<void>("speech_model_activate", { id });
+}
+
+/** Removes only the files of the model; the active one leaves none active. */
+export function deleteSpeechModel(id: string): Promise<void> {
+  return invokeCommand<void>("speech_model_delete", { id });
+}
+
+/** Sets the speech language; null is "Авто". */
+export function setSpeechLanguage(language: SpeechLanguageDto | null): Promise<void> {
+  return invokeCommand<void>("speech_language_set", { language });
 }
 
 export function listenSpeechModelsChanged(listener: () => void): Promise<UnlistenFn> {

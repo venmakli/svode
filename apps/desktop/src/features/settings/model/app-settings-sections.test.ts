@@ -8,6 +8,7 @@ test("classifies App Settings surfaces without promoting derived state to prefer
     appearance: "app-preference",
     variables: "owner-setting",
     providers: "owner-integration",
+    sessions: "owner-setting",
     shortcuts: "read-only",
     about: "command-derived",
   });

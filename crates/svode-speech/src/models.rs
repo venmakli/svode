@@ -5,7 +5,8 @@
 //! <root>/models/<id>/<file>        the model file of the catalog
 //! <root>/models/<id>/model.json    which catalog file it is
 //! <root>/models/.staging-<id>/     an install in progress
-//! <root>/settings.json             the active model and the measurements
+//! <root>/settings.json             the active model, the speech language
+//!                                  and the measurements
 //! ```
 //!
 //! An install writes the file into a staging directory, checks its size and
@@ -23,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use crate::catalog::{Catalog, CatalogModel};
+use crate::catalog::{Catalog, CatalogModel, Language};
 use crate::protocol::Backend;
 
 const MANIFEST: &str = "model.json";
@@ -94,6 +95,10 @@ impl Measurement {
 #[serde(rename_all = "camelCase")]
 pub struct ModelSettings {
     pub active_model: Option<String>,
+    /// The speech language the user chose; `None` is "Авто". Each model
+    /// recognizes with it as far as it can ([`CatalogModel::language`]).
+    #[serde(default)]
+    pub language: Option<Language>,
     #[serde(default)]
     pub measurements: BTreeMap<String, Measurement>,
 }
@@ -169,6 +174,10 @@ impl ModelStore {
             return Err(ModelError::NotInstalled(id.to_string()));
         }
         self.update_settings(|settings| settings.active_model = Some(id.to_string()))
+    }
+
+    pub fn set_language(&self, language: Option<Language>) -> Result<(), ModelError> {
+        self.update_settings(|settings| settings.language = language)
     }
 
     pub fn record_measurement(&self, id: &str, measurement: Measurement) -> Result<(), ModelError> {

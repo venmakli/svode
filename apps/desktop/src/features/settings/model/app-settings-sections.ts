@@ -3,6 +3,7 @@ export type AppSettingsSection =
   | "appearance"
   | "variables"
   | "providers"
+  | "sessions"
   | "shortcuts"
   | "about";
 
@@ -18,6 +19,7 @@ export const APP_SETTINGS_SECTION_KINDS = {
   appearance: "app-preference",
   variables: "owner-setting",
   providers: "owner-integration",
+  sessions: "owner-setting",
   shortcuts: "read-only",
   about: "command-derived",
 } as const satisfies Record<AppSettingsSection, AppSettingsSectionKind>;

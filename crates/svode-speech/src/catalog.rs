@@ -74,6 +74,22 @@ impl CatalogModel {
         )
     }
 
+    /// The speech language the model recognizes with when the user chose
+    /// `chosen` ("Авто" is `None`): the chosen one if the model transcribes
+    /// it, automatic detection if the model detects among several, its
+    /// first language otherwise. A model of one language always takes it.
+    pub fn language(&self, chosen: Option<Language>) -> Option<Language> {
+        let first = self.languages.keys().next().copied();
+        if self.languages.len() == 1 {
+            return first;
+        }
+        match chosen {
+            Some(language) if self.languages.contains_key(&language) => Some(language),
+            _ if self.detects_language => None,
+            _ => first,
+        }
+    }
+
     /// The tag to recognize `language` with; `None` (automatic detection)
     /// stays `None` for a model that detects the language and is its only
     /// language otherwise.
@@ -172,5 +188,27 @@ mod tests {
         assert!(!gigaam.languages.contains_key(&Language::En));
         assert_eq!(gigaam.language_tag(None), Some("ru"));
         assert_eq!(gigaam.language_tag(Some(Language::En)), None);
+    }
+
+    #[test]
+    fn the_language_is_limited_to_the_languages_of_the_model() {
+        let catalog = catalog();
+        let turbo = catalog.marked(Mark::Accurate);
+        assert_eq!(turbo.language(None), None);
+        assert_eq!(turbo.language(Some(Language::En)), Some(Language::En));
+
+        // A model of one language takes it whatever was chosen.
+        let gigaam = catalog.get("gigaam-v3-e2e-rnnt").unwrap();
+        assert_eq!(gigaam.language(None), Some(Language::Ru));
+        assert_eq!(gigaam.language(Some(Language::En)), Some(Language::Ru));
+        let sensevoice = catalog.get("sensevoice-small").unwrap();
+        assert!(sensevoice.detects_language);
+        assert_eq!(sensevoice.language(None), Some(Language::En));
+
+        // Without detection "Авто" is its first language.
+        let canary = catalog.get("canary-1b-v2").unwrap();
+        assert!(!canary.detects_language);
+        assert_eq!(canary.language(None), Some(Language::Ru));
+        assert_eq!(canary.language(Some(Language::En)), Some(Language::En));
     }
 }

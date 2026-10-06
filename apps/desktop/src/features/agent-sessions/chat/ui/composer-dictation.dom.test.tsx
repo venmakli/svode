@@ -75,6 +75,7 @@ if (process.env.SVODE_COMPOSER_DICTATION_DOM !== "1") {
   setLocale("en", { reload: false });
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { Composer } = await import("./composer");
+  const { registerVoiceSettingsOpener } = await import("@/features/voice-input");
   const { useComposerDraft } = await import("../hooks/use-composer-draft");
   const { readComposerDraft, writeComposerDraft } = await import("../model/composer");
 
@@ -279,6 +280,25 @@ if (process.env.SVODE_COMPOSER_DICTATION_DOM !== "1") {
     await click(button(m.voice_input_title()));
     expect(count("speech_dictation_start")).toBe(0);
     expect(Boolean(buttonWithText(m.voice_input_download({ size: 886 })))).toBe(true);
+    // Without the app shell there is nowhere to show other models.
+    expect(buttonWithText(m.voice_input_other_models())).toBe(undefined);
+  });
+
+  dictationTest("“Other models…” closes the popover and opens the voice input settings", async () => {
+    activeModel = null;
+    let opened = 0;
+    const unregister = registerVoiceSettingsOpener(() => {
+      opened += 1;
+    });
+    try {
+      await render();
+      await click(button(m.voice_input_title()));
+      await click(buttonWithText(m.voice_input_other_models()));
+      expect(opened).toBe(1);
+      expect(buttonWithText(m.voice_input_download({ size: 886 }))).toBe(undefined);
+    } finally {
+      unregister();
+    }
   });
 
   dictationTest("the microphone waits while another session records", async () => {

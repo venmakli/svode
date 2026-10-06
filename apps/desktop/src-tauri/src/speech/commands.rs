@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use svode_speech::catalog::{CatalogModel, License, Mark, catalog};
+use svode_speech::catalog::{CatalogModel, Language, License, Mark, catalog};
 use svode_speech::models::{Installation, InstalledModel, Measurement, ModelStore};
 use svode_speech::preparation::{Recommendation, recommend};
 use tauri::ipc::Channel;
@@ -44,6 +44,9 @@ pub struct SpeechModels {
     pub unsupported: Vec<InstalledModel>,
     /// The active model, when it is installed and supported.
     pub active_model: Option<String>,
+    /// The speech language the active model recognizes with, or the chosen
+    /// one without an active model; `None` is "Авто".
+    pub language: Option<Language>,
     pub recommendation: RecommendationView,
 }
 
@@ -101,6 +104,13 @@ pub async fn models(state: &SpeechState) -> SpeechModels {
     let accurate = catalog.marked(Mark::Accurate);
     let gpu = if refused { None } else { state.gpu().await };
     let recommendation = recommend(gpu, refused, current(&accurate.id).as_ref(), version);
+    let active = store
+        .active(catalog)
+        .and_then(|installed| catalog.get(&installed.id));
+    let language = match active {
+        Some(model) => model.language(settings.language),
+        None => settings.language,
+    };
     SpeechModels {
         models,
         unsupported: installed
@@ -108,7 +118,8 @@ pub async fn models(state: &SpeechState) -> SpeechModels {
             .filter(|installed| catalog.get(&installed.id).is_none())
             .cloned()
             .collect(),
-        active_model: store.active(catalog).map(|model| model.id),
+        active_model: active.map(|model| model.id.clone()),
+        language,
         recommendation: RecommendationView {
             model_id: catalog.marked(recommendation.model).id.clone(),
             recommendation,
@@ -157,6 +168,18 @@ pub async fn speech_model_activate(
     id: String,
 ) -> Result<(), AppError> {
     state.store().activate(&id, catalog())?;
+    let _ = app.emit(MODELS_CHANGED_EVENT, ());
+    Ok(())
+}
+
+/// Sets the speech language; `None` is "Авто".
+#[tauri::command]
+pub async fn speech_language_set(
+    app: AppHandle,
+    state: State<'_, SpeechState>,
+    language: Option<Language>,
+) -> Result<(), AppError> {
+    state.store().set_language(language)?;
     let _ = app.emit(MODELS_CHANGED_EVENT, ());
     Ok(())
 }

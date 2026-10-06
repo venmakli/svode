@@ -27,11 +27,13 @@ import {
 import type { Dictation } from "../hooks/use-dictation";
 import { useSpeechModels } from "../hooks/use-speech-models";
 import {
+  isInstalled,
   megabytes,
   slowerModelOffer,
   voiceModelState,
   type VoiceModelState,
 } from "../model/models";
+import { voiceSettingsOpener } from "../model/settings-opener";
 import { dictationShortcutLabel } from "../model/shortcut";
 import * as m from "@/paraglide/messages.js";
 
@@ -103,7 +105,13 @@ export function VoiceInputButton({
           <PopoverTitle>{m.voice_input_title()}</PopoverTitle>
           <PopoverDescription>{m.voice_input_on_device()}</PopoverDescription>
         </PopoverHeader>
-        {models && modelState && <EnableContent models={models} state={modelState} />}
+        {models && modelState && (
+          <EnableContent
+            models={models}
+            state={modelState}
+            onClose={() => setEnableOpen(false)}
+          />
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -147,17 +155,20 @@ function ProgressRing({ value }: { value: number }) {
 function EnableContent({
   models,
   state,
+  onClose,
 }: {
   models: SpeechModelsDto;
   state: VoiceModelState;
+  onClose: () => void;
 }) {
   const install = (id: string) => void installSpeechModel(id).catch(() => undefined);
   switch (state.kind) {
-    case "missing":
+    case "missing": {
+      const openSettings = voiceSettingsOpener();
       return (
         <div className="flex flex-col gap-3">
           <ModelLine model={state.model} />
-          {state.model.installation === "current" || state.model.installation === "outdated" ? (
+          {isInstalled(state.model) ? (
             <Button
               size="sm"
               onClick={() => void activateSpeechModel(state.model.id).catch(() => undefined)}
@@ -169,8 +180,22 @@ function EnableContent({
               {m.voice_input_download({ size: megabytes(state.model.size) })}
             </Button>
           )}
+          {openSettings && (
+            <Button
+              size="sm"
+              variant="link"
+              className="self-center"
+              onClick={() => {
+                onClose();
+                openSettings();
+              }}
+            >
+              {m.voice_input_other_models()}
+            </Button>
+          )}
         </div>
       );
+    }
     case "downloading":
       return (
         <div className="flex flex-col gap-2" aria-live="polite">

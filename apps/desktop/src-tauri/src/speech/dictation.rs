@@ -257,7 +257,9 @@ impl SpeechState {
         Some(Model {
             id: installed.id.clone(),
             path: self.store().model_path(&installed),
-            language: entry.language_tag(None).map(str::to_string),
+            language: entry
+                .language_tag(entry.language(self.store().settings().language))
+                .map(str::to_string),
         })
     }
 

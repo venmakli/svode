@@ -217,6 +217,25 @@ async fn a_measurement_never_changes_the_active_model() {
 }
 
 #[tokio::test]
+async fn the_speech_language_is_kept_across_models_and_launches() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("speech");
+    let store = ModelStore::open(root.clone());
+    let a = entry("a", b"model a");
+    install(&store, &a, b"model a").await.unwrap();
+    assert_eq!(store.settings().language, None);
+
+    store.set_language(Some(Language::En)).unwrap();
+    store.delete("a").unwrap();
+
+    let reopened = ModelStore::open(root);
+    assert_eq!(reopened.settings().language, Some(Language::En));
+    assert_eq!(reopened.settings().active_model, None);
+    reopened.set_language(None).unwrap();
+    assert_eq!(reopened.settings().language, None);
+}
+
+#[tokio::test]
 async fn a_repeated_download_does_not_duplicate_the_model() {
     let dir = tempfile::tempdir().unwrap();
     let store = ModelStore::open(dir.path().join("speech"));

@@ -355,6 +355,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         "Appearance",
         "Global variables",
         "Providers",
+        "Sessions",
         "Shortcuts",
         "About",
         "General",

@@ -12,6 +12,7 @@ import {
 import { AppShortcutsSection } from "./app-shortcuts-section";
 import { GlobalVariablesSection } from "./app-variables-section";
 import { ProvidersSection } from "./providers-section";
+import { VoiceInputGroup } from "./voice-input-group";
 
 export function AppSettingsContent({
   section,
@@ -34,6 +35,7 @@ export function AppSettingsContent({
         <GlobalVariablesSection registerLeaveGuard={registerLeaveGuard} />
       )}
       {section === "providers" && <ProvidersSection />}
+      {section === "sessions" && <VoiceInputGroup />}
       {section === "shortcuts" && (
         <AppShortcutsSection groups={shortcutGroups} />
       )}

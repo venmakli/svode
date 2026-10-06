@@ -459,6 +459,7 @@ pub fn run() {
             speech::commands::speech_model_prepare,
             speech::commands::speech_model_activate,
             speech::commands::speech_model_delete,
+            speech::commands::speech_language_set,
             speech::commands::speech_model_licenses,
             speech::commands::speech_dictation_owner,
             speech::commands::speech_dictation_start,
