@@ -22,6 +22,8 @@ use svode_agents::status::{SessionState, StopReason};
 const FORMAT_VERSION: u64 = 3;
 /// The header line holds the session id and folder only.
 const HEADER_BYTES: u64 = 64 * 1024;
+/// Bound of the settings file read for its `sessionDir`.
+const SETTINGS_BYTES: u64 = 1024 * 1024;
 
 /// pi's session files: `--<cwd>--/<timestamp>_<id>.jsonl` under the sessions
 /// directory, or flat in a session directory the user set. `root` finds
@@ -30,27 +32,51 @@ pub(super) struct Sessions<R> {
     pub root: R,
 }
 
-/// The sessions directory on every OS (N7): `PI_CODING_AGENT_SESSION_DIR`,
-/// else `sessions` under `PI_CODING_AGENT_DIR`, else under `~/.pi/agent`.
-/// `var` reads the environment pi runs in.
+/// The sessions directory on every OS (N7), as pi 1.0.0 finds it without
+/// `--session-dir`: `PI_CODING_AGENT_SESSION_DIR`, else `sessionDir` of the
+/// global `settings.json` in the agent directory, else `sessions` there. The
+/// agent directory is `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. `var` reads
+/// the environment pi runs in. A relative `sessionDir`, which pi resolves
+/// against the folder it runs in, and project settings are not followed.
 pub(super) fn sessions_dir(home: &Path, var: impl Fn(&str) -> Option<OsString>) -> PathBuf {
-    let expand = |dir: OsString| {
-        let dir = PathBuf::from(dir);
-        match dir.strip_prefix("~") {
-            Ok(rest) => home.join(rest),
-            Err(_) => dir,
-        }
+    let expand = |dir: PathBuf| match dir.strip_prefix("~") {
+        Ok(rest) => home.join(rest),
+        Err(_) => dir,
     };
     let set = |name| {
         var(name)
             .filter(|dir: &OsString| !dir.is_empty())
-            .map(expand)
+            .map(|dir| expand(PathBuf::from(dir)))
     };
-    set("PI_CODING_AGENT_SESSION_DIR").unwrap_or_else(|| {
-        set("PI_CODING_AGENT_DIR")
-            .unwrap_or_else(|| home.join(".pi").join("agent"))
-            .join("sessions")
-    })
+    if let Some(dir) = set("PI_CODING_AGENT_SESSION_DIR") {
+        return dir;
+    }
+    let agent_dir = set("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi").join("agent"));
+    settings_session_dir(&agent_dir.join("settings.json"))
+        .map(|dir| expand(PathBuf::from(dir)))
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| agent_dir.join("sessions"))
+}
+
+/// `sessionDir` of pi's settings file. A missing, unreadable or malformed
+/// file has none, as pi then starts with empty settings.
+fn settings_session_dir(settings: &Path) -> Option<String> {
+    let mut text = Vec::new();
+    File::open(settings)
+        .ok()?
+        .take(SETTINGS_BYTES)
+        .read_to_end(&mut text)
+        .ok()?;
+    let text = text.strip_prefix("\u{feff}".as_bytes()).unwrap_or(&text);
+    let settings: Settings = serde_json::from_slice(text).ok()?;
+    settings.session_dir.filter(|dir| !dir.is_empty())
+}
+
+/// The one setting the reader keeps.
+#[derive(Deserialize)]
+struct Settings {
+    #[serde(rename = "sessionDir")]
+    session_dir: Option<String>,
 }
 
 impl<R> SessionLogLayout for Sessions<R>
@@ -680,6 +706,62 @@ mod tests {
             dir("", ""),
             home.join(".pi").join("agent").join("sessions"),
             "an empty variable is not set"
+        );
+    }
+
+    #[test]
+    fn the_global_settings_move_the_sessions_folder_after_the_variable() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let agent_dir = home.join(".pi").join("agent");
+        let moved = temp.path().join("moved");
+        let dir = |session_dir: Option<&str>| {
+            let session_dir = session_dir.map(OsString::from);
+            sessions_dir(&home, move |name| {
+                (name == "PI_CODING_AGENT_SESSION_DIR")
+                    .then(|| session_dir.clone())
+                    .flatten()
+            })
+        };
+        let settings = |text: String| write(&agent_dir.join("settings.json"), &text);
+
+        assert_eq!(dir(None), agent_dir.join("sessions"), "no settings file");
+
+        settings(format!(
+            "\u{feff}{}",
+            json!({ "theme": "dark", "sessionDir": moved.to_str().unwrap() })
+        ));
+        assert_eq!(dir(None), moved, "an absolute sessionDir");
+        assert_eq!(
+            dir(Some("/from/the/variable")),
+            PathBuf::from("/from/the/variable"),
+            "the variable comes first"
+        );
+
+        settings(json!({ "sessionDir": "~/pi-sessions" }).to_string());
+        assert_eq!(dir(None), home.join("pi-sessions"));
+
+        for text in [
+            json!({ "sessionDir": "relative/sessions" }).to_string(),
+            json!({ "sessionDir": "" }).to_string(),
+            json!({ "sessionDir": 3 }).to_string(),
+            "{ \"sessionDir\": ".to_string(),
+        ] {
+            settings(text.clone());
+            assert_eq!(dir(None), agent_dir.join("sessions"), "{text}");
+        }
+
+        let agent_elsewhere = temp.path().join("agent");
+        write(
+            &agent_elsewhere.join("settings.json"),
+            &json!({ "sessionDir": moved.to_str().unwrap() }).to_string(),
+        );
+        let agent_var = agent_elsewhere.clone().into_os_string();
+        assert_eq!(
+            sessions_dir(&home, |name| (name == "PI_CODING_AGENT_DIR")
+                .then(|| agent_var.clone())),
+            moved,
+            "the settings of the agent directory pi uses"
         );
     }
 
