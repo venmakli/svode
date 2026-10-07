@@ -6,6 +6,7 @@
 //! subagent sent it.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
@@ -29,14 +30,23 @@ const MARKER_SCHEMA_VERSION: u64 = 1;
 /// is the one it records (N7).
 const MARKER_START_TOLERANCE: Duration = Duration::seconds(1);
 
-/// The chat logs under the Qwen home.
-pub(super) struct Chats {
-    pub root: PathBuf,
+/// The chat logs under the Qwen homes, found with the variables of the
+/// agent's environment.
+pub(super) struct Chats<V> {
+    pub home: PathBuf,
+    pub var: V,
 }
 
-impl SessionLogLayout for Chats {
+impl<V> SessionLogLayout for Chats<V>
+where
+    V: Fn(&str) -> Option<OsString> + Send + Sync,
+{
     fn index(&self) -> HashMap<String, PathBuf> {
-        index(&self.root)
+        let mut files = HashMap::new();
+        for base in bases(&self.home, &self.var) {
+            index_into(&base, &mut files);
+        }
+        files
     }
 
     fn companions(&self, log: &Path) -> Vec<PathBuf> {
@@ -56,14 +66,79 @@ impl SessionLogLayout for Chats {
     }
 }
 
-/// Chat logs `projects/<key>/chats/<session id>.jsonl` by session id. The
-/// id is looked up under every project key, as Qwen Code looks up its
-/// markers: `/cd` moves a session to the key of another folder, and keys of
-/// different folders may collide.
-fn index(root: &Path) -> HashMap<String, PathBuf> {
-    let mut files = HashMap::new();
-    let Ok(projects) = std::fs::read_dir(root.join("projects")) else {
-        return files;
+/// Where Qwen Code may keep its chats (N7), the one it prefers last:
+/// `QWEN_HOME` or `~/.qwen`, `advanced.runtimeOutputDir` of the user's and
+/// the system settings, then `QWEN_RUNTIME_DIR`. Each is searched, as Qwen
+/// Code searches its runtime bases for a session's marker. A relative path
+/// resolves against the folder of a Qwen process, which a reader of all
+/// sessions does not have, so it is skipped.
+fn bases(home: &Path, var: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    let set = |name: &str| var(name).filter(|value| !value.is_empty());
+    let global = set("QWEN_HOME")
+        .and_then(|dir| absolute(home, &dir.to_string_lossy()))
+        .unwrap_or_else(|| home.join(".qwen"));
+    let system_settings = set("QWEN_CODE_SYSTEM_SETTINGS_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(system_settings_path);
+    let mut bases = vec![global.clone()];
+    for settings in [global.join("settings.json"), system_settings] {
+        bases.extend(runtime_output_dir(&settings).and_then(|dir| absolute(home, &dir)));
+    }
+    bases.extend(set("QWEN_RUNTIME_DIR").and_then(|dir| absolute(home, &dir.to_string_lossy())));
+    let mut unique = Vec::new();
+    for base in bases {
+        if !unique.contains(&base) {
+            unique.push(base);
+        }
+    }
+    unique
+}
+
+fn system_settings_path() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        PathBuf::from("/Library/Application Support/QwenCode/settings.json")
+    } else if cfg!(windows) {
+        PathBuf::from(r"C:\ProgramData\qwen-code\settings.json")
+    } else {
+        PathBuf::from("/etc/qwen-code/settings.json")
+    }
+}
+
+/// `advanced.runtimeOutputDir` of a settings file, JSON with comments; the
+/// file's other settings are not kept.
+fn runtime_output_dir(settings: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(settings).ok()?;
+    let value: Value = jsonc_parser::parse_to_serde_value(
+        text.trim_start_matches('\u{feff}'),
+        &jsonc_parser::ParseOptions::default(),
+    )
+    .ok()?;
+    value
+        .get("advanced")?
+        .get("runtimeOutputDir")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// The path with `~` as the home folder, if it is absolute.
+fn absolute(home: &Path, dir: &str) -> Option<PathBuf> {
+    let path = if dir == "~" {
+        home.to_path_buf()
+    } else if let Some(rest) = dir.strip_prefix("~/").or_else(|| dir.strip_prefix("~\\")) {
+        home.join(rest)
+    } else {
+        PathBuf::from(dir)
+    };
+    path.is_absolute().then_some(path)
+}
+
+/// Chat logs `projects/<key>/chats/<session id>.jsonl` of a base by session
+/// id. The id is looked up under every project key, as Qwen Code looks up
+/// its markers: `/cd` moves a session to the key of another folder, and keys
+/// of different folders may collide.
+fn index_into(base: &Path, files: &mut HashMap<String, PathBuf>) {
+    let Ok(projects) = std::fs::read_dir(base.join("projects")) else {
+        return;
     };
     for project in projects.flatten() {
         let Ok(chats) = std::fs::read_dir(project.path().join("chats")) else {
@@ -81,7 +156,6 @@ fn index(root: &Path) -> HashMap<String, PathBuf> {
             }
         }
     }
-    files
 }
 
 fn marker_path(log: &Path) -> PathBuf {
@@ -627,10 +701,79 @@ mod tests {
         );
         write(&root.join("projects/-tmp-project/meta.json"), "{}");
 
-        let files = index(&root);
+        let files = Chats {
+            home: store.home(),
+            var: no_variables,
+        }
+        .index();
         assert_eq!(files.len(), 2);
         assert_eq!(files["ab"], store.chats("ab").join("ab.jsonl"));
         assert_eq!(files["abc"], store.chats("abc").join("abc.jsonl"));
+    }
+
+    fn no_variables(name: &str) -> Option<OsString> {
+        (name == "QWEN_CODE_SYSTEM_SETTINGS_PATH").then(|| "/nonexistent/settings.json".into())
+    }
+
+    #[test]
+    fn the_chats_are_found_where_the_agents_environment_and_settings_put_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let dir = |name: &str| temp.path().join(name);
+        let variables = HashMap::from([
+            ("QWEN_HOME", dir("qwen-home").into_os_string()),
+            ("QWEN_RUNTIME_DIR", dir("runtime").into_os_string()),
+            (
+                "QWEN_CODE_SYSTEM_SETTINGS_PATH",
+                dir("system/settings.json").into_os_string(),
+            ),
+        ]);
+        let var = |name: &str| variables.get(name).cloned();
+        write(
+            &dir("qwen-home/settings.json"),
+            "\u{feff}{\n  // the user's settings\n  \"advanced\": { \"runtimeOutputDir\": \"~/qwen-out\" },\n}\n",
+        );
+        write(
+            &dir("system/settings.json"),
+            &json!({ "advanced": { "runtimeOutputDir": dir("system-out") } }).to_string(),
+        );
+        assert_eq!(
+            bases(&home, var),
+            vec![
+                dir("qwen-home"),
+                home.join("qwen-out"),
+                dir("system-out"),
+                dir("runtime"),
+            ]
+        );
+
+        write(
+            &dir("qwen-home/settings.json"),
+            &json!({ "advanced": { "runtimeOutputDir": "relative/out" } }).to_string(),
+        );
+        let relative = HashMap::from([
+            ("QWEN_HOME", dir("qwen-home").into_os_string()),
+            ("QWEN_RUNTIME_DIR", OsString::from("relative/runtime")),
+            (
+                "QWEN_CODE_SYSTEM_SETTINGS_PATH",
+                OsString::from("/nonexistent"),
+            ),
+        ]);
+        assert_eq!(
+            bases(&home, |name: &str| relative.get(name).cloned()),
+            vec![dir("qwen-home")],
+            "a relative path depends on the folder of a Qwen process"
+        );
+        assert_eq!(bases(&home, no_variables), vec![home.join(".qwen")]);
+
+        let chats = dir("runtime/projects/-tmp-project/chats");
+        write(&chats.join("s1.jsonl"), &jsonl(&[user(), answer()]));
+        let files = Chats {
+            home: home.clone(),
+            var,
+        }
+        .index();
+        assert_eq!(files["s1"], chats.join("s1.jsonl"));
     }
 
     /// The listed session's chat target: another writer only for an open

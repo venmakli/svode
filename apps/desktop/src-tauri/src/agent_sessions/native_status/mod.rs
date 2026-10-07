@@ -304,7 +304,8 @@ fn source_of(
             }))
         }
         NativeStatusStore::QwenChats => Arc::new(SessionLogs::new(qwen_code::Chats {
-            root: home.join(".qwen"),
+            home: home.to_path_buf(),
+            var: agent_variable,
         })),
     }
 }

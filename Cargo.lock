@@ -5533,6 +5533,7 @@ dependencies = [
  "croner",
  "gtk",
  "iana-time-zone",
+ "jsonc-parser",
  "keyring",
  "notify",
  "objc2",
