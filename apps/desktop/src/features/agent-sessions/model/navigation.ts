@@ -80,9 +80,15 @@ export function confirmedMissingAgentSessionKeys(
   if (result.status !== "ok" || result.cache.mode === "stale-snapshot") {
     return [];
   }
-  const sourceRead = new Map<string, boolean>(
-    result.sources.map((report) => [report.source, report.status === "ok"]),
-  );
+  // An agent may list its origins from several sources, as Cursor does
+  // (Stage 10 `07` N2): its key confirms only when every one was read.
+  const sourceRead = new Map<string, boolean>();
+  for (const report of result.sources) {
+    sourceRead.set(
+      report.source,
+      (sourceRead.get(report.source) ?? true) && report.status === "ok",
+    );
+  }
   const everySourceRead = result.sources.every(
     (report) => report.status === "ok",
   );

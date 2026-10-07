@@ -68,6 +68,16 @@ test("a partial read or a list saved before the app started confirms nothing", (
   }
 });
 
+test("an agent with an unread one of its sources keeps its sessions", () => {
+  const result = fullList({
+    sources: [report("codex", "stale"), report("codex"), report("claude-code")],
+  });
+
+  expect(confirmedMissingAgentSessionKeys(result, keys)).toEqual([
+    { kind: "session", sessionId: "claude-code:gone" },
+  ]);
+});
+
 test("an unread source keeps its sessions and every launch key", () => {
   const result = fullList({
     sources: [report("codex"), report("claude-code", "stale")],

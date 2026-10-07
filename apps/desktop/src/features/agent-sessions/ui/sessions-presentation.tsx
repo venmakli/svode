@@ -315,9 +315,13 @@ function partialSourcesMessage(
   result: AgentSessionsListResult,
   agents: AgentAdapterDictionary,
 ) {
-  const unavailable = result.sources
-    .filter((source) => source.status !== "ok")
-    .map((source) => agents.label(source.source));
+  const unavailable = [
+    ...new Set(
+      result.sources
+        .filter((source) => source.status !== "ok")
+        .map((source) => agents.label(source.source)),
+    ),
+  ];
   return unavailable.length > 0
     ? m.sessions_source_partial({ agents: unavailable.join(", ") })
     : m.sessions_source_unavailable_description();

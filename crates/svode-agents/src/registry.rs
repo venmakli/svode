@@ -750,15 +750,20 @@ impl AdapterRuntimeRegistry {
     /// lists of Grok Build and Qwen Code cover their terminal sessions.
     /// Slice 8.1: the `state.db` of every Hermes profile is the one source
     /// of all its origins, ACP among them, so its list is no longer read.
+    /// Slice 8.4: the chat folders of the Cursor CLI are the source of its
+    /// terminal chats beside the list of its ACP sessions.
     pub fn catalog_sources(&self, adapter: AgentAdapterKind) -> &'static [CatalogSource] {
         match adapter {
             AgentAdapterKind::Codex
             | AgentAdapterKind::ClaudeCode
             | AgentAdapterKind::Opencode
-            | AgentAdapterKind::Cursor
             | AgentAdapterKind::Pi
             | AgentAdapterKind::GrokBuild
             | AgentAdapterKind::QwenCode => &[CatalogSource::AcpList],
+            AgentAdapterKind::Cursor => &[
+                CatalogSource::AcpList,
+                CatalogSource::Native(NativeCatalogStore::CursorChats),
+            ],
             AgentAdapterKind::Hermes => &[CatalogSource::Native(NativeCatalogStore::HermesStates)],
             _ => &[],
         }
@@ -865,10 +870,13 @@ impl AdapterRuntimeRegistry {
 
     /// Arguments that continue the agent's session in its terminal by native
     /// id, when the agent documents such a command. Slice 3.2: `opencode
-    /// --session` and `pi --session` continue the same session; Cursor
-    /// has no such command for its ACP sessions, its `--resume` with such
-    /// an id starts an empty chat. Slice 3.3: `hermes --resume`. Slice 3.5:
-    /// `grok --resume` and `qwen --resume`.
+    /// --session` and `pi --session` continue the same session. Slice 3.3:
+    /// `hermes --resume`. Slice 3.5: `grok --resume` and `qwen --resume`.
+    /// Slice 8.4: `cursor-agent --resume` continues a terminal chat, the
+    /// one origin of Cursor with a native id; its ACP sessions keep their
+    /// own namespace, since its `--resume` with such an id starts an empty
+    /// chat. A native catalogue source tells when a session of its origin
+    /// does not continue so (Stage 10 `07` N6).
     pub fn terminal_resume_args(
         &self,
         adapter: AgentAdapterKind,
@@ -877,6 +885,7 @@ impl AdapterRuntimeRegistry {
         let flag = match adapter {
             AgentAdapterKind::Codex => "resume",
             AgentAdapterKind::ClaudeCode
+            | AgentAdapterKind::Cursor
             | AgentAdapterKind::Hermes
             | AgentAdapterKind::GrokBuild
             | AgentAdapterKind::QwenCode => "--resume",
@@ -1055,6 +1064,9 @@ pub enum NativeCatalogStore {
     /// `state.db` of every Hermes profile: its CLI, TUI, desktop app and
     /// ACP sessions.
     HermesStates,
+    /// `chats/<md5(cwd)>/<chatId>/meta.json` under the Cursor CLI config
+    /// directory: its terminal chats.
+    CursorChats,
 }
 
 impl NativeCatalogStore {
@@ -1062,6 +1074,7 @@ impl NativeCatalogStore {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::HermesStates => "hermes-states",
+            Self::CursorChats => "cursor-chats",
         }
     }
 }
@@ -2582,10 +2595,11 @@ mod tests {
             assert!(!launch.session_per_connection);
             assert!(!launch.draft_session);
         }
-        // Cursor's ACP sessions are not its terminal chats.
+        // A native id of Cursor is a terminal chat; its ACP sessions have
+        // none (slice 8.4).
         assert_eq!(
             AdapterRuntimeRegistry.terminal_resume_args(AgentAdapterKind::Cursor, "s1"),
-            None
+            Some(vec!["--resume".to_string(), "s1".to_string()])
         );
         for agent in [AgentAdapterKind::Opencode, AgentAdapterKind::Pi] {
             assert_eq!(
@@ -2627,6 +2641,22 @@ mod tests {
                 "{agent:?}"
             );
         }
+    }
+
+    #[test]
+    fn cursor_lists_its_acp_sessions_and_its_terminal_chats_apart() {
+        let registry = AdapterRuntimeRegistry;
+        assert_eq!(
+            registry.catalog_sources(AgentAdapterKind::Cursor),
+            [
+                CatalogSource::AcpList,
+                CatalogSource::Native(NativeCatalogStore::CursorChats)
+            ]
+        );
+        assert!(registry.lists_catalog(AgentAdapterKind::Cursor));
+        assert!(!registry.acp_id_is_native(AgentAdapterKind::Cursor));
+        // The store tells no turn of a chat (Stage 10 `07` N7).
+        assert_eq!(registry.native_status_store(AgentAdapterKind::Cursor), None);
     }
 
     #[test]

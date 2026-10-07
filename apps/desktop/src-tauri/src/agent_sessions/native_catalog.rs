@@ -7,6 +7,8 @@
 //! read marks only its own source `stale`. The read-model merges these
 //! entries with the ACP lists by key, as one more source of the catalogue.
 
+pub(crate) mod cursor_chats;
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -43,10 +45,20 @@ pub(crate) struct NativeListing {
     /// The agent loads the session's origin over ACP, so it opens in the
     /// chat; any other origin continues in the terminal.
     pub opens_in_chat: bool,
+    /// The agent's terminal continues the session by `resume_id`: not a
+    /// Cursor terminal chat its CLI would no longer find from its folder,
+    /// nor an origin without a terminal command.
+    #[serde(default = "continues_unless_told")]
+    pub continues_in_terminal: bool,
     /// Native ids of the session's other links; a key saved with one of
     /// them addresses this session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+}
+
+/// A listing saved before slice 8.4 continues in the terminal.
+fn continues_unless_told() -> bool {
+    true
 }
 
 /// One session of a catalogue source: its list fields and, from a native
@@ -72,12 +84,33 @@ pub(crate) struct NativeList {
     pub sessions: Vec<CatalogEntry>,
     /// The store had more sessions than the read keeps.
     pub truncated: bool,
+    /// Records of the store the read could not use (N5, N7).
+    pub skipped: usize,
 }
 
 type SourceKey = (AgentId, NativeCatalogStore);
 
+/// Where each native catalogue store lives (`07` N7), found when it is
+/// read.
+#[derive(Clone)]
+pub(crate) struct CatalogRoots {
+    /// The Hermes home.
+    pub hermes_home: StoreRoot,
+    /// The Cursor CLI config directory.
+    pub cursor_config: StoreRoot,
+}
+
+impl CatalogRoots {
+    fn root(&self, store: NativeCatalogStore) -> PathBuf {
+        match store {
+            NativeCatalogStore::HermesStates => (self.hermes_home)(),
+            NativeCatalogStore::CursorChats => (self.cursor_config)(),
+        }
+    }
+}
+
 pub(crate) struct NativeCatalogSources {
-    hermes_home: StoreRoot,
+    roots: CatalogRoots,
     sources: Mutex<BTreeMap<SourceKey, SourceList>>,
 }
 
@@ -108,9 +141,9 @@ pub(crate) struct NativeCatalogRead {
 }
 
 impl NativeCatalogSources {
-    pub(crate) fn new(hermes_home: StoreRoot) -> Self {
+    pub(crate) fn new(roots: CatalogRoots) -> Self {
         Self {
-            hermes_home,
+            roots,
             sources: Mutex::new(BTreeMap::new()),
         }
     }
@@ -136,11 +169,13 @@ impl NativeCatalogSources {
                     continue;
                 }
                 source.reading = true;
-                let (this, home) = (self.clone(), self.hermes_home.clone());
+                let this = self.clone();
                 reads.push(tauri::async_runtime::spawn(async move {
                     let started = Instant::now();
-                    let mut read =
-                        tauri::async_runtime::spawn_blocking(move || read_store(store, &home()));
+                    let roots = this.roots.clone();
+                    let mut read = tauri::async_runtime::spawn_blocking(move || {
+                        read_store(store, &roots.root(store))
+                    });
                     let result = match tokio::time::timeout(READ_TIMEOUT, &mut read).await {
                         Ok(joined) => joined,
                         Err(_) => {
@@ -229,9 +264,11 @@ fn native_stores(agent: AgentAdapterKind) -> impl Iterator<Item = NativeCatalogS
         })
 }
 
-fn read_store(store: NativeCatalogStore, hermes_home: &Path) -> Result<NativeList, String> {
+fn read_store(store: NativeCatalogStore, root: &Path) -> Result<NativeList, String> {
+    let bounds = ListBounds::default();
     match store {
-        NativeCatalogStore::HermesStates => hermes_list(hermes_home, &ListBounds::default()),
+        NativeCatalogStore::HermesStates => hermes_list(root, &bounds),
+        NativeCatalogStore::CursorChats => cursor_chats::list(root, &bounds),
     }
 }
 
@@ -274,6 +311,7 @@ fn hermes_list(root: &Path, bounds: &ListBounds) -> Result<NativeList, String> {
                 resume_id: conversation.tip.clone(),
                 profile: Some(conversation.profile),
                 opens_in_chat: conversation.acp,
+                continues_in_terminal: true,
                 aliases: conversation
                     .links
                     .into_iter()
@@ -285,6 +323,7 @@ fn hermes_list(root: &Path, bounds: &ListBounds) -> Result<NativeList, String> {
     Ok(NativeList {
         sessions,
         truncated,
+        skipped: 0,
     })
 }
 
@@ -309,6 +348,16 @@ fn read_of(source: AgentId, store: NativeCatalogStore, list: &SourceList) -> Nat
         report.duration_ms = Some(last_good.duration_ms);
         report.counts.records_read = last_good.list.sessions.len();
         report.counts.candidates = last_good.list.sessions.len();
+        if last_good.list.skipped > 0 {
+            report.push_diagnostic(
+                AgentSessionDiagnosticSeverity::Info,
+                "native-catalog-skipped",
+                format!(
+                    "{} sessions in the store of {agent} were not shown: their records cannot be read",
+                    last_good.list.skipped
+                ),
+            );
+        }
         if last_good.list.truncated {
             report.push_diagnostic(
                 AgentSessionDiagnosticSeverity::Warning,
@@ -344,8 +393,12 @@ mod tests {
     use super::*;
     use crate::agent_sessions::native_status::hermes::tests::{session, store};
 
-    fn at(root: PathBuf) -> StoreRoot {
-        Arc::new(move || root.clone())
+    fn at(root: PathBuf) -> CatalogRoots {
+        let hermes_home: StoreRoot = Arc::new(move || root.clone());
+        CatalogRoots {
+            hermes_home,
+            cursor_config: Arc::new(|| PathBuf::from("/nonexistent")),
+        }
     }
 
     fn hermes_key() -> SourceKey {
@@ -441,6 +494,7 @@ mod tests {
             Ok(NativeList {
                 sessions: vec![entry],
                 truncated: false,
+                skipped: 0,
             }),
             2,
         );
@@ -458,6 +512,23 @@ mod tests {
             diagnostic.message
         );
         assert!(diagnostic.message.contains("database is locked"));
+    }
+
+    #[test]
+    fn records_a_read_skipped_are_a_diagnostic_of_its_source() {
+        let sources = NativeCatalogSources::new(at(PathBuf::from("/nonexistent")));
+        sources.apply(
+            &hermes_key(),
+            Ok(NativeList {
+                skipped: 2,
+                ..NativeList::default()
+            }),
+            1,
+        );
+        let report = &sources.reads()[0].report;
+        assert_eq!(report.status, AgentSessionSourceStatus::Ok);
+        assert_eq!(report.diagnostics[0].code, "native-catalog-skipped");
+        assert!(report.diagnostics[0].message.starts_with("2 sessions"));
     }
 
     fn settle(reads: Vec<JoinHandle<()>>) {

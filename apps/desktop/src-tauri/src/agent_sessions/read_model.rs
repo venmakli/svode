@@ -2654,6 +2654,135 @@ mod tests {
         );
     }
 
+    fn read_native_catalog(state: &AgentSessionsState, agent: AgentAdapterKind) {
+        let reads = state.native_catalogs.refresh(&[agent]);
+        tauri::async_runtime::block_on(async {
+            for read in reads {
+                read.await.expect("native catalogue read");
+            }
+        });
+    }
+
+    #[test]
+    fn a_cursor_terminal_chat_is_its_own_record_beside_an_acp_session_of_one_folder_and_title() {
+        use crate::agent_sessions::native_catalog::cursor_chats::tests::{chat, folder_of, meta};
+
+        let (temp, home, project) = project_dirs();
+        let root = home.join(".cursor");
+        chat(
+            &root,
+            &folder_of(&project),
+            "c1",
+            meta(&project, Some("ACP c1")),
+            true,
+        );
+        let moved = folder_of(&temp.path().join("moved"));
+        chat(&root, &moved, "c2", meta(&project, None), true);
+        let state = AgentSessionsState::with_home(home.clone());
+        acp_list(&state, "cursor", false, vec![("c1", &project, LISTED_AT)]);
+        read_native_catalog(&state, AgentAdapterKind::Cursor);
+
+        let result = list(&state, &project);
+        let mut ids = result
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(ids, ["cursor:acp:c1", "cursor:c1", "cursor:c2"]);
+        let reports = result
+            .sources
+            .iter()
+            .filter(|report| report.source == AgentAdapterKind::Cursor.id())
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 2, "its ACP list and its chat folders");
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.status == AgentSessionSourceStatus::Ok)
+        );
+
+        let acp = by_id(&result, "cursor:acp:c1");
+        assert!(acp.capabilities.can_open_in_chat);
+        assert!(!acp.capabilities.can_resume);
+        assert!(acp.resume_command.is_none());
+
+        let terminal = by_id(&result, "cursor:c1");
+        assert_eq!(terminal.title, "ACP c1");
+        assert_eq!(terminal.cwd, acp.cwd);
+        assert!(!terminal.capabilities.can_open_in_chat);
+        assert!(terminal.capabilities.can_resume);
+        let resume = terminal.resume_command.as_ref().expect("resume command");
+        assert_eq!(resume.program, "cursor-agent");
+        assert_eq!(resume.args, ["--resume", "c1"]);
+        assert_eq!(resume.cwd, terminal.cwd, "in the folder of the chat");
+        assert_eq!(terminal.status.state, SessionState::Unknown);
+        assert!(!terminal.native_external_writer);
+
+        let elsewhere = by_id(&result, "cursor:c2");
+        assert!(
+            !elsewhere.capabilities.can_resume,
+            "the CLI would look for the chat in another chat folder"
+        );
+        assert!(elsewhere.resume_command.is_none());
+
+        let chat_target = |state: &AgentSessionsState, id: &str| {
+            crate::agent_sessions::chat::chat_target(
+                state,
+                project.to_string_lossy().into_owned(),
+                id,
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("chat target")
+        };
+        assert_eq!(chat_target(&state, "cursor:c1"), None);
+        assert!(chat_target(&state, "cursor:acp:c1").is_some());
+
+        // What the chat folders told is saved with the list.
+        let restarted = AgentSessionsState::with_home(home);
+        let result = list(&restarted, &project);
+        assert_eq!(result.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+        assert!(by_id(&result, "cursor:c1").capabilities.can_resume);
+        assert!(!by_id(&result, "cursor:c2").capabilities.can_resume);
+    }
+
+    #[test]
+    fn a_cursor_chat_of_another_format_is_the_diagnostic_of_its_chat_folders_alone() {
+        use crate::agent_sessions::native_catalog::cursor_chats::tests::{chat, folder_of, meta};
+
+        let (_temp, home, project) = project_dirs();
+        let root = home.join(".cursor");
+        let folder = folder_of(&project);
+        chat(&root, &folder, "c1", meta(&project, None), true);
+        let state = AgentSessionsState::with_home(home);
+        acp_list(&state, "cursor", false, vec![("a1", &project, LISTED_AT)]);
+        read_native_catalog(&state, AgentAdapterKind::Cursor);
+        let mut newer = meta(&project, None);
+        newer["schemaVersion"] = serde_json::json!(2);
+        chat(&root, &folder, "c2", newer, true);
+        read_native_catalog(&state, AgentAdapterKind::Cursor);
+
+        let result = list(&state, &project);
+        assert_eq!(result.status, AgentSessionsListStatus::Partial);
+        by_id(&result, "cursor:acp:a1");
+        by_id(&result, "cursor:c1");
+        let stale = result
+            .sources
+            .iter()
+            .filter(|report| report.status == AgentSessionSourceStatus::Stale)
+            .collect::<Vec<_>>();
+        assert_eq!(stale.len(), 1, "the ACP list is untouched");
+        let diagnostic = &stale[0].diagnostics[0];
+        assert_eq!(diagnostic.code, "native-catalog-stale");
+        assert!(
+            diagnostic.message.contains("Cursor"),
+            "{}",
+            diagnostic.message
+        );
+        assert!(diagnostic.message.contains("schemaVersion"));
+    }
+
     #[test]
     fn an_opencode_session_shows_its_claimed_turn_and_the_outcome_of_its_last_one() {
         let (temp, home, project) = project_dirs();

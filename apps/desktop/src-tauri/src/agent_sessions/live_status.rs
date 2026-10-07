@@ -180,7 +180,11 @@ pub(super) fn map_listed(
         .as_ref()
         .map(|listing| listing.resume_id.clone())
         .filter(|resume_id| *resume_id != source_session_id);
-    let resume_command = native
+    let continues = native
+        && listing
+            .as_ref()
+            .is_none_or(|listing| listing.continues_in_terminal);
+    let resume_command = continues
         .then(|| {
             terminal_resume_argv(
                 &source,
@@ -249,7 +253,7 @@ pub(super) fn map_listed(
         waiting_since: None,
         resume_command,
         capabilities: AgentSessionCapabilities {
-            can_resume: native,
+            can_resume: continues,
             can_open_in_chat,
         },
         alias_ids,

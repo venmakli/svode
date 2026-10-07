@@ -5535,6 +5535,7 @@ dependencies = [
  "iana-time-zone",
  "jsonc-parser",
  "keyring",
+ "md-5",
  "notify",
  "objc2",
  "objc2-app-kit",
