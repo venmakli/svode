@@ -2625,4 +2625,115 @@ mod tests {
             SessionState::Running
         );
     }
+
+    /// opencode's sessions listed in the project, read from this
+    /// `opencode.db`.
+    fn opencode_with(
+        state: &AgentSessionsState,
+        project: &Path,
+        db: &Path,
+        sessions: &[crate::agent_sessions::native_status::opencode::fixture::Session],
+        extra: &[&str],
+    ) {
+        use crate::agent_sessions::native_status::opencode;
+
+        opencode::fixture::write(db, sessions, extra);
+        acp_list(
+            state,
+            "opencode",
+            true,
+            sessions
+                .iter()
+                .map(|(id, ..)| (*id, project, LISTED_AT))
+                .collect(),
+        );
+        let db = db.to_path_buf();
+        state.native_status.set_source(
+            AgentAdapterKind::Opencode.id(),
+            Arc::new(opencode::Database::new(move || Ok(db.clone()))),
+        );
+    }
+
+    #[test]
+    fn an_opencode_session_shows_its_claimed_turn_and_the_outcome_of_its_last_one() {
+        let (temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        let ms = |offset: chrono::Duration| (Utc::now() + offset).timestamp_millis();
+        let recent = ms(chrono::Duration::minutes(-1));
+        let stale = ms(chrono::Duration::seconds(
+            -(SOURCE_LOG_ACTIVE_STALE_AFTER_SECS + 60),
+        ));
+        opencode_with(
+            &state,
+            &project,
+            &temp.path().join("opencode.db"),
+            &[
+                ("claim", Some(recent), Some(recent), Some("succeeded")),
+                ("stale-claim", Some(stale), None, None),
+                ("succeeded", None, Some(recent), Some("succeeded")),
+                ("failed", None, Some(recent), Some("failed")),
+                ("interrupted", None, Some(recent), Some("interrupted")),
+                ("no-turn", None, None, None),
+            ],
+            &[],
+        );
+
+        let result = list(&state, &project);
+
+        assert_eq!(result.status, AgentSessionsListStatus::Ok);
+        let status = |id: &str| by_id(&result, &format!("opencode:{id}")).status;
+        assert_eq!(status("claim").state, SessionState::Running);
+        assert_eq!(status("claim").source, StatusSource::NativeStatusReader);
+        assert_eq!(status("claim").confidence, StatusConfidence::Approximate);
+        assert_eq!(status("stale-claim").state, SessionState::Unknown);
+        assert_eq!(status("succeeded").state, idle(Some(StopReason::EndTurn)));
+        assert_eq!(status("failed").state, idle(Some(StopReason::Error)));
+        assert_eq!(
+            status("interrupted").state,
+            idle(Some(StopReason::Cancelled))
+        );
+        assert_eq!(status("no-turn").state, idle(None));
+        for id in ["claim", "stale-claim", "succeeded"] {
+            assert_eq!(
+                chat_liveness(&state, &project, &format!("opencode:{id}")),
+                ExternalLiveness::Unknown,
+                "a claim without a process signal is no other writer: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_opencode_store_without_a_needed_migration_is_its_diagnostic() {
+        let (temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        opencode_with(
+            &state,
+            &project,
+            &temp.path().join("opencode.db"),
+            &[("s1", Some(Utc::now().timestamp_millis()), None, None)],
+            &["DELETE FROM migration WHERE id = '20260811161259_execution_claim_attempts'"],
+        );
+
+        let result = list(&state, &project);
+
+        let report = result
+            .sources
+            .iter()
+            .find(|report| report.source == AgentAdapterKind::Opencode.id())
+            .expect("opencode report");
+        assert_eq!(report.status, AgentSessionSourceStatus::Stale);
+        assert_eq!(report.diagnostics[0].code, "native-status-unavailable");
+        assert!(
+            report.diagnostics[0].message.contains("opencode")
+                && report.diagnostics[0]
+                    .message
+                    .contains("20260811161259_execution_claim_attempts"),
+            "{}",
+            report.diagnostics[0].message
+        );
+        assert_eq!(
+            by_id(&result, "opencode:s1").status,
+            SessionStatus::unknown()
+        );
+    }
 }

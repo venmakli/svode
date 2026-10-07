@@ -903,12 +903,15 @@ impl AdapterRuntimeRegistry {
 
     /// The agent's native store the Sessions status reader reads the status
     /// of a listed session from (Stage 10 `02` C10, `07` N1): ACP gives no
-    /// status of a session another process drives.
+    /// status of a session another process drives. Slice 8.2: `opencode.db`
+    /// gives the status of opencode's sessions; its ACP list stays its
+    /// catalogue.
     pub fn native_status_store(&self, adapter: AgentAdapterKind) -> Option<NativeStatusStore> {
         match adapter {
             AgentAdapterKind::Codex => Some(NativeStatusStore::CodexRollouts),
             AgentAdapterKind::ClaudeCode => Some(NativeStatusStore::ClaudeProjects),
             AgentAdapterKind::Hermes => Some(NativeStatusStore::HermesStates),
+            AgentAdapterKind::Opencode => Some(NativeStatusStore::OpencodeDb),
             _ => None,
         }
     }
@@ -1017,6 +1020,9 @@ pub enum NativeStatusStore {
     /// The turn leases and last messages in the `state.db` of every Hermes
     /// profile (Stage 10 `07` N7).
     HermesStates,
+    /// `opencode.db` under the opencode data directory: the turn claim and
+    /// the outcome of the last turn of each session (`07` N7).
+    OpencodeDb,
 }
 
 /// A declared catalogue source of some of an agent's origins (Stage 10 `02`
@@ -2600,6 +2606,17 @@ mod tests {
                 "{agent:?}"
             );
         }
+    }
+
+    #[test]
+    fn opencode_declares_its_database_as_the_status_store_beside_its_acp_list() {
+        let agent = AgentAdapterKind::Opencode;
+        assert_eq!(
+            AdapterRuntimeRegistry.native_status_store(agent),
+            Some(NativeStatusStore::OpencodeDb)
+        );
+        assert!(AdapterRuntimeRegistry.lists_catalog(agent));
+        assert!(AdapterRuntimeRegistry.acp_id_is_native(agent));
     }
 
     #[test]

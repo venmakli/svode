@@ -19,11 +19,13 @@ pub(crate) mod hermes;
     )
 )]
 pub(crate) mod jsonl_tail;
+pub(crate) mod opencode;
 pub(crate) mod process;
 pub(crate) mod session_logs;
 pub(crate) mod sqlite;
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -37,6 +39,7 @@ use svode_agents::registry::{AdapterRuntimeRegistry, NativeStatusStore};
 use svode_agents::status::{SessionState, StopReason};
 use svode_core::agent_adapters::AgentId;
 
+use crate::process::login_env::LoginEnvironment;
 use process::{ProcessRecord, ProcessSignal, process_signals};
 use session_logs::SessionLogs;
 
@@ -293,6 +296,22 @@ fn source_of(
         NativeStatusStore::HermesStates => {
             Arc::new(hermes::HermesStates::new(hermes_home.to_path_buf()))
         }
+        NativeStatusStore::OpencodeDb => {
+            let home = home.to_path_buf();
+            Arc::new(opencode::Database::new(move || {
+                opencode::database_path(&home, agent_variable)
+            }))
+        }
+    }
+}
+
+/// A variable of the environment the agent's processes run in: the user's
+/// login shell environment (Stage 10 `03` A1), else the app's, as the agent
+/// gets it where there is no login shell.
+fn agent_variable(name: &str) -> Option<OsString> {
+    match tauri::async_runtime::block_on(LoginEnvironment::session().get()) {
+        Some(environment) => environment.get(name).map(OsStr::to_os_string),
+        None => std::env::var_os(name),
     }
 }
 
