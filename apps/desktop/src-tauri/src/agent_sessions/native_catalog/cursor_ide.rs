@@ -766,5 +766,15 @@ pub(crate) mod tests {
             app_data_dir_on(home, env(&[]), "windows"),
             home.join("AppData").join("Roaming").join("Cursor")
         );
+        let this_system = match std::env::consts::OS {
+            "macos" => home.join("Library/Application Support/Cursor"),
+            "windows" => PathBuf::from("/roaming/Cursor"),
+            _ => PathBuf::from("/xdg/Cursor"),
+        };
+        assert_eq!(
+            app_data_dir(home, env(xdg)),
+            this_system,
+            "the branch of this OS"
+        );
     }
 }

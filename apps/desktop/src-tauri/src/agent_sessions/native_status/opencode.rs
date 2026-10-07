@@ -264,7 +264,7 @@ async fn format_problem(
 /// placeholder sessions, no conversation.
 #[cfg(test)]
 pub(crate) mod fixture {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
@@ -328,14 +328,20 @@ pub(crate) mod fixture {
             }
             pool.close().await;
         });
-        // The last connection removes the WAL as it closes, which can come
-        // after `close` returns; a read meanwhile would see the store change.
+        // The last connection removes the WAL and then the shared memory file
+        // as it closes, which can come after `close` returns; a read meanwhile
+        // would see the store change, on Windows also as the handle of the
+        // database closes.
         let wal = super::wal_of(db);
-        for _ in 0..200 {
-            if !wal.exists() {
-                break;
+        let mut shm = db.as_os_str().to_owned();
+        shm.push("-shm");
+        for side in [wal, PathBuf::from(shm)] {
+            for _ in 0..200 {
+                if !side.exists() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }

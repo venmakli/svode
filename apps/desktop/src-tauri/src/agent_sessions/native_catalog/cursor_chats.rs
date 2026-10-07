@@ -443,11 +443,8 @@ pub(crate) mod tests {
         assert_eq!(list.skipped, 3);
     }
 
-    #[cfg(unix)]
     #[test]
     fn the_store_of_a_chat_is_never_opened() {
-        use std::os::unix::fs::PermissionsExt;
-
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join(".cursor");
         let cwd = temp.path().join("w");
@@ -456,11 +453,34 @@ pub(crate) mod tests {
             .join("chats")
             .join(folder_of(&cwd))
             .join("listed/store.db");
-        fs::set_permissions(&store, fs::Permissions::from_mode(0o000)).unwrap();
+        // A store no one may open: without permissions on Unix, held
+        // without sharing on Windows.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&store, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        #[cfg(windows)]
+        let _held = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&store)
+                .unwrap()
+        };
+        assert!(
+            fs::File::open(&store).is_err(),
+            "the fixture blocks opening"
+        );
 
         let list = list(&root, &ListBounds::default()).unwrap();
         assert_eq!(ids(&list), ["listed"]);
-        fs::set_permissions(&store, fs::Permissions::from_mode(0o600)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&store, fs::Permissions::from_mode(0o600)).unwrap();
+        }
     }
 
     #[test]

@@ -666,6 +666,16 @@ pub(crate) mod tests {
             PathBuf::from("C:\\Users\\Me\\AppData\\Local").join("hermes")
         );
         assert_eq!(store_root_on(home, local, false), home.join(".hermes"));
+        let this_system = if cfg!(windows) {
+            PathBuf::from("C:\\Users\\Me\\AppData\\Local").join("hermes")
+        } else {
+            home.join(".hermes")
+        };
+        assert_eq!(
+            store_root(home, local),
+            this_system,
+            "the branch of this OS"
+        );
         let custom = |name: &str| (name == "HERMES_HOME").then(|| OsString::from("/srv/hermes"));
         assert_eq!(
             store_root_on(home, custom, true),

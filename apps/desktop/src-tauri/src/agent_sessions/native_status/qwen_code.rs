@@ -414,12 +414,13 @@ mod tests {
             .expect("spawn a child process")
     }
 
-    fn exited_pid() -> u32 {
+    /// A child that exited. Its handle is kept, so Windows does not give
+    /// its pid to another process meanwhile.
+    fn exited_child() -> Child {
         let mut child = sleeping_child();
-        let pid = child.id();
         child.kill().expect("kill the child");
         child.wait().expect("reap the child");
-        pid
+        child
     }
 
     /// A Qwen home with sessions of two project keys.
@@ -550,6 +551,7 @@ mod tests {
     fn an_open_turn_follows_the_process_its_marker_records() {
         let store = Store::new();
         let mut child = sleeping_child();
+        let exited = exited_child();
         let host = this_host();
         let written = Utc::now();
         let open = [user(), tool_call()];
@@ -561,7 +563,7 @@ mod tests {
         store.session(
             "dead",
             &open,
-            Some(marker("dead", exited_pid(), &host, written)),
+            Some(marker("dead", exited.id(), &host, written)),
         );
         store.session(
             "reused",
@@ -713,6 +715,21 @@ mod tests {
 
     fn no_variables(name: &str) -> Option<OsString> {
         (name == "QWEN_CODE_SYSTEM_SETTINGS_PATH").then(|| "/nonexistent/settings.json".into())
+    }
+
+    #[test]
+    fn the_system_settings_are_an_absolute_path_of_this_os() {
+        let settings = system_settings_path();
+        assert!(settings.is_absolute(), "{}", settings.display());
+        let folder = if cfg!(target_os = "macos") {
+            "QwenCode"
+        } else {
+            "qwen-code"
+        };
+        assert!(settings.ends_with(Path::new(folder).join("settings.json")));
+        if cfg!(windows) {
+            assert!(settings.starts_with(r"C:\ProgramData"));
+        }
     }
 
     #[test]

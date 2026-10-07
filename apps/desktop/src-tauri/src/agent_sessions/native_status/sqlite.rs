@@ -110,11 +110,17 @@ mod tests {
                 .unwrap();
             pool.close().await;
         });
+        // The last connection removes both files as it closes, which can come
+        // after `close` returns; Windows does not delete a file still open.
         for suffix in ["-wal", "-shm"] {
             let side = db.with_file_name(format!("state.db{suffix}"));
-            if side.exists() {
-                std::fs::remove_file(side).unwrap();
+            for _ in 0..200 {
+                if !side.exists() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
+            assert!(!side.exists(), "the writer left {}", side.display());
         }
     }
 
@@ -197,6 +203,8 @@ mod tests {
         assert!(!temp.path().join("state.db").exists(), "nothing is created");
     }
 
+    /// Unix alone: Windows keeps no write bit on a folder, and a store the
+    /// reader cannot open there is the missing store above.
     #[cfg(unix)]
     #[test]
     fn a_wal_store_without_shm_in_a_folder_it_may_not_write_cannot_be_read() {

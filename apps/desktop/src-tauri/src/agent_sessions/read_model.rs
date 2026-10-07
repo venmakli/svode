@@ -2039,7 +2039,13 @@ mod tests {
         .expect("a listed session opens in the chat");
         assert_eq!(target.agent, "codex");
         assert_eq!(target.key, SessionKey::from_acp("codex", &id, true));
-        assert_eq!(target.cwd, fs::canonicalize(&project).unwrap());
+        assert_eq!(
+            target.cwd,
+            PathBuf::from(svode_core::system_path::user_facing_path(
+                &fs::canonicalize(&project).unwrap()
+            )),
+            "the canonical folder as the user sees it, without the verbatim prefix of Windows"
+        );
         // Nothing tells whether another process writes to it.
         assert_eq!(
             target.liveness,

@@ -129,6 +129,46 @@ jobs:
       - name: Clippy
         run: cargo clippy -p svode-speech --all-targets -- -D warnings
 
+  native-readers-windows:
+    # The native session readers of Stage 10 `07` on Windows, which no live
+    # device checks: their store fixtures, the store paths of this OS, the
+    # liveness signal of a live and an exited child process and the Cursor
+    # chat folders of Windows paths. Linux runs them with the workspace tests
+    # of the rust job.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          key: native-readers
+      - uses: oven-sh/setup-bun@v2
+      - run: bun run --cwd apps/desktop check:sidecars
+      # The desktop crate gets the Common Controls v6 manifest from Tauri's
+      # resource for its binary alone, so its test binary would not start
+      # (STATUS_ENTRYPOINT_NOT_FOUND, tauri-apps/tauri#13419); the linker
+      # embeds the same manifest into the test binaries.
+      - name: Common Controls manifest for the test binaries
+        shell: pwsh
+        run: |
+          $manifest = Join-Path $env:RUNNER_TEMP 'common-controls.manifest'
+          Set-Content -Path $manifest -Encoding utf8 -Value @'
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@
+          "RUSTFLAGS=-C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:$manifest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      # The other tests of the agent runtime still assume Unix paths.
+      - name: Native stores and identities of the agent descriptions
+        run: cargo test -p svode-agents -- identity::tests registry::tests::an_agent_without_a_description registry::tests::cursor_lists registry::tests::grok_build_declares registry::tests::hermes_lists registry::tests::opencode_declares registry::tests::qwen_code_runs_its_acp_flag
+      - name: Native session reader tests
+        run: cargo test -p svode-desktop --lib -- agent_sessions::native_status agent_sessions::native_catalog agent_sessions::read_model agent_sessions::live_status
+
   standalone-linux:
     # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,
     # tested through real processes and smoke-checked without the desktop

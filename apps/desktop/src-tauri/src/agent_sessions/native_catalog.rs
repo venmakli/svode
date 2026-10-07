@@ -404,6 +404,9 @@ mod tests {
     use super::*;
     use crate::agent_sessions::native_status::hermes::tests::{session, store};
 
+    /// An absolute folder of a session on this OS.
+    const W: &str = if cfg!(windows) { "C:/w" } else { "/w" };
+
     fn at(root: PathBuf) -> CatalogRoots {
         let hermes_home: StoreRoot = Arc::new(move || root.clone());
         CatalogRoots {
@@ -431,25 +434,27 @@ mod tests {
                     "r",
                     "acp",
                     None,
-                    "end_reason = 'compression', model_config = '{\"cwd\":\"/w\"}'",
+                    &format!("end_reason = 'compression', model_config = '{{\"cwd\":\"{W}\"}}'"),
                 ),
                 session(
                     "t",
                     "acp",
                     None,
-                    "parent_session_id = 'r', started_at = 1800000200, \
-                     model_config = '{\"cwd\":\"/w\"}'",
+                    &format!(
+                        "parent_session_id = 'r', started_at = 1800000200, \
+                         model_config = '{{\"cwd\":\"{W}\"}}'"
+                    ),
                 ),
-                session("cli", "cli", Some("/w"), ""),
+                session("cli", "cli", Some(W), ""),
                 session("no-cwd", "cli", None, ""),
                 session("relative", "cli", Some("w"), ""),
-                session("silent", "cli", Some("/w"), "message_count = 0"),
+                session("silent", "cli", Some(W), "message_count = 0"),
             ]
             .concat(),
         );
         store(
             &root.join("profiles/work/state.db"),
-            &session("work", "tui", Some("/w"), ""),
+            &session("work", "tui", Some(W), ""),
         );
 
         let list = hermes_list(&root, &ListBounds::default()).unwrap();
@@ -462,7 +467,7 @@ mod tests {
         assert_eq!(list.sessions.len(), 3);
         let chain = by_id("r");
         assert_eq!(chain.listed.key.namespace, IdentityNamespace::Native);
-        assert_eq!(chain.listed.cwd, PathBuf::from("/w"));
+        assert_eq!(chain.listed.cwd, PathBuf::from(W));
         let listing = chain.listing.as_ref().unwrap();
         assert_eq!(listing.resume_id, "t");
         assert_eq!(listing.aliases, ["t"]);
@@ -497,7 +502,7 @@ mod tests {
                 namespace: IdentityNamespace::Native,
                 session_id: "h1".into(),
             },
-            cwd: PathBuf::from("/w"),
+            cwd: PathBuf::from(W),
             title: None,
             updated_at: Some("2026-10-07T10:00:00Z".into()),
         });
@@ -555,10 +560,7 @@ mod tests {
     fn only_an_available_agent_has_its_store_read() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join(".hermes");
-        store(
-            &root.join("state.db"),
-            &session("cli", "cli", Some("/w"), ""),
-        );
+        store(&root.join("state.db"), &session("cli", "cli", Some(W), ""));
         let sources = Arc::new(NativeCatalogSources::new(at(root)));
         let hermes = AgentAdapterKind::Hermes.id();
 

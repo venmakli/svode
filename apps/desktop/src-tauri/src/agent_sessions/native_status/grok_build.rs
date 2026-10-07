@@ -396,12 +396,13 @@ mod tests {
             .expect("spawn a child process")
     }
 
-    fn exited_pid() -> u32 {
+    /// A child that exited. Its handle is kept, so Windows does not give
+    /// its pid to another process meanwhile.
+    fn exited_child() -> std::process::Child {
         let mut child = live_child();
-        let pid = child.id();
         child.kill().expect("kill");
         child.wait().expect("reap");
-        pid
+        child
     }
 
     fn at(root: &Path) -> SessionEvents<impl Fn() -> PathBuf + Send + Sync + use<>> {
@@ -762,12 +763,13 @@ mod tests {
                 ),
             ],
         );
+        let exited = exited_child();
         write_registry(
             &home.join(".grok"),
             json!([
                 registry_entry("alive", tui.id()),
-                registry_entry("dead", exited_pid()),
-                registry_entry("ended", exited_pid()),
+                registry_entry("dead", exited.id()),
+                registry_entry("ended", exited.id()),
             ]),
         );
 

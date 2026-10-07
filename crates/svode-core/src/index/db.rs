@@ -187,7 +187,7 @@ fn quarantine_database_family_at(
                 .create_new(true)
                 .open(&backup)?,
         );
-        std::fs::rename(source, &backup).map_err(|error| {
+        rename_released(source, &backup).map_err(|error| {
             IndexError::Index(format!(
                 "quarantine rename {} failed: {error}",
                 source.display()
@@ -196,6 +196,27 @@ fn quarantine_database_family_at(
         quarantined.push(backup);
     }
     Ok(quarantined)
+}
+
+/// Windows refuses to rename a file another handle still holds, and a
+/// connection that failed to open a corrupt file closes it on its worker
+/// thread shortly after the error; the rename waits for that a little.
+fn rename_released(source: &Path, backup: &Path) -> std::io::Result<()> {
+    const SHARING_VIOLATION: i32 = 32;
+    let mut attempts = 0;
+    loop {
+        match std::fs::rename(source, backup) {
+            Err(error)
+                if cfg!(windows)
+                    && error.raw_os_error() == Some(SHARING_VIOLATION)
+                    && attempts < 40 =>
+            {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            result => return result,
+        }
+    }
 }
 
 pub async fn schema_status(pool: &SqlitePool) -> Result<SchemaStatus, IndexError> {
