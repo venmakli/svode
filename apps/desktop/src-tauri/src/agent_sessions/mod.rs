@@ -19,6 +19,10 @@ use cache::CatalogSnapshots;
 use native_catalog::NativeCatalogSources;
 use native_status::NativeStatusReader;
 use native_status::hermes;
+
+/// Where an agent's store lives, found when the store is read: it may depend
+/// on the environment of the agent (Stage 10 `07` N7).
+pub(crate) type StoreRoot = Arc<dyn Fn() -> PathBuf + Send + Sync>;
 use refresh::AgentSessionsReadCoordinator;
 
 /// The Sessions catalogue: each agent's ACP list, the native catalogue
@@ -37,21 +41,24 @@ pub struct AgentSessionsState {
 
 impl AgentSessionsState {
     /// The stores of this device: `HERMES_HOME` and, on Windows,
-    /// `LOCALAPPDATA` of the app's environment place the Hermes home.
+    /// `LOCALAPPDATA` of the agent's environment place the Hermes home,
+    /// found when a store is read.
     pub fn new() -> Self {
         let home_dir = default_home_dir();
-        let hermes_home = hermes::store_root(&home_dir, |name| std::env::var_os(name));
+        let home = home_dir.clone();
+        let hermes_home: StoreRoot =
+            Arc::new(move || hermes::store_root(&home, native_status::agent_variable));
         Self::with_stores(home_dir, hermes_home)
     }
 
     /// The stores under `home_dir` alone.
     #[cfg(test)]
     pub(crate) fn with_home(home_dir: PathBuf) -> Self {
-        let hermes_home = home_dir.join(".hermes");
-        Self::with_stores(home_dir, hermes_home)
+        let hermes = home_dir.join(".hermes");
+        Self::with_stores(home_dir, Arc::new(move || hermes.clone()))
     }
 
-    fn with_stores(home_dir: PathBuf, hermes_home: PathBuf) -> Self {
+    fn with_stores(home_dir: PathBuf, hermes_home: StoreRoot) -> Self {
         Self {
             native_status: Arc::new(NativeStatusReader::with_stores(
                 home_dir.clone(),

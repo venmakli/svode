@@ -17,6 +17,7 @@ use svode_agents::status::{SessionState, StopReason};
 use super::process::{ProcessRecord, ProcessSignal, process_signals};
 use super::sqlite::{read_only, table_columns};
 use super::{NativeLogRead, NativeStatusEvidence, NativeStatusSource, SourceReads};
+use crate::agent_sessions::StoreRoot;
 
 /// The profile of the root store.
 pub(crate) const ROOT_PROFILE: &str = "default";
@@ -521,13 +522,13 @@ fn status_of(
 
 /// The Hermes status source (N4, N7): reads the conversations with these
 /// root ids from every profile's store on each call, since a lease expires
-/// without the store changing.
+/// without the store changing. The Hermes home is found at each read.
 pub(crate) struct HermesStates {
-    root: PathBuf,
+    root: StoreRoot,
 }
 
 impl HermesStates {
-    pub(crate) fn new(root: PathBuf) -> Self {
+    pub(crate) fn new(root: StoreRoot) -> Self {
         Self { root }
     }
 }
@@ -536,7 +537,7 @@ impl NativeStatusSource for HermesStates {
     fn read(&self, ids: &[&str]) -> Result<SourceReads, String> {
         let now = Utc::now();
         let mut found: BTreeMap<String, (Option<Lease>, Option<LastMessage>)> = BTreeMap::new();
-        for (_, db) in profile_stores(&self.root)? {
+        for (_, db) in profile_stores(&(self.root)())? {
             let wanted = ids
                 .iter()
                 .filter(|id| !found.contains_key(**id))
@@ -985,7 +986,9 @@ pub(crate) mod tests {
             "r",
             "not-in-store",
         ];
-        let reads = HermesStates::new(root).read(&ids).unwrap();
+        let reads = HermesStates::new(std::sync::Arc::new(move || root.clone()))
+            .read(&ids)
+            .unwrap();
         child.kill().ok();
         child.wait().ok();
         let reads = reads.sessions;

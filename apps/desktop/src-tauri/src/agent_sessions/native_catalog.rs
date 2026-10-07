@@ -20,6 +20,7 @@ use svode_agents::registry::{AdapterRuntimeRegistry, CatalogSource, NativeCatalo
 use svode_core::agent_adapters::{AgentAdapterKind, AgentId};
 use tauri::async_runtime::JoinHandle;
 
+use super::StoreRoot;
 use super::native_status::hermes;
 use super::types::{
     AgentSessionDiagnosticSeverity, AgentSessionSourceReport, AgentSessionSourceStatus,
@@ -76,7 +77,7 @@ pub(crate) struct NativeList {
 type SourceKey = (AgentId, NativeCatalogStore);
 
 pub(crate) struct NativeCatalogSources {
-    hermes_home: PathBuf,
+    hermes_home: StoreRoot,
     sources: Mutex<BTreeMap<SourceKey, SourceList>>,
 }
 
@@ -107,7 +108,7 @@ pub(crate) struct NativeCatalogRead {
 }
 
 impl NativeCatalogSources {
-    pub(crate) fn new(hermes_home: PathBuf) -> Self {
+    pub(crate) fn new(hermes_home: StoreRoot) -> Self {
         Self {
             hermes_home,
             sources: Mutex::new(BTreeMap::new()),
@@ -139,7 +140,7 @@ impl NativeCatalogSources {
                 reads.push(tauri::async_runtime::spawn(async move {
                     let started = Instant::now();
                     let mut read =
-                        tauri::async_runtime::spawn_blocking(move || read_store(store, &home));
+                        tauri::async_runtime::spawn_blocking(move || read_store(store, &home()));
                     let result = match tokio::time::timeout(READ_TIMEOUT, &mut read).await {
                         Ok(joined) => joined,
                         Err(_) => {
@@ -343,6 +344,10 @@ mod tests {
     use super::*;
     use crate::agent_sessions::native_status::hermes::tests::{session, store};
 
+    fn at(root: PathBuf) -> StoreRoot {
+        Arc::new(move || root.clone())
+    }
+
     fn hermes_key() -> SourceKey {
         (
             AgentAdapterKind::Hermes.id(),
@@ -420,7 +425,7 @@ mod tests {
 
     #[test]
     fn a_failed_read_keeps_the_last_good_sessions_and_marks_its_source_stale() {
-        let sources = NativeCatalogSources::new(PathBuf::from("/nonexistent"));
+        let sources = NativeCatalogSources::new(at(PathBuf::from("/nonexistent")));
         let entry = CatalogEntry::listed(ListedSession {
             key: SessionKey {
                 agent: "hermes".into(),
@@ -471,7 +476,7 @@ mod tests {
             &root.join("state.db"),
             &session("cli", "cli", Some("/w"), ""),
         );
-        let sources = Arc::new(NativeCatalogSources::new(root));
+        let sources = Arc::new(NativeCatalogSources::new(at(root)));
         let hermes = AgentAdapterKind::Hermes.id();
 
         assert!(
@@ -500,7 +505,7 @@ mod tests {
     #[test]
     fn a_missing_store_of_an_available_agent_is_its_diagnostic() {
         let temp = tempfile::tempdir().unwrap();
-        let sources = Arc::new(NativeCatalogSources::new(temp.path().join(".hermes")));
+        let sources = Arc::new(NativeCatalogSources::new(at(temp.path().join(".hermes"))));
         settle(sources.refresh(&[AgentAdapterKind::Hermes]));
         let reads = sources.reads();
         assert_eq!(reads[0].report.status, AgentSessionSourceStatus::Stale);

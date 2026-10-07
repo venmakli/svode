@@ -35,6 +35,7 @@ use svode_agents::registry::{AdapterRuntimeRegistry, NativeStatusStore};
 use svode_agents::status::{SessionState, StopReason};
 use svode_core::agent_adapters::AgentId;
 
+use super::StoreRoot;
 use crate::process::login_env::LoginEnvironment;
 use process::{ProcessRecord, ProcessSignal, process_signals};
 use session_logs::SessionLogs;
@@ -153,7 +154,7 @@ pub(crate) struct SourceReads {
 pub(crate) struct NativeStatusReader {
     home: PathBuf,
     /// The Hermes home (`07` N7).
-    hermes_home: PathBuf,
+    hermes_home: StoreRoot,
     sources: Mutex<HashMap<AgentId, Arc<dyn NativeStatusSource>>>,
 }
 
@@ -181,11 +182,11 @@ pub(crate) struct NativeSessionRead {
 impl NativeStatusReader {
     #[cfg(test)]
     pub(crate) fn new(home: PathBuf) -> Self {
-        let hermes_home = home.join(".hermes");
-        Self::with_stores(home, hermes_home)
+        let hermes = home.join(".hermes");
+        Self::with_stores(home, Arc::new(move || hermes.clone()))
     }
 
-    pub(crate) fn with_stores(home: PathBuf, hermes_home: PathBuf) -> Self {
+    pub(crate) fn with_stores(home: PathBuf, hermes_home: StoreRoot) -> Self {
         Self {
             home,
             hermes_home,
@@ -280,7 +281,7 @@ impl NativeStatusReader {
 fn source_of(
     store: NativeStatusStore,
     home: &Path,
-    hermes_home: &Path,
+    hermes_home: &StoreRoot,
 ) -> Arc<dyn NativeStatusSource> {
     match store {
         NativeStatusStore::CodexRollouts => Arc::new(SessionLogs::new(codex::Rollouts {
@@ -289,9 +290,7 @@ fn source_of(
         NativeStatusStore::ClaudeProjects => Arc::new(SessionLogs::new(claude_code::Projects {
             root: home.join(".claude"),
         })),
-        NativeStatusStore::HermesStates => {
-            Arc::new(hermes::HermesStates::new(hermes_home.to_path_buf()))
-        }
+        NativeStatusStore::HermesStates => Arc::new(hermes::HermesStates::new(hermes_home.clone())),
         NativeStatusStore::OpencodeDb => {
             let home = home.to_path_buf();
             Arc::new(opencode::Database::new(move || {
@@ -320,7 +319,7 @@ fn source_of(
 /// A variable of the environment the agent's processes run in: the user's
 /// login shell environment (Stage 10 `03` A1), else the app's, as the agent
 /// gets it where there is no login shell.
-fn agent_variable(name: &str) -> Option<OsString> {
+pub(crate) fn agent_variable(name: &str) -> Option<OsString> {
     match tauri::async_runtime::block_on(LoginEnvironment::session().get()) {
         Some(environment) => environment.get(name).map(OsStr::to_os_string),
         None => std::env::var_os(name),
