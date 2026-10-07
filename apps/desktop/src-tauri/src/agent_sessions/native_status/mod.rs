@@ -11,15 +11,9 @@
 pub(crate) mod claude_code;
 pub(crate) mod codex;
 pub(crate) mod hermes;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the native readers of slices 8.1–8.5 read jsonl tails"
-    )
-)]
 pub(crate) mod jsonl_tail;
 pub(crate) mod opencode;
+pub(crate) mod pi;
 pub(crate) mod process;
 pub(crate) mod session_logs;
 pub(crate) mod sqlite;
@@ -300,6 +294,12 @@ fn source_of(
             let home = home.to_path_buf();
             Arc::new(opencode::Database::new(move || {
                 opencode::database_path(&home, agent_variable)
+            }))
+        }
+        NativeStatusStore::PiSessions => {
+            let home = home.to_path_buf();
+            Arc::new(SessionLogs::new(pi::Sessions {
+                root: move || pi::sessions_dir(&home, agent_variable),
             }))
         }
     }

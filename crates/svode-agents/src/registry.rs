@@ -912,6 +912,7 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::ClaudeCode => Some(NativeStatusStore::ClaudeProjects),
             AgentAdapterKind::Hermes => Some(NativeStatusStore::HermesStates),
             AgentAdapterKind::Opencode => Some(NativeStatusStore::OpencodeDb),
+            AgentAdapterKind::Pi => Some(NativeStatusStore::PiSessions),
             _ => None,
         }
     }
@@ -1023,6 +1024,8 @@ pub enum NativeStatusStore {
     /// `opencode.db` under the opencode data directory: the turn claim and
     /// the outcome of the last turn of each session (`07` N7).
     OpencodeDb,
+    /// `sessions/**/*.jsonl` under the pi agent directory (`07` N7).
+    PiSessions,
 }
 
 /// A declared catalogue source of some of an agent's origins (Stage 10 `02`
