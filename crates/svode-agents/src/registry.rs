@@ -739,28 +739,35 @@ impl AdapterRuntimeRegistry {
         })
     }
 
-    /// Whether the agent's `session/list` is its one declared catalogue
-    /// source. E01: the lists of Codex and Claude Code cover the sessions
-    /// of the CLI, IDE and the provider's desktop app. Both are listed
-    /// without `cwd`: their filter matches the exact directory only, so it
-    /// would drop sessions in a Space's subfolders. Slice 3.2: the lists of
+    /// The declared catalogue sources of the agent's local origins (Stage
+    /// 10 `02` C3, `07` N2); origins of different sources never overlap.
+    /// E01: the lists of Codex and Claude Code cover the sessions of the
+    /// CLI, IDE and the provider's desktop app. Both are listed without
+    /// `cwd`: their filter matches the exact directory only, so it would
+    /// drop sessions in a Space's subfolders. Slice 3.2: the lists of
     /// opencode and pi cover their terminal sessions; the list of Cursor
-    /// has only the sessions its ACP entrypoint created. Slice 3.3: so has
-    /// the list of Hermes, its CLI and desktop sessions stay out. Slice
-    /// 3.5: the lists of Grok Build and Qwen Code cover their terminal
-    /// sessions.
-    pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
-        matches!(
-            adapter,
+    /// has only the sessions its ACP entrypoint created. Slice 3.5: the
+    /// lists of Grok Build and Qwen Code cover their terminal sessions.
+    /// Slice 8.1: the `state.db` of every Hermes profile is the one source
+    /// of all its origins, ACP among them, so its list is no longer read.
+    pub fn catalog_sources(&self, adapter: AgentAdapterKind) -> &'static [CatalogSource] {
+        match adapter {
             AgentAdapterKind::Codex
-                | AgentAdapterKind::ClaudeCode
-                | AgentAdapterKind::Opencode
-                | AgentAdapterKind::Cursor
-                | AgentAdapterKind::Hermes
-                | AgentAdapterKind::Pi
-                | AgentAdapterKind::GrokBuild
-                | AgentAdapterKind::QwenCode
-        )
+            | AgentAdapterKind::ClaudeCode
+            | AgentAdapterKind::Opencode
+            | AgentAdapterKind::Cursor
+            | AgentAdapterKind::Pi
+            | AgentAdapterKind::GrokBuild
+            | AgentAdapterKind::QwenCode => &[CatalogSource::AcpList],
+            AgentAdapterKind::Hermes => &[CatalogSource::Native(NativeCatalogStore::HermesStates)],
+            _ => &[],
+        }
+    }
+
+    /// Whether the agent's `session/list` is a declared catalogue source.
+    pub fn lists_catalog(&self, adapter: AgentAdapterKind) -> bool {
+        self.catalog_sources(adapter)
+            .contains(&CatalogSource::AcpList)
     }
 
     /// Whether the agent's `session/list` covers one directory per request:
@@ -879,6 +886,21 @@ impl AdapterRuntimeRegistry {
         Some(vec![flag.to_string(), native_session_id.to_string()])
     }
 
+    /// Arguments that select the agent profile whose store holds a session,
+    /// put before its resume arguments (Stage 10 `07` N6). Slice 8.1:
+    /// `hermes -p <profile>`; the root store of Hermes is its profile
+    /// `default`.
+    pub fn terminal_profile_args(
+        &self,
+        adapter: AgentAdapterKind,
+        profile: &str,
+    ) -> Option<Vec<String>> {
+        match adapter {
+            AgentAdapterKind::Hermes => Some(vec!["-p".to_string(), profile.to_string()]),
+            _ => None,
+        }
+    }
+
     /// The agent's native store the Sessions status reader reads the status
     /// of a listed session from (Stage 10 `02` C10, `07` N1): ACP gives no
     /// status of a session another process drives.
@@ -886,6 +908,7 @@ impl AdapterRuntimeRegistry {
         match adapter {
             AgentAdapterKind::Codex => Some(NativeStatusStore::CodexRollouts),
             AgentAdapterKind::ClaudeCode => Some(NativeStatusStore::ClaudeProjects),
+            AgentAdapterKind::Hermes => Some(NativeStatusStore::HermesStates),
             _ => None,
         }
     }
@@ -991,6 +1014,37 @@ pub enum NativeStatusStore {
     CodexRollouts,
     /// `projects/**/*.jsonl` under the Claude config directory.
     ClaudeProjects,
+    /// The turn leases and last messages in the `state.db` of every Hermes
+    /// profile (Stage 10 `07` N7).
+    HermesStates,
+}
+
+/// A declared catalogue source of some of an agent's origins (Stage 10 `02`
+/// C3, `07` N2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CatalogSource {
+    /// The agent's ACP `session/list`, read over a live connection.
+    AcpList,
+    /// A native reader of the agent's store (`07`); it starts no agent
+    /// process.
+    Native(NativeCatalogStore),
+}
+
+/// A native catalogue store and the origins it covers (Stage 10 `07` N7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NativeCatalogStore {
+    /// `state.db` of every Hermes profile: its CLI, TUI, desktop app and
+    /// ACP sessions.
+    HermesStates,
+}
+
+impl NativeCatalogStore {
+    /// Stable name of the store, for keys of what is saved of it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::HermesStates => "hermes-states",
+        }
+    }
 }
 
 /// The agent's read-only sign-in status command (A5) and how its output
@@ -2489,7 +2543,12 @@ mod tests {
             assert_eq!(launch.program, PathBuf::from(executable));
             assert_eq!(launch.args, ["acp"]);
             assert!(launch.env.is_empty());
-            assert!(launch.lists_catalog);
+            // Hermes lists its sessions from its own store (slice 8.1).
+            assert_eq!(
+                launch.lists_catalog,
+                agent != AgentAdapterKind::Hermes,
+                "{agent:?}"
+            );
             assert_eq!(launch.acp_id_is_native, native, "{agent:?}");
             assert!(launch.read_only_open);
             assert_eq!(launch.writer_refusal, None);
@@ -2511,6 +2570,36 @@ mod tests {
             AdapterRuntimeRegistry.terminal_resume_args(AgentAdapterKind::Hermes, "s1"),
             Some(vec!["--resume".to_string(), "s1".to_string()])
         );
+    }
+
+    #[test]
+    fn hermes_lists_every_origin_from_its_profiles_and_resumes_in_one() {
+        let registry = AdapterRuntimeRegistry;
+        assert_eq!(
+            registry.catalog_sources(AgentAdapterKind::Hermes),
+            [CatalogSource::Native(NativeCatalogStore::HermesStates)]
+        );
+        assert!(!registry.lists_catalog(AgentAdapterKind::Hermes));
+        assert_eq!(
+            registry.native_status_store(AgentAdapterKind::Hermes),
+            Some(NativeStatusStore::HermesStates)
+        );
+        assert_eq!(
+            registry.terminal_profile_args(AgentAdapterKind::Hermes, "work"),
+            Some(vec!["-p".to_string(), "work".to_string()])
+        );
+        assert_eq!(
+            registry.terminal_profile_args(AgentAdapterKind::Codex, "work"),
+            None
+        );
+        for agent in AgentAdapterKind::ALL {
+            let sources = registry.catalog_sources(agent);
+            assert_eq!(
+                registry.lists_catalog(agent),
+                sources.contains(&CatalogSource::AcpList),
+                "{agent:?}"
+            );
+        }
     }
 
     #[test]

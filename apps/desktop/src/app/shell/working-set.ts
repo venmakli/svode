@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
   agentSessionForNavigationKey,
+  agentSessionHasId,
   pinnableAgentSessionItem,
   useActiveAgentSessions,
   useListedAgentSessions,
@@ -64,7 +65,9 @@ function messagedSession(
   sessionId: string,
   sessions: readonly AgentSession[] | null,
 ): AgentSession | null {
-  return sessions?.find((session) => session.id === sessionId) ?? null;
+  return (
+    sessions?.find((session) => agentSessionHasId(session, sessionId)) ?? null
+  );
 }
 
 /**

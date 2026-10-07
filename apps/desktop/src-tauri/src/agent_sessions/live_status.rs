@@ -1,5 +1,6 @@
 use chrono::{SecondsFormat, Utc};
 
+use super::native_catalog::NativeListing;
 use super::native_status::{NativeSessionRead, NativeStatusEvidence, short_id};
 use super::types::{
     AgentSession, AgentSessionCapabilities, AgentSessionResumeCommand, AgentSessionRuntime,
@@ -7,7 +8,7 @@ use super::types::{
 };
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
 use svode_agents::catalog::{ListedSession, RuntimeSession};
-use svode_agents::identity::IdentityNamespace;
+use svode_agents::identity::{IdentityNamespace, SessionKey};
 use svode_agents::status::{SessionState, SessionStatus, StatusConfidence, StatusSource};
 use svode_agents::writer::ExternalLiveness;
 use svode_core::agent_adapters::AgentId;
@@ -150,10 +151,13 @@ fn terminal_observation(evidence: AgentTerminalStatusEvidence) -> Observation {
 
 /// The catalogue record of a listed session, with its terminal surfaces laid
 /// over it: runtime of the most recent surface and one status resolved from
-/// the native evidence and the evidence of every matching surface.
+/// the native evidence and the evidence of every matching surface. A native
+/// catalogue source tells where the agent continues the session and whether
+/// its origin opens in the chat (Stage 10 `07` N6).
 pub(super) fn map_listed(
     source: AgentId,
     listed: ListedSession,
+    listing: Option<NativeListing>,
     native_read: Option<NativeSessionRead>,
     scope: AgentSessionScope,
     last_activity_at: chrono::DateTime<Utc>,
@@ -162,7 +166,8 @@ pub(super) fn map_listed(
     let id = catalog_session_id(&source, &listed.key);
     // Only a native id is the target of the agent's CLI resume and of a
     // managed PTY of Svode.
-    let native = listed.key.namespace == IdentityNamespace::Native;
+    let listed_namespace = listed.key.namespace;
+    let native = listed_namespace == IdentityNamespace::Native;
     let source_session_id = listed.key.session_id;
     let (title, title_source) = match listed.title.filter(|title| !title.is_empty()) {
         Some(title) => (title, AgentSessionTitleSource::CliTitle),
@@ -171,21 +176,42 @@ pub(super) fn map_listed(
             AgentSessionTitleSource::SessionId,
         ),
     };
+    let resume_session_id = listing
+        .as_ref()
+        .map(|listing| listing.resume_id.clone())
+        .filter(|resume_id| *resume_id != source_session_id);
     let resume_command = native
-        .then(|| terminal_resume_argv(&source, &source_session_id))
+        .then(|| {
+            terminal_resume_argv(
+                &source,
+                resume_session_id.as_deref().unwrap_or(&source_session_id),
+                listing
+                    .as_ref()
+                    .and_then(|listing| listing.profile.as_deref()),
+            )
+        })
         .flatten()
-        .map(|mut argv| {
-            let program = argv.remove(0);
-            AgentSessionResumeCommand {
-                display: std::iter::once(program.as_str())
-                    .chain(argv.iter().map(String::as_str))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                program,
-                args: argv,
-                cwd: scope.cwd.clone(),
-            }
-        });
+        .map(|argv| resume_command(argv, scope.cwd.clone()));
+    let alias_ids = listing
+        .as_ref()
+        .map(|listing| {
+            listing
+                .aliases
+                .iter()
+                .map(|alias| {
+                    catalog_session_id(
+                        &source,
+                        &SessionKey {
+                            agent: source.as_str().to_string(),
+                            namespace: listed_namespace,
+                            session_id: alias.clone(),
+                        },
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let can_open_in_chat = listing.as_ref().is_none_or(|listing| listing.opens_in_chat);
     let (launch_id, evidence, native_external_writer) = native_read
         .map(|native| (native.read.launch_id, native.status, native.external_writer))
         .unwrap_or_default();
@@ -224,8 +250,10 @@ pub(super) fn map_listed(
         resume_command,
         capabilities: AgentSessionCapabilities {
             can_resume: native,
-            can_open_in_chat: true,
+            can_open_in_chat,
         },
+        alias_ids,
+        resume_session_id,
         native_external_writer,
     };
     if native {
@@ -353,6 +381,8 @@ pub(super) fn map_provisional_surface(
             can_resume: false,
             can_open_in_chat: false,
         },
+        alias_ids: Vec::new(),
+        resume_session_id: None,
         native_external_writer: false,
     }
 }
@@ -403,20 +433,9 @@ pub(super) fn map_runtime_session(
         ),
     };
     let resume_command = native
-        .then(|| terminal_resume_argv(&source, &source_session_id))
+        .then(|| terminal_resume_argv(&source, &source_session_id, None))
         .flatten()
-        .map(|mut argv| {
-            let program = argv.remove(0);
-            AgentSessionResumeCommand {
-                display: std::iter::once(program.as_str())
-                    .chain(argv.iter().map(String::as_str))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                program,
-                args: argv,
-                cwd: scope.cwd.clone(),
-            }
-        });
+        .map(|argv| resume_command(argv, scope.cwd.clone()));
     AgentSession {
         id: catalog_session_id(&source, &runtime.key),
         launch_id: None,
@@ -447,7 +466,22 @@ pub(super) fn map_runtime_session(
             can_resume: native,
             can_open_in_chat: true,
         },
+        alias_ids: Vec::new(),
+        resume_session_id: None,
         native_external_writer: false,
+    }
+}
+
+fn resume_command(mut argv: Vec<String>, cwd: Option<String>) -> AgentSessionResumeCommand {
+    let program = argv.remove(0);
+    AgentSessionResumeCommand {
+        display: std::iter::once(program.as_str())
+            .chain(argv.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" "),
+        program,
+        args: argv,
+        cwd,
     }
 }
 

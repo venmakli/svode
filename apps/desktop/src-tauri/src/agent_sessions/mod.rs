@@ -3,6 +3,7 @@ mod cache;
 pub mod chat;
 pub mod commands;
 mod live_status;
+mod native_catalog;
 mod native_status;
 mod read_model;
 mod reentry;
@@ -15,29 +16,48 @@ use std::sync::Arc;
 
 use acp_list::AcpListSources;
 use cache::CatalogSnapshots;
+use native_catalog::NativeCatalogSources;
 use native_status::NativeStatusReader;
+use native_status::hermes;
 use refresh::AgentSessionsReadCoordinator;
 
-/// The Sessions catalogue: each agent's ACP list, the lists saved per project
-/// for the time before an agent connection opens, and the native status
-/// reader of the listed sessions.
+/// The Sessions catalogue: each agent's ACP list, the native catalogue
+/// sources of agents that list their sessions from their store, the lists
+/// saved per project for the time before a source is read, and the native
+/// status reader of the listed sessions.
 #[derive(Clone)]
 pub struct AgentSessionsState {
     pub(crate) home_dir: PathBuf,
     pub(crate) reads: AgentSessionsReadCoordinator,
     pub(crate) acp_lists: Arc<AcpListSources>,
+    pub(crate) native_catalogs: Arc<NativeCatalogSources>,
     pub(crate) snapshots: Arc<CatalogSnapshots>,
     pub(crate) native_status: Arc<NativeStatusReader>,
 }
 
 impl AgentSessionsState {
+    /// The stores of this device: `HERMES_HOME` and, on Windows,
+    /// `LOCALAPPDATA` of the app's environment place the Hermes home.
     pub fn new() -> Self {
-        Self::with_home(default_home_dir())
+        let home_dir = default_home_dir();
+        let hermes_home = hermes::store_root(&home_dir, |name| std::env::var_os(name));
+        Self::with_stores(home_dir, hermes_home)
     }
 
+    /// The stores under `home_dir` alone.
+    #[cfg(test)]
     pub(crate) fn with_home(home_dir: PathBuf) -> Self {
+        let hermes_home = home_dir.join(".hermes");
+        Self::with_stores(home_dir, hermes_home)
+    }
+
+    fn with_stores(home_dir: PathBuf, hermes_home: PathBuf) -> Self {
         Self {
-            native_status: Arc::new(NativeStatusReader::new(home_dir.clone())),
+            native_status: Arc::new(NativeStatusReader::with_stores(
+                home_dir.clone(),
+                hermes_home.clone(),
+            )),
+            native_catalogs: Arc::new(NativeCatalogSources::new(hermes_home)),
             home_dir,
             reads: AgentSessionsReadCoordinator::default(),
             acp_lists: Arc::new(AcpListSources::default()),

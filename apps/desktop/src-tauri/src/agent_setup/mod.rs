@@ -11,15 +11,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use svode_agents::adapters::{
-    AdapterStore, ChatOffer, LaunchContext, LaunchUnavailable, RegistryPackageSource,
+    AdapterStore, ChatOffer, LaunchContext, LaunchUnavailable, RegistryPackageSource, adapter_pin,
+    agent_enabled,
 };
 use svode_agents::custom::{
     CustomAgent, CustomAgentDefinition, CustomAgentError, custom_launch_plan, new_custom_agent_id,
 };
 use svode_agents::registry::{
-    AdapterRuntimeRegistry, AdapterTarget, AgentVerdict, SystemRuntimeCommandRunner,
+    AdapterRuntimeRegistry, AdapterTarget, AgentVerdict, CatalogSource, SystemRuntimeCommandRunner,
 };
-use svode_core::agent_adapters::{AgentAdapterKind, CustomAgentId};
+use svode_core::agent_adapters::{AgentAdapterKind, CustomAgentId, resolve_executable_path};
 
 use crate::agent_runtime::connections::{LaunchPlanner, PlanFuture};
 use crate::error::AppError;
@@ -142,6 +143,32 @@ impl AgentSetupState {
             .await;
         let offer = svode_agents::adapters::chat_offer(deferred(agent), &plan, authenticated);
         (plan, offer)
+    }
+
+    /// The built-in agents with a native catalogue source whose store
+    /// Svode reads (Stage 10 `07` N1): the available ones (`03` A1), found
+    /// on the device and not disabled by the user.
+    pub(crate) async fn native_catalog_agents(&self) -> Vec<AgentAdapterKind> {
+        let Ok(target) = commands::target().await else {
+            return Vec::new();
+        };
+        AgentAdapterKind::ALL
+            .into_iter()
+            .filter(|agent| {
+                AdapterRuntimeRegistry
+                    .catalog_sources(*agent)
+                    .iter()
+                    .any(|source| matches!(source, CatalogSource::Native(_)))
+            })
+            .filter(|agent| {
+                let install = adapter_pin(*agent).map(|pin| self.store.state(pin));
+                agent_enabled(self.choice(agent.as_str()), install.as_ref())
+            })
+            .filter(|agent| {
+                resolve_executable_path(*agent, None, &target.cwd, target.search_path.as_deref())
+                    .is_some()
+            })
+            .collect()
     }
 
     /// The custom ACP agents in the order the user added them.
@@ -594,7 +621,6 @@ mod tests {
                 "claude-code",
                 "cursor",
                 "opencode",
-                "hermes",
                 "pi",
                 "qwen-code",
                 "grok-build",

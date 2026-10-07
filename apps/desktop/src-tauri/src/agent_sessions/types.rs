@@ -25,7 +25,8 @@ pub(crate) fn catalog_session_id(agent: &AgentId, key: &SessionKey) -> String {
     }
 }
 
-/// The runtime key of a catalogue record, recovered from its id.
+/// The runtime key of a catalogue record, recovered from its id, under the
+/// native id the agent continues it under.
 pub(crate) fn catalog_session_key(session: &AgentSession) -> Option<SessionKey> {
     [IdentityNamespace::Native, IdentityNamespace::Acp]
         .into_iter()
@@ -35,16 +36,25 @@ pub(crate) fn catalog_session_key(session: &AgentSession) -> Option<SessionKey> 
             session_id: session.source_session_id.clone(),
         })
         .find(|key| catalog_session_id(&session.source, key) == session.id)
+        .map(|key| SessionKey {
+            session_id: session.resume_id().to_string(),
+            ..key
+        })
 }
 
 /// The command that continues a session in its agent's terminal by native
-/// id, when the agent's description has one.
+/// id, in the agent profile whose store holds it, when the agent's
+/// description has one (Stage 10 `07` N6).
 pub(crate) fn terminal_resume_argv(
     agent: &AgentId,
     source_session_id: &str,
+    profile: Option<&str>,
 ) -> Option<Vec<String>> {
     let builtin = agent.builtin()?;
     let mut argv = vec![builtin.executable().to_string()];
+    if let Some(profile) = profile {
+        argv.extend(AdapterRuntimeRegistry.terminal_profile_args(builtin, profile)?);
+    }
     argv.extend(AdapterRuntimeRegistry.terminal_resume_args(builtin, source_session_id)?);
     Some(argv)
 }
@@ -144,10 +154,34 @@ pub struct AgentSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<AgentSessionResumeCommand>,
     pub capabilities: AgentSessionCapabilities,
+    /// Catalogue ids of the other links of the session's conversation; a
+    /// key saved with one of them addresses this session (Stage 10 `07`
+    /// N2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alias_ids: Vec<String>,
+    /// The native id the agent continues the session under, when it is not
+    /// `source_session_id`: the tip of a Hermes chain (`07` N6).
+    #[serde(skip)]
+    pub(crate) resume_session_id: Option<String>,
     /// The native evidence of the turn tells that a process outside Svode
     /// drives the session (Stage 10 `02` C7, `07` N6).
     #[serde(skip)]
     pub(crate) native_external_writer: bool,
+}
+
+impl AgentSession {
+    /// Whether the catalogue id names this session: its own id or that of
+    /// another link of its conversation.
+    pub(crate) fn is_addressed_by(&self, id: &str) -> bool {
+        self.id == id || self.alias_ids.iter().any(|alias| alias == id)
+    }
+
+    /// The native id the agent continues the session under.
+    pub(crate) fn resume_id(&self) -> &str {
+        self.resume_session_id
+            .as_deref()
+            .unwrap_or(&self.source_session_id)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -242,8 +276,9 @@ pub struct AgentSessionsHotStatusResult {
     pub skipped_sessions: usize,
 }
 
-/// One agent's session list as the catalogue shows it: the agent's ACP
-/// `session/list`, its declared catalogue source.
+/// One catalogue source's session list as the catalogue shows it: the
+/// agent's ACP `session/list` or a native reader of its store (Stage 10
+/// `07` N2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionSourceReport {

@@ -8,7 +8,7 @@ use super::read_model;
 use super::types::{
     AgentSession, AgentSessionReentryError, AgentSessionReentryErrorCode, AgentSessionReentryMode,
     AgentSessionReentryResult, AgentSessionResumeCommand, AgentSessionScopeKind,
-    AgentSessionScopeStatus, native_writer_key, terminal_resume_argv,
+    AgentSessionScopeStatus, native_writer_key,
 };
 use crate::error::AppError;
 use crate::terminal::{AgentTerminalSpawn, AgentTerminalSurface, quote_agent_shell_command};
@@ -46,7 +46,7 @@ where
     let Some(session) = list
         .sessions
         .iter()
-        .find(|session| session.id == session_id)
+        .find(|session| session.is_addressed_by(&session_id))
     else {
         return Ok(error_result(
             session_id.clone(),
@@ -106,10 +106,14 @@ where
         });
     }
 
-    let resume = terminal_resume_argv(&session.source, &session.source_session_id).filter(|_| {
-        session.capabilities.can_resume && !session.source_session_id.trim().is_empty()
-    });
-    let Some((resume_program, resume_args)) = resume.as_deref().and_then(<[String]>::split_first)
+    // The record's command continues the session where its agent does: the
+    // tip of a Hermes chain in its profile (`07` N6).
+    let resume = session
+        .resume_command
+        .as_ref()
+        .filter(|_| session.capabilities.can_resume && !session.resume_id().trim().is_empty());
+    let Some((resume_program, resume_args)) =
+        resume.map(|command| (command.program.as_str(), command.args.as_slice()))
     else {
         return Ok(error_result(
             session.id.clone(),
@@ -148,7 +152,7 @@ where
     // Terminal resume under unknown liveness keeps today's behaviour: it is
     // the native CLI the user would start by hand, with its own guards.
     let claim = match writers.claim(
-        &native_writer_key(&session.source, &session.source_session_id),
+        &native_writer_key(&session.source, session.resume_id()),
         Writer::Pty,
         external_liveness(session),
         UnknownLiveness::NotConfirmed,
@@ -701,5 +705,60 @@ mod tests {
         .expect("claude path");
 
         assert_eq!(resolved, canonical_display(&claude));
+    }
+
+    #[test]
+    fn a_hermes_conversation_continues_at_its_tip_in_its_profile() {
+        use crate::agent_sessions::native_status::hermes::tests::{session, store};
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).expect("project");
+        let cwd = project.to_string_lossy();
+        store(
+            &home.join(".hermes/profiles/work/state.db"),
+            &[
+                session("r", "cli", Some(&cwd), "end_reason = 'compression'"),
+                session(
+                    "t",
+                    "cli",
+                    Some(&cwd),
+                    "parent_session_id = 'r', started_at = 1800000200",
+                ),
+            ]
+            .concat(),
+        );
+        store(&home.join(".hermes/state.db"), "");
+        let state = AgentSessionsState::with_home(home);
+        let reads = state.native_catalogs.refresh(&[AgentAdapterKind::Hermes]);
+        tauri::async_runtime::block_on(async {
+            for read in reads {
+                read.await.expect("read");
+            }
+        });
+
+        let writers = WriterRegistry::default();
+        let tip = native_writer_key(&AgentAdapterKind::Hermes.id(), "t");
+        // A key saved with the tip's id addresses the conversation.
+        let result = reenter_session(
+            &state,
+            project.to_string_lossy().into_owned(),
+            "hermes:t".to_string(),
+            Vec::new(),
+            &writers,
+            |_, _| Some("/bin/hermes".to_string()),
+            |spawn, _claim| {
+                assert_eq!(spawn.agent_session_id, "hermes:r");
+                assert_eq!(spawn.source_session_id, "r");
+                assert_eq!(spawn.command.program, "/bin/hermes");
+                assert_eq!(spawn.command.args, ["-p", "work", "--resume", "t"]);
+                assert_eq!(writers.writer(&tip), Some(Writer::Pty));
+                Ok("pty-hermes".to_string())
+            },
+        )
+        .expect("reenter");
+        assert_eq!(result.mode, AgentSessionReentryMode::SpawnedResumePty);
+        assert_eq!(result.session_id, "hermes:r");
     }
 }

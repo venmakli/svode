@@ -24,9 +24,11 @@ pub struct ChatTarget {
     pub liveness: ExternalLiveness,
 }
 
-/// The chat target of a listed session; `None` when the session is not in
-/// the project's catalogue or its record carries no runtime key, such as a
-/// launch whose agent has not named its session yet.
+/// The chat target of a listed session, under the native id the agent
+/// continues it under (`07` N6: the tip of a Hermes chain); `None` when the
+/// session is not in the project's catalogue, its origin does not open in
+/// the chat or its record carries no runtime key, such as a launch whose
+/// agent has not named its session yet.
 pub fn chat_target(
     state: &AgentSessionsState,
     project_path: String,
@@ -38,7 +40,7 @@ pub fn chat_target(
     let Some(session) = list
         .sessions
         .iter()
-        .find(|session| session.id == session_id)
+        .find(|session| session.is_addressed_by(session_id))
         .filter(|session| session.capabilities.can_open_in_chat)
     else {
         return Ok(None);

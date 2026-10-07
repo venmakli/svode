@@ -3,15 +3,16 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use svode_agents::catalog::{ListedSession, RuntimeSession};
-use svode_agents::identity::IdentityNamespace;
+use svode_agents::identity::{IdentityNamespace, SessionKey};
 use svode_agents::status::SessionState;
 use svode_core::agent_adapters::AgentId;
 
 use super::AgentSessionsState;
-use super::cache::{SavedList, SavedSession};
+use super::cache::{CatalogSourceKey, SavedList, SavedSession};
 use super::live_status::{
     map_listed, map_provisional_surface, map_runtime_session, overlay_runtime,
 };
+use super::native_catalog::{CatalogEntry, NativeListing};
 use super::native_status::{NativeReads, parse_timestamp_str};
 use super::scope::{ScopeIndex, load_child_spaces, normalize_project_path, resolve_scope};
 use super::types::{
@@ -23,12 +24,12 @@ use super::types::{
 use crate::error::AppError;
 use crate::terminal::AgentTerminalSurface;
 
-/// One agent's catalogue as the project's list builds it: the agent's ACP
-/// list read by this process or, until one is, the list saved before the app
-/// started.
+/// One catalogue source of an agent as the project's list builds it (Stage
+/// 10 `07` N2): its ACP list or a native store, read by this process or,
+/// until it is, the list saved before the app started.
 struct AgentCatalog {
-    source: AgentId,
-    sessions: Vec<ListedSession>,
+    key: CatalogSourceKey,
+    sessions: Vec<CatalogEntry>,
     report: AgentSessionSourceReport,
     read_at: Option<DateTime<Utc>>,
     snapshot: bool,
@@ -37,6 +38,7 @@ struct AgentCatalog {
 /// A listed session of the project with its scope and last activity.
 struct ScopedSession {
     listed: ListedSession,
+    listing: Option<NativeListing>,
     scope: AgentSessionScope,
     last_activity_at: DateTime<Utc>,
 }
@@ -91,9 +93,10 @@ fn list(
     let mut reports = Vec::new();
     let mut summary = AgentSessionsSummary::default();
     for catalog in catalogs {
+        let source = catalog.key.agent.clone();
         let mut report = catalog.report;
         let scoped = scoped_sessions(&scope_index, &state.home_dir, catalog.sessions, &mut report);
-        let mut native = read_native(state, &catalog.source, &scoped);
+        let mut native = read_native(state, &source, &scoped);
         if let Some(problem) = &native.problem {
             report_native_problem(&mut report, problem);
         }
@@ -102,7 +105,7 @@ fn list(
         // into the project.
         if let Some(read_at) = catalog
             .read_at
-            .filter(|_| save_lists && !catalog.source.is_custom())
+            .filter(|_| save_lists && !source.is_custom())
         {
             let saved = scoped
                 .iter()
@@ -112,11 +115,12 @@ fn list(
                         .sessions
                         .get(&session.listed.key.session_id)
                         .map(|native| native.read.clone()),
+                    listing: session.listing.clone(),
                 })
                 .collect();
             state.snapshots.save(
                 &project,
-                &catalog.source,
+                &catalog.key,
                 SavedList {
                     read_at,
                     sessions: saved,
@@ -126,8 +130,9 @@ fn list(
         for session in scoped {
             let read = native.sessions.remove(&session.listed.key.session_id);
             sessions.push(map_listed(
-                catalog.source.clone(),
+                source.clone(),
                 session.listed,
+                session.listing,
                 read,
                 session.scope,
                 session.last_activity_at,
@@ -190,21 +195,23 @@ pub(crate) fn hot_status(
     let mut updated_sessions = 0usize;
 
     for catalog in catalogs(state, &project) {
+        let source = catalog.key.agent.clone();
         let listed = catalog
             .sessions
             .into_iter()
-            .filter(|listed| requested.contains(&catalog_session_id(&catalog.source, &listed.key)))
+            .filter(|entry| entry_ids(&source, entry).any(|id| requested.contains(&id)))
             .collect::<Vec<_>>();
         checked_sessions += listed.len();
         let mut report = catalog.report;
         let scoped = scoped_sessions(&scope_index, &state.home_dir, listed, &mut report);
-        let mut native = read_native(state, &catalog.source, &scoped);
+        let mut native = read_native(state, &source, &scoped);
         updated_sessions += native.reparsed;
         for session in scoped {
             let read = native.sessions.remove(&session.listed.key.session_id);
             sessions.push(map_listed(
-                catalog.source.clone(),
+                source.clone(),
                 session.listed,
+                session.listing,
                 read,
                 session.scope,
                 session.last_activity_at,
@@ -240,30 +247,56 @@ pub(crate) fn hot_status(
     })
 }
 
-/// Every agent's catalogue for the project: its last good ACP list of this
+/// Every catalogue source of the project: its last good read of this
 /// process, else the list saved for the project before the app started.
+/// The sources of one agent cover disjoint origins (Stage 10 `07` N2), so
+/// their sessions never share a key.
 fn catalogs(state: &AgentSessionsState, project: &Path) -> Vec<AgentCatalog> {
     let mut saved = state.snapshots.lists(project, |lists| {
-        for (agent, list) in lists {
+        for (key, list) in lists {
             for session in &list.sessions {
                 if let Some(read) = &session.native {
-                    state
-                        .native_status
-                        .seed(agent, &session.listed.key.session_id, read.clone());
+                    state.native_status.seed(
+                        &key.agent,
+                        &session.listed.key.session_id,
+                        read.clone(),
+                    );
                 }
             }
         }
     });
-    let mut catalogs = Vec::new();
-    for read in state.acp_lists.reads() {
-        let mut catalog = AgentCatalog {
-            source: read.source,
+    let acp = state
+        .acp_lists
+        .reads()
+        .into_iter()
+        .map(|read| AgentCatalog {
+            key: CatalogSourceKey::acp(read.source),
+            sessions: read
+                .sessions
+                .into_iter()
+                .map(CatalogEntry::listed)
+                .collect(),
+            report: read.report,
+            read_at: read.read_at,
+            snapshot: false,
+        });
+    let native = state
+        .native_catalogs
+        .reads()
+        .into_iter()
+        .map(|read| AgentCatalog {
+            key: CatalogSourceKey {
+                agent: read.source,
+                store: Some(read.store),
+            },
             sessions: read.sessions,
             report: read.report,
             read_at: read.read_at,
             snapshot: false,
-        };
-        let saved_list = saved.remove(&catalog.source);
+        });
+    let mut catalogs = Vec::new();
+    for mut catalog in acp.chain(native) {
+        let saved_list = saved.remove(&catalog.key);
         if catalog.read_at.is_none()
             && let Some(list) = saved_list
         {
@@ -271,10 +304,10 @@ fn catalogs(state: &AgentSessionsState, project: &Path) -> Vec<AgentCatalog> {
         }
         catalogs.push(catalog);
     }
-    for (source, list) in saved {
+    for (key, list) in saved {
         let mut catalog = AgentCatalog {
-            report: AgentSessionSourceReport::new(source.clone()),
-            source,
+            report: AgentSessionSourceReport::new(key.agent.clone()),
+            key,
             sessions: Vec::new(),
             read_at: None,
             snapshot: false,
@@ -282,7 +315,7 @@ fn catalogs(state: &AgentSessionsState, project: &Path) -> Vec<AgentCatalog> {
         show_saved(&mut catalog, list);
         catalogs.push(catalog);
     }
-    catalogs.sort_by(|left, right| left.source.cmp(&right.source));
+    catalogs.sort_by(|left, right| left.key.cmp(&right.key));
     catalogs
 }
 
@@ -290,30 +323,64 @@ fn show_saved(catalog: &mut AgentCatalog, list: SavedList) {
     catalog.sessions = list
         .sessions
         .into_iter()
-        .map(|session| session.listed)
+        .map(|session| CatalogEntry {
+            listed: session.listed,
+            listing: session.listing,
+        })
         .collect();
     catalog.read_at = Some(list.read_at);
     catalog.snapshot = true;
     catalog.report.read_at = Some(list.read_at.to_rfc3339_opts(SecondsFormat::Secs, true));
     catalog.report.counts.records_read = catalog.sessions.len();
     catalog.report.counts.candidates = catalog.sessions.len();
-    catalog.report.push_diagnostic(
-        AgentSessionDiagnosticSeverity::Info,
-        "acp-list-snapshot",
-        "Showing the session list saved before the app started; it updates once the agent's connection opens",
-    );
+    let (code, message) = match catalog.key.store {
+        None => (
+            "acp-list-snapshot",
+            "Showing the session list saved before the app started; it updates once the agent's connection opens",
+        ),
+        Some(_) => (
+            "native-catalog-snapshot",
+            "Showing the session list saved before the app started; it updates once the agent's store is read",
+        ),
+    };
+    catalog
+        .report
+        .push_diagnostic(AgentSessionDiagnosticSeverity::Info, code, message);
+}
+
+/// The catalogue ids that address an entry: its own and those of the other
+/// links of its conversation (Stage 10 `07` N2).
+fn entry_ids<'a>(
+    source: &'a AgentId,
+    entry: &'a CatalogEntry,
+) -> impl Iterator<Item = String> + 'a {
+    std::iter::once(catalog_session_id(source, &entry.listed.key)).chain(
+        entry
+            .listing
+            .iter()
+            .flat_map(|listing| listing.aliases.iter())
+            .map(move |alias| {
+                catalog_session_id(
+                    source,
+                    &SessionKey {
+                        session_id: alias.clone(),
+                        ..entry.listed.key.clone()
+                    },
+                )
+            }),
+    )
 }
 
 /// The listed sessions that belong to the project and have a last activity.
 fn scoped_sessions(
     scope_index: &ScopeIndex,
     home: &Path,
-    listed: Vec<ListedSession>,
+    listed: Vec<CatalogEntry>,
     report: &mut AgentSessionSourceReport,
 ) -> Vec<ScopedSession> {
     listed
         .into_iter()
-        .filter_map(|listed| {
+        .filter_map(|CatalogEntry { listed, listing }| {
             let Some(scope) = resolve_scope(scope_index, &listed.cwd, home) else {
                 report.counts.unresolved_candidates += 1;
                 return None;
@@ -325,6 +392,7 @@ fn scoped_sessions(
             };
             Some(ScopedSession {
                 listed,
+                listing,
                 scope,
                 last_activity_at,
             })
@@ -332,7 +400,8 @@ fn scoped_sessions(
         .collect()
 }
 
-/// Native status of the sessions whose id is the agent's native id.
+/// Native status of the sessions whose id is the agent's native id; the
+/// store of an agent the user disabled is not read (Stage 10 `07` N1).
 fn read_native(
     state: &AgentSessionsState,
     source: &AgentId,
@@ -343,7 +412,7 @@ fn read_native(
         .filter(|session| session.listed.key.namespace == IdentityNamespace::Native)
         .map(|session| session.listed.key.session_id.as_str())
         .collect::<Vec<_>>();
-    if ids.is_empty() {
+    if ids.is_empty() || !state.native_catalogs.reads_store(source) {
         return NativeReads::default();
     }
     state.native_status.read(source, &ids)
@@ -380,7 +449,10 @@ fn apply_runtime_sessions(
             continue;
         };
         let id = catalog_session_id(&source, &runtime.key);
-        if let Some(listed) = sessions.iter_mut().find(|session| session.id == id) {
+        if let Some(listed) = sessions
+            .iter_mut()
+            .find(|session| session.is_addressed_by(&id))
+        {
             overlay_runtime(listed, runtime);
             continue;
         }
@@ -675,7 +747,7 @@ mod tests {
             mcp_project_path: None,
             mcp_routine_caller_token: None,
             title: Some(format!("Session {source_session_id}")),
-            initial_agent_argv: terminal_resume_argv(&source, source_session_id)
+            initial_agent_argv: terminal_resume_argv(&source, source_session_id, None)
                 .unwrap_or_default(),
             source,
             source_session_id: source_session_id.to_string(),
@@ -2251,5 +2323,306 @@ mod tests {
         let session = by_id(&result, "hermes:h1");
         assert_eq!(session.status.state, SessionState::Unknown);
         assert_eq!(session.status.source, StatusSource::NativeStatusReader);
+    }
+
+    /// The Hermes store of the device in `home`, read by the catalogue as
+    /// the list triggers read it.
+    fn hermes_store(state: &AgentSessionsState, home: &Path, sql: &str) {
+        crate::agent_sessions::native_status::hermes::tests::store(
+            &home.join(".hermes/state.db"),
+            sql,
+        );
+        read_hermes_store(state);
+    }
+
+    fn read_hermes_store(state: &AgentSessionsState) {
+        let reads = state.native_catalogs.refresh(&[AgentAdapterKind::Hermes]);
+        tauri::async_runtime::block_on(async {
+            for read in reads {
+                read.await.expect("native catalogue read");
+            }
+        });
+    }
+
+    fn hermes_session(id: &str, source: &str, cwd: &Path, extra: &str) -> String {
+        crate::agent_sessions::native_status::hermes::tests::session(
+            id,
+            source,
+            Some(&cwd.to_string_lossy()),
+            extra,
+        )
+    }
+
+    fn hermes_answer(id: &str) -> String {
+        format!(
+            "INSERT INTO messages (session_id, role, content, timestamp, finish_reason) \
+             VALUES ('{id}', 'assistant', 'not read', 1800000000, 'stop');"
+        )
+    }
+
+    /// An ACP conversation compressed from `r` into `t`, an external CLI
+    /// session in the project and one outside it.
+    fn hermes_conversations(project: &Path, elsewhere: &Path) -> String {
+        [
+            hermes_session("r", "acp", project, "end_reason = 'compression'"),
+            hermes_session(
+                "t",
+                "acp",
+                project,
+                "parent_session_id = 'r', started_at = 1800000200",
+            ),
+            hermes_answer("t"),
+            hermes_session("cli", "cli", project, ""),
+            hermes_answer("cli"),
+            hermes_session("away", "cli", elsewhere, ""),
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn a_hermes_conversation_is_one_record_under_its_root_that_continues_at_its_tip() {
+        let (temp, home, project) = project_dirs();
+        let elsewhere = temp.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let state = AgentSessionsState::with_home(home.clone());
+        hermes_store(&state, &home, &hermes_conversations(&project, &elsewhere));
+
+        let result = list(&state, &project);
+        let mut ids = result
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(ids, ["hermes:cli", "hermes:r"]);
+        let report = result
+            .sources
+            .iter()
+            .find(|report| report.source == AgentAdapterKind::Hermes.id())
+            .expect("hermes report");
+        assert_eq!(report.status, AgentSessionSourceStatus::Ok);
+
+        let chain = by_id(&result, "hermes:r");
+        assert_eq!(chain.alias_ids, ["hermes:t"]);
+        assert_eq!(chain.scope_kind, AgentSessionScopeKind::Project);
+        assert!(chain.capabilities.can_open_in_chat);
+        let resume = chain.resume_command.as_ref().expect("resume command");
+        assert_eq!(resume.program, "hermes");
+        assert_eq!(resume.args, ["-p", "default", "--resume", "t"]);
+        assert_eq!(
+            chain.status.state,
+            idle(Some(StopReason::EndTurn)),
+            "the last message of the tip"
+        );
+        assert_eq!(chain.status.source, StatusSource::NativeStatusReader);
+
+        let external = by_id(&result, "hermes:cli");
+        assert!(
+            !external.capabilities.can_open_in_chat,
+            "Hermes loads only its ACP origin over ACP"
+        );
+        assert!(external.capabilities.can_resume);
+        assert_eq!(
+            external.resume_command.as_ref().unwrap().args,
+            ["-p", "default", "--resume", "cli"]
+        );
+
+        let chat = |id: &str| {
+            crate::agent_sessions::chat::chat_target(
+                &state,
+                project.to_string_lossy().into_owned(),
+                id,
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("chat target")
+        };
+        let target = chat("hermes:r").expect("an ACP conversation opens in the chat");
+        assert_eq!(target.key, SessionKey::from_acp("hermes", "t", true));
+        assert_eq!(
+            chat("hermes:t").expect("a key of another link").key,
+            target.key
+        );
+        assert_eq!(chat("hermes:cli"), None, "an external session is not");
+
+        let hot = hot(&state, &project, "hermes:t");
+        assert_eq!(hot.sessions.len(), 1);
+        assert_eq!(hot.sessions[0].id, "hermes:r");
+
+        // The chat drives the tip: still the one record of the root.
+        let result = list_with_runtime(
+            &state,
+            &project,
+            vec![runtime_session("hermes", "t", true, &project)],
+        );
+        assert_eq!(
+            result
+                .sessions
+                .iter()
+                .filter(|session| session.source == AgentAdapterKind::Hermes.id())
+                .count(),
+            2
+        );
+        let driven = by_id(&result, "hermes:r");
+        assert_eq!(driven.status.source, StatusSource::SvodeRuntime);
+        assert_eq!(
+            driven.runtime.as_ref().unwrap().acp_session,
+            Some(SessionKey::from_acp("hermes", "t", true))
+        );
+    }
+
+    #[test]
+    fn the_saved_hermes_list_is_shown_after_a_restart_with_what_its_store_told() {
+        let (temp, home, project) = project_dirs();
+        let elsewhere = temp.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let state = AgentSessionsState::with_home(home.clone());
+        hermes_store(&state, &home, &hermes_conversations(&project, &elsewhere));
+        list(&state, &project);
+
+        let restarted = AgentSessionsState::with_home(home);
+        let result = list(&restarted, &project);
+        assert_eq!(result.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+        let chain = by_id(&result, "hermes:r");
+        assert_eq!(chain.alias_ids, ["hermes:t"]);
+        assert_eq!(
+            chain.resume_command.as_ref().unwrap().args,
+            ["-p", "default", "--resume", "t"]
+        );
+        assert!(!by_id(&result, "hermes:cli").capabilities.can_open_in_chat);
+        assert_eq!(
+            result.sources[0].diagnostics[0].code,
+            "native-catalog-snapshot"
+        );
+
+        read_hermes_store(&restarted);
+        let result = list(&restarted, &project);
+        assert_eq!(result.cache.mode, AgentSessionsCacheMode::Current);
+        assert_eq!(result.sessions.len(), 2);
+    }
+
+    #[test]
+    fn a_hermes_turn_lease_of_a_live_process_is_another_writer() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let mut child = live_child();
+        let now = Utc::now().timestamp() as f64;
+        let lease = |id: &str, acquired_at: f64, expires_at: f64| {
+            format!(
+                "INSERT INTO session_turn_leases VALUES ('{id}', 'pid={}:turn=1:platform=cli', \
+                 {acquired_at}, {expires_at});",
+                child.id()
+            )
+        };
+        hermes_store(
+            &state,
+            &home,
+            &[
+                hermes_session("held", "acp", &project, ""),
+                lease("held", now + 5.0, now + 240.0),
+                hermes_session("expired", "acp", &project, ""),
+                lease("expired", now + 5.0, now - 1.0),
+                hermes_session("free", "acp", &project, ""),
+                hermes_answer("free"),
+            ]
+            .concat(),
+        );
+
+        let result = list(&state, &project);
+        let held = chat_liveness(&state, &project, "hermes:held");
+        let expired = chat_liveness(&state, &project, "hermes:expired");
+        let free = chat_liveness(&state, &project, "hermes:free");
+        child.kill().ok();
+        child.wait().ok();
+
+        assert_eq!(
+            by_id(&result, "hermes:held").status.state,
+            SessionState::Running
+        );
+        assert_eq!(held, ExternalLiveness::ExternalActive);
+        assert_eq!(
+            by_id(&result, "hermes:expired").status.state,
+            SessionState::Unknown
+        );
+        assert_eq!(expired, ExternalLiveness::Unknown);
+        assert_eq!(free, ExternalLiveness::Unknown, "no lease is never free");
+    }
+
+    #[test]
+    fn a_disabled_hermes_keeps_its_shown_sessions_and_its_store_is_not_read() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        hermes_store(
+            &state,
+            &home,
+            &[
+                hermes_session("h1", "cli", &project, ""),
+                hermes_answer("h1"),
+            ]
+            .concat(),
+        );
+        assert_eq!(
+            by_id(&list(&state, &project), "hermes:h1").status.state,
+            idle(Some(StopReason::EndTurn))
+        );
+
+        assert!(state.native_catalogs.refresh(&[]).is_empty());
+        let result = list(&state, &project);
+        let session = by_id(&result, "hermes:h1");
+        assert_eq!(
+            session.status,
+            SessionStatus::unknown(),
+            "the store is not read"
+        );
+    }
+
+    #[test]
+    fn a_hermes_store_of_an_unknown_format_is_its_diagnostic_alone() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let id = codex_id(41);
+        listed_codex(
+            &state,
+            &home,
+            &project,
+            &id,
+            vec![task_started(&recent_source_log_timestamp())],
+        );
+        hermes_store(
+            &state,
+            &home,
+            &[
+                hermes_session("h1", "cli", &project, ""),
+                "UPDATE schema_version SET version = 30;".to_string(),
+            ]
+            .concat(),
+        );
+
+        let result = list(&state, &project);
+        assert_eq!(result.status, AgentSessionsListStatus::Partial);
+        let hermes = result
+            .sources
+            .iter()
+            .find(|report| report.source == AgentAdapterKind::Hermes.id())
+            .expect("hermes report");
+        assert_eq!(hermes.status, AgentSessionSourceStatus::Stale);
+        assert_eq!(hermes.diagnostics[0].code, "native-catalog-stale");
+        assert!(hermes.diagnostics[0].message.contains("Hermes"));
+        assert!(
+            result
+                .sessions
+                .iter()
+                .all(|session| session.source != AgentAdapterKind::Hermes.id())
+        );
+        let codex = result
+            .sources
+            .iter()
+            .find(|report| report.source == AgentAdapterKind::Codex.id())
+            .expect("codex report");
+        assert_eq!(codex.status, AgentSessionSourceStatus::Ok);
+        assert_eq!(
+            by_id(&result, &format!("codex:{id}")).status.state,
+            SessionState::Running
+        );
     }
 }

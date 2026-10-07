@@ -1,6 +1,7 @@
 import type { NavigationItem, NavigationKey } from "@/features/navigation";
 import type { AgentSessionsListResult } from "../api";
 import { isPendingSessionId } from "./pending";
+import { agentSessionHasId } from "./target";
 import type { AgentSession } from "./types";
 
 /**
@@ -35,7 +36,7 @@ export function pinnableAgentSessionItem(
 }
 
 function addressesSession(key: NavigationKey, session: AgentSession) {
-  if (key.kind === "session") return key.sessionId === session.id;
+  if (key.kind === "session") return agentSessionHasId(session, key.sessionId);
   if (key.kind === "sessionLaunch") return key.launchId === session.launchId;
   return false;
 }
@@ -90,7 +91,7 @@ export function confirmedMissingAgentSessionKeys(
       const source = key.sessionId.slice(0, key.sessionId.indexOf(":"));
       return (
         sourceRead.get(source) === true &&
-        !result.sessions.some((session) => session.id === key.sessionId)
+        !result.sessions.some((session) => addressesSession(key, session))
       );
     }
     if (key.kind === "sessionLaunch") {

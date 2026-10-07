@@ -10,6 +10,7 @@
 
 pub(crate) mod claude_code;
 pub(crate) mod codex;
+pub(crate) mod hermes;
 #[cfg_attr(
     not(test),
     expect(
@@ -20,13 +21,6 @@ pub(crate) mod codex;
 pub(crate) mod jsonl_tail;
 pub(crate) mod process;
 pub(crate) mod session_logs;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the native readers of slices 8.1–8.5 read SQLite stores"
-    )
-)]
 pub(crate) mod sqlite;
 
 use std::collections::HashMap;
@@ -159,6 +153,8 @@ pub(crate) struct SourceReads {
 /// read.
 pub(crate) struct NativeStatusReader {
     home: PathBuf,
+    /// The Hermes home (`07` N7).
+    hermes_home: PathBuf,
     sources: Mutex<HashMap<AgentId, Arc<dyn NativeStatusSource>>>,
 }
 
@@ -184,9 +180,16 @@ pub(crate) struct NativeSessionRead {
 }
 
 impl NativeStatusReader {
+    #[cfg(test)]
     pub(crate) fn new(home: PathBuf) -> Self {
+        let hermes_home = home.join(".hermes");
+        Self::with_stores(home, hermes_home)
+    }
+
+    pub(crate) fn with_stores(home: PathBuf, hermes_home: PathBuf) -> Self {
         Self {
             home,
+            hermes_home,
             sources: Mutex::new(HashMap::new()),
         }
     }
@@ -197,7 +200,7 @@ impl NativeStatusReader {
             return Some(source.clone());
         }
         let store = AdapterRuntimeRegistry.native_status_store(agent.builtin()?)?;
-        let source = source_of(store, &self.home);
+        let source = source_of(store, &self.home, &self.hermes_home);
         sources.insert(agent.clone(), source.clone());
         Some(source)
     }
@@ -275,7 +278,11 @@ impl NativeStatusReader {
     }
 }
 
-fn source_of(store: NativeStatusStore, home: &Path) -> Arc<dyn NativeStatusSource> {
+fn source_of(
+    store: NativeStatusStore,
+    home: &Path,
+    hermes_home: &Path,
+) -> Arc<dyn NativeStatusSource> {
     match store {
         NativeStatusStore::CodexRollouts => Arc::new(SessionLogs::new(codex::Rollouts {
             root: home.join(".codex"),
@@ -283,6 +290,9 @@ fn source_of(store: NativeStatusStore, home: &Path) -> Arc<dyn NativeStatusSourc
         NativeStatusStore::ClaudeProjects => Arc::new(SessionLogs::new(claude_code::Projects {
             root: home.join(".claude"),
         })),
+        NativeStatusStore::HermesStates => {
+            Arc::new(hermes::HermesStates::new(hermes_home.to_path_buf()))
+        }
     }
 }
 
@@ -703,9 +713,11 @@ mod tests {
 
     #[test]
     fn an_agent_without_a_native_log_has_no_reader() {
-        let hermes = AgentAdapterKind::Hermes.id();
+        let kimi = AgentAdapterKind::KimiCode.id();
         let reader = NativeStatusReader::new(PathBuf::from("/nonexistent"));
-        assert!(reader.read(&hermes, &["h1"]).sessions.is_empty());
+        let reads = reader.read(&kimi, &["k1"]);
+        assert!(reads.sessions.is_empty());
+        assert_eq!(reads.problem, None);
     }
 
     #[test]

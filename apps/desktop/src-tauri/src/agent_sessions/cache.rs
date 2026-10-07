@@ -15,8 +15,10 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use svode_agents::catalog::ListedSession;
+use svode_agents::registry::{AdapterRuntimeRegistry, CatalogSource, NativeCatalogStore};
 use svode_core::agent_adapters::AgentId;
 
+use super::native_catalog::NativeListing;
 use super::native_status::NativeLogRead;
 use crate::error::AppError;
 
@@ -27,9 +29,59 @@ pub(crate) struct CatalogSnapshots {
 
 #[derive(Default)]
 struct ProjectSnapshot {
-    lists: HashMap<AgentId, SavedList>,
-    /// Hash of the sessions last written per agent.
-    written: HashMap<AgentId, u64>,
+    lists: HashMap<CatalogSourceKey, SavedList>,
+    /// Hash of the sessions last written per source.
+    written: HashMap<CatalogSourceKey, u64>,
+}
+
+/// The catalogue source a list is saved by (Stage 10 `07` N2): an agent's
+/// ACP list, or one of the native stores its description declares.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct CatalogSourceKey {
+    pub agent: AgentId,
+    pub store: Option<NativeCatalogStore>,
+}
+
+impl CatalogSourceKey {
+    pub(crate) fn acp(agent: AgentId) -> Self {
+        Self { agent, store: None }
+    }
+
+    fn row(&self) -> String {
+        match self.store {
+            None => self.agent.as_str().to_string(),
+            Some(store) => format!("{}/{}", self.agent.as_str(), store.as_str()),
+        }
+    }
+
+    /// The source a saved row names, while the agent still declares it: a
+    /// built-in agent's ACP list that is no longer its source, as the list
+    /// of Hermes before slice 8.1, is not shown.
+    fn of_row(row: &str) -> Option<Self> {
+        let (agent, store) = match row.split_once('/') {
+            Some((agent, store)) => (agent, Some(store)),
+            None => (row, None),
+        };
+        let agent = AgentId::parse(agent).ok()?;
+        let Some(builtin) = agent.builtin() else {
+            return store.is_none().then(|| Self::acp(agent));
+        };
+        let declared = AdapterRuntimeRegistry
+            .catalog_sources(builtin)
+            .iter()
+            .find(|source| match (source, store) {
+                (CatalogSource::AcpList, None) => true,
+                (CatalogSource::Native(native), Some(store)) => native.as_str() == store,
+                _ => false,
+            })?;
+        Some(Self {
+            agent,
+            store: match declared {
+                CatalogSource::AcpList => None,
+                CatalogSource::Native(store) => Some(*store),
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +97,9 @@ pub(crate) struct SavedSession {
     pub listed: ListedSession,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeLogRead>,
+    /// What a native catalogue source knew of the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing: Option<NativeListing>,
 }
 
 impl CatalogSnapshots {
@@ -53,8 +108,8 @@ impl CatalogSnapshots {
     pub(crate) fn lists(
         &self,
         project: &Path,
-        loaded: impl FnOnce(&HashMap<AgentId, SavedList>),
-    ) -> HashMap<AgentId, SavedList> {
+        loaded: impl FnOnce(&HashMap<CatalogSourceKey, SavedList>),
+    ) -> HashMap<CatalogSourceKey, SavedList> {
         let mut projects = self.projects.lock().unwrap();
         if let Some(snapshot) = projects.get(project) {
             return snapshot.lists.clone();
@@ -75,9 +130,9 @@ impl CatalogSnapshots {
         lists
     }
 
-    /// Keeps the agent's list of the project and writes it when its sessions
-    /// differ from the last written ones.
-    pub(crate) fn save(&self, project: &Path, agent: &AgentId, list: SavedList) {
+    /// Keeps the source's list of the project and writes it when its
+    /// sessions differ from the last written ones.
+    pub(crate) fn save(&self, project: &Path, agent: &CatalogSourceKey, list: SavedList) {
         let Some(hash) = sessions_hash(&list.sessions) else {
             return;
         };
@@ -106,7 +161,7 @@ fn sessions_hash(sessions: &[SavedSession]) -> Option<u64> {
     Some(hasher.finish())
 }
 
-fn read_saved_lists(project: &Path) -> HashMap<AgentId, SavedList> {
+fn read_saved_lists(project: &Path) -> HashMap<CatalogSourceKey, SavedList> {
     let db_path = cache_db_path(project);
     if !db_path.is_file() {
         return HashMap::new();
@@ -133,7 +188,7 @@ fn read_saved_lists(project: &Path) -> HashMap<AgentId, SavedList> {
     };
     rows.into_iter()
         .filter_map(|(agent, json)| {
-            let agent = AgentId::parse(&agent).ok()?;
+            let agent = CatalogSourceKey::of_row(&agent)?;
             match serde_json::from_str::<SavedList>(&json) {
                 Ok(list) => Some((agent, list)),
                 Err(error) => {
@@ -145,7 +200,11 @@ fn read_saved_lists(project: &Path) -> HashMap<AgentId, SavedList> {
         .collect()
 }
 
-fn write_saved_list(project: &Path, agent: &AgentId, list: &SavedList) -> Result<(), AppError> {
+fn write_saved_list(
+    project: &Path,
+    agent: &CatalogSourceKey,
+    list: &SavedList,
+) -> Result<(), AppError> {
     let db_path = cache_db_path(project);
     let list_json = serde_json::to_string(list)?;
     let saved_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -160,7 +219,7 @@ fn write_saved_list(project: &Path, agent: &AgentId, list: &SavedList) -> Result
                 saved_at = excluded.saved_at
             "#,
         )
-        .bind(agent.as_str())
+        .bind(agent.row())
         .bind(list_json)
         .bind(saved_at)
         .execute(&pool)

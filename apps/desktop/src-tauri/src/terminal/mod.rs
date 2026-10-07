@@ -1185,7 +1185,8 @@ fn agent_surface_from_existing_session(
         mcp_project_path: None,
         mcp_routine_caller_token: None,
         title,
-        initial_agent_argv: terminal_resume_argv(&source, &source_session_id).unwrap_or_default(),
+        initial_agent_argv: terminal_resume_argv(&source, &source_session_id, None)
+            .unwrap_or_default(),
         source,
         source_session_id: source_session_id.clone(),
         live: true,

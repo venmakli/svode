@@ -28,6 +28,7 @@ export { isInsideAgentSessionContent } from "./lib";
 export type { StartedSession as NewSessionStarted } from "./chat/hooks/use-new-session-draft";
 export {
   agentSessionForNavigationKey,
+  agentSessionHasId,
   agentSessionNavigationIndex,
   agentSessionNavigationKey,
   agentSessionTargetFor,

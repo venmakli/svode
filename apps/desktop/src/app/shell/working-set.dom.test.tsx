@@ -60,6 +60,7 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
   }
   mock.module("@/features/agent-sessions", () => ({
     agentSessionForNavigationKey: () => null,
+    agentSessionHasId: (session: Session, id: string) => session.id === id,
     pinnableAgentSessionItem: (session: Session | null) =>
       session
         ? {

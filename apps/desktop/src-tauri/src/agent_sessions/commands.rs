@@ -12,6 +12,7 @@ use super::types::{
 };
 use crate::agent_runtime::AgentRuntimeState;
 use crate::agent_runtime::connections::AgentConnections;
+use crate::agent_setup::AgentSetupState;
 use crate::error::AppError;
 use crate::process::path_env::ProcessPath;
 use crate::terminal::TerminalManager;
@@ -22,6 +23,7 @@ pub async fn agent_sessions_list(
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
     agent_runtime: State<'_, AgentRuntimeState>,
+    agent_setup: State<'_, AgentSetupState>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
@@ -31,6 +33,9 @@ pub async fn agent_sessions_list(
         .add_folders(super::scope::project_folders(&root));
     // Off the response path: this read shows the last good lists.
     state.acp_lists.refresh(agent_runtime.runtime());
+    state
+        .native_catalogs
+        .refresh(&agent_setup.native_catalog_agents().await);
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let runtime = agent_runtime.runtime().clone();
@@ -94,6 +99,7 @@ pub async fn agent_sessions_refresh(
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
     agent_runtime: State<'_, AgentRuntimeState>,
+    agent_setup: State<'_, AgentSetupState>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
@@ -103,6 +109,9 @@ pub async fn agent_sessions_refresh(
         .add_folders(super::scope::project_folders(&root));
     // Off the response path: this read shows the last good lists.
     state.acp_lists.refresh(agent_runtime.runtime());
+    state
+        .native_catalogs
+        .refresh(&agent_setup.native_catalog_agents().await);
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let runtime = agent_runtime.runtime().clone();

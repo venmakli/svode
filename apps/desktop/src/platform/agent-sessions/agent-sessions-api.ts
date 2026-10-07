@@ -62,6 +62,11 @@ export interface AgentSession {
   waitingSince?: string;
   resumeCommand?: AgentResumeCommand;
   capabilities: AgentSessionCapabilities;
+  /**
+   * Catalog ids of the other links of the session's conversation; a key
+   * saved with one of them addresses this session.
+   */
+  aliasIds?: string[];
 }
 
 export type AgentSessionsListStatus = "ok" | "partial";

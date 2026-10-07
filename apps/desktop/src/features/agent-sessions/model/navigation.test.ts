@@ -158,3 +158,18 @@ test("a listed session with a new title refreshes its pin snapshot under the sto
     ),
   ).toEqual([]);
 });
+
+test("a key saved with another link of a conversation addresses its record", () => {
+  const chain = listedSession({ id: "hermes:root", aliasIds: ["hermes:tip"] });
+  const tipKey: NavigationKey = { kind: "session", sessionId: "hermes:tip" };
+  const result = {
+    ...listResult([chain]),
+    sources: [report("hermes")],
+  };
+
+  expect(agentSessionForNavigationKey(tipKey, [chain])).toBe(chain);
+  expect(
+    agentSessionNavigationIndex([{ key: tipKey, title: "Chat" }], chain),
+  ).toBe(0);
+  expect(confirmedMissingAgentSessionKeys(result, [tipKey])).toEqual([]);
+});

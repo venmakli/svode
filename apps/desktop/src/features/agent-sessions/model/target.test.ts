@@ -47,3 +47,16 @@ test("an unknown target keeps its own id", () => {
     resolveAgentSessionId({ sessionId: "codex:gone", launchId: null }, [], {}),
   ).toBe("codex:gone");
 });
+
+test("a target saved with another link of a conversation resolves to its record", () => {
+  const sessions = [
+    listedSession({ id: "hermes:root", aliasIds: ["hermes:tip"] }),
+  ];
+  expect(
+    resolveAgentSessionId(
+      { sessionId: "hermes:tip", launchId: null },
+      sessions,
+      {},
+    ),
+  ).toBe("hermes:root");
+});
