@@ -751,7 +751,8 @@ impl AdapterRuntimeRegistry {
     /// Slice 8.1: the `state.db` of every Hermes profile is the one source
     /// of all its origins, ACP among them, so its list is no longer read.
     /// Slice 8.4: the chat folders of the Cursor CLI are the source of its
-    /// terminal chats beside the list of its ACP sessions.
+    /// terminal chats beside the list of its ACP sessions. Slice 8.5: the
+    /// chat headers of the Cursor IDE are the source of its IDE chats.
     pub fn catalog_sources(&self, adapter: AgentAdapterKind) -> &'static [CatalogSource] {
         match adapter {
             AgentAdapterKind::Codex
@@ -763,6 +764,7 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Cursor => &[
                 CatalogSource::AcpList,
                 CatalogSource::Native(NativeCatalogStore::CursorChats),
+                CatalogSource::Native(NativeCatalogStore::CursorIde),
             ],
             AgentAdapterKind::Hermes => &[CatalogSource::Native(NativeCatalogStore::HermesStates)],
             _ => &[],
@@ -1067,6 +1069,9 @@ pub enum NativeCatalogStore {
     /// `chats/<md5(cwd)>/<chatId>/meta.json` under the Cursor CLI config
     /// directory: its terminal chats.
     CursorChats,
+    /// The chat headers in `User/globalStorage/state.vscdb` under the
+    /// Cursor app data: the chats of its IDE.
+    CursorIde,
 }
 
 impl NativeCatalogStore {
@@ -1075,6 +1080,7 @@ impl NativeCatalogStore {
         match self {
             Self::HermesStates => "hermes-states",
             Self::CursorChats => "cursor-chats",
+            Self::CursorIde => "cursor-ide",
         }
     }
 }
@@ -2644,13 +2650,14 @@ mod tests {
     }
 
     #[test]
-    fn cursor_lists_its_acp_sessions_and_its_terminal_chats_apart() {
+    fn cursor_lists_its_acp_sessions_its_terminal_chats_and_its_ide_chats_apart() {
         let registry = AdapterRuntimeRegistry;
         assert_eq!(
             registry.catalog_sources(AgentAdapterKind::Cursor),
             [
                 CatalogSource::AcpList,
-                CatalogSource::Native(NativeCatalogStore::CursorChats)
+                CatalogSource::Native(NativeCatalogStore::CursorChats),
+                CatalogSource::Native(NativeCatalogStore::CursorIde)
             ]
         );
         assert!(registry.lists_catalog(AgentAdapterKind::Cursor));

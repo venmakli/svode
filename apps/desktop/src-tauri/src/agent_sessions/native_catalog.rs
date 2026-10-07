@@ -8,6 +8,7 @@
 //! entries with the ACP lists by key, as one more source of the catalogue.
 
 pub(crate) mod cursor_chats;
+pub(crate) mod cursor_ide;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -54,6 +55,11 @@ pub(crate) struct NativeListing {
     /// them addresses this session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,
+    /// The other folders of a multi-root workspace after the listed `cwd`,
+    /// in the order of its file: the session belongs to the first of them
+    /// the scope resolver relates to the project (N2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<PathBuf>,
 }
 
 /// A listing saved before slice 8.4 continues in the terminal.
@@ -98,6 +104,8 @@ pub(crate) struct CatalogRoots {
     pub hermes_home: StoreRoot,
     /// The Cursor CLI config directory.
     pub cursor_config: StoreRoot,
+    /// The app data folder of the Cursor IDE.
+    pub cursor_app_data: StoreRoot,
 }
 
 impl CatalogRoots {
@@ -105,6 +113,7 @@ impl CatalogRoots {
         match store {
             NativeCatalogStore::HermesStates => (self.hermes_home)(),
             NativeCatalogStore::CursorChats => (self.cursor_config)(),
+            NativeCatalogStore::CursorIde => (self.cursor_app_data)(),
         }
     }
 }
@@ -269,6 +278,7 @@ fn read_store(store: NativeCatalogStore, root: &Path) -> Result<NativeList, Stri
     match store {
         NativeCatalogStore::HermesStates => hermes_list(root, &bounds),
         NativeCatalogStore::CursorChats => cursor_chats::list(root, &bounds),
+        NativeCatalogStore::CursorIde => cursor_ide::list(root, &bounds),
     }
 }
 
@@ -312,6 +322,7 @@ fn hermes_list(root: &Path, bounds: &ListBounds) -> Result<NativeList, String> {
                 profile: Some(conversation.profile),
                 opens_in_chat: conversation.acp,
                 continues_in_terminal: true,
+                folders: Vec::new(),
                 aliases: conversation
                     .links
                     .into_iter()
@@ -398,6 +409,7 @@ mod tests {
         CatalogRoots {
             hermes_home,
             cursor_config: Arc::new(|| PathBuf::from("/nonexistent")),
+            cursor_app_data: Arc::new(|| PathBuf::from("/nonexistent")),
         }
     }
 

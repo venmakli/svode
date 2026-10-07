@@ -255,6 +255,7 @@ pub(super) fn map_listed(
         capabilities: AgentSessionCapabilities {
             can_resume: continues,
             can_open_in_chat,
+            continues_in_ide: listed_namespace == IdentityNamespace::Ide,
         },
         alias_ids,
         resume_session_id,
@@ -384,6 +385,7 @@ pub(super) fn map_provisional_surface(
         capabilities: AgentSessionCapabilities {
             can_resume: false,
             can_open_in_chat: false,
+            continues_in_ide: false,
         },
         alias_ids: Vec::new(),
         resume_session_id: None,
@@ -469,6 +471,7 @@ pub(super) fn map_runtime_session(
         capabilities: AgentSessionCapabilities {
             can_resume: native,
             can_open_in_chat: true,
+            continues_in_ide: false,
         },
         alias_ids: Vec::new(),
         resume_session_id: None,

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use acp_list::AcpListSources;
 use cache::CatalogSnapshots;
-use native_catalog::{CatalogRoots, NativeCatalogSources, cursor_chats};
+use native_catalog::{CatalogRoots, NativeCatalogSources, cursor_chats, cursor_ide};
 use native_status::NativeStatusReader;
 use native_status::hermes;
 
@@ -43,7 +43,8 @@ impl AgentSessionsState {
     /// The stores of this device: `HERMES_HOME` and, on Windows,
     /// `LOCALAPPDATA` of the agent's environment place the Hermes home,
     /// `CURSOR_CONFIG_DIR` and `XDG_CONFIG_HOME` the Cursor CLI config
-    /// directory, found when a store is read.
+    /// directory, `APPDATA` and `XDG_CONFIG_HOME` the app data of the Cursor
+    /// IDE, found when a store is read.
     pub fn new() -> Self {
         let home_dir = default_home_dir();
         let home = home_dir.clone();
@@ -52,11 +53,15 @@ impl AgentSessionsState {
         let home = home_dir.clone();
         let cursor_config: StoreRoot =
             Arc::new(move || cursor_chats::config_dir(&home, native_status::agent_variable));
+        let home = home_dir.clone();
+        let cursor_app_data: StoreRoot =
+            Arc::new(move || cursor_ide::app_data_dir(&home, native_status::agent_variable));
         Self::with_stores(
             home_dir,
             CatalogRoots {
                 hermes_home,
                 cursor_config,
+                cursor_app_data,
             },
         )
     }
@@ -65,11 +70,13 @@ impl AgentSessionsState {
     #[cfg(test)]
     pub(crate) fn with_home(home_dir: PathBuf) -> Self {
         let (hermes, cursor) = (home_dir.join(".hermes"), home_dir.join(".cursor"));
+        let cursor_ide = cursor_ide::app_data_dir(&home_dir, |_| None);
         Self::with_stores(
             home_dir,
             CatalogRoots {
                 hermes_home: Arc::new(move || hermes.clone()),
                 cursor_config: Arc::new(move || cursor.clone()),
+                cursor_app_data: Arc::new(move || cursor_ide.clone()),
             },
         )
     }

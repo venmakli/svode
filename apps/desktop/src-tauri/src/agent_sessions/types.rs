@@ -16,17 +16,19 @@ pub(crate) fn native_writer_key(agent: &AgentId, source_session_id: &str) -> Ses
 }
 
 /// Catalogue id of a session: its agent and native id; an ACP id without
-/// equality evidence keeps its own namespace, so it never meets a native
-/// record of the same agent.
+/// equality evidence and the id of an IDE chat keep their own namespaces, so
+/// they never meet a native record of the same agent.
 pub(crate) fn catalog_session_id(agent: &AgentId, key: &SessionKey) -> String {
     match key.namespace {
         IdentityNamespace::Native => format!("{}:{}", agent.as_str(), key.session_id),
         IdentityNamespace::Acp => format!("{}:acp:{}", agent.as_str(), key.session_id),
+        IdentityNamespace::Ide => format!("{}:ide:{}", agent.as_str(), key.session_id),
     }
 }
 
 /// The runtime key of a catalogue record, recovered from its id, under the
-/// native id the agent continues it under.
+/// native id the agent continues it under; none for an IDE chat, which no
+/// runtime of the agent opens.
 pub(crate) fn catalog_session_key(session: &AgentSession) -> Option<SessionKey> {
     [IdentityNamespace::Native, IdentityNamespace::Acp]
         .into_iter()
@@ -222,6 +224,10 @@ pub struct AgentSessionCapabilities {
     /// session of its ACP list or one the runtime drives.
     #[serde(default)]
     pub can_open_in_chat: bool,
+    /// The session continues only in the agent's IDE: neither its chat nor
+    /// its terminal opens it (Stage 10 `07` N6).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub continues_in_ide: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

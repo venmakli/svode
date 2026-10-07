@@ -2462,6 +2462,7 @@
   "sessions_chat_no_terminal": "This agent cannot continue the session in a terminal",
   "sessions_chat_terminal_during_turn": "Available between turns",
   "sessions_chat_unavailable_not_openable": "The chat cannot open this session",
+  "sessions_chat_unavailable_continues_in_ide": "Continue this chat in {agent} IDE",
   "sessions_chat_unavailable_agent": "{agent} is not available for the chat: {reason}",
   "sessions_routine_terminal_chat_unavailable": "The Routine started in the terminal: the chat is not available to the agent",
   "sessions_routine_terminal_binding_not_acp": "The Routine started in the terminal: the chat cannot apply the executor's settings",

@@ -8,6 +8,8 @@ import type {
 export type ChatUnavailableReason =
   /** The record carries no key the agent's runtime opens it under. */
   | { kind: "not_openable" }
+  /** The session continues only in the agent's IDE (Stage 10 `07` N6). */
+  | { kind: "continues_in_ide" }
   /** The agent neither loads nor resumes the session over its connection. */
   | { kind: "unsupported" }
   /** The agent cannot start now (`03` A1): off, deferred, missing and so on. */
@@ -44,7 +46,12 @@ export function sessionInterfaceAtOpen(
 export function chatInterface(session: AgentSession): SessionInterface {
   if (session.runtime?.acpSession) return { kind: "chat", followed: true };
   if (!session.capabilities.canOpenInChat) {
-    return { kind: "terminal", chatUnavailable: { kind: "not_openable" } };
+    return {
+      kind: "terminal",
+      chatUnavailable: session.capabilities.continuesInIde
+        ? { kind: "continues_in_ide" }
+        : { kind: "not_openable" },
+    };
   }
   return { kind: "chat", followed: false };
 }

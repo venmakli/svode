@@ -35,6 +35,8 @@ export interface AgentSessionCapabilities {
   canResume: boolean;
   /** The record carries the key the agent's runtime opens it under. */
   canOpenInChat: boolean;
+  /** The session continues only in the agent's IDE, as a Cursor IDE chat. */
+  continuesInIde?: boolean;
 }
 
 export interface AgentSession {

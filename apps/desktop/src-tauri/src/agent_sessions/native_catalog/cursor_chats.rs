@@ -125,6 +125,7 @@ pub(super) fn list(root: &Path, bounds: &ListBounds) -> Result<NativeList, Strin
                     opens_in_chat: false,
                     continues_in_terminal: continues,
                     aliases: Vec::new(),
+                    folders: Vec::new(),
                 }),
             },
         ));

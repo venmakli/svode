@@ -372,6 +372,8 @@ fn entry_ids<'a>(
 }
 
 /// The listed sessions that belong to the project and have a last activity.
+/// A session of a multi-root workspace takes the first of its folders the
+/// project holds (Stage 10 `07` N2).
 fn scoped_sessions(
     scope_index: &ScopeIndex,
     home: &Path,
@@ -381,7 +383,11 @@ fn scoped_sessions(
     listed
         .into_iter()
         .filter_map(|CatalogEntry { listed, listing }| {
-            let Some(scope) = resolve_scope(scope_index, &listed.cwd, home) else {
+            let folders = listing.iter().flat_map(|listing| listing.folders.iter());
+            let Some(scope) = std::iter::once(&listed.cwd)
+                .chain(folders)
+                .find_map(|cwd| resolve_scope(scope_index, cwd, home))
+            else {
                 report.counts.unresolved_candidates += 1;
                 return None;
             };
@@ -2664,8 +2670,9 @@ mod tests {
     }
 
     #[test]
-    fn a_cursor_terminal_chat_is_its_own_record_beside_an_acp_session_of_one_folder_and_title() {
+    fn cursor_acp_sessions_terminal_chats_and_ide_chats_of_one_folder_and_title_are_apart() {
         use crate::agent_sessions::native_catalog::cursor_chats::tests::{chat, folder_of, meta};
+        use crate::agent_sessions::native_catalog::cursor_ide::{self, tests as ide};
 
         let (temp, home, project) = project_dirs();
         let root = home.join(".cursor");
@@ -2678,6 +2685,19 @@ mod tests {
         );
         let moved = folder_of(&temp.path().join("moved"));
         chat(&root, &moved, "c2", meta(&project, None), true);
+        ide::store(
+            &cursor_ide::app_data_dir(&home, |_| None),
+            &[
+                ide::HEADERS_TABLE.to_string(),
+                ide::row(
+                    "c1",
+                    Some(1_800_000_100_000),
+                    (0, 0),
+                    &ide::in_folder("ACP c1", &project),
+                ),
+            ]
+            .concat(),
+        );
         let state = AgentSessionsState::with_home(home.clone());
         acp_list(&state, "cursor", false, vec![("c1", &project, LISTED_AT)]);
         read_native_catalog(&state, AgentAdapterKind::Cursor);
@@ -2689,13 +2709,20 @@ mod tests {
             .map(|session| session.id.as_str())
             .collect::<Vec<_>>();
         ids.sort();
-        assert_eq!(ids, ["cursor:acp:c1", "cursor:c1", "cursor:c2"]);
+        assert_eq!(
+            ids,
+            ["cursor:acp:c1", "cursor:c1", "cursor:c2", "cursor:ide:c1"]
+        );
         let reports = result
             .sources
             .iter()
             .filter(|report| report.source == AgentAdapterKind::Cursor.id())
             .collect::<Vec<_>>();
-        assert_eq!(reports.len(), 2, "its ACP list and its chat folders");
+        assert_eq!(
+            reports.len(),
+            3,
+            "its ACP list, its chat folders and its IDE chats"
+        );
         assert!(
             reports
                 .iter()
@@ -2719,6 +2746,19 @@ mod tests {
         assert_eq!(terminal.status.state, SessionState::Unknown);
         assert!(!terminal.native_external_writer);
 
+        assert!(!terminal.capabilities.continues_in_ide);
+
+        let in_ide = by_id(&result, "cursor:ide:c1");
+        assert_eq!(in_ide.source_session_id, "c1");
+        assert_eq!(in_ide.title, "ACP c1");
+        assert_eq!(in_ide.cwd, acp.cwd);
+        assert!(!in_ide.capabilities.can_open_in_chat);
+        assert!(!in_ide.capabilities.can_resume);
+        assert!(in_ide.capabilities.continues_in_ide);
+        assert!(in_ide.resume_command.is_none());
+        assert_eq!(in_ide.status.state, SessionState::Unknown);
+        assert!(!in_ide.native_external_writer);
+
         let elsewhere = by_id(&result, "cursor:c2");
         assert!(
             !elsewhere.capabilities.can_resume,
@@ -2737,6 +2777,7 @@ mod tests {
             .expect("chat target")
         };
         assert_eq!(chat_target(&state, "cursor:c1"), None);
+        assert_eq!(chat_target(&state, "cursor:ide:c1"), None);
         assert!(chat_target(&state, "cursor:acp:c1").is_some());
 
         // What the chat folders told is saved with the list.
@@ -2745,6 +2786,97 @@ mod tests {
         assert_eq!(result.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
         assert!(by_id(&result, "cursor:c1").capabilities.can_resume);
         assert!(!by_id(&result, "cursor:c2").capabilities.can_resume);
+        assert!(
+            by_id(&result, "cursor:ide:c1")
+                .capabilities
+                .continues_in_ide
+        );
+    }
+
+    #[test]
+    fn an_ide_chat_of_a_multi_root_workspace_is_in_the_first_of_its_folders_the_project_holds() {
+        use crate::agent_sessions::native_catalog::cursor_ide::{self, tests as ide};
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = temp.path().join("home");
+        let project = temp.path().join("project");
+        let dev = project.join("dev");
+        let other = temp.path().join("other");
+        for dir in [&dev, &other] {
+            fs::create_dir_all(dir).expect("dir");
+        }
+        write_root_config(&project, vec![space_ref("dev-space", "dev", None)]);
+        let workspaces = temp.path().join("workspaces");
+        let file = |name: &str, folders: &[&str]| {
+            let file = workspaces.join(name);
+            write(
+                &file,
+                &serde_json::json!({
+                    "folders": folders
+                        .iter()
+                        .map(|path| serde_json::json!({ "path": path }))
+                        .collect::<Vec<_>>()
+                })
+                .to_string(),
+            );
+            file
+        };
+        let work = file(
+            "work.code-workspace",
+            &["../other", "../project/dev", "../project"],
+        );
+        let elsewhere = file("elsewhere.code-workspace", &["../other"]);
+        let chats = [
+            ("work", work),
+            ("elsewhere", elsewhere),
+            ("deleted", workspaces.join("deleted.code-workspace")),
+        ];
+        ide::store(
+            &cursor_ide::app_data_dir(&home, |_| None),
+            &std::iter::once(ide::HEADERS_TABLE.to_string())
+                .chain(chats.iter().map(|(id, file)| {
+                    ide::row(
+                        id,
+                        Some(1_800_000_100_000),
+                        (0, 0),
+                        &ide::in_workspace(id, file),
+                    )
+                }))
+                .collect::<String>(),
+        );
+        let state = AgentSessionsState::with_home(home);
+        read_native_catalog(&state, AgentAdapterKind::Cursor);
+
+        let result = list(&state, &project);
+        let ids = result
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            ["cursor:ide:work"],
+            "no folder of the project, or the workspace file is gone"
+        );
+        let work = by_id(&result, "cursor:ide:work");
+        assert_eq!(work.scope_kind, AgentSessionScopeKind::Space);
+        assert_eq!(work.space_id.as_deref(), Some("dev-space"));
+        assert_eq!(
+            work.cwd.as_deref(),
+            Some(fs::canonicalize(&dev).unwrap().to_string_lossy().as_ref())
+        );
+        let hot = hot(&state, &project, "cursor:ide:work");
+        assert_eq!(hot.sessions.len(), 1);
+        assert_eq!(hot.sessions[0].space_id.as_deref(), Some("dev-space"));
+
+        // The other project of its folders has it too.
+        write_root_config(&other, Vec::new());
+        let result = list(&state, &other);
+        assert_eq!(
+            by_id(&result, "cursor:ide:work").cwd.as_deref(),
+            Some(fs::canonicalize(&other).unwrap().to_string_lossy().as_ref())
+        );
+        by_id(&result, "cursor:ide:elsewhere");
     }
 
     #[test]
@@ -2781,6 +2913,70 @@ mod tests {
             diagnostic.message
         );
         assert!(diagnostic.message.contains("schemaVersion"));
+    }
+
+    #[test]
+    fn a_cursor_ide_store_of_another_format_is_the_diagnostic_of_its_ide_chats_alone() {
+        use crate::agent_sessions::native_catalog::cursor_chats::tests::{chat, folder_of, meta};
+        use crate::agent_sessions::native_catalog::cursor_ide::{self, tests as ide};
+
+        let (_temp, home, project) = project_dirs();
+        chat(
+            &home.join(".cursor"),
+            &folder_of(&project),
+            "c1",
+            meta(&project, None),
+            true,
+        );
+        let app_data = cursor_ide::app_data_dir(&home, |_| None);
+        ide::store(
+            &app_data,
+            &[
+                ide::HEADERS_TABLE.to_string(),
+                ide::row(
+                    "i1",
+                    Some(1_800_000_100_000),
+                    (0, 0),
+                    &ide::in_folder("IDE", &project),
+                ),
+            ]
+            .concat(),
+        );
+        let state = AgentSessionsState::with_home(home);
+        acp_list(&state, "cursor", false, vec![("a1", &project, LISTED_AT)]);
+        read_native_catalog(&state, AgentAdapterKind::Cursor);
+        fs::remove_dir_all(&app_data).unwrap();
+        ide::store(&app_data, "CREATE TABLE ItemTable (key TEXT, value BLOB);");
+        read_native_catalog(&state, AgentAdapterKind::Cursor);
+
+        let result = list(&state, &project);
+        assert_eq!(result.status, AgentSessionsListStatus::Partial);
+        by_id(&result, "cursor:acp:a1");
+        by_id(&result, "cursor:c1");
+        by_id(&result, "cursor:ide:i1");
+        let stale = result
+            .sources
+            .iter()
+            .filter(|report| report.status == AgentSessionSourceStatus::Stale)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            stale.len(),
+            1,
+            "the ACP list and the chat folders are untouched"
+        );
+        let diagnostic = &stale[0].diagnostics[0];
+        assert_eq!(diagnostic.code, "native-catalog-stale");
+        assert!(
+            diagnostic
+                .message
+                .contains("Showing the last sessions read")
+        );
+        assert!(
+            diagnostic.message.contains("Cursor")
+                && diagnostic.message.contains("not the format Svode reads"),
+            "{}",
+            diagnostic.message
+        );
     }
 
     #[test]

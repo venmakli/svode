@@ -26,6 +26,11 @@ export function ChatUnavailableLine({
     case "not_openable":
       text = m.sessions_chat_unavailable_not_openable();
       break;
+    case "continues_in_ide":
+      text = m.sessions_chat_unavailable_continues_in_ide({
+        agent: dictionary.label(agent),
+      });
+      break;
     case "unsupported":
       text = m.sessions_chat_unsupported_title();
       break;

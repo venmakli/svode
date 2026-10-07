@@ -701,6 +701,48 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     },
   );
 
+  peekTest(
+    "an IDE chat says to continue it in the IDE without an action",
+    async () => {
+      listed = [
+        session({
+          id: "cursor:ide:c1",
+          source: "cursor",
+          title: "IDE chat",
+          status: {
+            state: "unknown",
+            source: "none",
+            confidence: "approximate",
+          },
+          resumeCommand: undefined,
+          capabilities: {
+            canResume: false,
+            canOpenInChat: false,
+            continuesInIde: true,
+          },
+        }),
+      ];
+      openings.length = 0;
+      await mountPeek("/p-ide", { sessionId: "cursor:ide:c1", launchId: null });
+
+      expect(openings).toEqual([]);
+      const reason = document.querySelector("[data-slot='marker']");
+      // The test reads no agent registry, so the agent has the unknown label.
+      expect(reason?.textContent).toBe(
+        m.sessions_chat_unavailable_continues_in_ide({
+          agent: m.agent_adapter_unknown(),
+        }),
+      );
+      expect(
+        Boolean(buttonByText(m.sessions_action_continue_in_terminal())),
+      ).toBe(false);
+      await openMenu();
+      expect(menuItemContaining(m.sessions_action_open_in_chat())).toBe(
+        undefined,
+      );
+    },
+  );
+
   peekTest("a peek opened to work in the terminal focuses it", async () => {
     listed = [
       session({

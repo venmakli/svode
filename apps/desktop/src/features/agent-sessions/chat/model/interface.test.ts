@@ -70,6 +70,22 @@ test("a session the chat cannot open stays in the terminal with the reason", () 
   });
 });
 
+test("an IDE chat stays out of the chat with the IDE as the reason", () => {
+  const session = listedSession({
+    id: "cursor:ide:abc",
+    source: "cursor",
+    capabilities: {
+      canResume: false,
+      canOpenInChat: false,
+      continuesInIde: true,
+    },
+  });
+  expect(sessionInterfaceAtOpen(session, null)).toEqual({
+    kind: "terminal",
+    chatUnavailable: { kind: "continues_in_ide" },
+  });
+});
+
 test("an unknown session opens in nothing until it is known", () => {
   expect(sessionInterfaceAtOpen(null, null)).toBeNull();
 });

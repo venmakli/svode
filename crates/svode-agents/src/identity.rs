@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 pub enum IdentityNamespace {
     Native,
     Acp,
+    /// The ids of an origin the agent's IDE keeps apart from its CLI and
+    /// ACP sessions: the chats of the Cursor IDE (Stage 10 `07` N2). Neither
+    /// the agent's terminal nor its ACP connection continues them.
+    Ide,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
