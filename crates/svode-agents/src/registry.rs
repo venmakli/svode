@@ -906,6 +906,8 @@ impl AdapterRuntimeRegistry {
     /// status of a session another process drives. Slice 8.2: `opencode.db`
     /// gives the status of opencode's sessions; its ACP list stays its
     /// catalogue.
+    /// Slice 8.3a: Qwen Code keeps a chat log per session and, for a
+    /// terminal session, the process that holds it (`07` N7).
     pub fn native_status_store(&self, adapter: AgentAdapterKind) -> Option<NativeStatusStore> {
         match adapter {
             AgentAdapterKind::Codex => Some(NativeStatusStore::CodexRollouts),
@@ -913,6 +915,7 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Hermes => Some(NativeStatusStore::HermesStates),
             AgentAdapterKind::Opencode => Some(NativeStatusStore::OpencodeDb),
             AgentAdapterKind::Pi => Some(NativeStatusStore::PiSessions),
+            AgentAdapterKind::QwenCode => Some(NativeStatusStore::QwenChats),
             _ => None,
         }
     }
@@ -1026,6 +1029,9 @@ pub enum NativeStatusStore {
     OpencodeDb,
     /// `sessions/**/*.jsonl` under the pi agent directory (`07` N7).
     PiSessions,
+    /// `projects/<key>/chats/<id>.jsonl` with the process marker
+    /// `<id>.runtime.json` under the Qwen homes (`07` N7).
+    QwenChats,
 }
 
 /// A declared catalogue source of some of an agent's origins (Stage 10 `02`

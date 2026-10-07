@@ -15,6 +15,7 @@ pub(crate) mod jsonl_tail;
 pub(crate) mod opencode;
 pub(crate) mod pi;
 pub(crate) mod process;
+pub(crate) mod qwen_code;
 pub(crate) mod session_logs;
 pub(crate) mod sqlite;
 
@@ -302,6 +303,9 @@ fn source_of(
                 root: move || pi::sessions_dir(&home, agent_variable),
             }))
         }
+        NativeStatusStore::QwenChats => Arc::new(SessionLogs::new(qwen_code::Chats {
+            root: home.join(".qwen"),
+        })),
     }
 }
 

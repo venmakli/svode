@@ -37,11 +37,14 @@ static THIS_HOST: LazyLock<Option<String>> = LazyLock::new(System::host_name);
 
 /// The signal of each record, in order.
 pub(crate) fn process_signals(records: &[Option<&ProcessRecord>]) -> Vec<ProcessSignal> {
-    let pids = records
+    let mut pids = records
         .iter()
         .flatten()
         .map(|record| Pid::from_u32(record.pid))
         .collect::<Vec<_>>();
+    // sysinfo drops a process whose pid it is asked to refresh twice.
+    pids.sort_unstable();
+    pids.dedup();
     if pids.is_empty() {
         return vec![ProcessSignal::None; records.len()];
     }
@@ -143,6 +146,23 @@ mod tests {
         child.kill().ok();
         child.wait().ok();
         assert_eq!(alive, ProcessSignal::Alive);
+    }
+
+    #[test]
+    fn a_process_recorded_for_two_sessions_is_alive_for_both() {
+        let mut child = sleeping_child();
+        let held = record(child.id(), None, Utc::now() + Duration::seconds(1));
+        let signals = process_signals(&[Some(&held), None, Some(&held)]);
+        child.kill().ok();
+        child.wait().ok();
+        assert_eq!(
+            signals,
+            vec![
+                ProcessSignal::Alive,
+                ProcessSignal::None,
+                ProcessSignal::Alive
+            ]
+        );
     }
 
     #[test]
