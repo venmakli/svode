@@ -4,11 +4,36 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
+use super::session_logs::SessionLogLayout;
 use super::{
-    NativeStatusEvidence, for_each_jsonl, launch_id_from_text, nested_string_field, string_field,
-    timestamp_from_fields,
+    NativeStatusEvidence, StoreRead, TurnEvidence, for_each_jsonl, launch_id_from_text,
+    nested_string_field, string_field, timestamp_from_fields,
 };
 use svode_agents::status::{SessionState, StopReason};
+
+/// The session transcripts under the Claude config directory.
+pub(super) struct Projects {
+    pub root: PathBuf,
+}
+
+impl SessionLogLayout for Projects {
+    fn index(&self) -> HashMap<String, PathBuf> {
+        index(&self.root)
+    }
+
+    fn read(&self, log: &Path) -> Result<StoreRead, String> {
+        let (status, launch_id) = read(log);
+        Ok(StoreRead {
+            status,
+            launch_id,
+            process: None,
+        })
+    }
+
+    fn turn_evidence(&self) -> TurnEvidence {
+        TurnEvidence::LogAlone
+    }
+}
 
 /// Session transcripts `projects/<project>/<session id>.jsonl` under the
 /// Claude config directory by session id (E01: the listed id is the jsonl

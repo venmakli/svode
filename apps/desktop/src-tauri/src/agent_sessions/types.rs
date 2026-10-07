@@ -144,6 +144,10 @@ pub struct AgentSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<AgentSessionResumeCommand>,
     pub capabilities: AgentSessionCapabilities,
+    /// The native evidence of the turn tells that a process outside Svode
+    /// drives the session (Stage 10 `02` C7, `07` N6).
+    #[serde(skip)]
+    pub(crate) native_external_writer: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

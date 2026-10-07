@@ -879,13 +879,13 @@ impl AdapterRuntimeRegistry {
         Some(vec![flag.to_string(), native_session_id.to_string()])
     }
 
-    /// The agent's native session log the Sessions status reader reads the
-    /// status of a listed session from (Stage 10 `02` C10): ACP gives no
+    /// The agent's native store the Sessions status reader reads the status
+    /// of a listed session from (Stage 10 `02` C10, `07` N1): ACP gives no
     /// status of a session another process drives.
-    pub fn native_session_log(&self, adapter: AgentAdapterKind) -> Option<NativeSessionLog> {
+    pub fn native_status_store(&self, adapter: AgentAdapterKind) -> Option<NativeStatusStore> {
         match adapter {
-            AgentAdapterKind::Codex => Some(NativeSessionLog::CodexRollouts),
-            AgentAdapterKind::ClaudeCode => Some(NativeSessionLog::ClaudeProjects),
+            AgentAdapterKind::Codex => Some(NativeStatusStore::CodexRollouts),
+            AgentAdapterKind::ClaudeCode => Some(NativeStatusStore::ClaudeProjects),
             _ => None,
         }
     }
@@ -984,9 +984,9 @@ impl AdapterRuntimeRegistry {
     }
 }
 
-/// Which native session log the Sessions status reader reads.
+/// Which native store the Sessions status reader reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeSessionLog {
+pub enum NativeStatusStore {
     /// `rollout-*.jsonl` under the Codex home.
     CodexRollouts,
     /// `projects/**/*.jsonl` under the Claude config directory.
@@ -2243,7 +2243,7 @@ mod tests {
         assert!(!registry.lists_by_folder(agent));
         assert!(!registry.acp_id_is_native(agent));
         assert_eq!(registry.terminal_resume_args(agent, "s1"), None);
-        assert_eq!(registry.native_session_log(agent), None);
+        assert_eq!(registry.native_status_store(agent), None);
         assert_eq!(registry.acp_approval(agent, ApprovalMode::Ask), None);
         assert_eq!(registry.verdict(agent), AgentVerdict::Deferred);
         assert_eq!(registry.sign_in_arguments(agent), None);

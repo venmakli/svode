@@ -1,6 +1,6 @@
 use chrono::{SecondsFormat, Utc};
 
-use super::native_status::{NativeLogRead, NativeStatusEvidence, short_id};
+use super::native_status::{NativeSessionRead, NativeStatusEvidence, short_id};
 use super::types::{
     AgentSession, AgentSessionCapabilities, AgentSessionResumeCommand, AgentSessionRuntime,
     AgentSessionScope, AgentSessionTitleSource, catalog_session_id, terminal_resume_argv,
@@ -15,10 +15,14 @@ use svode_core::agent_adapters::AgentId;
 pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
 
 /// What Svode knows about an agent process outside it writing to the
-/// session. Only fresh native evidence of a turn counts; there is no process
-/// scan, so everything else is unknown, never free.
+/// session. Only fresh native evidence of a turn that tells of another
+/// writer counts (`07` N6); there is no process scan, so everything else is
+/// unknown, never free.
 pub(super) fn external_liveness(session: &AgentSession) -> ExternalLiveness {
-    if session.status.source == StatusSource::NativeStatusReader && session.status.state.in_turn() {
+    if session.status.source == StatusSource::NativeStatusReader
+        && session.status.state.in_turn()
+        && session.native_external_writer
+    {
         ExternalLiveness::ExternalActive
     } else {
         ExternalLiveness::Unknown
@@ -150,7 +154,7 @@ fn terminal_observation(evidence: AgentTerminalStatusEvidence) -> Observation {
 pub(super) fn map_listed(
     source: AgentId,
     listed: ListedSession,
-    native_read: Option<NativeLogRead>,
+    native_read: Option<NativeSessionRead>,
     scope: AgentSessionScope,
     last_activity_at: chrono::DateTime<Utc>,
     terminal_surfaces: &[AgentTerminalSurface],
@@ -182,8 +186,8 @@ pub(super) fn map_listed(
                 cwd: scope.cwd.clone(),
             }
         });
-    let (launch_id, evidence) = native_read
-        .map(|read| (read.launch_id, read.status))
+    let (launch_id, evidence, native_external_writer) = native_read
+        .map(|native| (native.read.launch_id, native.status, native.external_writer))
         .unwrap_or_default();
     // The list is read at lifecycle boundaries; the log tells of later work.
     let last_activity_at = evidence
@@ -222,6 +226,7 @@ pub(super) fn map_listed(
             can_resume: native,
             can_open_in_chat: true,
         },
+        native_external_writer,
     };
     if native {
         observations.extend(apply_terminal_runtime(&mut session, terminal_surfaces));
@@ -348,6 +353,7 @@ pub(super) fn map_provisional_surface(
             can_resume: false,
             can_open_in_chat: false,
         },
+        native_external_writer: false,
     }
 }
 
@@ -441,6 +447,7 @@ pub(super) fn map_runtime_session(
             can_resume: native,
             can_open_in_chat: true,
         },
+        native_external_writer: false,
     }
 }
 

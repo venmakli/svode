@@ -6,10 +6,36 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::Value;
 
+use super::session_logs::SessionLogLayout;
 use super::{
-    NativeStatusEvidence, for_each_jsonl, launch_id_from_text, string_field, timestamp_from_fields,
+    NativeStatusEvidence, StoreRead, TurnEvidence, for_each_jsonl, launch_id_from_text,
+    string_field, timestamp_from_fields,
 };
 use svode_agents::status::{InteractionKind, SessionState, StopReason};
+
+/// The rollout files under the Codex home.
+pub(super) struct Rollouts {
+    pub root: PathBuf,
+}
+
+impl SessionLogLayout for Rollouts {
+    fn index(&self) -> HashMap<String, PathBuf> {
+        index(&self.root)
+    }
+
+    fn read(&self, log: &Path) -> Result<StoreRead, String> {
+        let (status, launch_id) = read(log);
+        Ok(StoreRead {
+            status,
+            launch_id,
+            process: None,
+        })
+    }
+
+    fn turn_evidence(&self) -> TurnEvidence {
+        TurnEvidence::LogAlone
+    }
+}
 
 static ROLLOUT_ID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")

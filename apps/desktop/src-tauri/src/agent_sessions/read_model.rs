@@ -94,6 +94,9 @@ fn list(
         let mut report = catalog.report;
         let scoped = scoped_sessions(&scope_index, &state.home_dir, catalog.sessions, &mut report);
         let mut native = read_native(state, &catalog.source, &scoped);
+        if let Some(problem) = &native.problem {
+            report_native_problem(&mut report, problem);
+        }
         // A custom agent's id is of this device and the agent may be removed:
         // its list is read again once its connection opens, never saved
         // into the project.
@@ -105,7 +108,10 @@ fn list(
                 .iter()
                 .map(|session| SavedSession {
                     listed: session.listed.clone(),
-                    native: native.sessions.get(&session.listed.key.session_id).cloned(),
+                    native: native
+                        .sessions
+                        .get(&session.listed.key.session_id)
+                        .map(|native| native.read.clone()),
                 })
                 .collect();
             state.snapshots.save(
@@ -343,6 +349,23 @@ fn read_native(
     state.native_status.read(source, &ids)
 }
 
+/// The agent's native status source could not be read (Stage 10 `07` N5):
+/// the source's diagnostic, named by the agent, and its sessions without a
+/// native status; the agent's list and the other agents stay as they are.
+fn report_native_problem(report: &mut AgentSessionSourceReport, problem: &str) {
+    let agent = report
+        .source
+        .builtin()
+        .map_or(report.source.as_str(), |agent| agent.display_name())
+        .to_string();
+    report.status = AgentSessionSourceStatus::Stale;
+    report.push_diagnostic(
+        AgentSessionDiagnosticSeverity::Warning,
+        "native-status-unavailable",
+        format!("The session status of {agent} cannot be read: {problem}"),
+    );
+}
+
 /// Sessions the runtime drives: laid over their listed record, or their own
 /// record of the project until their agent lists them.
 fn apply_runtime_sessions(
@@ -450,7 +473,15 @@ mod tests {
     use svode_agents::status::{
         InteractionKind, SessionStatus, StatusConfidence, StatusSource, StopReason,
     };
+    use svode_agents::writer::ExternalLiveness;
     use svode_core::agent_adapters::AgentAdapterKind;
+
+    use crate::agent_sessions::native_status::process::ProcessRecord;
+    use crate::agent_sessions::native_status::{
+        NativeLogRead, NativeStatusEvidence, NativeStatusSource, SourceReads,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     const PERMISSION: SessionState = SessionState::RequiresAction {
         request: InteractionKind::Permission,
@@ -1948,5 +1979,277 @@ mod tests {
             .expect("chat target"),
             None
         );
+    }
+
+    /// A native status source of an agent of `07`, as slices 8.1–8.5 add
+    /// them: its reads, or the problem of its store.
+    struct StoreSource(Result<HashMap<String, NativeLogRead>, String>);
+
+    impl NativeStatusSource for StoreSource {
+        fn read(&self, ids: &[&str]) -> Result<SourceReads, String> {
+            let reads = self.0.clone()?;
+            Ok(SourceReads {
+                sessions: reads
+                    .into_iter()
+                    .filter(|(id, _)| ids.contains(&id.as_str()))
+                    .collect(),
+                reparsed: 0,
+            })
+        }
+    }
+
+    fn store_read(
+        state: SessionState,
+        observed_at: DateTime<Utc>,
+        process: Option<ProcessRecord>,
+    ) -> NativeLogRead {
+        NativeLogRead {
+            file: None,
+            companions: Vec::new(),
+            status: Some(NativeStatusEvidence {
+                state,
+                reason: "store evidence".to_string(),
+                observed_at: Some(observed_at),
+                waiting_since: None,
+            }),
+            launch_id: None,
+            process,
+        }
+    }
+
+    fn hermes_with(
+        state: &AgentSessionsState,
+        project: &Path,
+        reads: Result<Vec<(&str, NativeLogRead)>, String>,
+    ) {
+        let hermes = AgentAdapterKind::Hermes.id();
+        let ids = match &reads {
+            Ok(reads) => reads.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            Err(_) => vec!["h1"],
+        };
+        acp_list(
+            state,
+            hermes.as_str(),
+            true,
+            ids.iter().map(|id| (*id, project, LISTED_AT)).collect(),
+        );
+        state.native_status.set_source(
+            hermes,
+            Arc::new(StoreSource(reads.map(|reads| {
+                reads
+                    .into_iter()
+                    .map(|(id, read)| (id.to_string(), read))
+                    .collect()
+            }))),
+        );
+    }
+
+    fn chat_liveness(state: &AgentSessionsState, project: &Path, id: &str) -> ExternalLiveness {
+        crate::agent_sessions::chat::chat_target(
+            state,
+            project.to_string_lossy().into_owned(),
+            id,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("chat target")
+        .expect("listed session")
+        .liveness
+    }
+
+    fn live_child() -> std::process::Child {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = std::process::Command::new("ping");
+            command.args(["-n", "60", "127.0.0.1"]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = std::process::Command::new("sleep");
+            command.arg("60");
+            command
+        };
+        command
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn a child process")
+    }
+
+    fn holder(pid: u32) -> Option<ProcessRecord> {
+        Some(ProcessRecord {
+            pid,
+            host: None,
+            started_by: Utc::now() + chrono::Duration::seconds(1),
+        })
+    }
+
+    #[test]
+    fn an_open_turn_of_an_agent_of_07_follows_the_process_that_holds_it() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        let mut child = live_child();
+        let mut exited = live_child();
+        let exited_pid = exited.id();
+        exited.kill().expect("kill");
+        exited.wait().expect("reap");
+        let recent = Utc::now() - chrono::Duration::minutes(1);
+        let stale = Utc::now() - chrono::Duration::seconds(SOURCE_LOG_ACTIVE_STALE_AFTER_SECS + 60);
+        hermes_with(
+            &state,
+            &project,
+            Ok(vec![
+                ("alive", store_read(PERMISSION, recent, holder(child.id()))),
+                ("dead", store_read(PERMISSION, recent, holder(exited_pid))),
+                ("unsignalled", store_read(PERMISSION, recent, None)),
+                (
+                    "unsignalled-stale",
+                    store_read(SessionState::Running, stale, None),
+                ),
+                (
+                    "closed",
+                    store_read(idle(Some(StopReason::EndTurn)), recent, holder(exited_pid)),
+                ),
+            ]),
+        );
+
+        let result = list(&state, &project);
+        let alive_liveness = chat_liveness(&state, &project, "hermes:alive");
+        child.kill().ok();
+        child.wait().ok();
+
+        let status = |id: &str| by_id(&result, id).status;
+        assert_eq!(status("hermes:alive").state, PERMISSION);
+        assert_eq!(
+            status("hermes:alive").source,
+            StatusSource::NativeStatusReader
+        );
+        assert_eq!(
+            status("hermes:alive").confidence,
+            StatusConfidence::Approximate
+        );
+        assert_eq!(
+            status("hermes:dead").state,
+            idle(Some(StopReason::Interrupted))
+        );
+        assert_eq!(status("hermes:unsignalled").state, SessionState::Running);
+        assert_eq!(
+            status("hermes:unsignalled-stale").state,
+            SessionState::Unknown
+        );
+        assert_eq!(
+            status("hermes:closed").state,
+            idle(Some(StopReason::EndTurn))
+        );
+
+        assert_eq!(alive_liveness, ExternalLiveness::ExternalActive);
+        for id in [
+            "hermes:dead",
+            "hermes:unsignalled",
+            "hermes:unsignalled-stale",
+            "hermes:closed",
+        ] {
+            assert_eq!(
+                chat_liveness(&state, &project, id),
+                ExternalLiveness::Unknown,
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_native_running_codex_turn_stays_another_writer() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let id = codex_id(31);
+        listed_codex(
+            &state,
+            &home,
+            &project,
+            &id,
+            vec![task_started(&recent_source_log_timestamp())],
+        );
+
+        assert_eq!(
+            chat_liveness(&state, &project, &format!("codex:{id}")),
+            ExternalLiveness::ExternalActive
+        );
+    }
+
+    #[test]
+    fn an_unreadable_native_store_is_a_diagnostic_of_its_agent_alone() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let id = codex_id(32);
+        listed_codex(
+            &state,
+            &home,
+            &project,
+            &id,
+            vec![task_started(&recent_source_log_timestamp())],
+        );
+        hermes_with(
+            &state,
+            &project,
+            Err("state.db cannot be opened".to_string()),
+        );
+
+        let result = list(&state, &project);
+
+        assert_eq!(result.status, AgentSessionsListStatus::Partial);
+        let hermes = result
+            .sources
+            .iter()
+            .find(|report| report.source == AgentAdapterKind::Hermes.id())
+            .expect("hermes report");
+        assert_eq!(hermes.status, AgentSessionSourceStatus::Stale);
+        let diagnostic = &hermes.diagnostics[0];
+        assert_eq!(diagnostic.code, "native-status-unavailable");
+        assert!(
+            diagnostic.message.contains("Hermes"),
+            "{}",
+            diagnostic.message
+        );
+        assert!(diagnostic.message.contains("state.db cannot be opened"));
+        assert_eq!(by_id(&result, "hermes:h1").status, SessionStatus::unknown());
+
+        let codex = result
+            .sources
+            .iter()
+            .find(|report| report.source == AgentAdapterKind::Codex.id())
+            .expect("codex report");
+        assert_eq!(codex.status, AgentSessionSourceStatus::Ok);
+        assert!(codex.diagnostics.is_empty());
+        assert_eq!(
+            by_id(&result, &format!("codex:{id}")).status.state,
+            SessionState::Running
+        );
+    }
+
+    #[test]
+    fn an_unknown_status_value_is_an_unknown_session_without_a_diagnostic() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        hermes_with(
+            &state,
+            &project,
+            Ok(vec![(
+                "h1",
+                store_read(SessionState::Unknown, Utc::now(), None),
+            )]),
+        );
+
+        let result = list(&state, &project);
+
+        assert_eq!(result.status, AgentSessionsListStatus::Ok);
+        assert!(
+            result
+                .sources
+                .iter()
+                .all(|report| report.diagnostics.is_empty())
+        );
+        let session = by_id(&result, "hermes:h1");
+        assert_eq!(session.status.state, SessionState::Unknown);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
     }
 }
