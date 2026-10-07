@@ -52,7 +52,6 @@ export interface AgentAdapterSetupDto {
 
 /** What a limited agent lacks, recorded with live evidence. */
 export type AgentRestrictionDto =
-  | "external_sessions_unlisted"
   | "no_terminal_continuation"
   | "no_permission_requests"
   | "turn_errors_hidden";

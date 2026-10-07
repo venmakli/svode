@@ -109,8 +109,6 @@ function restrictionText(restriction: AgentRestriction) {
   switch (restriction) {
     case "new_session_only":
       return m.settings_agents_state_new_session_only();
-    case "external_sessions_unlisted":
-      return m.settings_agents_restriction_external_sessions_unlisted();
     case "no_terminal_continuation":
       return m.settings_agents_restriction_no_terminal_continuation();
     case "no_permission_requests":

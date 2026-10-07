@@ -537,7 +537,6 @@
   "settings_agents_failed_remove_custom": "Не удалено: {reason}",
   "settings_agents_state_command_missing": "Команда не найдена: {command}",
   "settings_agents_state_new_session_only": "Только новые сессии: агент не объявил список или загрузку сессий",
-  "settings_agents_restriction_external_sessions_unlisted": "Видны только сессии, начатые в Svode: сессии терминала и IDE агента продолжаются там",
   "settings_agents_restriction_no_terminal_continuation": "Сессии, начатые в Svode, нельзя продолжить в терминале агента",
   "settings_agents_restriction_no_permission_requests": "Агент выполняет инструменты без запроса разрешения",
   "settings_agents_restriction_turn_errors_hidden": "Ошибка провайдера завершает ход без сообщения",

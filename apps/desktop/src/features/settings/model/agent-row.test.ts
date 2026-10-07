@@ -96,7 +96,7 @@ test("a limited agent shows its main restriction after required actions", () => 
     agent: "cursor",
     verdict: {
       state: "limited",
-      restrictions: ["external_sessions_unlisted", "no_terminal_continuation"],
+      restrictions: ["no_terminal_continuation"],
     },
     adapter: null,
     cliVersion: { state: "untested", testedUpTo: "2026.10.1" },
@@ -104,7 +104,7 @@ test("a limited agent shows its main restriction after required actions", () => 
   const view = agentRowView(cursor, null);
   expect(view.state).toEqual({
     kind: "limited",
-    restrictions: ["external_sessions_unlisted", "no_terminal_continuation"],
+    restrictions: ["no_terminal_continuation"],
   });
   expect(view.warning).toEqual({ kind: "untested", testedUpTo: "2026.10.1" });
   expect(view.action).toBeNull();

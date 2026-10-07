@@ -955,9 +955,6 @@ pub enum AgentVerdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRestriction {
-    /// The agent lists only the sessions started in Svode; its terminal and
-    /// IDE sessions continue there.
-    ExternalSessionsUnlisted,
     /// Sessions started in Svode cannot be continued in the agent's
     /// terminal.
     NoTerminalContinuation,
@@ -972,29 +969,27 @@ impl AdapterRuntimeRegistry {
     /// continuation and their external sessions live (E01, slice 2.5b).
     /// opencode: the same with opencode 2.0.22 (slice 3.2). Cursor
     /// 2026.10.01 and pi 1.0.0 with `pi-acp` 0.0.34: limited (slice 3.2).
-    /// Hermes 2026.9.24: limited, it lists only its ACP sessions (slice 3.3).
     /// Grok Build 1.0.46 and Qwen Code 0.24.7: supported (slice 3.5).
+    /// Hermes 2026.9.24: supported once its sessions of every origin come
+    /// from its own store (slice 8.1, live in acceptance 8.7). Cursor lists
+    /// its terminal and IDE chats from its stores (slices 8.4 and 8.5), and
+    /// its ACP sessions still cannot be continued in its terminal.
     pub fn verdict(&self, adapter: AgentAdapterKind) -> AgentVerdict {
         match adapter {
             AgentAdapterKind::Codex
             | AgentAdapterKind::ClaudeCode
             | AgentAdapterKind::Opencode
             | AgentAdapterKind::GrokBuild
-            | AgentAdapterKind::QwenCode => AgentVerdict::Supported,
+            | AgentAdapterKind::QwenCode
+            | AgentAdapterKind::Hermes => AgentVerdict::Supported,
             AgentAdapterKind::Cursor => AgentVerdict::Limited {
-                restrictions: &[
-                    AgentRestriction::ExternalSessionsUnlisted,
-                    AgentRestriction::NoTerminalContinuation,
-                ],
+                restrictions: &[AgentRestriction::NoTerminalContinuation],
             },
             AgentAdapterKind::Pi => AgentVerdict::Limited {
                 restrictions: &[
                     AgentRestriction::NoPermissionRequests,
                     AgentRestriction::TurnErrorsHidden,
                 ],
-            },
-            AgentAdapterKind::Hermes => AgentVerdict::Limited {
-                restrictions: &[AgentRestriction::ExternalSessionsUnlisted],
             },
             _ => AgentVerdict::Deferred,
         }
@@ -2808,7 +2803,7 @@ mod tests {
             serde_json::to_value(registry.verdict(AgentAdapterKind::Cursor)).unwrap(),
             serde_json::json!({
                 "state": "limited",
-                "restrictions": ["external_sessions_unlisted", "no_terminal_continuation"]
+                "restrictions": ["no_terminal_continuation"]
             })
         );
         assert_eq!(
@@ -2819,11 +2814,8 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(registry.verdict(AgentAdapterKind::Hermes)).unwrap(),
-            serde_json::json!({
-                "state": "limited",
-                "restrictions": ["external_sessions_unlisted"]
-            })
+            registry.verdict(AgentAdapterKind::Hermes),
+            AgentVerdict::Supported
         );
         for agent in [
             AgentAdapterKind::Opencode,

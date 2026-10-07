@@ -1096,28 +1096,24 @@ if (!isolatedProcess) {
         agentSetup("codex"),
         agentSetup("claude-code"),
         {
-          ...found("cursor", "2026.10.01-e373342"),
+          ...found("pi", "1.0.0"),
           verdict: {
             state: "limited",
-            restrictions: [
-              "external_sessions_unlisted",
-              "no_terminal_continuation",
-            ],
+            restrictions: ["no_permission_requests", "turn_errors_hidden"],
           },
         },
         found("opencode", "2.0.22"),
       ],
     );
     try {
-      const cursor = agentRow(harness.dom, "cursor");
-      expect(title(cursor)).toBe("Cursor2026.10.01-e373342");
-      expect(stateOf(cursor)).toBe(
-        "Only sessions started in Svode are listed: the agent's terminal and IDE sessions continue there · All restrictions",
+      const pi = agentRow(harness.dom, "pi");
+      expect(stateOf(pi)).toBe(
+        "The agent runs its tools without asking for permission · All restrictions",
       );
-      expect(switchOf(cursor).disabled).toBe(false);
-      expect(switchOf(cursor).getAttribute("aria-checked")).toBe("true");
+      expect(switchOf(pi).disabled).toBe(false);
+      expect(switchOf(pi).getAttribute("aria-checked")).toBe("true");
       await act(async () => {
-        within(cursor, "All restrictions").click();
+        within(pi, "All restrictions").click();
         await settle();
       });
       const items = Array.from(
@@ -1126,8 +1122,8 @@ if (!isolatedProcess) {
         ),
       ).map((item) => item.textContent);
       expect(items).toEqual([
-        "Only sessions started in Svode are listed: the agent's terminal and IDE sessions continue there",
-        "Sessions started in Svode cannot be continued in the agent's terminal",
+        "The agent runs its tools without asking for permission",
+        "A provider error ends the turn without a message",
       ]);
 
       const opencode = agentRow(harness.dom, "opencode");
