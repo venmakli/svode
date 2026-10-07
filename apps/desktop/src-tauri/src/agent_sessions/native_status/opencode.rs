@@ -328,6 +328,15 @@ pub(crate) mod fixture {
             }
             pool.close().await;
         });
+        // The last connection removes the WAL as it closes, which can come
+        // after `close` returns; a read meanwhile would see the store change.
+        let wal = super::wal_of(db);
+        for _ in 0..200 {
+            if !wal.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
 
