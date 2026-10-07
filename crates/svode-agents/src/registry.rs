@@ -916,6 +916,7 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Opencode => Some(NativeStatusStore::OpencodeDb),
             AgentAdapterKind::Pi => Some(NativeStatusStore::PiSessions),
             AgentAdapterKind::QwenCode => Some(NativeStatusStore::QwenChats),
+            AgentAdapterKind::GrokBuild => Some(NativeStatusStore::GrokSessionEvents),
             _ => None,
         }
     }
@@ -1032,6 +1033,9 @@ pub enum NativeStatusStore {
     /// `projects/<key>/chats/<id>.jsonl` with the process marker
     /// `<id>.runtime.json` under the Qwen homes (`07` N7).
     QwenChats,
+    /// `sessions/*/<id>/events.jsonl` under the Grok home, with the TUI's
+    /// `active_sessions.json` as the process signal (`07` N7).
+    GrokSessionEvents,
 }
 
 /// A declared catalogue source of some of an agent's origins (Stage 10 `02`
@@ -2319,6 +2323,14 @@ mod tests {
         assert_eq!(
             registry.terminal_resume_args(AgentAdapterKind::Codex, "s1"),
             Some(vec!["resume".to_string(), "s1".to_string()])
+        );
+    }
+
+    #[test]
+    fn grok_build_declares_its_session_events_as_its_native_status_store() {
+        assert_eq!(
+            AdapterRuntimeRegistry.native_status_store(AgentAdapterKind::GrokBuild),
+            Some(NativeStatusStore::GrokSessionEvents)
         );
     }
 

@@ -10,6 +10,7 @@
 
 pub(crate) mod claude_code;
 pub(crate) mod codex;
+pub(crate) mod grok_build;
 pub(crate) mod hermes;
 pub(crate) mod jsonl_tail;
 pub(crate) mod opencode;
@@ -307,6 +308,12 @@ fn source_of(
             home: home.to_path_buf(),
             var: agent_variable,
         })),
+        NativeStatusStore::GrokSessionEvents => {
+            let home = home.to_path_buf();
+            Arc::new(SessionLogs::new(grok_build::SessionEvents {
+                root: move || grok_build::grok_home(&home, agent_variable),
+            }))
+        }
     }
 }
 
