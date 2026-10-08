@@ -3859,6 +3859,56 @@ async fn a_prompt_linking_a_missing_file_is_refused_without_a_prompt_or_a_turn()
 }
 
 #[tokio::test]
+async fn a_prompt_links_a_directory_by_its_uri_ending_with_a_slash() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("notes");
+    std::fs::create_dir(&folder).unwrap();
+    let runtime = AgentRuntime::default();
+    let (_id, key, mut agent) = session(&runtime).await;
+    let turn = runtime
+        .prompt(
+            &key,
+            &[
+                PromptPart::text("Look in "),
+                PromptPart::File {
+                    path: folder.clone(),
+                    name: "notes".into(),
+                },
+            ],
+        )
+        .unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    let uri = format!("{}/", crate::prompt::file_uri(&folder));
+    assert_eq!(
+        prompt["params"]["prompt"],
+        json!([
+            { "type": "text", "text": "Look in " },
+            { "type": "resource_link", "uri": uri, "name": "notes" },
+        ])
+    );
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    let message = snapshot
+        .items
+        .iter()
+        .find(|item| item.id == format!("user:{turn}"))
+        .unwrap();
+    assert_eq!(
+        message.kind,
+        ItemKind::UserMessage {
+            segments: vec![
+                MessageSegment::Text {
+                    text: "Look in ".into()
+                },
+                MessageSegment::Link {
+                    uri,
+                    name: "notes".into()
+                },
+            ]
+        }
+    );
+}
+
+#[tokio::test]
 async fn a_replayed_user_message_keeps_its_links_and_images_in_order() {
     let runtime = AgentRuntime::default();
     let key = SessionKey::from_acp("scripted", "links", false);

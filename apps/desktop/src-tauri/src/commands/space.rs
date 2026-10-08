@@ -1072,18 +1072,35 @@ pub enum PathKind {
     Directory,
 }
 
-/// Whether `path` names a file or a folder; none when nothing is there.
+/// What is at a local path: a link to it opens it, a drop into the composer
+/// attaches it only when it can be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalPath {
+    pub kind: PathKind,
+    /// A file opens for reading, a folder lists its entries.
+    pub readable: bool,
+}
+
+/// Whether `path` names a file or a folder and can be read; none when
+/// nothing is there.
 #[tauri::command]
-pub fn path_kind(path: String) -> Result<Option<PathKind>, AppError> {
+pub fn path_kind(path: String) -> Result<Option<LocalPath>, AppError> {
     Ok(local_path_kind(Path::new(&path)))
 }
 
-fn local_path_kind(path: &Path) -> Option<PathKind> {
+fn local_path_kind(path: &Path) -> Option<LocalPath> {
     let metadata = std::fs::metadata(path).ok()?;
     Some(if metadata.is_dir() {
-        PathKind::Directory
+        LocalPath {
+            kind: PathKind::Directory,
+            readable: std::fs::read_dir(path).is_ok(),
+        }
     } else {
-        PathKind::File
+        LocalPath {
+            kind: PathKind::File,
+            readable: std::fs::File::open(path).is_ok(),
+        }
     })
 }
 
@@ -1359,9 +1376,42 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let file = temp.path().join("notes.md");
         std::fs::write(&file, "notes").expect("write file");
-        assert_eq!(local_path_kind(&file), Some(PathKind::File));
-        assert_eq!(local_path_kind(temp.path()), Some(PathKind::Directory));
+        let readable = |kind| {
+            Some(LocalPath {
+                kind,
+                readable: true,
+            })
+        };
+        assert_eq!(local_path_kind(&file), readable(PathKind::File));
+        assert_eq!(local_path_kind(temp.path()), readable(PathKind::Directory));
         assert_eq!(local_path_kind(&temp.path().join("gone.md")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_kind_tells_an_unreadable_file_or_folder_from_a_missing_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("temp dir");
+        let file = temp.path().join("secret.md");
+        let folder = temp.path().join("private");
+        std::fs::write(&file, "secret").expect("write file");
+        std::fs::create_dir(&folder).expect("create folder");
+        let closed = std::fs::Permissions::from_mode(0o000);
+        std::fs::set_permissions(&file, closed.clone()).expect("close file");
+        std::fs::set_permissions(&folder, closed).expect("close folder");
+        let file_kind = local_path_kind(&file);
+        let folder_kind = local_path_kind(&folder);
+        let open = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(&file, open.clone()).expect("open file");
+        std::fs::set_permissions(&folder, open).expect("open folder");
+        let unreadable = |kind| {
+            Some(LocalPath {
+                kind,
+                readable: false,
+            })
+        };
+        assert_eq!(file_kind, unreadable(PathKind::File));
+        assert_eq!(folder_kind, unreadable(PathKind::Directory));
     }
 
     #[test]

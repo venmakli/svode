@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { ArrowUp, Loader2, Square } from "lucide-react";
 import { MentionInputPlugin, MentionPlugin } from "@platejs/mention/react";
 import { SingleBlockPlugin } from "platejs";
@@ -20,6 +20,7 @@ import {
   showsRecordingRow,
   VoiceInputButton,
 } from "@/features/voice-input";
+import { isResourceDrag } from "@/features/space/resource-drag";
 import { matchesPhysicalShortcut } from "@/shared/lib/keyboard-shortcuts";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -34,10 +35,15 @@ import { takeEscape } from "@/shared/lib/escape-key";
 import { isKeyTaken } from "../../lib/session-content";
 import { composerKeyAction } from "../model/composer";
 import { useComposerDictation } from "../hooks/use-composer-dictation";
+import {
+  useComposerDropReceiver,
+  type ComposerDropReceiver,
+} from "../hooks/use-chat-drop";
 import { COMMAND_PLUGINS, SessionCommandsPlugin } from "./composer-commands";
 import {
   AttachMenu,
   AttachmentElementView,
+  insertDroppedAttachments,
   MentionSearchElement,
   pasteAttachments,
 } from "./composer-attachments";
@@ -84,7 +90,7 @@ export interface ComposerProps {
  * The composer field (Stage 10 `04`): a small Plate editor with one root
  * block, so line breaks stay `\n` and nothing is rendered as markdown.
  * Attachments are inline badges where they were added: "+", an `@`
- * search or a paste. Enter sends, Shift+Enter breaks the line, Enter that
+ * search, a paste or a drop on the session surface. Enter sends, Shift+Enter breaks the line, Enter that
  * ends an IME composition only ends it, and Esc stops a running turn.
  * The microphone dictates into the field; while it records, the recording
  * row takes the place of the bottom row and Esc cancels the recording.
@@ -123,6 +129,18 @@ export function Composer({
   }, [partsKey, editor]);
 
   const { dictation, sendAfterRef } = useComposerDictation(editor, draftKey);
+  useComposerDropReceiver(
+    useMemo<ComposerDropReceiver | null>(
+      () =>
+        sending
+          ? null
+          : {
+              insert: (attachments, point) =>
+                insertDroppedAttachments(editor, attachments, point),
+            },
+      [editor, sending],
+    ),
+  );
   const dictating = dictation.state.phase !== "idle";
 
   useEffect(() => {
@@ -192,6 +210,9 @@ export function Composer({
               sending && "text-muted-foreground",
             )}
             onPaste={(event) => pasteAttachments(editor, event)}
+            // Files and sidebar resources go to the session surface, which
+            // inserts them as badges, rather than in as their text.
+            onDrop={(event) => isResourceDrag(event.dataTransfer)}
             onKeyDown={(event) => {
               // Enter and Esc in an open `@` or `/` search choose or close
               // it first.

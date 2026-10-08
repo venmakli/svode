@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { File, FileText, FileX, Image } from "lucide-react";
+import { File, FileText, FileX, Folder, Image } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   HoverCard,
@@ -106,6 +106,7 @@ const KIND_ICONS: Record<AttachmentKind, typeof File> = {
   page: FileText,
   image: Image,
   file: File,
+  folder: Folder,
 };
 
 function AttachmentPreviewCard({
@@ -155,6 +156,7 @@ function AttachmentPreviewCard({
 function kindLabel(kind: AttachmentKind, path: string): string {
   if (kind === "page") return m.sessions_chat_attachment_page();
   if (kind === "image") return m.sessions_chat_attachment_image();
+  if (kind === "folder") return m.sessions_chat_attachment_folder();
   const extension = fileExtension(path);
   return extension
     ? m.sessions_chat_attachment_file_type({ type: extension.toUpperCase() })

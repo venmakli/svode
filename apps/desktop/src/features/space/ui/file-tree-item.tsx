@@ -217,6 +217,7 @@ export function FileTreeItem({
       projectPath,
       spacePath,
       relativePath: node.path,
+      title: node.title,
     });
   };
   const projectedConflictPath = node.name_conflict?.conflicts[0]?.path ?? null;

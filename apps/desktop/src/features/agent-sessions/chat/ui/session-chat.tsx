@@ -22,6 +22,7 @@ import type { ChatSessionState } from "../model/interface";
 import { sessionControls } from "../model/session-controls";
 import { toolCallOf } from "../model/timeline";
 import { AgentModelButton, unavailableText } from "./agent-button";
+import { ChatDropSurface } from "./chat-drop-surface";
 import { ChatTimeline } from "./chat-timeline";
 import { Composer } from "./composer";
 import { PendingCard } from "./pending-card";
@@ -113,12 +114,16 @@ export function SessionChat({
 
   if (!snapshot) {
     return error ? (
-      <ChatUnavailable />
+      <ChatDropSurface refusal={m.sessions_chat_unavailable()}>
+        <ChatUnavailable />
+      </ChatDropSurface>
     ) : (
-      <div className="flex h-full flex-col gap-3 px-6 py-4" aria-busy="true">
-        <Skeleton className="h-6 w-2/3 self-end" />
-        <Skeleton className="h-16 w-full" />
-      </div>
+      <ChatDropSurface refusal={m.sessions_chat_history_loading()}>
+        <div className="flex h-full flex-col gap-3 px-6 py-4" aria-busy="true">
+          <Skeleton className="h-6 w-2/3 self-end" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      </ChatDropSurface>
     );
   }
 
@@ -152,9 +157,18 @@ export function SessionChat({
   const mode = sessionControls(snapshot.settings).mode;
   const changeSetting = (value: Parameters<typeof settings.change>[0]) =>
     void settings.change(value);
+  // A drop goes into the draft only while the field is there to take it.
+  const dropRefusal = pending
+    ? m.sessions_chat_drop_answer_first()
+    : externalWriter
+      ? m.sessions_chat_external_writer()
+      : composer.sending || continuation?.attaching
+        ? m.sessions_chat_sending()
+        : null;
 
   return (
-    <div
+    <ChatDropSurface
+      refusal={dropRefusal}
       className="flex h-full min-h-0 flex-col"
       onKeyDown={(event) => {
         // Esc stops a running turn anywhere in the session, after menus
@@ -251,7 +265,7 @@ export function SessionChat({
           </div>
         </ComposerFooter>
       </div>
-    </div>
+    </ChatDropSurface>
   );
 }
 

@@ -5,6 +5,7 @@ import {
   draftParts,
   draftValue,
   fileUriToPath,
+  folderAttachment,
   isDraftBlank,
   locateAttachment,
   messageParts,
@@ -172,4 +173,21 @@ test("a file belongs to its innermost Space", () => {
   });
   expect(locateAttachment("/p/childish/a.md", spaces)?.spaceId).toBe("root");
   expect(locateAttachment("/elsewhere/a.md", spaces)).toBeNull();
+});
+
+test("a folder ends with its separator, and its replayed link is a folder again", () => {
+  expect(folderAttachment("/p/tasks", "Tasks")).toEqual({ path: "/p/tasks/", name: "Tasks" });
+  expect(folderAttachment("/p/tasks/")).toEqual({ path: "/p/tasks/", name: "tasks" });
+  expect(folderAttachment("C:\\work\\tasks").path).toBe("C:\\work\\tasks\\");
+  expect(attachmentKind("/p/tasks/")).toBe("folder");
+  expect(attachmentKind("/p/plan.md")).toBe("page");
+  expect(
+    messageParts(
+      [{ type: "link", uri: "file:///p/tasks/", name: "Tasks" }],
+      "@Tasks",
+    ),
+  ).toEqual([{ type: "attachment", attachment: { path: "/p/tasks/", name: "Tasks" } }]);
+  expect(messageParts([], "[@tasks](file:///p/tasks/)")).toEqual([
+    { type: "attachment", attachment: { path: "/p/tasks/", name: "tasks" } },
+  ]);
 });

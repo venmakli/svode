@@ -8,6 +8,8 @@ export interface SvodeDraggedResource {
   projectPath: string;
   spacePath: string;
   relativePath: string;
+  /** The title of its sidebar row; a chat badge shows it. */
+  title?: string;
 }
 
 export function serializeSvodeDraggedResource(
@@ -31,7 +33,8 @@ export function parseSvodeDraggedResource(
       typeof resource.relativePath !== "string" ||
       !resource.projectPath ||
       !resource.spacePath ||
-      !resource.relativePath
+      !resource.relativePath ||
+      (resource.title !== undefined && typeof resource.title !== "string")
     ) {
       return null;
     }

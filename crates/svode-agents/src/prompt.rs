@@ -1,7 +1,8 @@
 //! Prompt content (Stage 10 `02` C6): an ordered sequence of text and links
-//! to files. A link is never a copy of the file: the agent reads it with its
-//! own tools; an image also goes as an image block when the agent declares
-//! image prompts, so the model sees it where it was written.
+//! to files and directories. A link is never a copy of the file: the agent
+//! reads it with its own tools; an image also goes as an image block when
+//! the agent declares image prompts, so the model sees it where it was
+//! written.
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +26,8 @@ pub enum PromptPart {
     Text {
         text: String,
     },
-    /// A file by its absolute path, with the name its badge shows.
+    /// A file or a directory by its absolute path, with the name its badge
+    /// shows.
     File {
         path: PathBuf,
         name: String,
@@ -55,8 +57,8 @@ pub(crate) enum PromptBlock {
     },
 }
 
-/// Refuses a prompt that links a file that is not there, before a new
-/// session is created for it.
+/// Refuses a prompt that links a file or a directory that is not there,
+/// before a new session is created for it.
 pub fn check(parts: &[PromptPart]) -> Result<(), AgentRuntimeError> {
     for part in parts {
         if let PromptPart::File { path, .. } = part {
@@ -69,7 +71,7 @@ pub fn check(parts: &[PromptPart]) -> Result<(), AgentRuntimeError> {
 /// The blocks of a prompt in order. A link to a file that is not there is
 /// refused before anything is sent; an image follows its link as an image
 /// block when the agent declares image prompts and the file is within the
-/// bound.
+/// bound. A directory is a link only.
 pub(crate) fn blocks(
     parts: &[PromptPart],
     images: bool,
@@ -80,8 +82,8 @@ pub(crate) fn blocks(
             PromptPart::Text { text } => blocks.push(PromptBlock::Text(text.clone())),
             PromptPart::File { path, name } => {
                 let metadata = file(path)?;
-                let uri = file_uri(path);
-                let mime_type = image_mime_type(path);
+                let uri = link_uri(path);
+                let mime_type = image_mime_type(path).filter(|_| metadata.is_file());
                 blocks.push(PromptBlock::Link {
                     uri: uri.clone(),
                     name: name.clone(),
@@ -104,12 +106,24 @@ pub(crate) fn blocks(
     Ok(blocks)
 }
 
-/// A linked file: an absolute path to a file that is there.
+/// A linked file: an absolute path to a file or a directory that is there.
 fn file(path: &Path) -> Result<std::fs::Metadata, AgentRuntimeError> {
     match std::fs::metadata(path) {
-        Ok(metadata) if path.is_absolute() && metadata.is_file() => Ok(metadata),
+        Ok(metadata) if path.is_absolute() && (metadata.is_file() || metadata.is_dir()) => {
+            Ok(metadata)
+        }
         _ => Err(unavailable(path)),
     }
+}
+
+/// The `file://` URI a link sends: a directory's ends with `/`, so the
+/// agent and a replay of the message tell it from a file.
+fn link_uri(path: &Path) -> String {
+    let mut uri = file_uri(path);
+    if !uri.ends_with('/') && path.is_dir() {
+        uri.push('/');
+    }
+    uri
 }
 
 fn unavailable(path: &Path) -> AgentRuntimeError {
@@ -133,7 +147,7 @@ pub(crate) fn message(parts: &[PromptPart]) -> (String, Vec<MessageSegment>) {
                 text.push('@');
                 text.push_str(name);
                 segments.push(MessageSegment::Link {
-                    uri: file_uri(path),
+                    uri: link_uri(path),
                     name: name.clone(),
                 });
             }
@@ -243,11 +257,7 @@ mod tests {
     #[test]
     fn a_link_to_a_missing_or_relative_file_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        for path in [
-            dir.path().join("gone.md"),
-            PathBuf::from("note.md"),
-            dir.path().to_path_buf(),
-        ] {
+        for path in [dir.path().join("gone.md"), PathBuf::from("notes")] {
             let parts = [PromptPart::File {
                 path: path.clone(),
                 name: "x".into(),
@@ -259,6 +269,34 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn a_directory_is_a_link_ending_with_a_slash_without_an_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("shots.png");
+        std::fs::create_dir(&folder).unwrap();
+        let parts = [PromptPart::File {
+            path: folder.clone(),
+            name: "shots.png".into(),
+        }];
+        let uri = format!("{}/", file_uri(&folder));
+        assert_eq!(
+            blocks(&parts, true).unwrap(),
+            [PromptBlock::Link {
+                uri: uri.clone(),
+                name: "shots.png".into(),
+                mime_type: None,
+            }]
+        );
+        assert_eq!(
+            message(&parts).1,
+            [MessageSegment::Link {
+                uri,
+                name: "shots.png".into()
+            }]
+        );
+        assert!(check(&parts).is_ok());
     }
 
     #[test]

@@ -7,9 +7,18 @@ export function pathExists(path: string): Promise<boolean> {
 
 export type PathKindDto = "file" | "directory";
 
-/** Whether `path` names a file or a folder; null when nothing is there. */
-export function pathKind(path: string): Promise<PathKindDto | null> {
-  return invokeCommand<PathKindDto | null>("path_kind", { path });
+export interface LocalPathDto {
+  kind: PathKindDto;
+  /** A file opens for reading, a folder lists its entries. */
+  readable: boolean;
+}
+
+/**
+ * Whether `path` names a file or a folder and can be read; null when
+ * nothing is there.
+ */
+export function pathKind(path: string): Promise<LocalPathDto | null> {
+  return invokeCommand<LocalPathDto | null>("path_kind", { path });
 }
 
 /** The user's home folder. */

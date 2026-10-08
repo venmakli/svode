@@ -36,6 +36,7 @@ import {
   AgentRecovery,
   unavailableText,
 } from "./agent-button";
+import { ChatDropSurface } from "./chat-drop-surface";
 import { Composer } from "./composer";
 import { ComposerFooter } from "./session-chat";
 import {
@@ -109,7 +110,16 @@ export function NewSessionDraft({
     void draft.changeSetting(value);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <ChatDropSurface
+      refusal={
+        noAgents
+          ? m.sessions_chat_no_agents()
+          : draft.sending
+            ? m.sessions_chat_sending()
+            : null
+      }
+      className="flex h-full min-h-0 flex-col"
+    >
       <header className="flex shrink-0 items-center gap-2 px-6 pb-3">
         <h2 className="min-w-0 flex-1 truncate text-lg font-semibold">
           {m.sessions_new_title()}
@@ -231,7 +241,7 @@ export function NewSessionDraft({
           }}
         />
       )}
-    </div>
+    </ChatDropSurface>
   );
 }
 

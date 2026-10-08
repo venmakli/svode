@@ -25,3 +25,13 @@ test("rejects unknown resource payload versions and malformed JSON", () => {
   ).toBeNull();
   expect(parseSvodeDraggedResource("not-json")).toBeNull();
 });
+
+test("keeps the row title and rejects one that is not text", () => {
+  const titled = { ...resource, title: "Tasks" };
+  expect(
+    parseSvodeDraggedResource(serializeSvodeDraggedResource(titled)),
+  ).toEqual(titled);
+  expect(
+    parseSvodeDraggedResource(JSON.stringify({ ...resource, title: 7 })),
+  ).toBeNull();
+});

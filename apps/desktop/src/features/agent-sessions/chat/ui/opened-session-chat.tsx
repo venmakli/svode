@@ -26,6 +26,7 @@ import { signInAgent, type AgentSessionKeyDto } from "../api/chat";
 import { useSessionOpening } from "../hooks/use-session-opening";
 import type { ChatSessionState, ChatUnavailableReason } from "../model/interface";
 import { AgentRecovery } from "./agent-button";
+import { ChatDropSurface } from "./chat-drop-surface";
 import { SessionChat } from "./session-chat";
 import * as m from "@/paraglide/messages.js";
 
@@ -105,16 +106,18 @@ export function OpenedSessionChat({
   }
   if (state.state === "opening") {
     return (
-      <div
-        className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-4"
-        aria-busy="true"
-      >
-        <p className="text-sm text-muted-foreground">
-          {m.sessions_chat_history_loading()}
-        </p>
-        <Skeleton className="h-6 w-2/3 self-end" />
-        <Skeleton className="h-16 w-full" />
-      </div>
+      <ChatDropSurface refusal={m.sessions_chat_history_loading()}>
+        <div
+          className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-4"
+          aria-busy="true"
+        >
+          <p className="text-sm text-muted-foreground">
+            {m.sessions_chat_history_loading()}
+          </p>
+          <Skeleton className="h-6 w-2/3 self-end" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      </ChatDropSurface>
     );
   }
 
@@ -223,7 +226,9 @@ export function OpenedSessionChat({
 
   return (
     <>
-      {body}
+      <ChatDropSurface refusal={OPENING_REFUSALS[state.state]()}>
+        {body}
+      </ChatDropSurface>
       {signIn && (
         <AgentSignInDialog
           agent={dictionary.label(agent)}
@@ -238,6 +243,22 @@ export function OpenedSessionChat({
     </>
   );
 }
+
+/** Why a drop is refused while the opening state takes the field's place. */
+const OPENING_REFUSALS: Record<
+  | "confirmation_required"
+  | "external_active"
+  | "terminal_active"
+  | "auth_required"
+  | "failed",
+  () => string
+> = {
+  confirmation_required: m.sessions_chat_load_history_title,
+  external_active: m.sessions_chat_external_writer_title,
+  terminal_active: m.sessions_chat_terminal_writer_title,
+  auth_required: m.sessions_chat_agent_unavailable_title,
+  failed: m.sessions_chat_open_failed_title,
+};
 
 function OpeningState({
   icon,

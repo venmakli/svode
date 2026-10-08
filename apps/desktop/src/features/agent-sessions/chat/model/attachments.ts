@@ -13,7 +13,7 @@ export interface Attachment {
   name: string;
 }
 
-export type AttachmentKind = "page" | "image" | "file";
+export type AttachmentKind = "page" | "image" | "file" | "folder";
 
 const IMAGE_EXTENSIONS = new Set([
   "png",
@@ -34,7 +34,13 @@ export function fileExtension(path: string): string {
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
+/**
+ * What a badge shows by the path alone. A folder's path ends with its
+ * separator, as the URI of a linked directory does (`02` C6), so a replayed
+ * message shows it as a folder too.
+ */
 export function attachmentKind(path: string): AttachmentKind {
+  if (/[\\/]$/.test(path)) return "folder";
   const extension = fileExtension(path);
   if (extension === "md") return "page";
   return IMAGE_EXTENSIONS.has(extension) ? "image" : "file";
@@ -46,6 +52,13 @@ export function fileName(path: string): string {
 
 export function attachmentOf(path: string, name?: string): Attachment {
   return { path, name: name ?? fileName(path) };
+}
+
+/** A folder or a collection: its path ends with the separator. */
+export function folderAttachment(path: string, name?: string): Attachment {
+  const separator = path.includes("/") || !path.includes("\\") ? "/" : "\\";
+  const folder = /[\\/]$/.test(path) ? path : path + separator;
+  return attachmentOf(folder, name);
 }
 
 /** A draft as written: text and attachments in order. */

@@ -64,13 +64,44 @@ export function insertAttachments(
 ) {
   if (attachments.length === 0) return;
   if (!editor.selection) editor.tf.select(editor.api.end([]));
-  editor.tf.withoutNormalizing(() => {
-    for (const attachment of attachments) {
-      editor.tf.insertNodes(attachmentElement(attachment));
-      editor.tf.move({ unit: "offset" });
-      editor.tf.insertText(" ");
-    }
-  });
+  // The space goes in with its badge: at the end of the draft there is no
+  // text after a new badge to move into until the editor normalizes.
+  editor.tf.insertNodes(
+    attachments.flatMap((attachment) => [
+      attachmentElement(attachment),
+      { text: " " },
+    ]),
+  );
+}
+
+/**
+ * Inserts dropped badges (`08` R5): at the drop point over the field, else
+ * at the field's caret, or at the end of the draft when the field did not
+ * have focus. The field then takes focus.
+ */
+export function insertDroppedAttachments(
+  editor: PlateEditor,
+  attachments: Attachment[],
+  point: { x: number; y: number },
+) {
+  const field = editor.api.toDOMNode(editor);
+  const ownerDocument = field?.ownerDocument ?? document;
+  const target = ownerDocument.elementFromPoint?.(point.x, point.y) ?? null;
+  const range =
+    field && target && field.contains(target)
+      ? editor.api.findEventRange({
+          clientX: point.x,
+          clientY: point.y,
+          target,
+        })
+      : undefined;
+  if (range) {
+    editor.tf.select(range);
+  } else if (!field?.contains(ownerDocument.activeElement)) {
+    editor.tf.select(editor.api.end([]));
+  }
+  editor.tf.focus();
+  insertAttachments(editor, attachments);
 }
 
 /**

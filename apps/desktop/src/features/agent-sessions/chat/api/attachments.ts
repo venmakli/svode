@@ -1,4 +1,5 @@
 import { searchEntriesByTitle } from "@/features/search";
+import type { SvodeDraggedResource } from "@/features/space/resource-drag";
 import {
   homeDirectory,
   pathExists,
@@ -15,10 +16,30 @@ import {
 import { openDialog } from "@/platform/native/dialog";
 import { openPath } from "@/platform/native/shell";
 import { readPage } from "@/platform/pages/pages-api";
-import { attachmentOf, type Attachment } from "../model/attachments";
+import {
+  attachmentKind,
+  attachmentOf,
+  fileName,
+  folderAttachment,
+  type Attachment,
+} from "../model/attachments";
 
 export { pathExists as attachmentExists, readClipboardFilePaths, savePastedImage };
-export { pathKind as localPathKind, type PathKindDto as LocalPathKind };
+export type { PathKindDto as LocalPathKind };
+
+/**
+ * Whether `path` names a file or a folder; null when nothing is there. A
+ * link opens what it cannot read as well.
+ */
+export async function localPathKind(path: string): Promise<PathKindDto | null> {
+  return (await pathKind(path))?.kind ?? null;
+}
+
+/** What a drop attaches: a file or a folder that can be read, else null. */
+async function readableKind(path: string): Promise<PathKindDto | null> {
+  const local = await pathKind(path).catch(() => null);
+  return local?.readable ? local.kind : null;
+}
 
 /** A web page in the browser, a folder in the file manager, a file in its app. */
 export { openPath as openInSystem };
@@ -79,6 +100,72 @@ export async function searchMentionTargets(
     });
   }
   return targets;
+}
+
+/**
+ * What a drop attaches (`08` R5), or the names of what is not there or
+ * cannot be read: then nothing is attached.
+ */
+export type DroppedAttachments =
+  | { ok: true; attachments: Attachment[] }
+  | { ok: false; unavailable: string[] };
+
+/** Files and folders of the OS: a folder links its directory. */
+export async function droppedPathAttachments(
+  paths: string[],
+): Promise<DroppedAttachments> {
+  const kinds = await Promise.all(
+    paths.map((path) => readableKind(path)),
+  );
+  const unavailable = paths.filter((_, index) => kinds[index] === null);
+  if (unavailable.length > 0) {
+    return { ok: false, unavailable: unavailable.map((path) => fileName(path)) };
+  }
+  return {
+    ok: true,
+    attachments: paths.map((path, index) =>
+      kinds[index] === "directory" ? folderAttachment(path) : attachmentOf(path),
+    ),
+  };
+}
+
+/**
+ * A sidebar resource: a page by its title, as an `@` mention gives it, a
+ * file by its name, a folder or a collection by its directory.
+ */
+export async function droppedResourceAttachment(
+  resource: SvodeDraggedResource,
+): Promise<DroppedAttachments> {
+  const title = resource.title || undefined;
+  const name = title ?? fileName(resource.relativePath);
+  const relative = resource.relativePath.split(/[\\/]/);
+  if (
+    /^([\\/]|[A-Za-z]:)/.test(resource.relativePath) ||
+    relative.includes("..")
+  ) {
+    return { ok: false, unavailable: [name] };
+  }
+  const path = joinPath(resource.spacePath, resource.relativePath);
+  const kind = await readableKind(path);
+  if (kind === null) return { ok: false, unavailable: [name] };
+  if (kind === "file") {
+    return {
+      ok: true,
+      attachments: [
+        attachmentKind(path) === "page"
+          ? attachmentOf(path, title)
+          : attachmentOf(path),
+      ],
+    };
+  }
+  if (resource.kind === "file") {
+    // A page with its own directory is its README.
+    const readme = joinPath(path, "README.md");
+    if ((await readableKind(readme)) === "file") {
+      return { ok: true, attachments: [attachmentOf(readme, name)] };
+    }
+  }
+  return { ok: true, attachments: [folderAttachment(path, name)] };
 }
 
 const IMAGE_PREVIEW_LIMIT = 10 * 1024 * 1024;

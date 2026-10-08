@@ -38,6 +38,8 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
     "/Users/me/todo.txt",
   ]);
   const folders = new Set(["/work/project/docs", "/Users/me/Downloads"]);
+  /** There but not readable: a link still opens it. */
+  const unreadable = new Set(["/Users/me/todo.txt"]);
   const checked: string[] = [];
   const shellOpened: string[] = [];
   let fetches = 0;
@@ -49,8 +51,9 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
     const payload = (args ?? {}) as { path?: string };
     if (command === "path_kind") {
       checked.push(payload.path!);
-      if (files.has(payload.path!)) return "file";
-      if (folders.has(payload.path!)) return "directory";
+      const readable = !unreadable.has(payload.path!);
+      if (files.has(payload.path!)) return { kind: "file", readable };
+      if (folders.has(payload.path!)) return { kind: "directory", readable };
       return null;
     }
     if (command === "plugin:path|resolve_directory") return "/Users/me";

@@ -1,4 +1,4 @@
-import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { clearMocks, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 export function mockNativeIpc(
   handler: Parameters<typeof mockIPC>[0],
@@ -9,4 +9,9 @@ export function mockNativeIpc(
 
 export function clearNativeMocks() {
   clearMocks();
+}
+
+/** The current window and webview, for code that listens to window events. */
+export function mockNativeWindow(label = "main") {
+  mockWindows(label);
 }

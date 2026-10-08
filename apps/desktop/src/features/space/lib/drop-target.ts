@@ -33,6 +33,22 @@ export function isPointInsideDropTarget(
   );
 }
 
+/**
+ * Whether a native drop point lies on `target`: inside its bounds and not
+ * under another surface drawn over it, such as a peek over a terminal.
+ */
+export function isPointOnDropTarget(
+  point: LogicalPoint,
+  target: Element,
+  ownerDocument: Pick<Document, "elementFromPoint"> = target.ownerDocument,
+): boolean {
+  if (!isPointInsideDropTarget(point, target.getBoundingClientRect())) {
+    return false;
+  }
+  const hit = ownerDocument.elementFromPoint?.(point.x, point.y) ?? null;
+  return hit === null || target.contains(hit);
+}
+
 export function reduceNativeDropTarget(
   state: NativeDropTargetState,
   event: NativeDropTargetEvent,
