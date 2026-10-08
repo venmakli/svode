@@ -3,12 +3,15 @@
 //! C4). Lives in the runtime owner process only; nothing here is persisted.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime};
 
+use svode_core::agent_adapters::AgentAdapterKind;
 use tokio::sync::broadcast;
 
+use crate::acp::mcp;
 use crate::acp::media::{self, MediaPart};
 use crate::acp::normalize::{self, DeclaredSettings, MessageRole, Normalized, ToolUpdate};
 use crate::activity::{
@@ -17,6 +20,7 @@ use crate::activity::{
     PendingInteraction, PlanEntry, SessionDelta, SessionSetting, SessionSnapshot, ToolKind,
     Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
 };
+use crate::changes::ToolPaths;
 use crate::identity::SessionKey;
 use crate::interaction::InteractionAnswer;
 use crate::runtime::Retention;
@@ -71,14 +75,12 @@ impl MediaData {
     }
 }
 
-/// What the media segments of a tool call are made of; updates of the call
-/// change its parts, locations and MCP form separately.
+/// What the media segments of a tool call are made of; its locations and
+/// MCP form are the call's [`ToolPaths`].
 #[derive(Default)]
 struct ToolMedia {
     /// Without their data, which is held by segment index.
     parts: Vec<MediaPart>,
-    locations: Vec<String>,
-    mcp: bool,
 }
 
 /// A `session/load` replay in progress. ACP v1 replays turns without
@@ -102,6 +104,10 @@ pub(crate) struct Projection {
     /// Media data of items by segment index.
     media: HashMap<String, Vec<MediaData>>,
     tool_media: HashMap<String, ToolMedia>,
+    /// What the updates of each tool call said about its files.
+    tool_paths: HashMap<String, ToolPaths>,
+    /// The session's directory; Svode MCP paths are resolved from it.
+    cwd: PathBuf,
     /// Item that chunks without a `messageId` extend, with its role.
     open_message: Option<(MessageRole, String)>,
     next_local_id: u64,
@@ -125,6 +131,7 @@ impl Projection {
     /// replay turns until [`Projection::end_replay`].
     pub(crate) fn new(
         session: SessionKey,
+        cwd: PathBuf,
         connection: ConnectionState,
         history: HistoryState,
         replay: bool,
@@ -157,6 +164,8 @@ impl Projection {
             details: HashMap::new(),
             media: HashMap::new(),
             tool_media: HashMap::new(),
+            tool_paths: HashMap::new(),
+            cwd,
             open_message: None,
             next_local_id: 0,
             retention,
@@ -725,19 +734,17 @@ impl Projection {
         id: &str,
         tool: ToolKind,
         status: Option<ItemStatus>,
+        paths: &ToolPaths,
         update: &mut ToolUpdate,
     ) -> Vec<MediaSegment> {
         let mut state = self.tool_media.remove(id).unwrap_or_default();
-        if let Some(locations) = update.locations.take() {
-            state.locations = locations;
-        }
-        state.mcp |= update.mcp;
+        let mcp = paths.is_mcp();
         let mut has_data = Vec::new();
         if let Some(parts) = update.media.take() {
             self.take_media(id);
             let mut data = Vec::new();
             state.parts.clear();
-            for part in parts.into_iter().filter(|part| state.mcp || !part.mcp_only) {
+            for part in parts.into_iter().filter(|part| mcp || !part.mcp_only) {
                 let (part, datum) = self.hold(part);
                 state.parts.push(part);
                 data.push(datum);
@@ -760,7 +767,7 @@ impl Projection {
                 if tool == ToolKind::Read
                     && part.kind == MediaKind::Image
                     && part.path.is_none()
-                    && let Some(path) = state.locations.first()
+                    && let Some(path) = paths.agent_locations().first()
                 {
                     part.name = part.name.or_else(|| {
                         std::path::Path::new(path)
@@ -774,8 +781,8 @@ impl Projection {
             })
             .collect();
         if segments.is_empty() && tool == ToolKind::Read && status != Some(ItemStatus::Failed) {
-            for part in state
-                .locations
+            for part in paths
+                .agent_locations()
                 .iter()
                 .filter_map(|path| media::read_file(path))
             {
@@ -824,8 +831,24 @@ impl Projection {
         };
         let tool = update.tool.unwrap_or(known_tool);
         let status = update.status.or(status);
-        let media = self.tool_segments(&update.id.clone(), tool, status, &mut update);
-        let kind = ItemKind::ToolCall { tool, media };
+        let agent = AgentAdapterKind::from_id(&self.snapshot.session.agent);
+        let mut paths = self.tool_paths.remove(&update.id).unwrap_or_default();
+        let calls = mcp::recognize(agent, &update.facts, &paths.tools());
+        paths.update(
+            agent,
+            &self.cwd,
+            update.locations.take(),
+            update.blocks.as_deref(),
+            calls,
+        );
+        let media = self.tool_segments(&update.id.clone(), tool, status, &paths, &mut update);
+        let kind = ItemKind::ToolCall {
+            tool,
+            media,
+            locations: paths.locations(tool, status),
+            mcp_calls: paths.call_refs(),
+        };
+        self.tool_paths.insert(update.id.clone(), paths);
         let mut has_detail = known.as_ref().is_some_and(|item| item.has_detail);
         if let Some(blocks) = update.blocks {
             has_detail = !blocks.is_empty();
@@ -961,6 +984,7 @@ impl Projection {
             }
             self.take_media(id);
             self.tool_media.remove(id);
+            self.tool_paths.remove(id);
         }
         if self
             .open_message
@@ -1147,6 +1171,20 @@ fn compact_size(item: &ActivityItem) -> usize {
             ItemKind::Generic { label } => label.len(),
             ItemKind::Plan { entries } => entries.iter().map(|entry| entry.content.len()).sum(),
             ItemKind::Interaction { option, .. } => option.as_ref().map_or(0, String::len),
+            ItemKind::ToolCall {
+                locations,
+                mcp_calls,
+                ..
+            } => {
+                locations
+                    .iter()
+                    .map(|location| location.path.len() + ITEM_OVERHEAD / 4)
+                    .sum::<usize>()
+                    + mcp_calls
+                        .iter()
+                        .map(|call| call.server.len() + call.tool.len())
+                        .sum::<usize>()
+            }
             _ => 0,
         };
     ITEM_OVERHEAD
@@ -1261,6 +1299,293 @@ fn block_size(block: &DetailBlock) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    use serde_json::{Value, json};
+
+    use crate::activity::{FileChange, McpCallRef, ToolLocation};
+    use crate::identity::IdentityNamespace;
+
+    /// A Svode project to resolve the paths of Svode MCP calls in.
+    fn project() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join(".svode")).unwrap();
+        std::fs::write(root.join(".svode/config.json"), "{}").unwrap();
+        (dir, root)
+    }
+
+    /// The tool call items a session of `agent` in `cwd` has after
+    /// `updates`, live or as a `session/load` replay.
+    fn tool_calls(agent: &str, cwd: &Path, replay: bool, updates: &[Value]) -> Vec<ItemKind> {
+        let mut projection = Projection::new(
+            SessionKey {
+                agent: agent.into(),
+                namespace: IdentityNamespace::Acp,
+                session_id: "s1".into(),
+            },
+            cwd.to_path_buf(),
+            ConnectionState::Ready,
+            Projection::live_history(),
+            replay,
+            WriterState::None,
+            Retention::default(),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        for update in updates {
+            let (_, normalized) = normalize::session_update(
+                json!({ "sessionId": "s1", "update": update }),
+                AgentAdapterKind::from_id(agent),
+            )
+            .unwrap();
+            projection.apply(normalized);
+        }
+        projection
+            .snapshot
+            .items
+            .iter()
+            .filter(|item| matches!(item.kind, ItemKind::ToolCall { .. }))
+            .map(|item| item.kind.clone())
+            .collect()
+    }
+
+    fn svode_call(server: &str, tool: &str, changes_project: bool) -> Vec<McpCallRef> {
+        vec![McpCallRef {
+            server: server.into(),
+            tool: tool.into(),
+            changes_project,
+        }]
+    }
+
+    fn location(path: PathBuf, change: FileChange) -> Vec<ToolLocation> {
+        vec![ToolLocation {
+            path: path.to_string_lossy().into_owned(),
+            change: Some(change),
+            lines: None,
+        }]
+    }
+
+    fn codex_call(id: &str, tool: &str, arguments: Value) -> Value {
+        json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": id,
+            "kind": "execute",
+            "title": format!("mcp.svode.{tool}"),
+            "status": "in_progress",
+            "rawInput": { "server": "svode", "tool": tool, "arguments": arguments },
+            "_meta": { "is_mcp_tool_call": true }
+        })
+    }
+
+    fn codex_result(id: &str, structured: Value) -> Value {
+        json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": id,
+            "status": "completed",
+            "rawOutput": { "result": { "content": [{ "type": "text", "text": "Done." }], "structuredContent": structured, "_meta": null }, "error": null }
+        })
+    }
+
+    #[test]
+    fn a_codex_mcp_call_names_its_server_and_tool_and_its_svode_paths_live_and_in_replay() {
+        let (_dir, root) = project();
+        let live = [
+            codex_call(
+                "exec-1",
+                "write_page",
+                json!({ "path": "notes/a.md", "content": "x", "sourceVersion": "v", "spaceId": "root" }),
+            ),
+            codex_result(
+                "exec-1",
+                json!({ "path": "notes/a.md", "changedPaths": ["notes/a.md"] }),
+            ),
+            codex_call(
+                "exec-2",
+                "create_page",
+                json!({ "parentPath": "notes", "title": "B" }),
+            ),
+            codex_result(
+                "exec-2",
+                json!({ "path": "notes/B.md", "changedPaths": [".svode/order.json", "notes/B.md"] }),
+            ),
+        ];
+        let expected = vec![
+            ItemKind::ToolCall {
+                tool: ToolKind::Execute,
+                media: Vec::new(),
+                locations: location(root.join("notes/a.md"), FileChange::Modified),
+                mcp_calls: svode_call("svode", "write_page", true),
+            },
+            ItemKind::ToolCall {
+                tool: ToolKind::Execute,
+                media: Vec::new(),
+                locations: location(root.join("notes/B.md"), FileChange::Created),
+                mcp_calls: svode_call("svode", "create_page", true),
+            },
+        ];
+        assert_eq!(tool_calls("codex", &root, false, &live), expected);
+
+        // A replay sends each call whole.
+        let mut replayed = Vec::new();
+        for pair in live.chunks(2) {
+            let mut call = pair[0].clone();
+            call["status"] = json!("completed");
+            call["rawOutput"] = pair[1]["rawOutput"].clone();
+            replayed.push(call);
+        }
+        assert_eq!(tool_calls("codex", &root, true, &replayed), expected);
+
+        // The path only the result names is not known before it.
+        assert_eq!(
+            tool_calls("codex", &root, false, &live[2..3]),
+            vec![ItemKind::ToolCall {
+                tool: ToolKind::Execute,
+                media: Vec::new(),
+                locations: Vec::new(),
+                mcp_calls: svode_call("svode", "create_page", true),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_claude_code_mcp_call_streams_its_arguments_and_names_its_result_path() {
+        let (_dir, root) = project();
+        let meta = |tool: &str| json!({ "claudeCode": { "toolName": tool } });
+        let created = "mcp__plugin_svode_svode__create_page";
+        let written = "mcp__svode__write_page";
+        let updates = [
+            json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_1", "title": created, "kind": "other", "status": "pending", "rawInput": {}, "content": [], "_meta": meta(created) }),
+            json!({ "sessionUpdate": "tool_call_update", "toolCallId": "toolu_1", "rawInput": { "spaceId": "root", "parentPath": "notes" }, "_meta": meta(created) }),
+            json!({ "sessionUpdate": "tool_call_update", "toolCallId": "toolu_1", "status": "completed",
+                "rawOutput": "{\"changedPaths\":[\".svode/order.json\",\"notes/E06 page.md\"],\"path\":\"notes/E06 page.md\"}",
+                "content": [{ "type": "content", "content": { "type": "text", "text": "{\"path\":\"notes/E06 page.md\"}" } }],
+                "_meta": meta(created) }),
+            json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_2", "title": written, "kind": "other", "status": "pending", "rawInput": { "path": "notes/a.md", "content": "x", "sourceVersion": "v" }, "_meta": meta(written) }),
+        ];
+        assert_eq!(
+            tool_calls("claude-code", &root, false, &updates),
+            vec![
+                ItemKind::ToolCall {
+                    tool: ToolKind::Other,
+                    media: Vec::new(),
+                    locations: location(root.join("notes/E06 page.md"), FileChange::Created),
+                    mcp_calls: svode_call("plugin_svode_svode", "create_page", true),
+                },
+                ItemKind::ToolCall {
+                    tool: ToolKind::Other,
+                    media: Vec::new(),
+                    locations: location(root.join("notes/a.md"), FileChange::Modified),
+                    mcp_calls: svode_call("svode", "write_page", true),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_svode_call_and_a_read_change_nothing() {
+        let (_dir, root) = project();
+        let failed_codex = [
+            codex_call(
+                "exec-1",
+                "write_page",
+                json!({ "path": "notes/a.md", "content": "x", "sourceVersion": "v" }),
+            ),
+            json!({ "sessionUpdate": "tool_call_update", "toolCallId": "exec-1", "status": "failed", "rawOutput": { "result": null, "error": "SOURCE_STALE" } }),
+            codex_call("exec-2", "read_page", json!({ "path": "notes/a.md" })),
+        ];
+        assert_eq!(
+            tool_calls("codex", &root, false, &failed_codex),
+            vec![
+                ItemKind::ToolCall {
+                    tool: ToolKind::Execute,
+                    media: Vec::new(),
+                    locations: Vec::new(),
+                    mcp_calls: svode_call("svode", "write_page", true),
+                },
+                ItemKind::ToolCall {
+                    tool: ToolKind::Execute,
+                    media: Vec::new(),
+                    locations: Vec::new(),
+                    mcp_calls: svode_call("svode", "read_page", false),
+                },
+            ]
+        );
+        let tool = "mcp__svode__delete_page";
+        let failed_claude = [
+            json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_1", "title": tool, "kind": "other", "status": "pending", "rawInput": { "path": "notes/a.md" }, "_meta": { "claudeCode": { "toolName": tool } } }),
+            json!({ "sessionUpdate": "tool_call_update", "toolCallId": "toolu_1", "status": "failed", "rawOutput": "MCP error -32602: not found", "_meta": { "claudeCode": { "toolName": tool } } }),
+        ];
+        assert_eq!(
+            tool_calls("claude-code", &root, false, &failed_claude),
+            vec![ItemKind::ToolCall {
+                tool: ToolKind::Other,
+                media: Vec::new(),
+                locations: Vec::new(),
+                mcp_calls: svode_call("svode", "delete_page", true),
+            }]
+        );
+    }
+
+    #[test]
+    fn an_unknown_form_and_a_lookalike_title_stay_items_of_their_kind() {
+        let (_dir, root) = project();
+        let lookalike = json!({
+            "sessionUpdate": "tool_call", "toolCallId": "t1", "kind": "execute",
+            "title": "mcp.svode.write_page", "status": "completed",
+            "rawInput": { "server": "svode", "tool": "write_page", "arguments": { "path": "notes/a.md" } }
+        });
+        assert_eq!(
+            tool_calls("codex", &root, false, &[lookalike]),
+            vec![ItemKind::ToolCall {
+                tool: ToolKind::Execute,
+                media: Vec::new(),
+                locations: Vec::new(),
+                mcp_calls: Vec::new(),
+            }]
+        );
+        let other_agent = json!({
+            "sessionUpdate": "tool_call", "toolCallId": "t1", "kind": "other",
+            "title": "mcp__svode__write_page", "status": "completed",
+            "rawInput": { "path": "notes/a.md" },
+            "_meta": { "claudeCode": { "toolName": "mcp__svode__write_page" } }
+        });
+        assert_eq!(
+            tool_calls("opencode", &root, false, &[other_agent]),
+            vec![ItemKind::ToolCall {
+                tool: ToolKind::Other,
+                media: Vec::new(),
+                locations: Vec::new(),
+                mcp_calls: Vec::new(),
+            }]
+        );
+    }
+
+    #[test]
+    fn an_edit_names_its_files_with_the_lines_its_diff_changes() {
+        let (_dir, root) = project();
+        let path = root.join("edit-me.txt").to_string_lossy().into_owned();
+        let updates = [
+            json!({ "sessionUpdate": "tool_call", "toolCallId": "toolu_1", "title": "Edit edit-me.txt", "kind": "edit", "status": "pending", "locations": [{ "path": path }] }),
+            json!({ "sessionUpdate": "tool_call_update", "toolCallId": "toolu_1", "status": "completed",
+                "content": [{ "type": "diff", "path": path, "oldText": "line one\nline two", "newText": "line one\nline 2" }] }),
+        ];
+        assert_eq!(
+            tool_calls("claude-code", &root, false, &updates),
+            vec![ItemKind::ToolCall {
+                tool: ToolKind::Edit,
+                media: Vec::new(),
+                locations: vec![ToolLocation {
+                    path,
+                    change: Some(FileChange::Modified),
+                    lines: Some(crate::activity::LineChanges {
+                        added: 1,
+                        removed: 1
+                    }),
+                }],
+                mcp_calls: Vec::new(),
+            }]
+        );
+    }
 
     fn parts(block: &DetailBlock) -> (&str, u64, &str) {
         match block {

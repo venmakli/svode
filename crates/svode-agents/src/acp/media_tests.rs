@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -7,8 +7,9 @@ use serde_json::{Value, json};
 use super::*;
 use crate::acp::normalize::{self, Normalized};
 use crate::activity::{
-    ActivityItem, ConnectionState, DetailOutcome, HistorySource, HistoryState, ItemKind,
-    MediaOutcome, MediaSegment, SessionSnapshot, UnavailableReason, WriterState,
+    ActivityItem, ConnectionState, DetailOutcome, FileChange, HistorySource, HistoryState,
+    ItemKind, McpCallRef, MediaOutcome, MediaSegment, SessionSnapshot, ToolLocation,
+    UnavailableReason, WriterState,
 };
 use crate::identity::SessionKey;
 use crate::projection::Projection;
@@ -61,6 +62,9 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("svode-e06")).unwrap();
         std::fs::write(dir.path().join("svode-e06/pixel.png"), b"\x89PNG").unwrap();
+        // A Svode project, so the paths of its Svode MCP calls resolve.
+        std::fs::create_dir_all(dir.path().join("svode-e06/.svode")).unwrap();
+        std::fs::write(dir.path().join("svode-e06/.svode/config.json"), "{}").unwrap();
         let project = dir.path().join("svode-e06");
         let scratch = dir.path().join("scratch");
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -104,8 +108,9 @@ impl Fixture {
 
     /// Runs the log through the normalizer and a projection per phase.
     fn run(&self, agent: AgentAdapterKind, retention: Retention) -> Run {
-        let mut live = projection(agent, false, retention);
-        let mut replay = projection(agent, true, retention);
+        let project = self.dir.path().join("svode-e06");
+        let mut live = projection(agent, false, retention, &project);
+        let mut replay = projection(agent, true, retention, &project);
         let mut turns = 0;
         for (phase, message) in &self.lines {
             let target = match phase.as_str() {
@@ -144,7 +149,12 @@ impl Fixture {
     }
 }
 
-fn projection(agent: AgentAdapterKind, replay: bool, retention: Retention) -> Projection {
+fn projection(
+    agent: AgentAdapterKind,
+    replay: bool,
+    retention: Retention,
+    cwd: &Path,
+) -> Projection {
     let history = match replay {
         true => HistoryState {
             source: HistorySource::Replay,
@@ -155,6 +165,7 @@ fn projection(agent: AgentAdapterKind, replay: bool, retention: Retention) -> Pr
     };
     Projection::new(
         SessionKey::from_acp(agent.as_str(), "s1", false),
+        cwd.to_path_buf(),
         ConnectionState::Ready,
         history,
         replay,
@@ -728,7 +739,12 @@ fn agent_chunk(content: Value) -> Normalized {
 
 #[test]
 fn media_blocks_of_an_agent_message_stand_at_their_place_in_its_text() {
-    let mut projection = projection(AgentAdapterKind::Codex, false, Retention::default());
+    let mut projection = projection(
+        AgentAdapterKind::Codex,
+        false,
+        Retention::default(),
+        Path::new("/project"),
+    );
     projection.begin_turn("t1", "hi", Vec::new());
     projection.apply(agent_chunk(json!({ "type": "text", "text": "Here é" })));
     projection.apply(agent_chunk(
@@ -803,7 +819,12 @@ fn an_mcp_result_counts_only_in_a_call_of_the_codex_mcp_form() {
     let result = json!({ "result": { "content": [
         { "type": "image", "mimeType": "image/png", "data": "iVBORw==" }
     ] } });
-    let mut projection = projection(AgentAdapterKind::Codex, false, Retention::default());
+    let mut projection = projection(
+        AgentAdapterKind::Codex,
+        false,
+        Retention::default(),
+        Path::new("/project"),
+    );
     projection.begin_turn("t1", "hi", Vec::new());
     projection.apply(update(json!({
         "sessionUpdate": "tool_call", "toolCallId": "mcp", "kind": "execute",
@@ -821,6 +842,66 @@ fn an_mcp_result_counts_only_in_a_call_of_the_codex_mcp_form() {
     })));
     assert_eq!(media(&projection, "mcp").len(), 1);
     assert!(media(&projection, "look-alike").is_empty());
+}
+
+/// The Svode MCP call of an E06 log by its tool, with the files it changes
+/// and its MCP calls.
+fn svode_call(projection: &Projection, tool: &str) -> (Vec<ToolLocation>, Vec<McpCallRef>) {
+    snapshot(projection)
+        .items
+        .into_iter()
+        .find_map(|item| match item.kind {
+            ItemKind::ToolCall {
+                locations,
+                mcp_calls,
+                ..
+            } if mcp_calls.iter().any(|call| call.tool == tool) => Some((locations, mcp_calls)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no call of {tool}"))
+}
+
+#[test]
+fn svode_mcp_calls_of_codex_and_claude_code_name_their_pages_live_and_in_replay() {
+    for (agent, name, server, page) in [
+        (
+            AgentAdapterKind::Codex,
+            "codex",
+            "svode",
+            "notes/E06 codex page.md",
+        ),
+        (
+            AgentAdapterKind::ClaudeCode,
+            "claude-code",
+            "plugin_svode_svode",
+            "notes/E06 page.md",
+        ),
+    ] {
+        let fixture = Fixture::load(name);
+        let run = fixture.run(agent, Retention::default());
+        let live = svode_call(&run.live, "create_page");
+        assert_eq!(live, svode_call(&run.replay, "create_page"), "{name}");
+        let project = PathBuf::from(fixture.project("")).canonicalize().unwrap();
+        assert_eq!(
+            live,
+            (
+                vec![ToolLocation {
+                    path: project.join(page).to_string_lossy().into_owned(),
+                    change: Some(FileChange::Created),
+                    lines: None,
+                }],
+                vec![McpCallRef {
+                    server: server.into(),
+                    tool: "create_page".into(),
+                    changes_project: true,
+                }],
+            ),
+            "{name}"
+        );
+        // The probe server is an MCP call too, but not Svode's.
+        let (locations, calls) = svode_call(&run.live, "probe_media");
+        assert!(locations.is_empty() && !calls[0].changes_project, "{name}");
+    }
 }
 
 #[test]

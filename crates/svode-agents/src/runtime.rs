@@ -1189,6 +1189,7 @@ impl AgentRuntime {
             listed: AtomicBool::new(false),
             projection: Mutex::new(Projection::new(
                 key,
+                cwd.to_path_buf(),
                 state,
                 history,
                 replay,

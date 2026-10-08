@@ -117,6 +117,14 @@ pub enum ItemKind {
         tool: ToolKind,
         #[serde(default)]
         media: Vec<MediaSegment>,
+        /// Files the call works with, without repeats, in order of first
+        /// appearance: the paths of its diffs, the agent's locations and,
+        /// for a call of the Svode MCP server that changes the project, the
+        /// objects its arguments and result name.
+        locations: Vec<ToolLocation>,
+        /// The MCP calls the tool call is, in order, when the runtime
+        /// recognized it as one by the form of its agent.
+        mcp_calls: Vec<McpCallRef>,
     },
     ModeChange,
     ConfigChange,
@@ -150,6 +158,46 @@ pub enum ItemKind {
     Generic {
         label: String,
     },
+}
+
+/// A file a tool call works with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolLocation {
+    /// Absolute path.
+    pub path: String,
+    /// How the call changes the file, when that is known.
+    pub change: Option<FileChange>,
+    /// Lines the call's diffs of the file add and remove; none without a
+    /// diff.
+    pub lines: Option<LineChanges>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileChange {
+    Created,
+    Modified,
+    Deleted,
+    Moved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineChanges {
+    pub added: u64,
+    pub removed: u64,
+}
+
+/// One MCP call of a tool call; its arguments and result stay in the
+/// agent's raw input and output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCallRef {
+    pub server: String,
+    pub tool: String,
+    /// A call of the Svode MCP server whose tool changes the project.
+    pub changes_project: bool,
 }
 
 /// One part of a user message in the order it was written. Image data is

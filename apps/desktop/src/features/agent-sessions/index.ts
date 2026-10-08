@@ -49,6 +49,10 @@ export {
   type OpenAttachment as OpenChatAttachment,
 } from "./chat/hooks/use-attachment-opener";
 export {
+  ChangesOpenerContext as ChatChangesOpenerContext,
+  type FileChangesTarget as ChatFileChangesTarget,
+} from "./chat/hooks/use-changes-opener";
+export {
   attachmentKind as chatAttachmentKind,
   locateAttachment as locateChatAttachment,
   type Attachment as ChatAttachment,

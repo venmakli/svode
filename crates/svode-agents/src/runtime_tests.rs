@@ -1402,7 +1402,9 @@ async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_
             (
                 ItemKind::ToolCall {
                     tool: crate::activity::ToolKind::Read,
-                    media: Vec::new()
+                    media: Vec::new(),
+                    locations: Vec::new(),
+                    mcp_calls: Vec::new(),
                 },
                 replay("replay:1"),
                 "Read file".into()
@@ -3381,7 +3383,9 @@ async fn a_permission_names_its_tool_call_and_its_fields_merge_into_that_item() 
         item.kind,
         ItemKind::ToolCall {
             tool: ToolKind::SwitchMode,
-            media: Vec::new()
+            media: Vec::new(),
+            locations: Vec::new(),
+            mcp_calls: Vec::new(),
         }
     );
     assert_eq!(item.summary, "Approve Plan");

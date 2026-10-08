@@ -6,6 +6,7 @@ rust-version = "1.89"
 
 [dependencies]
 svode-core = { path = "../svode-core" }
+svode-tools = { path = "../svode-tools" }
 base64 = "0.22"
 flate2 = "1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

@@ -56,8 +56,6 @@ function ScopeChangesControl({
   const statusError = useGitStore(
     (state) => state.statusErrors[target.spacePath] ?? false,
   );
-  const reader = useMemo(() => createItemReader(), []);
-  const save = useChangesSave(target, open);
   // Quiet control: "no changes" is claimed only for a readable status.
   const label = dirty
     ? m.changes_scope_label({ name: target.name, count: String(paths.length) })
@@ -92,43 +90,94 @@ function ScopeChangesControl({
         </TooltipTrigger>
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>
-      <SheetContent
-        side="right"
-        className="data-[side=right]:gap-0 data-[side=right]:overflow-hidden data-[side=right]:rounded-xl data-[side=right]:border"
-        style={{
-          bottom: "0.75rem",
-          height: "auto",
-          maxWidth: "none",
-          right: "0.75rem",
-          top: "0.75rem",
-          width:
-            origin === "peek"
-              ? "min(26rem, calc(100vw - 1.5rem))"
-              : "min(30rem, calc(100vw - 1.5rem))",
-        }}
-        overlayClassName={
-          origin === "peek"
-            ? "bg-transparent backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
-            : undefined
-        }
-      >
-        <ChangesBody
-          key={`${scope.kind}:${scope.path}`}
-          open={open}
-          scope={scope}
-          status={status}
-          error={statusError}
-          paths={paths}
-          reader={reader}
-          name={target.name}
-        />
-        <ChangesSaveFooter
-          save={save}
-          dirty={dirty}
-          statusError={statusError}
-          fileScope={scope.kind === "file"}
-        />
-      </SheetContent>
+      <ChangesSheetContent target={target} origin={origin} open={open} />
     </Sheet>
+  );
+}
+
+/**
+ * The "Changes" window of `target` opened from elsewhere than its control,
+ * such as a file the agent changed in a chat turn (Stage 10 `08` R2).
+ */
+export function ChangesWindow({
+  target,
+  open,
+  onOpenChange,
+}: {
+  target: ChangesTarget;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  useEffect(() => {
+    if (open) void refreshGitStatus(target.spacePath);
+  }, [open, target.spacePath]);
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <ChangesSheetContent target={target} origin="main" open={open} />
+    </Sheet>
+  );
+}
+
+function ChangesSheetContent({
+  target,
+  origin,
+  open,
+}: {
+  target: ChangesTarget;
+  origin: "main" | "peek";
+  open: boolean;
+}) {
+  const status = useGitStore((state) => state.statuses[target.spacePath]);
+  const { kind, sourceShape, spacePath, path } = target;
+  const scope = useMemo(
+    () => resolveInspectionScope({ kind, sourceShape, spacePath, path }),
+    [kind, sourceShape, spacePath, path],
+  );
+  const paths = inspectionPaths(scope, status);
+  const dirty = paths.length > 0;
+  const statusError = useGitStore(
+    (state) => state.statusErrors[target.spacePath] ?? false,
+  );
+  const reader = useMemo(() => createItemReader(), []);
+  const save = useChangesSave(target, open);
+
+  return (
+    <SheetContent
+      side="right"
+      className="data-[side=right]:gap-0 data-[side=right]:overflow-hidden data-[side=right]:rounded-xl data-[side=right]:border"
+      style={{
+        bottom: "0.75rem",
+        height: "auto",
+        maxWidth: "none",
+        right: "0.75rem",
+        top: "0.75rem",
+        width:
+          origin === "peek"
+            ? "min(26rem, calc(100vw - 1.5rem))"
+            : "min(30rem, calc(100vw - 1.5rem))",
+      }}
+      overlayClassName={
+        origin === "peek"
+          ? "bg-transparent backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
+          : undefined
+      }
+    >
+      <ChangesBody
+        key={`${scope.kind}:${scope.path}`}
+        open={open}
+        scope={scope}
+        status={status}
+        error={statusError}
+        paths={paths}
+        reader={reader}
+        name={target.name}
+      />
+      <ChangesSaveFooter
+        save={save}
+        dirty={dirty}
+        statusError={statusError}
+        fileScope={scope.kind === "file"}
+      />
+    </SheetContent>
   );
 }

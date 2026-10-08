@@ -217,6 +217,7 @@ pub(crate) struct ToolCall {
     pub status: Option<String>,
     #[serde(default)]
     pub content: Vec<Value>,
+    pub raw_input: Option<Value>,
     pub raw_output: Option<Value>,
     pub locations: Option<Vec<Value>>,
     #[serde(rename = "_meta")]
@@ -231,6 +232,7 @@ pub(crate) struct ToolCallUpdate {
     pub kind: Option<String>,
     pub status: Option<String>,
     pub content: Option<Vec<Value>>,
+    pub raw_input: Option<Value>,
     pub raw_output: Option<Value>,
     pub locations: Option<Vec<Value>>,
     #[serde(rename = "_meta")]

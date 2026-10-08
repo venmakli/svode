@@ -63,6 +63,7 @@ import {
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
 import { ChatAttachmentPeekProvider } from "./chat-attachment-peek";
+import { ChatChangesWindowProvider } from "./chat-changes-window";
 import {
   AgentSessionPeekHost,
   useShowStartedSessionInMainArea,
@@ -221,20 +222,22 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
       className="relative min-h-0 h-dvh overflow-hidden bg-sidebar"
     >
       <ChatAttachmentPeekProvider>
-        <ShellLayoutContent
-          sidebarProviderRef={sidebarProviderRef}
-          identityName={identityName}
-          identityEmail={identityEmail}
-          mainSurface={mainSurface}
-          onActivateContent={openContentSurface}
-          onBeforeNavigation={passNavigationGuards}
-          onOpenSearch={() => setCommandPaletteOpen(true)}
-          onOpenAppSettings={openAppSettings}
-        />
-        <AgentSessionCatalogHost projectPath={activeRootPath} />
-        <CollectionDetailPeekHost />
-        <AgentSessionPeekHost />
-        {view === "home" && <HomeEntry />}
+        <ChatChangesWindowProvider>
+          <ShellLayoutContent
+            sidebarProviderRef={sidebarProviderRef}
+            identityName={identityName}
+            identityEmail={identityEmail}
+            mainSurface={mainSurface}
+            onActivateContent={openContentSurface}
+            onBeforeNavigation={passNavigationGuards}
+            onOpenSearch={() => setCommandPaletteOpen(true)}
+            onOpenAppSettings={openAppSettings}
+          />
+          <AgentSessionCatalogHost projectPath={activeRootPath} />
+          <CollectionDetailPeekHost />
+          <AgentSessionPeekHost />
+          {view === "home" && <HomeEntry />}
+        </ChatChangesWindowProvider>
       </ChatAttachmentPeekProvider>
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}

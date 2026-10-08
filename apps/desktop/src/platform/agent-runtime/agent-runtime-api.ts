@@ -67,6 +67,23 @@ export type AgentToolKindDto =
   | "switch_mode"
   | "other";
 
+/** A file a tool call works with, by its absolute path. */
+export interface AgentToolLocationDto {
+  path: string;
+  /** How the call changes the file, when that is known. */
+  change: "created" | "modified" | "deleted" | "moved" | null;
+  /** Lines the call's diffs of the file add and remove; null without a diff. */
+  lines: { added: number; removed: number } | null;
+}
+
+/** One MCP call a tool call is, recognized by the form of its agent. */
+export interface AgentMcpCallDto {
+  server: string;
+  tool: string;
+  /** A call of the Svode MCP server whose tool changes the project. */
+  changesProject: boolean;
+}
+
 export interface AgentPlanEntryDto {
   content: string;
   priority: "high" | "medium" | "low";
@@ -108,17 +125,23 @@ export type AgentPromptPartDto =
   | { type: "text"; text: string }
   | { type: "file"; path: string; name: string };
 
-export type AgentActivityItemDto = (
-  /**
-   * The summary is the text; `segments` is the whole message in order once
-   * it links a file or an image, empty for a text-only message.
-   */
-  | { kind: "user_message"; segments: AgentMessageSegmentDto[] }
+export type AgentActivityItemDto = /**
+ * The summary is the text; `segments` is the whole message in order once
+ * it links a file or an image, empty for a text-only message.
+ */
+(| { kind: "user_message"; segments: AgentMessageSegmentDto[] }
   /** `media` stand at their places in the text, in order. */
   | { kind: "agent_message"; media: AgentMediaSegmentDto[] }
   | { kind: "reasoning" }
   /** `media` holds what the call produced or showed, in order. */
-  | { kind: "tool_call"; tool: AgentToolKindDto; media: AgentMediaSegmentDto[] }
+  | {
+      kind: "tool_call";
+      tool: AgentToolKindDto;
+      media: AgentMediaSegmentDto[];
+      /** Without repeats, in order of first appearance. */
+      locations: AgentToolLocationDto[];
+      mcpCalls: AgentMcpCallDto[];
+    }
   | { kind: "mode_change" }
   | { kind: "config_change" }
   /** The turn's plan; a later plan of the turn replaces it in place. */
@@ -542,7 +565,9 @@ export function openAgentSession(
 }
 
 /** The chat stops driving the session between turns. */
-export function releaseAgentSession(session: AgentSessionKeyDto): Promise<void> {
+export function releaseAgentSession(
+  session: AgentSessionKeyDto,
+): Promise<void> {
   return invoke<void>("agent_runtime_release_session", { session });
 }
 
@@ -581,7 +606,10 @@ export interface DraftAgentDto {
  * A new session draft chose `agent` in the Space `cwd`: its connection
  * starts so the draft shows its readiness before the first prompt.
  */
-export function holdDraftAgent(agent: string, cwd: string): Promise<DraftAgentDto> {
+export function holdDraftAgent(
+  agent: string,
+  cwd: string,
+): Promise<DraftAgentDto> {
   return invoke<DraftAgentDto>("agent_runtime_hold_draft", { agent, cwd });
 }
 

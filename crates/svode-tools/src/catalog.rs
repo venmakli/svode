@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,7 +13,110 @@ pub struct ToolDefinition {
     pub output_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
+    /// What a mutating tool changes in the project; empty for a read-only
+    /// one and for a mutation that changes no Page, Collection or file.
+    #[serde(skip)]
+    pub changes: &'static [ChangedObject],
 }
+
+/// One page, Collection or file a mutating tool changes, as its arguments
+/// and its result name it. Paths are relative to the Space the call's
+/// `spaceId` selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangedObject {
+    pub change: ObjectChange,
+    /// The argument naming the object before the call.
+    pub argument: Option<ObjectField>,
+    /// The result field naming it after the call; it wins over the argument.
+    pub result: Option<ObjectField>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectChange {
+    Created,
+    Modified,
+    Deleted,
+    Moved,
+}
+
+/// A JSON pointer to a path string; `file` names the file of the named
+/// directory that changes, such as the README of a Collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectField {
+    pub pointer: &'static str,
+    pub file: Option<&'static str>,
+}
+
+impl ChangedObject {
+    /// The object's path as the call's arguments name it.
+    pub fn in_arguments(&self, arguments: &Value) -> Option<String> {
+        named(self.argument?, arguments)
+    }
+
+    /// The object's path as the call's structured result names it.
+    pub fn in_result(&self, result: &Value) -> Option<String> {
+        named(self.result?, result)
+    }
+}
+
+fn named(field: ObjectField, value: &Value) -> Option<String> {
+    let path = value
+        .pointer(field.pointer)?
+        .as_str()?
+        .trim_end_matches('/');
+    match (path.is_empty(), field.file) {
+        (true, None) => None,
+        (true, Some(file)) => Some(file.to_string()),
+        (false, None) => Some(path.to_string()),
+        (false, Some(file)) => Some(format!("{path}/{file}")),
+    }
+}
+
+/// What the tool `name` changes in the project: `None` for an unknown or a
+/// read-only tool.
+pub fn project_changes(name: &str) -> Option<&'static [ChangedObject]> {
+    static CATALOG: OnceLock<Vec<ToolDefinition>> = OnceLock::new();
+    CATALOG
+        .get_or_init(definitions)
+        .iter()
+        .find(|definition| definition.name == name)
+        .filter(|definition| annotations_are_mutating(definition.annotations.as_ref()))
+        .map(|definition| definition.changes)
+}
+
+const fn at(pointer: &'static str) -> Option<ObjectField> {
+    Some(ObjectField {
+        pointer,
+        file: None,
+    })
+}
+
+const fn file_of(pointer: &'static str, file: &'static str) -> Option<ObjectField> {
+    Some(ObjectField {
+        pointer,
+        file: Some(file),
+    })
+}
+
+const fn object(
+    change: ObjectChange,
+    argument: Option<ObjectField>,
+    result: Option<ObjectField>,
+) -> ChangedObject {
+    ChangedObject {
+        change,
+        argument,
+        result,
+    }
+}
+
+const COLLECTION_README: &str = "README.md";
+const COLLECTION_SCHEMA: &str = "schema.yaml";
+const SCHEMA_CHANGE: &[ChangedObject] = &[object(
+    ObjectChange::Modified,
+    file_of("/collectionPath", COLLECTION_SCHEMA),
+    file_of("/collectionPath", COLLECTION_SCHEMA),
+)];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,7 +190,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, at("/path"), at("/path"))] }),
         def(
             "create_page",
             "Create one Svode Page with Desktop naming and allocation rules. parentPath is the containing directory (empty for the Space root); schema-backed parents apply Collection defaults and validate initial properties. A new image cover must use cover.path from import_asset or an already-existing repository file. Does not autocommit.",
@@ -107,7 +213,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Created, None, at("/path"))] }),
         def(
             "update_page_metadata",
             "Update standalone Page metadata: title, icon, description, and cover. A new title is how to rename a Page: Svode renames its file, or its directory for a directory-backed Page, rewrites links to it (including link text that followed the old name), relations, and sidebar order, and returns the actual path in page.path with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. For a new local image cover, call import_asset first and pass its returned coverPath as cover.path; an existing repository file is also allowed. Does not change body and does not autocommit.",
@@ -124,7 +231,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, at("/path"), at("/page/path"))] }),
         def(
             "delete_page",
             "Delete one standalone Page through Svode's managed delete/index/backlink flow. Does not accept Collection items or owner README content and does not autocommit.",
@@ -137,7 +245,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(true, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Deleted, at("/path"), None)] }),
         def(
             "read_space_readme",
             "Read the selected Project/Space owner's README content without classifying it as a Page. Returns sourceVersion, the token a later write_space_readme requires.",
@@ -159,7 +268,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, None, at("/path"))] }),
         def(
             "update_space_metadata",
             "Update the selected Project/Space owner's README metadata without classifying it as a Page. A title change never renames the Space or its directory. Does not autocommit.",
@@ -175,7 +285,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, None, at("/spaceReadme/path"))] }),
         def(
             "read_collection_readme",
             "Read one Collection owner's README content without classifying it as a Page or Collection item. Returns sourceVersion, the token a later write_collection_readme requires.",
@@ -201,7 +312,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, file_of("/collectionPath", COLLECTION_README), at("/path"))] }),
         def(
             "update_collection_metadata",
             "Update one Collection owner's README metadata without classifying it as a Page or Collection item. A new title is how to rename a Collection: Svode renames its directory, rewrites links to it and its items (including link text that followed the old name), relations and relation schemas that target it, and sidebar order, and returns the actual collectionPath with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. Does not autocommit.",
@@ -218,7 +330,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, file_of("/collectionPath", COLLECTION_README), file_of("/collectionPath", COLLECTION_README))] }),
         def(
             "import_asset",
             "Copy one supported local regular file next to existing Markdown content owned by a Page, Collection item, Space, or Collection. A leaf Page is converted through Svode's managed Page transition before the colocated copy. Use returned canonical contentPath, attachmentPath, markdownUrl, and coverPath; the tool does not change body/cover, move the source file, or autocommit.",
@@ -236,7 +349,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Created, None, at("/attachmentPath"))] }),
         def(
             "create_collection",
             "Create a Svode collection: a directory with README.md identity plus schema.yaml. Use for structured data, tables, boards, calendars, CRM, OKRs, tasks, backlog, inventories, and repeated records. A new image cover must use cover.path from import_asset or an already-existing repository file; binary attachments are not collection records. Does not autocommit.",
@@ -259,7 +373,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Created, None, file_of("/collectionPath", COLLECTION_README))] }),
         def(
             "convert_to_collection",
             "Convert an existing leaf Page, directory-backed Page, or bare folder into a Svode Collection in place through Svode's managed structural backend. This preserves source body/frontmatter, rewrites managed links, refreshes indexes/tree, returns oldPath, collectionPath, readmePath, schemaPath and touched paths, and does not autocommit.",
@@ -275,7 +390,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Moved, at("/path"), at("/readmePath"))] }),
         def(
             "search_pages",
             "Search indexed Pages with FTS snippets. Space and Collection owner README content is excluded.",
@@ -400,7 +516,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Created, None, at("/path"))] }),
         def(
             "update_routine",
             "Atomically replace one owner-local Routine through Svode's managed validation and fingerprint CAS. Read it first and pass its routineId and fingerprint. An enabled schedule/event additionally requires confirmAutomaticExecution=true. Preserves portable identity, materializes a readable filename from name when collision-free, does not change device authority, and does not autocommit.",
@@ -417,7 +534,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, None, at("/path"))] }),
         def(
             "delete_routine",
             "Delete one exact owner-local Routine definition through fingerprint CAS. Read it first and pass its routineId and fingerprint. Does not delete run/session history, cancel an active run, or autocommit.",
@@ -432,7 +550,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(true, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Deleted, None, at("/path"))] }),
         def(
             "run_routine",
             "Explicitly launch one exact manual or schedule Routine after rechecking its fingerprint, owner repository, Agent Actor, approval readiness, and one-active-run policy. Event Routines are blocked. Returns launch/session identity immediately, never waits for completion, never changes automatic authority or schedule checkpoints, and never autocommits.",
@@ -508,7 +627,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, at("/path"), at("/item/path"))] }),
         def(
             "update_collection_item_body",
             "Replace one Collection item's body; its fields stay unchanged. Pass sourceVersion from your last read of this source or from the previous write of it; a changed source fails with SOURCE_STALE (read again and reapply your change), SOURCE_BUSY means another Svode operation is writing (retry later). Returns the canonical path, changedPaths and the new sourceVersion. With file access, edit the body below the frontmatter with your own tools instead; this tool is the path for clients without file access. For new local media, call import_asset first and insert its returned markdownUrl. Does not autocommit.",
@@ -523,7 +643,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, at("/path"), at("/path"))] }),
         def(
             "update_collection_item_metadata",
             "Update one Collection item's title, icon, description, or cover. A new title is how to rename a Collection item: Svode renames its file, rewrites links to it (including link text that followed the old name), relations, and sidebar order, and returns the actual path in item.path with changedPaths. When the new name is taken, the title is saved and the filename kept with warning filename_rename_collision; when a relation schema or another repository blocks the rename, the title is saved with warning filename_rename_deferred: fix the cause, then save the same title again to rename. Does not change its body or custom fields and does not autocommit.",
@@ -540,7 +661,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Modified, at("/path"), at("/item/path"))] }),
         def(
             "delete_collection_item",
             "Delete one Collection item through Svode's managed delete/index/backlink flow. Does not autocommit.",
@@ -553,7 +675,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(true, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Deleted, at("/path"), None)] }),
         def(
             "delete_collection",
             "Delete one Collection owner and its owned content through Svode's managed delete/index/backlink flow. Does not autocommit.",
@@ -563,7 +686,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(true, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Deleted, file_of("/collectionPath", COLLECTION_README), None)] }),
         def(
             "rename_content",
             "Change the name of a path in its current parent through Svode's managed structural backend; meant for folders without a title. For a Page, Collection item, or Collection it changes only the file or directory name and keeps the old title: to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
@@ -580,7 +704,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Moved, at("/to"), at("/newPath"))] }),
         def(
             "move_content",
             "Move a Page, folder, or Collection under a new parent through Svode's managed structural backend. Use an empty toParent to move to the space root. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
@@ -600,7 +725,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Moved, at("/from"), at("/newPath"))] }),
         def(
             "reorder_content",
             "Set the complete semantic order of direct Page, folder, and Collection children under one parent. Use list_pages before and after to discover and verify child paths. Does not autocommit.",
@@ -646,7 +772,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(const { &[object(ObjectChange::Moved, at("/path"), at("/newPath"))] }),
         def(
             "validate_collection_integrity",
             "Read-only check for Collection relation targets, stored Collection item references, and stale sidebar order refs after structural files changed outside Svode. Omit collectionPath to validate every Collection in the selected space.",
@@ -667,7 +794,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(SCHEMA_CHANGE),
         def(
             "update_collection_column",
             "Patch configurable settings of an existing collection column, such as options, display, color, sensitivity, relation, date settings, or status groups. Read get_collection_schema first and preserve the current boolean display unless the user explicitly asks to change its presentation. For new fields prefer add_collection_column. Does not autocommit.",
@@ -682,7 +810,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(SCHEMA_CHANGE),
         def(
             "delete_collection_column",
             "Delete a Collection column. Set deleteValues true only when stored values should also be removed from Collection items. Does not autocommit.",
@@ -697,7 +826,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(true, Some(false)),
             None,
-        ),
+        )
+        .changing(SCHEMA_CHANGE),
         def(
             "add_collection_view",
             "Add a table, board, calendar, list, or gallery view to an existing collection schema. Calendar requires date_field. Board group_by should be status, select, or single actor. Gallery uses card_cover. Does not autocommit.",
@@ -712,7 +842,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, Some(false)),
             None,
-        ),
+        )
+        .changing(SCHEMA_CHANGE),
         def(
             "update_collection_view",
             "Patch an existing collection view: filters, sort, visible_fields, card_fields, group_by, date_field, gallery cover settings, and related view settings. Does not autocommit.",
@@ -727,7 +858,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(false, None),
             None,
-        ),
+        )
+        .changing(SCHEMA_CHANGE),
         def(
             "delete_collection_view",
             "Delete a named collection view. Collection README content belongs to the separate Readme scope surface and is not a schema view. Does not autocommit.",
@@ -741,7 +873,8 @@ pub fn definitions() -> Vec<ToolDefinition> {
             ),
             write_ann(true, Some(false)),
             None,
-        ),
+        )
+        .changing(SCHEMA_CHANGE),
         def(
             "list_actors",
             "Return read-only actor candidates from the Git-backed actor catalog. Use before writing actor fields; actor values are canonical email strings.",
@@ -927,6 +1060,14 @@ fn def(
         input_schema,
         output_schema,
         annotations: Some(annotations),
+        changes: &[],
+    }
+}
+
+impl ToolDefinition {
+    fn changing(mut self, changes: &'static [ChangedObject]) -> Self {
+        self.changes = changes;
+        self
     }
 }
 
@@ -1641,6 +1782,69 @@ fn list_actors_output_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_mutation_names_what_it_changes_by_its_own_arguments() {
+        // Order and Routine launches change no Page, Collection or file.
+        let without_objects = ["run_routine", "reorder_content", "reorder_spaces"];
+        for definition in definitions() {
+            let mutating = annotations_are_mutating(definition.annotations.as_ref());
+            let names_objects = mutating && !without_objects.contains(&definition.name);
+            assert_eq!(
+                !definition.changes.is_empty(),
+                names_objects,
+                "{} records what it changes exactly when it changes a named object",
+                definition.name
+            );
+            for object in definition.changes {
+                assert!(object.argument.is_some() || object.result.is_some());
+                if let Some(argument) = object.argument {
+                    let name = argument.pointer.trim_start_matches('/');
+                    assert!(
+                        definition.input_schema["properties"].get(name).is_some(),
+                        "{} has no argument {name}",
+                        definition.name
+                    );
+                }
+            }
+        }
+        assert_eq!(project_changes("read_page"), None);
+        assert_eq!(project_changes("unknown"), None);
+        assert_eq!(project_changes("run_routine"), Some(&[][..]));
+    }
+
+    #[test]
+    fn a_changed_object_is_named_by_its_result_or_its_arguments() {
+        let [page] = project_changes("update_page_metadata").unwrap() else {
+            panic!("one object");
+        };
+        assert_eq!(page.change, ObjectChange::Modified);
+        assert_eq!(
+            page.in_arguments(&json!({ "path": "notes/Old.md", "title": "New" })),
+            Some("notes/Old.md".into())
+        );
+        assert_eq!(
+            page.in_result(&json!({ "page": { "path": "notes/New.md" } })),
+            Some("notes/New.md".into())
+        );
+        assert_eq!(page.in_result(&json!({ "changedPaths": [] })), None);
+
+        let [readme] = project_changes("write_collection_readme").unwrap() else {
+            panic!("one object");
+        };
+        assert_eq!(
+            readme.in_arguments(&json!({ "collectionPath": "tasks/" })),
+            Some("tasks/README.md".into())
+        );
+        let [created] = project_changes("create_page").unwrap() else {
+            panic!("one object");
+        };
+        assert_eq!(
+            created.in_arguments(&json!({ "parentPath": "notes", "title": "A" })),
+            None
+        );
+        assert_eq!(created.change, ObjectChange::Created);
+    }
 
     #[test]
     fn definitions_publish_canonical_page_and_collection_item_delete_tools() {

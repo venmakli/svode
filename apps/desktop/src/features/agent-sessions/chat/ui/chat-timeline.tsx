@@ -48,13 +48,16 @@ import { useItemDetail } from "../hooks/use-item-detail";
 import { messageParts } from "../model/attachments";
 import { AttachmentBadge, ImageMark } from "./attachment-badge";
 import {
+  changedFilesKey,
   isExpanded,
   isSummaryExpanded,
   shownEntries,
   summaryKey,
   type ManualExpansion,
 } from "../model/expansion";
+import { turnChanges } from "../model/changed-files";
 import {
+  lastWhere,
   projectTimeline,
   type InteractionRecord,
   type NoticeItem,
@@ -65,6 +68,7 @@ import {
 } from "../model/timeline";
 import { formatDuration } from "../model/format";
 import { ItemDetail } from "./item-detail";
+import { TurnChangedFiles } from "./turn-changed-files";
 import * as m from "@/paraglide/messages.js";
 
 /** Links in agent text stay text: the chat opens nothing on its own. */
@@ -145,6 +149,20 @@ function TurnView({
       />
     </MessageScrollerItem>
   ) : null;
+  const changes = turnChanges(turn);
+  // Under the agent's last message, which stays visible in a folded turn.
+  const changesAfterId =
+    lastWhere(turn.entries, (entry) => entry.kind === "message")?.id ?? null;
+  const changesRow = changes ? (
+    <MessageScrollerItem key={changedFilesKey(turn)}>
+      <TurnChangedFiles
+        session={session}
+        changes={changes}
+        open={manual[changedFilesKey(turn)] ?? false}
+        onOpenChange={(open) => onToggle(changedFilesKey(turn), open)}
+      />
+    </MessageScrollerItem>
+  ) : null;
   const rows: ReactNode[] = [];
   if (summary && summary.afterId === null) rows.push(summaryRow);
   for (const entry of entries) {
@@ -164,7 +182,9 @@ function TurnView({
       </MessageScrollerItem>,
     );
     if (summary && summary.afterId === entry.id) rows.push(summaryRow);
+    if (entry.id === changesAfterId) rows.push(changesRow);
   }
+  if (changesAfterId === null) rows.push(changesRow);
   return <>{rows}</>;
 }
 
@@ -290,7 +310,9 @@ function ItemText({
   markdown?: boolean;
 }) {
   const detail = useItemDetail(session, item, item.hasDetail);
-  const text = item.hasDetail ? (detailText(detail) ?? item.summary) : item.summary;
+  const text = item.hasDetail
+    ? (detailText(detail) ?? item.summary)
+    : item.summary;
   if (!markdown) return <>{text}</>;
   return <MarkdownReader content={text} policy={agentTextPolicy} />;
 }
@@ -307,7 +329,9 @@ function UserMessageText({
   item: Extract<AgentActivityItemDto, { kind: "user_message" }>;
 }) {
   const detail = useItemDetail(session, item, item.hasDetail);
-  const text = item.hasDetail ? (detailText(detail) ?? item.summary) : item.summary;
+  const text = item.hasDetail
+    ? (detailText(detail) ?? item.summary)
+    : item.summary;
   return messageParts(item.segments, text).map((part, index) => {
     switch (part.type) {
       case "text":
@@ -416,7 +440,13 @@ function ToolGroup({
   );
 }
 
-function ToolRowView({ session, row }: { session: AgentSessionKeyDto; row: ToolRow }) {
+function ToolRowView({
+  session,
+  row,
+}: {
+  session: AgentSessionKeyDto;
+  row: ToolRow;
+}) {
   const [open, setOpen] = useState(false);
   const { item, permission } = row;
   return (
@@ -507,7 +537,11 @@ function QuestionRecord({ item }: { item: InteractionRecord }) {
   );
 }
 
-function PlanBlock({ item }: { item: Extract<AgentActivityItemDto, { kind: "plan" }> }) {
+function PlanBlock({
+  item,
+}: {
+  item: Extract<AgentActivityItemDto, { kind: "plan" }>;
+}) {
   return (
     <section
       aria-label={m.sessions_chat_plan()}
@@ -529,7 +563,8 @@ function PlanBlock({ item }: { item: Extract<AgentActivityItemDto, { kind: "plan
             <span
               className={cn(
                 "min-w-0 break-words",
-                entry.status === "completed" && "text-muted-foreground line-through",
+                entry.status === "completed" &&
+                  "text-muted-foreground line-through",
               )}
             >
               {entry.content}
@@ -570,7 +605,9 @@ function Notice({
   const title = noticeTitle(item);
   const repeats =
     count > 1 ? (
-      <span className="shrink-0 text-xs">{m.sessions_chat_repeats({ count })}</span>
+      <span className="shrink-0 text-xs">
+        {m.sessions_chat_repeats({ count })}
+      </span>
     ) : null;
   if (item.kind === "error" && item.summary) {
     return (
@@ -589,7 +626,9 @@ function Notice({
   }
   return (
     <Marker>
-      <MarkerIcon>{item.kind === "error" ? <AlertCircle /> : <Wrench />}</MarkerIcon>
+      <MarkerIcon>
+        {item.kind === "error" ? <AlertCircle /> : <Wrench />}
+      </MarkerIcon>
       <MarkerContent>{title}</MarkerContent>
       {repeats}
     </Marker>

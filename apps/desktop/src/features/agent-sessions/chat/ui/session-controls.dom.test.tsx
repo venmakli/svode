@@ -43,6 +43,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     spaces: [],
   };
   mock.module("@/features/space", () => ({
+    getSpaceSnapshot: () => spaceState,
     useSpace: (selector?: (state: typeof spaceState) => unknown) =>
       selector ? selector(spaceState) : spaceState,
   }));
@@ -500,6 +501,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
             turnId: "t1",
             kind: "tool_call",
             tool,
+            locations: [],
+            mcpCalls: [],
             status: "pending",
             summary: title,
             hasDetail: true,

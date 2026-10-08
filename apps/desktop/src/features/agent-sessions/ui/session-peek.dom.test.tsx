@@ -80,6 +80,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     spaces: [],
   };
   mock.module("@/features/space", () => ({
+    getSpaceSnapshot: () => spaceState,
     useSpace: (selector?: (state: typeof spaceState) => unknown) =>
       selector ? selector(spaceState) : spaceState,
   }));

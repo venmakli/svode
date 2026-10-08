@@ -41,6 +41,11 @@ export function summaryKey(turn: TimelineTurn): string {
   return `summary:${turn.id}`;
 }
 
+/** Key of a turn's changed files row in the manual expansion. */
+export function changedFilesKey(turn: TimelineTurn): string {
+  return `files:${turn.id}`;
+}
+
 /** A folded turn opens only by the user's hand. */
 export function isSummaryExpanded(
   manual: ManualExpansion,

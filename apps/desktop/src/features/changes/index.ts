@@ -1,4 +1,4 @@
-export { ChangesControl } from "./ui/changes-control";
+export { ChangesControl, ChangesWindow } from "./ui/changes-control";
 export {
   useMainChangesTarget,
   usePublishMainChangesTarget,

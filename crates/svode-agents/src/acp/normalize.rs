@@ -4,6 +4,7 @@
 use serde_json::Value;
 use svode_core::agent_adapters::AgentAdapterKind;
 
+use super::mcp::CallFacts;
 use super::media::{self, MediaPart};
 use super::wire;
 
@@ -53,8 +54,8 @@ pub(crate) struct ToolUpdate {
     pub media: Option<Vec<MediaPart>>,
     /// Paths of the call's `locations`; replace the known ones when present.
     pub locations: Option<Vec<String>>,
-    /// The update shows the call is an MCP call.
-    pub mcp: bool,
+    /// What an agent's form of an MCP call may be made of.
+    pub facts: CallFacts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,19 +116,19 @@ fn normalize(update: wire::SessionUpdate, agent: Option<AgentAdapterKind>) -> No
         wire::SessionUpdate::ToolCall(call) => {
             let output = media::tool_output(agent, &call.content, call.raw_output.as_ref());
             Normalized::Tool(ToolUpdate {
-                mcp: codex_mcp_call(
-                    agent,
-                    call.kind.as_deref(),
-                    Some(&call.title),
-                    call.meta.as_ref(),
-                ),
                 id: call.tool_call_id,
-                title: Some(call.title),
                 tool: Some(tool_kind(call.kind.as_deref())),
                 status: Some(item_status(call.status.as_deref())),
                 blocks: Some(output.blocks),
                 media: Some(output.media),
                 locations: call.locations.map(location_paths),
+                facts: CallFacts {
+                    title: Some(call.title.clone()),
+                    raw_input: call.raw_input,
+                    raw_output: call.raw_output,
+                    meta: call.meta,
+                },
+                title: Some(call.title),
             })
         }
         wire::SessionUpdate::ToolCallUpdate(update) => Normalized::Tool(tool_update(update, agent)),
@@ -217,14 +218,7 @@ fn tool_update(update: wire::ToolCallUpdate, agent: Option<AgentAdapterKind>) ->
         None => (None, None),
     };
     ToolUpdate {
-        mcp: codex_mcp_call(
-            agent,
-            update.kind.as_deref(),
-            update.title.as_deref(),
-            update.meta.as_ref(),
-        ),
         id: update.tool_call_id,
-        title: update.title,
         tool: update.kind.as_deref().map(|kind| tool_kind(Some(kind))),
         status: update
             .status
@@ -233,6 +227,13 @@ fn tool_update(update: wire::ToolCallUpdate, agent: Option<AgentAdapterKind>) ->
         blocks,
         media,
         locations: update.locations.map(location_paths),
+        facts: CallFacts {
+            title: update.title.clone(),
+            raw_input: update.raw_input,
+            raw_output: update.raw_output,
+            meta: update.meta,
+        },
+        title: update.title,
     }
 }
 
@@ -243,24 +244,6 @@ fn location_paths(locations: Vec<Value>) -> Vec<String> {
         .filter_map(|location| location.get("path")?.as_str())
         .filter_map(media::local_path)
         .collect()
-}
-
-/// The Codex form of an MCP call (Stage 10 `08` R7): kind `execute`, title
-/// `mcp.<server>.<tool>` and `_meta.is_mcp_tool_call`. A local stand-in until
-/// the R7 recognizer of slice 9.2a, which replaces it.
-fn codex_mcp_call(
-    agent: Option<AgentAdapterKind>,
-    kind: Option<&str>,
-    title: Option<&str>,
-    meta: Option<&Value>,
-) -> bool {
-    agent == Some(AgentAdapterKind::Codex)
-        && kind == Some("execute")
-        && title.is_some_and(|title| title.starts_with("mcp.") && title.matches('.').count() >= 2)
-        && meta
-            .and_then(|meta| meta.get("is_mcp_tool_call"))
-            .and_then(Value::as_bool)
-            == Some(true)
 }
 
 /// Settings a session declared, and whether they are legacy session modes,
@@ -890,7 +873,7 @@ mod tests {
                 }]),
                 media: Some(Vec::new()),
                 locations: None,
-                mcp: false,
+                facts: CallFacts::default(),
             })
         );
 
