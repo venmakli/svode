@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AgentSessionKeyDto } from "../api/chat";
 import {
+  loadImage,
   loadLocalMedia,
   mediaBlob,
   readMediaData,
@@ -27,12 +28,13 @@ export type MediaView =
   | { state: "error" };
 
 /**
- * Reads a media for display while its tile is mounted: the data the
- * runtime holds, else the local file as a stream. Nothing is written.
- * `fail` marks a media the window could not decode.
+ * Reads a media for display while its tile is mounted: an image by its
+ * address, the data the runtime holds, else the local file as a stream.
+ * Nothing is written. `fail` marks a media the window could not decode.
+ * Media of the text have no runtime data, so no session.
  */
 export function useMediaView(
-  session: AgentSessionKeyDto,
+  session: AgentSessionKeyDto | null,
   media: ChatMedia,
 ): { view: MediaView; fail: () => void } {
   const [state, setState] = useState<{ key: string; view: MediaView } | null>(
@@ -42,6 +44,7 @@ export function useMediaView(
   const path = media.path;
   const itemId = media.data?.itemId ?? null;
   const segmentId = media.data?.segmentId ?? null;
+  const url = media.url;
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +71,12 @@ export function useMediaView(
       };
     };
     const load = async (): Promise<MediaView> => {
+      if (url) {
+        const { width, height } = await loadImage(url);
+        return { state: "ready", url, width, height };
+      }
       if (!itemId || !segmentId) return fromFile();
+      if (!session) return { state: "error" };
       const outcome = await readMediaData(session, itemId, segmentId);
       if (outcome.outcome === "available") {
         const url = URL.createObjectURL(
@@ -93,7 +101,7 @@ export function useMediaView(
     };
     // The session object identity is not part of the read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, path, itemId, segmentId, session.agent, session.sessionId]);
+  }, [key, path, itemId, segmentId, url, session?.agent, session?.sessionId]);
 
   const fail = useCallback(
     () => setState({ key, view: { state: "error" } }),

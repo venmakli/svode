@@ -12,9 +12,7 @@ import {
 } from "./source-disclosure";
 import { AgentContextSkillFrontmatterDisclosure } from "./skill-frontmatter-disclosure";
 
-const skillReaderPolicy: MarkdownReaderPolicy = {
-  resolveImageSource: () => null,
-};
+const skillReaderPolicy: MarkdownReaderPolicy = {};
 
 export function AgentContextSkillDetail({
   row,

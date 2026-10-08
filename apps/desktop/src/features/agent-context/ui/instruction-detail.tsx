@@ -10,9 +10,7 @@ import {
   AgentContextSourceDisclosure,
 } from "./source-disclosure";
 
-const instructionReaderPolicy: MarkdownReaderPolicy = {
-  resolveImageSource: () => null,
-};
+const instructionReaderPolicy: MarkdownReaderPolicy = {};
 
 export function AgentContextInstructionDetail({
   row,

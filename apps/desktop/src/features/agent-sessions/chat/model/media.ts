@@ -3,6 +3,7 @@ import type {
   AgentMediaKindDto,
   AgentMediaSegmentDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
+import { mediaFamilyFromFormat, mediaFormatFromPath } from "@/features/media";
 import { fileExtension, fileName } from "./attachments";
 import type { TimelineTurn } from "./timeline";
 
@@ -10,7 +11,8 @@ type ToolCallItem = Extract<AgentActivityItemDto, { kind: "tool_call" }>;
 
 /**
  * One media the chat shows (Stage 10 `08` R2): a file by its path, data the
- * runtime holds for an item, or both.
+ * runtime holds for an item, or both; or an image the text of the agent
+ * names by its address (R3).
  */
 export interface ChatMedia {
   /** Unique among the media shown together. */
@@ -24,6 +26,11 @@ export interface ChatMedia {
   path: string | null;
   /** The data the runtime holds without a file, read by item and segment. */
   data: { itemId: string; segmentId: string } | null;
+  /**
+   * An image the window loads by its address: a `data:` URL of the text, or
+   * an external image the user chose to show.
+   */
+  url: string | null;
 }
 
 export function chatMediaOf(
@@ -38,7 +45,14 @@ export function chatMediaOf(
     size: segment.size,
     path: segment.path,
     data: segment.hasData ? { itemId, segmentId: segment.id } : null,
+    url: null,
   };
+}
+
+/** A local file's kind by its extension; anything else is a file. */
+export function mediaKindOfPath(path: string): AgentMediaKindDto {
+  const format = mediaFormatFromPath(path);
+  return format ? mediaFamilyFromFormat(format) : "file";
 }
 
 /**

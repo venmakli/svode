@@ -108,6 +108,78 @@ test("Reader gives the policy link URLs as written and inline code to wrap", () 
   ).toBe(true);
 });
 
+test("Reader gives the policy runs of images as blocks at their place, outside paragraphs", () => {
+  const runs: string[][] = [];
+  const content = [
+    "See ![one](/a/1.png) and then",
+    "![two](/a/2.png)",
+    "![three](data:image/png;base64,AAAA)",
+    "the end.",
+    "",
+    "![alone](https://example.com/x.png)",
+    "",
+    "- item ![four](/a/4.png)",
+    "",
+    "| cell |",
+    "| --- |",
+    "| ![five](/a/5.png) |",
+    "",
+    "[![badge](/a/badge.png)](https://example.com) and `![code](/a/c.png)`",
+    "",
+    "```",
+    "![fenced](/a/f.png)",
+    "```",
+  ].join("\n");
+  const markup = renderToStaticMarkup(
+    <MarkdownReader
+      content={content}
+      policy={{
+        renderImages: (images) => {
+          runs.push(images.map((image) => `${image.alt}=${image.source}`));
+          return <div data-run={runs.length} />;
+        },
+      }}
+    />,
+  );
+
+  expect(runs).toEqual([
+    ["one=/a/1.png"],
+    ["two=/a/2.png", "three=data:image/png;base64,AAAA"],
+    ["alone=https://example.com/x.png"],
+    ["four=/a/4.png"],
+    ["five=/a/5.png"],
+  ]);
+  // The paragraph splits around its runs; no block stays inside `<p>`.
+  expect(markup.includes("<p>See</p>")).toBe(true);
+  expect(markup.includes("<p>and then</p>")).toBe(true);
+  expect(markup.includes("<p>the end.</p>")).toBe(true);
+  expect(/<p>(?:(?!<\/p>).)*data-run/.test(markup)).toBe(false);
+  expect(markup.indexOf("<p>See</p>") < markup.indexOf('data-run="1"')).toBe(
+    true,
+  );
+  // An image inside a link stays its alt text; code stays code.
+  expect(markup.includes("data-markdown-reader-blocked-image")).toBe(true);
+  expect(markup.includes(">badge<")).toBe(true);
+  expect(markup.includes("![code](/a/c.png)")).toBe(true);
+  expect(markup.includes("![fenced](/a/f.png)")).toBe(true);
+  expect(markup.includes("<img")).toBe(false);
+});
+
+test("Reader without an image policy shows images as their alt text in place", () => {
+  const markup = renderToStaticMarkup(
+    <MarkdownReader
+      content="See ![one](/a/1.png) here"
+      policy={blockedPolicy}
+    />,
+  );
+  expect(markup.includes("<img")).toBe(false);
+  expect(
+    markup.includes(
+      '<p>See <span data-markdown-reader-blocked-image="true">one</span> here</p>',
+    ),
+  ).toBe(true);
+});
+
 test("Reader receives a frontmatter-free SKILL.md body and preserves unknown fences as escaped text", () => {
   const fixture = splitFixtureFrontmatter(readFixture("SKILL.md"));
   const markup = renderToStaticMarkup(

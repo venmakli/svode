@@ -39,6 +39,10 @@ const readerMermaid = {
   },
 } satisfies Record<DocumentColorScheme, MermaidOptions>;
 const readerRehypePlugins: RehypePlugin[] = [urlKeepingSanitize()];
+const imageReaderRehypePlugins: RehypePlugin[] = [
+  ...readerRehypePlugins,
+  imageRuns as RehypePlugin,
+];
 
 /**
  * Links and images reach the DOM only through the policy, which receives
@@ -54,12 +58,24 @@ function urlKeepingSanitize(): RehypePlugin {
   return [sanitize, { ...schema, protocols }] as RehypePlugin;
 }
 
+/** An image as written: its source goes to the policy untouched. */
+export interface MarkdownReaderImage {
+  source: string;
+  alt: string;
+}
+
 export interface MarkdownReaderPolicy {
   /** A link as the policy shows it; nothing leaves its text. */
   renderLink?(href: string, children: ReactNode): ReactNode;
   /** Inline code as the policy shows it; nothing leaves the code as is. */
   renderInlineCode?(code: string, element: ReactNode): ReactNode;
-  resolveImageSource?(source: string): string | null;
+  /**
+   * Images in a row of text — consecutive, with only spaces or line breaks
+   * between them — as the policy shows them, as a block at their place.
+   * Without it, and for an image inside a link or a heading, an image is
+   * its alt text.
+   */
+  renderImages?(images: MarkdownReaderImage[]): ReactNode;
 }
 
 /**
@@ -117,24 +133,18 @@ export function MarkdownReader({
           shown ?? <span data-markdown-reader-blocked-link>{children}</span>
         );
       },
-      img: ({ alt, src }) => {
-        const resolvedSource =
-          typeof src === "string" ? policy.resolveImageSource?.(src) : null;
-        if (!resolvedSource) {
-          return alt ? (
-            <span data-markdown-reader-blocked-image>{alt}</span>
-          ) : null;
-        }
-
-        return (
-          <img
-            alt={alt ?? ""}
-            src={resolvedSource}
-            loading="lazy"
-            referrerPolicy="no-referrer"
-          />
-        );
-      },
+      img: ({ alt }) =>
+        alt ? <span data-markdown-reader-blocked-image>{alt}</span> : null,
+      ...(policy.renderImages && {
+        div: ({ node, children, ...props }) => {
+          const images = imageRunOf(node as HastNode | undefined);
+          return images ? (
+            policy.renderImages?.(images)
+          ) : (
+            <div {...props}>{children}</div>
+          );
+        },
+      }),
       ...(policy.renderInlineCode && {
         inlineCode: ({ children }) => {
           const element = (
@@ -198,7 +208,9 @@ export function MarkdownReader({
           linkSafety={{ enabled: false }}
           mermaid={readerMermaid[colorScheme]}
           plugins={readerPlugins}
-          rehypePlugins={readerRehypePlugins}
+          rehypePlugins={
+            policy.renderImages ? imageReaderRehypePlugins : readerRehypePlugins
+          }
           translations={{ copyCode: m.markdown_reader_copy_code() }}
           urlTransform={readerUrlTransform}
         >
@@ -272,6 +284,144 @@ function MermaidSourceFallback({ chart, error }: MermaidErrorComponentProps) {
       </pre>
     </div>
   );
+}
+
+interface HastNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+}
+
+/** Parents where an image run may stand as a block among their children. */
+const FLOW_PARENTS = new Set(["root", "li", "td", "th", "blockquote", "div"]);
+
+/**
+ * Images of a paragraph are blocks where they stand: each run of them
+ * leaves the paragraph, which splits around it, and becomes one block the
+ * policy shows. A block inside `<p>` is not valid HTML.
+ */
+function imageRuns() {
+  return (tree: HastNode) => placeImageRuns(tree);
+}
+
+function placeImageRuns(node: HastNode): void {
+  if (!node.children) return;
+  node.children.forEach(placeImageRuns);
+  const parent = node.type === "root" ? "root" : (node.tagName ?? "");
+  if (!FLOW_PARENTS.has(parent)) return;
+  const children: HastNode[] = [];
+  for (const child of node.children) {
+    if (isElement(child, "p") && child.children?.some(isImage)) {
+      children.push(...splitParagraph(child));
+    } else {
+      children.push(child);
+    }
+  }
+  node.children = groupImageRuns(children);
+}
+
+function splitParagraph(paragraph: HastNode): HastNode[] {
+  const parts: HastNode[] = [];
+  let text: HastNode[] = [];
+  const flush = () => {
+    if (text.some((child) => !isBlank(child))) {
+      parts.push({ ...paragraph, children: trimBlank(text) });
+    }
+    text = [];
+  };
+  for (const child of groupImageRuns(paragraph.children ?? [])) {
+    if (isImageRun(child)) {
+      flush();
+      parts.push(child);
+    } else {
+      text.push(child);
+    }
+  }
+  flush();
+  return parts;
+}
+
+/** Consecutive images, with only blank text or breaks between, as runs. */
+function groupImageRuns(children: HastNode[]): HastNode[] {
+  const grouped: HastNode[] = [];
+  let run: HastNode[] = [];
+  let between: HastNode[] = [];
+  const flush = () => {
+    if (run.length > 0) {
+      grouped.push({
+        type: "element",
+        tagName: "div",
+        properties: { dataMarkdownReaderImages: true },
+        children: run,
+      });
+    }
+    grouped.push(...between);
+    run = [];
+    between = [];
+  };
+  for (const child of children) {
+    if (isImage(child)) {
+      run.push(child);
+      between = [];
+    } else if (run.length > 0 && isBlank(child)) {
+      between.push(child);
+    } else {
+      flush();
+      grouped.push(child);
+    }
+  }
+  flush();
+  return grouped;
+}
+
+function imageRunOf(node: HastNode | undefined): MarkdownReaderImage[] | null {
+  if (!node || !isImageRun(node)) return null;
+  return (node.children ?? []).filter(isImage).map((image) => ({
+    source: String(image.properties?.src ?? ""),
+    alt: String(image.properties?.alt ?? ""),
+  }));
+}
+
+function isElement(node: HastNode, tagName: string): boolean {
+  return node.type === "element" && node.tagName === tagName;
+}
+
+function isImage(node: HastNode): boolean {
+  return isElement(node, "img");
+}
+
+function isImageRun(node: HastNode): boolean {
+  return (
+    isElement(node, "div") &&
+    node.properties?.dataMarkdownReaderImages !== undefined
+  );
+}
+
+function isBlank(node: HastNode): boolean {
+  return (
+    isElement(node, "br") ||
+    (node.type === "text" && (node.value ?? "").trim() === "")
+  );
+}
+
+/** A paragraph part without the breaks and spaces at its edges. */
+function trimBlank(children: HastNode[]): HastNode[] {
+  let start = 0;
+  let end = children.length;
+  while (start < end && isBlank(children[start])) start += 1;
+  while (end > start && isBlank(children[end - 1])) end -= 1;
+  const trimmed = children.slice(start, end);
+  const edge = (index: number, trim: (value: string) => string) => {
+    const node = trimmed[index];
+    if (node?.type === "text") {
+      trimmed[index] = { ...node, value: trim(node.value ?? "") };
+    }
+  };
+  edge(0, (value) => value.trimStart());
+  edge(trimmed.length - 1, (value) => value.trimEnd());
+  return trimmed;
 }
 
 type DocumentColorScheme = "dark" | "light";

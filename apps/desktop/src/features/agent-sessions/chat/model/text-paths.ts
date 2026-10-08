@@ -188,7 +188,8 @@ function resolved(
   return { path: normalizePath(absolute), line };
 }
 
-function isAbsolute(path: string): boolean {
+/** An absolute path, Windows drive and UNC paths included. */
+export function isAbsolute(path: string): boolean {
   return (
     path.startsWith("/") || path.startsWith("\\\\") || DRIVE_PATH.test(path)
   );

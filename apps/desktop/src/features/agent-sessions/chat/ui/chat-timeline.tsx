@@ -42,9 +42,10 @@ import type {
 } from "../api/chat";
 import { useItemDetail } from "../hooks/use-item-detail";
 import { useLiveEdgeMarker } from "../hooks/use-live-edge-marker";
+import { RevealedImagesProvider } from "../hooks/use-revealed-images";
 import { messageParts } from "../model/attachments";
-import { AgentText } from "./agent-text";
-import { AgentMessageContent, ChatMediaView } from "./chat-media";
+import { AgentMessageContent, AgentText } from "./agent-text";
+import { ChatMediaView } from "./chat-media";
 import { AttachmentBadge, ImageMark } from "./attachment-badge";
 import {
   changedFilesKey,
@@ -80,16 +81,24 @@ import * as m from "@/paraglide/messages.js";
  * a summary row. One scroll owner follows the end only while the user is
  * there.
  */
-export function ChatTimeline({
-  session,
-  snapshot,
-  header,
-}: {
+export function ChatTimeline(props: ChatTimelineProps) {
+  const { agent, sessionId } = props.session;
+  return (
+    // External images shown stay shown while the timeline is open (`08` R3).
+    <RevealedImagesProvider owner={`${agent}:${sessionId}`}>
+      <TimelineView {...props} />
+    </RevealedImagesProvider>
+  );
+}
+
+interface ChatTimelineProps {
   session: AgentSessionKeyDto;
   snapshot: AgentSessionSnapshotDto;
   /** History state shown above the first turn. */
   header?: ReactNode;
-}) {
+}
+
+function TimelineView({ session, snapshot, header }: ChatTimelineProps) {
   const [manual, setManual] = useState<ManualExpansion>({});
   const toggle = (id: string, open: boolean) =>
     setManual((current) => ({ ...current, [id]: open }));
@@ -263,7 +272,12 @@ function EntryView({
       return (
         <Message>
           <MessageContent>
-            <ItemText session={session} item={entry.item} markdown />
+            <ItemText
+              session={session}
+              item={entry.item}
+              markdown
+              streaming={turn.live && turn.entries.at(-1)?.id === entry.id}
+            />
           </MessageContent>
         </Message>
       );
@@ -316,10 +330,13 @@ function ItemText({
   session,
   item,
   markdown = false,
+  streaming = false,
 }: {
   session: AgentSessionKeyDto;
   item: AgentActivityItemDto;
   markdown?: boolean;
+  /** The agent is still writing it. */
+  streaming?: boolean;
 }) {
   const detail = useItemDetail(session, item, item.hasDetail);
   const text = item.hasDetail
@@ -333,6 +350,7 @@ function ItemText({
       itemId={item.id}
       text={text}
       media={item.media}
+      streaming={streaming}
     />
   );
 }

@@ -10,6 +10,7 @@ import {
 import { savePastedImage } from "@/platform/native/clipboard";
 import { openPath } from "@/platform/native/shell";
 import { mediaFileName, type ChatMedia } from "../model/media";
+import { dataImage } from "../model/text-media";
 
 export type { AgentMediaOutcomeDto };
 
@@ -65,6 +66,23 @@ function localMediaFailure(error: unknown): LocalMediaFailure {
   return "error";
 }
 
+/**
+ * An image the window loads by its address, decoded: its size, known
+ * before it is shown. No referrer leaves with the request.
+ */
+export function loadImage(
+  url: string,
+): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.referrerPolicy = "no-referrer";
+    image.onload = () =>
+      resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => reject(new Error("The image did not load"));
+    image.src = url;
+  });
+}
+
 /** The data of a media segment the runtime holds for an item. */
 export function readMediaData(
   session: AgentSessionKeyDto,
@@ -89,6 +107,27 @@ export function mediaBlob(data: string, mimeType: string): Blob {
 }
 
 /**
+ * Opens an image of the text by its address: an external one in the
+ * browser, a `data:` one as media without a file.
+ */
+export async function openMediaUrl(media: ChatMedia): Promise<void> {
+  if (!media.url) throw new Error("The media has no address");
+  const data = dataImage(media.url);
+  if (!data) {
+    await openPath(media.url);
+    return;
+  }
+  const blob = data.base64
+    ? mediaBlob(data.payload, data.mimeType)
+    : new Blob([decodeURIComponent(data.payload)], { type: data.mimeType });
+  await openFile(
+    new File([blob], mediaFileName(media, data.mimeType), {
+      type: data.mimeType,
+    }),
+  );
+}
+
+/**
  * Opens media without a file in its system app (`08` R2): on the user's
  * click its data is written into the system temp directory, as a pasted
  * image is (`04`). The only disk write of agent media.
@@ -108,10 +147,15 @@ export async function openMediaData(
       outcome.outcome === "error" ? outcome.message : outcome.reason,
     );
   }
-  const file = new File(
-    [mediaBlob(outcome.data, outcome.mimeType)],
-    mediaFileName(media, outcome.mimeType),
-    { type: outcome.mimeType },
+  await openFile(
+    new File(
+      [mediaBlob(outcome.data, outcome.mimeType)],
+      mediaFileName(media, outcome.mimeType),
+      { type: outcome.mimeType },
+    ),
   );
+}
+
+async function openFile(file: File): Promise<void> {
   await openPath(await savePastedImage(file));
 }

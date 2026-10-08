@@ -52,6 +52,9 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       if (path === "/gone.png") {
         throw { kind: "source_missing", message: "Media source is missing" };
       }
+      if (path === "/huge.png") {
+        throw { kind: "resource_limit", message: "Media is too large" };
+      }
       if (path === "/photo.heic") {
         throw { kind: "unsupported_format", message: "Not supported" };
       }
@@ -243,6 +246,7 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
           segment("old", { path: null, hasData: true }),
         ]),
         tool("gen7", "t2", "other", [segment("x", { path: "/photo.heic" })]),
+        tool("gen9", "t2", "other", [segment("x", { path: "/huge.png" })]),
         tool("gen8", "t2", "other", [
           segment("x", {
             kind: "video",
@@ -442,6 +446,20 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       );
       expect(systemOpened).toEqual(["/out/big.png"]);
 
+      // A local file the window refuses by its size opens in its app.
+      const huge = state("gen9")!;
+      expect(huge.getAttribute("data-media-state")).toBe("too_large");
+      expect(
+        (huge.textContent ?? "").includes(m.sessions_chat_media_too_large()),
+      ).toBe(true);
+      await click(
+        Array.from(huge.querySelectorAll("button")).find(
+          (button) =>
+            button.textContent === m.sessions_chat_media_open_in_app(),
+        ),
+      );
+      expect(systemOpened).toEqual(["/out/big.png", "/huge.png"]);
+
       const released = state("gen6")!;
       expect(released.getAttribute("data-media-state")).toBe("released");
       expect(
@@ -601,6 +619,48 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       expect(moves.every((value) => value === 4900)).toBe(true);
       expect(Boolean(rowOf("g9"))).toBe(true);
       expect(rowOf("r9")).toBe(undefined);
+    } finally {
+      await unmountAll();
+    }
+  });
+
+  test("a MEDIA line at the end of a message the agent still writes shows once the message ends", async () => {
+    const message = (text: string) =>
+      item("m8", "t9", { kind: "agent_message" }, text);
+    const user = item(
+      "u8",
+      "t9",
+      { kind: "user_message", segments: [] },
+      "Show",
+    );
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mounted.push(root);
+    const render = async (value: AgentSessionSnapshotDto) => {
+      await act(async () =>
+        root.render(
+          <TooltipProvider>
+            <ChatTimeline session={key} snapshot={value} />
+          </TooltipProvider>,
+        ),
+      );
+      await settle();
+    };
+    try {
+      sources.length = 0;
+      await render(
+        turnSnapshot([user, message("Here:\nMEDIA:/project/m.png")], "running"),
+      );
+      expect(sources.includes("/project/m.png")).toBe(false);
+      await render(
+        turnSnapshot(
+          [user, message("Here:\nMEDIA:/project/m.png"), done("t9")],
+          "none",
+        ),
+      );
+      expect(sources.includes("/project/m.png")).toBe(true);
+      expect(Boolean(buttonByLabel("m.png"))).toBe(true);
     } finally {
       await unmountAll();
     }

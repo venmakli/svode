@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   File,
   FileImage,
@@ -26,18 +26,16 @@ import {
 import { formatMediaBytes, formatMediaDuration } from "@/features/media";
 import { cn } from "@/shared/lib/utils";
 import { openInSystem } from "../api/attachments";
-import type { AgentMediaSegmentDto, AgentSessionKeyDto } from "../api/chat";
+import type { AgentSessionKeyDto } from "../api/chat";
 import { useAttachmentAvailable } from "../hooks/use-attachment-preview";
 import { useOpenMedia } from "../hooks/use-media-opener";
 import { useMediaView, type MediaView } from "../hooks/use-media-view";
 import {
-  agentMessageParts,
   groupMedia,
   mediaTypeLabel,
   tileLayout,
   type ChatMedia,
 } from "../model/media";
-import { AgentText } from "./agent-text";
 import * as m from "@/paraglide/messages.js";
 
 /** Height bound of a single uncropped tile, in px. */
@@ -47,50 +45,26 @@ const FOCUS_RING =
   "outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
 
 /**
- * An agent message with its media at their places in the text (`08` R2):
- * the text as markdown, the media as tiles, player rows and file cards.
- */
-export function AgentMessageContent({
-  session,
-  itemId,
-  text,
-  media,
-}: {
-  session: AgentSessionKeyDto;
-  itemId: string;
-  text: string;
-  media: readonly AgentMediaSegmentDto[];
-}) {
-  if (media.length === 0) return <AgentText text={text} />;
-  return (
-    <div className="flex min-w-0 flex-col gap-3">
-      {agentMessageParts(itemId, text, media).map((part, index) =>
-        part.type === "text" ? (
-          <AgentText key={index} text={part.text} />
-        ) : (
-          <ChatMediaView key={index} session={session} media={part.media} />
-        ),
-      )}
-    </div>
-  );
-}
-
-/**
  * Media shown together (`08` R2, Composition): images and videos as tiles
  * in the layout by their count, audio as player rows, other files as cards
- * in rows. A click or Enter opens a media by the badge rule.
+ * in rows. A click or Enter opens a media by the badge rule. Media of the
+ * text have no session; `onFail` hears of a tile the window could not show.
  */
 export function ChatMediaView({
   session,
   media,
+  onFail,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   media: readonly ChatMedia[];
+  onFail?: (media: ChatMedia) => void;
 }) {
   const { tiles, audio, files } = groupMedia(media);
   return (
     <div className="flex min-w-0 flex-col gap-2" data-chat-media>
-      {tiles.length > 0 && <MediaTiles session={session} tiles={tiles} />}
+      {tiles.length > 0 && (
+        <MediaTiles session={session} tiles={tiles} onFail={onFail} />
+      )}
       {audio.map((entry) => (
         <AudioRow key={entry.key} session={session} media={entry} />
       ))}
@@ -108,15 +82,19 @@ export function ChatMediaView({
 function MediaTiles({
   session,
   tiles,
+  onFail,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   tiles: ChatMedia[];
+  onFail?: (media: ChatMedia) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const layout = tileLayout(tiles.length, expanded);
   const shown = tiles.slice(0, layout.shown);
   if (layout.kind === "single") {
-    return <MediaTile session={session} media={shown[0]} single />;
+    return (
+      <MediaTile session={session} media={shown[0]} single onFail={onFail} />
+    );
   }
   const expandedGrid = layout.kind === "grid" && layout.shown > 4;
   return (
@@ -155,7 +133,12 @@ function MediaTiles({
                 {m.sessions_chat_media_more({ count: layout.more })}
               </button>
             ) : (
-              <MediaTile session={session} media={entry} single={false} />
+              <MediaTile
+                session={session}
+                media={entry}
+                single={false}
+                onFail={onFail}
+              />
             )}
           </div>
         );
@@ -169,12 +152,20 @@ function MediaTile({
   session,
   media,
   single,
+  onFail,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   media: ChatMedia;
   single: boolean;
+  onFail?: (media: ChatMedia) => void;
 }) {
   const { view, fail } = useMediaView(session, media);
+  const failed = view.state === "error";
+  useEffect(() => {
+    if (failed) onFail?.(media);
+    // The media is the tile's own; only its failing is heard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failed]);
   const open = useOpenMedia(session);
   const name = mediaName(media);
   const reserve = single ? reservedSize(view) : undefined;
@@ -221,6 +212,7 @@ function MediaTile({
           src={view.url}
           alt={name}
           draggable={false}
+          referrerPolicy="no-referrer"
           onError={fail}
           className={cn(
             "block",
@@ -296,7 +288,7 @@ function AudioRow({
   session,
   media,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   media: ChatMedia;
 }) {
   const { view, fail } = useMediaView(session, media);
@@ -343,7 +335,7 @@ function FileCard({
   session,
   media,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   media: ChatMedia;
 }) {
   if (media.path) {
@@ -357,7 +349,7 @@ function PathFileCard({
   media,
   path,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   media: ChatMedia;
   path: string;
 }) {
@@ -380,7 +372,7 @@ function FileCardView({
   media,
   missing,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   media: ChatMedia;
   missing: boolean;
 }) {
@@ -424,7 +416,7 @@ function MediaStatus({
   className,
   inline = false,
 }: {
-  session: AgentSessionKeyDto;
+  session: AgentSessionKeyDto | null;
   media: ChatMedia;
   view: Exclude<MediaView, { state: "loading" | "ready" }>;
   className?: string;

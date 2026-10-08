@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   Tooltip,
   TooltipContent,
@@ -10,6 +10,7 @@ import {
   type MarkdownReaderPolicy,
 } from "@/shared/ui/markdown-reader";
 import { openInSystem } from "../api/attachments";
+import type { AgentMediaSegmentDto, AgentSessionKeyDto } from "../api/chat";
 import { useOpenAttachment } from "../hooks/use-attachment-opener";
 import {
   recheckAttachments,
@@ -17,22 +18,78 @@ import {
 } from "../hooks/use-attachment-preview";
 import { usePathBase } from "../hooks/use-path-base";
 import { attachmentOf } from "../model/attachments";
+import { agentMessageParts } from "../model/media";
+import { withMediaImages } from "../model/text-media";
 import {
   formatLineSuffix,
   inlineCodeReference,
   linkTarget,
   type LocalReference,
 } from "../model/text-paths";
+import { ChatMediaView } from "./chat-media";
+import { TextImages } from "./text-media";
 import * as m from "@/paraglide/messages.js";
+
+/**
+ * An agent message with its media at their places in the text (`08` R2):
+ * the text as markdown, the media as tiles, player rows and file cards.
+ */
+export function AgentMessageContent({
+  session,
+  itemId,
+  text,
+  media,
+  streaming,
+}: {
+  session: AgentSessionKeyDto;
+  itemId: string;
+  text: string;
+  media: readonly AgentMediaSegmentDto[];
+  /** The agent is still writing it: its last line may grow. */
+  streaming: boolean;
+}) {
+  if (media.length === 0) {
+    return <AgentText text={text} streaming={streaming} />;
+  }
+  const parts = agentMessageParts(itemId, text, media);
+  return (
+    <div className="flex min-w-0 flex-col gap-3">
+      {parts.map((part, index) =>
+        part.type === "text" ? (
+          <AgentText
+            key={index}
+            text={part.text}
+            streaming={streaming && index === parts.length - 1}
+          />
+        ) : (
+          <ChatMediaView key={index} session={session} media={part.media} />
+        ),
+      )}
+    </div>
+  );
+}
 
 /**
  * Markdown text of the agent (Stage 10 `08`, R3): a link or a path in
  * inline code to an existing local object opens it by the badge rule, a
  * folder in the file manager; `http(s)` opens in the browser; anything
- * else stays text. Nothing opens on its own.
+ * else stays text. Images with a local path or `data:` and `MEDIA:` lines
+ * are media at their place, external images load only when asked. Nothing
+ * opens on its own.
  */
-export function AgentText({ text }: { text: string }) {
-  return <MarkdownReader content={text} policy={agentTextPolicy} />;
+export function AgentText({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  /** The agent is still writing it: its last line may grow. */
+  streaming?: boolean;
+}) {
+  const content = useMemo(
+    () => withMediaImages(text, { complete: !streaming }),
+    [text, streaming],
+  );
+  return <MarkdownReader content={content} policy={agentTextPolicy} />;
 }
 
 /**
@@ -46,7 +103,7 @@ const agentTextPolicy: MarkdownReaderPolicy = {
   renderInlineCode: (code, element) => (
     <AgentInlineCode code={code}>{element}</AgentInlineCode>
   ),
-  resolveImageSource: () => null,
+  renderImages: (images) => <TextImages images={images} />,
 };
 
 function AgentTextLink({
