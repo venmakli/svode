@@ -5,6 +5,23 @@
     {
       "kind": "ci-build",
       "version": "0.0.9",
+      "commit": "6716b25428c9f62f7e57924fa3d1377ad9cd2a1e",
+      "sourceRef": "main",
+      "runId": 37859286800,
+      "publishedAt": "2026-10-08T23:51:01.502Z",
+      "expiresAt": "2026-10-11T23:51:01.502Z",
+      "reason": "Rich-контент чата",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/37859286800/artifacts/11585944264",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/37859286800",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.9",
       "commit": "7d5c275d8b977bad96e30cab83b2f34ce782c49d",
       "sourceRef": "main",
       "runId": 37616918519,
