@@ -54,6 +54,7 @@ test("deltas upsert items by id and a resolved request clears pending", () => {
   const item = {
     kind: "tool_call" as const,
     tool: "execute" as const,
+    media: [],
     id: "call-1",
     turnId: "t1",
     status: "in_progress" as const,

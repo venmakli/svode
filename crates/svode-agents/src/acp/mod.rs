@@ -1,6 +1,7 @@
 //! ACP v1 client. The one implementation of the Svode adapter contract so
 //! far; wire shapes do not leave this module.
 
+pub(crate) mod media;
 pub(crate) mod normalize;
 pub(crate) mod rpc;
 mod wire;

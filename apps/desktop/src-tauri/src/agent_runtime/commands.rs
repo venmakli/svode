@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
-use svode_agents::activity::DetailOutcome;
+use svode_agents::activity::{DetailOutcome, MediaOutcome};
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::identity::SessionKey;
 use svode_agents::interaction::{AnswerOutcome, InteractionAnswer};
@@ -53,6 +53,18 @@ pub async fn agent_runtime_detail(
     item_id: String,
 ) -> Result<DetailOutcome, AppError> {
     Ok(state.runtime().detail(&session, &item_id))
+}
+
+/// The data of a media segment the runtime holds for an item (Stage 10
+/// `08` R1).
+#[tauri::command]
+pub async fn agent_runtime_media(
+    state: State<'_, AgentRuntimeState>,
+    session: SessionKey,
+    item_id: String,
+    segment_id: String,
+) -> Result<MediaOutcome, AppError> {
+    Ok(state.runtime().media(&session, &item_id, &segment_id))
 }
 
 /// Returns the turn id once the runtime accepted the prompt.

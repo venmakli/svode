@@ -448,7 +448,7 @@ fn messages(items: &[ActivityItem]) -> Vec<(String, String)> {
                 Some(("user".to_string(), serde_json::to_string(segments).unwrap()))
             }
             ItemKind::UserMessage { .. } => Some(("user".to_string(), item.summary.clone())),
-            ItemKind::AgentMessage => Some(("agent".to_string(), item.summary.clone())),
+            ItemKind::AgentMessage { .. } => Some(("agent".to_string(), item.summary.clone())),
             _ => None,
         })
         .collect()

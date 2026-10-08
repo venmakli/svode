@@ -104,10 +104,19 @@ pub enum ItemKind {
     UserMessage {
         segments: Vec<MessageSegment>,
     },
-    AgentMessage,
+    /// `media` holds the files and media the agent sent in the message, in
+    /// order, each at its place in the text.
+    AgentMessage {
+        #[serde(default)]
+        media: Vec<MediaSegment>,
+    },
     Reasoning,
+    /// `media` holds the files and media the call produced or showed, in
+    /// order.
     ToolCall {
         tool: ToolKind,
+        #[serde(default)]
+        media: Vec<MediaSegment>,
     },
     ModeChange,
     ConfigChange,
@@ -164,6 +173,39 @@ pub enum MessageSegment {
         uri: Option<String>,
         name: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaKind {
+    Image,
+    Video,
+    Audio,
+    File,
+}
+
+/// A file or media of an agent message or a tool call (Stage 10 `08` R1).
+/// Its data is never in the snapshot: a segment with `has_data` is read by
+/// item and segment id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaSegment {
+    /// Unique within the item.
+    pub id: String,
+    /// From the agent's MIME type, else from the file extension.
+    pub kind: MediaKind,
+    pub name: Option<String>,
+    pub mime_type: Option<String>,
+    /// Absolute path of the local file.
+    pub path: Option<String>,
+    /// Size in bytes the agent reported, or that of the data.
+    pub size: Option<u64>,
+    /// The agent sent the data without a file; the runtime holds it in
+    /// memory as the segment's detail.
+    pub has_data: bool,
+    /// In an agent message, the place in its text in UTF-16 code units;
+    /// none in a tool call.
+    pub offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -485,6 +527,27 @@ pub enum DetailOutcome {
     Available { blocks: Vec<DetailBlock> },
     Unavailable { reason: UnavailableReason },
     Error { message: String },
+}
+
+/// The data of one media segment, read by item and segment id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "outcome",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum MediaOutcome {
+    /// `data` is base64, as the agent sent it.
+    Available {
+        mime_type: String,
+        data: String,
+    },
+    Unavailable {
+        reason: UnavailableReason,
+    },
+    Error {
+        message: String,
+    },
 }
 
 impl SessionSnapshot {

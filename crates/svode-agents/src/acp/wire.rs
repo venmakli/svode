@@ -218,6 +218,9 @@ pub(crate) struct ToolCall {
     #[serde(default)]
     pub content: Vec<Value>,
     pub raw_output: Option<Value>,
+    pub locations: Option<Vec<Value>>,
+    #[serde(rename = "_meta")]
+    pub meta: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -229,6 +232,9 @@ pub(crate) struct ToolCallUpdate {
     pub status: Option<String>,
     pub content: Option<Vec<Value>>,
     pub raw_output: Option<Value>,
+    pub locations: Option<Vec<Value>>,
+    #[serde(rename = "_meta")]
+    pub meta: Option<Value>,
 }
 
 #[derive(Deserialize)]

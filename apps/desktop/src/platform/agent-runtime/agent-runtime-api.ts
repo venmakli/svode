@@ -80,6 +80,29 @@ export type AgentMessageSegmentDto =
   | { type: "link"; uri: string; name: string }
   | { type: "image"; uri: string | null; name: string | null };
 
+export type AgentMediaKindDto = "image" | "video" | "audio" | "file";
+
+/**
+ * A file or media of an agent message or a tool call. Its data is never in
+ * the snapshot: a segment with `hasData` is read by item and segment id.
+ */
+export interface AgentMediaSegmentDto {
+  /** Unique within the item. */
+  id: string;
+  /** From the agent's MIME type, else from the file extension. */
+  kind: AgentMediaKindDto;
+  name: string | null;
+  mimeType: string | null;
+  /** Absolute path of the local file. */
+  path: string | null;
+  /** Size in bytes the agent reported, or that of the data. */
+  size: number | null;
+  /** The runtime holds the data the agent sent without a file. */
+  hasData: boolean;
+  /** In an agent message, the place in its text in UTF-16 code units. */
+  offset: number | null;
+}
+
 /** A prompt part: text, or a link to a file by its absolute path. */
 export type AgentPromptPartDto =
   | { type: "text"; text: string }
@@ -91,9 +114,11 @@ export type AgentActivityItemDto = (
    * it links a file or an image, empty for a text-only message.
    */
   | { kind: "user_message"; segments: AgentMessageSegmentDto[] }
-  | { kind: "agent_message" }
+  /** `media` stand at their places in the text, in order. */
+  | { kind: "agent_message"; media: AgentMediaSegmentDto[] }
   | { kind: "reasoning" }
-  | { kind: "tool_call"; tool: AgentToolKindDto }
+  /** `media` holds what the call produced or showed, in order. */
+  | { kind: "tool_call"; tool: AgentToolKindDto; media: AgentMediaSegmentDto[] }
   | { kind: "mode_change" }
   | { kind: "config_change" }
   /** The turn's plan; a later plan of the turn replaces it in place. */
@@ -297,6 +322,15 @@ export type AgentDetailOutcomeDto =
     }
   | { outcome: "error"; message: string };
 
+export type AgentMediaOutcomeDto =
+  /** `data` is base64. */
+  | { outcome: "available"; mimeType: string; data: string }
+  | {
+      outcome: "unavailable";
+      reason: "too_large" | "not_provided" | "released";
+    }
+  | { outcome: "error"; message: string };
+
 export type AgentInteractionAnswerDto =
   | { type: "option"; optionId: string }
   | {
@@ -431,6 +465,19 @@ export function readAgentActivityDetail(
   return invoke<AgentDetailOutcomeDto>("agent_runtime_detail", {
     session,
     itemId,
+  });
+}
+
+/** The data of a media segment the runtime holds for an item. */
+export function readAgentMedia(
+  session: AgentSessionKeyDto,
+  itemId: string,
+  segmentId: string,
+): Promise<AgentMediaOutcomeDto> {
+  return invoke<AgentMediaOutcomeDto>("agent_runtime_media", {
+    session,
+    itemId,
+    segmentId,
   });
 }
 

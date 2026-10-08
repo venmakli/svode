@@ -2,7 +2,9 @@
 //! ACP session updates; historical replay and live turns share it.
 
 use serde_json::Value;
+use svode_core::agent_adapters::AgentAdapterKind;
 
+use super::media::{self, MediaPart};
 use super::wire;
 
 use crate::activity::{
@@ -46,6 +48,13 @@ pub(crate) struct ToolUpdate {
     pub status: Option<ItemStatus>,
     /// Replaces the collected content when present.
     pub blocks: Option<Vec<DetailBlock>>,
+    /// Media of the content and raw output; replaces the collected media
+    /// when present.
+    pub media: Option<Vec<MediaPart>>,
+    /// Paths of the call's `locations`; replace the known ones when present.
+    pub locations: Option<Vec<String>>,
+    /// The update shows the call is an MCP call.
+    pub mcp: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +66,8 @@ pub(crate) enum Normalized {
         /// A user message chunk with a link or an image, as its segments in
         /// order; empty for plain text. `text` is how the summary reads it.
         segments: Vec<MessageSegment>,
+        /// Media of an agent message chunk, after its text.
+        media: Vec<MediaPart>,
     },
     Tool(ToolUpdate),
     /// The whole plan; it replaces the previous one.
@@ -76,8 +87,12 @@ pub(crate) enum Normalized {
     Generic(String),
 }
 
-/// Session id and normalized change of a `session/update` notification.
-pub(crate) fn session_update(params: Value) -> Option<(String, Normalized)> {
+/// Session id and normalized change of a `session/update` notification
+/// from `agent`, a built-in agent or none for a custom one.
+pub(crate) fn session_update(
+    params: Value,
+    agent: Option<AgentAdapterKind>,
+) -> Option<(String, Normalized)> {
     let session_id = params.get("sessionId")?.as_str()?.to_string();
     let label = params
         .get("update")
@@ -86,25 +101,36 @@ pub(crate) fn session_update(params: Value) -> Option<(String, Normalized)> {
         .map(|tag| bounded(tag, LABEL_LIMIT))
         .unwrap_or_else(|| "unknown".to_string());
     let normalized = match serde_json::from_value::<wire::SessionNotification>(params) {
-        Ok(notification) => normalize(notification.update),
+        Ok(notification) => normalize(notification.update, agent),
         Err(_) => Normalized::Generic(label),
     };
     Some((session_id, normalized))
 }
 
-fn normalize(update: wire::SessionUpdate) -> Normalized {
+fn normalize(update: wire::SessionUpdate, agent: Option<AgentAdapterKind>) -> Normalized {
     match update {
         wire::SessionUpdate::UserMessageChunk(chunk) => message(MessageRole::User, chunk),
         wire::SessionUpdate::AgentMessageChunk(chunk) => message(MessageRole::Agent, chunk),
         wire::SessionUpdate::AgentThoughtChunk(chunk) => message(MessageRole::Reasoning, chunk),
-        wire::SessionUpdate::ToolCall(call) => Normalized::Tool(ToolUpdate {
-            id: call.tool_call_id,
-            title: Some(call.title),
-            tool: Some(tool_kind(call.kind.as_deref())),
-            status: Some(item_status(call.status.as_deref())),
-            blocks: Some(tool_blocks(call.content, call.raw_output)),
-        }),
-        wire::SessionUpdate::ToolCallUpdate(update) => Normalized::Tool(tool_update(update)),
+        wire::SessionUpdate::ToolCall(call) => {
+            let output = media::tool_output(agent, &call.content, call.raw_output.as_ref());
+            Normalized::Tool(ToolUpdate {
+                mcp: codex_mcp_call(
+                    agent,
+                    call.kind.as_deref(),
+                    Some(&call.title),
+                    call.meta.as_ref(),
+                ),
+                id: call.tool_call_id,
+                title: Some(call.title),
+                tool: Some(tool_kind(call.kind.as_deref())),
+                status: Some(item_status(call.status.as_deref())),
+                blocks: Some(output.blocks),
+                media: Some(output.media),
+                locations: call.locations.map(location_paths),
+            })
+        }
+        wire::SessionUpdate::ToolCallUpdate(update) => Normalized::Tool(tool_update(update, agent)),
         wire::SessionUpdate::Plan(plan) => Normalized::Plan(
             plan.entries
                 .into_iter()
@@ -177,8 +203,26 @@ fn commands(available: Vec<Value>) -> Vec<SessionCommand> {
         .collect()
 }
 
-fn tool_update(update: wire::ToolCallUpdate) -> ToolUpdate {
+fn tool_update(update: wire::ToolCallUpdate, agent: Option<AgentAdapterKind>) -> ToolUpdate {
+    let output = match (&update.content, &update.raw_output) {
+        (None, None) => None,
+        (content, raw_output) => Some(media::tool_output(
+            agent,
+            content.as_deref().unwrap_or_default(),
+            raw_output.as_ref(),
+        )),
+    };
+    let (blocks, media) = match output {
+        Some(output) => (Some(output.blocks), Some(output.media)),
+        None => (None, None),
+    };
     ToolUpdate {
+        mcp: codex_mcp_call(
+            agent,
+            update.kind.as_deref(),
+            update.title.as_deref(),
+            update.meta.as_ref(),
+        ),
         id: update.tool_call_id,
         title: update.title,
         tool: update.kind.as_deref().map(|kind| tool_kind(Some(kind))),
@@ -186,11 +230,37 @@ fn tool_update(update: wire::ToolCallUpdate) -> ToolUpdate {
             .status
             .as_deref()
             .map(|status| item_status(Some(status))),
-        blocks: match (update.content, update.raw_output) {
-            (None, None) => None,
-            (content, raw_output) => Some(tool_blocks(content.unwrap_or_default(), raw_output)),
-        },
+        blocks,
+        media,
+        locations: update.locations.map(location_paths),
     }
+}
+
+/// Local paths of a tool call's `locations`, in order.
+fn location_paths(locations: Vec<Value>) -> Vec<String> {
+    locations
+        .iter()
+        .filter_map(|location| location.get("path")?.as_str())
+        .filter_map(media::local_path)
+        .collect()
+}
+
+/// The Codex form of an MCP call (Stage 10 `08` R7): kind `execute`, title
+/// `mcp.<server>.<tool>` and `_meta.is_mcp_tool_call`. A local stand-in until
+/// the R7 recognizer of slice 9.2a, which replaces it.
+fn codex_mcp_call(
+    agent: Option<AgentAdapterKind>,
+    kind: Option<&str>,
+    title: Option<&str>,
+    meta: Option<&Value>,
+) -> bool {
+    agent == Some(AgentAdapterKind::Codex)
+        && kind == Some("execute")
+        && title.is_some_and(|title| title.starts_with("mcp.") && title.matches('.').count() >= 2)
+        && meta
+            .and_then(|meta| meta.get("is_mcp_tool_call"))
+            .and_then(Value::as_bool)
+            == Some(true)
 }
 
 /// Settings a session declared, and whether they are legacy session modes,
@@ -289,15 +359,23 @@ fn setting_option(value: String, name: String, description: Option<String>) -> S
 }
 
 fn message(role: MessageRole, chunk: wire::ContentChunk) -> Normalized {
-    let (text, segments) = match role {
-        MessageRole::User => user_content(&chunk.content),
-        MessageRole::Agent | MessageRole::Reasoning => (content_text(&chunk.content), Vec::new()),
+    let (text, segments, media) = match role {
+        MessageRole::User => {
+            let (text, segments) = user_content(&chunk.content);
+            (text, segments, Vec::new())
+        }
+        MessageRole::Agent => {
+            let (text, media) = media::message_content(&chunk.content);
+            (text, Vec::new(), media)
+        }
+        MessageRole::Reasoning => (content_text(&chunk.content), Vec::new(), Vec::new()),
     };
     Normalized::Message {
         role,
         message_id: chunk.message_id,
         text,
         segments,
+        media,
     }
 }
 
@@ -403,42 +481,8 @@ fn link(uri: Option<String>, name: Option<String>) -> (String, Vec<MessageSegmen
     (format!("@{name}"), vec![MessageSegment::Link { uri, name }])
 }
 
-fn tool_blocks(content: Vec<Value>, raw_output: Option<Value>) -> Vec<DetailBlock> {
-    let mut blocks: Vec<DetailBlock> = content
-        .iter()
-        .filter_map(|content| match content.get("type")?.as_str()? {
-            "content" => Some(DetailBlock::Text {
-                text: content_text(content.get("content")?),
-            }),
-            "diff" => Some(DetailBlock::Diff {
-                path: content.get("path")?.as_str()?.to_string(),
-                old_text: content
-                    .get("oldText")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                new_text: content.get("newText")?.as_str()?.to_string(),
-            }),
-            "terminal" => Some(DetailBlock::Terminal {
-                terminal_id: content.get("terminalId")?.as_str()?.to_string(),
-            }),
-            _ => None,
-        })
-        .collect();
-    if blocks.is_empty()
-        && let Some(output) = raw_output
-    {
-        blocks.push(DetailBlock::Text {
-            text: match output {
-                Value::String(text) => text,
-                other => other.to_string(),
-            },
-        });
-    }
-    blocks
-}
-
 /// Text of an ACP content block; non-text content is named, not inlined.
-fn content_text(content: &Value) -> String {
+pub(crate) fn content_text(content: &Value) -> String {
     match content.get("type").and_then(Value::as_str) {
         Some("text") => content
             .get("text")
@@ -506,10 +550,13 @@ pub(crate) struct PermissionRequest {
     pub options: Vec<InteractionOption>,
 }
 
-pub(crate) fn permission_request(params: &str) -> Result<PermissionRequest, String> {
+pub(crate) fn permission_request(
+    params: &str,
+    agent: Option<AgentAdapterKind>,
+) -> Result<PermissionRequest, String> {
     let request: wire::RequestPermission =
         serde_json::from_str(params).map_err(|error| error.to_string())?;
-    let tool_call = tool_update(request.tool_call);
+    let tool_call = tool_update(request.tool_call, agent);
     Ok(PermissionRequest {
         session_id: request.session_id,
         title: bounded(
@@ -721,10 +768,13 @@ mod tests {
 
     #[test]
     fn links_and_images_of_a_user_message_become_segments() {
-        let user = |content: Value| match session_update(json!({
-            "sessionId": "s1",
-            "update": { "sessionUpdate": "user_message_chunk", "content": content }
-        })) {
+        let user = |content: Value| match session_update(
+            json!({
+                "sessionId": "s1",
+                "update": { "sessionUpdate": "user_message_chunk", "content": content }
+            }),
+            None,
+        ) {
             Some((_, Normalized::Message { text, segments, .. })) => (text, segments),
             other => panic!("unexpected {other:?}"),
         };
@@ -789,14 +839,17 @@ mod tests {
 
     #[test]
     fn chunks_tools_and_plans_normalize_without_wire_types() {
-        let (session, chunk) = session_update(json!({
-            "sessionId": "s1",
-            "update": {
-                "sessionUpdate": "agent_message_chunk",
-                "content": { "type": "text", "text": "Hello" },
-                "messageId": "m1"
-            }
-        }))
+        let (session, chunk) = session_update(
+            json!({
+                "sessionId": "s1",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "type": "text", "text": "Hello" },
+                    "messageId": "m1"
+                }
+            }),
+            None,
+        )
         .unwrap();
         assert_eq!(session, "s1");
         assert_eq!(
@@ -805,19 +858,23 @@ mod tests {
                 role: MessageRole::Agent,
                 message_id: Some("m1".into()),
                 text: "Hello".into(),
-                segments: Vec::new()
+                segments: Vec::new(),
+                media: Vec::new()
             }
         );
 
-        let (_, tool) = session_update(json!({
-            "sessionId": "s1",
-            "update": {
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": "t1",
-                "status": "completed",
-                "content": [{ "type": "diff", "path": "/a.md", "oldText": "a", "newText": "b" }]
-            }
-        }))
+        let (_, tool) = session_update(
+            json!({
+                "sessionId": "s1",
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "t1",
+                    "status": "completed",
+                    "content": [{ "type": "diff", "path": "/a.md", "oldText": "a", "newText": "b" }]
+                }
+            }),
+            None,
+        )
         .unwrap();
         assert_eq!(
             tool,
@@ -830,27 +887,36 @@ mod tests {
                     path: "/a.md".into(),
                     old_text: Some("a".into()),
                     new_text: "b".into()
-                }])
+                }]),
+                media: Some(Vec::new()),
+                locations: None,
+                mcp: false,
             })
         );
 
-        let (_, plan) = session_update(json!({
-            "sessionId": "s1",
-            "update": {
-                "sessionUpdate": "plan",
-                "entries": [{ "content": "Step", "priority": "high", "status": "in_progress" }]
-            }
-        }))
+        let (_, plan) = session_update(
+            json!({
+                "sessionId": "s1",
+                "update": {
+                    "sessionUpdate": "plan",
+                    "entries": [{ "content": "Step", "priority": "high", "status": "in_progress" }]
+                }
+            }),
+            None,
+        )
         .unwrap();
         assert!(matches!(plan, Normalized::Plan(entries) if entries.len() == 1));
     }
 
     #[test]
     fn unknown_updates_become_bounded_generic_items() {
-        let (_, update) = session_update(json!({
-            "sessionId": "s1",
-            "update": { "sessionUpdate": "x".repeat(500), "payload": "secret transcript" }
-        }))
+        let (_, update) = session_update(
+            json!({
+                "sessionId": "s1",
+                "update": { "sessionUpdate": "x".repeat(500), "payload": "secret transcript" }
+            }),
+            None,
+        )
         .unwrap();
         let Normalized::Generic(label) = update else {
             panic!("expected a generic item");

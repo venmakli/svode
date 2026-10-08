@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::value::RawValue;
+use svode_core::agent_adapters::AgentAdapterKind;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc};
@@ -23,8 +24,8 @@ use crate::acp::rpc::{AUTH_REQUIRED, Incoming, RpcClient, RpcError};
 use crate::acp::{self};
 use crate::activity::{
     Change, ConnectionState, DetailOutcome, HistorySource, HistoryState, InteractionOption,
-    InteractionState, PendingInteraction, QuestionField, SessionDelta, SessionSnapshot, TurnPhase,
-    WriterState,
+    InteractionState, MediaOutcome, PendingInteraction, QuestionField, SessionDelta,
+    SessionSnapshot, TurnPhase, WriterState,
 };
 use crate::adapters::LaunchUnavailable;
 use crate::catalog::{
@@ -84,6 +85,9 @@ pub struct Retention {
     /// Detail of one item; beyond it text keeps its head and tail and other
     /// detail is `too_large`.
     pub item_detail: usize,
+    /// Data of one media segment without a file; beyond it the segment
+    /// stays and its data is `too_large`.
+    pub media_item: usize,
     /// Detail of all open sessions; beyond it the least recently opened
     /// sessions release theirs.
     pub process_detail: usize,
@@ -98,6 +102,7 @@ impl Default for Retention {
             session_items: 2_000,
             session_bytes: 2 * 1024 * 1024,
             item_detail: 1024 * 1024,
+            media_item: 16 * 1024 * 1024,
             process_detail: 128 * 1024 * 1024,
             idle_release: Duration::from_secs(5 * 60),
         }
@@ -1425,6 +1430,21 @@ impl AgentRuntime {
         }
     }
 
+    /// The data of media segment `segment_id` of item `item_id` (Stage 10
+    /// `08` R1).
+    pub fn media(&self, key: &SessionKey, item_id: &str, segment_id: &str) -> MediaOutcome {
+        match self.session(key) {
+            Ok(session) => session
+                .projection
+                .lock()
+                .unwrap()
+                .media(item_id, segment_id),
+            Err(error) => MediaOutcome::Error {
+                message: error.to_string(),
+            },
+        }
+    }
+
     /// Stops the agent process; its sessions end their turns `interrupted`.
     pub async fn close_connection(&self, id: ConnectionId) -> Result<(), AgentRuntimeError> {
         self.connection(id)?.terminate().await;
@@ -1846,6 +1866,12 @@ impl Connection {
         self.sessions.lock().unwrap().values().cloned().collect()
     }
 
+    /// The built-in agent of the connection, whose output forms the
+    /// normalizer knows; none for a custom agent.
+    fn adapter(&self) -> Option<AgentAdapterKind> {
+        AgentAdapterKind::from_id(&self.agent)
+    }
+
     fn session(&self, acp_id: &str) -> Option<Arc<Session>> {
         self.sessions.lock().unwrap().get(acp_id).cloned()
     }
@@ -1870,7 +1896,9 @@ async fn dispatch(connection: Weak<Connection>, mut incoming: mpsc::UnboundedRec
         };
         match message {
             Incoming::Notification { method, params } if method == acp::SESSION_UPDATE => {
-                let Some((acp_id, normalized)) = normalize::session_update(params) else {
+                let Some((acp_id, normalized)) =
+                    normalize::session_update(params, connection.adapter())
+                else {
                     continue;
                 };
                 if let Some(session) = connection.session(&acp_id) {
@@ -1907,7 +1935,7 @@ fn apply(session: &Session, normalized: Normalized) {
 }
 
 fn request_permission(connection: &Connection, id: Value, params: &RawValue) {
-    match normalize::permission_request(params.get()) {
+    match normalize::permission_request(params.get(), connection.adapter()) {
         Ok(request) => open_interaction(
             connection,
             id,

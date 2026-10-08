@@ -6,7 +6,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHal
 use super::*;
 use crate::activity::{
     Change, DetailBlock, FieldInput, HistorySource, HistoryState, ItemKind, ItemStatus,
-    MessageSegment, ToolKind, TurnPhase, UnavailableReason,
+    MediaOutcome, MessageSegment, ToolKind, TurnPhase, UnavailableReason,
 };
 use crate::identity::IdentityNamespace;
 use crate::interaction::FieldValue;
@@ -224,7 +224,7 @@ async fn a_turn_streams_ordered_deltas_and_ends_with_the_agent_stop_reason() {
     assert_eq!(items[0].turn_id.as_deref(), Some(turn.as_str()));
     let message = items
         .iter()
-        .find(|item| item.kind == ItemKind::AgentMessage)
+        .find(|item| matches!(item.kind, ItemKind::AgentMessage { .. }))
         .unwrap();
     assert_eq!(message.summary, "Hello world");
     let tool = items.iter().find(|item| item.id == "t1").unwrap();
@@ -591,7 +591,7 @@ async fn long_live_text_keeps_its_head_and_follows_its_tail() {
         .snapshot
         .items
         .iter()
-        .find(|item| item.kind == ItemKind::AgentMessage)
+        .find(|item| matches!(item.kind, ItemKind::AgentMessage { .. }))
         .unwrap();
     assert_eq!(message.summary, "01234567");
     assert!(message.has_detail);
@@ -1394,15 +1394,24 @@ async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_
                 replay("replay:1"),
                 "Read the plan".into()
             ),
-            (ItemKind::AgentMessage, replay("replay:1"), "Reading".into()),
+            (
+                ItemKind::AgentMessage { media: Vec::new() },
+                replay("replay:1"),
+                "Reading".into()
+            ),
             (
                 ItemKind::ToolCall {
-                    tool: crate::activity::ToolKind::Read
+                    tool: crate::activity::ToolKind::Read,
+                    media: Vec::new()
                 },
                 replay("replay:1"),
                 "Read file".into()
             ),
-            (ItemKind::AgentMessage, replay("replay:1"), "Done".into()),
+            (
+                ItemKind::AgentMessage { media: Vec::new() },
+                replay("replay:1"),
+                "Done".into()
+            ),
             (
                 ItemKind::UserMessage {
                     segments: Vec::new()
@@ -1411,7 +1420,7 @@ async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_
                 "Thanks".into()
             ),
             (
-                ItemKind::AgentMessage,
+                ItemKind::AgentMessage { media: Vec::new() },
                 replay("replay:2"),
                 "You are welcome".into()
             ),
@@ -1748,6 +1757,75 @@ async fn the_process_detail_bound_releases_the_least_recently_opened_session_fir
     let t1 = older_items.iter().find(|item| item.id == "t1").unwrap();
     assert_eq!(t1.summary, "Read file", "the summary stays");
     assert!(runtime.inner.detail_bytes.load(Ordering::Relaxed) <= 2_500);
+}
+
+#[tokio::test]
+async fn media_data_is_read_by_item_and_segment_and_released_under_the_process_bound() {
+    let runtime = runtime_with(Retention {
+        process_detail: 3_000,
+        ..Retention::default()
+    });
+    let image = |id: &str, data: &str| {
+        json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": id,
+            "title": "Generate",
+            "kind": "other",
+            "status": "completed",
+            "content": [{ "type": "content", "content": { "type": "image", "mimeType": "image/png", "data": data } }]
+        })
+    };
+    let older = SessionKey::from_acp("a", "s1", false);
+    let first = "A1b2".repeat(500);
+    let _a = reopened(
+        &runtime,
+        &agent_launch("a"),
+        &older,
+        vec![user_chunk("q"), image("t1", &first)],
+    )
+    .await;
+    assert_eq!(
+        runtime.media(&older, "t1", "0"),
+        MediaOutcome::Available {
+            mime_type: "image/png".into(),
+            data: first.clone()
+        }
+    );
+    let snapshot = serde_json::to_string(&runtime.subscribe(&older).unwrap().snapshot).unwrap();
+    assert!(
+        !snapshot.contains(&first),
+        "the snapshot carries no media data"
+    );
+
+    let newer = SessionKey::from_acp("b", "s1", false);
+    let _b = reopened(
+        &runtime,
+        &agent_launch("b"),
+        &newer,
+        vec![user_chunk("q"), image("t1", &"C3d4".repeat(500))],
+    )
+    .await;
+    assert_eq!(
+        runtime.media(&older, "t1", "0"),
+        MediaOutcome::Unavailable {
+            reason: UnavailableReason::Released
+        }
+    );
+    let older_items = runtime.subscribe(&older).unwrap().snapshot.items;
+    let t1 = older_items.iter().find(|item| item.id == "t1").unwrap();
+    assert!(
+        matches!(&t1.kind, ItemKind::ToolCall { media, .. } if media.len() == 1 && media[0].has_data),
+        "the segment stays"
+    );
+    assert!(matches!(
+        runtime.media(&newer, "t1", "0"),
+        MediaOutcome::Available { .. }
+    ));
+    assert!(runtime.inner.detail_bytes.load(Ordering::Relaxed) <= 3_000);
+    assert!(matches!(
+        runtime.media(&SessionKey::from_acp("c", "s1", false), "t1", "0"),
+        MediaOutcome::Error { .. }
+    ));
 }
 
 #[tokio::test]
@@ -3302,7 +3380,8 @@ async fn a_permission_names_its_tool_call_and_its_fields_merge_into_that_item() 
     assert_eq!(
         item.kind,
         ItemKind::ToolCall {
-            tool: ToolKind::SwitchMode
+            tool: ToolKind::SwitchMode,
+            media: Vec::new()
         }
     );
     assert_eq!(item.summary, "Approve Plan");
@@ -3531,7 +3610,7 @@ async fn a_finished_turn_carries_its_duration_and_each_turn_its_own_plan() {
         .position(|item| item.id == format!("plan:{first}"));
     let message_at = items
         .iter()
-        .position(|item| item.kind == ItemKind::AgentMessage);
+        .position(|item| matches!(item.kind, ItemKind::AgentMessage { .. }));
     assert!(plan_at < message_at, "the plan keeps its first place");
     assert!(items.iter().any(|item| matches!(
         item.kind,
@@ -3649,7 +3728,7 @@ async fn updates_sent_before_the_answer_land_in_the_turn_before_it_ends() {
     let message = snapshot
         .items
         .iter()
-        .find(|item| item.kind == ItemKind::AgentMessage)
+        .find(|item| matches!(item.kind, ItemKind::AgentMessage { .. }))
         .unwrap();
     assert!(message.summary.ends_with("199 "));
     assert_eq!(message.turn_id, turn.or(snapshot.turn.turn_id.clone()));

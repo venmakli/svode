@@ -9,12 +9,13 @@ use std::time::{Instant, SystemTime};
 
 use tokio::sync::broadcast;
 
+use crate::acp::media::{self, MediaPart};
 use crate::acp::normalize::{self, DeclaredSettings, MessageRole, Normalized, ToolUpdate};
 use crate::activity::{
     ActivityItem, Change, ConnectionState, DetailBlock, DetailOutcome, HistorySource, HistoryState,
-    InteractionState, ItemKind, ItemStatus, MessageSegment, PendingInteraction, PlanEntry,
-    SessionDelta, SessionSetting, SessionSnapshot, Truncation, TurnPhase, TurnState,
-    UnavailableReason, WriterState,
+    InteractionState, ItemKind, ItemStatus, MediaKind, MediaOutcome, MediaSegment, MessageSegment,
+    PendingInteraction, PlanEntry, SessionDelta, SessionSetting, SessionSnapshot, ToolKind,
+    Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
 };
 use crate::identity::SessionKey;
 use crate::interaction::InteractionAnswer;
@@ -46,6 +47,40 @@ impl Detail {
     }
 }
 
+/// The data of one media segment (Stage 10 `08` R1); counted in the detail
+/// bounds like any detail.
+enum MediaData {
+    Held {
+        mime_type: String,
+        data: String,
+    },
+    /// The segment is a file or a link.
+    None,
+    /// Beyond the per-item media bound; never kept.
+    TooLarge,
+    /// Released under the process bound; the segment stays.
+    Released,
+}
+
+impl MediaData {
+    fn size(&self) -> usize {
+        match self {
+            MediaData::Held { data, .. } => data.len(),
+            MediaData::None | MediaData::TooLarge | MediaData::Released => 0,
+        }
+    }
+}
+
+/// What the media segments of a tool call are made of; updates of the call
+/// change its parts, locations and MCP form separately.
+#[derive(Default)]
+struct ToolMedia {
+    /// Without their data, which is held by segment index.
+    parts: Vec<MediaPart>,
+    locations: Vec<String>,
+    mcp: bool,
+}
+
 /// A `session/load` replay in progress. ACP v1 replays turns without
 /// delimiters, so each user message starts the next replay turn: whole
 /// turns are what retention evicts.
@@ -64,6 +99,9 @@ pub(crate) struct Projection {
     snapshot: SessionSnapshot,
     sender: broadcast::Sender<SessionDelta>,
     details: HashMap<String, Detail>,
+    /// Media data of items by segment index.
+    media: HashMap<String, Vec<MediaData>>,
+    tool_media: HashMap<String, ToolMedia>,
     /// Item that chunks without a `messageId` extend, with its role.
     open_message: Option<(MessageRole, String)>,
     next_local_id: u64,
@@ -117,6 +155,8 @@ impl Projection {
             },
             sender,
             details: HashMap::new(),
+            media: HashMap::new(),
+            tool_media: HashMap::new(),
             open_message: None,
             next_local_id: 0,
             retention,
@@ -373,7 +413,8 @@ impl Projection {
                 message_id,
                 text,
                 segments,
-            } => self.append_message(role, message_id, &text, segments),
+                media,
+            } => self.append_message(role, message_id, &text, segments, media),
             Normalized::Tool(update) => self.upsert_tool(update),
             Normalized::Plan(entries) => self.put_plan(entries),
             Normalized::ModeChange(mode) => {
@@ -441,8 +482,45 @@ impl Projection {
         }
     }
 
-    /// Releases the detail of the oldest items outside the current turn
-    /// until `need` bytes are freed; summaries stay. Returns the bytes freed.
+    pub(crate) fn media(&self, item_id: &str, segment_id: &str) -> MediaOutcome {
+        let Some(item) = self.snapshot.items.iter().find(|item| item.id == item_id) else {
+            return MediaOutcome::Error {
+                message: format!("no item {item_id} in this session"),
+            };
+        };
+        let Some(segment) = media_of(&item.kind)
+            .iter()
+            .find(|segment| segment.id == segment_id)
+        else {
+            return MediaOutcome::Error {
+                message: format!("no media {segment_id} in item {item_id}"),
+            };
+        };
+        let held = segment
+            .has_data
+            .then(|| segment_id.parse::<usize>().ok())
+            .flatten()
+            .and_then(|index| self.media.get(item_id)?.get(index));
+        match held {
+            Some(MediaData::Held { mime_type, data }) => MediaOutcome::Available {
+                mime_type: mime_type.clone(),
+                data: data.clone(),
+            },
+            Some(MediaData::TooLarge) => MediaOutcome::Unavailable {
+                reason: UnavailableReason::TooLarge,
+            },
+            Some(MediaData::Released) => MediaOutcome::Unavailable {
+                reason: UnavailableReason::Released,
+            },
+            Some(MediaData::None) | None => MediaOutcome::Unavailable {
+                reason: UnavailableReason::NotProvided,
+            },
+        }
+    }
+
+    /// Releases the detail and media data of the oldest items outside the
+    /// current turn until `need` bytes are freed; summaries and segments
+    /// stay. Returns the bytes freed.
     pub(crate) fn release_detail(&mut self, need: usize) -> usize {
         let current = self.current_turn();
         let candidates: Vec<String> = self
@@ -464,7 +542,23 @@ impl Projection {
             {
                 freed += self.set_detail(&id, Detail::Released);
             }
+            freed += self.release_media(&id);
         }
+        freed
+    }
+
+    fn release_media(&mut self, id: &str) -> usize {
+        let Some(data) = self.media.get_mut(id) else {
+            return 0;
+        };
+        let mut freed = 0;
+        for datum in data.iter_mut() {
+            if let MediaData::Held { .. } = datum {
+                freed += datum.size();
+                *datum = MediaData::Released;
+            }
+        }
+        self.untrack_detail(freed);
         freed
     }
 
@@ -474,6 +568,7 @@ impl Projection {
         message_id: Option<String>,
         text: &str,
         segments: Vec<MessageSegment>,
+        media: Vec<MediaPart>,
     ) {
         if role == MessageRole::User && self.replay.is_some() {
             let continues = match (&self.open_message, &message_id) {
@@ -514,7 +609,9 @@ impl Projection {
             MessageRole::User => ItemKind::UserMessage {
                 segments: self.extend_segments(&id, &known, text, segments),
             },
-            MessageRole::Agent => ItemKind::AgentMessage,
+            MessageRole::Agent => ItemKind::AgentMessage {
+                media: self.extend_message_media(&id, &known, text, media),
+            },
             MessageRole::Reasoning => ItemKind::Reasoning,
         };
         let block = extend_text(known, text, self.retention.item_detail);
@@ -560,6 +657,137 @@ impl Projection {
         bounded_segments(segments)
     }
 
+    /// The media of agent message `id` with the next chunk's, placed after
+    /// the text so far and the chunk's `text`.
+    fn extend_message_media(
+        &mut self,
+        id: &str,
+        known: &DetailBlock,
+        text: &str,
+        parts: Vec<MediaPart>,
+    ) -> Vec<MediaSegment> {
+        let mut segments = match self.snapshot.items.iter().find(|item| item.id == id) {
+            Some(ActivityItem {
+                kind: ItemKind::AgentMessage { media },
+                ..
+            }) => media.clone(),
+            _ => Vec::new(),
+        };
+        if parts.is_empty() {
+            return segments;
+        }
+        let offset = utf16_len(known) + text.encode_utf16().count() as u64;
+        let mut data = self.take_media(id);
+        for part in parts {
+            let (part, datum) = self.hold(part);
+            let has_data = !matches!(datum, MediaData::None);
+            data.push(datum);
+            segments.push(segment(segments.len(), part, has_data, Some(offset)));
+        }
+        self.put_media(id, data);
+        segments
+    }
+
+    /// The part without its data, and the data it holds within the per-item
+    /// media bound.
+    fn hold(&self, mut part: MediaPart) -> (MediaPart, MediaData) {
+        let datum = match part.data.take() {
+            None => MediaData::None,
+            Some(data) if data.len() > self.retention.media_item => MediaData::TooLarge,
+            Some(data) => MediaData::Held {
+                mime_type: part
+                    .mime_type
+                    .clone()
+                    .unwrap_or_else(|| "application/octet-stream".into()),
+                data,
+            },
+        };
+        (part, datum)
+    }
+
+    /// Takes the media data of item `id` out of the detail bounds.
+    fn take_media(&mut self, id: &str) -> Vec<MediaData> {
+        let data = self.media.remove(id).unwrap_or_default();
+        self.untrack_detail(data.iter().map(MediaData::size).sum());
+        data
+    }
+
+    fn put_media(&mut self, id: &str, data: Vec<MediaData>) {
+        self.track_detail(data.iter().map(MediaData::size).sum());
+        if let Some(old) = self.media.insert(id.to_string(), data) {
+            self.untrack_detail(old.iter().map(MediaData::size).sum());
+        }
+    }
+
+    /// The media segments of tool call `id` of kind `tool` after `update`.
+    fn tool_segments(
+        &mut self,
+        id: &str,
+        tool: ToolKind,
+        status: Option<ItemStatus>,
+        update: &mut ToolUpdate,
+    ) -> Vec<MediaSegment> {
+        let mut state = self.tool_media.remove(id).unwrap_or_default();
+        if let Some(locations) = update.locations.take() {
+            state.locations = locations;
+        }
+        state.mcp |= update.mcp;
+        let mut has_data = Vec::new();
+        if let Some(parts) = update.media.take() {
+            self.take_media(id);
+            let mut data = Vec::new();
+            state.parts.clear();
+            for part in parts.into_iter().filter(|part| state.mcp || !part.mcp_only) {
+                let (part, datum) = self.hold(part);
+                state.parts.push(part);
+                data.push(datum);
+            }
+            self.put_media(id, data);
+        }
+        if let Some(data) = self.media.get(id) {
+            has_data = data
+                .iter()
+                .map(|datum| !matches!(datum, MediaData::None))
+                .collect();
+        }
+        let mut segments: Vec<MediaSegment> = state
+            .parts
+            .iter()
+            .enumerate()
+            .map(|(index, part)| {
+                let mut part = part.clone();
+                // A read tool call names the image it read in `locations`.
+                if tool == ToolKind::Read
+                    && part.kind == MediaKind::Image
+                    && part.path.is_none()
+                    && let Some(path) = state.locations.first()
+                {
+                    part.name = part.name.or_else(|| {
+                        std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(str::to_string)
+                    });
+                    part.path = Some(path.clone());
+                }
+                segment(index, part, has_data.get(index) == Some(&true), None)
+            })
+            .collect();
+        if segments.is_empty() && tool == ToolKind::Read && status != Some(ItemStatus::Failed) {
+            for part in state
+                .locations
+                .iter()
+                .filter_map(|path| media::read_file(path))
+            {
+                if segments.iter().all(|known| known.path != part.path) {
+                    segments.push(segment(segments.len(), part, false, None));
+                }
+            }
+        }
+        self.tool_media.insert(id.to_string(), state);
+        segments
+    }
+
     /// One plan item per turn at the place the turn's first plan appeared;
     /// a later plan of the turn replaces it in place.
     fn put_plan(&mut self, entries: Vec<PlanEntry>) {
@@ -576,7 +804,7 @@ impl Projection {
         });
     }
 
-    fn upsert_tool(&mut self, update: ToolUpdate) {
+    fn upsert_tool(&mut self, mut update: ToolUpdate) {
         self.open_message = None;
         let known = self
             .snapshot
@@ -584,20 +812,20 @@ impl Projection {
             .iter()
             .find(|item| item.id == update.id)
             .cloned();
-        let (kind, status, summary) = match &known {
-            Some(item) => (item.kind.clone(), item.status, item.summary.clone()),
-            None => (
-                ItemKind::ToolCall {
-                    tool: crate::activity::ToolKind::Other,
-                },
-                Some(ItemStatus::Pending),
-                String::new(),
-            ),
+        let (known_tool, status, summary) = match &known {
+            Some(ActivityItem {
+                kind: ItemKind::ToolCall { tool, .. },
+                status,
+                summary,
+                ..
+            }) => (*tool, *status, summary.clone()),
+            Some(item) => (ToolKind::Other, item.status, item.summary.clone()),
+            None => (ToolKind::Other, Some(ItemStatus::Pending), String::new()),
         };
-        let kind = match update.tool {
-            Some(tool) => ItemKind::ToolCall { tool },
-            None => kind,
-        };
+        let tool = update.tool.unwrap_or(known_tool);
+        let status = update.status.or(status);
+        let media = self.tool_segments(&update.id.clone(), tool, status, &mut update);
+        let kind = ItemKind::ToolCall { tool, media };
         let mut has_detail = known.as_ref().is_some_and(|item| item.has_detail);
         if let Some(blocks) = update.blocks {
             has_detail = !blocks.is_empty();
@@ -610,7 +838,7 @@ impl Projection {
                 None => self.current_turn(),
             },
             kind,
-            status: update.status.or(status),
+            status,
             summary: update
                 .title
                 .map(|title| normalize::bounded(&title, SUMMARY_LIMIT))
@@ -731,6 +959,8 @@ impl Projection {
             if let Some(detail) = self.details.remove(id) {
                 self.untrack_detail(detail.size());
             }
+            self.take_media(id);
+            self.tool_media.remove(id);
         }
         if self
             .open_message
@@ -864,15 +1094,61 @@ fn segment_size(segment: &MessageSegment) -> usize {
     }
 }
 
+/// The media segments an item kind carries.
+fn media_of(kind: &ItemKind) -> &[MediaSegment] {
+    match kind {
+        ItemKind::AgentMessage { media } | ItemKind::ToolCall { media, .. } => media,
+        _ => &[],
+    }
+}
+
+fn segment(index: usize, part: MediaPart, has_data: bool, offset: Option<u64>) -> MediaSegment {
+    MediaSegment {
+        id: index.to_string(),
+        kind: part.kind,
+        name: part.name,
+        mime_type: part.mime_type,
+        path: part.path,
+        size: part.size,
+        has_data,
+        offset,
+    }
+}
+
+/// Length of a message text in UTF-16 code units; an excerpt counts the
+/// omitted characters as one unit each.
+fn utf16_len(block: &DetailBlock) -> u64 {
+    match block {
+        DetailBlock::Text { text } => text.encode_utf16().count() as u64,
+        DetailBlock::Excerpt {
+            head,
+            omitted_chars,
+            tail,
+        } => (head.encode_utf16().count() + tail.encode_utf16().count()) as u64 + omitted_chars,
+        DetailBlock::Diff { .. } | DetailBlock::Terminal { .. } => 0,
+    }
+}
+
 /// Size of an item in the compact bound.
 fn compact_size(item: &ActivityItem) -> usize {
-    let label = match &item.kind {
-        ItemKind::UserMessage { segments } => segments.iter().map(segment_size).sum(),
-        ItemKind::Generic { label } => label.len(),
-        ItemKind::Plan { entries } => entries.iter().map(|entry| entry.content.len()).sum(),
-        ItemKind::Interaction { option, .. } => option.as_ref().map_or(0, String::len),
-        _ => 0,
-    };
+    let media: usize = media_of(&item.kind)
+        .iter()
+        .map(|segment| {
+            ITEM_OVERHEAD
+                + segment.id.len()
+                + segment.name.as_ref().map_or(0, String::len)
+                + segment.mime_type.as_ref().map_or(0, String::len)
+                + segment.path.as_ref().map_or(0, String::len)
+        })
+        .sum();
+    let label = media
+        + match &item.kind {
+            ItemKind::UserMessage { segments } => segments.iter().map(segment_size).sum::<usize>(),
+            ItemKind::Generic { label } => label.len(),
+            ItemKind::Plan { entries } => entries.iter().map(|entry| entry.content.len()).sum(),
+            ItemKind::Interaction { option, .. } => option.as_ref().map_or(0, String::len),
+            _ => 0,
+        };
     ITEM_OVERHEAD
         + item.id.len()
         + item.turn_id.as_ref().map_or(0, String::len)
