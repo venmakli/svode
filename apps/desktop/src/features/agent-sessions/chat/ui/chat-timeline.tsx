@@ -70,6 +70,7 @@ import { formatDuration } from "../model/format";
 import { ItemDetail } from "./item-detail";
 import { LiveTurnEnd, LiveTurnMarker } from "./live-turn-marker";
 import { TurnChangedFiles } from "./turn-changed-files";
+import { TurnRail } from "./turn-rail";
 import * as m from "@/paraglide/messages.js";
 
 /**
@@ -97,7 +98,7 @@ export function ChatTimeline({
 
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
-      <MessageScroller className="min-h-0 flex-1">
+      <MessageScroller className="@container min-h-0 flex-1">
         <MessageScrollerViewport
           aria-label={m.sessions_chat_timeline_label()}
           className="px-6"
@@ -129,6 +130,7 @@ export function ChatTimeline({
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton aria-label={m.sessions_chat_scroll_to_end()} />
+        <TurnRail turns={turns} hiddenTurns={null} />
         <LiveTurnEnd live={marker !== null} />
       </MessageScroller>
     </MessageScrollerProvider>

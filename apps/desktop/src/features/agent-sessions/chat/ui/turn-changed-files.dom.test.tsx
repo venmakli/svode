@@ -251,8 +251,13 @@ if (process.env.SVODE_TURN_CHANGED_FILES_DOM !== "1") {
     await settle();
   }
 
+  /** The files rows of the timeline; the turn rail repeats the count. */
   function filesRows() {
-    return Array.from(document.querySelectorAll("button")).filter((element) =>
+    return Array.from(
+      document
+        .querySelector("[data-slot='message-scroller-viewport']")!
+        .querySelectorAll("button"),
+    ).filter((element) =>
       element.textContent?.includes(
         m.sessions_chat_changed_files({ count: 3 }),
       ),

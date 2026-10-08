@@ -10,6 +10,12 @@ import { NodeApi } from "platejs";
 import type { Heading } from "@platejs/toc";
 import { useTocSideBarState, useTocSideBar } from "@platejs/toc/react";
 import { cn } from "@/shared/lib/utils";
+import {
+  ScrollRailItem,
+  ScrollRailPanel,
+  ScrollRailTick,
+  ScrollRailTicks,
+} from "@/shared/ui/scroll-rail";
 
 interface TocSidebarProps {
   topOffset?: number;
@@ -184,15 +190,12 @@ export function TocSidebar({ topOffset = 80 }: TocSidebarProps) {
       >
         {/* Collapsed: bars */}
         {!isHovered && (
-          <div className="flex flex-col gap-1 items-end pr-1">
+          <ScrollRailTicks>
             {headingList.map((item) => (
-              <button
+              <ScrollRailTick
                 key={item.id}
+                active={item.id === activeContentId}
                 className={cn(
-                  "h-0.5 rounded-full transition-colors cursor-pointer",
-                  item.id === activeContentId
-                    ? "bg-foreground"
-                    : "bg-muted-foreground/30",
                   item.depth === 1 && "w-6",
                   item.depth === 2 && "w-5",
                   item.depth >= 3 && "w-4",
@@ -200,31 +203,29 @@ export function TocSidebar({ topOffset = 80 }: TocSidebarProps) {
                 onClick={(e) => handleHeadingClick(e, item, "smooth")}
               />
             ))}
-          </div>
+          </ScrollRailTicks>
         )}
 
         {/* Expanded: heading list */}
         {isHovered && (
-          <div className="bg-background/95 backdrop-blur-sm border rounded-md py-2 px-3 shadow-md max-w-[200px]">
+          <ScrollRailPanel className="max-w-[200px]">
             <div className="flex flex-col gap-0.5">
               {headingList.map((item) => (
-                <button
+                <ScrollRailItem
                   key={item.id}
+                  active={item.id === activeContentId}
                   className={cn(
-                    "text-left text-xs truncate py-0.5 hover:text-foreground transition-colors cursor-pointer",
-                    item.id === activeContentId
-                      ? "text-primary font-medium"
-                      : "text-muted-foreground",
+                    "truncate",
                     item.depth === 2 && "pl-3",
                     item.depth >= 3 && "pl-6",
                   )}
                   onClick={(e) => handleHeadingClick(e, item, "smooth")}
                 >
                   {item.title}
-                </button>
+                </ScrollRailItem>
               ))}
             </div>
-          </div>
+          </ScrollRailPanel>
         )}
       </nav>
     </div>
