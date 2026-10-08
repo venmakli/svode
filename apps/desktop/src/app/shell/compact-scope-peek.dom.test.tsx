@@ -90,6 +90,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   mock.module("@/features/media", () => ({
     formatMediaBytes: (value: number) => `${value} B`,
     formatMediaDuration: (value: number) => String(value),
+    mediaFamilyFromFormat: () => null,
+    mediaFormatFromPath: () => null,
     probeMediaTarget: () => ({ status: "no_match" }),
   }));
   mock.module("@/features/properties/panel", () => ({
