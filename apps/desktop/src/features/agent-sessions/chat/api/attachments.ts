@@ -150,7 +150,11 @@ export async function droppedResourceAttachment(
   ) {
     return { ok: false, unavailable: [name] };
   }
-  const path = joinPath(resource.spacePath, resource.relativePath);
+  let path = joinPath(resource.spacePath, resource.relativePath);
+  // The tree names a collection or folder by its README; its directory is meant.
+  if (resource.kind !== "file" && /[\\/]README\.md$/i.test(path)) {
+    path = path.replace(/[\\/]README\.md$/i, "");
+  }
   const kind = await readableKind(path);
   if (kind === null) return { ok: false, unavailable: [name] };
   if (kind === "file") {

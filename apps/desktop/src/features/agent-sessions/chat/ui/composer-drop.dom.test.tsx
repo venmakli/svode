@@ -199,7 +199,7 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
   }
 
   async function dispatchDrag(
-    type: "dragenter" | "dragover" | "drop",
+    type: "dragenter" | "dragover" | "dragleave" | "drop",
     target: Element,
     dataTransfer: ReturnType<typeof transfer>,
     point = { x: 0, y: 0 },
@@ -283,6 +283,47 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
     expect(Boolean(document.querySelector('button[aria-label="Plan"] svg.lucide-file-text'))).toBe(true);
     expect(Boolean(document.querySelector('button[aria-label="Tasks"] svg.lucide-folder'))).toBe(true);
     expect(field().contains(document.activeElement)).toBe(true);
+  });
+
+  dropTest("a collection the tree names by its README becomes a folder badge of its directory", async () => {
+    kinds = {
+      "/project/tasks": "directory",
+      "/project/tasks/README.md": "file",
+    };
+    await mount(chat());
+    await drop(
+      resource({ kind: "collection", relativePath: "tasks/README.md", title: "Tasks" }),
+    );
+    expect(draft()).toEqual(["[Tasks|/project/tasks/]", " "]);
+    expect(Boolean(document.querySelector('button[aria-label="Tasks"] svg.lucide-folder'))).toBe(true);
+  });
+
+  dropTest("a leave between children without a related target keeps the highlight", async () => {
+    await mount(chat());
+    const target = surface();
+    const bounds = window.Element.prototype.getBoundingClientRect;
+    window.Element.prototype.getBoundingClientRect = function () {
+      return this === target
+        ? new window.DOMRect(0, 0, 600, 400)
+        : bounds.call(this);
+    };
+    const doc = document as Document & {
+      elementFromPoint: (x: number, y: number) => Element | null;
+    };
+    const fromPoint = doc.elementFromPoint;
+    doc.elementFromPoint = () => field();
+    try {
+      await dispatchDrag("dragenter", field(), resource({ kind: "file", relativePath: "notes/plan.md" }), { x: 100, y: 100 });
+      // WebKit: moving onto another child fires a leave with no related target.
+      await dispatchDrag("dragleave", field(), resource({ kind: "file", relativePath: "notes/plan.md" }), { x: 120, y: 100 });
+      expect(target.textContent?.includes(m.sessions_chat_drop_attach())).toBe(true);
+      // Leaving the window: the point lies outside the surface.
+      await dispatchDrag("dragleave", target, resource({ kind: "file", relativePath: "notes/plan.md" }), { x: 900, y: 900 });
+      expect(target.textContent?.includes(m.sessions_chat_drop_attach())).toBe(false);
+    } finally {
+      window.Element.prototype.getBoundingClientRect = bounds;
+      doc.elementFromPoint = fromPoint;
+    }
   });
 
   dropTest("files and folders of the OS become badges, a folder by its directory", async () => {

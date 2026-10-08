@@ -295,6 +295,17 @@ export function useResourceDropTarget({
       ) {
         return;
       }
+      // WebKit leaves `relatedTarget` null when the drag moves between
+      // children, so a leave inside the surface's bounds is not one.
+      if (
+        event.relatedTarget === null &&
+        isPointOnDropTarget(
+          { x: event.clientX, y: event.clientY },
+          event.currentTarget,
+        )
+      ) {
+        return;
+      }
       clearActiveDrag();
     },
     [clearActiveDrag],
