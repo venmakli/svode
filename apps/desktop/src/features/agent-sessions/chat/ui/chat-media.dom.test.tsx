@@ -624,6 +624,19 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
     }
   });
 
+  test("folding a turn into as many rows keeps the timeline at its end, not at an earlier turn", async () => {
+    try {
+      // [reasoning, answer] folds into [summary, answer]: the row count stays.
+      const moves = await foldMoves([
+        item("r7", "t9", { kind: "reasoning" }, "Thinking"),
+        item("m7", "t9", { kind: "agent_message" }, "Done"),
+      ]);
+      expect(moves.every((value) => value === 4900)).toBe(true);
+    } finally {
+      await unmountAll();
+    }
+  });
+
   test("a MEDIA line at the end of a message the agent still writes shows once the message ends", async () => {
     const message = (text: string) =>
       item("m8", "t9", { kind: "agent_message" }, text);
