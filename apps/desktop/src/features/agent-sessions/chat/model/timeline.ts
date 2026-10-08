@@ -157,7 +157,13 @@ function projectTurn(items: AgentActivityItemDto[]): TimelineEntry[] {
       case "tool_call": {
         const row = { item, permission: permissions.get(item.id) ?? null };
         const last = entries.at(-1);
-        if (last?.kind === "tools") {
+        // A call that created media stands on its own, so neither a group
+        // nor a folded turn hides what it made (`08` R2).
+        if (
+          last?.kind === "tools" &&
+          !createsMedia(item) &&
+          !last.rows.some((previous) => createsMedia(previous.item))
+        ) {
           entries[entries.length - 1] = { ...last, rows: [...last.rows, row] };
         } else {
           push({ kind: "tools", id: item.id, rows: [row] });

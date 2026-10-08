@@ -133,13 +133,17 @@ test("a folded turn keeps the rows of created media outside, each on its own, an
         : entry.id,
     ),
   ).toEqual(["user:t1", "tools:gen1", "tools:gen2", "m1"]);
-  // Unfolded, the turn groups its tool calls as before.
+  // Unfolded, created media stay on their own rows; the rest group as before.
   const unfolded = shownEntries({ "summary:t1": true }, turn);
-  expect(unfolded.find((entry) => entry.kind === "tools")?.id).toBe("run");
+  expect(
+    unfolded
+      .filter((entry) => entry.kind === "tools")
+      .map((entry) => entry.rows.map((row) => row.item.id).join(",")),
+  ).toEqual(["run", "gen1", "view,find", "gen2"]);
   expect(turnCreatedMediaCount(turn)).toBe(3);
 });
 
-test("a turn whose only folded items are created media has no summary row but still lifts them", () => {
+test("a turn whose only tool calls created media has no summary row and shows each on its own", () => {
   const [turn] = projectTimeline({
     turn: idle,
     items: [
@@ -150,7 +154,7 @@ test("a turn whose only folded items are created media has no summary row but st
       outcome,
     ],
   });
-  expect(turn.summary?.count).toBe(0);
+  expect(turn.summary).toBe(null);
   expect(
     shownEntries({}, turn).map((entry) =>
       entry.kind === "tools" ? entry.rows.length : 0,
