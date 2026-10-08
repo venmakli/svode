@@ -212,6 +212,33 @@ if (process.env.SVODE_MARKDOWN_READER_MERMAID_DOM !== "1") {
     }
   });
 
+  test("a wheel over a diagram scrolls the page instead of zooming the diagram", async () => {
+    const reader = await renderReader(
+      "```mermaid\nflowchart TD\n  A --> B\n```",
+    );
+
+    try {
+      const svg = await waitFor(() =>
+        reader.container.querySelector('[data-streamdown="mermaid"] svg'),
+      );
+      const wheel = new dom.window.WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: 120,
+      });
+      await act(async () => {
+        svg.dispatchEvent(wheel);
+      });
+      expect(wheel.defaultPrevented).toBe(false);
+      const surface = reader.container.querySelector<HTMLElement>(
+        '[data-streamdown="mermaid"] [role="application"]',
+      );
+      expect(surface?.style.transform).toBe("translate(0px, 0px) scale(1)");
+    } finally {
+      await reader.unmount();
+    }
+  });
+
   test("Mermaid offers copying its source and code blocks keep no controls", async () => {
     const reader = await renderReader(
       "```mermaid\nflowchart TD\n  A --> B\n```\n\n```ts\nconst value = 1;\n```",
