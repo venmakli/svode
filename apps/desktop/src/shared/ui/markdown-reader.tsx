@@ -1,6 +1,12 @@
-import { Component, useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  Component,
+  useEffect,
+  useMemo,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { code } from "@streamdown/code";
-import { harden } from "rehype-harden";
 import {
   defaultRehypePlugins,
   Streamdown,
@@ -10,26 +16,66 @@ import {
 
 import { cn } from "@/shared/lib/utils";
 
+type RehypePlugin = NonNullable<StreamdownProps["rehypePlugins"]>[number];
+
 const readerPlugins = { code } as const;
-const readerRehypePlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [
-  defaultRehypePlugins.sanitize,
-  [
-    harden,
-    {
-      allowedImagePrefixes: ["*"],
-      allowedLinkPrefixes: ["*"],
-      allowDataImages: false,
-      imageBlockPolicy: "text-only",
-      linkBlockPolicy: "text-only",
-    },
-  ],
-];
+const readerRehypePlugins: RehypePlugin[] = [urlKeepingSanitize()];
+
+/**
+ * Links and images reach the DOM only through the policy, which receives
+ * their URLs as written: a relative path with a line suffix or a `file://`
+ * URI is not a URL a sanitizer keeps. HTML stays sanitized as before.
+ */
+function urlKeepingSanitize(): RehypePlugin {
+  const [sanitize, schema] = defaultRehypePlugins.sanitize as [
+    unknown,
+    { protocols?: Record<string, string[]> },
+  ];
+  const { href: _href, src: _src, ...protocols } = schema.protocols ?? {};
+  return [sanitize, { ...schema, protocols }] as RehypePlugin;
+}
 
 export interface MarkdownReaderPolicy {
-  openLink(target: string): void | Promise<void>;
+  /** A link as the policy shows it; nothing leaves its text. */
+  renderLink?(href: string, children: ReactNode): ReactNode;
+  /** Inline code as the policy shows it; nothing leaves the code as is. */
+  renderInlineCode?(code: string, element: ReactNode): ReactNode;
   resolveImageSource?(source: string): string | null;
-  resolveLink(href: string): string | null;
 }
+
+/**
+ * A link of the policy: it acts through `onOpen`, never by navigation.
+ * Other props reach the button, as a tooltip trigger passes them.
+ */
+export function MarkdownReaderLink({
+  children,
+  target,
+  onOpen,
+  className,
+  ...props
+}: Omit<ComponentProps<"button">, "onClick"> & {
+  /** What the link opens, for tests and diagnostics. */
+  target: string;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="link"
+      {...props}
+      className={cn(
+        "inline cursor-pointer border-0 bg-transparent p-0 text-primary underline underline-offset-4",
+        className,
+      )}
+      data-markdown-reader-link={target}
+      onClick={onOpen}
+    >
+      {children}
+    </button>
+  );
+}
+
+const INLINE_CODE_CLASS = "rounded bg-muted px-1.5 py-0.5 font-mono text-sm";
 
 export interface MarkdownReaderProps {
   className?: string;
@@ -46,21 +92,9 @@ export function MarkdownReader({
   const components = useMemo<StreamdownProps["components"]>(
     () => ({
       a: ({ children, href }) => {
-        const target = href ? policy.resolveLink(href) : null;
-        if (!target) {
-          return <span data-markdown-reader-blocked-link>{children}</span>;
-        }
-
+        const shown = href ? policy.renderLink?.(href, children) : null;
         return (
-          <button
-            type="button"
-            role="link"
-            className="inline cursor-pointer border-0 bg-transparent p-0 text-primary underline underline-offset-4"
-            data-markdown-reader-link={target}
-            onClick={() => void policy.openLink(target)}
-          >
-            {children}
-          </button>
+          shown ?? <span data-markdown-reader-blocked-link>{children}</span>
         );
       },
       img: ({ alt, src }) => {
@@ -81,6 +115,20 @@ export function MarkdownReader({
           />
         );
       },
+      ...(policy.renderInlineCode && {
+        inlineCode: ({ children }) => {
+          const element = (
+            <code className={INLINE_CODE_CLASS} data-streamdown="inline-code">
+              {children}
+            </code>
+          );
+          const shown =
+            typeof children === "string"
+              ? policy.renderInlineCode?.(children, element)
+              : null;
+          return shown ?? element;
+        },
+      }),
     }),
     [policy],
   );
@@ -130,7 +178,7 @@ export function MarkdownReader({
           linkSafety={{ enabled: false }}
           plugins={readerPlugins}
           rehypePlugins={readerRehypePlugins}
-          urlTransform={safeReaderUrlTransform}
+          urlTransform={readerUrlTransform}
         >
           {content}
         </Streamdown>
@@ -189,10 +237,5 @@ export function MarkdownReaderPlaintextFallback({
   );
 }
 
-const safeReaderUrlTransform: UrlTransform = (url) => {
-  const normalized = url.trim();
-  if (!normalized || /^(?:data|file|javascript|vbscript):/i.test(normalized)) {
-    return null;
-  }
-  return normalized;
-};
+/** URLs go to the policy as written; it alone decides what they open. */
+const readerUrlTransform: UrlTransform = (url) => url.trim() || null;

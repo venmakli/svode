@@ -11,9 +11,7 @@ import {
 } from "./source-disclosure";
 
 const instructionReaderPolicy: MarkdownReaderPolicy = {
-  openLink: () => undefined,
   resolveImageSource: () => null,
-  resolveLink: () => null,
 };
 
 export function AgentContextInstructionDetail({

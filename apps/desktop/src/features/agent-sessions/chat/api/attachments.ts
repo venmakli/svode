@@ -1,8 +1,11 @@
 import { searchEntriesByTitle } from "@/features/search";
 import {
+  homeDirectory,
   pathExists,
+  pathKind,
   readLocalFile,
   searchProjectFiles,
+  type PathKindDto,
 } from "@/platform/filesystem/path-api";
 import { inspectManagedImportSource } from "@/platform/attachments/attachments-api";
 import {
@@ -10,10 +13,23 @@ import {
   savePastedImage,
 } from "@/platform/native/clipboard";
 import { openDialog } from "@/platform/native/dialog";
+import { openPath } from "@/platform/native/shell";
 import { readPage } from "@/platform/pages/pages-api";
 import { attachmentOf, type Attachment } from "../model/attachments";
 
 export { pathExists as attachmentExists, readClipboardFilePaths, savePastedImage };
+export { pathKind as localPathKind, type PathKindDto as LocalPathKind };
+
+/** A web page in the browser, a folder in the file manager, a file in its app. */
+export { openPath as openInSystem };
+
+let home: Promise<string | null> | null = null;
+
+/** The home folder `~` names; read once. */
+export function homeFolder(): Promise<string | null> {
+  home ??= homeDirectory().catch(() => null);
+  return home;
+}
 
 /** Files the user picks on disk; nothing when the dialog is cancelled. */
 export async function pickDiskFiles(): Promise<Attachment[]> {

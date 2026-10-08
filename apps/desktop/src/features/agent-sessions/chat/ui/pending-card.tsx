@@ -1,7 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { MarkdownReader } from "@/shared/ui/markdown-reader";
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -29,7 +28,7 @@ import type {
 } from "../api/chat";
 import { useItemDetail } from "../hooks/use-item-detail";
 import { questionItems, questionValues } from "../model/question-form";
-import { agentTextPolicy } from "./chat-timeline";
+import { AgentText } from "./agent-text";
 import { DetailBlock, DetailView } from "./item-detail";
 import * as m from "@/paraglide/messages.js";
 
@@ -247,7 +246,7 @@ function SubjectText({ text, markdown }: { text: string; markdown: boolean }) {
   if (markdown) {
     return (
       <div className="text-sm">
-        <MarkdownReader content={text} policy={agentTextPolicy} />
+        <AgentText text={text} />
       </div>
     );
   }

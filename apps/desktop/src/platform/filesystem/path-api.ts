@@ -1,7 +1,20 @@
+import { homeDir } from "@tauri-apps/api/path";
 import { invokeCommand } from "@/platform/native/invoke";
 
 export function pathExists(path: string): Promise<boolean> {
   return invokeCommand<boolean>("path_exists", { path });
+}
+
+export type PathKindDto = "file" | "directory";
+
+/** Whether `path` names a file or a folder; null when nothing is there. */
+export function pathKind(path: string): Promise<PathKindDto | null> {
+  return invokeCommand<PathKindDto | null>("path_kind", { path });
+}
+
+/** The user's home folder. */
+export function homeDirectory(): Promise<string> {
+  return homeDir();
 }
 
 /** Files of the project whose name contains `query`, as absolute paths. */

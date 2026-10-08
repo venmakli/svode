@@ -33,10 +33,6 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
-import {
-  MarkdownReader,
-  type MarkdownReaderPolicy,
-} from "@/shared/ui/markdown-reader";
 import { cn } from "@/shared/lib/utils";
 import type {
   AgentActivityItemDto,
@@ -46,6 +42,7 @@ import type {
 } from "../api/chat";
 import { useItemDetail } from "../hooks/use-item-detail";
 import { messageParts } from "../model/attachments";
+import { AgentText } from "./agent-text";
 import { AttachmentBadge, ImageMark } from "./attachment-badge";
 import {
   changedFilesKey,
@@ -70,13 +67,6 @@ import { formatDuration } from "../model/format";
 import { ItemDetail } from "./item-detail";
 import { TurnChangedFiles } from "./turn-changed-files";
 import * as m from "@/paraglide/messages.js";
-
-/** Links in agent text stay text: the chat opens nothing on its own. */
-export const agentTextPolicy: MarkdownReaderPolicy = {
-  openLink: () => undefined,
-  resolveImageSource: () => null,
-  resolveLink: () => null,
-};
 
 /**
  * The session timeline (Stage 10 `04`): turns of the runtime snapshot with
@@ -314,7 +304,7 @@ function ItemText({
     ? (detailText(detail) ?? item.summary)
     : item.summary;
   if (!markdown) return <>{text}</>;
-  return <MarkdownReader content={text} policy={agentTextPolicy} />;
+  return <AgentText text={text} />;
 }
 
 /**

@@ -1064,6 +1064,29 @@ pub fn path_exists(path: String) -> Result<bool, AppError> {
     Ok(Path::new(&path).exists())
 }
 
+/// What a local path names, for a link to it in the chat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PathKind {
+    File,
+    Directory,
+}
+
+/// Whether `path` names a file or a folder; none when nothing is there.
+#[tauri::command]
+pub fn path_kind(path: String) -> Result<Option<PathKind>, AppError> {
+    Ok(local_path_kind(Path::new(&path)))
+}
+
+fn local_path_kind(path: &Path) -> Option<PathKind> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(if metadata.is_dir() {
+        PathKind::Directory
+    } else {
+        PathKind::File
+    })
+}
+
 /// Files of the project whose name contains `query`, nearest first, as
 /// absolute paths; pages are found by the title search.
 #[tauri::command]
@@ -1330,6 +1353,16 @@ pub async fn remove_missing_space(
 mod tests {
     use super::*;
     use crate::git::access::RepositoryAccessStatus;
+
+    #[test]
+    fn path_kind_tells_a_file_from_a_folder_and_nothing() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let file = temp.path().join("notes.md");
+        std::fs::write(&file, "notes").expect("write file");
+        assert_eq!(local_path_kind(&file), Some(PathKind::File));
+        assert_eq!(local_path_kind(temp.path()), Some(PathKind::Directory));
+        assert_eq!(local_path_kind(&temp.path().join("gone.md")), None);
+    }
 
     #[test]
     fn automatic_open_repairs_are_skipped_when_access_gate_denies() {

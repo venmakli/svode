@@ -2,8 +2,10 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useSpace } from "@/features/space";
 import {
   attachmentExists,
+  localPathKind,
   readImagePreview,
   readPagePreview,
+  type LocalPathKind,
   type PagePreview,
 } from "../api/attachments";
 import {
@@ -61,6 +63,39 @@ export function useAttachmentAvailable(path: string): boolean | null {
     };
   }, [path, check]);
   return state?.path === path ? state.available : null;
+}
+
+/**
+ * What a path in agent text names: a file, a folder, or nothing (null);
+ * undefined until first checked. Checked again with the badges.
+ */
+export function useLocalPathKind(
+  path: string | null,
+): LocalPathKind | null | undefined {
+  const check = useSyncExternalStore(
+    subscribeAvailabilityCheck,
+    () => availabilityCheck,
+  );
+  const [state, setState] = useState<{
+    path: string;
+    kind: LocalPathKind | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!path) return;
+    let cancelled = false;
+    localPathKind(path)
+      .then((kind) => {
+        if (!cancelled) setState({ path, kind });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ path, kind: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, check]);
+  if (!path) return null;
+  return state?.path === path ? state.kind : undefined;
 }
 
 export type AttachmentPreview =

@@ -72,6 +72,7 @@ import {
   SessionResumingState,
 } from "./session-states";
 import { SessionStatusMarker, statusText } from "./session-status";
+import { SessionCwdContext } from "../chat/hooks/use-path-base";
 import { SessionChat } from "../chat/ui/session-chat";
 import { OpenedSessionChat } from "../chat/ui/opened-session-chat";
 import { ChatUnavailableLine } from "../chat/ui/chat-unavailable-line";
@@ -262,19 +263,23 @@ export function AgentSessionContent({
           {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
           className="min-h-0 flex-1 overflow-hidden"
         >
-          <SessionBody
-            view={view}
-            scopeLabel={identityLabel}
-            surface={surface}
-            routineLaunch={routine?.launch ?? null}
-            onCopyCommand={copyResumeCommand}
-            onOpenExternalTerminal={openExternalTerminal}
-            onOpenInTerminal={openInTerminal}
-            onShowTerminal={showTerminal}
-            onChatUnavailable={leaveChat}
-            onChatStateChange={setChatState}
-            onOpenAgentSettings={onOpenAgentSettings}
-          />
+          <SessionCwdContext.Provider
+            value={view.session?.cwd ?? view.session?.spacePath ?? null}
+          >
+            <SessionBody
+              view={view}
+              scopeLabel={identityLabel}
+              surface={surface}
+              routineLaunch={routine?.launch ?? null}
+              onCopyCommand={copyResumeCommand}
+              onOpenExternalTerminal={openExternalTerminal}
+              onOpenInTerminal={openInTerminal}
+              onShowTerminal={showTerminal}
+              onChatUnavailable={leaveChat}
+              onChatStateChange={setChatState}
+              onOpenAgentSettings={onOpenAgentSettings}
+            />
+          </SessionCwdContext.Provider>
         </div>
       </div>
       <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>

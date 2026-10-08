@@ -321,6 +321,7 @@ pub fn run() {
             commands::space::register_cloned_space,
             commands::space::project_clone,
             commands::space::path_exists,
+            commands::space::path_kind,
             commands::space::search_project_files,
             commands::space::ensure_assets_scope,
             commands::space::ensure_space_scaffold,

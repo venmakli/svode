@@ -13,9 +13,7 @@ import {
 import { AgentContextSkillFrontmatterDisclosure } from "./skill-frontmatter-disclosure";
 
 const skillReaderPolicy: MarkdownReaderPolicy = {
-  openLink: () => undefined,
   resolveImageSource: () => null,
-  resolveLink: () => null,
 };
 
 export function AgentContextSkillDetail({

@@ -8,16 +8,14 @@ import { JSDOM } from "jsdom";
 import {
   MarkdownReader,
   MarkdownReaderBoundary,
+  MarkdownReaderLink,
   MarkdownReaderPlaintextFallback,
   type MarkdownReaderPolicy,
 } from "./markdown-reader";
 
 const fixtureRoot = new URL("./__fixtures__/markdown-reader/", import.meta.url);
 
-const blockedPolicy: MarkdownReaderPolicy = {
-  openLink: () => undefined,
-  resolveLink: () => null,
-};
+const blockedPolicy: MarkdownReaderPolicy = {};
 
 test("Reader renders GFM tables, task lists, and code fences from AGENTS.md", () => {
   const content = readFixture("AGENTS.md");
@@ -36,9 +34,12 @@ test("Reader renders GFM tables, task lists, and code fences from AGENTS.md", ()
 test("Reader applies explicit link policy and blocks HTML and all automatic media", () => {
   const content = readFixture("CLAUDE.md");
   const policy: MarkdownReaderPolicy = {
-    openLink: () => undefined,
-    resolveLink: (href) =>
-      href === "https://docs.example.com/guide" ? "approved:docs" : null,
+    renderLink: (href, children) =>
+      href === "https://docs.example.com/guide" ? (
+        <MarkdownReaderLink target="approved:docs" onOpen={() => undefined}>
+          {children}
+        </MarkdownReaderLink>
+      ) : null,
   };
   const markup = renderToStaticMarkup(
     <MarkdownReader content={content} policy={policy} />,
@@ -53,6 +54,58 @@ test("Reader applies explicit link policy and blocks HTML and all automatic medi
   expect(markup.includes("<script>")).toBe(false);
   expect(markup.includes("window.readerExecuted = true")).toBe(true);
   expect(markup.includes("javascript:alert")).toBe(false);
+});
+
+test("Reader gives the policy link URLs as written and inline code to wrap", () => {
+  const hrefs: string[] = [];
+  const codes: string[] = [];
+  const content = [
+    "[a](/abs/a.md) [b](file:///abs/b%20c.md#L3) [c](src/main.rs:42)",
+    "[d](~/notes.txt) [e](./x/y.rs#L10-L20) [f](../up.md:3:7)",
+    "[g](main.rs:10-20) [h](<a b.md>) [i](javascript:alert(1))",
+    "",
+    "`~/a/b` and `plain`",
+  ].join("\n");
+  const markup = renderToStaticMarkup(
+    <MarkdownReader
+      content={content}
+      policy={{
+        renderLink: (href) => {
+          hrefs.push(href);
+          return null;
+        },
+        renderInlineCode: (code, element) => {
+          codes.push(code);
+          return code === "plain" ? null : <mark>{element}</mark>;
+        },
+      }}
+    />,
+  );
+
+  expect(hrefs).toEqual([
+    "/abs/a.md",
+    "file:///abs/b%20c.md#L3",
+    "src/main.rs:42",
+    "~/notes.txt",
+    "./x/y.rs#L10-L20",
+    "../up.md:3:7",
+    "main.rs:10-20",
+    "a%20b.md",
+    "javascript:alert(1)",
+  ]);
+  expect(codes).toEqual(["~/a/b", "plain"]);
+  expect(markup.includes("javascript:")).toBe(false);
+  expect(markup.includes("href=")).toBe(false);
+  expect(
+    markup.includes(
+      '<mark><code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm" data-streamdown="inline-code">~/a/b</code></mark>',
+    ),
+  ).toBe(true);
+  expect(
+    markup.includes(
+      '<code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm" data-streamdown="inline-code">plain</code>',
+    ),
+  ).toBe(true);
 });
 
 test("Reader receives a frontmatter-free SKILL.md body and preserves unknown fences as escaped text", () => {
@@ -160,11 +213,15 @@ test("Reader link activation uses the supplied callback without navigation or ne
         <MarkdownReader
           content={readFixture("CLAUDE.md")}
           policy={{
-            openLink: (target) => {
-              opened.push(target);
-            },
-            resolveLink: (href) =>
-              href.startsWith("https://docs.example.com/") ? href : null,
+            renderLink: (href, children) =>
+              href.startsWith("https://docs.example.com/") ? (
+                <MarkdownReaderLink
+                  target={href}
+                  onOpen={() => opened.push(href)}
+                >
+                  {children}
+                </MarkdownReaderLink>
+              ) : null,
           }}
         />,
       );
