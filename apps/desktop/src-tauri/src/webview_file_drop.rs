@@ -55,11 +55,11 @@ fn answer_drop_messages(webview: &tauri::Webview) {
                 return Ok(());
             };
             let mut message = PWSTR::null();
-            unsafe { args.WebMessageAsJson(&mut message)? };
+            args.WebMessageAsJson(&mut message)?;
             let Some(id) = drop_message_id(&take_pwstr(message)) else {
                 return Ok(());
             };
-            let paths = match unsafe { file_paths(&args) } {
+            let paths = match file_paths(&args) {
                 Ok(paths) => drop_paths(paths),
                 Err(error) => {
                     tracing::warn!(%error, "Failed to read dropped file paths");
