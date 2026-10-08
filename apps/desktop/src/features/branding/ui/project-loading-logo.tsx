@@ -77,30 +77,41 @@ const PETAL_SIZES = PETALS.map(({ width }) => width);
 const MIN_PETAL_SIZE = Math.min(...PETAL_SIZES);
 const MAX_PETAL_SIZE = Math.max(...PETAL_SIZES);
 
-export function ProjectLoadingLogo() {
+/** The animated Svode logo; `size` is its side in rem. */
+export function ProjectLoadingLogo({
+  size = LOGO_SIZE_REM,
+}: {
+  size?: number;
+}) {
   return (
-    <div aria-hidden="true" className="relative size-12">
+    <div
+      aria-hidden="true"
+      className="relative shrink-0"
+      style={{ width: `${size}rem`, height: `${size}rem` }}
+    >
       {PETALS.map((petal) => (
-        <Petal key={petal.id} config={petal} />
+        <Petal key={petal.id} config={petal} size={size} />
       ))}
     </div>
   );
 }
 
-function Petal({ config }: { config: PetalConfig }) {
+function Petal({ config, size }: { config: PetalConfig; size: number }) {
   const elementRef = useRef<HTMLSpanElement>(null);
   const position: CSSProperties = {
-    [config.anchorX]: toRem(config.anchorXOffset),
-    [config.anchorY]: toRem(config.anchorYOffset),
+    [config.anchorX]: toRem(config.anchorXOffset, size),
+    [config.anchorY]: toRem(config.anchorYOffset, size),
   };
-  const initialGeometry = petalGeometry(config, 1);
+  const initialGeometry = petalGeometry(config, 1, size);
 
   useLayoutEffect(() => {
     const element = elementRef.current;
 
+    // Without Web Animations or with reduced motion the logo stays still.
     if (
       !element ||
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      typeof element.animate !== "function" ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
     ) {
       return;
     }
@@ -117,7 +128,7 @@ function Petal({ config }: { config: PetalConfig }) {
       firstScale,
     ];
     const keyframes = scales.map((scale) => ({
-      ...petalGeometry(config, scale),
+      ...petalGeometry(config, scale, size),
       easing: "cubic-bezier(0.45, 0, 0.55, 1)",
     }));
     const animation = element.animate(keyframes, {
@@ -129,7 +140,7 @@ function Petal({ config }: { config: PetalConfig }) {
     animation.currentTime = Math.random() * duration;
 
     return () => animation.cancel();
-  }, [config]);
+  }, [config, size]);
 
   return (
     <span
@@ -144,15 +155,19 @@ function Petal({ config }: { config: PetalConfig }) {
   );
 }
 
-function petalGeometry(config: PetalConfig, scale: number): PetalGeometry {
+function petalGeometry(
+  config: PetalConfig,
+  scale: number,
+  size: number,
+): PetalGeometry {
   const width = config.width * scale;
   const height = config.height * scale;
   const radii = fixedCenterRadii(config, width, height, scale);
 
   return {
-    width: toRem(width),
-    height: toRem(height),
-    borderRadius: radii.map(toRem).join(" "),
+    width: toRem(width, size),
+    height: toRem(height, size),
+    borderRadius: radii.map((radius) => toRem(radius, size)).join(" "),
   };
 }
 
@@ -179,8 +194,8 @@ function fixedCenterRadii(
   return radii;
 }
 
-function toRem(value: number) {
-  return `${(value / LOGO_SOURCE_SIZE) * LOGO_SIZE_REM}rem`;
+function toRem(value: number, size: number) {
+  return `${(value / LOGO_SOURCE_SIZE) * size}rem`;
 }
 
 function randomScale(config: PetalConfig) {

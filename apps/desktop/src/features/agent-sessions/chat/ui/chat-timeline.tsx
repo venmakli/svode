@@ -41,6 +41,7 @@ import type {
   AgentSessionSnapshotDto,
 } from "../api/chat";
 import { useItemDetail } from "../hooks/use-item-detail";
+import { useLiveEdgeMarker } from "../hooks/use-live-edge-marker";
 import { messageParts } from "../model/attachments";
 import { AgentText } from "./agent-text";
 import { AttachmentBadge, ImageMark } from "./attachment-badge";
@@ -65,6 +66,7 @@ import {
 } from "../model/timeline";
 import { formatDuration } from "../model/format";
 import { ItemDetail } from "./item-detail";
+import { LiveTurnEnd, LiveTurnMarker } from "./live-turn-marker";
 import { TurnChangedFiles } from "./turn-changed-files";
 import * as m from "@/paraglide/messages.js";
 
@@ -89,6 +91,7 @@ export function ChatTimeline({
   const toggle = (id: string, open: boolean) =>
     setManual((current) => ({ ...current, [id]: open }));
   const turns = projectTimeline(snapshot);
+  const marker = useLiveEdgeMarker(snapshot);
 
   return (
     <MessageScrollerProvider autoScroll defaultScrollPosition="end">
@@ -108,9 +111,23 @@ export function ChatTimeline({
                 onToggle={toggle}
               />
             ))}
+            {marker && (
+              // The live edge: always the last row, rendered even offscreen.
+              <MessageScrollerItem
+                key={`live:${marker.turnId}`}
+                className="[content-visibility:visible]"
+              >
+                <LiveTurnMarker
+                  session={session}
+                  turnId={marker.turnId}
+                  caption={marker.caption}
+                />
+              </MessageScrollerItem>
+            )}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton aria-label={m.sessions_chat_scroll_to_end()} />
+        <LiveTurnEnd live={marker !== null} />
       </MessageScroller>
     </MessageScrollerProvider>
   );
