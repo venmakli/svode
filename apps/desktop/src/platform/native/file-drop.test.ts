@@ -95,6 +95,21 @@ test("keeps durable native file paths without copying them", async () => {
   expect(materializer.nativePathCalls).toEqual([]);
 });
 
+test("never reads a dropped file of a network share through its DOM file", async () => {
+  const materializer = createMaterializer();
+  const files = [{ name: "a.png" } as File, { name: "virtual.msg" } as File];
+
+  expect(
+    await resolveDroppedFilePaths(
+      ["\\\\server\\share\\a.png"],
+      files,
+      materializer,
+    ),
+  ).toEqual(["\\\\server\\share\\a.png"]);
+  expect(materializer.fileCalls).toEqual([]);
+  expect(materializer.nativePathCalls).toEqual([]);
+});
+
 test("materializes a promised DOM file when no native path exists", async () => {
   const materializer = createMaterializer();
   const promisedFile = { name: "Screenshot.png" } as File;

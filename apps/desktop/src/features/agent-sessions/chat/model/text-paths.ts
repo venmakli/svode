@@ -3,7 +3,7 @@ import {
   isDrivePath,
   isNetworkPath,
   withoutVerbatimPrefix,
-} from "./local-paths";
+} from "@/shared/lib/local-paths";
 
 /**
  * Local paths in agent text (Stage 10 `08`, R3): links, paths in inline

@@ -1218,4 +1218,20 @@ mod tests {
         assert_eq!(window["minWidth"], MIN_WINDOW_WIDTH);
         assert_eq!(window["minHeight"], MIN_WINDOW_HEIGHT);
     }
+
+    /// The first window takes file drops as the windows of `build_window`
+    /// do on Linux: by the native handler of Tauri, which reads the paths
+    /// on disk and leaves the HTML5 drags of the page to WebKitGTK.
+    #[test]
+    fn the_first_window_of_linux_differs_only_by_the_native_drop_handler() {
+        let base: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("parse Tauri config");
+        let linux: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.linux.conf.json"))
+                .expect("parse Linux Tauri config");
+        let mut window = base["app"]["windows"][0].clone();
+        assert_eq!(window["dragDropEnabled"], false);
+        window["dragDropEnabled"] = true.into();
+        assert_eq!(linux, serde_json::json!({ "app": { "windows": [window] } }));
+    }
 }

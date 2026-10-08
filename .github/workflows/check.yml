@@ -177,6 +177,11 @@ jobs:
         run: cargo test -p svode-agents -- prompt::tests changes::tests::a_path_on_a_network_share changes::tests::a_path_in_a_canonical_space acp::media::tests::a_network_share acp::media::tests::windows_drive_paths
       - name: Chat paths of Desktop
         run: cargo test -p svode-desktop --lib -- commands::space::tests::path_kind media::source::tests::a_local_file shell_open_scope
+      # The paths WebView2 hands for files dropped from the Explorer, built
+      # with the WebView2 host code of this OS, and the network share refusal
+      # of a terminal drop.
+      - name: Dropped file paths of Desktop
+        run: cargo test -p svode-desktop --lib -- webview_file_drop terminal::tests::terminal_paths_reject_a_network_share app_windows::tests::the_first_window_of_linux
 
   standalone-linux:
     # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,

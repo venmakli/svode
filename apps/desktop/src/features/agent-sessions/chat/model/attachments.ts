@@ -8,7 +8,7 @@ import {
   isNetworkPath,
   pathKey,
   withoutVerbatimPrefix,
-} from "./local-paths";
+} from "@/shared/lib/local-paths";
 
 /**
  * A file in a draft or a user message (Stage 10 `04`, attachments): a link

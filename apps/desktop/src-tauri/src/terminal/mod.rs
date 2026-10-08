@@ -1529,8 +1529,10 @@ fn validate_terminal_path(path: &str) -> Result<(), AppError> {
             "Terminal path contains unsupported characters".to_string(),
         ));
     }
+    // A network share is not looked at: even its metadata reaches the server
+    // (Stage 10 `08` security).
     let candidate = Path::new(path);
-    if !candidate.is_absolute() || !candidate.exists() {
+    if system_path::is_network_path(path) || !candidate.is_absolute() || !candidate.exists() {
         return Err(AppError::General(
             "Terminal path is not accessible".to_string(),
         ));
@@ -1750,6 +1752,27 @@ mod tests {
         .expect_err("control character should fail");
 
         assert!(error.to_string().contains("unsupported characters"));
+    }
+
+    #[test]
+    fn terminal_paths_reject_a_network_share_unread() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("notes.md");
+        std::fs::write(&file, "notes").unwrap();
+        let mut paths = vec![
+            r"\\server\share\a.md".to_string(),
+            "//server/share/a.md".to_string(),
+        ];
+        // On Unix the same file through two separators.
+        if cfg!(unix) {
+            paths.push(format!("/{}", file.display()));
+        }
+        for path in paths {
+            assert!(
+                prepare_terminal_paths(TerminalShellKind::Posix, vec![path.clone()]).is_err(),
+                "{path}"
+            );
+        }
     }
 
     #[test]

@@ -9,6 +9,7 @@ import {
 import {
   onNativeFileDrop,
   readNativeFileDragPaths,
+  readWebViewDroppedFilePaths,
   resolveDroppedFilePaths,
   type LogicalPoint,
 } from "@/platform/native/file-drop";
@@ -71,9 +72,10 @@ export function isResourceDrag(dataTransfer: DataTransfer): boolean {
  * A surface that takes files of the OS and sidebar resources dropped on it.
  * The DOM drag lifecycle decides the target where the WebView keeps it
  * (macOS, Windows): paths of the system drag session are read from the
- * backend, and promised or ephemeral files are saved first. Where the
- * native handler of Tauri owns the drag (Linux), the window-level drop
- * goes only to the surface under the drop point.
+ * backend on macOS and from the dropped files by WebView2 on Windows, and
+ * promised, ephemeral or virtual files are saved first. Where the native
+ * handler of Tauri owns the drag (Linux), the window-level drop goes only
+ * to the surface under the drop point.
  */
 export function useResourceDropTarget({
   containerRef,
@@ -324,10 +326,14 @@ export function useResourceDropTarget({
       const cachedNativePathsPromise = readCachedNativeFilePaths();
       // File promises can publish their URL only when the drop is accepted.
       // Start a second read while the system drag session is still current.
-      const dropNativePathsPromise = readNativeFileDragPaths().catch((error) => {
-        console.warn("Failed to read native file paths on drop:", error);
-        return [];
-      });
+      // WebView2 hands the paths of the dropped files themselves.
+      const dropNativePathsPromise = Promise.all([
+        readNativeFileDragPaths().catch((error) => {
+          console.warn("Failed to read native file paths on drop:", error);
+          return [];
+        }),
+        readWebViewDroppedFilePaths(droppedFiles),
+      ]).then(([dragPaths, webViewPaths]) => [...dragPaths, ...webViewPaths]);
       const nativePathsPromise = Promise.all([
         cachedNativePathsPromise,
         dropNativePathsPromise,

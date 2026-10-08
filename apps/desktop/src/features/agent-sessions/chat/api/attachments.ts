@@ -23,7 +23,7 @@ import {
   folderAttachment,
   type Attachment,
 } from "../model/attachments";
-import { isNetworkPath } from "../model/local-paths";
+import { isNetworkPath } from "@/shared/lib/local-paths";
 
 export { pathExists as attachmentExists, readClipboardFilePaths, savePastedImage };
 export type { PathKindDto as LocalPathKind };

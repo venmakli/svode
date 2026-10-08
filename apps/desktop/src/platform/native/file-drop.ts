@@ -2,6 +2,8 @@ import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { invokeCommand } from "@/platform/native/invoke";
+import { listen } from "@/platform/native/events";
+import { isNetworkPath } from "@/shared/lib/local-paths";
 
 const DROP_FILE_NAME_HEADER = "x-svode-drop-file-name";
 export const MAX_MATERIALIZED_DROP_BYTES = 100 * 1024 * 1024;
@@ -79,6 +81,84 @@ export function readNativeFileDragPaths(): Promise<string[]> {
   return invokeCommand<string[]>("native_file_drop_paths");
 }
 
+/** How the host answers a drop message of the page in WebView2. */
+const WEBVIEW_DROP_PATHS_EVENT = "webview-file-drop-paths";
+export const WEBVIEW_DROP_PATHS_TIMEOUT_MS = 2000;
+
+interface WebViewDropPaths {
+  id: string;
+  paths: string[];
+}
+
+interface WebViewHost {
+  postMessageWithAdditionalObjects(
+    message: unknown,
+    additionalObjects: ArrayLike<unknown>,
+  ): void;
+}
+
+let webViewDropCount = 0;
+
+function webViewHost(): WebViewHost | null {
+  const host = (
+    globalThis as { chrome?: { webview?: Partial<WebViewHost> } }
+  ).chrome?.webview;
+  return typeof host?.postMessageWithAdditionalObjects === "function"
+    ? (host as WebViewHost)
+    : null;
+}
+
+/**
+ * The paths on disk of DOM files dropped into WebView2 (Windows), which
+ * the page hands to the host to read them from the files. Empty in other
+ * webviews, when a file has no path on disk or the host does not answer in
+ * time: the drop then saves the files, as before.
+ */
+export async function readWebViewDroppedFilePaths(
+  files: readonly File[],
+  timeoutMs = WEBVIEW_DROP_PATHS_TIMEOUT_MS,
+): Promise<string[]> {
+  const host = webViewHost();
+  if (!host || files.length === 0) return [];
+  const id = `drop-${Date.now()}-${++webViewDropCount}`;
+  let settled = false;
+  let unlisten: (() => void) | null = null;
+  return new Promise<string[]>((resolve) => {
+    const settle = (paths: string[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      unlisten?.();
+      resolve(paths);
+    };
+    const timer = setTimeout(() => settle([]), timeoutMs);
+    listen<WebViewDropPaths>(WEBVIEW_DROP_PATHS_EVENT, ({ payload }) => {
+      if (payload.id !== id) return;
+      settle(payload.paths.length === files.length ? payload.paths : []);
+    }).then(
+      (stop) => {
+        if (settled) {
+          stop();
+          return;
+        }
+        unlisten = stop;
+        try {
+          host.postMessageWithAdditionalObjects({ svodeFileDrop: id }, [
+            ...files,
+          ]);
+        } catch (error) {
+          console.warn("Failed to hand dropped files to WebView2:", error);
+          settle([]);
+        }
+      },
+      (error: unknown) => {
+        console.warn("Failed to listen for dropped file paths:", error);
+        settle([]);
+      },
+    );
+  });
+}
+
 export interface DroppedFilePathMaterializer {
   fromFiles(files: readonly File[]): Promise<string[]>;
   fromNativePaths(paths: readonly string[]): Promise<string[]>;
@@ -149,6 +229,8 @@ export async function resolveDroppedFilePaths(
   const hasEphemeralNativePath = nativePaths.some(
     isLikelyEphemeralFileDropPath,
   );
+  // A network share is refused by the target, never read through its file.
+  if (nativePaths.some(isNetworkPath)) return [...nativePaths];
   const hasIncompleteNativePaths =
     files.length > 0 && nativePaths.length < files.length;
   if (

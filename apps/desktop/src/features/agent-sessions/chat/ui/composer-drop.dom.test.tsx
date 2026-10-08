@@ -107,8 +107,9 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
     }
     if (command.startsWith("plugin:")) return 1;
     throw new Error(`unexpected command ${command}`);
-  });
+  }, { shouldMockEvents: true });
   mockNativeWindow();
+  const { emit } = await import("@/platform/native/events");
 
   const m = await import("@/paraglide/messages.js");
   const { setLocale } = await import("@/paraglide/runtime");
@@ -187,11 +188,11 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
     });
   }
 
-  function transfer(data: Record<string, string>, files = false) {
+  function transfer(data: Record<string, string>, files: boolean | File[] = false) {
     return {
       types: files ? ["Files"] : Object.keys(data),
       items: [],
-      files: [],
+      files: Array.isArray(files) ? files : [],
       dropEffect: "none",
       getData: (type: string) => data[type] ?? "",
     };
@@ -308,6 +309,43 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
       "[drafts|C:\\Users\\me\\drafts\\]",
       " ",
     ]);
+  });
+
+  dropTest("files and folders from the Explorer become badges by the paths WebView2 hands", async () => {
+    const files = [new File(["a"], "Shot.PNG"), new File([], "drafts")];
+    const posted: unknown[][] = [];
+    Object.assign(globalThis, {
+      chrome: {
+        webview: {
+          postMessageWithAdditionalObjects(
+            message: { svodeFileDrop: string },
+            objects: ArrayLike<unknown>,
+          ) {
+            posted.push(Array.from(objects));
+            void emit("webview-file-drop-paths", {
+              id: message.svodeFileDrop,
+              paths: ["C:\\Users\\me\\Shot.PNG", "C:\\Users\\me\\drafts"],
+            });
+          },
+        },
+      },
+    });
+    try {
+      kinds = { "C:\\Users\\me\\Shot.PNG": "file", "C:\\Users\\me\\drafts": "directory" };
+      await mount(chat());
+      await drop(transfer({}, files));
+      await settle();
+      expect(posted).toEqual([files]);
+      // No copy in the temp directory: an unexpected command would fail it.
+      expect(draft()).toEqual([
+        "[Shot.PNG|C:\\Users\\me\\Shot.PNG]",
+        " ",
+        "[drafts|C:\\Users\\me\\drafts\\]",
+        " ",
+      ]);
+    } finally {
+      Object.assign(globalThis, { chrome: undefined });
+    }
   });
 
   dropTest("a file on a network share is refused without looking at it", async () => {

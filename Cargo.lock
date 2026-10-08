@@ -5574,6 +5574,7 @@ dependencies = [
  "unicode-normalization",
  "unicode-segmentation",
  "url",
+ "webview2-com",
  "which",
  "windows 0.61.3",
 ]

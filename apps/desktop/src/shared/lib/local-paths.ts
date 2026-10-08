@@ -1,7 +1,7 @@
 /**
- * Path forms of macOS, Windows and Linux the chat reads (Stage 10 `08`,
- * R3 and security). A network share is never a local object: even a
- * metadata read of its path reaches the server, so nothing looks at it.
+ * Path forms of macOS, Windows and Linux. A network share is never a local
+ * object: even a metadata read of its path reaches the server, so nothing
+ * should look at it.
  */
 
 /** `\\?\C:\…`: a drive path in the verbatim form a canonical one takes. */

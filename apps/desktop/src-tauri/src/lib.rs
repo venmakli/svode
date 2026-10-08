@@ -33,6 +33,7 @@ mod speech;
 mod storage;
 mod structure;
 mod terminal;
+mod webview_file_drop;
 
 use std::sync::Arc;
 
@@ -68,6 +69,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             app_windows::handle_single_instance(app, args, cwd);
         }))
+        .plugin(webview_file_drop::plugin())
         .manage(agent_context::AgentContextState::new())
         .manage(files::FileWatcher::new())
         .manage(agent_sessions::AgentSessionsState::new())
