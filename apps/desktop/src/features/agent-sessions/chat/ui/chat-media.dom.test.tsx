@@ -473,6 +473,139 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
     expect((revoked ?? "").includes("token:/clip.mp4")).toBe(true);
   });
 
+  /** A turn that ends: running, then finished and folded. */
+  function turnSnapshot(
+    items: AgentActivityItemDto[],
+    phase: "running" | "none",
+  ): AgentSessionSnapshotDto {
+    return {
+      ...snapshot(),
+      turn: {
+        turnId: "t9",
+        phase,
+        lastOutcome: phase === "none" ? "end_turn" : null,
+        status: {
+          state: "running",
+          source: "svode_runtime",
+          confidence: "exact",
+        },
+      },
+      items,
+    } as AgentSessionSnapshotDto;
+  }
+
+  /**
+   * Renders as a runtime update does, outside `act`: React commits and runs
+   * effects in separate tasks, and the scroller observes each commit.
+   */
+  async function update(root: Root, value: AgentSessionSnapshotDto) {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: false });
+    try {
+      root.render(
+        <TooltipProvider>
+          <ChatTimeline session={key} snapshot={value} />
+        </TooltipProvider>,
+      );
+      for (let index = 0; index < 4; index += 1) {
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    } finally {
+      Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    }
+  }
+
+  /**
+   * Folds a turn whose tool calls created media while the timeline follows
+   * its end, and returns where the scroller moved the viewport.
+   */
+  async function foldMoves(live: AgentActivityItemDto[]): Promise<number[]> {
+    const earlier = [
+      item("u0", "t0", { kind: "user_message", segments: [] }, "Hello"),
+      item("m0", "t0", { kind: "agent_message" }, "Hi"),
+      done("t0"),
+      item("u9", "t9", { kind: "user_message", segments: [] }, "Draw"),
+    ];
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    mounted.push(root);
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ChatTimeline
+            session={key}
+            snapshot={turnSnapshot(earlier, "running")}
+          />
+        </TooltipProvider>,
+      );
+    });
+    await settle();
+    const viewport = container.querySelector<HTMLElement>(
+      "[data-slot='message-scroller-viewport']",
+    )!;
+    // A long timeline at its end: the end is far below the first message.
+    let top = 4900;
+    const moves: number[] = [];
+    Object.defineProperty(viewport, "clientHeight", { value: 100 });
+    Object.defineProperty(viewport, "scrollHeight", { value: 5000 });
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        moves.push(value);
+        top = value;
+      },
+    });
+    viewport.scrollTo = ((options: { top: number }) => {
+      moves.push(options.top);
+      top = options.top;
+    }) as never;
+    const rect = window.Element.prototype.getBoundingClientRect;
+    window.Element.prototype.getBoundingClientRect = function () {
+      return this === viewport
+        ? new window.DOMRect(0, 0, 600, 100)
+        : new window.DOMRect(0, -4900, 600, 5000);
+    };
+    try {
+      await update(root, turnSnapshot([...earlier, ...live], "running"));
+      moves.length = 0;
+      await update(
+        root,
+        turnSnapshot(
+          [
+            ...earlier,
+            ...live.map((entry) => ({
+              ...entry,
+              status: "completed" as const,
+            })),
+            done("t9"),
+          ],
+          "none",
+        ),
+      );
+      return moves;
+    } finally {
+      window.Element.prototype.getBoundingClientRect = rect;
+    }
+  }
+
+  test("folding a turn with created media keeps the timeline at its end", async () => {
+    try {
+      const moves = await foldMoves([
+        tool("g9", "t9", "other", [segment("g", { path: "/project/g.png" })]),
+        tool("r9", "t9", "execute"),
+        item("m9", "t9", { kind: "agent_message" }, "Drawn"),
+      ]);
+      // Every move follows the end; none goes to a message above it.
+      expect(moves.every((value) => value === 4900)).toBe(true);
+      expect(Boolean(rowOf("g9"))).toBe(true);
+      expect(rowOf("r9")).toBe(undefined);
+    } finally {
+      await unmountAll();
+    }
+  });
+
   async function unmountAll() {
     for (const root of mounted.splice(0)) {
       await act(async () => root.unmount());
