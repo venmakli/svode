@@ -143,6 +143,54 @@ test("Reader stays readable for malformed bounded content and plaintext fallback
   expect(fallback.includes("[overflow-wrap:anywhere]")).toBe(true);
 });
 
+test("Reader typesets only $$ formulas, inline and as a block, and keeps single dollars as text", () => {
+  const markup = renderToStaticMarkup(
+    <MarkdownReader
+      content={
+        "Energy $$E = mc^2$$ here.\n\n$$\n\\int_0^1 x\\,dx\n$$\n\nIt costs $5 и $10 together."
+      }
+      policy={blockedPolicy}
+    />,
+  );
+  const dom = new JSDOM(`<!doctype html><body>${markup}</body>`);
+  const document = dom.window.document;
+
+  const formulas = Array.from(document.querySelectorAll(".katex"));
+  expect(formulas.length).toBe(2);
+  expect(
+    formulas.map(
+      (formula) =>
+        formula.querySelector('annotation[encoding="application/x-tex"]')
+          ?.textContent,
+    ),
+  ).toEqual(["E = mc^2", "\\int_0^1 x\\,dx"]);
+  expect(document.querySelectorAll(".katex-display").length).toBe(1);
+  expect(formulas[0]?.closest(".katex-display")).toBeNull();
+  const prices = Array.from(document.querySelectorAll("p")).find((paragraph) =>
+    paragraph.textContent?.includes("It costs"),
+  );
+  expect(prices?.textContent).toBe("It costs $5 и $10 together.");
+  expect(prices?.querySelector(".katex")).toBeNull();
+  dom.window.close();
+});
+
+test("Reader shows the source of a formula KaTeX cannot typeset", () => {
+  const markup = renderToStaticMarkup(
+    <MarkdownReader
+      content={"Broken $$\\frac{1}{$$ formula."}
+      policy={blockedPolicy}
+    />,
+  );
+  const dom = new JSDOM(`<!doctype html><body>${markup}</body>`);
+  const errors = Array.from(
+    dom.window.document.querySelectorAll(".katex-error"),
+  );
+
+  expect(errors.map((error) => error.textContent)).toEqual(["\\frac{1}{"]);
+  expect(errors.every((error) => error.getAttribute("title"))).toBe(true);
+  dom.window.close();
+});
+
 test("Reader contains inline content and makes code and table overflow regions keyboard reachable", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",

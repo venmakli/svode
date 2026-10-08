@@ -3,22 +3,41 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useSyncExternalStore,
   type ComponentProps,
   type ReactNode,
 } from "react";
 import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
 import {
   defaultRehypePlugins,
   Streamdown,
+  type ControlsConfig,
+  type MermaidErrorComponentProps,
+  type MermaidOptions,
   type StreamdownProps,
   type UrlTransform,
 } from "streamdown";
 
+import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
 type RehypePlugin = NonNullable<StreamdownProps["rehypePlugins"]>[number];
 
-const readerPlugins = { code } as const;
+const readerPlugins = { code, math, mermaid } as const;
+const readerControls: ControlsConfig = {
+  code: false,
+  mermaid: { copy: true, download: false, fullscreen: false, panZoom: false },
+  table: false,
+};
+const readerMermaid = {
+  dark: { config: { theme: "dark" }, errorComponent: MermaidSourceFallback },
+  light: {
+    config: { theme: "default" },
+    errorComponent: MermaidSourceFallback,
+  },
+} satisfies Record<DocumentColorScheme, MermaidOptions>;
 const readerRehypePlugins: RehypePlugin[] = [urlKeepingSanitize()];
 
 /**
@@ -89,6 +108,7 @@ export function MarkdownReader({
   policy,
 }: MarkdownReaderProps) {
   const readerRef = useRef<HTMLDivElement>(null);
+  const colorScheme = useDocumentColorScheme();
   const components = useMemo<StreamdownProps["components"]>(
     () => ({
       a: ({ children, href }) => {
@@ -172,12 +192,14 @@ export function MarkdownReader({
           mode="static"
           animated={false}
           components={components}
-          controls={false}
+          controls={readerControls}
           isAnimating={false}
           lineNumbers={false}
           linkSafety={{ enabled: false }}
+          mermaid={readerMermaid[colorScheme]}
           plugins={readerPlugins}
           rehypePlugins={readerRehypePlugins}
+          translations={{ copyCode: m.markdown_reader_copy_code() }}
           urlTransform={readerUrlTransform}
         >
           {content}
@@ -235,6 +257,42 @@ export function MarkdownReaderPlaintextFallback({
       {content}
     </pre>
   );
+}
+
+/** A diagram Mermaid cannot draw: the first line of its reason and its source. */
+function MermaidSourceFallback({ chart, error }: MermaidErrorComponentProps) {
+  const reason = error.split("\n", 1)[0]?.trim() ?? "";
+  return (
+    <div className="flex flex-col gap-2 p-2" data-markdown-reader-diagram-error>
+      <p className="text-xs text-destructive [overflow-wrap:anywhere]">
+        {m.markdown_reader_diagram_error({ reason })}
+      </p>
+      <pre className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-xs">
+        {chart}
+      </pre>
+    </div>
+  );
+}
+
+type DocumentColorScheme = "dark" | "light";
+
+/** The color scheme the app applied as a class on the document root. */
+function useDocumentColorScheme(): DocumentColorScheme {
+  return useSyncExternalStore(
+    subscribeToDocumentColorScheme,
+    readDocumentColorScheme,
+    () => "light",
+  );
+}
+
+function subscribeToDocumentColorScheme(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributeFilter: ["class"] });
+  return () => observer.disconnect();
+}
+
+function readDocumentColorScheme(): DocumentColorScheme {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
 /** URLs go to the policy as written; it alone decides what they open. */

@@ -2576,5 +2576,7 @@
   "voice_input_settings_download_title": "Download {name}?",
   "voice_input_settings_download_description": "The model takes {size} MB on this computer. Once downloaded and prepared, dictation uses it.",
   "voice_input_settings_delete_title": "Delete {name}?",
-  "voice_input_settings_delete_description": "Voice input will be unavailable until another installed model is chosen."
+  "voice_input_settings_delete_description": "Voice input will be unavailable until another installed model is chosen.",
+  "markdown_reader_copy_code": "Copy code",
+  "markdown_reader_diagram_error": "The diagram could not be drawn: {reason}"
 }

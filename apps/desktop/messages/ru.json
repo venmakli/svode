@@ -2576,5 +2576,7 @@
   "voice_input_settings_download_title": "Скачать «{name}»?",
   "voice_input_settings_download_description": "Модель займёт {size} МБ на этом компьютере. После загрузки и подготовки диктовка будет идти с ней.",
   "voice_input_settings_delete_title": "Удалить «{name}»?",
-  "voice_input_settings_delete_description": "Голосовой ввод будет недоступен, пока не выбрана другая установленная модель."
+  "voice_input_settings_delete_description": "Голосовой ввод будет недоступен, пока не выбрана другая установленная модель.",
+  "markdown_reader_copy_code": "Копировать код",
+  "markdown_reader_diagram_error": "Не удалось построить диаграмму: {reason}"
 }
