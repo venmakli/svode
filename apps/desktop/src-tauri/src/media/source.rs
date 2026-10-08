@@ -15,6 +15,7 @@ pub(crate) const FULL_RESPONSE_LIMIT: u64 = 64 * 1024 * 1024;
 pub(crate) const RANGE_RESPONSE_LIMIT: u64 = 8 * 1024 * 1024;
 const SVG_SOURCE_LIMIT: u64 = 4 * 1024 * 1024;
 const HEADER_READ_LIMIT: u64 = 1024 * 1024;
+const CONTAINER_SIGNATURE_LIMIT: u64 = 16;
 const RASTER_SIDE_LIMIT: u32 = 16_384;
 const RASTER_PIXEL_LIMIT: u64 = 40_000_000;
 const GIF_CUMULATIVE_PIXEL_LIMIT: u64 = 256_000_000;
@@ -276,17 +277,67 @@ pub(crate) fn inspect_media_source(
     describe_media_source(&path, target, format, &metadata)
 }
 
-/// A local file by its absolute path, read only to show it.
+/// A local file by its absolute path, read only to show it (Stage 10 `08`,
+/// security): only media by their content, images within the size bound.
 pub(crate) fn inspect_local_media_source(
     path: &Path,
 ) -> Result<ResolvedMediaSource, MediaSourceError> {
     let (path, format, metadata) = resolve_local_media_path(path)?;
+    if format.family() == MediaFamily::Image {
+        let limit_bytes = format.encoded_limit().unwrap_or(FULL_RESPONSE_LIMIT);
+        if metadata.len() > limit_bytes {
+            return Err(MediaSourceError::ResourceLimit {
+                limit_bytes: Some(limit_bytes),
+                actual_bytes: Some(metadata.len()),
+            });
+        }
+    }
+    let prefix = read_prefix(&path, metadata.len().min(CONTAINER_SIGNATURE_LIMIT))?;
+    if !has_media_signature(format, &prefix) {
+        return Err(MediaSourceError::UnsupportedFormat);
+    }
     describe_media_source(
         &path,
         MediaSourceTarget::Local { path: path.clone() },
         format,
         &metadata,
     )
+}
+
+/// Whether the leading bytes are those of `format`: its container or
+/// stream signature. SVG is text; its inspection reads its root element.
+fn has_media_signature(format: MediaFormat, bytes: &[u8]) -> bool {
+    let at = |offset: usize, signature: &[u8]| {
+        bytes.get(offset..offset + signature.len()) == Some(signature)
+    };
+    let iso_media = at(4, b"ftyp");
+    let mpeg_audio_sync = bytes.len() >= 2 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0;
+    match format {
+        MediaFormat::Png => at(0, b"\x89PNG\r\n\x1a\n"),
+        MediaFormat::Jpeg => at(0, &[0xff, 0xd8, 0xff]),
+        MediaFormat::Gif => at(0, b"GIF87a") || at(0, b"GIF89a"),
+        MediaFormat::Webp => at(0, b"RIFF") && at(8, b"WEBP"),
+        MediaFormat::Svg => true,
+        MediaFormat::Avif => iso_media,
+        MediaFormat::Ico => at(0, &[0, 0, 1, 0]),
+        MediaFormat::Mp3 => at(0, b"ID3") || (mpeg_audio_sync && bytes[1] & 0x06 != 0),
+        MediaFormat::Aac => at(0, b"ADIF") || (mpeg_audio_sync && bytes[1] & 0x06 == 0),
+        MediaFormat::Wav => at(0, b"RIFF") && at(8, b"WAVE"),
+        MediaFormat::Avi => at(0, b"RIFF") && at(8, b"AVI "),
+        MediaFormat::Flac => at(0, b"fLaC"),
+        MediaFormat::Ogg | MediaFormat::Opus => at(0, b"OggS"),
+        MediaFormat::Aiff => at(0, b"FORM") && (at(8, b"AIFF") || at(8, b"AIFC")),
+        MediaFormat::Mp4 | MediaFormat::M4v | MediaFormat::M4a | MediaFormat::ThreeGp => iso_media,
+        // QuickTime files may open with an atom other than `ftyp`.
+        MediaFormat::Mov => [&b"ftyp"[..], b"moov", b"mdat", b"wide", b"free", b"skip"]
+            .iter()
+            .any(|atom| at(4, atom)),
+        MediaFormat::Webm | MediaFormat::Mkv => at(0, &[0x1a, 0x45, 0xdf, 0xa3]),
+        MediaFormat::Wmv | MediaFormat::Wma => {
+            at(0, &[0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11])
+        }
+        MediaFormat::Mpg | MediaFormat::Mpeg => at(0, &[0, 0, 1, 0xba]) || at(0, &[0, 0, 1, 0xb3]),
+    }
 }
 
 fn describe_media_source(
@@ -996,9 +1047,6 @@ mod tests {
             Err(MediaSourceError::SourceMissing)
         ));
 
-        fs::write(temp.path().join("clip.mp4"), b"fixture").unwrap();
-        let clip = inspect_local_media_source(&temp.path().join("clip.mp4")).unwrap();
-        assert_eq!(clip.descriptor.family, MediaFamily::Video);
         fs::write(temp.path().join("notes.txt"), b"text").unwrap();
         assert!(matches!(
             inspect_local_media_source(&temp.path().join("notes.txt")),
@@ -1011,6 +1059,77 @@ mod tests {
         assert!(matches!(
             inspect_local_media_source(temp.path()),
             Err(MediaSourceError::SourceUnavailable)
+        ));
+    }
+
+    #[test]
+    fn a_local_file_is_shown_only_when_its_content_is_the_media_its_name_says() {
+        let temp = tempfile::tempdir().unwrap();
+        let accepted: [(&str, &[u8], MediaFamily); 9] = [
+            ("clip.mp4", b"\x00\x00\x00\x18ftypisom", MediaFamily::Video),
+            ("clip.mov", b"\x00\x00\x00\x08wide", MediaFamily::Video),
+            ("clip.webm", b"\x1a\x45\xdf\xa3\x9f", MediaFamily::Video),
+            ("voice.mp3", b"ID3\x04\x00", MediaFamily::Audio),
+            ("frame.mp3", b"\xff\xfb\x90\x64", MediaFamily::Audio),
+            (
+                "voice.wav",
+                b"RIFF\x24\x00\x00\x00WAVEfmt ",
+                MediaFamily::Audio,
+            ),
+            ("voice.ogg", b"OggS\x00\x02", MediaFamily::Audio),
+            ("voice.flac", b"fLaC\x00", MediaFamily::Audio),
+            ("voice.m4a", b"\x00\x00\x00\x20ftypM4A ", MediaFamily::Audio),
+        ];
+        for (name, bytes, family) in accepted {
+            let path = temp.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            let source =
+                inspect_local_media_source(&path).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(source.descriptor.family, family, "{name}");
+        }
+
+        for (name, bytes) in [
+            ("fake.mp4", &b"fixture"[..]),
+            ("fake.mp3", b"<html>not audio</html>"),
+            ("fake.wav", b"RIFF\x24\x00\x00\x00AVI "),
+            ("fake.webm", b"OggS\x00\x02"),
+            ("fake.png", b"GIF89a\x01\x00\x01\x00"),
+        ] {
+            let path = temp.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            assert!(
+                matches!(
+                    inspect_local_media_source(&path),
+                    Err(MediaSourceError::UnsupportedFormat)
+                ),
+                "{name}"
+            );
+        }
+
+        // An image beyond the size bound of the pipeline is too large to show.
+        let large = temp.path().join("large.png");
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&64u32.to_be_bytes());
+        png.extend_from_slice(&48u32.to_be_bytes());
+        fs::write(&large, png).unwrap();
+        File::options()
+            .write(true)
+            .open(&large)
+            .unwrap()
+            .set_len(FULL_RESPONSE_LIMIT + 1)
+            .unwrap();
+        assert!(matches!(
+            inspect_local_media_source(&large),
+            Err(MediaSourceError::ResourceLimit { .. })
+        ));
+        let svg = temp.path().join("large.svg");
+        File::create(&svg)
+            .unwrap()
+            .set_len(SVG_SOURCE_LIMIT + 1)
+            .unwrap();
+        assert!(matches!(
+            inspect_local_media_source(&svg),
+            Err(MediaSourceError::ResourceLimit { .. })
         ));
     }
 
