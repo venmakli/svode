@@ -1,9 +1,16 @@
 import { fileUriToPath } from "./attachments";
+import {
+  isDrivePath,
+  isNetworkPath,
+  withoutVerbatimPrefix,
+} from "./local-paths";
 
 /**
  * Local paths in agent text (Stage 10 `08`, R3): links, paths in inline
- * code, and what later reads paths the same way. A path is untrusted
- * input; this only reads it, existence is checked by its consumer.
+ * code, and what later reads paths the same way, in the forms of macOS,
+ * Windows and Linux. A path is untrusted input; this only reads it,
+ * existence is checked by its consumer. A network share is not a local
+ * object: its path resolves to nothing.
  */
 
 /** A line or a range of lines named after the path. */
@@ -32,7 +39,6 @@ export type LinkTarget =
 
 const WEB_LINK = /^https?:\/\//i;
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-const DRIVE_PATH = /^[a-z]:[\\/]/i;
 const FRAGMENT_LINES = /^L(\d+)(?:-L(\d+))?$/;
 const COLON_RANGE = /:(\d+)-(\d+)$/;
 const COLON_LINE = /:(\d+)(?::(\d+))?$/;
@@ -73,7 +79,7 @@ export function linkTarget(href: string, base: PathBase): LinkTarget | null {
   const split = splitLineSuffix(decoded(written));
   if (
     !split.path ||
-    (SCHEME.test(split.path) && !DRIVE_PATH.test(split.path))
+    (SCHEME.test(split.path) && !isDrivePath(split.path))
   ) {
     return null;
   }
@@ -173,10 +179,10 @@ function resolved(
   base: PathBase,
   relative: boolean,
 ): LocalReference | null {
-  if (!path) return null;
+  if (!path || isNetworkPath(path)) return null;
   let absolute: string;
   if (isAbsolute(path)) {
-    absolute = path;
+    absolute = withoutVerbatimPrefix(path);
   } else if (path === "~" || path.startsWith("~/") || path.startsWith("~\\")) {
     if (!base.home) return null;
     absolute = joinPath(base.home, path.slice(1));
@@ -185,14 +191,18 @@ function resolved(
   } else {
     return null;
   }
+  // The session's directory or the home folder may lie on a share too.
+  if (isNetworkPath(absolute)) return null;
   return { path: normalizePath(absolute), line };
 }
 
-/** An absolute path, Windows drive and UNC paths included. */
+/**
+ * An absolute local path: from the root on Unix, of a Windows drive, also
+ * in its verbatim form. A network share is not one.
+ */
 export function isAbsolute(path: string): boolean {
-  return (
-    path.startsWith("/") || path.startsWith("\\\\") || DRIVE_PATH.test(path)
-  );
+  if (isNetworkPath(path)) return false;
+  return path.startsWith("/") || isDrivePath(withoutVerbatimPrefix(path));
 }
 
 function isRoot(path: string): boolean {
@@ -208,10 +218,15 @@ function separatorOf(path: string): "/" | "\\" {
   return path.includes("\\") && !path.includes("/") ? "\\" : "/";
 }
 
-/** `.` and `..` resolved and repeated separators joined, root kept. */
+/**
+ * `.` and `..` resolved and repeated separators joined, root kept. A
+ * Windows drive path takes the separator of Windows, so it reads as the
+ * Spaces and dropped files of the window do.
+ */
 function normalizePath(path: string): string {
-  const separator = separatorOf(path);
-  const root = /^(?:\\\\|[a-z]:[\\/]|\/)/i.exec(path)?.[0] ?? "";
+  const drive = isDrivePath(path);
+  const separator = drive ? "\\" : separatorOf(path);
+  const root = drive ? `${path.slice(0, 2)}\\` : path.startsWith("/") ? "/" : "";
   const segments: string[] = [];
   for (const segment of path.slice(root.length).split(/[\\/]+/)) {
     if (!segment || segment === ".") continue;

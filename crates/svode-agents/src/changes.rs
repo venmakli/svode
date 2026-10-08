@@ -11,6 +11,7 @@ use svode_core::agent_adapters::AgentAdapterKind;
 use svode_core::page::{
     project_for_directory, ready_child_space_for_directory, resolve_space_target,
 };
+use svode_core::system_path;
 use svode_tools::catalog::{self, ChangedObject, ObjectChange};
 use svode_tools::target::ROOT_SPACE_ID;
 
@@ -66,7 +67,8 @@ impl ToolPaths {
     }
 
     /// Takes what one update of the tool call says. `cwd` is the session's
-    /// directory, the one the agent's Svode MCP server serves.
+    /// directory, the one the agent's Svode MCP server serves. A path on a
+    /// network share is not a local file of the call (`08` security).
     pub(crate) fn update(
         &mut self,
         agent: Option<AgentAdapterKind>,
@@ -75,7 +77,8 @@ impl ToolPaths {
         blocks: Option<&[DetailBlock]>,
         calls: Vec<McpCall>,
     ) {
-        if let Some(locations) = locations {
+        if let Some(mut locations) = locations {
+            locations.retain(|path| !system_path::is_network_path(path));
             self.locations = locations;
         }
         if let Some(blocks) = blocks {
@@ -219,6 +222,9 @@ fn diff_locations(blocks: &[DetailBlock]) -> Vec<ToolLocation> {
         else {
             continue;
         };
+        if system_path::is_network_path(path) {
+            continue;
+        }
         let lines = line_changes(old_text.as_deref(), new_text);
         match locations.iter_mut().find(|known| &known.path == path) {
             Some(known) => {
@@ -331,12 +337,14 @@ fn inside(space: &Path, path: &str) -> Option<String> {
     {
         return None;
     }
-    // Joined part by part, so the path has the separators of this platform.
-    let path = relative
-        .components()
-        .fold(space.to_path_buf(), |path, part| path.join(part))
-        .to_string_lossy()
-        .into_owned();
+    // Joined part by part, so the path has the separators of this platform;
+    // without the verbatim prefix of the canonical Space, as the agent and
+    // the Spaces of the window name it.
+    let path = system_path::user_facing_path(
+        &relative
+            .components()
+            .fold(space.to_path_buf(), |path, part| path.join(part)),
+    );
     (path.len() <= URI_LIMIT).then_some(path)
 }
 
@@ -421,6 +429,45 @@ mod tests {
             paths.locations(ToolKind::Delete, None)[2].change,
             Some(FileChange::Deleted)
         );
+    }
+
+    #[test]
+    fn a_path_on_a_network_share_is_not_a_file_of_the_call() {
+        let mut paths = ToolPaths::default();
+        paths.update(
+            Some(AgentAdapterKind::ClaudeCode),
+            Path::new("/p"),
+            Some(vec![
+                r"\\server\share\a.png".into(),
+                "//server/share/b.png".into(),
+                "/p/c.txt".into(),
+            ]),
+            Some(&[DetailBlock::Diff {
+                path: r"\\?\UNC\server\share\d.txt".into(),
+                old_text: None,
+                new_text: "d".into(),
+            }]),
+            Vec::new(),
+        );
+        assert_eq!(paths.agent_locations(), ["/p/c.txt".to_string()]);
+        assert_eq!(
+            paths.locations(ToolKind::Edit, Some(ItemStatus::Completed)),
+            vec![ToolLocation {
+                path: "/p/c.txt".into(),
+                change: None,
+                lines: None,
+            }]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_path_in_a_canonical_space_has_no_verbatim_prefix() {
+        assert_eq!(
+            inside(Path::new(r"\\?\C:\p"), "notes/a.md"),
+            Some(r"C:\p\notes\a.md".into())
+        );
+        assert_eq!(inside(Path::new(r"C:\p"), r"\\server\share\a.md"), None);
     }
 
     #[test]

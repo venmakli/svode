@@ -133,8 +133,8 @@ jobs:
     # The native session readers of Stage 10 `07` on Windows, which no live
     # device checks: their store fixtures, the store paths of this OS, the
     # liveness signal of a live and an exited child process and the Cursor
-    # chat folders of Windows paths. Linux runs them with the workspace tests
-    # of the rust job.
+    # chat folders of Windows paths; and the local paths of the chat of `08`.
+    # Linux runs them with the workspace tests of the rust job.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -168,6 +168,15 @@ jobs:
         run: cargo test -p svode-agents -- identity::tests registry::tests::an_agent_without_a_description registry::tests::cursor_lists registry::tests::grok_build_declares registry::tests::hermes_lists registry::tests::opencode_declares registry::tests::qwen_code_runs_its_acp_flag
       - name: Native session reader tests
         run: cargo test -p svode-desktop --lib -- agent_sessions::native_status agent_sessions::native_catalog agent_sessions::read_model agent_sessions::live_status
+      # The local paths of the chat of Stage 10 `08` on Windows: drive paths
+      # in either separator and their verbatim form, folder links, and no
+      # filesystem access for a network share.
+      - name: Chat paths of the system path helpers
+        run: cargo test -p svode-core --lib -- system_path::tests
+      - name: Chat paths of the agent runtime
+        run: cargo test -p svode-agents -- prompt::tests changes::tests::a_path_on_a_network_share changes::tests::a_path_in_a_canonical_space acp::media::tests::a_network_share acp::media::tests::windows_drive_paths
+      - name: Chat paths of Desktop
+        run: cargo test -p svode-desktop --lib -- commands::space::tests::path_kind media::source::tests::a_local_file shell_open_scope
 
   standalone-linux:
     # svode and svode-mcp as scripts and CI use them on Linux x86_64: built,

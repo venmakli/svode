@@ -513,3 +513,57 @@ fn shutdown_desktop(app_handle: &tauri::AppHandle) {
         project_sessions.close_all().await;
     });
 }
+
+#[cfg(test)]
+mod shell_open_scope {
+    /// What the shell plugin lets the window open with the system app: web
+    /// and mail addresses and local paths of every OS, never a network share
+    /// (Stage 10 `08` security).
+    fn scope() -> regex::Regex {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("parse Tauri config");
+        regex::Regex::new(
+            config["plugins"]["shell"]["open"]
+                .as_str()
+                .expect("open scope"),
+        )
+        .expect("open scope regex")
+    }
+
+    #[test]
+    fn the_system_app_opens_local_paths_of_every_os_and_no_network_share() {
+        let scope = scope();
+        for target in [
+            "https://example.com/a",
+            "http://localhost:1420",
+            "mailto:me@example.com",
+            "tel:+100",
+            "/Users/me/a b.png",
+            "/home/me/notes/",
+            "/tmp/svode-pasted-images/a.png",
+            r"C:\Users\me\a.png",
+            r"c:\Users\me\folder\",
+            "C:/Users/me/a.png",
+            "file:///Users/me/a.png",
+            "file:///C:/Users/me/a.png",
+        ] {
+            assert!(scope.is_match(target), "{target}");
+        }
+        for target in [
+            r"\\server\share\a.png",
+            "//server/share/a.png",
+            r"/\server\share\a.png",
+            r"\\?\UNC\server\share\a.png",
+            "file://server/share/a.png",
+            "file:////server/share/a.png",
+            "file:///%5C%5Cserver/share/a.png",
+            "javascript:alert(1)",
+            "vscode://file/a",
+            "relative/a.png",
+            "/",
+            "",
+        ] {
+            assert!(!scope.is_match(target), "{target}");
+        }
+    }
+}

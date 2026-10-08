@@ -3,6 +3,12 @@ import type {
   AgentMessageSegmentDto,
   AgentPromptPartDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
+import {
+  isDrivePath,
+  isNetworkPath,
+  pathKey,
+  withoutVerbatimPrefix,
+} from "./local-paths";
 
 /**
  * A file in a draft or a user message (Stage 10 `04`, attachments): a link
@@ -245,7 +251,10 @@ function decodedName(name: string): string {
   }
 }
 
-/** The absolute path of a local `file://` URI, or null for any other URI. */
+/**
+ * The absolute path of a local `file://` URI, or null for any other URI;
+ * a URI of a network share, by its host or its path, is not local.
+ */
 export function fileUriToPath(uri: string): string | null {
   if (!uri.startsWith("file://")) return null;
   let path: string;
@@ -255,9 +264,9 @@ export function fileUriToPath(uri: string): string | null {
     return null;
   }
   if (path.startsWith("localhost/")) path = path.slice("localhost".length);
-  if (!path.startsWith("/")) return null;
+  if (!path.startsWith("/") || isNetworkPath(path)) return null;
   // `file:///C:/work/a.md` names a Windows drive path.
-  return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
+  return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
 }
 
 /** Where a file lies in the project: its Space and its path in that Space. */
@@ -270,21 +279,26 @@ export interface AttachmentLocation {
 
 /**
  * The innermost Space of `spaces` that holds `path`, or null for a file
- * outside the project.
+ * outside the project. A Windows path matches its Space whatever its case
+ * and separators; the path in the Space is `/`-separated.
  */
 export function locateAttachment(
   path: string,
   spaces: readonly { id: string; path: string }[],
 ): AttachmentLocation | null {
+  const local = withoutVerbatimPrefix(path);
+  const key = pathKey(local);
   let found: AttachmentLocation | null = null;
   for (const space of spaces) {
     const root = space.path.replace(/[\\/]+$/, "");
-    if (!path.startsWith(`${root}/`)) continue;
+    const rootKey = pathKey(root);
+    if (!key.startsWith(`${rootKey}/`)) continue;
     if (found && found.spacePath.length >= root.length) continue;
+    const relative = local.slice(withoutVerbatimPrefix(root).length + 1);
     found = {
       spaceId: space.id,
       spacePath: root,
-      path: path.slice(root.length + 1),
+      path: isDrivePath(local) ? relative.replace(/\\/g, "/") : relative,
     };
   }
   return found;

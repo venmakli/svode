@@ -36,8 +36,14 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
     "/work/project/notes.md",
     "/work/project/src/main.rs",
     "/Users/me/todo.txt",
+    "C:\\work\\project\\notes.md",
+    "C:\\work\\project\\src\\main.rs",
   ]);
-  const folders = new Set(["/work/project/docs", "/Users/me/Downloads"]);
+  const folders = new Set([
+    "/work/project/docs",
+    "/Users/me/Downloads",
+    "C:\\Users\\me\\Downloads",
+  ]);
   /** There but not readable: a link still opens it. */
   const unreadable = new Set(["/Users/me/todo.txt"]);
   const checked: string[] = [];
@@ -67,7 +73,7 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
   const doc = dom.window.document;
   const opened: string[] = [];
 
-  async function render(text: string) {
+  async function render(text: string, cwd = "/work/project") {
     const root = createRoot(doc.getElementById("app")!);
     await act(async () => {
       root.render(
@@ -75,7 +81,7 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
           <AttachmentOpenerContext.Provider
             value={(attachment) => opened.push(attachment.path)}
           >
-            <SessionCwdContext.Provider value="/work/project">
+            <SessionCwdContext.Provider value={cwd}>
               <AgentText text={text} />
             </SessionCwdContext.Provider>
           </AttachmentOpenerContext.Provider>
@@ -95,8 +101,15 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
   }
 
   function linkTo(target: string): HTMLElement | null {
-    return doc.querySelector<HTMLElement>(
-      `[data-markdown-reader-link="${target}"]`,
+    return withAttribute("data-markdown-reader-link", target);
+  }
+
+  /** By the value as is: a Windows path holds what CSS reads as escapes. */
+  function withAttribute(name: string, value: string): HTMLElement | null {
+    return (
+      Array.from(doc.querySelectorAll<HTMLElement>(`[${name}]`)).find(
+        (element) => element.getAttribute(name) === value,
+      ) ?? null
     );
   }
 
@@ -263,6 +276,71 @@ if (process.env.SVODE_AGENT_TEXT_DOM !== "1") {
       await act(async () => root.unmount());
       opened.length = 0;
       shellOpened.length = 0;
+    }
+  });
+
+  test("Windows paths open by the same rules in either separator", async () => {
+    checked.length = 0;
+    const root = await render(
+      [
+        "[notes](notes.md) [main](C:/work/project/src/main.rs:42)",
+        "and `C:\\Users\\me\\Downloads` or `C:\\work\\project\\gone.md:3`",
+      ].join("\n"),
+      "C:\\work\\project",
+    );
+    try {
+      await click(linkTo("C:\\work\\project\\notes.md")!);
+      await click(linkTo("C:\\work\\project\\src\\main.rs")!);
+      expect(opened).toEqual([
+        "C:\\work\\project\\notes.md",
+        "C:\\work\\project\\src\\main.rs",
+      ]);
+      expect(await hover(linkTo("C:\\work\\project\\src\\main.rs")!)).toBe(
+        "C:\\work\\project\\src\\main.rs:42",
+      );
+      await click(
+        withAttribute("data-agent-text-code-path", "C:\\Users\\me\\Downloads")!,
+      );
+      expect(shellOpened).toEqual(["C:\\Users\\me\\Downloads"]);
+      expect(checked.sort()).toEqual([
+        "C:\\Users\\me\\Downloads",
+        "C:\\work\\project\\gone.md",
+        "C:\\work\\project\\notes.md",
+        "C:\\work\\project\\src\\main.rs",
+      ]);
+    } finally {
+      await act(async () => root.unmount());
+      opened.length = 0;
+      shellOpened.length = 0;
+    }
+  });
+
+  test("a path on a network share is plain text that nothing looks at", async () => {
+    checked.length = 0;
+    const root = await render(
+      [
+        "[a](file:////server/share/a.md) [b](//server/share/b.md) [c](file://server/share/c.md)",
+        "[d](file:///%5C%5Cserver/share/d.md) and `\\\\server\\share\\e.md`, `//server/share/f.md`",
+      ].join("\n"),
+      "C:\\work\\project",
+    );
+    try {
+      expect(doc.querySelector("[data-markdown-reader-link]")).toBeNull();
+      expect(doc.querySelector("[data-agent-text-code-path]")).toBeNull();
+      expect(doc.querySelector("[data-agent-text-missing-link]")).toBeNull();
+      expect(
+        doc.querySelectorAll("[data-markdown-reader-blocked-link]").length,
+      ).toBe(4);
+      expect(checked).toEqual([]);
+      for (const text of Array.from(
+        doc.querySelectorAll<HTMLElement>("[data-markdown-reader-blocked-link]"),
+      )) {
+        await click(text);
+      }
+      expect(opened).toEqual([]);
+      expect(shellOpened).toEqual([]);
+    } finally {
+      await act(async () => root.unmount());
     }
   });
 }

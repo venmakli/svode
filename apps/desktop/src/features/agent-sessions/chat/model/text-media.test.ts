@@ -50,6 +50,14 @@ test("MEDIA lines become images by the rule of the runtime", () => {
   expect(withMediaImages("MEDIA:C:\\out\\a.png", done)).toBe(
     "![](C:%5Cout%5Ca.png)",
   );
+  // A network share stays text.
+  for (const line of [
+    "MEDIA:\\\\server\\share\\a.png",
+    "MEDIA://server/share/a.png",
+    'MEDIA:"\\\\?\\UNC\\server\\share\\a.png"',
+  ]) {
+    expect(withMediaImages(line, done)).toBe(line);
+  }
 });
 
 test("a MEDIA line split by the stream is recognized once it ended", () => {
@@ -127,6 +135,34 @@ test("images of the text: local files and data within the bound as media, extern
     { type: "text", text: "big" },
     { type: "text", text: "html" },
     [{ kind: "image", name: "b.png", path: "/abs/b.png", url: null }],
+  ]);
+});
+
+test("an image of a Windows drive is a file, one of a network share its alt text", () => {
+  const windows = { cwd: "C:\\work\\project", home: "C:\\Users\\me" };
+  const parts = textImageParts(
+    [
+      { source: "C:%5Cout%5CShot.PNG", alt: "" },
+      { source: "img/a.png", alt: "" },
+      { source: "%5C%5Cserver%5Cshare%5Cb.png", alt: "share" },
+      { source: "//server/share/c.png", alt: "" },
+      { source: "file://server/share/d.png", alt: "host" },
+    ],
+    windows,
+  );
+  expect(
+    parts.map((part) =>
+      part.type === "media"
+        ? part.media.map(({ kind, path }) => ({ kind, path }))
+        : part,
+    ),
+  ).toEqual([
+    [
+      { kind: "image", path: "C:\\out\\Shot.PNG" },
+      { kind: "image", path: "C:\\work\\project\\img\\a.png" },
+    ],
+    { type: "text", text: "share" },
+    { type: "text", text: "host" },
   ]);
 });
 

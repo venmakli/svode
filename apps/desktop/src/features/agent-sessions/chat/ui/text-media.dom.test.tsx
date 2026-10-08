@@ -384,6 +384,31 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
     }
   });
 
+  test("an image or a MEDIA line of a network share is text that nothing reads", async () => {
+    try {
+      await render(
+        tree(
+          [
+            "![share](//server/share/a.png)",
+            "",
+            "MEDIA:\\\\server\\share\\b.png",
+            "",
+            "![](file://server/share/c.png) and ![](C:/out/d.png)",
+          ].join("\n"),
+        ),
+      );
+      expect(sources).toEqual(["C:\\out\\d.png"]);
+      const text = doc.body.textContent ?? "";
+      expect(text.includes("share")).toBe(true);
+      // Markdown reads the doubled backslash as one.
+      expect(text.includes("MEDIA:\\server\\share\\b.png")).toBe(true);
+      expect(fetches).toBe(0);
+    } finally {
+      await unmountAll();
+      sources.length = 0;
+    }
+  });
+
   test("a local image too large to show offers its app", async () => {
     try {
       await render(tree("![](/abs/huge.png)"));

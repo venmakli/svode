@@ -297,6 +297,34 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
     ]);
   });
 
+  dropTest("Windows files and folders become badges, a folder by its directory", async () => {
+    dragPaths = ["C:\\Users\\me\\Shot.PNG", "C:\\Users\\me\\drafts"];
+    kinds = { "C:\\Users\\me\\Shot.PNG": "file", "C:\\Users\\me\\drafts": "directory" };
+    await mount(chat());
+    await drop(transfer({}, true));
+    expect(draft()).toEqual([
+      "[Shot.PNG|C:\\Users\\me\\Shot.PNG]",
+      " ",
+      "[drafts|C:\\Users\\me\\drafts\\]",
+      " ",
+    ]);
+  });
+
+  dropTest("a file on a network share is refused without looking at it", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Keep me" }] });
+    dragPaths = ["/Users/me/here.md", "\\\\server\\share\\a.md", "//server/share/b.md"];
+    kinds = {
+      "/Users/me/here.md": "file",
+      "\\\\server\\share\\a.md": "file",
+      "//server/share/b.md": "file",
+    };
+    await mount(chat());
+    await drop(transfer({}, true));
+    expect(draft()).toEqual(["Keep me"]);
+    expect(toasts).toEqual([m.sessions_chat_drop_unavailable({ name: "a.md, b.md" })]);
+    expect(asked).toEqual(["/Users/me/here.md"]);
+  });
+
   dropTest("over the field a drop goes to its point, elsewhere to the caret, without focus to the end", async () => {
     writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello world" }] });
     kinds = { "/a.md": "file", "/b.md": "file", "/c.md": "file" };

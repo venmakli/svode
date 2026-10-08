@@ -154,6 +154,18 @@ test("file URIs map to local paths, Windows drives included", () => {
   expect(fileUriToPath("file:///%E0%A4%A")).toBeNull();
 });
 
+test("a file URI of a network share, by its host or its path, is not local", () => {
+  for (const uri of [
+    "file://server/share/a.md",
+    "file:////server/share/a.md",
+    "file:///%5C%5Cserver/share/a.md",
+    "file://localhost//server/share/a.md",
+  ]) {
+    expect(fileUriToPath(uri)).toBeNull();
+  }
+  expect(fileUriToPath("file:///C:%5Cwork%5Ca.md")).toBe("C:\\work\\a.md");
+});
+
 test("the kind follows the extension", () => {
   expect(attachmentKind("/p/a.MD")).toBe("page");
   expect(attachmentKind("/p/a.jpeg")).toBe("image");
@@ -173,6 +185,31 @@ test("a file belongs to its innermost Space", () => {
   });
   expect(locateAttachment("/p/childish/a.md", spaces)?.spaceId).toBe("root");
   expect(locateAttachment("/elsewhere/a.md", spaces)).toBeNull();
+});
+
+test("a Windows file belongs to its Space whatever its case and separators", () => {
+  const spaces = [
+    { id: "root", path: "C:\\Users\\me\\project" },
+    { id: "child", path: "C:\\Users\\me\\project\\child\\" },
+  ];
+  for (const path of [
+    "C:\\Users\\me\\project\\child\\docs\\a.md",
+    "C:/Users/me/project/child/docs/a.md",
+    "c:\\users\\ME\\project\\child\\docs\\a.md",
+    "\\\\?\\C:\\Users\\me\\project\\child\\docs\\a.md",
+  ]) {
+    expect(locateAttachment(path, spaces)).toEqual({
+      spaceId: "child",
+      spacePath: "C:\\Users\\me\\project\\child",
+      path: "docs/a.md",
+    });
+  }
+  expect(
+    locateAttachment("C:\\Users\\me\\projects\\a.md", spaces),
+  ).toBeNull();
+  expect(locateAttachment("D:\\Users\\me\\project\\a.md", spaces)).toBeNull();
+  // Unix paths keep their case.
+  expect(locateAttachment("/P/a.md", [{ id: "root", path: "/p" }])).toBeNull();
 });
 
 test("a folder ends with its separator, and its replayed link is a folder again", () => {

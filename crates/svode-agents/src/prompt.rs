@@ -206,6 +206,32 @@ mod tests {
             file_uri(Path::new("C:\\work\\a.md")),
             "file:///C:/work/a.md"
         );
+        // A folder badge of Windows ends with its separator.
+        assert_eq!(
+            file_uri(Path::new("C:\\work\\tasks\\")),
+            "file:///C:/work/tasks/"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_folder_ending_with_its_separator_is_one_directory_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("tasks");
+        std::fs::create_dir(&folder).unwrap();
+        let parts = [PromptPart::File {
+            path: PathBuf::from(format!("{}\\", folder.display())),
+            name: "tasks".into(),
+        }];
+        let blocks = blocks(&parts, true).unwrap();
+        let [PromptBlock::Link { uri, .. }] = blocks.as_slice() else {
+            panic!("one link");
+        };
+        assert!(
+            uri.starts_with("file:///") && uri.ends_with("/tasks/"),
+            "{uri}"
+        );
+        assert!(!uri.contains('\\'), "{uri}");
     }
 
     #[test]

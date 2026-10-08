@@ -10,6 +10,7 @@ use crate::AppError;
 use crate::attachments::source::resolve_registered_owner;
 use crate::files::tree::child_folder_names;
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use svode_core::system_path;
 
 pub(crate) const FULL_RESPONSE_LIMIT: u64 = 64 * 1024 * 1024;
 pub(crate) const RANGE_RESPONSE_LIMIT: u64 = 8 * 1024 * 1024;
@@ -282,6 +283,11 @@ pub(crate) fn inspect_media_source(
 pub(crate) fn inspect_local_media_source(
     path: &Path,
 ) -> Result<ResolvedMediaSource, MediaSourceError> {
+    // A network share is not a local file: not even resolved, since that
+    // reaches the server.
+    if system_path::is_network_path(&path.to_string_lossy()) {
+        return Err(MediaSourceError::SourceUnavailable);
+    }
     let (path, format, metadata) = resolve_local_media_path(path)?;
     if format.family() == MediaFamily::Image {
         let limit_bytes = format.encoded_limit().unwrap_or(FULL_RESPONSE_LIMIT);
@@ -1058,6 +1064,68 @@ mod tests {
         ));
         assert!(matches!(
             inspect_local_media_source(temp.path()),
+            Err(MediaSourceError::SourceUnavailable)
+        ));
+    }
+
+    fn minimal_png() -> Vec<u8> {
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&64u32.to_be_bytes());
+        png.extend_from_slice(&48u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        png
+    }
+
+    #[test]
+    fn a_local_file_through_a_network_share_path_is_never_resolved() {
+        let temp = tempfile::tempdir().unwrap();
+        let photo = temp.path().join("generated.png");
+        fs::write(&photo, minimal_png()).unwrap();
+        let mut paths = vec![
+            r"\\server\share\a.png".to_string(),
+            "//server/share/a.png".to_string(),
+            r"\\?\UNC\server\share\a.png".to_string(),
+        ];
+        // On Unix the same file through two separators: refused unread.
+        if cfg!(unix) {
+            paths.push(format!("/{}", photo.display()));
+        }
+        for path in paths {
+            assert!(
+                matches!(
+                    inspect_local_media_source(Path::new(&path)),
+                    Err(MediaSourceError::SourceUnavailable)
+                ),
+                "{path}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_local_file_of_a_windows_drive_is_a_source_in_any_written_form() {
+        let temp = tempfile::tempdir().unwrap();
+        let photo = temp.path().join("Generated.PNG");
+        fs::write(&photo, minimal_png()).unwrap();
+        let drive = photo.to_string_lossy().to_string();
+        let canonical = fs::canonicalize(&photo).unwrap();
+        for path in [
+            PathBuf::from(&drive),
+            PathBuf::from(drive.replace('\\', "/")),
+            canonical.clone(),
+        ] {
+            let resolved = inspect_local_media_source(&path).unwrap();
+            assert_eq!(resolved.descriptor.format, MediaFormat::Png);
+            assert_eq!(resolved.descriptor.width, Some(64));
+            assert_eq!(
+                resolve_capability_source(&resolved.target, &resolved.descriptor).unwrap(),
+                canonical
+            );
+        }
+        let (letter, rest) = drive.split_once(":\\").unwrap();
+        let share = format!(r"\\localhost\{letter}$\{rest}");
+        assert!(matches!(
+            inspect_local_media_source(Path::new(&share)),
             Err(MediaSourceError::SourceUnavailable)
         ));
     }

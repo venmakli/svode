@@ -23,6 +23,7 @@ import {
   folderAttachment,
   type Attachment,
 } from "../model/attachments";
+import { isNetworkPath } from "../model/local-paths";
 
 export { pathExists as attachmentExists, readClipboardFilePaths, savePastedImage };
 export type { PathKindDto as LocalPathKind };
@@ -35,8 +36,12 @@ export async function localPathKind(path: string): Promise<PathKindDto | null> {
   return (await pathKind(path))?.kind ?? null;
 }
 
-/** What a drop attaches: a file or a folder that can be read, else null. */
+/**
+ * What a drop attaches: a file or a folder that can be read, else null. A
+ * network share is refused without looking at it (`08` security).
+ */
 async function readableKind(path: string): Promise<PathKindDto | null> {
+  if (isNetworkPath(path)) return null;
   const local = await pathKind(path).catch(() => null);
   return local?.readable ? local.kind : null;
 }

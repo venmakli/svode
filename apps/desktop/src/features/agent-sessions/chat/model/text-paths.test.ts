@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   formatLineSuffix,
   inlineCodeReference,
+  isAbsolute,
   linkTarget,
   localReference,
   splitLineSuffix,
@@ -81,10 +82,80 @@ test("a link to a local object resolves an absolute path, file URI, ~ and the cw
     path: "/work/project/docs/setup.md",
     line: null,
   });
-  expect(localPath("C:/work/a.md")?.path).toBe("C:/work/a.md");
   expect(localPath("notes.md", { cwd: "C:\\work", home: null })?.path).toBe(
     "C:\\work\\notes.md",
   );
+});
+
+test("Windows paths resolve in either separator to the form of Windows", () => {
+  const windows: PathBase = {
+    cwd: "C:\\work\\project",
+    home: "C:\\Users\\me",
+  };
+  expect(localPath("C:/work/a.md")?.path).toBe("C:\\work\\a.md");
+  expect(localPath("C:%5Cwork%5Ca%20b.md")?.path).toBe("C:\\work\\a b.md");
+  expect(localPath("file:///C:/work/my%20notes.md#L3")).toEqual({
+    path: "C:\\work\\my notes.md",
+    line: { line: 3, column: null, endLine: null },
+  });
+  // The drive is not a line suffix.
+  expect(localPath("C:\\a\\b.rs:42")).toEqual({
+    path: "C:\\a\\b.rs",
+    line: { line: 42, column: null, endLine: null },
+  });
+  expect(localPath("C:/a/b.rs:10-20")?.line).toEqual({
+    line: 10,
+    column: null,
+    endLine: 20,
+  });
+  expect(localPath("src/main.rs:42:7", windows)).toEqual({
+    path: "C:\\work\\project\\src\\main.rs",
+    line: { line: 42, column: 7, endLine: null },
+  });
+  expect(localPath("..\\up.md", windows)?.path).toBe("C:\\work\\up.md");
+  expect(localPath("~/notes/a.md", windows)?.path).toBe(
+    "C:\\Users\\me\\notes\\a.md",
+  );
+  expect(localPath("~\\notes\\a.md", windows)?.path).toBe(
+    "C:\\Users\\me\\notes\\a.md",
+  );
+  expect(localPath("D:\\x\\..\\..\\y.md")?.path).toBe("D:\\y.md");
+  expect(localPath("\\\\?\\C:\\work\\a.md")?.path).toBe("C:\\work\\a.md");
+  expect(inlineCodeReference("C:\\Users\\me\\a.rs:3", windows)).toEqual({
+    path: "C:\\Users\\me\\a.rs",
+    line: { line: 3, column: null, endLine: null },
+  });
+  expect(inlineCodeReference("C:/", windows)).toBe(null);
+  expect(inlineCodeReference("\\\\?\\C:\\", windows)).toBe(null);
+  expect(inlineCodeReference("C:relative.rs", windows)).toBe(null);
+});
+
+test("a network share is not a local object in any form", () => {
+  for (const href of [
+    "\\\\server\\share\\a.md",
+    "//server/share/a.md",
+    "/\\server\\share\\a.md",
+    "\\\\?\\UNC\\server\\share\\a.md",
+    "\\\\.\\pipe\\name",
+    "%5C%5Cserver%5Cshare%5Ca.md",
+    "file://server/share/a.md",
+    "file:////server/share/a.md",
+    "file:///%5C%5Cserver/share/a.md",
+  ]) {
+    expect(linkTarget(href, base)).toBe(null);
+    // Only a link percent-decodes what it names.
+    if (!href.startsWith("%")) {
+      expect(localReference(href, base, { relative: true })).toBe(null);
+    }
+  }
+  expect(inlineCodeReference("\\\\server\\share\\a.md", base)).toBe(null);
+  expect(inlineCodeReference("//server/share/a.md", base)).toBe(null);
+  // A session or a home on a share resolves nothing either.
+  const shared: PathBase = { cwd: "\\\\server\\share", home: "//server/home" };
+  expect(linkTarget("notes.md", shared)).toBe(null);
+  expect(linkTarget("~/notes.md", shared)).toBe(null);
+  expect(isAbsolute("\\\\server\\share")).toBe(false);
+  expect(isAbsolute("\\\\?\\C:\\a")).toBe(true);
 });
 
 test("a link without a base it needs resolves nothing", () => {

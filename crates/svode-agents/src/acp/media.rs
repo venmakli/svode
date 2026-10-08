@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde_json::Value;
 use svode_core::agent_adapters::{AgentAdapterKind, system_home_dir};
+use svode_core::system_path;
 
 use super::normalize::{URI_LIMIT, bounded, content_text};
 use crate::activity::{DetailBlock, MediaKind};
@@ -632,7 +633,8 @@ fn expand_path(path: &str) -> Option<String> {
     local_path(path)
 }
 
-/// The local path a `file://` URI or an absolute path names.
+/// The local path a `file://` URI or an absolute path names; a network
+/// share is not one (`08` security).
 pub(crate) fn local_path(uri: &str) -> Option<String> {
     if uri.is_empty() || uri.len() > URI_LIMIT {
         return None;
@@ -648,7 +650,7 @@ pub(crate) fn local_path(uri: &str) -> Option<String> {
         }
         None => uri.to_string(),
     };
-    Path::new(&path).is_absolute().then_some(path)
+    (Path::new(&path).is_absolute() && !system_path::is_network_path(&path)).then_some(path)
 }
 
 fn percent_decode(text: &str) -> Option<String> {
@@ -700,7 +702,10 @@ pub(crate) fn extension_kind(path: &str) -> Option<MediaKind> {
 /// A segment of the existing media file a read tool call names in its
 /// `locations` without sending it.
 pub(crate) fn read_file(path: &str) -> Option<MediaPart> {
-    if extension_kind(path)? == MediaKind::File || !Path::new(path).is_file() {
+    if extension_kind(path)? == MediaKind::File
+        || system_path::is_network_path(path)
+        || !Path::new(path).is_file()
+    {
         return None;
     }
     Some(MediaPart::new(

@@ -69,7 +69,7 @@
   },
   "plugins": {
     "shell": {
-      "open": "^(https?://|mailto:|tel:|file://|/).+"
+      "open": "^((https?://|mailto:|tel:).|file:///[^/\\\\%]|/[^/\\\\]|[A-Za-z]:[\\\\/]).*"
     }
   }
 }

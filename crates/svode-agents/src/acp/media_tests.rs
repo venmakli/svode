@@ -1045,3 +1045,48 @@ fn local_paths_are_absolute_paths_and_file_uris() {
     assert_eq!(local_path("file:///tmp/%zz"), None);
     assert_eq!(local_path(&format!("/{}", "a".repeat(URI_LIMIT))), None);
 }
+
+#[test]
+fn a_network_share_is_not_a_local_path() {
+    for uri in [
+        "//server/share/a.png",
+        r"\\server\share\a.png",
+        r"\\?\UNC\server\share\a.png",
+        "file://server/share/a.png",
+        "file:////server/share/a.png",
+        "file:///%5C%5Cserver/share/a.png",
+        "file://localhost//server/share/a.png",
+    ] {
+        assert_eq!(local_path(uri), None, "{uri}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_read_names_no_file_through_two_leading_separators() {
+    let folder = tempfile::tempdir().unwrap();
+    let image = folder.path().join("a.png");
+    std::fs::write(&image, b"\x89PNG").unwrap();
+    let image = image.to_str().unwrap();
+    assert!(read_file(image).is_some());
+    // The same file on Unix, a network share on Windows: never looked at.
+    assert!(read_file(&format!("/{image}")).is_none());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_drive_paths_and_uris_are_local_paths() {
+    assert_eq!(
+        local_path("file:///C:/Users/me/a%20b.png").as_deref(),
+        Some("C:/Users/me/a b.png")
+    );
+    assert_eq!(
+        local_path(r"C:\Users\me\a.png").as_deref(),
+        Some(r"C:\Users\me\a.png")
+    );
+    assert_eq!(
+        local_path(r"\\?\C:\Users\me\a.png").as_deref(),
+        Some(r"\\?\C:\Users\me\a.png")
+    );
+    assert_eq!(local_path(r"C:a.png"), None);
+}

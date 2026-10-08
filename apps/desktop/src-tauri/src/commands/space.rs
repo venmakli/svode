@@ -1089,7 +1089,12 @@ pub fn path_kind(path: String) -> Result<Option<LocalPath>, AppError> {
     Ok(local_path_kind(Path::new(&path)))
 }
 
+/// A network share is not a local object (Stage 10 `08` security): its path
+/// is not looked at, since even its metadata reaches the server.
 fn local_path_kind(path: &Path) -> Option<LocalPath> {
+    if system_path::is_network_path(&path.to_string_lossy()) {
+        return None;
+    }
     let metadata = std::fs::metadata(path).ok()?;
     Some(if metadata.is_dir() {
         LocalPath {
@@ -1385,6 +1390,52 @@ mod tests {
         assert_eq!(local_path_kind(&file), readable(PathKind::File));
         assert_eq!(local_path_kind(temp.path()), readable(PathKind::Directory));
         assert_eq!(local_path_kind(&temp.path().join("gone.md")), None);
+    }
+
+    #[test]
+    fn path_kind_looks_at_no_path_of_a_network_share() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let file = temp.path().join("notes.md");
+        std::fs::write(&file, "notes").expect("write file");
+        // On Unix the same file through two separators: refused unread.
+        #[cfg(unix)]
+        assert_eq!(
+            local_path_kind(Path::new(&format!("/{}", file.display()))),
+            None
+        );
+        for path in [r"\\server\share\a.md", "//server/share/a.md"] {
+            assert_eq!(local_path_kind(Path::new(path)), None, "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_kind_takes_windows_drive_paths_but_no_share_of_this_machine() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let file = temp.path().join("notes.md");
+        std::fs::write(&file, "notes").expect("write file");
+        let readable = Some(LocalPath {
+            kind: PathKind::File,
+            readable: true,
+        });
+        let drive = file.to_string_lossy().to_string();
+        assert_eq!(local_path_kind(Path::new(&drive)), readable);
+        assert_eq!(
+            local_path_kind(Path::new(&drive.replace('\\', "/"))),
+            readable
+        );
+        assert_eq!(
+            local_path_kind(&std::fs::canonicalize(&file).expect("canonical")),
+            readable
+        );
+        let (letter, rest) = drive.split_once(":\\").expect("drive path");
+        for share in [
+            format!(r"\\localhost\{letter}$\{rest}"),
+            format!("//localhost/{letter}$/{}", rest.replace('\\', "/")),
+            format!(r"\\?\UNC\localhost\{letter}$\{rest}"),
+        ] {
+            assert_eq!(local_path_kind(Path::new(&share)), None, "{share}");
+        }
     }
 
     #[cfg(unix)]
