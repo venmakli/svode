@@ -4,7 +4,7 @@
 use serde_json::Value;
 use svode_core::agent_adapters::AgentAdapterKind;
 
-use super::mcp::CallFacts;
+use super::mcp::{self, CallFacts};
 use super::media::{self, MediaPart};
 use super::wire;
 
@@ -127,6 +127,7 @@ fn normalize(update: wire::SessionUpdate, agent: Option<AgentAdapterKind>) -> No
                     raw_input: call.raw_input,
                     raw_output: call.raw_output,
                     meta: call.meta,
+                    text: mcp::result_text(agent, &call.content),
                 },
                 title: Some(call.title),
             })
@@ -232,6 +233,10 @@ fn tool_update(update: wire::ToolCallUpdate, agent: Option<AgentAdapterKind>) ->
             raw_input: update.raw_input,
             raw_output: update.raw_output,
             meta: update.meta,
+            text: update
+                .content
+                .as_deref()
+                .and_then(|content| mcp::result_text(agent, content)),
         },
         title: update.title,
     }

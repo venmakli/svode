@@ -904,6 +904,87 @@ fn svode_mcp_calls_of_codex_and_claude_code_name_their_pages_live_and_in_replay(
     }
 }
 
+/// The MCP calls of every tool call of the session, in order.
+fn mcp_calls(projection: &Projection) -> Vec<(String, String)> {
+    snapshot(projection)
+        .items
+        .into_iter()
+        .flat_map(|item| match item.kind {
+            ItemKind::ToolCall { mcp_calls, .. } => mcp_calls,
+            _ => Vec::new(),
+        })
+        .map(|call| (call.server, call.tool))
+        .collect()
+}
+
+#[test]
+fn svode_mcp_calls_of_the_other_agents_are_recognized_live_and_in_replay() {
+    // The page path is only in the result, which Hermes sends as markdown
+    // and Cursor not at all; Kimi Code's call failed on a name conflict.
+    for (agent, name, probe, page) in [
+        (
+            AgentAdapterKind::Opencode,
+            "opencode-svode",
+            false,
+            Some("notes/E06 opencode page.md"),
+        ),
+        (
+            AgentAdapterKind::QwenCode,
+            "qwen-code-mcp",
+            true,
+            Some("notes/E06 qwen page.md"),
+        ),
+        (
+            AgentAdapterKind::GrokBuild,
+            "grok-build",
+            true,
+            Some("notes/E06 grok page.md"),
+        ),
+        (AgentAdapterKind::Hermes, "hermes", true, None),
+        (AgentAdapterKind::Cursor, "cursor", true, None),
+        (AgentAdapterKind::KimiCode, "kimi-code", true, None),
+    ] {
+        let fixture = Fixture::load(name);
+        let run = fixture.run(agent, Retention::default());
+        // Search meta-tools and opencode's code calling an unknown tool
+        // are not MCP calls.
+        let mut expected = Vec::new();
+        if probe {
+            expected.push(("svode_probe".to_string(), "probe_media".to_string()));
+        }
+        expected.push(("svode".to_string(), "create_page".to_string()));
+        assert_eq!(mcp_calls(&run.live), expected, "{name}");
+        assert_eq!(mcp_calls(&run.replay), expected, "{name}");
+
+        let live = svode_call(&run.live, "create_page");
+        assert_eq!(live, svode_call(&run.replay, "create_page"), "{name}");
+        let project = PathBuf::from(fixture.project("")).canonicalize().unwrap();
+        assert_eq!(
+            live,
+            (
+                page.map(|page| ToolLocation {
+                    path: project.join(page).to_string_lossy().into_owned(),
+                    change: Some(FileChange::Created),
+                    lines: None,
+                })
+                .into_iter()
+                .collect(),
+                vec![McpCallRef {
+                    server: "svode".into(),
+                    tool: "create_page".into(),
+                    changes_project: true,
+                }],
+            ),
+            "{name}"
+        );
+    }
+    let fixture = Fixture::load("opencode-mcp");
+    let run = fixture.run(AgentAdapterKind::Opencode, Retention::default());
+    let probe = vec![("svode_probe".to_string(), "probe_media".to_string())];
+    assert_eq!(mcp_calls(&run.live), probe);
+    assert_eq!(mcp_calls(&run.replay), probe);
+}
+
 #[test]
 fn inline_data_beyond_the_limit_becomes_a_size_mark() {
     let long = data(4000, "0a1b2c");
