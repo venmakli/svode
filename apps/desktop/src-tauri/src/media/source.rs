@@ -249,10 +249,16 @@ impl Serialize for MediaSourceError {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MediaSourceTarget {
-    pub project_path: PathBuf,
-    pub space_id: Option<String>,
-    pub target_path: String,
+pub(crate) enum MediaSourceTarget {
+    /// A file of a registered Space of the project, by its relative path.
+    Project {
+        project_path: PathBuf,
+        space_id: Option<String>,
+        target_path: String,
+    },
+    /// A local file by its canonical absolute path, wherever it lies: what
+    /// an agent session shows (Stage 10 `08` R2).
+    Local { path: PathBuf },
 }
 
 #[derive(Debug, Clone)]
@@ -267,6 +273,28 @@ pub(crate) fn inspect_media_source(
     target_path: &str,
 ) -> Result<ResolvedMediaSource, MediaSourceError> {
     let (path, target, format, metadata) = resolve_media_path(project_path, space_id, target_path)?;
+    describe_media_source(&path, target, format, &metadata)
+}
+
+/// A local file by its absolute path, read only to show it.
+pub(crate) fn inspect_local_media_source(
+    path: &Path,
+) -> Result<ResolvedMediaSource, MediaSourceError> {
+    let (path, format, metadata) = resolve_local_media_path(path)?;
+    describe_media_source(
+        &path,
+        MediaSourceTarget::Local { path: path.clone() },
+        format,
+        &metadata,
+    )
+}
+
+fn describe_media_source(
+    path: &Path,
+    target: MediaSourceTarget,
+    format: MediaFormat,
+    metadata: &fs::Metadata,
+) -> Result<ResolvedMediaSource, MediaSourceError> {
     if let Some(limit_bytes) = format.encoded_limit()
         && metadata.len() > limit_bytes
     {
@@ -276,7 +304,7 @@ pub(crate) fn inspect_media_source(
         });
     }
 
-    let generation = source_generation(format, &metadata)?;
+    let generation = source_generation(format, metadata)?;
     let mut descriptor = MediaSourceDescriptor {
         format,
         family: format.family(),
@@ -291,18 +319,18 @@ pub(crate) fn inspect_media_source(
         requires_range_requests: metadata.len() > FULL_RESPONSE_LIMIT,
     };
 
-    let prefix = read_prefix(&path, metadata.len().min(HEADER_READ_LIMIT))?;
+    let prefix = read_prefix(path, metadata.len().min(HEADER_READ_LIMIT))?;
     if prefix.starts_with(GIT_LFS_POINTER_PREFIX) {
         return Err(MediaSourceError::SourceUnavailable);
     }
     if format.is_baseline_image() {
-        let image = inspect_image(format, &path, &prefix)?;
+        let image = inspect_image(format, path, &prefix)?;
         descriptor.width = image.width;
         descriptor.height = image.height;
         descriptor.animated = image.animated;
         descriptor.intrinsic_oversized = image.intrinsic_oversized;
     }
-    confirm_generation(&path, &descriptor)?;
+    confirm_generation(path, &descriptor)?;
 
     Ok(ResolvedMediaSource { target, descriptor })
 }
@@ -347,11 +375,18 @@ pub(crate) fn resolve_capability_source(
     target: &MediaSourceTarget,
     expected: &MediaSourceDescriptor,
 ) -> Result<PathBuf, MediaSourceError> {
-    let (path, _, format, metadata) = resolve_media_path(
-        &target.project_path,
-        target.space_id.as_deref(),
-        &target.target_path,
-    )?;
+    let (path, format, metadata) = match target {
+        MediaSourceTarget::Project {
+            project_path,
+            space_id,
+            target_path,
+        } => {
+            let (path, _, format, metadata) =
+                resolve_media_path(project_path, space_id.as_deref(), target_path)?;
+            (path, format, metadata)
+        }
+        MediaSourceTarget::Local { path } => resolve_local_media_path(path)?,
+    };
     if format != expected.format
         || metadata.len() != expected.size_bytes
         || source_generation(format, &metadata)? != expected.generation
@@ -385,7 +420,7 @@ fn resolve_media_path(
     let format = MediaFormat::from_path(&canonical).ok_or(MediaSourceError::UnsupportedFormat)?;
     Ok((
         canonical,
-        MediaSourceTarget {
+        MediaSourceTarget::Project {
             project_path: owner.project_path,
             space_id: owner.space_id,
             target_path: normalized,
@@ -393,6 +428,22 @@ fn resolve_media_path(
         format,
         metadata,
     ))
+}
+
+/// No list of forbidden folders: the bytes only reach the window.
+fn resolve_local_media_path(
+    path: &Path,
+) -> Result<(PathBuf, MediaFormat, fs::Metadata), MediaSourceError> {
+    if !path.is_absolute() {
+        return Err(MediaSourceError::SourceUnavailable);
+    }
+    let canonical = fs::canonicalize(path).map_err(map_io_error)?;
+    let metadata = fs::metadata(&canonical).map_err(map_io_error)?;
+    if !metadata.is_file() {
+        return Err(MediaSourceError::SourceUnavailable);
+    }
+    let format = MediaFormat::from_path(&canonical).ok_or(MediaSourceError::UnsupportedFormat)?;
+    Ok((canonical, format, metadata))
 }
 
 fn confirm_generation(
@@ -908,6 +959,58 @@ mod tests {
                 &resolved.descriptor.generation
             ),
             Err(MediaSourceError::SourceChanged)
+        ));
+    }
+
+    #[test]
+    fn a_local_file_outside_any_project_is_a_source_by_its_absolute_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&64u32.to_be_bytes());
+        png.extend_from_slice(&48u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let photo = temp.path().join("generated.png");
+        fs::write(&photo, png).unwrap();
+
+        let resolved = inspect_local_media_source(&photo).unwrap();
+        assert_eq!(resolved.descriptor.width, Some(64));
+        assert_eq!(resolved.descriptor.height, Some(48));
+        let canonical = fs::canonicalize(&photo).unwrap();
+        assert!(matches!(
+            &resolved.target,
+            MediaSourceTarget::Local { path } if *path == canonical
+        ));
+        assert_eq!(
+            resolve_capability_source(&resolved.target, &resolved.descriptor).unwrap(),
+            canonical
+        );
+
+        fs::write(&photo, b"changed").unwrap();
+        assert!(matches!(
+            resolve_capability_source(&resolved.target, &resolved.descriptor),
+            Err(MediaSourceError::SourceChanged)
+        ));
+        fs::remove_file(&photo).unwrap();
+        assert!(matches!(
+            inspect_local_media_source(&photo),
+            Err(MediaSourceError::SourceMissing)
+        ));
+
+        fs::write(temp.path().join("clip.mp4"), b"fixture").unwrap();
+        let clip = inspect_local_media_source(&temp.path().join("clip.mp4")).unwrap();
+        assert_eq!(clip.descriptor.family, MediaFamily::Video);
+        fs::write(temp.path().join("notes.txt"), b"text").unwrap();
+        assert!(matches!(
+            inspect_local_media_source(&temp.path().join("notes.txt")),
+            Err(MediaSourceError::UnsupportedFormat)
+        ));
+        assert!(matches!(
+            inspect_local_media_source(Path::new("generated.png")),
+            Err(MediaSourceError::SourceUnavailable)
+        ));
+        assert!(matches!(
+            inspect_local_media_source(temp.path()),
+            Err(MediaSourceError::SourceUnavailable)
         ));
     }
 

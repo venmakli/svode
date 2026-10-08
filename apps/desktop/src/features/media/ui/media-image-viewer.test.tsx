@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { MediaImageViewer, maxSafeZoom } from "./media-image-viewer";
-import { formatMediaBytes } from "./media-toolbar";
+import { formatMediaBytes } from "../lib/format";
 import type { ExternalOpenBinding } from "@/features/external-open";
 
 const externalOpen: ExternalOpenBinding = {

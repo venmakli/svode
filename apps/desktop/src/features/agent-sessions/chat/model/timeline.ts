@@ -2,6 +2,7 @@ import type {
   AgentActivityItemDto,
   AgentSessionSnapshotDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
+import { createsMedia } from "./media";
 
 type ItemOf<K extends AgentActivityItemDto["kind"]> = Extract<
   AgentActivityItemDto,
@@ -48,7 +49,15 @@ export type TimelineEntry =
 export interface TurnSummary {
   /** Entries shown while the turn is folded. */
   visibleIds: ReadonlySet<string>;
-  /** Folded items; each tool call counts. */
+  /**
+   * Tool calls that created media (`08` R2): their rows stay outside the
+   * fold, each on its own, in the order of the timeline.
+   */
+  mediaRowIds: ReadonlySet<string>;
+  /**
+   * Folded items; each tool call counts. Zero when nothing folds and the
+   * turn only lifts created media out of their group: no summary row then.
+   */
   count: number;
   durationMs: number | null;
   /** The entry the summary row follows: the user's message, if any. */
@@ -218,18 +227,35 @@ function summarize(
     );
     if (error) visible.add(error.id);
   }
+  const mediaRows = new Set<string>();
+  let lifted = false;
+  for (const entry of entries) {
+    if (entry.kind !== "tools" || visible.has(entry.id)) continue;
+    const created = entry.rows.filter((row) => createsMedia(row.item));
+    for (const row of created) mediaRows.add(row.item.id);
+    if (created.length > 0 && entry.rows.length > 1) lifted = true;
+    if (created.length === entry.rows.length && entry.rows.length === 1) {
+      visible.add(entry.id);
+    }
+  }
   const folded = entries.filter((entry) => !visible.has(entry.id));
-  if (folded.length === 0) return null;
+  const count = folded.reduce(
+    (sum, entry) =>
+      sum +
+      (entry.kind === "tools"
+        ? entry.rows.filter((row) => !mediaRows.has(row.item.id)).length
+        : 1),
+    0,
+  );
+  if (count === 0 && !lifted) return null;
   const outcome = lastWhere(
     items,
     (item) => item.kind === "turn_outcome" || item.kind === "interrupted",
   );
   return {
     visibleIds: visible,
-    count: folded.reduce(
-      (sum, entry) => sum + (entry.kind === "tools" ? entry.rows.length : 1),
-      0,
-    ),
+    mediaRowIds: mediaRows,
+    count,
     durationMs:
       outcome?.kind === "turn_outcome" || outcome?.kind === "interrupted"
         ? outcome.durationMs

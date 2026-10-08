@@ -314,7 +314,7 @@ mod tests {
     fn capability_tokens_are_revocable() {
         let state = MediaSourceState::new();
         let source = ResolvedMediaSource {
-            target: MediaSourceTarget {
+            target: MediaSourceTarget::Project {
                 project_path: "project".into(),
                 space_id: None,
                 target_path: "photo.png".into(),

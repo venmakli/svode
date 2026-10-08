@@ -12,7 +12,7 @@ import {
   MediaPlaybackViewer,
   videoDimensionsWithinLimits,
 } from "./media-playback-viewer";
-import { formatMediaDuration } from "./media-toolbar";
+import { formatMediaDuration } from "../lib/format";
 import type { ExternalOpenBinding } from "@/features/external-open";
 
 const externalOpen: ExternalOpenBinding = {

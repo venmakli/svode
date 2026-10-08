@@ -92,6 +92,8 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     probeDocumentTarget: () => ({ status: "no_match" }),
   }));
   mock.module("@/features/media", () => ({
+    formatMediaBytes: (value: number) => `${value} B`,
+    formatMediaDuration: (value: number) => String(value),
     probeMediaTarget: () => ({ status: "no_match" }),
   }));
   mock.module("@/features/properties/panel", () => ({

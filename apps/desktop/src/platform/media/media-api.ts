@@ -69,6 +69,20 @@ export async function createMediaSource(
   };
 }
 
+/** A local file by its absolute path, in or outside the project. */
+export async function createLocalMediaSource(
+  path: string,
+): Promise<MediaSourceSessionDto & { sourceUrl: string }> {
+  const source = await invokeCommand<MediaSourceSessionDto>(
+    "media_create_local_source",
+    { path },
+  );
+  return {
+    ...source,
+    sourceUrl: convertFileSrc(source.capabilityToken, "svode-media"),
+  };
+}
+
 export function validateMediaSource(
   input: MediaSourceInputDto & { expectedGeneration: string },
 ): Promise<void> {

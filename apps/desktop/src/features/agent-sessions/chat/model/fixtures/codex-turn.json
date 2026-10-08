@@ -415,6 +415,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -620,6 +621,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -825,6 +827,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -1030,6 +1033,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -1235,6 +1239,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -1440,6 +1445,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -1645,6 +1651,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -1850,6 +1857,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -2055,6 +2063,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -2260,6 +2269,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -2465,6 +2475,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -2473,6 +2484,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "in_progress",
@@ -2681,6 +2693,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -2689,6 +2702,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "pending",
@@ -2910,6 +2924,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -2918,6 +2933,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -3139,6 +3155,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -3147,6 +3164,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -3376,6 +3394,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -3384,6 +3403,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -3416,6 +3436,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -3621,6 +3642,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -3629,6 +3651,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -3661,6 +3684,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -3866,6 +3890,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -3874,6 +3899,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -3906,6 +3932,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4111,6 +4138,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4119,6 +4147,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -4151,6 +4180,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt`",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4356,6 +4386,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4364,6 +4395,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -4396,6 +4428,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt` containing",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4601,6 +4634,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4609,6 +4643,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -4641,6 +4676,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt` containing `",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4846,6 +4882,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -4854,6 +4891,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -4886,6 +4924,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt` containing `ok",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5091,6 +5130,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5099,6 +5139,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -5131,6 +5172,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt` containing `ok`.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5336,6 +5378,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5344,6 +5387,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -5376,6 +5420,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt` containing `ok`.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5581,6 +5626,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5589,6 +5635,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -5621,6 +5668,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt` containing `ok`.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5826,6 +5874,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "I’ll run the requested command in the current directory.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -5834,6 +5883,7 @@
           "hasDetail": true,
           "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
           "kind": "tool_call",
+          "media": [],
           "locations": [],
           "mcpCalls": [],
           "status": "completed",
@@ -5866,6 +5916,7 @@
           "hasDetail": false,
           "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
           "kind": "agent_message",
+          "media": [],
           "status": null,
           "summary": "Created `probe.txt` containing `ok`.",
           "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6113,6 +6164,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6125,6 +6177,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6137,6 +6190,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6149,6 +6203,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6161,6 +6216,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6173,6 +6229,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested command",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6185,6 +6242,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested command in",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6197,6 +6255,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested command in the",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6209,6 +6268,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested command in the current",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6221,6 +6281,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested command in the current directory",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6233,6 +6294,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested command in the current directory.",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6245,6 +6307,7 @@
         "hasDetail": true,
         "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
         "kind": "tool_call",
+        "media": [],
         "locations": [],
         "mcpCalls": [],
         "status": "in_progress",
@@ -6260,6 +6323,7 @@
         "hasDetail": true,
         "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
         "kind": "tool_call",
+        "media": [],
         "locations": [],
         "mcpCalls": [],
         "status": "pending",
@@ -6379,6 +6443,7 @@
         "hasDetail": true,
         "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
         "kind": "tool_call",
+        "media": [],
         "locations": [],
         "mcpCalls": [],
         "status": "completed",
@@ -6406,6 +6471,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6418,6 +6484,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6430,6 +6497,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6442,6 +6510,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe.txt",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6454,6 +6523,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe.txt`",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6466,6 +6536,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe.txt` containing",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6478,6 +6549,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe.txt` containing `",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6490,6 +6562,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe.txt` containing `ok",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6502,6 +6575,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe.txt` containing `ok`.",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6582,6 +6656,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf5ab388191938776fb7c20335f",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "I’ll run the requested command in the current directory.",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"
@@ -6590,6 +6665,7 @@
         "hasDetail": true,
         "id": "exec-0b7f458b-b072-4209-85fe-da4a2ffa2f65",
         "kind": "tool_call",
+        "media": [],
         "locations": [],
         "mcpCalls": [],
         "status": "completed",
@@ -6622,6 +6698,7 @@
         "hasDetail": false,
         "id": "msg_05fd046b74444ad7016ac1cbf84c508191baa7338abcd6f3ca",
         "kind": "agent_message",
+        "media": [],
         "status": null,
         "summary": "Created `probe.txt` containing `ok`.",
         "turnId": "01m42g994a8cfnd5vc3hd7f6kp"

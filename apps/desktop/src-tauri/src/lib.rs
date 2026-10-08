@@ -198,6 +198,7 @@ pub fn run() {
             document::commands::document_open_external,
             document::commands::document_reveal_external,
             media::commands::media_create_source,
+            media::commands::media_create_local_source,
             media::commands::media_validate_source,
             media::commands::media_revoke_source,
             media::commands::media_list_external_apps,

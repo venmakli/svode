@@ -26,6 +26,9 @@ function item(
     status: null,
     summary,
     hasDetail: false,
+    ...(kind.kind === "tool_call" || kind.kind === "agent_message"
+      ? { media: [] }
+      : {}),
     ...kind,
   } as AgentActivityItemDto;
 }

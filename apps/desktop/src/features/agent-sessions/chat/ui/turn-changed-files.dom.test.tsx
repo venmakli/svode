@@ -104,6 +104,9 @@ if (process.env.SVODE_TURN_CHANGED_FILES_DOM !== "1") {
       status: "completed",
       summary,
       hasDetail: kind.kind === "tool_call",
+      ...(kind.kind === "tool_call" || kind.kind === "agent_message"
+        ? { media: [] }
+        : {}),
       ...kind,
     } as AgentActivityItemDto;
   }

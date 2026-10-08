@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 
 use super::MediaSourceState;
 use super::source::{
-    MediaSourceDescriptor, MediaSourceError, inspect_media_source,
+    MediaSourceDescriptor, MediaSourceError, inspect_local_media_source, inspect_media_source,
     resolve_media_source_for_external, validate_media_source_generation,
 };
 use crate::external_apps::{self, ExternalAppDto};
@@ -27,6 +27,21 @@ pub(crate) fn media_create_source(
     target_path: String,
 ) -> Result<MediaSourceSessionDescriptor, MediaSourceError> {
     let source = inspect_media_source(Path::new(&project_path), space_id.as_deref(), &target_path)?;
+    let capability_token = state.issue(&source);
+    Ok(MediaSourceSessionDescriptor {
+        source: source.descriptor,
+        capability_token,
+    })
+}
+
+/// A local file by its absolute path, in or outside the project: media an
+/// agent session shows (Stage 10 `08` R2).
+#[tauri::command]
+pub(crate) fn media_create_local_source(
+    state: State<'_, MediaSourceState>,
+    path: String,
+) -> Result<MediaSourceSessionDescriptor, MediaSourceError> {
+    let source = inspect_local_media_source(Path::new(&path))?;
     let capability_token = state.issue(&source);
     Ok(MediaSourceSessionDescriptor {
         source: source.descriptor,

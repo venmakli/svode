@@ -24,6 +24,7 @@ export type {
   AgentExternalLivenessDto,
   AgentInteractionAnswerDto,
   AgentLaunchUnavailableDto,
+  AgentMediaSegmentDto,
   AgentPendingInteractionDto,
   AgentQuestionFieldDto,
   AgentRuntimeErrorCode,

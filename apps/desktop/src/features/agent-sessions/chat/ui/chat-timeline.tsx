@@ -44,6 +44,7 @@ import { useItemDetail } from "../hooks/use-item-detail";
 import { useLiveEdgeMarker } from "../hooks/use-live-edge-marker";
 import { messageParts } from "../model/attachments";
 import { AgentText } from "./agent-text";
+import { AgentMessageContent, ChatMediaView } from "./chat-media";
 import { AttachmentBadge, ImageMark } from "./attachment-badge";
 import {
   changedFilesKey,
@@ -54,6 +55,7 @@ import {
   type ManualExpansion,
 } from "../model/expansion";
 import { turnChanges } from "../model/changed-files";
+import { chatMediaOf } from "../model/media";
 import {
   lastWhere,
   projectTimeline,
@@ -146,16 +148,17 @@ function TurnView({
 }) {
   const entries = shownEntries(manual, turn);
   const summary = turn.summary;
-  const summaryRow = summary ? (
-    <MessageScrollerItem key={summaryKey(turn)}>
-      <TurnSummaryRow
-        count={summary.count}
-        durationMs={summary.durationMs}
-        open={isSummaryExpanded(manual, turn)}
-        onOpenChange={(open) => onToggle(summaryKey(turn), open)}
-      />
-    </MessageScrollerItem>
-  ) : null;
+  const summaryRow =
+    summary && summary.count > 0 ? (
+      <MessageScrollerItem key={summaryKey(turn)}>
+        <TurnSummaryRow
+          count={summary.count}
+          durationMs={summary.durationMs}
+          open={isSummaryExpanded(manual, turn)}
+          onOpenChange={(open) => onToggle(summaryKey(turn), open)}
+        />
+      </MessageScrollerItem>
+    ) : null;
   const changes = turnChanges(turn);
   // Under the agent's last message, which stays visible in a folded turn.
   const changesAfterId =
@@ -321,7 +324,15 @@ function ItemText({
     ? (detailText(detail) ?? item.summary)
     : item.summary;
   if (!markdown) return <>{text}</>;
-  return <AgentText text={text} />;
+  if (item.kind !== "agent_message") return <AgentText text={text} />;
+  return (
+    <AgentMessageContent
+      session={session}
+      itemId={item.id}
+      text={text}
+      media={item.media}
+    />
+  );
 }
 
 /**
@@ -376,6 +387,7 @@ function Disclosure({
   icon,
   title,
   meta,
+  preview,
   children,
 }: {
   open: boolean;
@@ -383,6 +395,8 @@ function Disclosure({
   icon: ReactNode;
   title: ReactNode;
   meta?: ReactNode;
+  /** Shown under the title whether or not the detail is open. */
+  preview?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -393,6 +407,7 @@ function Disclosure({
         {meta}
         <ChevronRight className="ms-auto size-3.5 shrink-0 transition-transform group-data-[state=open]/disclosure:rotate-90" />
       </CollapsibleTrigger>
+      {preview && <div className="ps-6 pt-1 pb-1">{preview}</div>}
       <CollapsibleContent className="ps-6 pt-1">{children}</CollapsibleContent>
     </Collapsible>
   );
@@ -467,6 +482,14 @@ function ToolRowView({
           {permission && <PermissionOutcome record={permission} />}
           <ToolStatus status={item.status} />
         </>
+      }
+      preview={
+        item.media.length > 0 && (
+          <ChatMediaView
+            session={session}
+            media={item.media.map((segment) => chatMediaOf(item.id, segment))}
+          />
+        )
       }
     >
       {open && <ItemDetail session={session} item={item} />}

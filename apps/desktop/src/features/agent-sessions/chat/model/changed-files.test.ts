@@ -30,6 +30,7 @@ function tool(
     turnId: options.turnId ?? "t1",
     kind: "tool_call",
     tool: kind,
+    media: [],
     locations,
     mcpCalls: options.mcp
       ? [{ server: "svode", tool: "create_page", changesProject: true }]

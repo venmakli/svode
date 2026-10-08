@@ -501,6 +501,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
             turnId: "t1",
             kind: "tool_call",
             tool,
+            media: [],
             locations: [],
             mcpCalls: [],
             status: "pending",
