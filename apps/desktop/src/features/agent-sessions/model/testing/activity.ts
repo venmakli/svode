@@ -20,7 +20,12 @@ export function activitySnapshot(
     },
     items: [],
     pending: null,
-    history: { source: "live", available: true, truncatedItems: null },
+    history: {
+      source: "live",
+      available: true,
+      truncatedItems: null,
+      truncatedTurns: null,
+    },
     writer: "acp",
     settings: [],
     commands: [],

@@ -407,7 +407,13 @@ if (process.env.SVODE_TURN_RAIL_DOM !== "1") {
         item("o4", "t4", { kind: "interrupted", durationMs: null }),
       ];
       layOut();
-      await render(snapshot(items, { truncatedItems: 12 }));
+      await render(snapshot(items, { truncatedItems: 12, truncatedTurns: 4 }));
+      // Truncated history: the first row of the list, not a way to go.
+      const first = rail()!.querySelector("ul > li")!;
+      expect(first.textContent).toBe(
+        m.sessions_chat_turns_hidden({ count: 4 }),
+      );
+      expect(first.querySelector("button")).toBe(null);
       // Opened at the end: the last turn is active.
       expect(activeRow()).toBe(rows()[3]);
       const texts = rows().map((row) => row.textContent);

@@ -137,7 +137,12 @@ test("a truncation drops the evicted items and marks the history", () => {
           change: "truncated",
           value: {
             itemIds: ["a"],
-            history: { source: "replay", available: true, truncatedItems: 1 },
+            history: {
+              source: "replay",
+              available: true,
+              truncatedItems: 1,
+              truncatedTurns: 1,
+            },
           },
         },
       },

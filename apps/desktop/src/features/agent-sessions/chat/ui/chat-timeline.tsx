@@ -130,7 +130,7 @@ export function ChatTimeline({
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton aria-label={m.sessions_chat_scroll_to_end()} />
-        <TurnRail turns={turns} hiddenTurns={null} />
+        <TurnRail turns={turns} hiddenTurns={snapshot.history.truncatedTurns} />
         <LiveTurnEnd live={marker !== null} />
       </MessageScroller>
     </MessageScrollerProvider>

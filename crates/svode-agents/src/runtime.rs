@@ -1009,6 +1009,7 @@ impl AgentRuntime {
                     source: HistorySource::Replay,
                     available: true,
                     truncated_items: None,
+                    truncated_turns: None,
                 },
             )
         } else if capabilities.resume_session {
@@ -1018,6 +1019,7 @@ impl AgentRuntime {
                     source: HistorySource::None,
                     available: false,
                     truncated_items: None,
+                    truncated_turns: None,
                 },
             )
         } else {
@@ -1125,6 +1127,7 @@ impl AgentRuntime {
                 source: HistorySource::Replay,
                 available: true,
                 truncated_items: None,
+                truncated_turns: None,
             },
             true,
             None,

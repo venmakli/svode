@@ -35,6 +35,7 @@ fn snapshot(seq: u64) -> SessionSnapshot {
             source: HistorySource::Live,
             available: true,
             truncated_items: None,
+            truncated_turns: None,
         },
         writer: WriterState::Acp,
         settings: Vec::new(),

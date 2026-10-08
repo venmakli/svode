@@ -185,6 +185,7 @@ impl Projection {
             source: HistorySource::Live,
             available: true,
             truncated_items: None,
+            truncated_turns: None,
         }
     }
 
@@ -994,8 +995,19 @@ impl Projection {
             self.open_message = None;
         }
         let evicted = self.snapshot.history.truncated_items.unwrap_or(0) + item_ids.len() as u64;
+        let mut turns: Vec<&String> = self
+            .snapshot
+            .items
+            .iter()
+            .filter(|item| item_ids.contains(&item.id))
+            .filter_map(|item| item.turn_id.as_ref())
+            .collect();
+        turns.sort();
+        turns.dedup();
+        let evicted_turns = self.snapshot.history.truncated_turns.unwrap_or(0) + turns.len() as u64;
         let history = HistoryState {
             truncated_items: Some(evicted),
+            truncated_turns: Some(evicted_turns),
             ..self.snapshot.history
         };
         self.emit(Change::Truncated(Truncation { item_ids, history }));

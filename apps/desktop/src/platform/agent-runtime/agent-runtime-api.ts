@@ -53,6 +53,8 @@ export interface AgentHistoryStateDto {
   available: boolean;
   /** Number of evicted items when the retained history is truncated. */
   truncatedItems: number | null;
+  /** Number of whole turns among them; items outside a turn do not count. */
+  truncatedTurns: number | null;
 }
 
 export type AgentToolKindDto =
@@ -125,52 +127,54 @@ export type AgentPromptPartDto =
   | { type: "text"; text: string }
   | { type: "file"; path: string; name: string };
 
-export type AgentActivityItemDto = /**
- * The summary is the text; `segments` is the whole message in order once
- * it links a file or an image, empty for a text-only message.
- */
-(| { kind: "user_message"; segments: AgentMessageSegmentDto[] }
-  /** `media` stand at their places in the text, in order. */
-  | { kind: "agent_message"; media: AgentMediaSegmentDto[] }
-  | { kind: "reasoning" }
-  /** `media` holds what the call produced or showed, in order. */
-  | {
-      kind: "tool_call";
-      tool: AgentToolKindDto;
-      media: AgentMediaSegmentDto[];
-      /** Without repeats, in order of first appearance. */
-      locations: AgentToolLocationDto[];
-      mcpCalls: AgentMcpCallDto[];
-    }
-  | { kind: "mode_change" }
-  | { kind: "config_change" }
-  /** The turn's plan; a later plan of the turn replaces it in place. */
-  | { kind: "plan"; entries: AgentPlanEntryDto[] }
-  /** A resolved request; a permission belongs to its tool call row. */
-  | {
-      kind: "interaction";
-      request: AgentInteractionKindDto;
-      state: AgentInteractionStateDto;
-      toolCallId: string | null;
-      option: string | null;
-      declined: boolean;
-    }
-  | {
-      kind: "turn_outcome";
-      reason: AgentStopReasonDto;
-      durationMs: number | null;
-    }
-  | { kind: "error" }
-  | { kind: "interrupted"; durationMs: number | null }
-  | { kind: "generic"; label: string }
-) & {
-  id: string;
-  turnId: string | null;
-  status: "pending" | "in_progress" | "completed" | "failed" | null;
-  /** Bounded compact text; the full content is the detail. */
-  summary: string;
-  hasDetail: boolean;
-};
+export type AgentActivityItemDto =
+  /**
+   * The summary is the text; `segments` is the whole message in order once
+   * it links a file or an image, empty for a text-only message.
+   */
+  (
+    | { kind: "user_message"; segments: AgentMessageSegmentDto[] }
+    /** `media` stand at their places in the text, in order. */
+    | { kind: "agent_message"; media: AgentMediaSegmentDto[] }
+    | { kind: "reasoning" }
+    /** `media` holds what the call produced or showed, in order. */
+    | {
+        kind: "tool_call";
+        tool: AgentToolKindDto;
+        media: AgentMediaSegmentDto[];
+        /** Without repeats, in order of first appearance. */
+        locations: AgentToolLocationDto[];
+        mcpCalls: AgentMcpCallDto[];
+      }
+    | { kind: "mode_change" }
+    | { kind: "config_change" }
+    /** The turn's plan; a later plan of the turn replaces it in place. */
+    | { kind: "plan"; entries: AgentPlanEntryDto[] }
+    /** A resolved request; a permission belongs to its tool call row. */
+    | {
+        kind: "interaction";
+        request: AgentInteractionKindDto;
+        state: AgentInteractionStateDto;
+        toolCallId: string | null;
+        option: string | null;
+        declined: boolean;
+      }
+    | {
+        kind: "turn_outcome";
+        reason: AgentStopReasonDto;
+        durationMs: number | null;
+      }
+    | { kind: "error" }
+    | { kind: "interrupted"; durationMs: number | null }
+    | { kind: "generic"; label: string }
+  ) & {
+    id: string;
+    turnId: string | null;
+    status: "pending" | "in_progress" | "completed" | "failed" | null;
+    /** Bounded compact text; the full content is the detail. */
+    summary: string;
+    hasDetail: boolean;
+  };
 
 export type AgentInteractionStateDto =
   | "pending"

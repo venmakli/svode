@@ -46,6 +46,9 @@ pub struct HistoryState {
     pub available: bool,
     /// Number of evicted items when the retained history is truncated.
     pub truncated_items: Option<u64>,
+    /// Number of whole turns among them; items outside a turn do not count.
+    #[serde(default)]
+    pub truncated_turns: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

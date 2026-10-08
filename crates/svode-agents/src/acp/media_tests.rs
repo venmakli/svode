@@ -160,6 +160,7 @@ fn projection(
             source: HistorySource::Replay,
             available: true,
             truncated_items: None,
+            truncated_turns: None,
         },
         false => Projection::live_history(),
     };

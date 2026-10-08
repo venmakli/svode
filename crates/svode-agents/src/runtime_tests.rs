@@ -1368,7 +1368,8 @@ async fn a_session_reopened_after_reconnect_is_restored_from_its_replay_without_
         HistoryState {
             source: HistorySource::Replay,
             available: true,
-            truncated_items: None
+            truncated_items: None,
+            truncated_turns: None
         }
     );
     assert_eq!(snapshot.turn.phase, TurnPhase::None);
@@ -1485,7 +1486,8 @@ async fn a_resume_only_agent_continues_the_session_without_history() {
         HistoryState {
             source: HistorySource::None,
             available: false,
-            truncated_items: None
+            truncated_items: None,
+            truncated_turns: None
         }
     );
     assert!(snapshot.items.is_empty());
@@ -1616,6 +1618,10 @@ async fn a_large_replay_keeps_the_newest_whole_turns_and_marks_the_truncation() 
     }
     assert_eq!(turn_of(&snapshot, "huge").as_deref(), Some("replay:500"));
     assert_eq!(
+        snapshot.history.truncated_turns,
+        Some(500 - turns.len() as u64)
+    );
+    assert_eq!(
         runtime.detail(&key, "huge"),
         DetailOutcome::Available {
             blocks: vec![DetailBlock::Excerpt {
@@ -1674,6 +1680,7 @@ async fn other_sessions_answer_while_a_replay_streams() {
     let snapshot = runtime.subscribe(&key).unwrap().snapshot;
     assert_eq!(snapshot.items.len(), 2_000);
     assert_eq!(snapshot.history.truncated_items, Some(2_000));
+    assert_eq!(snapshot.history.truncated_turns, Some(1_000));
 }
 
 #[tokio::test]
@@ -1705,12 +1712,44 @@ async fn live_turns_past_the_bound_evict_the_oldest_turn_for_subscribers_too() {
         "snapshot + deltas = runtime state"
     );
     assert_eq!(fresh.history.truncated_items, Some(3));
+    assert_eq!(fresh.history.truncated_turns, Some(1));
     assert!(
         fresh
             .items
             .iter()
             .all(|item| item.turn_id.as_ref() == Some(&turns[1]))
     );
+}
+
+#[tokio::test]
+async fn the_truncation_counts_whole_turns_and_not_items_outside_a_turn() {
+    let runtime = runtime_with(Retention {
+        session_items: 2,
+        ..Retention::default()
+    });
+    let (_connection, key, mut agent) = session(&runtime).await;
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    agent.update("s1", agent_chunk("between turns")).await;
+    follow(&mut subscription, |snapshot| snapshot.items.len() == 1).await;
+    assert_eq!(subscription.snapshot.items[0].turn_id, None);
+    for text in ["first", "second"] {
+        let turn = runtime.prompt(&key, &[PromptPart::text(text)]).unwrap();
+        let prompt = agent.expect("session/prompt").await;
+        agent.update("s1", agent_chunk("ok")).await;
+        agent
+            .reply(&prompt, json!({ "stopReason": "end_turn" }))
+            .await;
+        follow(&mut subscription, |snapshot| {
+            snapshot.turn.turn_id.as_deref() == Some(turn.as_str())
+                && snapshot.turn.phase == TurnPhase::None
+        })
+        .await;
+    }
+    let fresh = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(subscription.snapshot, fresh);
+    // The item outside a turn and the first turn's message, reply and outcome.
+    assert_eq!(fresh.history.truncated_items, Some(4));
+    assert_eq!(fresh.history.truncated_turns, Some(1));
 }
 
 #[tokio::test]
@@ -2854,7 +2893,8 @@ async fn reading_replays_the_history_then_closes_the_session_without_a_writer() 
         HistoryState {
             source: HistorySource::Replay,
             available: true,
-            truncated_items: None
+            truncated_items: None,
+            truncated_turns: None
         }
     );
     assert_eq!(snapshot.writer, WriterState::None);
