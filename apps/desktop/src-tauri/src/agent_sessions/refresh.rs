@@ -694,6 +694,7 @@ mod tests {
                     .await
             })
         };
+        wait_until(|| coordinator.inner.coalesced_reads.load(Ordering::Relaxed) == 1);
 
         release(&gate);
         second.await.expect("second task").expect("second result");
