@@ -110,7 +110,10 @@ function TimelineView({ session, snapshot, header }: ChatTimelineProps) {
       <MessageScroller className="@container min-h-0 flex-1">
         <MessageScrollerViewport
           aria-label={m.sessions_chat_timeline_label()}
-          className="px-6"
+          // WebKit keeps the wheel scroll range of a `contain: content`
+          // scroller from before its content grew, so a timeline whose
+          // diagrams and media render after mount cannot be scrolled to end.
+          className="px-6 contain-none!"
         >
           <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-4 py-4">
             {header}
