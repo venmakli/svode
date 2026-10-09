@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ReactNode } from "react";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -10,6 +10,7 @@ import {
   type CollectionPresentationDescriptor,
 } from "@/features/collection";
 
+import type { ArtifactOpenTarget } from "../api/agent-context-api";
 import { skillDetailProvenance } from "../model/detail-provenance";
 import type { AgentContextSkillRow } from "../model/types";
 import {
@@ -389,54 +390,41 @@ test("Detail projection keeps discovery location independent from canonical owne
   );
 });
 
-test("skill external action opens its canonical manifest in the owning root", async () => {
-  const opened: unknown[] = [];
-  const runtime = createAgentContextSkillsPresentation({
-    artifactOpeners: [
-      {
-        capabilities: ["reveal_file"],
-        id: "file_manager",
-        icon: "data:image/png;base64,RklOREVS",
-        isDefault: false,
-        kind: "file_manager",
-        label: "Finder",
-      },
-    ],
-    onOpenArtifact: (input) => {
-      opened.push(input);
-    },
+test("skills open their manifest from the detail top bar, not from collection menus", () => {
+  const presentation = createAgentContextSkillsPresentation({
     state: { phase: "ready", rows: [reviewSkill] },
-  }) as unknown as {
-    instance: {
-      descriptor: {
-        rowActions: Array<{
-          icon: ReactNode;
-          id: string;
-          run(row: AgentContextSkillRow): void;
-        }>;
-      };
-    };
-  };
+  });
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <CollectionPresentationShell
+        instanceKey="agent-context:space:skill-menus"
+        presentation={presentation}
+        query={EMPTY_COLLECTION_QUERY}
+        onQueryChange={() => undefined}
+      />
+    </TooltipProvider>,
+  );
+  const descriptor = (
+    presentation as unknown as {
+      instance: { descriptor: { rowActions?: readonly unknown[] } };
+    }
+  ).instance.descriptor;
 
-  const action = runtime.instance.descriptor.rowActions[0]!;
-  await action.run(reviewSkill);
-  expect(action.id).toBe("open-in-file_manager");
-  expect(
-    renderToStaticMarkup(action.icon).includes(
-      'src="data:image/png;base64,RklOREVS"',
-    ),
-  ).toBe(true);
-  expect(opened).toEqual([
-    {
-      canonicalArtifactPath: "/workspace/.agents/skills/review/SKILL.md",
-      ownerRoot: "/workspace",
-      tool: "file_manager",
-    },
-  ]);
+  expect(descriptor.rowActions).toBe(undefined);
+  expect(html.includes("Row actions")).toBe(false);
+  expect(html.includes("data-collection-action")).toBe(false);
+
+  const request = createSkillDetailContent(reviewSkill);
+  // The identity block below the top bar stays for skills.
+  expect(request.identity).toBe(undefined);
+  expect(request.headerActions).toBe(undefined);
+  expect((request.openWith as ReactElement<ArtifactOpenTarget>).props).toEqual({
+    canonicalArtifactPath: "/workspace/.agents/skills/review/SKILL.md",
+    ownerRoot: "/workspace",
+  });
 });
 
-test("skill external action uses canonical owner instead of discovery alias owner", async () => {
-  const opened: unknown[] = [];
+test("skill Open with uses the canonical owner instead of the discovery alias owner", () => {
   const linkedPersonalSkill: AgentContextSkillRow = {
     ...reviewSkill,
     aliases: [
@@ -452,35 +440,14 @@ test("skill external action uses canonical owner instead of discovery alias owne
     manifestPath: "/home/user/.agents/skills/personal/SKILL.md",
     ownerPath: "/home/user/.agents/skills",
   };
-  const runtime = createAgentContextSkillsPresentation({
-    artifactOpeners: [
-      {
-        capabilities: ["reveal_file"],
-        id: "file_manager",
-        icon: null,
-        isDefault: false,
-        kind: "file_manager",
-        label: "Finder",
-      },
-    ],
-    onOpenArtifact: (input) => {
-      opened.push(input);
-    },
-    state: { phase: "ready", rows: [linkedPersonalSkill] },
-  }) as unknown as {
-    instance: {
-      descriptor: {
-        rowActions: Array<{ run(row: AgentContextSkillRow): void }>;
-      };
-    };
-  };
 
-  await runtime.instance.descriptor.rowActions[0]!.run(linkedPersonalSkill);
-  expect(opened).toEqual([
-    {
-      canonicalArtifactPath: "/home/user/.agents/skills/personal/SKILL.md",
-      ownerRoot: "/home/user/.agents/skills",
-      tool: "file_manager",
-    },
-  ]);
+  expect(
+    (
+      createSkillDetailContent(linkedPersonalSkill)
+        .openWith as ReactElement<ArtifactOpenTarget>
+    ).props,
+  ).toEqual({
+    canonicalArtifactPath: "/home/user/.agents/skills/personal/SKILL.md",
+    ownerRoot: "/home/user/.agents/skills",
+  });
 });

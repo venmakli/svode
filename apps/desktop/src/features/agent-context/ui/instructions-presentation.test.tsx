@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ReactNode } from "react";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -8,6 +8,7 @@ import {
   CollectionPresentationShell,
 } from "@/features/collection";
 
+import type { ArtifactOpenTarget } from "../api/agent-context-api";
 import type { AgentContextInstructionRow } from "../model/types";
 import {
   createAgentContextInstructionsPresentation,
@@ -79,12 +80,6 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   expect(html.includes("data-collection-refresh")).toBe(false);
   const detail = createInstructionDetailContent(selected);
   const detailHtml = renderToStaticMarkup(detail.content);
-  const detailTitleHtml = renderToStaticMarkup(detail.title);
-  expect(detailTitleHtml.includes("lucide-file-text")).toBe(true);
-  expect(detailTitleHtml.includes("AGENTS.md")).toBe(true);
-  expect(renderToStaticMarkup(detail.description).includes("sr-only")).toBe(
-    true,
-  );
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
   expect(detailHtml.includes("Source and location")).toBe(true);
@@ -198,48 +193,39 @@ test("only row-local degraded health renders a warning overlay", () => {
   expect(html.includes("Preview was limited to 32 KiB")).toBe(true);
 });
 
-test("instruction external action keeps the canonical artifact and owner together", async () => {
-  const opened: unknown[] = [];
+test("instructions open their file from the detail top bar, not from collection menus", () => {
   const presentation = createAgentContextInstructionsPresentation({
-    artifactOpeners: [
-      {
-        capabilities: ["open_workspace_file"],
-        id: "vscode",
-        icon: null,
-        isDefault: false,
-        kind: "editor",
-        label: "VS Code",
-      },
-    ],
-    onOpenArtifact: (input) => {
-      opened.push(input);
-    },
     state: { phase: "ready", rows: [selected] },
-  }) as unknown as {
-    instance: {
-      descriptor: {
-        rowActions: Array<{
-          icon: ReactNode;
-          id: string;
-          run(row: AgentContextInstructionRow): void;
-        }>;
-      };
-    };
-  };
+  });
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <CollectionPresentationShell
+        instanceKey="agent-context:space:menus"
+        presentation={presentation}
+        query={EMPTY_COLLECTION_QUERY}
+        onQueryChange={() => undefined}
+      />
+    </TooltipProvider>,
+  );
+  const descriptor = (
+    presentation as unknown as {
+      instance: { descriptor: { rowActions?: readonly unknown[] } };
+    }
+  ).instance.descriptor;
 
-  const action = presentation.instance.descriptor.rowActions[0]!;
-  await action.run(selected);
-  expect(action.id).toBe("open-in-vscode");
+  expect(descriptor.rowActions).toBe(undefined);
+  expect(html.includes("Row actions")).toBe(false);
+  expect(html.includes("data-collection-action")).toBe(false);
+
+  const detail = createInstructionDetailContent(selected);
+  expect(detail.identity?.name).toBe("AGENTS.md");
   expect(
-    renderToStaticMarkup(action.icon).includes(
-      'data-external-app-icon="fallback"',
-    ),
+    renderToStaticMarkup(detail.identity?.icon).includes("lucide-file-text"),
   ).toBe(true);
-  expect(opened).toEqual([
-    {
-      canonicalArtifactPath: "/workspace/AGENTS.md",
-      ownerRoot: "/workspace",
-      tool: "vscode",
-    },
-  ]);
+  expect(detail.title).toBe("AGENTS.md");
+  expect(detail.headerActions).toBe(undefined);
+  expect((detail.openWith as ReactElement<ArtifactOpenTarget>).props).toEqual({
+    canonicalArtifactPath: "/workspace/AGENTS.md",
+    ownerRoot: "/workspace",
+  });
 });

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/sheet";
 import { registerSupplementalContentDeactivation } from "@/features/artifact";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
-import { PeekTopBar } from "@/shared/ui/peek-top-bar";
+import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
@@ -110,13 +110,25 @@ export function CollectionDetailPeekFrame({
   return (
     <>
       <PeekTopBar
+        identity={
+          request.identity ? <PeekIdentity {...request.identity} /> : undefined
+        }
         // The row actions of a fixed Collection keep their place before ×
         // until its detail gets the shared identity and menu.
-        openWith={request.headerActions}
+        openWith={
+          request.headerActions || request.openWith ? (
+            <>
+              {request.headerActions}
+              {request.openWith}
+            </>
+          ) : undefined
+        }
         onClose={onClose}
         closePending={pending}
       />
-      <SheetHeader className="shrink-0 px-6 pt-0 pb-3">
+      <SheetHeader
+        className={cn("shrink-0 px-6 pt-0 pb-3", request.identity && "sr-only")}
+      >
         <div className={cn("flex flex-col gap-0.5", column)}>
           <SheetTitle className="text-lg font-semibold">
             {request.title}

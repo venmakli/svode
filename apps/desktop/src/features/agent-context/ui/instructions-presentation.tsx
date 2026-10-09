@@ -23,26 +23,17 @@ import {
   defineDomainSpecificCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
-import { ExternalAppIcon } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { AgentContextInstructionRow } from "../model/types";
-import type { ArtifactOpener } from "../api/agent-context-api";
+import { AgentContextArtifactOpenWith } from "./artifact-open-with";
 import { AgentContextInstructionDetail } from "./instruction-detail";
 import { sourceLinkKindLabel } from "./provenance-labels";
 
 export function createAgentContextInstructionsPresentation({
-  artifactOpeners = [],
-  onOpenArtifact,
   onActivate,
   state,
 }: {
-  artifactOpeners?: readonly ArtifactOpener[];
-  onOpenArtifact?(input: {
-    ownerRoot: string;
-    canonicalArtifactPath: string;
-    tool: ArtifactOpener["id"];
-  }): void | Promise<void>;
   onActivate?: CollectionPresentationDescriptor<AgentContextInstructionRow>["onActivate"];
   state: CollectionPresentationState<AgentContextInstructionRow>;
 }) {
@@ -68,18 +59,6 @@ export function createAgentContextInstructionsPresentation({
         visibleProperties: ["source"],
       },
       query: {},
-      rowActions: artifactOpeners.map((opener) => ({
-        getState: () => ({ status: "idle" as const }),
-        id: `open-in-${opener.id}`,
-        icon: <ExternalAppIcon app={opener} data-icon="inline-start" />,
-        label: m.agent_context_open_in({ name: opener.label }),
-        run: (row) =>
-          onOpenArtifact?.({
-            canonicalArtifactPath: row.canonicalPath,
-            ownerRoot: row.ownerPath,
-            tool: opener.id,
-          }),
-      })),
     },
     state,
   });
@@ -90,22 +69,16 @@ export function createInstructionDetailContent(
 ): CollectionDetailContent {
   return {
     content: <AgentContextInstructionDetail row={row} />,
-    description: (
-      <span className="sr-only">{m.agent_context_detail_description()}</span>
+    description: m.agent_context_detail_description(),
+    identity: { icon: <FileText />, name: row.filename },
+    openWith: (
+      <AgentContextArtifactOpenWith
+        canonicalArtifactPath={row.canonicalPath}
+        ownerRoot={row.ownerPath}
+      />
     ),
-    title: instructionDetailTitle(row),
+    title: row.filename,
   };
-}
-
-export function instructionDetailTitle(row: AgentContextInstructionRow) {
-  return (
-    <span className="flex min-w-0 items-center gap-3 text-left">
-      <FileText className="size-6 shrink-0 text-muted-foreground" aria-hidden />
-      <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-        {row.filename}
-      </span>
-    </span>
-  );
 }
 
 export function AgentContextInstructionsEmpty() {

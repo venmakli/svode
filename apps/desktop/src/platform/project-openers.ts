@@ -18,15 +18,6 @@ export interface ExternalAppDto {
   icon: string | null;
 }
 
-export type ArtifactOpenerCapability =
-  | "open_workspace_file"
-  | "reveal_file"
-  | "open_directory";
-
-export interface ArtifactOpenerDto extends ExternalAppDto {
-  capabilities: readonly ArtifactOpenerCapability[];
-}
-
 export interface ArtifactOpenTarget {
   ownerRoot: string;
   canonicalArtifactPath: string;
@@ -44,8 +35,19 @@ export function openProjectInApp(
   return invoke("open_project_in_tool", { projectPath, app: appId });
 }
 
-export function listArtifactOpeners(): Promise<ArtifactOpenerDto[]> {
-  return invoke<ArtifactOpenerDto[]>("list_artifact_openers");
+/** Applications the OS offers for an artifact file, its default first. */
+export function listArtifactApps(
+  target: ArtifactOpenTarget,
+): Promise<ExternalAppDto[]> {
+  return invoke<ExternalAppDto[]>("list_artifact_apps", { target });
+}
+
+/** Opens an artifact file in `appId`, or in the OS default application for `null`. */
+export function openArtifactInApp(
+  target: ArtifactOpenTarget,
+  appId: string | null,
+): Promise<void> {
+  return invoke("open_artifact_in_app", { target, appId });
 }
 
 export function openArtifactInTool(

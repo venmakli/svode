@@ -6,13 +6,17 @@ import {
   listenAgentContextChanged,
 } from "@/platform/agent-context/agent-context-api";
 import {
-  listArtifactOpeners,
+  listArtifactApps,
+  openArtifactInApp,
   openArtifactInTool,
-  type ArtifactOpenerDto as ArtifactOpener,
   type ArtifactOpenTarget,
 } from "@/platform/project-openers";
+import {
+  filePreferenceKey,
+  type ExternalOpenTarget,
+} from "@/features/external-open";
 
-export type { ArtifactOpener, ArtifactOpenTarget };
+export type { ArtifactOpenTarget };
 
 import type {
   AgentContextInstructionsSnapshot,
@@ -48,15 +52,16 @@ export function listenAgentContextInvalidation(
   return listenAgentContextChanged((event) => handler(event.payload));
 }
 
-export function listAgentContextArtifactOpeners(): Promise<ArtifactOpener[]> {
-  return listArtifactOpeners();
-}
-
-export function openAgentContextArtifact(
+/** External open of an instruction or skill file, re-validated inside its owner root. */
+export function agentContextArtifactExternalOpenTarget(
   target: ArtifactOpenTarget,
-  tool: ArtifactOpener["id"],
-): Promise<void> {
-  return openArtifactInTool(target, tool);
+): ExternalOpenTarget {
+  return {
+    preferenceKey: filePreferenceKey(target.canonicalArtifactPath),
+    listApps: () => listArtifactApps(target),
+    open: (appId) => openArtifactInApp(target, appId),
+    reveal: () => openArtifactInTool(target, "file_manager"),
+  };
 }
 
 export function toAgentContextInstructionsSnapshot(

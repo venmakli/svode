@@ -1620,7 +1620,7 @@
   "agent_context_skill_parameter_allowed_tools": "Разрешённые инструменты (экспериментально)",
   "agent_context_skill_parameter_allowed_tools_hint": "Декларативное значение исходного файла для клиента.",
   "agent_context_skill_parameter_metadata": "Метаданные",
-  "agent_context_open_in": "Открыть в {name}",
+  "agent_context_open_error": "Не удалось открыть {name}",
   "agent_actors_presentation": "Агенты",
   "agent_actors_add": "Добавить агента",
   "agent_actors_retry": "Повторить",

@@ -1620,7 +1620,7 @@
   "agent_context_skill_parameter_allowed_tools": "Allowed tools (experimental)",
   "agent_context_skill_parameter_allowed_tools_hint": "A client-defined source value.",
   "agent_context_skill_parameter_metadata": "Metadata",
-  "agent_context_open_in": "Open in {name}",
+  "agent_context_open_error": "Could not open {name}",
   "agent_actors_presentation": "Agents",
   "agent_actors_add": "Add agent",
   "agent_actors_retry": "Retry",

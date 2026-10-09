@@ -13,8 +13,6 @@ import {
 } from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 
-import { openAgentContextArtifact } from "../api/agent-context-api";
-import { useAgentContextArtifactOpeners } from "../hooks/use-agent-context-artifact-openers";
 import { useAgentContextInstructions } from "../hooks/use-agent-context-instructions";
 import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
 import { AgentContextDiagnosticsDialog } from "./agent-context-diagnostics-dialog";
@@ -45,7 +43,6 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
   const [openedRow, setOpenedRow] = useState<OpenedAgentContextRow | null>(
     null,
   );
-  const artifactOpeners = useAgentContextArtifactOpeners();
   const instanceKey = `agent-context:${owner.ownerKey}`;
   const instructionsState = toAgentContextPresentationState(
     state,
@@ -72,9 +69,6 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
   const instructionsPresentation = useMemo(
     () =>
       createAgentContextInstructionsPresentation({
-        artifactOpeners,
-        onOpenArtifact: ({ canonicalArtifactPath, ownerRoot, tool }) =>
-          openAgentContextArtifact({ canonicalArtifactPath, ownerRoot }, tool),
         onActivate: createCollectionDetailActivation({
           controller: detailController,
           createContent: createInstructionDetailContent,
@@ -85,14 +79,11 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
         }),
         state: instructionsState,
       }),
-    [artifactOpeners, detailController, instanceKey, instructionsState],
+    [detailController, instanceKey, instructionsState],
   );
   const skillsPresentation = useMemo(
     () =>
       createAgentContextSkillsPresentation({
-        artifactOpeners,
-        onOpenArtifact: ({ canonicalArtifactPath, ownerRoot, tool }) =>
-          openAgentContextArtifact({ canonicalArtifactPath, ownerRoot }, tool),
         onActivate: createCollectionDetailActivation({
           controller: detailController,
           createContent: createSkillDetailContent,
@@ -103,7 +94,7 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
         }),
         state: skillsState,
       }),
-    [artifactOpeners, detailController, instanceKey, skillsState],
+    [detailController, instanceKey, skillsState],
   );
   const instance = useMemo<CollectionInstance>(
     () => ({

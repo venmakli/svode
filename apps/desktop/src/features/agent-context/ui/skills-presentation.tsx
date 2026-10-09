@@ -33,7 +33,6 @@ import {
   type CollectionPropertyDefinition,
   type CollectionPropertyFilterEditorInput,
 } from "@/features/properties";
-import { ExternalAppIcon } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import { skillSourceFamilies, skillSourceLocations } from "../model/provenance";
@@ -42,7 +41,7 @@ import type {
   AgentContextSourceFamily,
   AgentContextSourceLocation,
 } from "../model/types";
-import type { ArtifactOpener } from "../api/agent-context-api";
+import { AgentContextArtifactOpenWith } from "./artifact-open-with";
 import {
   sourceFamilyLabel,
   sourceLinkKindLabel,
@@ -51,17 +50,9 @@ import {
 import { AgentContextSkillDetail, skillWarnings } from "./skill-detail";
 
 export function createAgentContextSkillsPresentation({
-  artifactOpeners = [],
-  onOpenArtifact,
   onActivate,
   state,
 }: {
-  artifactOpeners?: readonly ArtifactOpener[];
-  onOpenArtifact?(input: {
-    ownerRoot: string;
-    canonicalArtifactPath: string;
-    tool: ArtifactOpener["id"];
-  }): void | Promise<void>;
   onActivate?: CollectionPresentationDescriptor<AgentContextSkillRow>["onActivate"];
   state: CollectionPresentationState<AgentContextSkillRow>;
 }) {
@@ -113,18 +104,6 @@ export function createAgentContextSkillsPresentation({
         defaultCompare: compareSkillsByDefault,
         getSearchText: (row) => `${row.name} ${row.description}`,
       },
-      rowActions: artifactOpeners.map((opener) => ({
-        getState: () => ({ status: "idle" as const }),
-        id: `open-in-${opener.id}`,
-        icon: <ExternalAppIcon app={opener} data-icon="inline-start" />,
-        label: m.agent_context_open_in({ name: opener.label }),
-        run: (row) =>
-          onOpenArtifact?.({
-            canonicalArtifactPath: row.manifestPath,
-            ownerRoot: skillOwnerRoot(row),
-            tool: opener.id,
-          }),
-      })),
     },
     state,
   });
@@ -139,6 +118,12 @@ export function createSkillDetailContent(
       <span className="sr-only">
         {m.agent_context_skill_detail_description()}
       </span>
+    ),
+    openWith: (
+      <AgentContextArtifactOpenWith
+        canonicalArtifactPath={row.manifestPath}
+        ownerRoot={row.ownerPath}
+      />
     ),
     title: skillDetailTitle(row),
   };
@@ -159,10 +144,6 @@ export function skillDetailTitle(row: AgentContextSkillRow) {
       </span>
     </span>
   );
-}
-
-function skillOwnerRoot(row: AgentContextSkillRow): string {
-  return row.ownerPath;
 }
 
 export function AgentContextSkillsEmpty() {

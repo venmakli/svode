@@ -1,6 +1,7 @@
 use std::{path::Path, path::PathBuf, process::Command};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use tauri::AppHandle;
 
 use crate::{
     AppError,
@@ -83,14 +84,6 @@ impl ProjectOpenerId {
         }
     }
 
-    fn artifact_capability(self) -> ArtifactOpenerCapability {
-        match self {
-            Self::Vscode | Self::Cursor => ArtifactOpenerCapability::OpenWorkspaceFile,
-            Self::FileManager => ArtifactOpenerCapability::RevealFile,
-            Self::Terminal | Self::Iterm2 => ArtifactOpenerCapability::OpenDirectory,
-        }
-    }
-
     /// Bundle names in the launch order of `open -a`, then the bundle identifier.
     #[cfg(target_os = "macos")]
     fn macos_bundle(self) -> (&'static [&'static str], &'static str) {
@@ -132,28 +125,12 @@ impl ProjectOpenerId {
     }
 }
 
-/// A filesystem target whose owning workspace must be retained by an external app.
+/// An artifact file that must stay inside its owner root when it is opened.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactOpenerTarget {
     pub owner_root: String,
     pub canonical_artifact_path: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtifactOpenerCapability {
-    OpenWorkspaceFile,
-    RevealFile,
-    OpenDirectory,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ArtifactOpenerInfo {
-    #[serde(flatten)]
-    app: ExternalAppDto,
-    capabilities: Vec<ArtifactOpenerCapability>,
 }
 
 /// Installed applications for the project directory, in catalog order.
@@ -183,16 +160,27 @@ pub fn open_project_in_tool(project_path: String, app: Option<String>) -> Result
     }
 }
 
-/// Lists only tools whose capability contract is safe for opening an artifact.
+/// Applications the OS offers for an artifact file, its default first.
 #[tauri::command]
-pub fn list_artifact_openers() -> Vec<ArtifactOpenerInfo> {
-    available_openers()
-        .into_iter()
-        .map(|id| ArtifactOpenerInfo {
-            app: external_app(id, false),
-            capabilities: vec![id.artifact_capability()],
-        })
-        .collect()
+pub fn list_artifact_apps(target: ArtifactOpenerTarget) -> Result<Vec<ExternalAppDto>, AppError> {
+    let (_, artifact_path) = resolve_artifact_target(&target)?;
+    Ok(external_apps::file_apps(&artifact_path))
+}
+
+/// Opens an artifact file in `app_id`, or in the OS default application when absent.
+#[tauri::command]
+pub fn open_artifact_in_app(
+    app: AppHandle,
+    target: ArtifactOpenerTarget,
+    app_id: Option<String>,
+) -> Result<(), AppError> {
+    let (_, artifact_path) = resolve_artifact_target(&target)?;
+    external_apps::open_file(&app, &artifact_path, app_id.as_deref()).map_err(|err| {
+        AppError::General(format!(
+            "Failed to open {}: {err:?}",
+            target.canonical_artifact_path
+        ))
+    })
 }
 
 #[tauri::command]
@@ -1019,32 +1007,6 @@ mod tests {
                 "kind": "file_manager",
                 "isDefault": true,
                 "icon": null,
-            })
-        );
-    }
-
-    #[test]
-    fn artifact_openers_share_the_app_dto_with_capabilities() {
-        let info = ArtifactOpenerInfo {
-            app: ExternalAppDto {
-                id: ProjectOpenerId::Cursor.as_str().to_string(),
-                label: "Cursor".into(),
-                kind: ProjectOpenerId::Cursor.kind(),
-                is_default: false,
-                icon: Some("data:image/png;base64,AA==".into()),
-            },
-            capabilities: vec![ProjectOpenerId::Cursor.artifact_capability()],
-        };
-
-        assert_eq!(
-            serde_json::to_value(&info).expect("dto"),
-            serde_json::json!({
-                "id": "cursor",
-                "label": "Cursor",
-                "kind": "editor",
-                "isDefault": false,
-                "icon": "data:image/png;base64,AA==",
-                "capabilities": ["open_workspace_file"],
             })
         );
     }

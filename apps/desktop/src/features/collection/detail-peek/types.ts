@@ -11,7 +11,14 @@ export interface CollectionDetailRequest {
   title: ReactNode;
   description: ReactNode;
   content: ReactNode;
+  /**
+   * Icon and name of the object in the top bar; the title and description
+   * below it then stay for screen readers only.
+   */
+  identity?: { icon: ReactNode; name: string };
   headerActions?: ReactNode;
+  /** The "Open with" control of the object in the top bar. */
+  openWith?: ReactNode;
   footerActions?: ReactNode;
   /** An editing form keeps the narrow form width; readers get reading width. */
   layout?: "form" | "reader";
