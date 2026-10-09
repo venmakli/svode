@@ -182,8 +182,14 @@ async fn unsubscribe_and_a_failed_send_end_the_delivery() {
     closed(&mut receiver).await;
     state.unsubscribe(id);
 
-    let (_, receiver) = deliver(&state, "main", snapshot(0), sender.subscribe());
-    drop(receiver);
+    state.deliver(
+        "main",
+        SessionSubscription {
+            snapshot: snapshot(0),
+            deltas: sender.subscribe(),
+        },
+        |_| false,
+    );
     wait_for_count(&state, 0).await;
     assert_eq!(
         sender.receiver_count(),
