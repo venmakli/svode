@@ -73,8 +73,18 @@ export function reenterAgentSession(projectPath: string, sessionId: string) {
 
 const EXTERNAL_TERMINAL_APP_ID = "terminal";
 
-export function openSessionCwdInExternalTerminal(cwd: string) {
-  return openProjectInApp(cwd, EXTERNAL_TERMINAL_APP_ID);
+/** Opens a session cwd in an installed terminal, the system one by default. */
+export function openSessionCwdInExternalTerminal(
+  cwd: string,
+  appId: string = EXTERNAL_TERMINAL_APP_ID,
+) {
+  return openProjectInApp(cwd, appId);
+}
+
+/** The installed terminals of the external application catalog. */
+export async function listExternalTerminalApps(): Promise<ExternalAppDto[]> {
+  const apps = await listProjectOpeners();
+  return apps.filter((app) => app.kind === "terminal");
 }
 
 /** The installed terminal that opens a session cwd, when available. */

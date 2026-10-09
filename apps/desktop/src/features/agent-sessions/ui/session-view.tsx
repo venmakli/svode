@@ -1,9 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   BotMessageSquare,
-  Copy,
   ListChecks,
-  MessagesSquare,
   MoreHorizontal,
   SquareTerminal,
   X,
@@ -37,6 +35,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { AgentIcon } from "@/features/agent-adapters";
+import type { OpenWithGroup } from "@/features/external-open";
 import {
   useRoutineLaunchLinks,
   type RoutineLaunchLink,
@@ -53,12 +52,10 @@ import {
   useAgentSessionView,
   type AgentSessionView,
 } from "../hooks";
+import { useSessionContinuationGroup } from "../hooks/use-session-continuation-group";
 import { scopeLabel } from "../lib";
 import type { AgentSession, AgentSessionTarget } from "../model";
-import {
-  ExternalTerminalAppProvider,
-  ExternalTerminalIcon,
-} from "./external-terminal-icon";
+import { ExternalTerminalAppProvider } from "./external-terminal-icon";
 import {
   ReentryErrorState,
   SessionMetadataPopover,
@@ -78,7 +75,6 @@ import {
   type ChatSessionState,
   type ChatUnavailableReason,
   type SessionInterface,
-  type TerminalActionAvailability,
 } from "../chat/model/interface";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
@@ -90,8 +86,10 @@ export interface AgentSessionChrome {
   identity: { icon: ReactNode; title: string } | null;
   /** "status · time", which opens the session metadata; null without a session. */
   status: ReactNode;
-  /** The ⋯ menu of the session. */
+  /** The ⋯ menu of the session; null when it has no actions. */
   menu: ReactNode;
+  /** The continuation group of "Open with"; null without a session. */
+  openWith: OpenWithGroup | null;
 }
 
 interface AgentSessionContentProps {
@@ -203,36 +201,37 @@ export function AgentSessionContent({
     });
   }
 
-  const menu = (
-    <SessionActionsMenu
-      view={view}
-      onCloseTerminal={() => {
-        if (view.agentBusy) setConfirmCloseOpen(true);
-        else closeTerminal();
-      }}
-      onCopyCommand={copyResumeCommand}
-      onOpenExternalTerminal={openExternalTerminal}
-      onOpenRoutine={
-        routine?.definitionPresent ? () => onOpenRoutine(routine) : null
-      }
-      onOpenInChat={
-        session?.capabilities.canOpenInChat && !inChat
-          ? () => setChosen(chatInterface(session))
-          : null
-      }
-      openInTerminal={
-        session && inChat
-          ? {
-              availability: terminalAction,
-              onSelect: () =>
-                openInTerminal(
-                  chatState?.session ?? session.runtime?.acpSession ?? null,
-                ),
-            }
-          : null
-      }
-    />
-  );
+  const openWith = useSessionContinuationGroup({
+    session,
+    shownIn: inChat ? "chat" : "terminal",
+    ptyId: view.ptyId,
+    svodeTerminal: terminalAction,
+    cwd: view.externalTerminalCwd,
+    resumeCommand: view.resumeCommand,
+    onOpenInChat: () => {
+      if (session) setChosen(chatInterface(session));
+    },
+    onOpenInSvodeTerminal: () =>
+      openInTerminal(chatState?.session ?? session?.runtime?.acpSession ?? null),
+    onCopyResumeCommand: copyResumeCommand,
+  });
+
+  const menu =
+    routine?.definitionPresent || view.ptyId ? (
+      <SessionActionsMenu
+        onOpenRoutine={
+          routine?.definitionPresent ? () => onOpenRoutine(routine) : null
+        }
+        onCloseTerminal={
+          view.ptyId
+            ? () => {
+                if (view.agentBusy) setConfirmCloseOpen(true);
+                else closeTerminal();
+              }
+            : null
+        }
+      />
+    ) : null;
 
   return (
     <ExternalTerminalAppProvider>
@@ -255,6 +254,7 @@ export function AgentSessionContent({
             />
           ) : null,
           menu,
+          openWith,
         })}
         <div
           {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
@@ -473,28 +473,15 @@ function useSessionRoutine(session: AgentSession | null) {
   return session ? routineOf(session) : null;
 }
 
+/** The ⋯ menu of a session: its Routine and closing its terminal. */
 function SessionActionsMenu({
-  view,
-  onCloseTerminal,
-  onCopyCommand,
-  onOpenExternalTerminal,
   onOpenRoutine,
-  onOpenInChat,
-  openInTerminal,
+  onCloseTerminal,
 }: {
-  view: AgentSessionView;
-  onCloseTerminal: () => void;
-  onCopyCommand: () => void;
-  onOpenExternalTerminal: () => void;
   /** Present when a Routine launched the session and still exists. */
   onOpenRoutine: (() => void) | null;
-  /** Present for a session the agent's runtime can open that the chat does not show. */
-  onOpenInChat: (() => void) | null;
-  /** Present while the chat shows the session. */
-  openInTerminal: {
-    availability: TerminalActionAvailability;
-    onSelect: () => void;
-  } | null;
+  /** Present while a Svode terminal runs the session. */
+  onCloseTerminal: (() => void) | null;
 }) {
   return (
     <DropdownMenu>
@@ -508,67 +495,20 @@ function SessionActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-56">
-        <DropdownMenuGroup>
-          {onOpenInChat && (
-            <DropdownMenuItem disabled={Boolean(view.ptyId)} onSelect={onOpenInChat}>
-              <MessagesSquare />
-              <span className="flex min-w-0 flex-col">
-                {m.sessions_action_open_in_chat()}
-                {view.ptyId && (
-                  <span className="text-xs text-muted-foreground">
-                    {m.sessions_open_in_chat_terminal_live()}
-                  </span>
-                )}
-              </span>
-            </DropdownMenuItem>
-          )}
-          {openInTerminal && (
-            <DropdownMenuItem
-              disabled={!openInTerminal.availability.available}
-              onSelect={openInTerminal.onSelect}
-            >
-              <SquareTerminal />
-              <span className="flex min-w-0 flex-col">
-                {m.sessions_action_open_in_terminal()}
-                {!openInTerminal.availability.available && (
-                  <span className="text-xs text-muted-foreground">
-                    {openInTerminal.availability.reason === "turn_active"
-                      ? m.sessions_chat_terminal_during_turn()
-                      : m.sessions_chat_no_terminal()}
-                  </span>
-                )}
-              </span>
-            </DropdownMenuItem>
-          )}
-          {onOpenRoutine && (
+        {onOpenRoutine && (
+          <DropdownMenuGroup>
             <DropdownMenuItem onSelect={onOpenRoutine}>
               <ListChecks />
               {m.sessions_action_open_routine()}
             </DropdownMenuItem>
-          )}
-          <DropdownMenuItem
-            disabled={!view.resumeCommand}
-            onSelect={onCopyCommand}
-          >
-            <Copy />
-            {m.sessions_action_copy_resume_command()}
+          </DropdownMenuGroup>
+        )}
+        {onOpenRoutine && onCloseTerminal && <DropdownMenuSeparator />}
+        {onCloseTerminal && (
+          <DropdownMenuItem variant="destructive" onSelect={onCloseTerminal}>
+            <X />
+            {m.sessions_action_close_terminal()}
           </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!view.externalTerminalCwd}
-            onSelect={onOpenExternalTerminal}
-          >
-            <ExternalTerminalIcon />
-            {m.sessions_action_open_external_terminal()}
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        {view.ptyId && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={onCloseTerminal}>
-              <X />
-              {m.sessions_action_close_terminal()}
-            </DropdownMenuItem>
-          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

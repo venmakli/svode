@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { BreadcrumbPage } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { OpenWithGroup } from "@/features/external-open";
 import { useSpace } from "@/features/space";
 import { useAgentSessionSpace } from "../hooks";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
@@ -13,7 +14,6 @@ import type {
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
-import { ExternalTerminalAppProvider } from "./external-terminal-icon";
 import { AgentSessionContent, type AgentSessionChrome } from "./session-view";
 import * as m from "@/paraglide/messages.js";
 
@@ -23,8 +23,10 @@ export interface AgentSessionMainHeader {
   spacePath: string;
   /** The last breadcrumb: agent icon, title and "status · time". */
   current: ReactNode;
-  /** The ⋯ menu of the session, right after the breadcrumbs. */
+  /** The ⋯ menu of the session, right after the breadcrumbs; null without actions. */
   menu: ReactNode;
+  /** The continuation group of "Open with", ahead of the project applications. */
+  openWith: OpenWithGroup | null;
 }
 
 /** A session as the one object of the main area. */
@@ -70,7 +72,7 @@ export function AgentSessionMainSurface({
 }
 
 function MainSessionHeader({
-  chrome: { view, identity, status, menu },
+  chrome: { view, identity, status, menu, openWith },
   renderHeader,
 }: {
   chrome: AgentSessionChrome;
@@ -93,8 +95,8 @@ function MainSessionHeader({
     ) : (
       <Skeleton className="h-4 w-40" />
     ),
-    // The menu renders in the top bar, outside the session's providers.
-    menu: <ExternalTerminalAppProvider>{menu}</ExternalTerminalAppProvider>,
+    menu,
+    openWith,
   });
 }
 

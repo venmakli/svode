@@ -41,6 +41,7 @@ export function OpenWithControl({
   const primary = groups[0].primary;
   const pending = groups.some((group) => group.pending);
   const text = presentation === "text";
+  const disabledReason = primary.disabledReason ?? null;
 
   const primaryButton = (
     <Button
@@ -48,14 +49,44 @@ export function OpenWithControl({
       variant={variant}
       size={text ? "default" : "icon-sm"}
       aria-label={text ? undefined : primary.label}
-      disabled={pending}
+      disabled={pending || disabledReason !== null}
       data-external-open-primary
+      // Inside the wrapper the group no longer squares the joined edge.
+      className={disabledReason === null ? undefined : "rounded-r-none"}
       onClick={() => primary.run()}
     >
       {primary.renderIcon(text ? "inline-start" : undefined)}
       {text ? <span className="truncate">{primary.label}</span> : null}
     </Button>
   );
+
+  // A disabled button gets no pointer or focus events, so the reason is
+  // reached through a focusable wrapper.
+  const primaryControl =
+    disabledReason !== null ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            tabIndex={0}
+            className="inline-flex min-w-0"
+            data-external-open-primary-unavailable
+          >
+            {primaryButton}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="flex flex-col items-start">
+          <span>{primary.label}</span>
+          <span className="opacity-70">{disabledReason}</span>
+        </TooltipContent>
+      </Tooltip>
+    ) : text ? (
+      primaryButton
+    ) : (
+      <Tooltip>
+        <TooltipTrigger asChild>{primaryButton}</TooltipTrigger>
+        <TooltipContent side="bottom">{primary.label}</TooltipContent>
+      </Tooltip>
+    );
 
   return (
     <DropdownMenu
@@ -64,14 +95,7 @@ export function OpenWithControl({
       }}
     >
       <ButtonGroup className={text ? "max-w-full min-w-0" : "shrink-0"}>
-        {text ? (
-          primaryButton
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>{primaryButton}</TooltipTrigger>
-            <TooltipContent side="bottom">{primary.label}</TooltipContent>
-          </Tooltip>
-        )}
+        {primaryControl}
         {variant === "outline" ? null : <ButtonGroupSeparator />}
         <Tooltip>
           <TooltipTrigger asChild>

@@ -6,6 +6,7 @@ import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { ChangesControl } from "@/features/changes";
+import { OpenWithControl } from "@/features/external-open";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type {
   AgentSession,
@@ -136,7 +137,7 @@ export function AgentSessionPeek({
               focusTerminal={focusTerminal}
               onOpenRoutine={onOpenRoutine}
               onOpenAgentSettings={onOpenAgentSettings}
-              renderChrome={({ view, identity, status, menu }) => (
+              renderChrome={({ view, identity, status, menu, openWith }) => (
                 <PeekTopBar
                   identity={
                     identity ? (
@@ -151,6 +152,9 @@ export function AgentSessionPeek({
                   info={status}
                   menu={menu}
                   changes={<SessionSpaceChanges session={view.session} />}
+                  openWith={
+                    openWith ? <OpenWithControl groups={[openWith]} /> : null
+                  }
                   onExpand={() => void expand(view.session)}
                   expandDisabled={expanding}
                   onClose={() => onOpenChange(false)}

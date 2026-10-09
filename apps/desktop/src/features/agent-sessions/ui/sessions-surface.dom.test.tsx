@@ -42,7 +42,9 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
     },
     subscribeManagedTerminalExit: () => () => undefined,
   }));
+  const realExternalOpen = await import("@/features/external-open");
   mock.module("@/features/external-open", () => ({
+    ...realExternalOpen,
     ExternalAppIcon: () => null,
   }));
   const spaceState = {

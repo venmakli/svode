@@ -100,6 +100,8 @@ export function useExternalOpen(
      * choice — and remembers it for this kind of target.
      */
     choose,
+    /** Forgets the remembered application, so the default is primary again. */
+    forget: () => writePreferredApp(target.preferenceKey, null),
     reveal: reveal ? () => run(() => reveal.call(target), null) : undefined,
   };
 }

@@ -17,7 +17,7 @@ import { useShellStore } from "./model";
 import { passNavigationGuards } from "./navigation-guards";
 import { useShellView } from "./shell-view";
 
-/** A session in the main area; its identity and ⋯ go to the top bar. */
+/** A session in the main area; its identity, ⋯ and "Open with" go to the top bar. */
 export function SessionSurface(
   props: Omit<ComponentProps<typeof AgentSessionMainSurface>, "renderHeader">,
 ) {
@@ -26,7 +26,7 @@ export function SessionSurface(
   return (
     <AgentSessionMainSurface
       {...props}
-      renderHeader={({ spacePath, current, menu }) => (
+      renderHeader={({ spacePath, current, menu, openWith }) => (
         <PublishMainHeader
           breadcrumbs={
             <SpaceBreadcrumbs
@@ -38,6 +38,7 @@ export function SessionSurface(
             />
           }
           objectActions={menu}
+          openWith={openWith ?? undefined}
         />
       )}
     />

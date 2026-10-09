@@ -70,7 +70,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       };
     },
   }));
+  const realExternalOpen = await import("@/features/external-open");
   mock.module("@/features/external-open", () => ({
+    ...realExternalOpen,
     ExternalAppIcon: () => null,
   }));
   const spaceState = {
@@ -110,6 +112,19 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     agentSessionId: string;
     launch: Record<string, unknown>;
   }[] = [];
+  /** The installed external applications, and what they were asked to open. */
+  const externalApps = [
+    {
+      id: "file_manager",
+      label: "Finder",
+      kind: "file_manager",
+      isDefault: true,
+      icon: null,
+    },
+    { id: "terminal", label: "Terminal", kind: "terminal", isDefault: false, icon: null },
+    { id: "iterm2", label: "iTerm2", kind: "terminal", isDefault: false, icon: null },
+  ];
+  const openedApps: unknown[] = [];
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -172,7 +187,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       return "turn-1";
     }
     if (command === "path_exists") return !missingPaths.has(String(payload.path));
-    if (command === "list_project_openers") return [];
+    if (command === "list_project_openers") return externalApps;
+    if (command === "open_project_in_tool") {
+      openedApps.push(payload);
+      return null;
+    }
     if (command === "agent_setup_chat_agents") return { agents: [], last: null };
     if (command === "routines_resolve_launches") {
       const launchIds = payload.launchIds as string[];
@@ -201,6 +220,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   let reloadCatalog: () => Promise<void> = async () => {};
   const { AgentSessionPeek } = await import("./session-peek");
   const { AgentSessionMainSurface } = await import("./session-main-surface");
+  const { ProjectExternalOpenButton } = await import("@/features/external-open");
 
   function Harness({
     projectPath,
@@ -231,10 +251,14 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
               target={target}
               focus={false}
               onOpenRoutine={() => undefined}
-              renderHeader={({ spacePath, current, menu }) => (
+              renderHeader={({ spacePath, current, menu, openWith }) => (
                 <div data-main-header data-space={spacePath}>
                   {current}
                   {menu}
+                  <ProjectExternalOpenButton
+                    projectPath={projectPath}
+                    objectGroup={openWith ?? undefined}
+                  />
                 </div>
               )}
             />
@@ -263,6 +287,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           await act(async () => root.unmount());
         }
         document.body.innerHTML = "";
+        window.localStorage.clear();
       }
     });
   }
@@ -333,7 +358,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   );
 
   peekTest(
-    "the session peek top bar has the menu, then icon-only Expand and Close",
+    "the session peek top bar has Open with, then icon-only Expand and Close, and no empty menu",
     async () => {
       listed = [session({ id: "codex:bar", title: "Bar" })];
       const { openChanges } = await mountPeek("/p-bar", {
@@ -341,15 +366,19 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         launchId: null,
       });
       const bar = document.querySelector("[data-peek-top-bar]")!;
-      const menu = bar.querySelector(
-        `[aria-label="${m.sessions_action_more()}"]`,
+      // Without a Routine or a running terminal the ⋯ has nothing to offer.
+      expect(
+        bar.querySelector(`[aria-label="${m.sessions_action_more()}"]`),
+      ).toBeNull();
+      const openWith = bar.querySelector(
+        `[aria-label="${m.external_open_with()}"]`,
       )!;
       const expand = bar.querySelector(`[aria-label="${m.peek_expand()}"]`)!;
       const close = bar.querySelector(`[aria-label="${m.peek_close()}"]`)!;
-      expect([menu, expand, close].every(Boolean)).toBe(true);
+      expect([openWith, expand, close].every(Boolean)).toBe(true);
       expect(
         Boolean(
-          menu.compareDocumentPosition(expand) &
+          openWith.compareDocumentPosition(expand) &
             Node.DOCUMENT_POSITION_FOLLOWING,
         ),
       ).toBe(true);
@@ -643,12 +672,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         launchId: null,
       });
 
-      await openMenu();
-      const item = Array.from(
-        document.querySelectorAll("[role='menuitem']"),
-      ).find((element) =>
-        element.textContent?.includes(m.sessions_action_open_in_chat()),
+      // The chat is the primary action of a session in its terminal.
+      await expectPrimaryUnavailable(
+        m.sessions_action_open_in_chat(),
+        m.sessions_open_in_chat_terminal_live(),
       );
+      await openOpenWith();
+      const item = continuationItem("chat");
       expect(item?.getAttribute("aria-disabled")).toBe("true");
       expect(
         item?.textContent?.includes(m.sessions_open_in_chat_terminal_live()),
@@ -700,8 +730,12 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     snapshotTurn = "running";
     await mountPeek("/p-busy", { sessionId: "codex:busy", launchId: null });
 
-    await openMenu();
-    const item = menuItemContaining(m.sessions_action_open_in_terminal());
+    await expectPrimaryUnavailable(
+      m.sessions_action_open_in_svode_terminal(),
+      m.sessions_chat_terminal_during_turn(),
+    );
+    await openOpenWith();
+    const item = continuationItem("svode-terminal");
     expect(item?.getAttribute("aria-disabled")).toBe("true");
     expect(
       item?.textContent?.includes(m.sessions_chat_terminal_during_turn()),
@@ -730,8 +764,8 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       snapshotTurn = "none";
       await mountPeek("/p-leave", { sessionId: "codex:leave", launchId: null });
 
-      await openMenu();
-      await click(menuItem(m.sessions_action_open_in_terminal()));
+      await openOpenWith();
+      await click(continuationItem("svode-terminal"));
       // The chat releases its writer before the terminal resumes the session.
       expect(
         commands.filter(
@@ -775,8 +809,8 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       });
 
       expect(openings).toEqual([false]);
-      await openMenu();
-      const item = menuItemContaining(m.sessions_action_open_in_terminal());
+      await openOpenWith();
+      const item = continuationItem("svode-terminal");
       expect(item?.getAttribute("aria-disabled")).toBe("true");
       expect(item?.textContent?.includes(m.sessions_chat_no_terminal())).toBe(
         true,
@@ -812,9 +846,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       // Opening it in its terminal resumes nothing by itself.
       expect(commands.includes("agent_sessions_reenter")).toBe(false);
 
-      // "Open in chat" tries the chat again.
-      await openMenu();
-      await click(menuItem(m.sessions_action_open_in_chat()));
+      // "Chat" tries the chat again.
+      await openOpenWith();
+      await click(continuationItem("chat"));
       expect(openings).toEqual([false, false]);
     },
   );
@@ -836,7 +870,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   );
 
   peekTest(
-    "an IDE chat says to continue it in the IDE without an action",
+    "an IDE chat says to continue it in the IDE, and its Chat is unavailable with that reason",
     async () => {
       listed = [
         session({
@@ -870,10 +904,14 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(
         Boolean(buttonByText(m.sessions_action_continue_in_terminal())),
       ).toBe(false);
-      await openMenu();
-      expect(menuItemContaining(m.sessions_action_open_in_chat())).toBe(
-        undefined,
-      );
+      const ideReason = m.sessions_chat_unavailable_continues_in_ide({
+        agent: m.agent_adapter_unknown(),
+      });
+      await expectPrimaryUnavailable(m.sessions_action_open_in_chat(), ideReason);
+      await openOpenWith();
+      const chat = continuationItem("chat");
+      expect(chat?.getAttribute("aria-disabled")).toBe("true");
+      expect(chat?.textContent?.includes(ideReason)).toBe(true);
     },
   );
 
@@ -947,7 +985,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       await pressEscape(terminal()!);
       expect(peek.openChanges).toEqual([]);
 
-      await pressEscape(buttonByLabel(m.sessions_action_more()));
+      await pressEscape(buttonByLabel(m.external_open_with()));
       expect(peek.openChanges).toEqual([false]);
     },
   );
@@ -1279,9 +1317,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           ].some((text) => document.body.textContent?.includes(text)),
         ).toBe(false);
         await openMenu();
-        expect(
-          Boolean(menuItemContaining(m.sessions_action_open_routine())),
-        ).toBe(true);
+        expect(menuTexts()).toEqual([m.sessions_action_open_routine()]);
       } finally {
         routineLinks = [];
       }
@@ -1306,10 +1342,14 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         true,
       );
       expect(Boolean(status.querySelector("time"))).toBe(true);
+      expect(
+        bar.querySelector(`[aria-label="${m.sessions_action_more()}"]`),
+      ).toBeNull();
       expectInOrder([
         identity,
         status,
-        buttonByLabel(m.sessions_action_more()),
+        primaryButton(),
+        buttonByLabel(m.external_open_with()),
         buttonByLabel(m.peek_expand()),
         buttonByLabel(m.peek_close()),
       ]);
@@ -1328,10 +1368,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       }
       await pressEscape(metadata as HTMLElement);
 
-      await openMenu();
-      expect(menuTexts()).toEqual([
-        m.sessions_action_copy_resume_command(),
-        m.sessions_action_open_external_terminal(),
+      // The peek has the continuation group only, without the project.
+      await openOpenWith();
+      expect(openWithEntries()).toEqual([
+        "chat",
+        "terminal:terminal",
+        "terminal:iterm2",
+        "copy-resume-command",
       ]);
     },
   );
@@ -1420,7 +1463,10 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         const status = header.querySelector<HTMLElement>(
           "[data-session-status]",
         )!;
-        expectInOrder([page, status, buttonByLabel(m.sessions_action_more())]);
+        expect(
+          header.querySelector(`[aria-label="${m.sessions_action_more()}"]`),
+        ).toBeNull();
+        expectInOrder([page, status, primaryButton()]);
         expectNoContentHeader("Main chat");
         // The chat shows the session.
         expect(document.body.textContent?.includes("Earlier")).toBe(true);
@@ -1435,11 +1481,20 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           document.querySelector<HTMLElement>("[data-slot=popover-content]")!,
         );
 
-        await openMenu();
-        expect(menuTexts()).toEqual([
-          m.sessions_action_open_in_terminal(),
-          m.sessions_action_copy_resume_command(),
-          m.sessions_action_open_external_terminal(),
+        // The continuation group leads, the project applications follow it.
+        expect(primaryButton().getAttribute("aria-label")).toBe(
+          m.sessions_action_open_in_svode_terminal(),
+        );
+        await openOpenWith();
+        expect(openWithEntries()).toEqual([
+          "svode-terminal",
+          "terminal:terminal",
+          "terminal:iterm2",
+          "copy-resume-command",
+          "separator",
+          "app:file_manager",
+          "app:terminal",
+          "app:iterm2",
         ]);
       } finally {
         openingOutcome = () => ({ outcome: "unsupported" });
@@ -1472,11 +1527,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expectNoContentHeader("Main terminal");
 
       await openMenu();
-      expect(menuTexts()).toEqual([
-        m.sessions_action_copy_resume_command(),
-        m.sessions_action_open_external_terminal(),
-        m.sessions_action_close_terminal(),
-      ]);
+      expect(menuTexts()).toEqual([m.sessions_action_close_terminal()]);
     },
   );
 
@@ -1515,15 +1566,92 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         ).toBe("Main routine");
         expectNoContentHeader("Main routine");
         await openMenu();
-        expect(menuTexts()).toEqual([
-          m.sessions_action_open_in_terminal(),
-          m.sessions_action_open_routine(),
-          m.sessions_action_copy_resume_command(),
-          m.sessions_action_open_external_terminal(),
-        ]);
+        expect(menuTexts()).toEqual([m.sessions_action_open_routine()]);
       } finally {
         routineLinks = [];
         snapshotWriter = "none";
+      }
+    },
+  );
+
+  peekTest(
+    "Open with repeats the chosen external terminal after a restart; the pair takes it back",
+    async () => {
+      const key = {
+        agent: "codex",
+        namespace: "native",
+        sessionId: "choice",
+      } as const;
+      listed = [
+        session({
+          id: "codex:choice",
+          title: "Choice",
+          runtime: { live: true, acpSession: key },
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      snapshotWriter = "acp";
+      snapshotTurn = "none";
+      const copied: string[] = [];
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: async (text: string) => void copied.push(text) },
+      });
+      openedApps.length = 0;
+      commands.length = 0;
+      const target = { sessionId: "codex:choice", launchId: null };
+      try {
+        await mountPeek("/p-choice", target);
+        expect(primaryButton().getAttribute("aria-label")).toBe(
+          m.sessions_action_open_in_svode_terminal(),
+        );
+
+        // Copying the resume command never becomes primary.
+        await openOpenWith();
+        await click(continuationItem("copy-resume-command"));
+        expect(copied).toEqual(["codex resume abc"]);
+        expect(primaryButton().getAttribute("aria-label")).toBe(
+          m.sessions_action_open_in_svode_terminal(),
+        );
+
+        // An external terminal opens the session cwd and becomes primary.
+        await openOpenWith();
+        await click(
+          document.querySelector<HTMLElement>(
+            "[data-session-terminal='iterm2']",
+          )!,
+        );
+        expect(openedApps).toEqual([{ projectPath: "/project", app: "iterm2" }]);
+        expect(primaryButton().getAttribute("aria-label")).toBe(
+          m.external_open_in({ name: "iTerm2" }),
+        );
+
+        // The choice is kept on the device, also for the main area.
+        for (const root of mounted.splice(0)) {
+          await act(async () => root.unmount());
+        }
+        document.body.innerHTML = "";
+        await mountPeek("/p-choice", target, false, true);
+        expect(primaryButton().getAttribute("aria-label")).toBe(
+          m.external_open_in({ name: "iTerm2" }),
+        );
+        await click(primaryButton());
+        expect(openedApps).toEqual([
+          { projectPath: "/project", app: "iterm2" },
+          { projectPath: "/project", app: "iterm2" },
+        ]);
+
+        // Choosing the Svode terminal forgets it: the chat of the pair is primary.
+        await openOpenWith();
+        await click(continuationItem("svode-terminal"));
+        expect(commands.includes("agent_sessions_reenter")).toBe(true);
+        expect(terminal()?.dataset.terminal).toBe("pty-resume-codex:choice");
+        expect(primaryButton().getAttribute("aria-label")).toBe(
+          m.sessions_action_open_in_chat(),
+        );
+      } finally {
+        snapshotWriter = "none";
+        Reflect.deleteProperty(navigator, "clipboard");
       }
     },
   );
@@ -1648,16 +1776,77 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     )!;
   }
 
-  function menuItemContaining(text: string) {
-    return Array.from(document.querySelectorAll("[role='menuitem']")).find(
-      (item) => item.textContent?.includes(text),
-    ) as HTMLElement | undefined;
-  }
-
   function menuItem(text: string) {
     return Array.from(document.querySelectorAll("[role='menuitem']")).find(
       (item) => item.textContent?.trim() === text,
     ) as HTMLElement;
+  }
+
+  function primaryButton() {
+    return document.querySelector<HTMLButtonElement>(
+      "[data-external-open-primary]",
+    )!;
+  }
+
+  async function openOpenWith() {
+    const trigger = buttonByLabel(m.external_open_with());
+    await act(async () => {
+      trigger.dispatchEvent(
+        new window.KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await settle();
+  }
+
+  function continuationItem(kind: string) {
+    return (
+      document.querySelector<HTMLElement>(
+        `[data-session-continuation="${kind}"]`,
+      ) ?? undefined
+    );
+  }
+
+  /** The "Open with" menu in order: continuation entries, then the project. */
+  function openWithEntries() {
+    const menu = document.querySelector("[role='menu']")!;
+    return Array.from(
+      menu.querySelectorAll<HTMLElement>(
+        "[data-session-continuation], [data-session-terminal], [data-open-with-group-separator], [data-external-app]",
+      ),
+    ).map(
+      (entry) =>
+        entry.dataset.sessionContinuation ??
+        (entry.dataset.sessionTerminal
+          ? `terminal:${entry.dataset.sessionTerminal}`
+          : entry.dataset.externalApp
+            ? `app:${entry.dataset.externalApp}`
+            : "separator"),
+    );
+  }
+
+  /** The primary action is disabled, and its tooltip names it and says why. */
+  async function expectPrimaryUnavailable(label: string, reason: string) {
+    const button = primaryButton();
+    expect(button.getAttribute("aria-label")).toBe(label);
+    expect(button.disabled).toBe(true);
+    const wrapper = button.closest<HTMLElement>(
+      "[data-external-open-primary-unavailable]",
+    )!;
+    await act(async () => {
+      wrapper.focus();
+    });
+    await settle();
+    const tooltip = document.querySelector("[data-slot=tooltip-content]");
+    expect(tooltip?.textContent?.includes(label)).toBe(true);
+    expect(tooltip?.textContent?.includes(reason)).toBe(true);
+    await act(async () => {
+      wrapper.blur();
+    });
+    await settle();
   }
 
   async function openMenu() {

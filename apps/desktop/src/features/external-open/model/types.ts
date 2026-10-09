@@ -26,6 +26,8 @@ export interface OpenWithAction {
   label: string;
   renderIcon(dataIcon?: "inline-start"): ReactNode;
   run(): void;
+  /** Why the action cannot run now; the button is disabled with it in the tooltip. */
+  disabledReason?: string | null;
 }
 
 /**

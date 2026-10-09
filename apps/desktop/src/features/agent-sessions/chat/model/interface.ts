@@ -81,3 +81,30 @@ export function openInTerminalAvailability(
   if (turnActive) return { available: false, reason: "turn_active" };
   return { available: true };
 }
+
+export type ChatActionAvailability =
+  | { available: true }
+  | {
+      available: false;
+      reason: "terminal_live" | "not_openable" | "continues_in_ide";
+    };
+
+/**
+ * "Chat" for a session shown in its terminal: only for a session the
+ * agent's runtime can open, and only while no Svode terminal writes to it.
+ */
+export function openInChatAvailability(
+  session: AgentSession,
+  ptyId: string | null,
+): ChatActionAvailability {
+  if (!session.capabilities.canOpenInChat) {
+    return {
+      available: false,
+      reason: session.capabilities.continuesInIde
+        ? "continues_in_ide"
+        : "not_openable",
+    };
+  }
+  if (ptyId) return { available: false, reason: "terminal_live" };
+  return { available: true };
+}
