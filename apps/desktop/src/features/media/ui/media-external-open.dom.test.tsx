@@ -278,6 +278,7 @@ if (process.env.SVODE_MEDIA_EXTERNAL_OPEN_DOM !== "1") {
                 projectPath="/work/project"
                 spaceId={null}
                 spacePath="/work/project"
+                changes={<button type="button" data-changes-slot />}
                 onClose={() => undefined}
                 onOpenFullPage={() => undefined}
               />
@@ -325,7 +326,7 @@ if (process.env.SVODE_MEDIA_EXTERNAL_OPEN_DOM !== "1") {
     expect(doc.querySelectorAll("[data-external-open-primary]").length).toBe(1);
     expect(doc.querySelector('[aria-label="Pin"]')).toBeNull();
 
-    // Peek: identity · ⓘ · tools · Open with · Expand · ×, one row.
+    // Peek: identity · ⓘ · tools · Changes · Open with · Expand · ×, one row.
     await mount(true);
     expect(doc.querySelectorAll("[data-peek-top-bar]").length).toBe(1);
     const bar = doc.querySelector("[data-peek-top-bar]")!;
@@ -336,6 +337,7 @@ if (process.env.SVODE_MEDIA_EXTERNAL_OPEN_DOM !== "1") {
         bar.querySelector("[data-peek-identity]")!,
         bar.querySelector('[aria-label="Media details"]')!,
         tools,
+        bar.querySelector("[data-changes-slot]")!,
         bar.querySelector("[data-external-open-primary]")!,
         bar.querySelector('[aria-label="Expand"]')!,
         bar.querySelector('[aria-label="Close"]')!,

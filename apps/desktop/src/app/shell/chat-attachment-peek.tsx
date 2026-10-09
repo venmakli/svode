@@ -9,6 +9,7 @@ import {
   type ChatAttachment,
   type ChatAttachmentLocation,
 } from "@/features/agent-sessions";
+import { ChangesControl, fileChangesTarget } from "@/features/changes";
 import { usePeekNavigation } from "@/features/scope-surfaces";
 import { useSpace } from "@/features/space";
 import { openPath } from "@/platform/native/shell";
@@ -174,6 +175,16 @@ function ChatAttachmentPeek({
                   projectPath={project}
                   spaceId={target.registeredSpaceId}
                   spacePath={target.location.spacePath}
+                  changes={
+                    <ChangesControl
+                      origin="peek"
+                      target={fileChangesTarget({
+                        spacePath: target.location.spacePath,
+                        projectPath: project,
+                        path: target.location.path,
+                      })}
+                    />
+                  }
                   onClose={close}
                   onOpenFullPage={() => {
                     close();

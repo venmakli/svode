@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import { resolveGitSaveAllScope } from "@/features/git/editor";
 import type { GitStatus } from "@/features/git";
 import {
+  fileChangesTarget,
   inspectionPaths,
+  inspectionSaveScope,
   resolveInspectionScope,
   type ChangesTarget,
 } from "./scope";
@@ -100,5 +102,29 @@ test("aggregate save scope is explicit even for owners absent from the sidebar",
     kind: "space",
     path: "",
     label: "space",
+  });
+});
+
+test("a document or media file shows and saves the changes of that one file", () => {
+  const file = fileChangesTarget({
+    spacePath: "/project",
+    projectPath: "/project",
+    sessionKey: 7,
+    path: "contract\\manual.pdf",
+  });
+  expect(file.name).toBe("manual.pdf");
+  expect(file.sessionKey).toBe(7);
+  expect(resolveInspectionScope(file)).toEqual({
+    kind: "file",
+    spacePath: "/project",
+    path: "contract/manual.pdf",
+  });
+  expect(inspectionPaths(resolveInspectionScope(file), status)).toEqual([
+    "contract/manual.pdf",
+  ]);
+  expect(inspectionSaveScope(file)).toEqual({
+    kind: "file",
+    path: "contract/manual.pdf",
+    label: "page",
   });
 });

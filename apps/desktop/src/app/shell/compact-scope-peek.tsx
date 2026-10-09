@@ -19,6 +19,7 @@ import {
   type ScopeSurfaceId,
 } from "@/features/scope-surfaces";
 import { UserEditScope } from "@/features/navigation";
+import { ChangesControl, type ChangesTarget } from "@/features/changes";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
 import {
@@ -98,6 +99,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
     return true;
   };
   const identityIcon = identity?.icon ?? props.fallbackIcon;
+  const identityName = identity?.title ?? props.fallbackTitle ?? path;
   const topBar = (
     <PeekTopBar
       identity={
@@ -109,10 +111,17 @@ export function CompactScopePeek(props: ScopePeekContext) {
               <ScopeOwnerFallbackIcon owner={owner} />
             )
           }
-          name={identity?.title ?? props.fallbackTitle ?? path}
+          name={identityName}
         />
       }
-      changes={owner ? props.renderChanges?.(owner) : null}
+      changes={
+        owner ? (
+          <ChangesControl
+            origin="peek"
+            target={ownerChangesTarget(owner, identityName)}
+          />
+        ) : null
+      }
       onExpand={() => props.onExpand(openFull)}
       expandDisabled={!owner}
       onClose={props.onClose}
@@ -171,6 +180,22 @@ export function CompactScopePeek(props: ScopePeekContext) {
       </div>
     </div>
   );
+}
+
+// The scope main shows for the same owner: a Page its file or folder, a
+// Collection or App its directory.
+function ownerChangesTarget(owner: ScopeOwnerRef, name: string): ChangesTarget {
+  const page =
+    owner.identityKind === "page-file" ||
+    owner.identityKind === "page-directory";
+  return {
+    kind: page ? "page" : "owner",
+    sourceShape: owner.identityKind === "page-file" ? "file" : "directory",
+    spacePath: owner.spacePath,
+    projectPath: owner.projectPath,
+    path: owner.readmePath,
+    name,
+  };
 }
 
 function ScopeOwnerFallbackIcon({ owner }: { owner: ScopeOwnerRef | null }) {

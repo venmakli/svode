@@ -2,6 +2,7 @@ export {
   requestAgentSessionCatalogFastRefresh,
   useActiveAgentSessions,
   useAgentSessionCatalogLifecycle,
+  useAgentSessionChangesTarget,
   useAgentSessionSpace,
   useListedAgentSessions,
   useResolvedAgentSession,

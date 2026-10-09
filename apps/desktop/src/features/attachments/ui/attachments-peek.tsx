@@ -14,6 +14,7 @@ import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
+import { ChangesControl, fileChangesTarget } from "@/features/changes";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
@@ -85,6 +86,17 @@ export function AttachmentsPeek({
   const isDocument = target?.row.kind === "document";
   const isMedia = target?.row.kind === "media";
   const isBinaryViewer = isDocument || isMedia;
+  const fileChanges =
+    target && isBinaryViewer ? (
+      <ChangesControl
+        origin="peek"
+        target={fileChangesTarget({
+          spacePath: resolvedSpacePath,
+          projectPath: resolvedProjectPath,
+          path: target.row.path,
+        })}
+      />
+    ) : null;
 
   return (
     <Sheet
@@ -155,6 +167,7 @@ export function AttachmentsPeek({
                 projectPath={resolvedProjectPath}
                 spaceId={target.owner.spaceId}
                 spacePath={resolvedSpacePath}
+                changes={fileChanges}
                 onClose={() => onOpenChange(false)}
                 onOpenFullPage={() => {
                   onOpenChange(false);
@@ -173,6 +186,7 @@ export function AttachmentsPeek({
                 projectPath={resolvedProjectPath}
                 spaceId={target.owner.spaceId}
                 spacePath={resolvedSpacePath}
+                changes={fileChanges}
                 onClose={() => onOpenChange(false)}
                 onOpenFullPage={() => {
                   onOpenChange(false);

@@ -77,7 +77,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     activeRootName: "Project",
     activeRootPath: "/project",
     rootSpaces: [],
-    spaces: [],
+    spaces: [] as { id: string; path: string; name: string; status: string }[],
   };
   mock.module("@/features/space", () => ({
     getSpaceSnapshot: () => spaceState,
@@ -295,6 +295,42 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     await render(target);
     return { openChanges };
   }
+
+  peekTest(
+    "the session peek shows the Changes of the session's Space before Expand",
+    async () => {
+      spaceState.spaces = [
+        { id: "docs", path: "/project/docs", name: "Docs", status: "ready" },
+      ];
+      try {
+        listed = [
+          session({
+            id: "codex:docs",
+            title: "Docs work",
+            scopeKind: "space",
+            spaceId: "docs",
+            spacePath: "/project/docs",
+          }),
+        ];
+        await mountPeek("/project", {
+          sessionId: "codex:docs",
+          launchId: null,
+        });
+        const bar = document.querySelector("[data-peek-top-bar]")!;
+        const changes = bar.querySelector("[data-changes-trigger]")!;
+        const expand = bar.querySelector(`[aria-label="${m.peek_expand()}"]`)!;
+        expect(changes.getAttribute("aria-label")?.includes("Docs")).toBe(true);
+        expect(
+          Boolean(
+            changes.compareDocumentPosition(expand) &
+              Node.DOCUMENT_POSITION_FOLLOWING,
+          ),
+        ).toBe(true);
+      } finally {
+        spaceState.spaces = [];
+      }
+    },
+  );
 
   peekTest(
     "the session peek top bar has the menu, then icon-only Expand and Close",

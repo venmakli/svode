@@ -15,6 +15,21 @@ export interface ChangesTarget {
   name: string;
 }
 
+/** The changes of one file, such as a document or media file. */
+export function fileChangesTarget(file: {
+  spacePath: string;
+  projectPath?: string | null;
+  sessionKey?: number;
+  path: string;
+}): ChangesTarget {
+  return {
+    kind: "page",
+    sourceShape: "file",
+    ...file,
+    name: file.path.replaceAll("\\", "/").split("/").at(-1) ?? file.path,
+  };
+}
+
 export interface InspectionScope {
   kind: "file" | "directory" | "repository";
   spacePath: string;

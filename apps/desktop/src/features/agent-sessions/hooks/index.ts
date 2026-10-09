@@ -16,6 +16,7 @@ export {
   type AgentSessionView,
 } from "./use-agent-session-view";
 export {
+  useAgentSessionChangesTarget,
   useAgentSessionSpace,
   type AgentSessionSpace,
 } from "./use-agent-session-space";

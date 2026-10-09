@@ -26,7 +26,7 @@ import { ProjectSwitcher } from "./project-switcher";
 import { useShellView } from "./shell-view";
 import { passNavigationGuards } from "./navigation-guards";
 import {
-  useAgentSessionSpace,
+  useAgentSessionChangesTarget,
   useResolvedAgentSession,
 } from "@/features/agent-sessions";
 
@@ -116,7 +116,7 @@ export function WindowHeader() {
     state.mainSurface === "session" ? state.mainSessionTarget : null,
   );
   const mainSession = useResolvedAgentSession(mainSessionTarget);
-  const mainSessionSpace = useAgentSessionSpace(mainSession);
+  const sessionChanges = useAgentSessionChangesTarget(mainSession);
   const openSpaceSettings = useShellStore((state) => state.openSpaceSettings);
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const activeSpacePath = useSpace(selectActiveSpacePath);
@@ -126,12 +126,9 @@ export function WindowHeader() {
   // Home without an active project shows no project chrome.
   const projectShown = activeRootPath !== null;
   const showBreadcrumbs = projectShown && mainSurface === "content";
-  // A session shows Git sync and changes of its own Space only.
-  const sessionSpace =
-    projectShown && mainSessionSpace?.ready ? mainSessionSpace : null;
-  const showGitSync =
-    projectShown &&
-    (!mainSessionTarget || sessionSpace?.spacePath === activeSpacePath);
+  // Git sync shows the repository of the open object: a session's own
+  // Space, the active Space for everything else.
+  const repositoryPath = sessionChanges?.spacePath ?? activeSpacePath;
   const sidebarHidden = state === "collapsed";
   const changesTarget = contribution?.changes;
   const objectActions = projectShown ? contribution?.objectActions : null;
@@ -197,26 +194,16 @@ export function WindowHeader() {
             target={changesTarget}
           />
         ) : null}
-        {sessionSpace ? (
-          <ChangesControl
-            target={{
-              kind: sessionSpace.spaceId ? "space" : "project",
-              sourceShape: "directory",
-              spacePath: sessionSpace.spacePath,
-              projectPath: activeRootPath,
-              path: "",
-              name: sessionSpace.name,
-            }}
+        {projectShown && sessionChanges ? (
+          <ChangesControl target={sessionChanges} />
+        ) : null}
+        {projectShown && repositoryPath ? (
+          <GitSyncStatusWidget
+            repositoryPath={repositoryPath}
+            activateAccess={mainSurface === "content"}
+            onOpenRepositorySettings={(path) => openSpaceSettings(path, "git")}
           />
         ) : null}
-        {showGitSync && (
-          <GitSyncStatusWidget
-            activateAccess={mainSurface === "content"}
-            onOpenRepositorySettings={(repositoryPath) =>
-              openSpaceSettings(repositoryPath, "git")
-            }
-          />
-        )}
         {activeRootPath ? (
           <ProjectExternalOpenButton
             projectPath={activeRootPath}

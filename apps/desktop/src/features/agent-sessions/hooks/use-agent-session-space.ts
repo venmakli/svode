@@ -1,3 +1,4 @@
+import type { ChangesTarget } from "@/features/changes";
 import { useSpace } from "@/features/space";
 import type { AgentSession } from "../model";
 
@@ -39,5 +40,22 @@ export function useAgentSessionSpace(
     spacePath,
     name: activeRootName ?? spacePath,
     ready: true,
+  };
+}
+
+/** The "Changes" of a session: those of its Space, once that Space is ready. */
+export function useAgentSessionChangesTarget(
+  session: AgentSession | null,
+): ChangesTarget | null {
+  const space = useAgentSessionSpace(session);
+  const projectPath = useSpace((state) => state.activeRootPath);
+  if (!space?.ready || !projectPath) return null;
+  return {
+    kind: space.spaceId ? "space" : "project",
+    sourceShape: "directory",
+    spacePath: space.spacePath,
+    projectPath,
+    path: "",
+    name: space.name,
   };
 }

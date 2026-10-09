@@ -1,6 +1,7 @@
 import { FileText } from "lucide-react";
 import { useCallback } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
+import { fileChangesTarget } from "@/features/changes";
 import { PublishMainHeader } from "./main-header-contribution";
 import { PageScopeSurface } from "./page-scope-surface";
 import {
@@ -185,7 +186,19 @@ export function ActiveSpaceContent() {
             />
           ) : null
         }
-        renderMainHeader={(header) => <PublishMainHeader {...header} />}
+        // Only documents and media hand over their elements; their Changes
+        // are those of that one file.
+        renderMainHeader={(header) => (
+          <PublishMainHeader
+            {...header}
+            changes={fileChangesTarget({
+              spacePath: activeSpace.path,
+              projectPath: activeRootPath,
+              sessionKey: artifactRequest.sessionKey,
+              path: artifactRequest.intent.target.path,
+            })}
+          />
+        )}
         spacePath={activeSpace.path}
         projectPath={activeRootPath}
         spaceId={selectionSpaceId}

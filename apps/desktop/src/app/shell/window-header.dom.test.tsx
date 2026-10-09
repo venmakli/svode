@@ -85,13 +85,19 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
   const realGit = await import("@/features/git/app-shell");
   mock.module("@/features/git/app-shell", () => ({
     ...realGit,
-    GitSyncStatusWidget: () => <div data-part="git-sync" />,
+    GitSyncStatusWidget: ({ repositoryPath }: { repositoryPath: string }) => (
+      <div data-part="git-sync" data-repository={repositoryPath} />
+    ),
   }));
   const realChanges = await import("@/features/changes");
   mock.module("@/features/changes", () => ({
     ...realChanges,
     ChangesControl: ({ target }: { target: ChangesTarget }) => (
-      <div data-part="changes" data-scope={target.path} />
+      <div
+        data-part="changes"
+        data-scope={target.path}
+        data-space={target.spacePath}
+      />
     ),
   }));
   const realExternalOpen = await import("@/features/external-open");
@@ -110,11 +116,14 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
   }));
   // The Space the draft is set to; the draft's own tests change it.
   let draftSpace = spacePath;
+  // The Changes of the open session, those of its Space.
+  let sessionChanges: ChangesTarget | null = null;
   const realSessions = await import("@/features/agent-sessions");
   mock.module("@/features/agent-sessions", () => ({
     ...realSessions,
     useResolvedAgentSession: () => null,
     useAgentSessionSpace: () => null,
+    useAgentSessionChangesTarget: () => sessionChanges,
     AgentSessionMainSurface: ({
       renderHeader,
     }: {
@@ -233,6 +242,10 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
       </TooltipProvider>,
     );
   }
+  function repository() {
+    return doc.querySelector<HTMLElement>("[data-part=git-sync]")?.dataset
+      .repository;
+  }
   function changes(path: string, sessionKey: number): ChangesTarget {
     return {
       kind: "owner",
@@ -269,6 +282,7 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
         doc.querySelector<HTMLElement>("[data-part=changes]")!.dataset.scope,
       ).toBe(`${label}/README.md`);
       expect(doc.querySelector("[data-view-tools]")).toBeNull();
+      expect(repository()).toBe(spacePath);
     }
   });
 
@@ -344,6 +358,49 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
     expect(parts()[0]).toBe("breadcrumbs");
   });
 
+  test("a session outside the active Space shows Changes and Git sync of its own Space", async () => {
+    selection = null;
+    const target = { sessionId: "codex:two", launchId: null };
+    sessionChanges = {
+      kind: "space",
+      sourceShape: "directory",
+      spacePath: "/project/docs",
+      projectPath: spacePath,
+      path: "",
+      name: "Docs",
+    };
+    await act(async () => {
+      useShellStore.setState({
+        mainSurface: "session",
+        mainSessionTarget: target,
+      });
+    });
+    try {
+      await render(
+        <SessionSurface
+          target={target}
+          focus={false}
+          onOpenRoutine={() => {}}
+        />,
+      );
+      expect(parts().slice(-3)).toEqual(["changes", "git-sync", "open-with"]);
+      expect(
+        doc.querySelector<HTMLElement>("[data-part=changes]")!.dataset.space,
+      ).toBe("/project/docs");
+      expect(repository()).toBe("/project/docs");
+    } finally {
+      sessionChanges = null;
+      await act(async () => {
+        useShellStore.setState({
+          mainSurface: "content",
+          mainSessionTarget: null,
+        });
+      });
+      await render(null);
+    }
+    expect(repository()).toBe(spacePath);
+  });
+
   test("a new session draft puts the breadcrumbs of its Space first, without Changes", async () => {
     selection = null;
     const draft = { draftId: "d1", spacePath };
@@ -373,6 +430,7 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
     ]);
     expect(crumbs().dataset.space).toBe(spacePath);
     expect(crumbs().dataset.home).toBe("false");
+    expect(repository()).toBe(spacePath);
     expect(doc.querySelector("[data-part=breadcrumbs]")).toBeNull();
 
     // The Space chosen in the draft starts the breadcrumbs.
@@ -432,6 +490,7 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
       "git-sync",
       "open-with",
     ]);
+    expect(repository()).toBe(spacePath);
     const group = doc.querySelector<HTMLElement>("[data-view-tools]")!;
     expect(group.dataset.viewTools).toBe("inline");
     expect(group.style.flexBasis).toBe(`${toolsWidth}px`);

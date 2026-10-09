@@ -69,17 +69,16 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
             all,
             all && aggregate ? inspectionSaveScope(target) : undefined,
           );
-        } else if (all && aggregate) {
+        } else if (all || !aggregate) {
+          // Without an open editor the file on disk is what gets saved.
           await commitSaveScopeAndMaybeSync(
             target.spacePath,
             inspectionSaveScope(target),
             [],
             target.projectPath ?? undefined,
           );
-        } else if (aggregate) {
-          toast.info(m.git_save_no_surface());
         } else {
-          await dispatchPageSave(target.spacePath, target.path, all);
+          toast.info(m.git_save_no_surface());
         }
       } catch (error) {
         if (active.current !== owner) return;

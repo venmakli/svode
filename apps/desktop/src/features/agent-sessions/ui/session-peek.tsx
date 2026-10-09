@@ -5,6 +5,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
+import { ChangesControl } from "@/features/changes";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type {
   AgentSession,
@@ -18,6 +19,7 @@ import {
 } from "../lib/session-content";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
+import { useAgentSessionChangesTarget } from "../hooks/use-agent-session-space";
 import { AgentSessionContent } from "./session-view";
 import * as m from "@/paraglide/messages.js";
 
@@ -148,6 +150,7 @@ export function AgentSessionPeek({
                   }
                   info={status}
                   menu={menu}
+                  changes={<SessionSpaceChanges session={view.session} />}
                   onExpand={() => void expand(view.session)}
                   expandDisabled={expanding}
                   onClose={() => onOpenChange(false)}
@@ -159,4 +162,10 @@ export function AgentSessionPeek({
       </SheetContent>
     </Sheet>
   );
+}
+
+/** The "Changes" of the session's Space. */
+function SessionSpaceChanges({ session }: { session: AgentSession | null }) {
+  const target = useAgentSessionChangesTarget(session);
+  return target ? <ChangesControl origin="peek" target={target} /> : null;
 }

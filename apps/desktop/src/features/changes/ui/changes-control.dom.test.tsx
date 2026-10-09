@@ -817,6 +817,124 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       dom.window.close();
     }
   });
+  test("a document file without an open editor shows and saves only that file", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    const base = {
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      hasStaged: false,
+      hasUnstaged: true,
+      hasConflicts: false,
+      tracking: null,
+    };
+    let files = [
+      { path: "docs/report.pdf", state: "modified" },
+      { path: "docs/notes.md", state: "modified" },
+    ];
+    const commits: unknown[] = [];
+    const reads: string[] = [];
+    mockNativeIpc(
+      (command, args) => {
+        if (command === "git_status") return { ...base, files };
+        if (command === "git_inspection_stats") {
+          const input = args as { paths: string[]; generation: string };
+          return {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: null,
+              deletions: null,
+            })),
+          };
+        }
+        if (command === "git_working_tree_item") {
+          reads.push((args as { path: string }).path);
+          return {
+            ...(args as object),
+            state: "binary",
+            before: null,
+            after: null,
+          };
+        }
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "doc-repo",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_commit_paths") {
+          commits.push(args);
+          files = files.filter((file) => file.path !== "docs/report.pdf");
+          return { ...base, files };
+        }
+        if (command === "git_get_user_policy") return { autoSync: false };
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { ChangesControl } = await import("./changes-control");
+    const { fileChangesTarget } = await import("../model/scope");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl
+              origin="peek"
+              target={fileChangesTarget({
+                spacePath: "/doc-space",
+                projectPath: "/doc-space",
+                path: "docs/report.pdf",
+              })}
+            />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+      const doc = dom.window.document;
+      const trigger = doc.querySelector<HTMLButtonElement>(
+        "[data-changes-trigger]",
+      )!;
+      // One changed file of two in the repository.
+      expect(trigger.textContent).toBe("1");
+      expect(trigger.getAttribute("aria-label")?.includes("report.pdf")).toBe(
+        true,
+      );
+      await act(async () => {
+        trigger.click();
+        await nextFrame(dom);
+      });
+      expect(doc.querySelector("[data-changes-item-trigger]")).toBeNull();
+      expect([...new Set(reads)]).toEqual(["docs/report.pdf"]);
+      await act(async () => {
+        doc
+          .querySelector<HTMLButtonElement>(
+            '[data-slot="sheet-footer"] button',
+          )!
+          .click();
+        await nextFrame(dom);
+      });
+      expect(
+        commits.map((args) => (args as { filePaths: string[] }).filePaths),
+      ).toEqual([["docs/report.pdf"]]);
+      expect(doc.querySelector('[data-slot="sheet-footer"]')).toBeNull();
+    } finally {
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
   test("save errors retain safe localized causes and optional parent failure preserves child success", async () => {
     const dom = createDom();
     const restore = installDomGlobals(dom);

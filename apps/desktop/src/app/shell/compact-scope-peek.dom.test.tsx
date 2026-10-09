@@ -346,18 +346,22 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
           "App",
           "Attachments",
         ]);
-        // P1 and P3: the Page title on the left, then Changes (P1), Expand, ×.
+        // P1 and P3: the Page title on the left, then Changes, Expand, ×.
         const bar = topBar(dom);
         expect(identityName(dom)).toBe("Notes");
         const order = [
           bar.querySelector("[data-peek-identity]"),
-          family === "collection"
-            ? bar.querySelector("[data-changes-trigger]")
-            : null,
+          bar.querySelector("[data-changes-trigger]"),
           bar.querySelector(`[aria-label="${m.peek_expand()}"]`),
           bar.querySelector(`[aria-label="${m.peek_close()}"]`),
         ].filter((element) => element !== null);
-        expect(order.length).toBe(family === "collection" ? 4 : 3);
+        expect(order.length).toBe(4);
+        expect(
+          bar
+            .querySelector("[data-changes-trigger]")
+            ?.getAttribute("aria-label")
+            ?.includes("Notes"),
+        ).toBe(true);
         for (let index = 1; index < order.length; index += 1)
           expect(precedes(order[index - 1]!, order[index]!)).toBe(true);
         expect(
@@ -584,6 +588,20 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
             hasApp: false,
           };
         }
+        if (command === "git_status")
+          return {
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasStaged: false,
+            hasUnstaged: true,
+            hasConflicts: false,
+            tracking: null,
+            files: ["Tasks/Item2.md", "Tasks/Item3.md"].map((path) => ({
+              path,
+              state: "modified",
+            })),
+          };
         throw new Error(`Unexpected IPC: ${command}`);
       },
       { shouldMockEvents: true },
@@ -639,9 +657,16 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         `[aria-label="${m.peek_close()}"]`,
       )!;
       expect(expand.textContent).toBe("");
-      expect(precedes(bar.querySelector("[data-peek-identity]")!, expand)).toBe(
+      // P2: Changes of the Page file before Expand.
+      const changes = bar.querySelector("[data-changes-trigger]")!;
+      expect(changes.textContent).toBe("1");
+      expect(changes.getAttribute("aria-label")?.includes("Item2 title")).toBe(
         true,
       );
+      expect(
+        precedes(bar.querySelector("[data-peek-identity]")!, changes),
+      ).toBe(true);
+      expect(precedes(changes, expand)).toBe(true);
       expect(precedes(expand, close)).toBe(true);
       // The Page header of this peek has no Pin button any more.
       expect(

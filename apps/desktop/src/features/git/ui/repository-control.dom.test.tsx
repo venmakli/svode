@@ -374,7 +374,10 @@ if (!isolatedProcess) {
       const recovery = useRepositoryAccessPreflight();
       return (
         <TooltipProvider>
-          <GitSyncStatusWidget onOpenRepositorySettings={() => undefined} />
+          <GitSyncStatusWidget
+            repositoryPath={path}
+            onOpenRepositorySettings={() => undefined}
+          />
           <RepositoryAccessSummary
             repositoryPath={path}
             remoteUrl="https://example.test/repo.git"
@@ -597,7 +600,10 @@ if (!isolatedProcess) {
         root.render(
           <TooltipProvider>
             <textarea defaultValue="Unsaved draft" />
-            <GitSyncStatusWidget activateAccess={activateAccess} />
+            <GitSyncStatusWidget
+              repositoryPath={activePath}
+              activateAccess={activateAccess}
+            />
             <RepositoryAccessBadge repositoryPath="/sibling" />
           </TooltipProvider>,
         );
@@ -707,8 +713,11 @@ if (!isolatedProcess) {
 
   async function renderControl(
     root: Root,
-    props: ComponentProps<
-      typeof import("./git-sync-status-widget").GitSyncStatusWidget
+    props: Omit<
+      ComponentProps<
+        typeof import("./git-sync-status-widget").GitSyncStatusWidget
+      >,
+      "repositoryPath"
     > = {},
   ) {
     const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
@@ -717,7 +726,11 @@ if (!isolatedProcess) {
     await act(async () => {
       root.render(
         <TooltipProvider>
-          <GitSyncStatusWidget key={activePath} {...props} />
+          <GitSyncStatusWidget
+            key={activePath}
+            repositoryPath={activePath}
+            {...props}
+          />
         </TooltipProvider>,
       );
       await settle();

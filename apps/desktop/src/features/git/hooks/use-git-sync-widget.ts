@@ -13,6 +13,7 @@ import {
   setGitAutoSync,
   syncGitNow,
 } from "../api/git-sync-widget-actions";
+import { refreshGitOnWindowFocus } from "../api/git-focus-actions";
 import { notifyGitSyncOutcome } from "../effects/git-notifications";
 import {
   useGitStore,
@@ -54,8 +55,8 @@ export interface GitSyncWidget {
   setAutoSync: (enabled: boolean) => Promise<void>;
 }
 
-export function useGitSyncWidget(): GitSyncWidget {
-  const spacePath = useSpace(selectActiveSpacePath);
+/** Git sync of the repository at `spacePath`, which need not be the active Space. */
+export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   const parent = useParentPublication(spacePath);
   const active = useRef<object | null>(null);
   const remoteRequest = useRef(0);
@@ -82,6 +83,16 @@ export function useGitSyncWidget(): GitSyncWidget {
     };
   }, [spacePath]);
   const activeRootPath = useSpace((state) => state.activeRootPath);
+  const activeSpacePath = useSpace(selectActiveSpacePath);
+  // The app refreshes the active Space on focus once (`useAppGitFocus`);
+  // another repository shown here refreshes the same way.
+  useEffect(() => {
+    if (!spacePath || spacePath === activeSpacePath) return;
+    const onFocus = () =>
+      void refreshGitOnWindowFocus(spacePath, activeRootPath);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [activeRootPath, activeSpacePath, spacePath]);
   const status = useGitStore((state) =>
     spacePath ? state.statuses[spacePath] : undefined,
   );

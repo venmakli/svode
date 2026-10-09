@@ -38,6 +38,7 @@ import { XlsxViewer } from "../xlsx/xlsx-viewer";
 import { PptxViewer } from "../pptx/pptx-viewer";
 
 export function DocumentSurface({
+  changes,
   onClose,
   onOpenFullPage,
   path,
@@ -46,6 +47,8 @@ export function DocumentSurface({
   spacePath,
   renderMainHeader,
 }: {
+  /** The "Changes" of the file in the peek top bar. */
+  changes?: ReactNode;
   /** Shows the document in a peek, with the peek top bar ending in ×. */
   onClose?: () => void;
   onOpenFullPage?: () => void;
@@ -93,6 +96,7 @@ export function DocumentSurface({
         identity={<PeekIdentity icon={<FileText />} name={title} />}
         info={info}
         viewTools={viewTools}
+        changes={changes}
         openWith={<OpenWithControl groups={[openWith]} />}
         onExpand={openFullPage}
         onClose={onClose}

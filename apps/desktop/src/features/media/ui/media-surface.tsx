@@ -36,6 +36,7 @@ import { MediaPlaybackViewer } from "./media-playback-viewer";
 import { MediaFamilyIcon, MediaMetadataPopover } from "./media-toolbar";
 
 export function MediaSurface({
+  changes,
   onClose,
   onOpenFullPage,
   path,
@@ -44,6 +45,8 @@ export function MediaSurface({
   spaceId,
   spacePath,
 }: {
+  /** The "Changes" of the file in the peek top bar. */
+  changes?: ReactNode;
   /** Shows the media file in a peek, with the peek top bar ending in ×. */
   onClose?: () => void;
   onOpenFullPage?: () => void;
@@ -101,6 +104,7 @@ export function MediaSurface({
         }
         info={info}
         viewTools={viewTools}
+        changes={changes}
         openWith={<OpenWithControl groups={[openWith]} />}
         onExpand={openFullPage}
         onClose={onClose}

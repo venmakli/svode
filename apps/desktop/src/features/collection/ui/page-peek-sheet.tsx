@@ -1,4 +1,3 @@
-import { ChangesControl } from "@/features/changes";
 import { Star, StarOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -93,20 +92,6 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
                   spaceId={spaceId}
                   projectPath={projectPath}
                   template={target.template}
-                />
-              ),
-              renderChanges: (owner) => (
-                <ChangesControl
-                  origin="peek"
-                  target={{
-                    kind: "page",
-                    sourceShape:
-                      owner.identityKind === "page-file" ? "file" : "directory",
-                    spacePath,
-                    projectPath,
-                    path: owner.readmePath,
-                    name: target.page.meta.title,
-                  }}
                 />
               ),
               onExpand: (openFull) =>

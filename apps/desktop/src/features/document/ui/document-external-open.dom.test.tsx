@@ -180,6 +180,7 @@ if (process.env.SVODE_DOCUMENT_EXTERNAL_OPEN_DOM !== "1") {
             spacePath="/work/project"
             {...(peek
               ? {
+                  changes: <button type="button" data-changes-slot />,
                   onClose: () => peekCalls.push("close"),
                   onOpenFullPage: () => peekCalls.push("expand"),
                 }
@@ -367,7 +368,7 @@ if (process.env.SVODE_DOCUMENT_EXTERNAL_OPEN_DOM !== "1") {
       "document_open_external",
     ]);
 
-    // Peek: identity, Open with (file only), Expand and × in one row.
+    // Peek: identity, Changes, Open with (file only), Expand and × in one row.
     await mount("docs/report.doc", true);
     const bars = doc.querySelectorAll("[data-peek-top-bar]");
     expect(bars.length).toBe(1);
@@ -377,6 +378,7 @@ if (process.env.SVODE_DOCUMENT_EXTERNAL_OPEN_DOM !== "1") {
     expect(identity.querySelector("svg") === null).toBe(false);
     const order = [
       identity,
+      bar.querySelector("[data-changes-slot]")!,
       bar.querySelector("[data-external-open-primary]")!,
       bar.querySelector('[aria-label="Expand"]')!,
       bar.querySelector('[aria-label="Close"]')!,

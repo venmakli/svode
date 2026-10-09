@@ -316,6 +316,17 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
           '[aria-label="Expand"]',
         )!;
         expect(Boolean(fullPage)).toBe(true);
+        // P3: Changes of the Collection or App before Expand.
+        const changes = bar.querySelector("[data-changes-trigger]")!;
+        expect(
+          changes.getAttribute("aria-label")?.includes("Saved metadata"),
+        ).toBe(true);
+        expect(
+          Boolean(
+            changes.compareDocumentPosition(fullPage) &
+            dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+          ),
+        ).toBe(true);
         await act(async () => fullPage.click());
         expect(getActiveContentSelection().selection).toEqual(before);
         expect(

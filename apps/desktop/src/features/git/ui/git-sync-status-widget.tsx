@@ -41,6 +41,8 @@ import { RepositoryAccessSection } from "./repository-access-section";
 import * as m from "@/paraglide/messages.js";
 
 export interface GitSyncStatusWidgetProps {
+  /** The repository of the open object, not necessarily the active Space. */
+  repositoryPath: string;
   // Only the content surface activates access checks; elsewhere the
   // indicator passively reads the canonical local snapshot.
   activateAccess?: boolean;
@@ -48,10 +50,11 @@ export interface GitSyncStatusWidgetProps {
 }
 
 export function GitSyncStatusWidget({
+  repositoryPath,
   activateAccess = false,
   onOpenRepositorySettings,
 }: GitSyncStatusWidgetProps) {
-  const sync = useGitSyncWidget();
+  const sync = useGitSyncWidget(repositoryPath);
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
   const access = useRepositoryAccess(sync.spacePath);
   const presentation = repositoryAccessPresentation(access);

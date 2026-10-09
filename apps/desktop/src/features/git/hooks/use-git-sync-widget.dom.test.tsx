@@ -85,7 +85,7 @@ if (process.env.SVODE_GIT_LIFECYCLE_DOM !== "1") {
     const { useGitStore } = await import("../model/git-store");
     let widget!: GitSyncWidget;
     function Probe({ revision }: { revision: number }) {
-      const current = useGitSyncWidget();
+      const current = useGitSyncWidget(path);
       useEffect(() => {
         widget = current;
       });

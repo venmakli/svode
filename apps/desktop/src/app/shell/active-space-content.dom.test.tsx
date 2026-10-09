@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act, type ReactNode } from "react";
+import { act, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
@@ -72,18 +72,33 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     },
   }));
   mock.module("@/features/artifact/app-shell", () => ({
+    // A Page renders its surface; a document or media file hands its top
+    // bar elements to the main header.
     ArtifactSurface: ({
+      request,
       renderPageSurface,
+      renderMainHeader,
     }: {
+      request: { intent: { target: { semanticHint?: unknown } } };
       renderPageSurface: (layout: {
         header: () => ReactNode;
         children: ReactNode;
       }) => ReactNode;
-    }) => renderPageSurface({ header: () => null, children: null }),
+      renderMainHeader: (header: object) => ReactNode;
+    }) =>
+      request.intent.target.semanticHint
+        ? renderPageSurface({ header: () => null, children: null })
+        : renderMainHeader({}),
   }));
   const { ActiveSpaceContent } = await import("./active-space-content");
-  const { openArtifact, openScopeOwner, closeActiveContent } =
-    await import("@/features/artifact");
+  const { useMainHeaderContribution } =
+    await import("./main-header-contribution");
+  const {
+    openArtifact,
+    openScopeOwner,
+    closeActiveContent,
+    getActiveContentSelection,
+  } = await import("@/features/artifact");
 
   async function fixture(
     facts: (path: string) => unknown,
@@ -126,8 +141,15 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     return {
       query,
       reads: () => reads,
-      render: async () => {
-        await act(async () => root.render(<ActiveSpaceContent />));
+      render: async (extra?: ReactNode) => {
+        await act(async () =>
+          root.render(
+            <>
+              <ActiveSpaceContent />
+              {extra}
+            </>,
+          ),
+        );
       },
       settle: async () => {
         await act(async () => {
@@ -256,6 +278,46 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       expect(
         f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
       ).toBe("page-directory:tasks/README.md:");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  test("a document in main hands the Changes of its one file to the main header", async () => {
+    const f = await fixture(() => {
+      throw new Error("a document has no owner facts");
+    });
+    let changes: unknown = undefined;
+    function Header() {
+      const current = useMainHeaderContribution()?.changes;
+      useEffect(() => {
+        changes = current;
+      });
+      return null;
+    }
+    try {
+      openArtifact({
+        spaceId: "root",
+        path: "Docs/report.pdf",
+        sourceShape: "file",
+      });
+      await f.render(<Header />);
+      await f.settle();
+      const selection = getActiveContentSelection().selection;
+      expect(selection?.kind).toBe("artifact");
+      expect(changes).toEqual({
+        kind: "page",
+        sourceShape: "file",
+        spacePath,
+        projectPath: spacePath,
+        sessionKey:
+          selection?.kind === "artifact"
+            ? selection.request.sessionKey
+            : undefined,
+        path: "Docs/report.pdf",
+        name: "report.pdf",
+      });
+      expect(f.reads()).toBe(0);
     } finally {
       await f.cleanup();
     }
