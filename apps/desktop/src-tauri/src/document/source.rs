@@ -3,6 +3,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -80,6 +81,8 @@ pub(crate) struct DocumentSourceDescriptor {
     pub format: DocumentFormat,
     pub size_bytes: u64,
     pub generation: String,
+    /// RFC 3339 UTC modification time of the file.
+    pub modified_at: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -234,9 +237,8 @@ fn descriptor_from_metadata(
     format: DocumentFormat,
     metadata: &fs::Metadata,
 ) -> Result<DocumentSourceDescriptor, DocumentSourceError> {
-    let modified = metadata
-        .modified()
-        .map_err(map_io_error)?
+    let modified_time = metadata.modified().map_err(map_io_error)?;
+    let modified = modified_time
         .duration_since(UNIX_EPOCH)
         .map_err(|_| DocumentSourceError::SourceInaccessible)?;
     let mut hasher = Sha256::new();
@@ -252,6 +254,8 @@ fn descriptor_from_metadata(
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect(),
+        modified_at: DateTime::<Utc>::from(modified_time)
+            .to_rfc3339_opts(SecondsFormat::Secs, true),
     })
 }
 
@@ -337,6 +341,29 @@ mod tests {
             read_document_source(temp.path(), None, "guide.pdf", &descriptor.generation).unwrap();
         assert_eq!(bytes, b"%PDF fixture");
         assert_eq!(descriptor.format, DocumentFormat::Pdf);
+    }
+
+    #[test]
+    fn document_source_reports_the_file_modification_time() {
+        let temp = tempfile::tempdir().unwrap();
+        write_project(temp.path());
+        let path = temp.path().join("notes.doc");
+        fs::write(&path, b"legacy").unwrap();
+        let modified = UNIX_EPOCH + std::time::Duration::from_secs(1_767_323_045);
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        let descriptor = inspect_document_source(temp.path(), None, "notes.doc")
+            .unwrap()
+            .descriptor;
+        assert_eq!(descriptor.format, DocumentFormat::Doc);
+        assert_eq!(descriptor.size_bytes, 6);
+        assert_eq!(descriptor.modified_at, "2026-01-02T03:04:05Z");
+        let json = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(json["modifiedAt"], "2026-01-02T03:04:05Z");
     }
 
     #[test]

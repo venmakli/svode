@@ -21,6 +21,8 @@ export interface DocumentSourceDescriptorDto {
   format: DocumentFormatDto;
   sizeBytes: number;
   generation: string;
+  /** RFC 3339 UTC modification time of the file. */
+  modifiedAt: string;
 }
 
 export interface DocumentSourceInvalidatedDto {

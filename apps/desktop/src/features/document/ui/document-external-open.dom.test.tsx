@@ -100,7 +100,12 @@ if (process.env.SVODE_DOCUMENT_EXTERNAL_OPEN_DOM !== "1") {
     const { mockNativeIpc } = await import("@/platform/native/testing");
     mockNativeIpc(async (command, args) => {
       if (command === "document_inspect_source") {
-        return { format: "doc", sizeBytes: 12, generation: "g1" };
+        return {
+          format: "doc",
+          sizeBytes: 12,
+          generation: "g1",
+          modifiedAt: "2026-01-02T03:04:05Z",
+        };
       }
       if (command === "document_list_external_apps") return offered;
       if (command === "list_project_openers") return [VSCODE, FINDER];

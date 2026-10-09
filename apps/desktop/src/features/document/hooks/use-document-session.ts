@@ -20,6 +20,7 @@ import {
   documentTargetKey,
   type DocumentFailure,
   type DocumentSessionState,
+  type DocumentSourceDescriptor,
   type DocumentTarget,
   type DocumentViewState,
 } from "../model/types";
@@ -64,6 +65,7 @@ export function useDocumentSession(target: DocumentTarget) {
     phase: "loading",
     progress: 0,
   });
+  const [source, setSource] = useState<DocumentSourceDescriptor | null>(null);
   const [viewState, setViewState] = useState<DocumentViewState>({
     ...DEFAULT_DOCUMENT_VIEW_STATE,
   });
@@ -81,6 +83,7 @@ export function useDocumentSession(target: DocumentTarget) {
     );
     sessionRef.current = session;
     setExternalOpenError(null);
+    setSource(null);
     setState({ phase: "loading", progress: 0.05 });
 
     void (async () => {
@@ -89,6 +92,7 @@ export function useDocumentSession(target: DocumentTarget) {
       try {
         const descriptor = await loadDocumentDescriptor(stableTarget);
         if (session.signal.aborted) return;
+        setSource(descriptor);
         if (!documentHasInlinePreview(descriptor.format)) {
           setState({
             failure: { kind: "external_only" },
@@ -121,7 +125,6 @@ export function useDocumentSession(target: DocumentTarget) {
               if (session.signal.aborted) return;
               session.setPasswordHandler(null);
               setState({
-                descriptor,
                 format: "pptx",
                 phase: "ready",
                 presentation,
@@ -178,7 +181,6 @@ export function useDocumentSession(target: DocumentTarget) {
               if (session.signal.aborted) return;
               session.setPasswordHandler(null);
               setState({
-                descriptor,
                 format: "xlsx",
                 phase: "ready",
                 textIndex: {
@@ -236,7 +238,6 @@ export function useDocumentSession(target: DocumentTarget) {
               if (session.signal.aborted) return;
               session.setPasswordHandler(null);
               setState({
-                descriptor,
                 docx,
                 format: "docx",
                 phase: "ready",
@@ -277,7 +278,6 @@ export function useDocumentSession(target: DocumentTarget) {
         if (session.signal.aborted) return;
         const initialIndex = { complete: false, pages: [], truncated: false };
         setState({
-          descriptor,
           format: "pdf",
           pdf,
           phase: "ready",
@@ -385,6 +385,13 @@ export function useDocumentSession(target: DocumentTarget) {
     registerRendererDisposer,
     reportRendererError,
     retry: () => setRetryKey((key) => key + 1),
+    // Facts of a changed or missing file are stale.
+    source:
+      state.phase === "failed" &&
+      (state.failure.kind === "source_changed" ||
+        state.failure.kind === "source_missing")
+        ? null
+        : source,
     state,
     submitPassword: (password: string) =>
       sessionRef.current?.submitPassword(password),

@@ -29,6 +29,8 @@ export interface DocumentSourceDescriptor {
   format: DocumentFormat;
   sizeBytes: number;
   generation: string;
+  /** RFC 3339 UTC modification time of the file. */
+  modifiedAt: string;
 }
 
 export type DocumentFailureKind =
@@ -139,32 +141,50 @@ export type DocumentSessionState =
   | {
       phase: "ready";
       format: "pdf";
-      descriptor: DocumentSourceDescriptor;
       pdf: PDFDocumentProxy;
       textIndex: PdfTextIndex;
     }
   | {
       phase: "ready";
       format: "docx";
-      descriptor: DocumentSourceDescriptor;
       docx: DocxDocument;
       textIndex: DocxTextIndex;
     }
   | {
       phase: "ready";
       format: "xlsx";
-      descriptor: DocumentSourceDescriptor;
       workbook: XlsxWorkbook;
       textIndex: XlsxTextIndex;
     }
   | {
       phase: "ready";
       format: "pptx";
-      descriptor: DocumentSourceDescriptor;
       presentation: PptxPresentation;
       textIndex: PptxTextIndex;
     }
   | { phase: "failed"; failure: DocumentFailure };
+
+/** Pages, sheets or slides of a loaded document, as its viewer counts them. */
+export interface DocumentPartCount {
+  kind: "pages" | "sheets" | "slides";
+  count: number;
+}
+
+export function documentPartCount(
+  state: DocumentSessionState,
+): DocumentPartCount | null {
+  if (state.phase !== "ready") return null;
+  switch (state.format) {
+    case "pdf":
+      return { kind: "pages", count: state.pdf.numPages };
+    case "docx":
+      return { kind: "pages", count: state.docx.pageCount };
+    case "xlsx":
+      return { kind: "sheets", count: state.workbook.sheetNames.length };
+    case "pptx":
+      return { kind: "slides", count: state.presentation.slideCount };
+  }
+}
 
 export function documentTargetKey(target: DocumentTarget) {
   return `${normalizeRuntimePath(target.spacePath)}\0${target.path}`;

@@ -26,10 +26,12 @@ import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 
 import { useDocumentSession } from "../hooks/use-document-session";
 import {
+  documentPartCount,
   normalizeRuntimePath,
   type DocumentFailure,
   type DocumentTarget,
 } from "../model/types";
+import { DocumentDetailsPopover } from "./document-details-popover";
 import { DocxViewer } from "../docx/docx-viewer";
 import { PdfViewer } from "../pdf/pdf-viewer";
 import { XlsxViewer } from "../xlsx/xlsx-viewer";
@@ -53,6 +55,7 @@ export function DocumentSurface({
   spacePath: string;
   /** Outside a peek, hands the top bar elements to the main header. */
   renderMainHeader?: (header: {
+    objectActions?: ReactNode;
     viewTools?: ReactNode;
     openWith: OpenWithGroup;
   }) => ReactNode;
@@ -78,17 +81,24 @@ export function DocumentSurface({
       }
     : undefined;
   const openWith = useExternalOpenGroup(session.externalOpen);
+  const info = session.source ? (
+    <DocumentDetailsPopover
+      source={session.source}
+      parts={documentPartCount(session.state)}
+    />
+  ) : undefined;
   const renderTopBar = (viewTools?: ReactNode) =>
     onClose ? (
       <PeekTopBar
         identity={<PeekIdentity icon={<FileText />} name={title} />}
+        info={info}
         viewTools={viewTools}
         openWith={<OpenWithControl groups={[openWith]} />}
         onExpand={openFullPage}
         onClose={onClose}
       />
     ) : (
-      renderMainHeader?.({ viewTools, openWith })
+      renderMainHeader?.({ objectActions: info, viewTools, openWith })
     );
 
   if (session.state.phase === "ready") {
