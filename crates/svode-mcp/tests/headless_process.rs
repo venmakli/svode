@@ -1430,6 +1430,7 @@ fn a_corrupt_store_is_quarantined_and_an_unsupported_one_is_left_untouched() {
     let mut live = Live::start(fixture.temp.path(), &args);
     live.ok("create_routine", create);
     live.finish();
+    assert_closed(project);
 
     // A store this install created before, now unreadable.
     let db = project.join(".svode/routines.db");

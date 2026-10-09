@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
 use super::{RoutineStoreError, authority, storage};
-use crate::index::IndexKey;
+use crate::index::{IndexKey, db};
 
 #[derive(Default)]
 pub struct RoutineStoreState {
@@ -58,16 +58,16 @@ impl RoutineStoreState {
             storage::open_pool(&storage::database_path(space_dir), previously_created).await?;
         if let Some(evidence) = outcome.recovery {
             if let Err(error) = authority::record_recovery(space_dir, evidence) {
-                outcome.pool.close().await;
+                db::close_pool(&outcome.pool).await;
                 return Err(error);
             }
         } else if !previously_created && let Err(error) = authority::mark_storage_ready(space_dir) {
-            outcome.pool.close().await;
+            db::close_pool(&outcome.pool).await;
             return Err(error);
         }
         let mut pools = self.pools.lock().await;
         if let Some(existing) = pools.get(key) {
-            outcome.pool.close().await;
+            db::close_pool(&outcome.pool).await;
             return Ok(existing.clone());
         }
         pools.insert(key.clone(), outcome.pool.clone());
@@ -129,7 +129,7 @@ impl RoutineStoreState {
         let _guard = lock.lock().await;
         if let Some(pool) = self.pools.lock().await.remove(key) {
             tracing::info!(?key, "closing routines pool");
-            pool.close().await;
+            db::close_pool(&pool).await;
         }
     }
 

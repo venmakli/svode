@@ -363,11 +363,17 @@ mod tests {
             .get_or_create(&key, &root)
             .await
             .unwrap();
+        session
+            .routine_stores()
+            .owner_paths(&key, &root)
+            .await
+            .unwrap();
 
         session.close().await;
 
         assert!(index.is_closed());
         assert!(routines.is_closed());
+        assert_eq!(routines.size(), 0);
         assert!(session.index().existing_pool(&key).await.is_none());
         session.close().await;
     }

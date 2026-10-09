@@ -52,7 +52,7 @@ pub async fn open_pool(
                 })
             }
             Ok(SchemaStatus::Unsupported(found)) => {
-                pool.close().await;
+                db::close_pool(&pool).await;
                 Err(RoutineStoreError::General(format!(
                     "unsupported routines database schema (found {found:?}, expected {SCHEMA_VERSION})"
                 )))
@@ -82,7 +82,7 @@ pub async fn reopen_current_pool(db_path: &Path) -> Result<SqlitePool, RoutineSt
             Ok(pool)
         }
         SchemaStatus::Uninitialized | SchemaStatus::Unsupported(_) => {
-            pool.close().await;
+            db::close_pool(&pool).await;
             Err(RoutineStoreError::General(format!(
                 "routines database is unavailable: {}",
                 db_path.display()
