@@ -162,6 +162,35 @@ export function MarkdownReader({
     }),
     [policy],
   );
+  const rehypePlugins = policy.renderImages
+    ? imageReaderRehypePlugins
+    : readerRehypePlugins;
+  const copyCode = m.markdown_reader_copy_code();
+  // The rendered text is kept while its inputs stay, so a parent render does
+  // not redraw Streamdown: a redraw re-inserts each Mermaid SVG, and WebKit
+  // pulls a scrolled container back when that happens near its end.
+  const body = useMemo(
+    () => (
+      <Streamdown
+        className="w-full min-w-0 max-w-full"
+        mode="static"
+        animated={false}
+        components={components}
+        controls={readerControls}
+        isAnimating={false}
+        lineNumbers={false}
+        linkSafety={{ enabled: false }}
+        mermaid={readerMermaid[colorScheme]}
+        plugins={readerPlugins}
+        rehypePlugins={rehypePlugins}
+        translations={{ copyCode }}
+        urlTransform={readerUrlTransform}
+      >
+        {content}
+      </Streamdown>
+    ),
+    [colorScheme, components, content, copyCode, rehypePlugins],
+  );
 
   useEffect(() => {
     const reader = readerRef.current;
@@ -197,25 +226,7 @@ export function MarkdownReader({
         className={cn("w-full min-w-0 max-w-full text-sm", className)}
         data-markdown-reader
       >
-        <Streamdown
-          className="w-full min-w-0 max-w-full"
-          mode="static"
-          animated={false}
-          components={components}
-          controls={readerControls}
-          isAnimating={false}
-          lineNumbers={false}
-          linkSafety={{ enabled: false }}
-          mermaid={readerMermaid[colorScheme]}
-          plugins={readerPlugins}
-          rehypePlugins={
-            policy.renderImages ? imageReaderRehypePlugins : readerRehypePlugins
-          }
-          translations={{ copyCode: m.markdown_reader_copy_code() }}
-          urlTransform={readerUrlTransform}
-        >
-          {content}
-        </Streamdown>
+        {body}
       </div>
     </MarkdownReaderBoundary>
   );

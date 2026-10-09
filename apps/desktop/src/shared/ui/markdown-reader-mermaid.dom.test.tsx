@@ -83,6 +83,11 @@ if (process.env.SVODE_MARKDOWN_READER_MERMAID_DOM !== "1") {
     });
     return {
       container,
+      async rerender() {
+        await act(async () => {
+          root.render(<MarkdownReader content={content} policy={policy} />);
+        });
+      },
       async unmount() {
         await act(async () => root.unmount());
         container.remove();
@@ -261,6 +266,65 @@ if (process.env.SVODE_MARKDOWN_READER_MERMAID_DOM !== "1") {
       ).toBe(1);
     } finally {
       await reader.unmount();
+    }
+  });
+
+  // WebKit pulls a scrolled container back when a diagram SVG is re-inserted
+  // near its end (DF-179), so an unchanged diagram keeps its element.
+  test("rendering the reader again with the same text keeps the diagram SVG", async () => {
+    const reader = await renderReader(
+      "```mermaid\nflowchart TD\n  A --> B\n```",
+    );
+
+    try {
+      const svg = await waitFor(() =>
+        reader.container.querySelector('[data-streamdown="mermaid"] svg[id^="mermaid-"]'),
+      );
+      await reader.rerender();
+      await reader.rerender();
+      expect(
+        reader.container.querySelector('[data-streamdown="mermaid"] svg[id^="mermaid-"]'),
+      ).toBe(svg);
+    } finally {
+      await reader.unmount();
+    }
+  });
+
+  test("Streamdown keeps the diagram SVG when it is drawn again with new props", async () => {
+    const { Streamdown } = await import("streamdown");
+    const { mermaid } = await import("@streamdown/mermaid");
+    const plugins = { mermaid };
+    const content = "```mermaid\nflowchart TD\n  A --> B\n```";
+    const container = dom.window.document.createElement("div");
+    dom.window.document.body.append(container);
+    const root = createRoot(container);
+    // A new linkSafety object defeats the Streamdown memo on every render.
+    const render = () =>
+      act(async () => {
+        root.render(
+          <Streamdown
+            mode="static"
+            linkSafety={{ enabled: false }}
+            plugins={plugins}
+          >
+            {content}
+          </Streamdown>,
+        );
+      });
+
+    try {
+      await render();
+      const svg = await waitFor(() =>
+        container.querySelector('[data-streamdown="mermaid"] svg[id^="mermaid-"]'),
+      );
+      await render();
+      await render();
+      expect(container.querySelector('[data-streamdown="mermaid"] svg[id^="mermaid-"]')).toBe(
+        svg,
+      );
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
     }
   });
 }
