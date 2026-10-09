@@ -8,8 +8,8 @@
       "commit": "6716b25428c9f62f7e57924fa3d1377ad9cd2a1e",
       "sourceRef": "main",
       "runId": 37859286800,
-      "publishedAt": "2026-10-09T00:07:19.329Z",
-      "expiresAt": "2026-10-12T00:07:19.329Z",
+      "publishedAt": "2026-10-09T00:21:47.153Z",
+      "expiresAt": "2026-10-12T00:21:47.153Z",
       "reason": "Rich-контент чата",
       "platforms": {
         "linux": {
@@ -21,6 +21,11 @@
           "url": "https://github.com/venmakli/svode/actions/runs/37859286800/artifacts/11587151841",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/37859286800",
           "artifactName": "Svode-windows-nsis"
+        },
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/37859286800/artifacts/11586729705",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/37859286800",
+          "artifactName": "Svode-macos-dmg"
         }
       }
     },
