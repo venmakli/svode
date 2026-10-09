@@ -15,6 +15,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { OpenWithGroup } from "@/features/external-open";
 import type { PageSurfaceLayout } from "@/features/page/app-shell";
 import { probeDocumentTarget } from "@/features/document";
 import { probeMediaTarget } from "@/features/media";
@@ -26,6 +27,13 @@ import type {
 } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 
+/** Top bar elements a document or media surface hands to the main header. */
+interface ArtifactMainHeader {
+  objectActions?: ReactNode;
+  viewTools?: ReactNode;
+  openWith?: OpenWithGroup;
+}
+
 interface ArtifactSurfaceProps {
   request: ActiveArtifactOpenRequest;
   spacePath: string;
@@ -34,6 +42,7 @@ interface ArtifactSurfaceProps {
   onOpenRepositorySettings?: (repositoryPath: string) => void;
   pageSessionKey?: string;
   renderPageSurface: (layout: PageSurfaceLayout) => ReactNode;
+  renderMainHeader?: (header: ArtifactMainHeader) => ReactNode;
   retainSurfaceDuringRetarget?: boolean;
 }
 
@@ -45,6 +54,7 @@ interface ArtifactSurfaceRenderProps {
   onOpenRepositorySettings?: (repositoryPath: string) => void;
   pageSessionKey?: string;
   renderPageSurface: (layout: PageSurfaceLayout) => ReactNode;
+  renderMainHeader?: (header: ArtifactMainHeader) => ReactNode;
 }
 
 type ArtifactSurfaceComponent = ComponentType<ArtifactSurfaceRenderProps>;
@@ -99,6 +109,7 @@ async function loadDocumentSurface(): Promise<{
       projectPath,
       spacePath,
       target,
+      renderMainHeader,
     }: ArtifactSurfaceRenderProps) {
       return (
         <DocumentSurface
@@ -106,6 +117,7 @@ async function loadDocumentSurface(): Promise<{
           projectPath={projectPath ?? spacePath}
           spaceId={target.spaceId}
           spacePath={spacePath}
+          renderMainHeader={renderMainHeader}
         />
       );
     },
@@ -123,6 +135,7 @@ async function loadMediaSurface(): Promise<{
       projectPath,
       spacePath,
       target,
+      renderMainHeader,
     }: ArtifactSurfaceRenderProps) {
       return (
         <MediaSurface
@@ -130,6 +143,7 @@ async function loadMediaSurface(): Promise<{
           projectPath={projectPath ?? spacePath}
           spaceId={target.spaceId}
           spacePath={spacePath}
+          renderMainHeader={renderMainHeader}
         />
       );
     },
@@ -182,6 +196,7 @@ export function ArtifactSurface({
   onOpenRepositorySettings,
   pageSessionKey,
   renderPageSurface,
+  renderMainHeader,
   retainSurfaceDuringRetarget = false,
 }: ArtifactSurfaceProps) {
   const registry = useMemo(() => createFirstPartyArtifactRegistry(), []);
@@ -215,6 +230,7 @@ export function ArtifactSurface({
           onOpenRepositorySettings={onOpenRepositorySettings}
           pageSessionKey={pageSessionKey}
           renderPageSurface={renderPageSurface}
+          renderMainHeader={renderMainHeader}
         />
       </Suspense>
     </ArtifactSurfaceErrorBoundary>

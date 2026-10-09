@@ -1,4 +1,3 @@
-import { artifactNavigationKey, PinToggleButton } from "@/features/navigation";
 import { useMemo, type ReactNode } from "react";
 import { FileWarning, RefreshCw } from "lucide-react";
 
@@ -15,9 +14,13 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ExternalOpenButton,
+  OpenWithControl,
+  useExternalOpenGroup,
   type ExternalOpenBinding,
+  type OpenWithGroup,
 } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
+import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 
 import { useMediaSession } from "../hooks/use-media-session";
 import {
@@ -30,24 +33,27 @@ import {
 } from "../model/types";
 import { MediaImageViewer } from "./media-image-viewer";
 import { MediaPlaybackViewer } from "./media-playback-viewer";
-import { MediaFamilyIcon } from "./media-toolbar";
+import { MediaFamilyIcon, MediaMetadataPopover } from "./media-toolbar";
 
 export function MediaSurface({
   onClose,
   onOpenFullPage,
   path,
   projectPath,
-  renderToolbarActions,
+  renderMainHeader,
   spaceId,
   spacePath,
 }: {
+  /** Shows the media file in a peek, with the peek top bar ending in ×. */
   onClose?: () => void;
   onOpenFullPage?: () => void;
   path: string;
   projectPath: string;
-  renderToolbarActions?: (actions: {
-    onClose(): void;
-    onOpenFullPage(): void;
+  /** Outside a peek, hands the top bar elements to the main header. */
+  renderMainHeader?: (header: {
+    objectActions?: ReactNode;
+    viewTools?: ReactNode;
+    openWith: OpenWithGroup;
   }) => ReactNode;
   spaceId: string | null;
   spacePath: string;
@@ -72,19 +78,36 @@ export function MediaSurface({
         onOpenFullPage();
       }
     : undefined;
-  const toolbarActions = (
-    <>
-      <PinToggleButton
-        item={{
-          key: artifactNavigationKey("attachment", path, target.spaceId, null),
-          title,
-        }}
+  const openWith = useExternalOpenGroup(session.externalOpen);
+  const loadedSource =
+    session.state.phase === "loading" || session.state.phase === "ready"
+      ? session.state.source
+      : null;
+  const info = loadedSource ? (
+    <MediaMetadataPopover source={loadedSource} />
+  ) : undefined;
+  const renderTopBar = (viewTools?: ReactNode) =>
+    onClose ? (
+      <PeekTopBar
+        identity={
+          <PeekIdentity
+            icon={
+              <MediaFamilyIcon
+                family={loadedSource?.family ?? mediaFamilyFromPath(path)}
+              />
+            }
+            name={title}
+          />
+        }
+        info={info}
+        viewTools={viewTools}
+        openWith={<OpenWithControl groups={[openWith]} />}
+        onExpand={openFullPage}
+        onClose={onClose}
       />
-      {renderToolbarActions && onClose && openFullPage
-        ? renderToolbarActions({ onClose, onOpenFullPage: openFullPage })
-        : null}
-    </>
-  );
+    ) : (
+      renderMainHeader?.({ objectActions: info, viewTools, openWith })
+    );
 
   if (session.state.phase === "loading" || session.state.phase === "ready") {
     const source = session.state.source;
@@ -94,15 +117,14 @@ export function MediaSurface({
           key={source.capabilityToken}
           externalOpenError={session.externalOpenError}
           loading={session.state.phase === "loading"}
-          externalOpen={session.externalOpen}
           onPlaybackError={session.reportPlaybackError}
           onReady={session.markReady}
           onRegisterExternalSuspender={session.registerExternalSuspender}
           onRegisterRendererDisposer={session.registerRendererDisposer}
           onViewStateChange={session.updateViewState}
           source={source}
+          renderTopBar={renderTopBar}
           title={title}
-          toolbarActions={toolbarActions}
           viewState={session.viewState}
         />
       );
@@ -111,15 +133,14 @@ export function MediaSurface({
       <MediaImageViewer
         externalOpenError={session.externalOpenError}
         loading={session.state.phase === "loading"}
-        externalOpen={session.externalOpen}
         onReady={(dimensions) => session.markReady(source, dimensions)}
         onRegisterExternalSuspender={session.registerExternalSuspender}
         onRegisterRendererDisposer={session.registerRendererDisposer}
         onRenderError={() => void session.reportImageError(source)}
         onViewStateChange={session.updateViewState}
         source={source}
+        renderTopBar={renderTopBar}
         title={title}
-        toolbarActions={toolbarActions}
         viewState={session.viewState}
       />
     );
@@ -127,12 +148,7 @@ export function MediaSurface({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <MediaFrameToolbar
-        family={mediaFamilyFromPath(path)}
-        externalOpen={session.externalOpen}
-        title={title}
-        toolbarActions={toolbarActions}
-      />
+      {renderTopBar()}
       {session.state.phase === "resolving" ? (
         <MediaLoadingState />
       ) : (
@@ -150,32 +166,6 @@ export function MediaSurface({
           {m.media_external_open_error()}
         </p>
       ) : null}
-    </div>
-  );
-}
-
-function MediaFrameToolbar({
-  family,
-  externalOpen,
-  title,
-  toolbarActions,
-}: {
-  family: "image" | "audio" | "video";
-  externalOpen: ExternalOpenBinding;
-  title: string;
-  toolbarActions?: ReactNode;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-2">
-      <MediaFamilyIcon family={family} />
-      <div
-        className="min-w-0 flex-1 truncate text-sm font-medium"
-        title={title}
-      >
-        {title}
-      </div>
-      <ExternalOpenButton {...externalOpen} />
-      {toolbarActions}
     </div>
   );
 }

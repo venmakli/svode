@@ -11,12 +11,7 @@ import {
 } from "@/components/ui/empty";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
-import {
-  PeekCloseButton,
-  PeekExpandButton,
-  PeekIdentity,
-  PeekTopBar,
-} from "@/shared/ui/peek-top-bar";
+import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
 import * as m from "@/paraglide/messages.js";
@@ -104,7 +99,7 @@ export function AttachmentsPeek({
         overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
         className={cn(
           "gap-0 p-0 data-[side=right]:sm:max-w-none",
-          isBinaryViewer ? "pt-0 pb-0" : "pt-2 pb-6",
+          isBinaryViewer ? "pt-2 pb-0" : "pt-2 pb-6",
         )}
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
         onCloseAutoFocus={(event) => {
@@ -169,12 +164,6 @@ export function AttachmentsPeek({
                     spaceId: target.owner.spaceId,
                   });
                 }}
-                renderToolbarActions={(actions) => (
-                  <>
-                    <PeekExpandButton onClick={actions.onOpenFullPage} />
-                    <PeekCloseButton onClick={actions.onClose} />
-                  </>
-                )}
               />
             </Suspense>
           ) : target?.row.kind === "media" ? (
@@ -193,12 +182,6 @@ export function AttachmentsPeek({
                     spaceId: target.owner.spaceId,
                   });
                 }}
-                renderToolbarActions={(actions) => (
-                  <>
-                    <PeekExpandButton onClick={actions.onOpenFullPage} />
-                    <PeekCloseButton onClick={actions.onClose} />
-                  </>
-                )}
               />
             </Suspense>
           ) : target ? (

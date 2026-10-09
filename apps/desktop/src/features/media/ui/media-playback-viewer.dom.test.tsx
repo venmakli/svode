@@ -4,17 +4,6 @@ import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import type { ExternalOpenBinding } from "@/features/external-open";
-
-const externalOpen: ExternalOpenBinding = {
-  target: {
-    preferenceKey: "file:fixture",
-    listApps: () => Promise.resolve([]),
-    open: () => Promise.resolve(),
-    reveal: () => Promise.resolve(),
-  },
-  onError: () => undefined,
-};
 
 const isolatedDomProcess = process.env.SVODE_MEDIA_PLAYBACK_DOM_PROCESS === "1";
 
@@ -89,7 +78,7 @@ if (!isolatedDomProcess) {
             <MediaPlaybackViewer
               externalOpenError={false}
               loading
-              externalOpen={externalOpen}
+              renderTopBar={(tools) => <div data-top-bar>{tools}</div>}
               onPlaybackError={() => undefined}
               onReady={(_source, metadata) => {
                 readyMetadata = metadata;

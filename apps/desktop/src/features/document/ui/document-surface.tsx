@@ -1,4 +1,3 @@
-import { artifactNavigationKey, PinToggleButton } from "@/features/navigation";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { FileText, FileWarning, KeyRound, RefreshCw } from "lucide-react";
 
@@ -17,9 +16,13 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ExternalOpenButton,
+  OpenWithControl,
+  useExternalOpenGroup,
   type ExternalOpenBinding,
+  type OpenWithGroup,
 } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
+import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 
 import { useDocumentSession } from "../hooks/use-document-session";
 import {
@@ -39,17 +42,19 @@ export function DocumentSurface({
   projectPath,
   spaceId,
   spacePath,
-  renderToolbarActions,
+  renderMainHeader,
 }: {
+  /** Shows the document in a peek, with the peek top bar ending in ×. */
   onClose?: () => void;
   onOpenFullPage?: () => void;
   path: string;
   projectPath: string;
   spaceId: string | null;
   spacePath: string;
-  renderToolbarActions?: (actions: {
-    onClose(): void;
-    onOpenFullPage(): void;
+  /** Outside a peek, hands the top bar elements to the main header. */
+  renderMainHeader?: (header: {
+    viewTools?: ReactNode;
+    openWith: OpenWithGroup;
   }) => ReactNode;
 }) {
   const target = useMemo<DocumentTarget>(
@@ -72,32 +77,30 @@ export function DocumentSurface({
         onOpenFullPage();
       }
     : undefined;
-  const toolbarActions = (
-    <>
-      <PinToggleButton
-        item={{
-          key: artifactNavigationKey("attachment", path, target.spaceId, null),
-          title,
-        }}
+  const openWith = useExternalOpenGroup(session.externalOpen);
+  const renderTopBar = (viewTools?: ReactNode) =>
+    onClose ? (
+      <PeekTopBar
+        identity={<PeekIdentity icon={<FileText />} name={title} />}
+        viewTools={viewTools}
+        openWith={<OpenWithControl groups={[openWith]} />}
+        onExpand={openFullPage}
+        onClose={onClose}
       />
-      {renderToolbarActions && onClose && openFullPage
-        ? renderToolbarActions({ onClose, onOpenFullPage: openFullPage })
-        : null}
-    </>
-  );
+    ) : (
+      renderMainHeader?.({ viewTools, openWith })
+    );
 
   if (session.state.phase === "ready") {
     if (session.state.format === "pptx") {
       return (
         <PptxViewer
           externalOpenError={session.externalOpenError}
-          externalOpen={session.externalOpen}
           onRegisterRendererDisposer={session.registerRendererDisposer}
           onRenderError={session.reportRendererError}
           onViewStateChange={session.updateViewState}
           presentation={session.state.presentation}
-          title={title}
-          toolbarActions={toolbarActions}
+          renderTopBar={renderTopBar}
           viewState={session.viewState}
         />
       );
@@ -106,12 +109,11 @@ export function DocumentSurface({
       return (
         <XlsxViewer
           externalOpenError={session.externalOpenError}
-          externalOpen={session.externalOpen}
           onRegisterRendererDisposer={session.registerRendererDisposer}
           onRenderError={session.reportRendererError}
           onViewStateChange={session.updateViewState}
+          renderTopBar={renderTopBar}
           title={title}
-          toolbarActions={toolbarActions}
           viewState={session.viewState}
           workbook={session.state.workbook}
         />
@@ -122,12 +124,10 @@ export function DocumentSurface({
         <DocxViewer
           docx={session.state.docx}
           externalOpenError={session.externalOpenError}
-          externalOpen={session.externalOpen}
           onRegisterRendererDisposer={session.registerRendererDisposer}
           onRenderError={session.reportRendererError}
           onViewStateChange={session.updateViewState}
-          title={title}
-          toolbarActions={toolbarActions}
+          renderTopBar={renderTopBar}
           viewState={session.viewState}
         />
       );
@@ -135,12 +135,11 @@ export function DocumentSurface({
     return (
       <PdfViewer
         externalOpenError={session.externalOpenError}
-        externalOpen={session.externalOpen}
         onRenderError={session.reportRendererError}
         onViewStateChange={session.updateViewState}
         pdf={session.state.pdf}
+        renderTopBar={renderTopBar}
         title={title}
-        toolbarActions={toolbarActions}
         viewState={session.viewState}
       />
     );
@@ -148,11 +147,7 @@ export function DocumentSurface({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <DocumentFrameToolbar
-        externalOpen={session.externalOpen}
-        title={title}
-        toolbarActions={toolbarActions}
-      />
+      {renderTopBar()}
       {session.state.phase === "loading" ? (
         <DocumentLoadingState progress={session.state.progress} />
       ) : session.state.phase === "password" ? (
@@ -176,33 +171,6 @@ export function DocumentSurface({
           {m.document_external_open_error()}
         </p>
       ) : null}
-    </div>
-  );
-}
-
-function DocumentFrameToolbar({
-  externalOpen,
-  title,
-  toolbarActions,
-}: {
-  externalOpen: ExternalOpenBinding;
-  title: string;
-  toolbarActions?: ReactNode;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-2">
-      <FileText
-        className="size-4 shrink-0 text-muted-foreground"
-        aria-hidden="true"
-      />
-      <div
-        className="min-w-0 flex-1 truncate text-sm font-medium"
-        title={title}
-      >
-        {title}
-      </div>
-      <ExternalOpenButton {...externalOpen} />
-      {toolbarActions}
     </div>
   );
 }

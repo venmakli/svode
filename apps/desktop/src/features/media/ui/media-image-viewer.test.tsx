@@ -5,17 +5,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { MediaImageViewer, maxSafeZoom } from "./media-image-viewer";
 import { formatMediaBytes } from "../lib/format";
-import type { ExternalOpenBinding } from "@/features/external-open";
-
-const externalOpen: ExternalOpenBinding = {
-  target: {
-    preferenceKey: "file:fixture",
-    listApps: () => Promise.resolve([]),
-    open: () => Promise.resolve(),
-    reveal: () => Promise.resolve(),
-  },
-  onError: () => undefined,
-};
 
 const svgSource = {
   animated: false,
@@ -39,7 +28,7 @@ test("SVG is composed only as an image resource", () => {
       <MediaImageViewer
         externalOpenError={false}
         loading={false}
-        externalOpen={externalOpen}
+        renderTopBar={(tools) => <div data-top-bar>{tools}</div>}
         onReady={() => undefined}
         onRegisterExternalSuspender={() => () => undefined}
         onRegisterRendererDisposer={() => () => undefined}
@@ -63,8 +52,9 @@ test("SVG is composed only as an image resource", () => {
     </TooltipProvider>,
   );
   expect(markup.includes("<img")).toBe(true);
-  expect(markup.includes("data-external-open-primary")).toBe(true);
-  expect(markup.includes('aria-label="Open with"')).toBe(true);
+  // View tools go to the top bar; external open is the surface's.
+  expect(markup.includes("data-top-bar")).toBe(true);
+  expect(markup.includes("data-external-open-primary")).toBe(false);
   expect(markup.includes("<iframe")).toBe(false);
   expect(markup.includes("<object")).toBe(false);
   expect(markup.includes("<embed")).toBe(false);

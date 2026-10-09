@@ -1,6 +1,7 @@
 import { FileText } from "lucide-react";
 import { useCallback } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
+import { PublishMainHeader } from "./main-header-contribution";
 import { PageScopeSurface } from "./page-scope-surface";
 import {
   useActiveContentSelection,
@@ -184,6 +185,7 @@ export function ActiveSpaceContent() {
             />
           ) : null
         }
+        renderMainHeader={(header) => <PublishMainHeader {...header} />}
         spacePath={activeSpace.path}
         projectPath={activeRootPath}
         spaceId={selectionSpaceId}

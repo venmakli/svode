@@ -1,10 +1,4 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useState,
-  type ReactNode,
-} from "react";
+import { lazy, Suspense, useCallback, useState, type ReactNode } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
@@ -25,7 +19,6 @@ import {
   VIDEO_EXTS,
 } from "@/platform/upload/media-types";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
-import { PeekCloseButton, PeekExpandButton } from "@/shared/ui/peek-top-bar";
 import { CompactScopePeek } from "./compact-scope-peek";
 
 const DocumentSurface = lazy(async () => ({
@@ -104,7 +97,9 @@ export function ChatAttachmentPeekProvider({
       {children}
       <ChatAttachmentPeek
         target={target}
-        projectPath={rootSpaces.find((space) => space.id === activeRootId)?.path}
+        projectPath={
+          rootSpaces.find((space) => space.id === activeRootId)?.path
+        }
         onClose={() => setTarget(null)}
       />
     </ChatAttachmentOpenerContext.Provider>
@@ -188,12 +183,6 @@ function ChatAttachmentPeek({
                       spaceId: target.registeredSpaceId,
                     });
                   }}
-                  renderToolbarActions={(actions) => (
-                    <>
-                      <PeekExpandButton onClick={actions.onOpenFullPage} />
-                      <PeekCloseButton onClick={actions.onClose} />
-                    </>
-                  )}
                 />
               );
             })()}

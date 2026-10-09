@@ -25,30 +25,23 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  ExternalOpenButton,
-  type ExternalOpenBinding,
-} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState, PdfZoomMode } from "../model/types";
 
+/** View tools of a PDF; the surface places them in its top bar. */
 export function PdfToolbar({
   activeFindIndex,
   findMatches,
   onFindNavigate,
-  externalOpen,
   onPageChange,
   onViewStateChange,
   pageCount,
-  title,
-  toolbarActions,
   viewState,
 }: {
   activeFindIndex: number;
   findMatches: number;
   onFindNavigate(direction: 1 | -1): void;
-  externalOpen: ExternalOpenBinding;
   onPageChange(page: number): void;
   onViewStateChange(
     update:
@@ -56,15 +49,13 @@ export function PdfToolbar({
       | ((current: DocumentViewState) => DocumentViewState),
   ): void;
   pageCount: number;
-  title: string;
-  toolbarActions?: ReactNode;
   viewState: DocumentViewState;
 }) {
   const nextFitMode: Extract<PdfZoomMode, "page" | "width"> =
     viewState.zoomMode === "width" ? "page" : "width";
 
   return (
-    <div className="flex shrink-0 items-center gap-1 overflow-hidden border-b bg-background px-2 py-2">
+    <>
       <TooltipButton
         label={
           viewState.thumbnailsOpen
@@ -80,12 +71,6 @@ export function PdfToolbar({
       >
         {viewState.thumbnailsOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
       </TooltipButton>
-      <div
-        className="min-w-0 flex-1 truncate px-1 text-sm font-medium"
-        title={title}
-      >
-        {title}
-      </div>
       <ButtonGroup className="shrink-0">
         <TooltipButton
           grouped
@@ -176,9 +161,7 @@ export function PdfToolbar({
         onViewStateChange={onViewStateChange}
         viewState={viewState}
       />
-      <ExternalOpenButton {...externalOpen} />
-      {toolbarActions}
-    </div>
+    </>
   );
 }
 

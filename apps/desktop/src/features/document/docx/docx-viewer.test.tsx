@@ -6,17 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 import { DEFAULT_DOCUMENT_VIEW_STATE } from "../model/types";
 import { DocxViewer } from "./docx-viewer";
-import type { ExternalOpenBinding } from "@/features/external-open";
-
-const externalOpen: ExternalOpenBinding = {
-  target: {
-    preferenceKey: "file:fixture",
-    listApps: () => Promise.resolve([]),
-    open: () => Promise.resolve(),
-    reveal: () => Promise.resolve(),
-  },
-  onError: () => undefined,
-};
 
 test("DOCX surface omits a normal-state badge and exposes a named viewport", () => {
   const html = renderToStaticMarkup(
@@ -24,19 +13,19 @@ test("DOCX surface omits a normal-state badge and exposes a named viewport", () 
       <DocxViewer
         docx={{ pageCount: 6 } as DocxDocument}
         externalOpenError={null}
-        externalOpen={externalOpen}
+        renderTopBar={(tools) => <div data-top-bar>{tools}</div>}
         onRegisterRendererDisposer={() => () => undefined}
         onRenderError={() => undefined}
         onViewStateChange={() => undefined}
-        title="brief.docx"
         viewState={DEFAULT_DOCUMENT_VIEW_STATE}
       />
     </TooltipProvider>,
   );
 
   expect(html.includes('data-document-viewer="docx"')).toBe(true);
-  expect(html.includes("data-external-open-primary")).toBe(true);
-  expect(html.includes('aria-label="Open with"')).toBe(true);
+  // View tools go to the top bar; external open is the surface's.
+  expect(html.includes("data-top-bar")).toBe(true);
+  expect(html.includes("data-external-open-primary")).toBe(false);
   expect(html.includes("Limited preview")).toBe(false);
   expect(html.includes('role="region"')).toBe(true);
   expect(html.includes('tabindex="0"')).toBe(true);
@@ -47,7 +36,6 @@ test("DOCX surface omits a normal-state badge and exposes a named viewport", () 
     "Zoom out",
     "Zoom in",
     "Find in document",
-    "Open with",
   ]) {
     expect(html.includes(label)).toBe(true);
   }

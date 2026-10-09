@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { FileImage, Info, Music, Video } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -14,44 +13,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  ExternalOpenButton,
-  type ExternalOpenBinding,
-} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import { formatMediaBytes, formatMediaDuration } from "../lib/format";
 import type { MediaSourceDescriptor } from "../model/types";
-
-export function MediaToolbar({
-  children,
-  externalOpen,
-  source,
-  title,
-  toolbarActions,
-}: {
-  children?: ReactNode;
-  externalOpen: ExternalOpenBinding;
-  source: MediaSourceDescriptor;
-  title: string;
-  toolbarActions?: ReactNode;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-2 border-b bg-background px-2 py-2">
-      <MediaFamilyIcon family={source.family} />
-      <div
-        className="min-w-16 flex-1 truncate text-sm font-medium"
-        title={title}
-      >
-        {title}
-      </div>
-      {children}
-      <MediaMetadataPopover source={source} />
-      <ExternalOpenButton {...externalOpen} />
-      {toolbarActions}
-    </div>
-  );
-}
 
 export function MediaFamilyIcon({
   family,
@@ -68,7 +33,12 @@ export function MediaFamilyIcon({
   return <FileImage className={className} aria-hidden />;
 }
 
-function MediaMetadataPopover({ source }: { source: MediaSourceDescriptor }) {
+/** ⓘ of a media file: format, dimensions, duration and size. */
+export function MediaMetadataPopover({
+  source,
+}: {
+  source: MediaSourceDescriptor;
+}) {
   const showDimensions = source.family !== "audio";
   const showDuration = source.family !== "image";
   return (
@@ -88,7 +58,7 @@ function MediaMetadataPopover({ source }: { source: MediaSourceDescriptor }) {
         </TooltipTrigger>
         <TooltipContent>{m.media_metadata()}</TooltipContent>
       </Tooltip>
-      <PopoverContent align="end" className="w-64">
+      <PopoverContent align="start" className="w-64">
         <PopoverHeader>
           <PopoverTitle>{m.media_metadata()}</PopoverTitle>
         </PopoverHeader>

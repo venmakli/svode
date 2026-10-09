@@ -29,5 +29,5 @@ export { NavigationSidebarGroup } from "./ui/navigation-sidebar-group";
 export { NavigationSidebarItem } from "./ui/navigation-sidebar-item";
 export { NavigationStoreProvider } from "./ui/navigation-store-provider";
 export type { NavigationStore } from "./model/navigation-store";
-export { NavigationMenuItems, PinToggleButton } from "./ui/pin-controls";
+export { NavigationMenuItems } from "./ui/pin-controls";
 export { UserEditScope } from "./ui/user-edit-scope";

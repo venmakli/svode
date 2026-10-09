@@ -7,7 +7,6 @@ import {
 } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
@@ -17,7 +16,6 @@ import type {
   MediaSourceDescriptor,
   MediaViewState,
 } from "../model/types";
-import { MediaToolbar } from "./media-toolbar";
 
 const VIDEO_SIDE_LIMIT = 16_384;
 const VIDEO_PIXEL_LIMIT = 40_000_000;
@@ -25,7 +23,6 @@ const VIDEO_PIXEL_LIMIT = 40_000_000;
 export function MediaPlaybackViewer({
   externalOpenError,
   loading,
-  externalOpen,
   onPlaybackError,
   onReady,
   onRegisterExternalSuspender,
@@ -33,12 +30,11 @@ export function MediaPlaybackViewer({
   onViewStateChange,
   source,
   title,
-  toolbarActions,
+  renderTopBar,
   viewState,
 }: {
   externalOpenError: boolean;
   loading: boolean;
-  externalOpen: ExternalOpenBinding;
   onPlaybackError(source: MediaSourceDescriptor, failure: MediaFailure): void;
   onReady(source: MediaSourceDescriptor, metadata: MediaRuntimeMetadata): void;
   onRegisterExternalSuspender(
@@ -50,7 +46,7 @@ export function MediaPlaybackViewer({
   ): void;
   source: MediaSourceDescriptor;
   title: string;
-  toolbarActions?: ReactNode;
+  renderTopBar(viewTools?: ReactNode): ReactNode;
   viewState: MediaViewState;
 }) {
   const elementRef = useRef<HTMLMediaElement | null>(null);
@@ -182,12 +178,7 @@ export function MediaPlaybackViewer({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <MediaToolbar
-        externalOpen={externalOpen}
-        source={source}
-        title={title}
-        toolbarActions={toolbarActions}
-      />
+      {renderTopBar()}
       {source.family === "audio" ? (
         <div className="relative flex min-h-0 flex-1 items-center bg-muted/30 px-4 py-6">
           <audio

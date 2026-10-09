@@ -2,7 +2,6 @@ import { useCallback, useEffect, type ReactNode } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -13,16 +12,14 @@ import "./pdf-viewer.css";
 
 export function PdfViewer({
   externalOpenError,
-  externalOpen,
   onRenderError,
   onViewStateChange,
   pdf,
   title,
-  toolbarActions,
+  renderTopBar,
   viewState,
 }: {
   externalOpenError: string | null;
-  externalOpen: ExternalOpenBinding;
   onRenderError(error: unknown): void;
   onViewStateChange(
     update:
@@ -31,7 +28,7 @@ export function PdfViewer({
   ): void;
   pdf: PDFDocumentProxy;
   title: string;
-  toolbarActions?: ReactNode;
+  renderTopBar(viewTools: ReactNode): ReactNode;
   viewState: DocumentViewState;
 }) {
   useEffect(() => {
@@ -73,18 +70,17 @@ export function PdfViewer({
       data-document-viewer="pdf"
       aria-label={`${title}: ${m.document_read_only_preview()}`}
     >
-      <PdfToolbar
-        activeFindIndex={activeFindIndex}
-        findMatches={findMatches}
-        onFindNavigate={navigateFind}
-        externalOpen={externalOpen}
-        onPageChange={setPage}
-        onViewStateChange={onViewStateChange}
-        pageCount={pdf.numPages}
-        title={title}
-        toolbarActions={toolbarActions}
-        viewState={viewState}
-      />
+      {renderTopBar(
+        <PdfToolbar
+          activeFindIndex={activeFindIndex}
+          findMatches={findMatches}
+          onFindNavigate={navigateFind}
+          onPageChange={setPage}
+          onViewStateChange={onViewStateChange}
+          pageCount={pdf.numPages}
+          viewState={viewState}
+        />,
+      )}
       {externalOpenError ? (
         <Alert
           variant="destructive"

@@ -3,7 +3,6 @@ import type { XlsxWorkbook } from "@silurus/ooxml/xlsx";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -25,17 +24,15 @@ const XLSX_THEME_STYLE = {
 
 export function XlsxViewer({
   externalOpenError,
-  externalOpen,
   onRegisterRendererDisposer,
   onRenderError,
   onViewStateChange,
   title,
-  toolbarActions,
+  renderTopBar,
   viewState,
   workbook,
 }: {
   externalOpenError: string | null;
-  externalOpen: ExternalOpenBinding;
   onRegisterRendererDisposer(disposer: () => void): () => void;
   onRenderError(error: unknown): void;
   onViewStateChange(
@@ -44,7 +41,7 @@ export function XlsxViewer({
       | ((current: DocumentViewState) => DocumentViewState),
   ): void;
   title: string;
-  toolbarActions?: ReactNode;
+  renderTopBar(viewTools: ReactNode): ReactNode;
   viewState: DocumentViewState;
   workbook: XlsxWorkbook;
 }) {
@@ -72,17 +69,16 @@ export function XlsxViewer({
       data-document-viewer="xlsx"
       aria-label={`${title}: ${m.document_read_only_preview()}`}
     >
-      <XlsxToolbar
-        findMatches={findMatches}
-        fitWidth={fitWidth}
-        navigateFind={navigateFind}
-        externalOpen={externalOpen}
-        onViewStateChange={onViewStateChange}
-        setZoom={setZoom}
-        title={title}
-        toolbarActions={toolbarActions}
-        viewState={viewState}
-      />
+      {renderTopBar(
+        <XlsxToolbar
+          findMatches={findMatches}
+          fitWidth={fitWidth}
+          navigateFind={navigateFind}
+          onViewStateChange={onViewStateChange}
+          setZoom={setZoom}
+          viewState={viewState}
+        />,
+      )}
       {externalOpenError ? (
         <Alert
           variant="destructive"

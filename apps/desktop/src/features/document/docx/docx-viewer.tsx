@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import type { DocxDocument } from "@silurus/ooxml/docx";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -12,17 +11,14 @@ import { useDocxScrollViewer } from "./use-docx-scroll-viewer";
 export function DocxViewer({
   docx,
   externalOpenError,
-  externalOpen,
   onRegisterRendererDisposer,
   onRenderError,
   onViewStateChange,
-  title,
-  toolbarActions,
+  renderTopBar,
   viewState,
 }: {
   docx: DocxDocument;
   externalOpenError: string | null;
-  externalOpen: ExternalOpenBinding;
   onRegisterRendererDisposer(disposer: () => void): () => void;
   onRenderError(error: unknown): void;
   onViewStateChange(
@@ -30,8 +26,7 @@ export function DocxViewer({
       | DocumentViewState
       | ((current: DocumentViewState) => DocumentViewState),
   ): void;
-  title: string;
-  toolbarActions?: ReactNode;
+  renderTopBar(viewTools: ReactNode): ReactNode;
   viewState: DocumentViewState;
 }) {
   const {
@@ -55,19 +50,18 @@ export function DocxViewer({
       className="flex h-full min-h-0 flex-col overflow-hidden"
       data-document-viewer="docx"
     >
-      <DocxToolbar
-        findMatches={findMatches}
-        fit={fit}
-        goToPage={goToPage}
-        navigateFind={navigateFind}
-        externalOpen={externalOpen}
-        onViewStateChange={onViewStateChange}
-        pageCount={pageCount}
-        setZoom={setZoom}
-        title={title}
-        toolbarActions={toolbarActions}
-        viewState={viewState}
-      />
+      {renderTopBar(
+        <DocxToolbar
+          findMatches={findMatches}
+          fit={fit}
+          goToPage={goToPage}
+          navigateFind={navigateFind}
+          onViewStateChange={onViewStateChange}
+          pageCount={pageCount}
+          setZoom={setZoom}
+          viewState={viewState}
+        />,
+      )}
       {externalOpenError ? (
         <Alert
           variant="destructive"

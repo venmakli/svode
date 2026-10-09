@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import type { PptxPresentation } from "@silurus/ooxml/pptx";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState } from "../model/types";
@@ -12,17 +11,14 @@ import { usePptxSlideViewer } from "./use-pptx-slide-viewer";
 
 export function PptxViewer({
   externalOpenError,
-  externalOpen,
   onRegisterRendererDisposer,
   onRenderError,
   onViewStateChange,
   presentation,
-  title,
-  toolbarActions,
+  renderTopBar,
   viewState,
 }: {
   externalOpenError: string | null;
-  externalOpen: ExternalOpenBinding;
   onRegisterRendererDisposer(disposer: () => void): () => void;
   onRenderError(error: unknown): void;
   onViewStateChange(
@@ -31,8 +27,7 @@ export function PptxViewer({
       | ((current: DocumentViewState) => DocumentViewState),
   ): void;
   presentation: PptxPresentation;
-  title: string;
-  toolbarActions?: ReactNode;
+  renderTopBar(viewTools: ReactNode): ReactNode;
   viewState: DocumentViewState;
 }) {
   const {
@@ -59,19 +54,18 @@ export function PptxViewer({
       className="flex h-full min-h-0 flex-col overflow-hidden"
       data-document-viewer="pptx"
     >
-      <PptxToolbar
-        findMatches={findMatches}
-        fit={fit}
-        goToSlide={goToSlide}
-        navigateFind={navigateFind}
-        externalOpen={externalOpen}
-        onViewStateChange={onViewStateChange}
-        setZoom={setZoom}
-        slideCount={presentation.slideCount}
-        title={title}
-        toolbarActions={toolbarActions}
-        viewState={viewState}
-      />
+      {renderTopBar(
+        <PptxToolbar
+          findMatches={findMatches}
+          fit={fit}
+          goToSlide={goToSlide}
+          navigateFind={navigateFind}
+          onViewStateChange={onViewStateChange}
+          setZoom={setZoom}
+          slideCount={presentation.slideCount}
+          viewState={viewState}
+        />,
+      )}
       {externalOpenError ? (
         <Alert
           variant="destructive"

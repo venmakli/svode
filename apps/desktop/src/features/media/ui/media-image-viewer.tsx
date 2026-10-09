@@ -19,12 +19,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { ExternalOpenBinding } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
 import type { MediaSourceDescriptor, MediaViewState } from "../model/types";
-import { MediaToolbar } from "./media-toolbar";
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 4;
@@ -41,7 +39,6 @@ const transparencyBackground: CSSProperties = {
 export function MediaImageViewer({
   externalOpenError,
   loading,
-  externalOpen,
   onReady,
   onRegisterExternalSuspender,
   onRegisterRendererDisposer,
@@ -49,12 +46,11 @@ export function MediaImageViewer({
   onViewStateChange,
   source,
   title,
-  toolbarActions,
+  renderTopBar,
   viewState,
 }: {
   externalOpenError: boolean;
   loading: boolean;
-  externalOpen: ExternalOpenBinding;
   onReady(dimensions: { width: number; height: number }): void;
   onRegisterExternalSuspender(suspender: () => void): () => void;
   onRegisterRendererDisposer(disposer: () => void): () => void;
@@ -64,7 +60,7 @@ export function MediaImageViewer({
   ): void;
   source: MediaSourceDescriptor;
   title: string;
-  toolbarActions?: ReactNode;
+  renderTopBar(viewTools?: ReactNode): ReactNode;
   viewState: MediaViewState;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -306,22 +302,21 @@ export function MediaImageViewer({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <MediaImageToolbar
-        canUseActualSize={canUseActualSize}
-        gifPlaying={gifPlaying}
-        onFit={setFit}
-        onGifPause={freezeGif}
-        onGifPlay={playGif}
-        onGifReplay={replayGif}
-        externalOpen={externalOpen}
-        onZoomIn={() => setZoom(scale * 1.25)}
-        onZoomOut={() => setZoom(scale / 1.25)}
-        onZoomOne={() => setZoom(1)}
-        scale={scale}
-        source={source}
-        title={title}
-        toolbarActions={toolbarActions}
-      />
+      {renderTopBar(
+        <MediaImageToolbar
+          canUseActualSize={canUseActualSize}
+          gifPlaying={gifPlaying}
+          onFit={setFit}
+          onGifPause={freezeGif}
+          onGifPlay={playGif}
+          onGifReplay={replayGif}
+          onZoomIn={() => setZoom(scale * 1.25)}
+          onZoomOut={() => setZoom(scale / 1.25)}
+          onZoomOne={() => setZoom(1)}
+          scale={scale}
+          source={source}
+        />,
+      )}
       <div
         ref={viewportRef}
         className={cn(
@@ -409,14 +404,11 @@ function MediaImageToolbar({
   onGifPause,
   onGifPlay,
   onGifReplay,
-  externalOpen,
   onZoomIn,
   onZoomOne,
   onZoomOut,
   scale,
   source,
-  title,
-  toolbarActions,
 }: {
   canUseActualSize: boolean;
   gifPlaying: boolean;
@@ -424,22 +416,14 @@ function MediaImageToolbar({
   onGifPause(): void;
   onGifPlay(): void;
   onGifReplay(): void;
-  externalOpen: ExternalOpenBinding;
   onZoomIn(): void;
   onZoomOne(): void;
   onZoomOut(): void;
   scale: number;
   source: MediaSourceDescriptor;
-  title: string;
-  toolbarActions?: ReactNode;
 }) {
   return (
-    <MediaToolbar
-      externalOpen={externalOpen}
-      source={source}
-      title={title}
-      toolbarActions={toolbarActions}
-    >
+    <>
       {source.animated ? (
         <ButtonGroup aria-label={m.media_animation_controls()}>
           <ToolbarButton
@@ -478,7 +462,7 @@ function MediaImageToolbar({
           <span className="text-[11px] font-semibold">1:1</span>
         </ToolbarButton>
       </ButtonGroup>
-    </MediaToolbar>
+    </>
   );
 }
 

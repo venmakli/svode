@@ -13,17 +13,6 @@ import {
   videoDimensionsWithinLimits,
 } from "./media-playback-viewer";
 import { formatMediaDuration } from "../lib/format";
-import type { ExternalOpenBinding } from "@/features/external-open";
-
-const externalOpen: ExternalOpenBinding = {
-  target: {
-    preferenceKey: "file:fixture",
-    listApps: () => Promise.resolve([]),
-    open: () => Promise.resolve(),
-    reveal: () => Promise.resolve(),
-  },
-  onError: () => undefined,
-};
 
 const audioSource: MediaSourceDescriptor = {
   animated: false,
@@ -44,7 +33,9 @@ const audioSource: MediaSourceDescriptor = {
 test("audio and video use one native control set without autoplay", () => {
   const audio = renderPlayback(audioSource);
   expect(audio.includes("<audio")).toBe(true);
-  expect(audio.includes("data-external-open-primary")).toBe(true);
+  // Playback has no view tools; external open is the surface's.
+  expect(audio.includes('<div data-top-bar="true"></div>')).toBe(true);
+  expect(audio.includes("data-external-open-primary")).toBe(false);
   expect(audio.includes("<video")).toBe(false);
   expect(audio.includes('controls=""')).toBe(true);
   expect(audio.includes('preload="metadata"')).toBe(true);
@@ -86,7 +77,7 @@ function renderPlayback(source: MediaSourceDescriptor) {
       <MediaPlaybackViewer
         externalOpenError={false}
         loading={false}
-        externalOpen={externalOpen}
+        renderTopBar={(tools) => <div data-top-bar>{tools}</div>}
         onPlaybackError={() => undefined}
         onReady={() => undefined}
         onRegisterExternalSuspender={() => () => undefined}

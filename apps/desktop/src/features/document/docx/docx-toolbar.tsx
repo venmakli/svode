@@ -22,32 +22,25 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  ExternalOpenButton,
-  type ExternalOpenBinding,
-} from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
 
 import type { DocumentViewState, DocumentZoomMode } from "../model/types";
 
+/** View tools of a DOCX document; the surface places them in its top bar. */
 export function DocxToolbar({
   findMatches,
   fit,
   goToPage,
   navigateFind,
-  externalOpen,
   onViewStateChange,
   pageCount,
   setZoom,
-  title,
-  toolbarActions,
   viewState,
 }: {
   findMatches: number;
   fit(mode: Extract<DocumentZoomMode, "page" | "width">): void;
   goToPage(page: number): void;
   navigateFind(direction: 1 | -1): void;
-  externalOpen: ExternalOpenBinding;
   onViewStateChange(
     update:
       | DocumentViewState
@@ -55,21 +48,13 @@ export function DocxToolbar({
   ): void;
   pageCount: number;
   setZoom(zoom: number): void;
-  title: string;
-  toolbarActions?: ReactNode;
   viewState: DocumentViewState;
 }) {
   const nextFitMode: Extract<DocumentZoomMode, "page" | "width"> =
     viewState.zoomMode === "width" ? "page" : "width";
 
   return (
-    <div className="flex shrink-0 items-center gap-1 overflow-hidden border-b bg-background px-2 py-2">
-      <div
-        className="min-w-0 flex-1 truncate px-1 text-sm font-medium"
-        title={title}
-      >
-        {title}
-      </div>
+    <>
       <ButtonGroup className="shrink-0">
         <TooltipButton
           grouped
@@ -131,9 +116,7 @@ export function DocxToolbar({
         onViewStateChange={onViewStateChange}
         viewState={viewState}
       />
-      <ExternalOpenButton {...externalOpen} />
-      {toolbarActions}
-    </div>
+    </>
   );
 }
 
