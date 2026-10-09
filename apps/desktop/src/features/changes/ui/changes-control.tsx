@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { refreshGitStatus, useGitStore } from "@/features/git";
+import { PeekCloseButton } from "@/shared/ui/peek-top-bar";
 import * as m from "@/paraglide/messages.js";
 import {
   inspectionPaths,
@@ -90,7 +91,12 @@ function ScopeChangesControl({
         </TooltipTrigger>
         <TooltipContent>{label}</TooltipContent>
       </Tooltip>
-      <ChangesSheetContent target={target} origin={origin} open={open} />
+      <ChangesSheetContent
+        target={target}
+        origin={origin}
+        open={open}
+        onClose={() => setOpen(false)}
+      />
     </Sheet>
   );
 }
@@ -113,7 +119,12 @@ export function ChangesWindow({
   }, [open, target.spacePath]);
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <ChangesSheetContent target={target} origin="main" open={open} />
+      <ChangesSheetContent
+        target={target}
+        origin="main"
+        open={open}
+        onClose={() => onOpenChange(false)}
+      />
     </Sheet>
   );
 }
@@ -122,10 +133,12 @@ function ChangesSheetContent({
   target,
   origin,
   open,
+  onClose,
 }: {
   target: ChangesTarget;
   origin: "main" | "peek";
   open: boolean;
+  onClose: () => void;
 }) {
   const status = useGitStore((state) => state.statuses[target.spacePath]);
   const { kind, sourceShape, spacePath, path } = target;
@@ -144,6 +157,7 @@ function ChangesSheetContent({
   return (
     <SheetContent
       side="right"
+      showCloseButton={false}
       className="data-[side=right]:gap-0 data-[side=right]:overflow-hidden data-[side=right]:rounded-xl data-[side=right]:border"
       style={{
         bottom: "0.75rem",
@@ -178,6 +192,9 @@ function ChangesSheetContent({
         statusError={statusError}
         fileScope={scope.kind === "file"}
       />
+      <div className="absolute top-3 right-3">
+        <PeekCloseButton onClick={onClose} />
+      </div>
     </SheetContent>
   );
 }

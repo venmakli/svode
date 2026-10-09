@@ -12,10 +12,12 @@ export interface ScopePeekContext {
   fallbackIcon?: string | null;
   metadataBefore?: ReactNode;
   renderHeaderActions?: (page: Page, readOnly: boolean) => ReactNode;
-  renderActions: (
-    openFullPage: () => Promise<boolean>,
-    owner: ScopeOwnerRef | null,
-  ) => ReactNode;
+  /** Expand: leaves the Peek through its guard, then `openFullPage`. */
+  onExpand: (openFullPage: () => Promise<boolean>) => void;
+  /** ×: closes the Peek through its leave guard. */
+  onClose: () => void;
+  /** The Changes control of the resolved owner in the Peek top bar. */
+  renderChanges?: (owner: ScopeOwnerRef) => ReactNode;
   registerNavigationGuard: (guard: () => Promise<boolean>) => () => void;
   onContentPathChange?: (path: string) => void;
   /** Closes the Peek at once, without its leave guard: the target is gone. */

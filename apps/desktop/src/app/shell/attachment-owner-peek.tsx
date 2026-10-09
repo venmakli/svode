@@ -4,7 +4,8 @@ import { CompactScopePeek } from "./compact-scope-peek";
 export function AttachmentOwnerPeek({
   target,
   spaceId,
-  renderActions,
+  onExpand,
+  onClose,
   registerCloseGuard,
   onContentPathChange,
   dismiss,
@@ -19,7 +20,8 @@ export function AttachmentOwnerPeek({
       sessionKey={target.ownerSession?.key ?? row.key}
       fallbackTitle={row.displayName}
       fallbackIcon={row.icon}
-      renderActions={renderActions}
+      onExpand={onExpand}
+      onClose={onClose}
       registerNavigationGuard={registerCloseGuard}
       onContentPathChange={onContentPathChange}
       dismiss={dismiss}

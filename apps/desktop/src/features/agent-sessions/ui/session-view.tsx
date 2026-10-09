@@ -95,7 +95,7 @@ interface AgentSessionContentProps {
   /** Focus the terminal once it is shown, as after starting a new session. */
   focusTerminal?: boolean;
   /**
-   * Peek chrome: an action row above the identity header that receives the
+   * Peek chrome: the top bar above the identity header that receives the
    * session menu. Without it the menu sits in the identity header.
    */
   renderActions?: (menu: ReactNode, view: AgentSessionView) => ReactNode;
@@ -239,11 +239,7 @@ export function AgentSessionContent({
   return (
     <ExternalTerminalAppProvider>
       <div className="flex h-full min-h-0 flex-col">
-        {renderActions && (
-          <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
-            {renderActions(menu, view)}
-          </div>
-        )}
+        {renderActions?.(menu, view)}
         <header className="flex shrink-0 items-start gap-3 px-6 pb-3">
           <SessionIdentity
             session={session}

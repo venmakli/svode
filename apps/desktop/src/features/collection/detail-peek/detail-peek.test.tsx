@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { Sheet } from "@/components/ui/sheet";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 import type { CollectionDetailActiveState } from "./detail-controller";
 import { CollectionDetailPeekFrame } from "./detail-peek";
@@ -27,14 +28,16 @@ function renderFrame(
   props: { diagnostic?: string | null; pending?: boolean } = {},
 ) {
   return renderToStaticMarkup(
-    <Sheet open>
-      <CollectionDetailPeekFrame
-        active={state}
-        diagnostic={props.diagnostic ?? null}
-        pending={props.pending ?? false}
-        onClose={() => undefined}
-      />
-    </Sheet>,
+    <TooltipProvider>
+      <Sheet open>
+        <CollectionDetailPeekFrame
+          active={state}
+          diagnostic={props.diagnostic ?? null}
+          pending={props.pending ?? false}
+          onClose={() => undefined}
+        />
+      </Sheet>
+    </TooltipProvider>,
   );
 }
 
@@ -54,6 +57,11 @@ test("detail frame keeps accessible semantics, diagnostic, actions, and its own 
     markup.includes("[&amp;_[data-slot=scroll-area-viewport]&gt;div]:!block"),
   ).toBe(true);
   expect(markup.includes('role="alert"')).toBe(true);
+  // Row actions keep their place before ×, which is named "Close".
+  expect(
+    markup.indexOf("Actor actions") < markup.indexOf('aria-label="Close"'),
+  ).toBe(true);
+  expect(markup.includes("Close details")).toBe(false);
 });
 
 test("forms keep the former detail width and readers a reading width", () => {

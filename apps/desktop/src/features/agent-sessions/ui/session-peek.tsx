@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { PortalContext } from "@ariakit/react";
-import { Maximize2, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { PeekCloseButton, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type {
   AgentSession,
@@ -119,16 +118,7 @@ export function AgentSessionPeek({
                 }
                 onOpenAgentSettings={() => onOpenAgentSettings?.()}
                 actions={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => onOpenChange(false)}
-                  >
-                    <X />
-                    <span className="sr-only">
-                      {m.sessions_action_close_peek()}
-                    </span>
-                  </Button>
+                  <PeekCloseButton onClick={() => onOpenChange(false)} />
                 }
               />
             </div>
@@ -141,28 +131,12 @@ export function AgentSessionPeek({
               onOpenRoutine={onOpenRoutine}
               onOpenAgentSettings={onOpenAgentSettings}
               renderActions={(menu, view) => (
-                <>
-                  {menu}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={expanding}
-                    onClick={() => void expand(view.session)}
-                  >
-                    <Maximize2 data-icon="inline-start" />
-                    {m.attachments_full_page()}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => onOpenChange(false)}
-                  >
-                    <X />
-                    <span className="sr-only">
-                      {m.sessions_action_close_peek()}
-                    </span>
-                  </Button>
-                </>
+                <PeekTopBar
+                  menu={menu}
+                  onExpand={() => void expand(view.session)}
+                  expandDisabled={expanding}
+                  onClose={() => onOpenChange(false)}
+                />
               )}
             />
           )}

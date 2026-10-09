@@ -382,7 +382,8 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
             spacePath={SPACE}
             projectPath={SPACE}
             sessionKey="peek-1"
-            renderActions={() => null}
+            onExpand={() => {}}
+            onClose={() => {}}
             registerNavigationGuard={() => () => {}}
             onContentPathChange={(path) => published.push(path)}
             dismiss={() => {}}

@@ -1,8 +1,7 @@
 import { useSyncExternalStore } from "react";
-import { AlertCircle, LoaderCircle, X } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
@@ -13,6 +12,7 @@ import {
 } from "@/components/ui/sheet";
 import { registerSupplementalContentDeactivation } from "@/features/artifact";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
@@ -109,19 +109,13 @@ export function CollectionDetailPeekFrame({
 
   return (
     <>
-      <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
-        {request.headerActions}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={m.collection_detail_close()}
-          disabled={pending}
-          onClick={onClose}
-        >
-          {pending ? <LoaderCircle className="animate-spin" /> : <X />}
-        </Button>
-      </div>
+      <PeekTopBar
+        // The row actions of a fixed Collection keep their place before ×
+        // until its detail gets the shared identity and menu.
+        openWith={request.headerActions}
+        onClose={onClose}
+        closePending={pending}
+      />
       <SheetHeader className="shrink-0 px-6 pt-0 pb-3">
         <div className={cn("flex flex-col gap-0.5", column)}>
           <SheetTitle className="text-lg font-semibold">

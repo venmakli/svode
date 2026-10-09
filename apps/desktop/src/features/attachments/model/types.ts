@@ -137,7 +137,10 @@ function normalizeRuntimePath(value: string): string {
 export interface AttachmentOwnerPeekContext {
   target: AttachmentActivationRequest;
   spaceId: string;
-  renderActions(onOpenFullPage: () => Promise<boolean>): ReactNode;
+  /** Expand: leaves the Peek through its close guard, then `openFullPage`. */
+  onExpand(openFullPage: () => Promise<boolean>): void;
+  /** ×: closes the Peek through its close guard. */
+  onClose(): void;
   onContentPathChange?: (path: string) => void;
   registerCloseGuard(guard: () => Promise<boolean>): () => void;
   /** Closes the Peek at once, without its close guard: the owner is gone. */

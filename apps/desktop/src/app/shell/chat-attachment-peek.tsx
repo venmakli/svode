@@ -5,8 +5,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Maximize2, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
@@ -27,8 +25,8 @@ import {
   VIDEO_EXTS,
 } from "@/platform/upload/media-types";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { PeekCloseButton, PeekExpandButton } from "@/shared/ui/peek-top-bar";
 import { CompactScopePeek } from "./compact-scope-peek";
-import * as m from "@/paraglide/messages.js";
 
 const DocumentSurface = lazy(async () => ({
   default: (await import("@/features/document/app-shell")).DocumentSurface,
@@ -163,19 +161,12 @@ function ChatAttachmentPeek({
             fallbackTitle={target.attachment.name}
             registerNavigationGuard={navigation.registerNavigationGuard}
             dismiss={close}
-            renderActions={(openFull, owner) => (
-              <PeekActions
-                onExpand={
-                  owner
-                    ? () =>
-                        void leave(async () => {
-                          if (await openFull()) close();
-                        })
-                    : null
-                }
-                onClose={() => void leave(() => close())}
-              />
-            )}
+            onExpand={(openFull) =>
+              void leave(async () => {
+                if (await openFull()) close();
+              })
+            }
+            onClose={() => void leave(() => close())}
           />
         ) : target ? (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>
@@ -198,10 +189,10 @@ function ChatAttachmentPeek({
                     });
                   }}
                   renderToolbarActions={(actions) => (
-                    <PeekActions
-                      onExpand={actions.onOpenFullPage}
-                      onClose={actions.onClose}
-                    />
+                    <>
+                      <PeekExpandButton onClick={actions.onOpenFullPage} />
+                      <PeekCloseButton onClick={actions.onClose} />
+                    </>
                   )}
                 />
               );
@@ -210,41 +201,5 @@ function ChatAttachmentPeek({
         ) : null}
       </SheetContent>
     </Sheet>
-  );
-}
-
-/** "Full page" and close, as in the Attachments Peek. */
-function PeekActions({
-  onExpand,
-  onClose,
-}: {
-  onExpand: (() => void) | null;
-  onClose: () => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      {onExpand && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-          onClick={onExpand}
-        >
-          <Maximize2 data-icon="inline-start" />
-          {m.attachments_full_page()}
-        </Button>
-      )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        className="text-muted-foreground hover:text-foreground"
-        onClick={onClose}
-      >
-        <X />
-        <span className="sr-only">{m.settings_cancel()}</span>
-      </Button>
-    </div>
   );
 }

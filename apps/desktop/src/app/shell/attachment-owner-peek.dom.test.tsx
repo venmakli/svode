@@ -12,7 +12,7 @@ import type {
 import type { ScopeSurfacePage } from "./scope-surface-page";
 
 if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
-  test("Collection/App attachments stay in guarded Peek until Full page", () => {
+  test("Collection/App attachments stay in guarded Peek until Expand", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
@@ -212,14 +212,17 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
         if (kind === "directory") {
           expect(dialog.textContent?.includes("No available items")).toBe(true);
           expect(dialog.querySelector("[data-owner]")).toBeNull();
+          // A folder shows its identity on the left and only ×.
+          const bar = dialog.querySelector("[data-peek-top-bar]")!;
           expect(
-            [...dialog.querySelectorAll("button")].some((button) =>
-              button.textContent?.includes("Expand"),
+            bar.querySelector("[data-peek-identity] [title]")?.textContent,
+          ).toBe("Child");
+          expect(
+            [...bar.querySelectorAll("button")].map((button) =>
+              button.getAttribute("aria-label"),
             ),
-          ).toBe(false);
-          const close = [...dialog.querySelectorAll("button")].find((button) =>
-            button.textContent?.includes("Cancel"),
-          )!;
+          ).toEqual(["Close"]);
+          const close = bar.querySelector<HTMLElement>('[aria-label="Close"]')!;
           await act(async () => close.click());
           expect(getActiveContentSelection().selection).toEqual(before);
           expect(
@@ -251,7 +254,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
             ...dom.window.document.querySelectorAll<HTMLElement>(
               '[role="dialog"] button',
             ),
-          ].find((button) => button.textContent?.includes("Cancel"))!;
+          ].find((button) => button.getAttribute("aria-label") === "Close")!;
           await act(async () => nestedClose.click());
           await act(async () => {
             await new Promise((resolve) => setTimeout(resolve, 20));
@@ -305,10 +308,12 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
         expect(beforeHeader?.getAttribute("data-surface")).toBe(
           kind === "app" ? "app" : "collection",
         );
-        const fullPage = [...dialog.querySelectorAll("button")].find(
-          (button) =>
-            button.textContent?.includes("Expand") ||
-            button.textContent?.includes("Развернуть"),
+        const bar = dialog.querySelector("[data-peek-top-bar]")!;
+        expect(
+          bar.querySelector("[data-peek-identity] [title]")?.textContent,
+        ).toBe("Saved metadata");
+        const fullPage = bar.querySelector<HTMLElement>(
+          '[aria-label="Expand"]',
         )!;
         expect(Boolean(fullPage)).toBe(true);
         await act(async () => fullPage.click());

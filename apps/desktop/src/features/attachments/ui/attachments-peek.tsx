@@ -1,8 +1,7 @@
 import { usePeekNavigation } from "@/features/scope-surfaces";
 import { type ReactNode, lazy, Suspense, useEffect, useRef } from "react";
-import { Maximize2, Paperclip, X } from "lucide-react";
+import { Paperclip } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import {
   Empty,
   EmptyDescription,
@@ -12,12 +11,19 @@ import {
 } from "@/components/ui/empty";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import {
+  PeekCloseButton,
+  PeekExpandButton,
+  PeekIdentity,
+  PeekTopBar,
+} from "@/shared/ui/peek-top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
 import * as m from "@/paraglide/messages.js";
 import { cn } from "@/shared/lib/utils";
 
 import { attachmentKindLabel } from "../model/presentation";
+import { AttachmentIcon } from "./attachment-icon";
 import type {
   AttachmentActivationRequest,
   AttachmentOwnerRef,
@@ -109,10 +115,16 @@ export function AttachmentsPeek({
         <SheetTitle className="sr-only">
           {target?.row.displayName ?? m.scope_surface_attachments()}
         </SheetTitle>
-        {!isBinaryViewer && !isOwner ? (
-          <div className="flex shrink-0 items-center justify-end gap-1 px-2 pb-2">
-            <PeekActions onClose={() => void close()} />
-          </div>
+        {target && !isBinaryViewer && !isOwner ? (
+          <PeekTopBar
+            identity={
+              <PeekIdentity
+                icon={<AttachmentIcon row={target.row} />}
+                name={target.row.displayName}
+              />
+            }
+            onClose={() => void close()}
+          />
         ) : null}
         <div
           className={cn(
@@ -134,16 +146,12 @@ export function AttachmentsPeek({
               registerCloseGuard={registerCloseGuard}
               onContentPathChange={onContentPathChange}
               dismiss={dismiss}
-              renderActions={(onOpenFullPage) => (
-                <PeekActions
-                  onClose={() => void close()}
-                  onExpand={() =>
-                    void navigation.leave(async () => {
-                      if (await onOpenFullPage()) dismiss();
-                    })
-                  }
-                />
-              )}
+              onExpand={(openFullPage) =>
+                void navigation.leave(async () => {
+                  if (await openFullPage()) dismiss();
+                })
+              }
+              onClose={() => void close()}
             />
           ) : target?.row.kind === "document" ? (
             <Suspense fallback={<DocumentPeekLoadingState />}>
@@ -162,10 +170,10 @@ export function AttachmentsPeek({
                   });
                 }}
                 renderToolbarActions={(actions) => (
-                  <PeekActions
-                    onClose={actions.onClose}
-                    onExpand={actions.onOpenFullPage}
-                  />
+                  <>
+                    <PeekExpandButton onClick={actions.onOpenFullPage} />
+                    <PeekCloseButton onClick={actions.onClose} />
+                  </>
                 )}
               />
             </Suspense>
@@ -186,10 +194,10 @@ export function AttachmentsPeek({
                   });
                 }}
                 renderToolbarActions={(actions) => (
-                  <PeekActions
-                    onClose={actions.onClose}
-                    onExpand={actions.onOpenFullPage}
-                  />
+                  <>
+                    <PeekExpandButton onClick={actions.onOpenFullPage} />
+                    <PeekCloseButton onClick={actions.onClose} />
+                  </>
                 )}
               />
             </Suspense>
@@ -199,41 +207,6 @@ export function AttachmentsPeek({
         </div>
       </SheetContent>
     </Sheet>
-  );
-}
-
-function PeekActions({
-  onClose,
-  onExpand,
-}: {
-  onClose(): void;
-  onExpand?: () => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      {onExpand ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 rounded-lg px-2 text-xs text-muted-foreground hover:text-foreground"
-          onClick={onExpand}
-        >
-          <Maximize2 data-icon="inline-start" />
-          {m.attachments_full_page()}
-        </Button>
-      ) : null}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        className="text-muted-foreground hover:text-foreground"
-        onClick={onClose}
-      >
-        <X />
-        <span className="sr-only">{m.settings_cancel()}</span>
-      </Button>
-    </div>
   );
 }
 

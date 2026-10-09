@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import type { Page } from "@/features/page";
+import type { SpaceInfo } from "@/features/space";
 
 if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   test("Compact Page integration through both real Sheet adapters", () => {
@@ -189,7 +190,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   const { ScopeSurfaceErrorBoundary } =
     await import("@/features/scope-surfaces");
   const m = await import("@/paraglide/messages.js");
-  test("Page+App+Attachments keeps one writer and selected Full page through Collection/relation/template and Attachments", async () => {
+  test("Page+App+Attachments keeps one writer and selected Expand through Collection/relation/template and Attachments", async () => {
     for (const family of ["collection", "attachments"] as const) {
       const dom = new JSDOM("<!doctype html><div id=app></div>", {
         pretendToBeVisual: true,
@@ -305,7 +306,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                           kind: "page",
                           hasApp: true,
                           icon: null,
-                          displayName: "Notes",
+                          displayName: "Notes row",
                           modified: "",
                           sizeBytes: null,
                           format: "",
@@ -345,6 +346,25 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
           "App",
           "Attachments",
         ]);
+        // P1 and P3: the Page title on the left, then Changes (P1), Expand, ×.
+        const bar = topBar(dom);
+        expect(identityName(dom)).toBe("Notes");
+        const order = [
+          bar.querySelector("[data-peek-identity]"),
+          family === "collection"
+            ? bar.querySelector("[data-changes-trigger]")
+            : null,
+          bar.querySelector(`[aria-label="${m.peek_expand()}"]`),
+          bar.querySelector(`[aria-label="${m.peek_close()}"]`),
+        ].filter((element) => element !== null);
+        expect(order.length).toBe(family === "collection" ? 4 : 3);
+        for (let index = 1; index < order.length; index += 1)
+          expect(precedes(order[index - 1]!, order[index]!)).toBe(true);
+        expect(
+          dom.window.document
+            .querySelector('[data-slot="sheet-content"]')
+            ?.textContent?.includes("Full page"),
+        ).toBe(false);
         const { emit } = await import("@/platform/native/events");
         const fileEvent = async (name: string, path: string) =>
           act(async () => {
@@ -388,8 +408,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         expect(mounts).toBe(1);
         await clickTab(dom, 2);
         expect(dom.window.location.search).toBe("?view=Original");
-        const full = [...dom.window.document.querySelectorAll("button")].find(
-          (button) => /Full page|Expand/.test(button.textContent ?? ""),
+        const full = dom.window.document.querySelector<HTMLButtonElement>(
+          `[data-peek-top-bar] [aria-label="${m.peek_expand()}"]`,
         )!;
         await act(async () => {
           full.click();
@@ -504,8 +524,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         "Peek header failed",
       );
       expect(String(report?.[2]).includes("PageIdentityHeader")).toBe(true);
-      const close = [...sheet!.querySelectorAll("button")].find(
-        (button) => button.textContent === m.settings_cancel(),
+      const close = sheet!.querySelector<HTMLButtonElement>(
+        `[aria-label="${m.peek_close()}"]`,
       )!;
       await act(async () => {
         close.click();
@@ -520,6 +540,125 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       await act(async () => root.unmount());
       clearNativeMocks();
       console.error = previousError;
+      restore();
+      dom.window.close();
+    }
+  });
+  test("a chat attachment Page peek shows the Page identity, Expand and × in the shared top bar", async () => {
+    const dom = new JSDOM("<!doctype html><div id=app></div>", {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    });
+    const restore = installDomGlobals(dom);
+    const page: Page = {
+      path: "Tasks/Item2.md",
+      body: "",
+      meta: {
+        title: "Item2 title",
+        icon: "🧭",
+        created: "",
+        updated: "",
+        extra: {},
+      },
+    };
+    mockNativeIpc(
+      (command, args) => {
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "/target",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            reason: null,
+            lastKnownStatus: null,
+          };
+        if (command === "read_page") return page;
+        if (command === "get_page_schema") return null;
+        if (command === "get_scope_owner_facts") {
+          const path = String(args && "path" in args ? args.path : "");
+          return {
+            identity: "pageFile",
+            ownerPath: path,
+            contentPath: path,
+            hasApp: false,
+          };
+        }
+        throw new Error(`Unexpected IPC: ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { registerRootSpace } = await import("@/features/space");
+    const { ChatAttachmentOpenerContext } =
+      await import("@/features/agent-sessions");
+    const { ChatAttachmentPeekProvider } =
+      await import("./chat-attachment-peek");
+    const { useContext } = await import("react");
+    registerRootSpace({
+      id: "target",
+      name: "Target",
+      path: "/target",
+    } as SpaceInfo);
+    function Opener() {
+      const open = useContext(ChatAttachmentOpenerContext);
+      return (
+        <button
+          data-open-attachment
+          onClick={() =>
+            open?.({ path: "/target/Tasks/Item2.md", name: "Item2.md" })
+          }
+        />
+      );
+    }
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChatAttachmentPeekProvider>
+              <Opener />
+            </ChatAttachmentPeekProvider>
+          </TooltipProvider>,
+        );
+        await settle();
+      });
+      await act(async () => {
+        dom.window.document
+          .querySelector<HTMLElement>("[data-open-attachment]")!
+          .click();
+        await settle();
+      });
+      const bar = topBar(dom);
+      // The Page title, not the attachment's file name, and its icon.
+      expect(identityName(dom)).toBe("Item2 title");
+      expect(
+        bar.querySelector("[data-peek-identity]")?.textContent?.includes("🧭"),
+      ).toBe(true);
+      const expand = bar.querySelector(`[aria-label="${m.peek_expand()}"]`)!;
+      const close = bar.querySelector<HTMLButtonElement>(
+        `[aria-label="${m.peek_close()}"]`,
+      )!;
+      expect(expand.textContent).toBe("");
+      expect(precedes(bar.querySelector("[data-peek-identity]")!, expand)).toBe(
+        true,
+      );
+      expect(precedes(expand, close)).toBe(true);
+      // The Page header of this peek has no Pin button any more.
+      expect(
+        dom.window.document.querySelector(
+          '[data-slot="sheet-content"] header button',
+        ),
+      ).toBeNull();
+      await act(async () => {
+        close.click();
+        await settle();
+      });
+      expect(
+        dom.window.document.querySelector('[data-slot="sheet-content"]'),
+      ).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      clearNativeMocks();
       restore();
       dom.window.close();
     }
@@ -618,6 +757,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
           header.textContent?.includes("Renamed by a Routine"),
         ),
       ).toBe(true);
+      expect(identityName(dom)).toBe("Renamed by a Routine");
       expect(dom.window.document.querySelector("textarea")).toBe(editor);
       expect(editor.value).toBe("unsaved draft");
       expect(mounts).toBe(1);
@@ -858,6 +998,20 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
     }
   });
 
+  function topBar(dom: JSDOM) {
+    return dom.window.document.querySelector<HTMLElement>(
+      '[data-slot="sheet-content"] [data-peek-top-bar]',
+    )!;
+  }
+  function identityName(dom: JSDOM) {
+    return topBar(dom).querySelector("[data-peek-identity] [title]")
+      ?.textContent;
+  }
+  function precedes(left: Element, right: Element) {
+    return Boolean(
+      left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  }
   function tabs(dom: JSDOM) {
     return Array.from(
       dom.window.document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),

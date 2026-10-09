@@ -1,7 +1,6 @@
 import { ChangesControl } from "@/features/changes";
-import { Maximize2, Star, StarOff, X } from "lucide-react";
+import { Star, StarOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
@@ -96,47 +95,25 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
                   template={target.template}
                 />
               ),
-              renderActions: (openFull, owner) => (
-                <div className="flex items-center gap-1">
-                  {owner ? (
-                    <ChangesControl
-                      origin="peek"
-                      target={{
-                        kind: "page",
-                        sourceShape:
-                          owner.identityKind === "page-file"
-                            ? "file"
-                            : "directory",
-                        spacePath,
-                        projectPath,
-                        path: owner.readmePath,
-                        name: target.page.meta.title,
-                      }}
-                    />
-                  ) : null}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={!owner}
-                    onClick={() =>
-                      void leave(async () => {
-                        if (await openFull()) close();
-                      })
-                    }
-                  >
-                    <Maximize2 data-icon="inline-start" />
-                    Full page
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => void leave(() => close())}
-                  >
-                    <X />
-                    <span className="sr-only">{m.settings_cancel()}</span>
-                  </Button>
-                </div>
+              renderChanges: (owner) => (
+                <ChangesControl
+                  origin="peek"
+                  target={{
+                    kind: "page",
+                    sourceShape:
+                      owner.identityKind === "page-file" ? "file" : "directory",
+                    spacePath,
+                    projectPath,
+                    path: owner.readmePath,
+                    name: target.page.meta.title,
+                  }}
+                />
               ),
+              onExpand: (openFull) =>
+                void leave(async () => {
+                  if (await openFull()) close();
+                }),
+              onClose: () => void leave(() => close()),
             })
           : null}
       </SheetContent>

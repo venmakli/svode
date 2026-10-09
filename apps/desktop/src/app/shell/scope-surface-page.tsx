@@ -47,6 +47,11 @@ import { ScopeOwnerActions } from "./scope-owner-actions";
 import { scopeOwnerNavigationItem } from "./scope-owner-navigation";
 import { useOpenSessionRoutine } from "./open-session-routine";
 
+export interface ScopeOwnerIdentity {
+  title: string;
+  icon: string | null;
+}
+
 interface ScopeSurfacePageProps {
   owner: ScopeOwnerRef;
   presentation: ScopePresentation;
@@ -55,6 +60,8 @@ interface ScopeSurfacePageProps {
   renderHeaderActions?: (page: Page, readOnly: boolean) => ReactNode;
   metadataBefore?: ReactNode;
   onContentPathChange?: (path: string) => void;
+  /** The title and icon of the shown object, for chrome outside this page. */
+  onIdentityChange?: (identity: ScopeOwnerIdentity) => void;
   openIntent?: ScopeOpenIntent;
   openRequestKey?: number;
   previousOwnerKey?: ScopeOwnerRef["ownerKey"];
@@ -74,6 +81,7 @@ export function ScopeSurfacePage({
   renderHeaderActions,
   metadataBefore,
   onContentPathChange,
+  onIdentityChange,
   openIntent,
   openRequestKey,
   previousOwnerKey,
@@ -218,6 +226,7 @@ export function ScopeSurfacePage({
           renderHeaderActions={renderHeaderActions}
           metadataBefore={metadataBefore}
           onContentPathChange={onContentPathChange}
+          onIdentityChange={onIdentityChange}
           openIntent={openIntent}
           openRequestKey={openRequestKey}
           previousOwnerKey={previousOwnerKey}
@@ -240,6 +249,7 @@ function ScopePageSurfaceHost({
   renderHeaderActions,
   metadataBefore,
   onContentPathChange,
+  onIdentityChange,
   registerNavigationGuard,
   ...props
 }: Omit<ComponentProps<typeof ScopeSurfaceHost>, "contributions" | "header"> & {
@@ -250,6 +260,7 @@ function ScopePageSurfaceHost({
   renderHeaderActions?: (page: Page, readOnly: boolean) => ReactNode;
   metadataBefore?: ReactNode;
   onContentPathChange?: (path: string) => void;
+  onIdentityChange?: (identity: ScopeOwnerIdentity) => void;
   registerNavigationGuard?: (guard: () => Promise<boolean>) => () => void;
 }) {
   const pageSurface = usePageSurfaceSession();
@@ -273,6 +284,14 @@ function ScopePageSurfaceHost({
     handoff.hostPath = pagePath;
     onContentPathChange?.(pagePath);
   }, [pagePath, readmePath, onContentPathChange]);
+  const identityTitle = detail.page?.meta.title || detail.fallbackTitle;
+  const identityIcon =
+    (detail.metadataDrafts.get("icon")?.value as string | undefined) ??
+    detail.page?.meta.icon ??
+    detail.fallbackIcon;
+  useEffect(() => {
+    onIdentityChange?.({ title: identityTitle, icon: identityIcon });
+  }, [identityTitle, identityIcon, onIdentityChange]);
   useEffect(
     () =>
       registerNavigationGuard?.(() => pageSurface.prepareToLeave()),

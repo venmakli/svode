@@ -169,6 +169,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     }
     if (command === "path_exists") return !missingPaths.has(String(payload.path));
     if (command === "list_project_openers") return [];
+    if (command === "agent_setup_chat_agents") return { agents: [], last: null };
     if (command === "routines_resolve_launches") {
       const launchIds = payload.launchIds as string[];
       const sessionIds = payload.sessionIds as string[];
@@ -270,6 +271,66 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     await render(target);
     return { openChanges };
   }
+
+  peekTest(
+    "the session peek top bar has the menu, then icon-only Expand and Close",
+    async () => {
+      listed = [session({ id: "codex:bar", title: "Bar" })];
+      const { openChanges } = await mountPeek("/p-bar", {
+        sessionId: "codex:bar",
+        launchId: null,
+      });
+      const bar = document.querySelector("[data-peek-top-bar]")!;
+      const menu = bar.querySelector(
+        `[aria-label="${m.sessions_action_more()}"]`,
+      )!;
+      const expand = bar.querySelector(`[aria-label="${m.peek_expand()}"]`)!;
+      const close = bar.querySelector(`[aria-label="${m.peek_close()}"]`)!;
+      expect([menu, expand, close].every(Boolean)).toBe(true);
+      expect(
+        Boolean(
+          menu.compareDocumentPosition(expand) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      ).toBe(true);
+      expect(
+        Boolean(
+          expand.compareDocumentPosition(close) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      ).toBe(true);
+      expect(expand.textContent).toBe("");
+      await click(close);
+      expect(openChanges).toEqual([false]);
+    },
+  );
+
+  peekTest("the new session draft peek closes with Close", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root: Root = createRoot(container);
+    mounted.push(root);
+    const openChanges: boolean[] = [];
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <AgentSessionPeek
+            target={null}
+            draft={{ draftId: "draft-1", spacePath: "/p-draft" }}
+            onOpenChange={(open) => openChanges.push(open)}
+            onExpand={async () => true}
+            onOpenRoutine={() => undefined}
+          />
+        </TooltipProvider>,
+      );
+    });
+    await settle();
+    expect(
+      document.querySelector(`[aria-label="${m.peek_expand()}"]`),
+    ).toBeNull();
+    await click(buttonByLabel(m.peek_close()));
+    expect(openChanges).toEqual([false]);
+  });
 
   peekTest(
     "viewing a history session does not resume it; continuing does once",

@@ -127,6 +127,15 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       expect(
         dom.window.document.querySelectorAll('[role="dialog"]').length,
       ).toBe(2);
+      const { peek_close } = await import("@/paraglide/messages.js");
+      const changesSheet = dom.window.document.querySelectorAll(
+        '[role="dialog"]',
+      )[1]!;
+      // × of the Changes Sheet is the shared peek Close.
+      expect(changesSheet.querySelector('[data-slot="sheet-close"]')).toBeNull();
+      expect(
+        Boolean(changesSheet.querySelector(`[aria-label="${peek_close()}"]`)),
+      ).toBe(true);
       expect(calls.some((name) => /write|commit|verify/.test(name))).toBe(
         false,
       );
@@ -213,6 +222,21 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         dom.window.document.querySelector<HTMLElement>("#origin-draft")!
           .textContent,
       ).toBe("preserved draft");
+      await act(async () => {
+        trigger.click();
+        await nextFrame(dom);
+      });
+      await act(async () => {
+        dom.window.document
+          .querySelectorAll('[role="dialog"]')[1]!
+          .querySelector<HTMLButtonElement>(`[aria-label="${peek_close()}"]`)!
+          .click();
+        await nextFrame(dom);
+      });
+      expect(peekCloses).toBe(0);
+      expect(
+        dom.window.document.querySelectorAll('[role="dialog"]').length,
+      ).toBe(1);
     } finally {
       await act(async () => {
         root.unmount();
