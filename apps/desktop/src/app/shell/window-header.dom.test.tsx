@@ -61,17 +61,23 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
       <nav data-slot="breadcrumb" data-part="breadcrumbs" />
     ),
     SpaceBreadcrumbs: ({
+      home,
       spacePath,
       current,
+      onActivateContent,
     }: {
+      home: boolean;
       spacePath: string;
       current: ReactNode;
+      onActivateContent?: () => void;
     }) => (
       <nav
         data-slot="breadcrumb"
         data-part="space-breadcrumbs"
         data-space={spacePath}
+        data-home={String(home)}
       >
+        <button type="button" data-prefix onClick={onActivateContent} />
         {current}
       </nav>
     ),
@@ -102,6 +108,8 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
       />
     ),
   }));
+  // The Space the draft is set to; the draft's own tests change it.
+  let draftSpace = spacePath;
   const realSessions = await import("@/features/agent-sessions");
   mock.module("@/features/agent-sessions", () => ({
     ...realSessions,
@@ -120,6 +128,18 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
         spacePath: "/project/docs",
         current: <span data-part="session-current" />,
         menu: <button type="button" data-part="session-menu" />,
+      }),
+    AgentSessionDraftMainSurface: ({
+      renderHeader,
+    }: {
+      renderHeader: (header: {
+        spacePath: string;
+        current: ReactNode;
+      }) => ReactNode;
+    }) =>
+      renderHeader({
+        spacePath: draftSpace,
+        current: <span data-part="draft-current" />,
       }),
   }));
   const realKnowledge = await import("@/features/knowledge");
@@ -193,7 +213,10 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
   const { useShellStore } = await import("./model");
   const { WindowHeader } = await import("./window-header");
   const { PublishMainHeader } = await import("./main-header-contribution");
-  const { GraphSurface, SessionSurface } = await import("./main-surfaces");
+  const { GraphSurface, SessionDraftSurface, SessionSurface } = await import(
+    "./main-surfaces"
+  );
+  const { ShellViewContext } = await import("./shell-view");
   const { createDefaultKnowledgeFilters } = realKnowledge;
 
   function parts() {
@@ -319,6 +342,66 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
     await render(null);
     expect(doc.querySelector("[data-part=space-breadcrumbs]")).toBeNull();
     expect(parts()[0]).toBe("breadcrumbs");
+  });
+
+  test("a new session draft puts the breadcrumbs of its Space first, without Changes", async () => {
+    selection = null;
+    const draft = { draftId: "d1", spacePath };
+    await act(async () => {
+      useShellStore.setState({
+        mainSurface: "session",
+        mainSessionTarget: null,
+        mainSessionDraft: draft,
+      });
+    });
+    const surface = () => (
+      <SessionDraftSurface
+        draft={draft}
+        onStarted={() => {}}
+        onOpenAgentSettings={() => {}}
+      />
+    );
+    const crumbs = () =>
+      doc.querySelector<HTMLElement>("[data-part=space-breadcrumbs]")!;
+
+    await render(surface());
+    expect(parts()).toEqual([
+      "space-breadcrumbs",
+      "draft-current",
+      "git-sync",
+      "open-with",
+    ]);
+    expect(crumbs().dataset.space).toBe(spacePath);
+    expect(crumbs().dataset.home).toBe("false");
+    expect(doc.querySelector("[data-part=breadcrumbs]")).toBeNull();
+
+    // The Space chosen in the draft starts the breadcrumbs.
+    draftSpace = `${spacePath}/docs`;
+    await render(surface());
+    expect(crumbs().dataset.space).toBe(`${spacePath}/docs`);
+    draftSpace = spacePath;
+
+    // Home starts the chain with the project.
+    await dom.render(
+      <ShellViewContext.Provider value="home">
+        <TooltipProvider>
+          <WindowHeader />
+          {surface()}
+        </TooltipProvider>
+      </ShellViewContext.Provider>,
+    );
+    expect(crumbs().dataset.home).toBe("true");
+
+    // A breadcrumb shows the content surface in place of the draft.
+    await act(async () => {
+      crumbs().querySelector<HTMLButtonElement>("[data-prefix]")!.click();
+    });
+    expect(useShellStore.getState().mainSurface).toBe("content");
+    expect(useShellStore.getState().mainSessionDraft).toBeNull();
+
+    // The breadcrumbs leave with the draft.
+    await render(null);
+    expect(doc.querySelector("[data-part=space-breadcrumbs]")).toBeNull();
   });
 
   test("Graph is one row and its tools collapse on a narrow row", async () => {

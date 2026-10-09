@@ -523,7 +523,6 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
       <NewSessionDraft
         spacePath="/project"
         onStarted={() => undefined}
-        onOpenTerminal={() => undefined}
         onOpenAgentSettings={() => undefined}
       />,
     );

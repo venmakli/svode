@@ -142,6 +142,9 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   );
   const { keepLayerOpenOnEscape } = await import("@/shared/lib/escape-key");
   const { NewSessionDraft } = await import("./new-session-draft");
+  const { AgentSessionDraftMainSurface } = await import(
+    "../../ui/session-main-surface"
+  );
   const { newSessionDraftKey, sessionDraftKey, writeComposerDraft } =
     await import("../model/composer");
   const { subscribeUserEdits } = await import("@/features/navigation");
@@ -297,7 +300,6 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         <NewSessionDraft
           spacePath="/project"
           onStarted={() => undefined}
-          onOpenTerminal={() => undefined}
           onOpenAgentSettings={() => undefined}
         />,
       );
@@ -305,6 +307,13 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         agent: "codex",
         cwd: "/project",
       });
+      // The host names the draft; the draft itself starts no terminal.
+      expect(document.querySelector("header, h2")).toBeNull();
+      expect(
+        Array.from(document.querySelectorAll("button")).some((button) =>
+          /terminal/i.test(button.textContent ?? ""),
+        ),
+      ).toBe(false);
       await click(agentButton());
       expect(
         Boolean(
@@ -340,7 +349,6 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         <NewSessionDraft
           spacePath="/project"
           onStarted={() => undefined}
-          onOpenTerminal={() => undefined}
           onOpenAgentSettings={() => undefined}
         />,
       );
@@ -373,7 +381,6 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         <NewSessionDraft
           spacePath="/project"
           onStarted={() => undefined}
-          onOpenTerminal={() => undefined}
           onOpenAgentSettings={() => undefined}
         />,
       );
@@ -771,12 +778,18 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     async () => {
       const chosen: string[] = [];
       let allow = false;
+      // The main area top bar gets the draft's Space and its last crumb.
+      const header = () =>
+        document.querySelector<HTMLElement>("[data-draft-header]")!;
+      const probe = () => header().dataset.draftHeader;
       await mount(
-        <NewSessionDraft
-          spacePath="/project"
+        <AgentSessionDraftMainSurface
+          draft={{ draftId: "d1", spacePath: "/project" }}
           onStarted={() => undefined}
-          onOpenTerminal={() => undefined}
           onOpenAgentSettings={() => undefined}
+          renderHeader={({ spacePath, current }) => (
+            <nav data-draft-header={spacePath}>{current}</nav>
+          )}
           spaceChoices={{
             choices: [
               {
@@ -821,12 +834,17 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(buttonByLabel(m.sessions_chat_space_choose())?.textContent).toBe(
         "Project",
       );
+      expect(probe()).toBe("/project");
+      const current = header().querySelector("[data-slot=breadcrumb-page]");
+      expect(current?.textContent).toBe(m.sessions_new_title());
+      expect(current?.querySelector("svg") === null).toBe(false);
       allow = true;
       await openMenu(buttonByLabel(m.sessions_chat_space_choose()));
       await click(menuItem("Notes"));
       expect(buttonByLabel(m.sessions_chat_space_choose())?.textContent).toBe(
         "Notes",
       );
+      expect(probe()).toBe("/notes");
       expect(lastCall("agent_runtime_hold_draft")).toEqual({
         agent: "codex",
         cwd: "/notes",

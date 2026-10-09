@@ -2,7 +2,6 @@ import { useCallback } from "react";
 import {
   AgentSessionPeek,
   useOpenNewSession,
-  useStartAgentSession,
   type AgentSession,
   type AgentSessionScopeGroup,
   type AgentSessionTarget,
@@ -61,25 +60,6 @@ export function useStartSessionInMainArea() {
       }
     },
     [openNewSession, showDraft, showSession],
-  );
-}
-
-/**
- * "New session in terminal" from a main area draft: the managed terminal of
- * phase 1 replaces the draft.
- */
-export function useStartTerminalSessionInMainArea() {
-  const showSession = useShowSessionInMainArea();
-  const startSession = useStartAgentSession();
-  const scopes = useSessionScopesBySpacePath();
-  return useCallback(
-    async (spacePath: string) => {
-      const target = await startSession(spacePath);
-      if (target) {
-        showSession(target, scopes(spacePath), { focusTerminal: true });
-      }
-    },
-    [scopes, showSession, startSession],
   );
 }
 
@@ -172,7 +152,6 @@ export function AgentSessionPeekHost() {
   const draft = useShellStore((state) => state.sessionPeekDraft);
   const openSessionPeek = useShellStore((state) => state.openSessionPeek);
   const openAppSettings = useShellStore((state) => state.openAppSettings);
-  const startSession = useStartAgentSession();
   const focusTerminal = useShellStore(
     (state) => state.sessionPeekFocusTerminal,
   );
@@ -187,11 +166,6 @@ export function AgentSessionPeekHost() {
       onDraftStarted={(started) =>
         openSessionPeek({ sessionId: started.sessionId, launchId: null })
       }
-      onOpenNewSessionTerminal={(spacePath) => {
-        void startSession(spacePath).then((terminal) => {
-          if (terminal) openSessionPeek(terminal, { focusTerminal: true });
-        });
-      }}
       onOpenAgentSettings={() => openAppSettings("providers")}
       focusTerminal={focusTerminal}
       onOpenChange={(open) => {

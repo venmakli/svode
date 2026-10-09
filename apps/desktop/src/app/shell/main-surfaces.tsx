@@ -1,5 +1,8 @@
 import type { ComponentProps } from "react";
-import { AgentSessionMainSurface } from "@/features/agent-sessions";
+import {
+  AgentSessionDraftMainSurface,
+  AgentSessionMainSurface,
+} from "@/features/agent-sessions";
 import {
   KnowledgeGraphScreen,
   knowledgeOpenPath,
@@ -35,6 +38,35 @@ export function SessionSurface(
             />
           }
           objectActions={menu}
+        />
+      )}
+    />
+  );
+}
+
+/** A new session draft in the main area; its breadcrumbs go to the top bar. */
+export function SessionDraftSurface(
+  props: Omit<
+    ComponentProps<typeof AgentSessionDraftMainSurface>,
+    "renderHeader"
+  >,
+) {
+  const home = useShellView() === "home";
+  const openContentSurface = useShellStore((state) => state.openContentSurface);
+  return (
+    <AgentSessionDraftMainSurface
+      {...props}
+      renderHeader={({ spacePath, current }) => (
+        <PublishMainHeader
+          breadcrumbs={
+            <SpaceBreadcrumbs
+              home={home}
+              spacePath={spacePath}
+              current={current}
+              onBeforeNavigation={passNavigationGuards}
+              onActivateContent={openContentSurface}
+            />
+          }
         />
       )}
     />

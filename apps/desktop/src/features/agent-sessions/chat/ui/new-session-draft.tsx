@@ -1,11 +1,5 @@
 import { useState, type ReactNode } from "react";
-import {
-  Box,
-  Check,
-  ChevronDown,
-  FolderClosed,
-  SquareTerminal,
-} from "lucide-react";
+import { Box, Check, ChevronDown, FolderClosed } from "lucide-react";
 import { toast } from "sonner";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { AgentSignInDialog } from "@/features/settings/agent-sign-in";
@@ -53,14 +47,14 @@ const CUSTOM_PREFIX = "custom-";
  * The draft of a new session (Stage 10 `04`, new session): the agent in
  * the composer's agent button, the Space under the field, and the
  * composer. Nothing exists until the first send creates the session, which
- * the same host then shows.
+ * the same host then shows. The host names the draft through
+ * `renderHeader`.
  */
 export function NewSessionDraft({
   spacePath,
   onStarted,
-  onOpenTerminal,
   onOpenAgentSettings,
-  actions,
+  renderHeader,
   spaceChoices,
 }: {
   /** The Space of the context the draft was opened from. */
@@ -68,11 +62,12 @@ export function NewSessionDraft({
   /** Places to list instead of the Spaces of the active project. */
   spaceChoices?: DraftSpaceChoices;
   onStarted: (started: StartedSession) => void;
-  /** "New session in terminal": a managed terminal in the draft's Space. */
-  onOpenTerminal: (spacePath: string) => void;
   onOpenAgentSettings: () => void;
-  /** Host chrome next to the title, such as close or expand. */
-  actions?: ReactNode;
+  /**
+   * The host's header of the draft: the top bar of a peek above it, or the
+   * part of the main area top bar, which follows the chosen Space.
+   */
+  renderHeader?: (header: { spacePath: string }) => ReactNode;
 }) {
   const draft = useNewSessionDraft(spacePath, onStarted);
   const dictionary = useAgentAdapterDictionary();
@@ -120,20 +115,7 @@ export function NewSessionDraft({
       }
       className="flex h-full min-h-0 flex-col"
     >
-      <header className="flex shrink-0 items-center gap-2 px-6 pb-3">
-        <h2 className="min-w-0 flex-1 truncate text-lg font-semibold">
-          {m.sessions_new_title()}
-        </h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onOpenTerminal(draft.spacePath)}
-        >
-          <SquareTerminal data-icon="inline-start" />
-          {m.sessions_chat_new_in_terminal()}
-        </Button>
-        {actions}
-      </header>
+      {renderHeader?.({ spacePath: draft.spacePath })}
       <div className="min-h-0 flex-1" />
       <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-1.5 px-6 pt-2">
         {noAgents ? (

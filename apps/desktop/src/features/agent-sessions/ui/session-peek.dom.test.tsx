@@ -329,7 +329,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     },
   );
 
-  peekTest("the new session draft peek closes with Close", async () => {
+  peekTest("the new session draft peek: New session on the left, Close on the right", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root: Root = createRoot(container);
@@ -349,9 +349,21 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       );
     });
     await settle();
+    const bar = document.querySelector<HTMLElement>("[data-peek-top-bar]")!;
     expect(
-      document.querySelector(`[aria-label="${m.peek_expand()}"]`),
-    ).toBeNull();
+      bar.querySelector("[data-peek-identity]")?.textContent,
+    ).toBe(m.sessions_new_title());
+    expect(
+      [...bar.querySelectorAll("button")].map((button) =>
+        button.getAttribute("aria-label"),
+      ),
+    ).toEqual([m.peek_close()]);
+    // The draft starts no terminal of its own.
+    expect(
+      [...document.querySelectorAll("button")].some((button) =>
+        /terminal/i.test(button.textContent ?? ""),
+      ),
+    ).toBe(false);
     await click(buttonByLabel(m.peek_close()));
     expect(openChanges).toEqual([false]);
   });

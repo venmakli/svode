@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { Plus } from "lucide-react";
 import { BreadcrumbPage } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSpace } from "@/features/space";
@@ -14,6 +15,7 @@ import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
 import { ExternalTerminalAppProvider } from "./external-terminal-icon";
 import { AgentSessionContent, type AgentSessionChrome } from "./session-view";
+import * as m from "@/paraglide/messages.js";
 
 /** What a session gives the main area top bar. */
 export interface AgentSessionMainHeader {
@@ -96,20 +98,29 @@ function MainSessionHeader({
   });
 }
 
+/** What a new session draft gives the main area top bar. */
+export interface AgentSessionDraftMainHeader {
+  /** The Space chosen in the draft, which the breadcrumbs start with. */
+  spacePath: string;
+  /** The last breadcrumb: "New session". */
+  current: ReactNode;
+}
+
 /** A new session draft as the one object of the main area; focus goes to its composer. */
 export function AgentSessionDraftMainSurface({
   draft,
   onStarted,
-  onOpenTerminal,
   onOpenAgentSettings,
   spaceChoices,
+  renderHeader,
 }: {
   draft: NewSessionDraftTarget;
   /** Places to list instead of the Spaces of the active project. */
   spaceChoices?: DraftSpaceChoices;
   onStarted: (started: StartedSession) => void;
-  onOpenTerminal: (spacePath: string) => void;
   onOpenAgentSettings: () => void;
+  /** Publishes the draft's part of the main area top bar. */
+  renderHeader: (header: AgentSessionDraftMainHeader) => ReactNode;
 }) {
   return (
     <div
@@ -120,9 +131,22 @@ export function AgentSessionDraftMainSurface({
         key={draft.draftId}
         spacePath={draft.spacePath}
         onStarted={onStarted}
-        onOpenTerminal={onOpenTerminal}
         onOpenAgentSettings={onOpenAgentSettings}
         spaceChoices={spaceChoices}
+        renderHeader={({ spacePath }) =>
+          renderHeader({
+            spacePath,
+            current: (
+              <BreadcrumbPage className="flex min-w-0 items-center gap-1.5">
+                <Plus
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+                <span className="truncate">{m.sessions_new_title()}</span>
+              </BreadcrumbPage>
+            ),
+          })
+        }
       />
     </div>
   );

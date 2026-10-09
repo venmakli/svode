@@ -8,7 +8,6 @@ export {
   useSavedProjectSessions,
   useSessionTerminals,
   useOpenNewSession,
-  useStartAgentSession,
   type AgentSessionSpace,
   type NewSessionOpening,
   type SavedProjectSessions,

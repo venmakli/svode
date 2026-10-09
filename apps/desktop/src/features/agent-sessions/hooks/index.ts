@@ -6,7 +6,6 @@ export {
   useListedAgentSessions,
 } from "./use-agent-session-catalog";
 export { useAgentSessionScopes } from "./use-agent-session-scopes";
-export { useStartAgentSession } from "./use-start-agent-session";
 export {
   useOpenNewSession,
   type NewSessionOpening,

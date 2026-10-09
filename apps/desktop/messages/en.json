@@ -2391,7 +2391,6 @@
   "sessions_chat_live_working": "Working",
   "sessions_chat_live_writing": "Writing the answer",
   "sessions_chat_model": "Model",
-  "sessions_chat_new_in_terminal": "New session in terminal",
   "sessions_chat_no_agents": "No agent can chat right now. Turn one on or set it up in the agent settings.",
   "sessions_chat_not_sent": "Not sent: the agent did not get this message",
   "sessions_chat_notice_config": "Session settings changed",

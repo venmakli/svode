@@ -56,8 +56,11 @@ import {
   useShellStore,
   type MainSurface,
 } from "./model";
-import { GraphSurface, SessionSurface } from "./main-surfaces";
-import { AgentSessionDraftMainSurface } from "@/features/agent-sessions";
+import {
+  GraphSurface,
+  SessionDraftSurface,
+  SessionSurface,
+} from "./main-surfaces";
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
 import { ChatAttachmentPeekProvider } from "./chat-attachment-peek";
@@ -66,7 +69,6 @@ import {
   AgentSessionPeekHost,
   useShowStartedSessionInMainArea,
   useStartSessionInPeek,
-  useStartTerminalSessionInMainArea,
 } from "./agent-session-peek-host";
 import { NewSessionSidebarRow } from "./new-session-sidebar-row";
 import { AllProjectsSidebarRow } from "./all-projects-sidebar-row";
@@ -436,7 +438,6 @@ function ShellMainInset({
   const mainSessionDraft = useShellStore((state) => state.mainSessionDraft);
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const showStartedSession = useShowStartedSessionInMainArea();
-  const startTerminalSession = useStartTerminalSessionInMainArea();
   const mainSessionFocus = useShellStore((state) => state.mainSessionFocus);
   const mainSessionFocusTerminal = useShellStore(
     (state) => state.mainSessionFocusTerminal,
@@ -476,9 +477,6 @@ function ShellMainInset({
               onStarted={(started) =>
                 showStartedSession(started, mainSessionDraft.spacePath)
               }
-              onOpenTerminal={(spacePath) =>
-                void startTerminalSession(spacePath)
-              }
               onOpenAgentSettings={() => openAppSettings("providers")}
             />
           ) : mainSurface === "graph" ? (
@@ -501,26 +499,18 @@ function ShellMainInset({
 
 /** The main area draft; on Home its composer lists the projects. */
 function MainSessionDraft(
-  props: Omit<
-    ComponentProps<typeof AgentSessionDraftMainSurface>,
-    "spaceChoices"
-  >,
+  props: Omit<ComponentProps<typeof SessionDraftSurface>, "spaceChoices">,
 ) {
   return useShellView() === "home" ? (
     <HomeSessionDraft {...props} />
   ) : (
-    <AgentSessionDraftMainSurface {...props} />
+    <SessionDraftSurface {...props} />
   );
 }
 
 function HomeSessionDraft(
-  props: Omit<
-    ComponentProps<typeof AgentSessionDraftMainSurface>,
-    "spaceChoices"
-  >,
+  props: Omit<ComponentProps<typeof SessionDraftSurface>, "spaceChoices">,
 ) {
   const spaceChoices = useHomeDraftSpaceChoices();
-  return (
-    <AgentSessionDraftMainSurface {...props} spaceChoices={spaceChoices} />
-  );
+  return <SessionDraftSurface {...props} spaceChoices={spaceChoices} />;
 }

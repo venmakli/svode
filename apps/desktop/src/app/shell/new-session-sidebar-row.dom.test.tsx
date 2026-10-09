@@ -68,10 +68,6 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
     useResolvedAgentSession: (target: unknown) => (target ? session : null),
     useAgentSessionSpace: (resolved: { spaceId: string | null } | null) =>
       resolved ? { spaceId: resolved.spaceId } : null,
-    useStartAgentSession: () => async (spacePath: string) => {
-      started.push(spacePath);
-      return { sessionId: "pending:pty", launchId: null };
-    },
     useOpenNewSession: () => async (spacePath: string) => {
       if (chatAvailable) {
         return { kind: "draft", draft: { draftId: "d1", spacePath } };

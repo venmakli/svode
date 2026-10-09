@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { PortalContext } from "@ariakit/react";
+import { Plus } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  PeekCloseButton,
-  PeekIdentity,
-  PeekTopBar,
-} from "@/shared/ui/peek-top-bar";
+import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type {
   AgentSession,
@@ -30,8 +27,6 @@ interface AgentSessionPeekProps {
   draft?: NewSessionDraftTarget | null;
   /** The draft's first send created this session; the peek now shows it. */
   onDraftStarted?: (started: StartedSession) => void;
-  /** "New session in terminal" from the draft. */
-  onOpenNewSessionTerminal?: (spacePath: string) => void;
   onOpenAgentSettings?: () => void;
   /** Focus goes to the terminal instead of the peek chrome. */
   focusTerminal?: boolean;
@@ -49,7 +44,6 @@ export function AgentSessionPeek({
   target,
   draft = null,
   onDraftStarted,
-  onOpenNewSessionTerminal,
   onOpenAgentSettings,
   focusTerminal = false,
   onOpenChange,
@@ -118,13 +112,18 @@ export function AgentSessionPeek({
                 key={shownDraft.draftId}
                 spacePath={shownDraft.spacePath}
                 onStarted={(started) => onDraftStarted?.(started)}
-                onOpenTerminal={(spacePath) =>
-                  onOpenNewSessionTerminal?.(spacePath)
-                }
                 onOpenAgentSettings={() => onOpenAgentSettings?.()}
-                actions={
-                  <PeekCloseButton onClick={() => onOpenChange(false)} />
-                }
+                renderHeader={() => (
+                  <PeekTopBar
+                    identity={
+                      <PeekIdentity
+                        icon={<Plus />}
+                        name={m.sessions_new_title()}
+                      />
+                    }
+                    onClose={() => onOpenChange(false)}
+                  />
+                )}
               />
             </div>
           )}

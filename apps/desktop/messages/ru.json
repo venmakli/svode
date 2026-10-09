@@ -2391,7 +2391,6 @@
   "sessions_chat_live_working": "Работает",
   "sessions_chat_live_writing": "Пишет ответ",
   "sessions_chat_model": "Модель",
-  "sessions_chat_new_in_terminal": "Новая сессия в терминале",
   "sessions_chat_no_agents": "Сейчас ни один агент не может работать в чате. Включите или настройте агента в настройках агентов.",
   "sessions_chat_not_sent": "Не отправлено: агент не получил это сообщение",
   "sessions_chat_notice_config": "Настройки сессии изменены",
