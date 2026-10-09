@@ -122,6 +122,7 @@ export function WindowHeader() {
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const activeSpacePath = useSpace(selectActiveSpacePath);
   const { state } = useSidebar();
+  const view = useShellView();
 
   // Home without an active project shows no project chrome.
   const projectShown = activeRootPath !== null;
@@ -155,7 +156,10 @@ export function WindowHeader() {
         className="flex min-w-0 shrink-[10000] items-center gap-1 has-[[data-slot=breadcrumb]]:min-w-32"
       >
         {showBreadcrumbs && (
-          <MainBreadcrumbs onBeforeNavigation={passNavigationGuards} />
+          <MainBreadcrumbs
+            home={view === "home"}
+            onBeforeNavigation={passNavigationGuards}
+          />
         )}
         {projectShown && mainSessionTarget && (
           <AgentSessionBreadcrumbs target={mainSessionTarget} />

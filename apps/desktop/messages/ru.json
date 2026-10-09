@@ -431,6 +431,7 @@
   "space_not_found": "Директория не найдена: {path}",
   "space_not_found_action_update": "Обновить путь",
   "space_not_found_action_remove": "Удалить из списка",
+  "space_breadcrumb_hidden_path": "Показать скрытую часть пути",
   "file_delete_title": "Удалить содержимое?",
   "file_delete_description": "Страница будет удалена.",
   "file_delete_tree_description": "Страница-каталог и всё внутри неё будут удалены.",

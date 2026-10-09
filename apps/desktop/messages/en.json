@@ -431,6 +431,7 @@
   "space_not_found": "Directory not found: {path}",
   "space_not_found_action_update": "Update path",
   "space_not_found_action_remove": "Remove from list",
+  "space_breadcrumb_hidden_path": "Show hidden path",
   "file_delete_title": "Delete content?",
   "file_delete_description": "This Page will be deleted.",
   "file_delete_tree_description": "This directory-backed Page and everything inside it will be deleted.",
