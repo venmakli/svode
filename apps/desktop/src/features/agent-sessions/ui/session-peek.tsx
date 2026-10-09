@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { PortalContext } from "@ariakit/react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
-import { PeekCloseButton, PeekTopBar } from "@/shared/ui/peek-top-bar";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  PeekCloseButton,
+  PeekIdentity,
+  PeekTopBar,
+} from "@/shared/ui/peek-top-bar";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type {
   AgentSession,
@@ -130,8 +135,19 @@ export function AgentSessionPeek({
               focusTerminal={focusTerminal}
               onOpenRoutine={onOpenRoutine}
               onOpenAgentSettings={onOpenAgentSettings}
-              renderActions={(menu, view) => (
+              renderChrome={({ view, identity, status, menu }) => (
                 <PeekTopBar
+                  identity={
+                    identity ? (
+                      <PeekIdentity
+                        icon={identity.icon}
+                        name={identity.title}
+                      />
+                    ) : (
+                      <Skeleton className="mx-1 h-4 w-40" />
+                    )
+                  }
+                  info={status}
                   menu={menu}
                   onExpand={() => void expand(view.session)}
                   expandDisabled={expanding}

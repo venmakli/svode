@@ -56,11 +56,8 @@ import {
   useShellStore,
   type MainSurface,
 } from "./model";
-import { GraphSurface } from "./main-surfaces";
-import {
-  AgentSessionDraftMainSurface,
-  AgentSessionMainSurface,
-} from "@/features/agent-sessions";
+import { GraphSurface, SessionSurface } from "./main-surfaces";
+import { AgentSessionDraftMainSurface } from "@/features/agent-sessions";
 import { ActiveSpaceContent } from "./active-space-content";
 import { AgentSessionCatalogHost } from "./agent-session-catalog-host";
 import { ChatAttachmentPeekProvider } from "./chat-attachment-peek";
@@ -466,7 +463,7 @@ function ShellMainInset({
           {view === "home" && !activeRootId ? (
             <HomeMainPlaceholder />
           ) : mainSurface === "session" && mainSessionTarget ? (
-            <AgentSessionMainSurface
+            <SessionSurface
               target={mainSessionTarget}
               focus={mainSessionFocus}
               focusTerminal={mainSessionFocusTerminal}

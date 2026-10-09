@@ -26,7 +26,6 @@ import { ProjectSwitcher } from "./project-switcher";
 import { useShellView } from "./shell-view";
 import { passNavigationGuards } from "./navigation-guards";
 import {
-  AgentSessionBreadcrumbs,
   useAgentSessionSpace,
   useResolvedAgentSession,
 } from "@/features/agent-sessions";
@@ -161,9 +160,7 @@ export function WindowHeader() {
             onBeforeNavigation={passNavigationGuards}
           />
         )}
-        {projectShown && mainSessionTarget && (
-          <AgentSessionBreadcrumbs target={mainSessionTarget} />
-        )}
+        {projectShown && contribution?.breadcrumbs}
         {projectShown && mainSurface === "graph" && (
           <KnowledgeGraphBreadcrumb />
         )}

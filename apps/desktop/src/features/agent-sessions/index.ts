@@ -15,7 +15,6 @@ export {
   type SessionTerminals,
 } from "./hooks";
 export {
-  AgentSessionBreadcrumbs,
   AgentSessionDraftMainSurface,
   AgentSessionMainSurface,
   AgentSessionNavigationItem,

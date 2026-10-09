@@ -13,6 +13,8 @@ import type { OpenWithGroup } from "@/features/external-open";
  * they take their state through props rather than surface context.
  */
 export interface MainHeaderContribution {
+  /** Breadcrumbs of a surface the header does not build them for. */
+  breadcrumbs?: ReactNode;
   /** ⓘ and ⋯ of the open object, right after the breadcrumbs. */
   objectActions?: ReactNode;
   /** View tools, collapsed into one popover button on a narrow row. */
@@ -66,6 +68,7 @@ function sameContribution(
   b: MainHeaderContribution,
 ) {
   return (
+    a.breadcrumbs === b.breadcrumbs &&
     a.objectActions === b.objectActions &&
     a.viewTools === b.viewTools &&
     a.openWith === b.openWith &&

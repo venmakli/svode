@@ -86,6 +86,8 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   }));
 
   let listed: ListedAgentSession[] = [];
+  /** Holds the session lists back, as while a session is being checked. */
+  let listGate: Promise<void> | null = null;
   const commands: string[] = [];
   /** `attach` of each opening in the chat, and what the next one answers. */
   const openings: boolean[] = [];
@@ -116,7 +118,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       command === "agent_sessions_list" ||
       command === "agent_sessions_refresh"
     ) {
-      return listResult(listed);
+      return listGate
+        ? listGate.then(() => listResult(listed))
+        : listResult(listed);
     }
     if (command === "agent_sessions_hot_status") {
       return {
@@ -196,17 +200,21 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     await import("../hooks");
   let reloadCatalog: () => Promise<void> = async () => {};
   const { AgentSessionPeek } = await import("./session-peek");
+  const { AgentSessionMainSurface } = await import("./session-main-surface");
 
   function Harness({
     projectPath,
     target,
     focusTerminal,
     onOpenChange,
+    main = false,
   }: {
     projectPath: string;
     target: AgentSessionTarget | null;
     focusTerminal?: boolean;
     onOpenChange: (open: boolean) => void;
+    /** The session in the main area, its top bar part in `[data-main-header]`. */
+    main?: boolean;
   }) {
     useAgentSessionCatalogLifecycle(projectPath);
     const load = useAgentSessionCatalog((state) => state.load);
@@ -218,13 +226,27 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         <AttachmentOpenerContext.Provider
           value={(attachment) => openedAttachments.push(attachment.path)}
         >
-          <AgentSessionPeek
-            target={target}
-            focusTerminal={focusTerminal}
-            onOpenChange={onOpenChange}
-            onExpand={async () => true}
-            onOpenRoutine={() => undefined}
-          />
+          {main && target ? (
+            <AgentSessionMainSurface
+              target={target}
+              focus={false}
+              onOpenRoutine={() => undefined}
+              renderHeader={({ spacePath, current, menu }) => (
+                <div data-main-header data-space={spacePath}>
+                  {current}
+                  {menu}
+                </div>
+              )}
+            />
+          ) : (
+            <AgentSessionPeek
+              target={target}
+              focusTerminal={focusTerminal}
+              onOpenChange={onOpenChange}
+              onExpand={async () => true}
+              onOpenRoutine={() => undefined}
+            />
+          )}
         </AttachmentOpenerContext.Provider>
       </TooltipProvider>
     );
@@ -249,6 +271,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     projectPath: string,
     target: AgentSessionTarget,
     focusTerminal?: boolean,
+    main = false,
   ) {
     const container = document.createElement("div");
     document.body.append(container);
@@ -263,6 +286,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
             target={next}
             focusTerminal={focusTerminal}
             onOpenChange={(open) => openChanges.push(open)}
+            main={main}
           />,
         );
       });
@@ -1215,6 +1239,332 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       }
     },
   );
+
+  peekTest(
+    "the session peek top bar shows the agent, title and status · time, then the menu, Expand and Close",
+    async () => {
+      listed = [session({ id: "codex:identity", title: "Identity" })];
+      await mountPeek("/p-identity", {
+        sessionId: "codex:identity",
+        launchId: null,
+      });
+      const bar = document.querySelector("[data-peek-top-bar]")!;
+      const identity = bar.querySelector<HTMLElement>("[data-peek-identity]")!;
+      expect(identity.textContent).toBe("Identity");
+      // The agent's brand icon.
+      expect(Boolean(identity.querySelector("img"))).toBe(true);
+      const status = bar.querySelector<HTMLElement>("[data-session-status]")!;
+      expect(status.textContent?.startsWith(m.sessions_status_done())).toBe(
+        true,
+      );
+      expect(Boolean(status.querySelector("time"))).toBe(true);
+      expectInOrder([
+        identity,
+        status,
+        buttonByLabel(m.sessions_action_more()),
+        buttonByLabel(m.peek_expand()),
+        buttonByLabel(m.peek_close()),
+      ]);
+      expectNoContentHeader("Identity");
+
+      await click(status);
+      const metadata = document.querySelector("[data-slot=popover-content]")!;
+      for (const text of [
+        m.sessions_metadata(),
+        m.sessions_metadata_scope(),
+        m.sessions_metadata_status_source(),
+        "/project",
+        "identity",
+      ]) {
+        expect(metadata.textContent?.includes(text)).toBe(true);
+      }
+      await pressEscape(metadata as HTMLElement);
+
+      await openMenu();
+      expect(menuTexts()).toEqual([
+        m.sessions_action_copy_resume_command(),
+        m.sessions_action_open_external_terminal(),
+      ]);
+    },
+  );
+
+  peekTest(
+    "a missing session is named a session in the peek, without status",
+    async () => {
+      listed = [];
+      await mountPeek("/p-missing-identity", {
+        sessionId: "codex:gone-identity",
+        launchId: null,
+      });
+      const bar = document.querySelector("[data-peek-top-bar]")!;
+      expect(bar.querySelector("[data-peek-identity]")?.textContent).toBe(
+        m.sessions_peek_title(),
+      );
+      expect(bar.querySelector("[data-session-status]")).toBeNull();
+      expect(bar.querySelector("[data-slot=skeleton]")).toBeNull();
+    },
+  );
+
+  peekTest(
+    "while the session is checked the peek identity waits as a skeleton",
+    async () => {
+      listed = [session({ id: "codex:checked", title: "Checked" })];
+      let release = () => {};
+      listGate = new Promise((resolve) => {
+        release = resolve;
+      });
+      try {
+        await mountPeek("/p-checked", {
+          sessionId: "codex:checked",
+          launchId: null,
+        });
+        const bar = document.querySelector("[data-peek-top-bar]")!;
+        expect(Boolean(bar.querySelector("[data-slot=skeleton]"))).toBe(true);
+        expect(bar.querySelector("[data-peek-identity]")).toBeNull();
+        expect(bar.querySelector("[data-session-status]")).toBeNull();
+      } finally {
+        listGate = null;
+        release();
+      }
+      await settle();
+      const bar = document.querySelector("[data-peek-top-bar]")!;
+      expect(bar.querySelector("[data-peek-identity]")?.textContent).toBe(
+        "Checked",
+      );
+      expect(bar.querySelector("[data-slot=skeleton]")).toBeNull();
+    },
+  );
+
+  peekTest(
+    "a session in the main area gives the top bar its identity, status and menu, and has no header of its own",
+    async () => {
+      listed = [
+        session({
+          id: "codex:main-chat",
+          title: "Main chat",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openingOutcome = () => ({
+        outcome: "opened",
+        session: {
+          agent: "codex",
+          namespace: "native",
+          sessionId: "main-chat",
+        },
+        liveness: "unknown",
+      });
+      snapshotWriter = "none";
+      snapshotTurn = "none";
+      try {
+        await mountPeek(
+          "/p-main-chat",
+          { sessionId: "codex:main-chat", launchId: null },
+          false,
+          true,
+        );
+        const header =
+          document.querySelector<HTMLElement>("[data-main-header]")!;
+        expect(header.dataset.space).toBe("/project");
+        const page = header.querySelector("[data-slot=breadcrumb-page]")!;
+        expect(page.textContent).toBe("Main chat");
+        expect(Boolean(page.querySelector("img"))).toBe(true);
+        const status = header.querySelector<HTMLElement>(
+          "[data-session-status]",
+        )!;
+        expectInOrder([page, status, buttonByLabel(m.sessions_action_more())]);
+        expectNoContentHeader("Main chat");
+        // The chat shows the session.
+        expect(document.body.textContent?.includes("Earlier")).toBe(true);
+
+        await click(status);
+        expect(
+          document
+            .querySelector("[data-slot=popover-content]")
+            ?.textContent?.includes(m.sessions_metadata()),
+        ).toBe(true);
+        await pressEscape(
+          document.querySelector<HTMLElement>("[data-slot=popover-content]")!,
+        );
+
+        await openMenu();
+        expect(menuTexts()).toEqual([
+          m.sessions_action_open_in_terminal(),
+          m.sessions_action_copy_resume_command(),
+          m.sessions_action_open_external_terminal(),
+        ]);
+      } finally {
+        openingOutcome = () => ({ outcome: "unsupported" });
+      }
+    },
+  );
+
+  peekTest(
+    "a session in its terminal keeps Close terminal in the main area menu",
+    async () => {
+      listed = [
+        session({
+          id: "codex:main-term",
+          title: "Main terminal",
+          runtime: { live: true, ptyId: "pty-main-term" },
+        }),
+      ];
+      await mountPeek(
+        "/p-main-term",
+        { sessionId: "codex:main-term", launchId: null },
+        false,
+        true,
+      );
+      expect(terminal()?.dataset.terminal).toBe("pty-main-term");
+      const header = document.querySelector("[data-main-header]")!;
+      expect(
+        header.querySelector("[data-slot=breadcrumb-page]")?.textContent,
+      ).toBe("Main terminal");
+      expect(Boolean(header.querySelector("[data-session-status]"))).toBe(true);
+      expectNoContentHeader("Main terminal");
+
+      await openMenu();
+      expect(menuTexts()).toEqual([
+        m.sessions_action_copy_resume_command(),
+        m.sessions_action_open_external_terminal(),
+        m.sessions_action_close_terminal(),
+      ]);
+    },
+  );
+
+  peekTest(
+    "a Routine session keeps Open routine in the main area menu",
+    async () => {
+      const key = {
+        agent: "codex",
+        namespace: "native",
+        sessionId: "main-routine",
+      } as const;
+      listed = [
+        session({
+          id: "codex:main-routine",
+          title: "Main routine",
+          runtime: { live: true, acpSession: key },
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      routineLinks = [
+        routineLink("launch-main", "codex:main-routine", { transport: "acp" }),
+      ];
+      snapshotWriter = "acp";
+      snapshotTurn = "none";
+      try {
+        await mountPeek(
+          "/p-main-routine",
+          { sessionId: "codex:main-routine", launchId: "launch-main" },
+          false,
+          true,
+        );
+        expect(
+          document.querySelector(
+            "[data-main-header] [data-slot=breadcrumb-page]",
+          )?.textContent,
+        ).toBe("Main routine");
+        expectNoContentHeader("Main routine");
+        await openMenu();
+        expect(menuTexts()).toEqual([
+          m.sessions_action_open_in_terminal(),
+          m.sessions_action_open_routine(),
+          m.sessions_action_copy_resume_command(),
+          m.sessions_action_open_external_terminal(),
+        ]);
+      } finally {
+        routineLinks = [];
+        snapshotWriter = "none";
+      }
+    },
+  );
+
+  peekTest(
+    "a missing or checked session in the main area names itself or waits as a skeleton",
+    async () => {
+      listed = [];
+      await mountPeek(
+        "/p-main-missing",
+        { sessionId: "codex:main-gone", launchId: null },
+        false,
+        true,
+      );
+      let header = document.querySelector<HTMLElement>("[data-main-header]")!;
+      expect(header.dataset.space).toBe("/project");
+      expect(
+        header.querySelector("[data-slot=breadcrumb-page]")?.textContent,
+      ).toBe(m.sessions_peek_title());
+      expect(header.querySelector("[data-session-status]")).toBeNull();
+      expect(
+        document.body.textContent?.includes(m.sessions_missing_title()),
+      ).toBe(true);
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+      document.body.innerHTML = "";
+
+      listed = [session({ id: "codex:main-checked", title: "Main checked" })];
+      let release = () => {};
+      listGate = new Promise((resolve) => {
+        release = resolve;
+      });
+      try {
+        await mountPeek(
+          "/p-main-checked",
+          { sessionId: "codex:main-checked", launchId: null },
+          false,
+          true,
+        );
+        header = document.querySelector<HTMLElement>("[data-main-header]")!;
+        expect(Boolean(header.querySelector("[data-slot=skeleton]"))).toBe(
+          true,
+        );
+        expect(header.querySelector("[data-slot=breadcrumb-page]")).toBeNull();
+      } finally {
+        listGate = null;
+        release();
+      }
+      await settle();
+      header = document.querySelector<HTMLElement>("[data-main-header]")!;
+      expect(
+        header.querySelector("[data-slot=breadcrumb-page]")?.textContent,
+      ).toBe("Main checked");
+    },
+  );
+
+  /** The session's own content repeats no title header. */
+  function expectNoContentHeader(title: string) {
+    const headings = Array.from(document.querySelectorAll("h1, h2, h3"));
+    expect(headings.some((heading) => heading.textContent === title)).toBe(
+      false,
+    );
+    expect(
+      document.querySelector(
+        "[data-agent-session-content] header, header:not([data-main-header])",
+      ),
+    ).toBeNull();
+  }
+
+  function expectInOrder(elements: Element[]) {
+    for (let index = 1; index < elements.length; index += 1) {
+      expect(
+        Boolean(
+          elements[index - 1].compareDocumentPosition(elements[index]) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      ).toBe(true);
+    }
+  }
+
+  function menuTexts() {
+    return Array.from(document.querySelectorAll("[role='menuitem']")).map(
+      (item) =>
+        item.querySelector("span.flex")?.firstChild?.textContent?.trim() ??
+        item.textContent?.trim() ??
+        "",
+    );
+  }
 
   function routineLink(
     launchId: string,

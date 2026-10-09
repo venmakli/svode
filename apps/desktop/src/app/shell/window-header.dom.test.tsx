@@ -60,6 +60,21 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
     MainBreadcrumbs: () => (
       <nav data-slot="breadcrumb" data-part="breadcrumbs" />
     ),
+    SpaceBreadcrumbs: ({
+      spacePath,
+      current,
+    }: {
+      spacePath: string;
+      current: ReactNode;
+    }) => (
+      <nav
+        data-slot="breadcrumb"
+        data-part="space-breadcrumbs"
+        data-space={spacePath}
+      >
+        {current}
+      </nav>
+    ),
   }));
   const realGit = await import("@/features/git/app-shell");
   mock.module("@/features/git/app-shell", () => ({
@@ -92,7 +107,20 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
     ...realSessions,
     useResolvedAgentSession: () => null,
     useAgentSessionSpace: () => null,
-    AgentSessionBreadcrumbs: () => null,
+    AgentSessionMainSurface: ({
+      renderHeader,
+    }: {
+      renderHeader: (header: {
+        spacePath: string;
+        current: ReactNode;
+        menu: ReactNode;
+      }) => ReactNode;
+    }) =>
+      renderHeader({
+        spacePath: "/project/docs",
+        current: <span data-part="session-current" />,
+        menu: <button type="button" data-part="session-menu" />,
+      }),
   }));
   const realKnowledge = await import("@/features/knowledge");
   mock.module("@/features/knowledge", () => ({
@@ -165,7 +193,7 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
   const { useShellStore } = await import("./model");
   const { WindowHeader } = await import("./window-header");
   const { PublishMainHeader } = await import("./main-header-contribution");
-  const { GraphSurface } = await import("./main-surfaces");
+  const { GraphSurface, SessionSurface } = await import("./main-surfaces");
   const { createDefaultKnowledgeFilters } = realKnowledge;
 
   function parts() {
@@ -256,6 +284,41 @@ if (process.env.SVODE_WINDOW_HEADER_TEST !== "1") {
       doc.querySelector<HTMLElement>("[data-part=open-with]")!.dataset
         .objectGroup,
     ).toBe("");
+  });
+
+  test("a session puts its Space breadcrumbs, identity and ⋯ first in the row", async () => {
+    selection = null;
+    const target = { sessionId: "codex:one", launchId: null };
+    await act(async () => {
+      useShellStore.setState({
+        mainSurface: "session",
+        mainSessionTarget: target,
+      });
+    });
+    await render(
+      <SessionSurface target={target} focus={false} onOpenRoutine={() => {}} />,
+    );
+    expect(parts().slice(0, 3)).toEqual([
+      "space-breadcrumbs",
+      "session-current",
+      "session-menu",
+    ]);
+    expect(
+      doc.querySelector<HTMLElement>("[data-part=space-breadcrumbs]")!.dataset
+        .space,
+    ).toBe("/project/docs");
+    expect(doc.querySelector("[data-part=breadcrumbs]")).toBeNull();
+
+    // The breadcrumbs leave with the session.
+    await act(async () => {
+      useShellStore.setState({
+        mainSurface: "content",
+        mainSessionTarget: null,
+      });
+    });
+    await render(null);
+    expect(doc.querySelector("[data-part=space-breadcrumbs]")).toBeNull();
+    expect(parts()[0]).toBe("breadcrumbs");
   });
 
   test("Graph is one row and its tools collapse on a narrow row", async () => {

@@ -1,6 +1,13 @@
 import { Copy, RotateCw, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -10,13 +17,17 @@ import {
 } from "@/components/ui/empty";
 import type { AgentSessionReentryResult } from "../api";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
-import { scopeLabel, tooltipDateTime } from "../lib";
+import { scopeLabel, sessionTimeLabel, tooltipDateTime } from "../lib";
 import type { AgentSession } from "../model";
 import { ExternalTerminalIcon } from "./external-terminal-icon";
 import { statusSourceLabel, statusText } from "./session-status";
 import * as m from "@/paraglide/messages.js";
 
-export function SessionMetadata({
+/**
+ * "status · time" of a session in the top bar; it opens the session
+ * metadata.
+ */
+export function SessionMetadataPopover({
   session,
   rootName,
   spaceNames,
@@ -26,31 +37,69 @@ export function SessionMetadata({
   spaceNames: Map<string, string>;
 }) {
   const agents = useAgentAdapterDictionary();
+  const time = sessionTimeLabel(session);
   return (
-    <dl className="grid shrink-0 grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-1 border-b bg-muted/30 px-4 py-3 text-xs">
-      <dt className="text-muted-foreground">{m.sessions_metadata_source()}</dt>
-      <dd>{agents.label(session.source)}</dd>
-      <dt className="text-muted-foreground">{m.sessions_metadata_scope()}</dt>
-      <dd>{scopeLabel(session, rootName, spaceNames)}</dd>
-      <dt className="text-muted-foreground">{m.sessions_metadata_status()}</dt>
-      <dd>{statusText(session)}</dd>
-      <dt className="text-muted-foreground">
-        {m.sessions_metadata_status_source()}
-      </dt>
-      <dd>{statusSourceLabel(session)}</dd>
-      <dt className="text-muted-foreground">
-        {m.sessions_metadata_last_activity()}
-      </dt>
-      <dd>{tooltipDateTime(session.lastActivityAt)}</dd>
-      <dt className="text-muted-foreground">{m.sessions_metadata_cwd()}</dt>
-      <dd className="truncate">
-        {session.cwd ?? session.resumeCommand?.cwd ?? "—"}
-      </dd>
-      <dt className="text-muted-foreground">
-        {m.sessions_metadata_session_id()}
-      </dt>
-      <dd className="truncate">{session.sourceSessionId}</dd>
-    </dl>
+    <>
+      <span aria-hidden className="shrink-0 text-muted-foreground">
+        ·
+      </span>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            data-session-status
+            className="shrink-0 px-1 font-normal text-muted-foreground"
+          >
+            {statusText(session)}
+            {time && (
+              <>
+                {" · "}
+                <time dateTime={session.lastActivityAt}>{time}</time>
+              </>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-96">
+          <PopoverHeader>
+            <PopoverTitle>{m.sessions_metadata()}</PopoverTitle>
+          </PopoverHeader>
+          <dl className="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+            <dt className="text-muted-foreground">
+              {m.sessions_metadata_source()}
+            </dt>
+            <dd>{agents.label(session.source)}</dd>
+            <dt className="text-muted-foreground">
+              {m.sessions_metadata_scope()}
+            </dt>
+            <dd>{scopeLabel(session, rootName, spaceNames)}</dd>
+            <dt className="text-muted-foreground">
+              {m.sessions_metadata_status()}
+            </dt>
+            <dd>{statusText(session)}</dd>
+            <dt className="text-muted-foreground">
+              {m.sessions_metadata_status_source()}
+            </dt>
+            <dd>{statusSourceLabel(session)}</dd>
+            <dt className="text-muted-foreground">
+              {m.sessions_metadata_last_activity()}
+            </dt>
+            <dd>{tooltipDateTime(session.lastActivityAt)}</dd>
+            <dt className="text-muted-foreground">
+              {m.sessions_metadata_cwd()}
+            </dt>
+            <dd className="break-all">
+              {session.cwd ?? session.resumeCommand?.cwd ?? "—"}
+            </dd>
+            <dt className="text-muted-foreground">
+              {m.sessions_metadata_session_id()}
+            </dt>
+            <dd className="break-all">{session.sourceSessionId}</dd>
+          </dl>
+        </PopoverContent>
+      </Popover>
+    </>
   );
 }
 

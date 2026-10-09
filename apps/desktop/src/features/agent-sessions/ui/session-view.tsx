@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
+  BotMessageSquare,
   Copy,
-  Info,
   ListChecks,
   MessagesSquare,
   MoreHorizontal,
@@ -36,9 +36,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useAgentAdapterDictionary } from "@/features/agent-adapters";
-import { NavigationMenuItems } from "@/features/navigation";
+import { AgentIcon } from "@/features/agent-adapters";
 import {
   useRoutineLaunchLinks,
   type RoutineLaunchLink,
@@ -55,23 +53,18 @@ import {
   useAgentSessionView,
   type AgentSessionView,
 } from "../hooks";
-import { scopeLabel, sessionTimeLabel, tooltipDateTime } from "../lib";
-import {
-  pinnableAgentSessionItem,
-  type AgentSession,
-  type AgentSessionTarget,
-} from "../model";
+import { scopeLabel } from "../lib";
+import type { AgentSession, AgentSessionTarget } from "../model";
 import {
   ExternalTerminalAppProvider,
   ExternalTerminalIcon,
 } from "./external-terminal-icon";
 import {
   ReentryErrorState,
-  SessionMetadata,
+  SessionMetadataPopover,
   SessionMissingState,
   SessionResumingState,
 } from "./session-states";
-import { SessionStatusMarker, statusText } from "./session-status";
 import { SessionCwdContext } from "../chat/hooks/use-path-base";
 import { SessionChat } from "../chat/ui/session-chat";
 import { OpenedSessionChat } from "../chat/ui/opened-session-chat";
@@ -90,22 +83,30 @@ import {
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
 
+/** What the top bar of the main area or the peek shows of a session. */
+export interface AgentSessionChrome {
+  view: AgentSessionView;
+  /** Agent icon and title; null while the session is being checked. */
+  identity: { icon: ReactNode; title: string } | null;
+  /** "status · time", which opens the session metadata; null without a session. */
+  status: ReactNode;
+  /** The ⋯ menu of the session. */
+  menu: ReactNode;
+}
+
 interface AgentSessionContentProps {
   target: AgentSessionTarget;
   /** Focus the terminal once it is shown, as after starting a new session. */
   focusTerminal?: boolean;
-  /**
-   * Peek chrome: the top bar above the identity header that receives the
-   * session menu. Without it the menu sits in the identity header.
-   */
-  renderActions?: (menu: ReactNode, view: AgentSessionView) => ReactNode;
+  /** The top bar of the host, which shows the session identity and menu. */
+  renderChrome: (chrome: AgentSessionChrome) => ReactNode;
   onOpenRoutine(routine: RoutineLaunchLink): void;
   /** Recovery of an agent the chat cannot start: the agent settings. */
   onOpenAgentSettings?: () => void;
 }
 
 /**
- * Identity, status and the chat or terminal of one session, shared by the
+ * The chat or terminal of one session with its top bar parts, shared by the
  * session peek and the main area. The interface is chosen when the session
  * opens (Stage 10 `04`, chat and terminal); opening it never resumes the
  * agent.
@@ -113,13 +114,12 @@ interface AgentSessionContentProps {
 export function AgentSessionContent({
   target,
   focusTerminal,
-  renderActions,
+  renderChrome,
   onOpenRoutine,
   onOpenAgentSettings,
 }: AgentSessionContentProps) {
   const view = useAgentSessionView(target, { focusTerminal });
   const routine = useSessionRoutine(view.session);
-  const [metadataOpen, setMetadataOpen] = useState(false);
   // Chosen once the session is known, then changed by the user or by a
   // terminal that starts while it is shown.
   const [chosen, setChosen] = useState<SessionInterface | null>(null);
@@ -206,8 +206,6 @@ export function AgentSessionContent({
   const menu = (
     <SessionActionsMenu
       view={view}
-      metadataOpen={metadataOpen}
-      onToggleMetadata={() => setMetadataOpen((open) => !open)}
       onCloseTerminal={() => {
         if (view.agentBusy) setConfirmCloseOpen(true);
         else closeTerminal();
@@ -239,22 +237,25 @@ export function AgentSessionContent({
   return (
     <ExternalTerminalAppProvider>
       <div className="flex h-full min-h-0 flex-col">
-        {renderActions?.(menu, view)}
-        <header className="flex shrink-0 items-start gap-3 px-6 pb-3">
-          <SessionIdentity
-            session={session}
-            checking={view.checking}
-            identityLabel={identityLabel}
-          />
-          {!renderActions && menu}
-        </header>
-        {metadataOpen && session && (
-          <SessionMetadata
-            session={session}
-            rootName={activeRootName}
-            spaceNames={spaceNames}
-          />
-        )}
+        {renderChrome({
+          view,
+          identity: session
+            ? {
+                icon: <AgentIcon agent={session.source} />,
+                title: session.title,
+              }
+            : view.checking
+              ? null
+              : { icon: <BotMessageSquare />, title: m.sessions_peek_title() },
+          status: session ? (
+            <SessionMetadataPopover
+              session={session}
+              rootName={activeRootName}
+              spaceNames={spaceNames}
+            />
+          ) : null,
+          menu,
+        })}
         <div
           {...{ [AGENT_SESSION_CONTENT_ATTRIBUTE]: "" }}
           className="min-h-0 flex-1 overflow-hidden"
@@ -297,60 +298,6 @@ export function AgentSessionContent({
         </AlertDialogContent>
       </AlertDialog>
     </ExternalTerminalAppProvider>
-  );
-}
-
-function SessionIdentity({
-  session,
-  checking,
-  identityLabel,
-}: {
-  session: AgentSession | null;
-  checking: boolean;
-  identityLabel: string | null;
-}) {
-  const agents = useAgentAdapterDictionary();
-  if (!session) {
-    return (
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        {checking ? (
-          <>
-            <Skeleton className="h-6 w-1/2" />
-            <Skeleton className="h-4 w-1/3" />
-          </>
-        ) : (
-          <h2 className="truncate text-lg font-semibold">
-            {m.sessions_title()}
-          </h2>
-        )}
-      </div>
-    );
-  }
-
-  const time = sessionTimeLabel(session);
-  return (
-    <div className="flex min-w-0 flex-1 flex-col gap-1">
-      <h2 className="truncate text-lg font-semibold">{session.title}</h2>
-      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <SessionStatusMarker session={session} />
-        <span className="truncate">
-          {[statusText(session), agents.label(session.source), identityLabel]
-            .filter(Boolean)
-            .join(" · ")}
-          {time && (
-            <>
-              {" · "}
-              <time
-                dateTime={session.lastActivityAt}
-                title={tooltipDateTime(session.lastActivityAt) ?? undefined}
-              >
-                {time}
-              </time>
-            </>
-          )}
-        </span>
-      </div>
-    </div>
   );
 }
 
@@ -528,8 +475,6 @@ function useSessionRoutine(session: AgentSession | null) {
 
 function SessionActionsMenu({
   view,
-  metadataOpen,
-  onToggleMetadata,
   onCloseTerminal,
   onCopyCommand,
   onOpenExternalTerminal,
@@ -538,8 +483,6 @@ function SessionActionsMenu({
   openInTerminal,
 }: {
   view: AgentSessionView;
-  metadataOpen: boolean;
-  onToggleMetadata: () => void;
   onCloseTerminal: () => void;
   onCopyCommand: () => void;
   onOpenExternalTerminal: () => void;
@@ -616,16 +559,6 @@ function SessionActionsMenu({
           >
             <ExternalTerminalIcon />
             {m.sessions_action_open_external_terminal()}
-          </DropdownMenuItem>
-          <NavigationMenuItems item={pinnableAgentSessionItem(view.session)} />
-          <DropdownMenuItem
-            disabled={!view.session}
-            onSelect={onToggleMetadata}
-          >
-            <Info />
-            {metadataOpen
-              ? m.sessions_action_hide_metadata()
-              : m.sessions_action_view_metadata()}
           </DropdownMenuItem>
         </DropdownMenuGroup>
         {view.ptyId && (

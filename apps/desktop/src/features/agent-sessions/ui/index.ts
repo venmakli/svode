@@ -1,6 +1,5 @@
 export { AgentSessionPeek } from "./session-peek";
 export {
-  AgentSessionBreadcrumbs,
   AgentSessionDraftMainSurface,
   AgentSessionMainSurface,
 } from "./session-main-surface";

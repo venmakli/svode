@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import { AgentSessionMainSurface } from "@/features/agent-sessions";
 import {
   KnowledgeGraphScreen,
   knowledgeOpenPath,
@@ -6,7 +8,38 @@ import {
 } from "@/features/knowledge";
 import { useSelectResult } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
+import { SpaceBreadcrumbs } from "@/features/space/app-shell";
 import { PublishMainHeader } from "./main-header-contribution";
+import { useShellStore } from "./model";
+import { passNavigationGuards } from "./navigation-guards";
+import { useShellView } from "./shell-view";
+
+/** A session in the main area; its identity and ⋯ go to the top bar. */
+export function SessionSurface(
+  props: Omit<ComponentProps<typeof AgentSessionMainSurface>, "renderHeader">,
+) {
+  const home = useShellView() === "home";
+  const openContentSurface = useShellStore((state) => state.openContentSurface);
+  return (
+    <AgentSessionMainSurface
+      {...props}
+      renderHeader={({ spacePath, current, menu }) => (
+        <PublishMainHeader
+          breadcrumbs={
+            <SpaceBreadcrumbs
+              home={home}
+              spacePath={spacePath}
+              current={current}
+              onBeforeNavigation={passNavigationGuards}
+              onActivateContent={openContentSurface}
+            />
+          }
+          objectActions={menu}
+        />
+      )}
+    />
+  );
+}
 
 export function GraphSurface({
   openRequest,

@@ -1,12 +1,8 @@
-import { useEffect, useRef } from "react";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import { useAgentSessionSpace, useResolvedAgentSession } from "../hooks";
+import { useEffect, useRef, type ReactNode } from "react";
+import { BreadcrumbPage } from "@/components/ui/breadcrumb";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSpace } from "@/features/space";
+import { useAgentSessionSpace } from "../hooks";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type {
   AgentSessionTarget,
@@ -16,7 +12,18 @@ import type {
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
-import { AgentSessionContent } from "./session-view";
+import { ExternalTerminalAppProvider } from "./external-terminal-icon";
+import { AgentSessionContent, type AgentSessionChrome } from "./session-view";
+
+/** What a session gives the main area top bar. */
+export interface AgentSessionMainHeader {
+  /** The Space of the session, which the breadcrumbs start with. */
+  spacePath: string;
+  /** The last breadcrumb: agent icon, title and "status · time". */
+  current: ReactNode;
+  /** The ⋯ menu of the session, right after the breadcrumbs. */
+  menu: ReactNode;
+}
 
 /** A session as the one object of the main area. */
 export function AgentSessionMainSurface({
@@ -25,6 +32,7 @@ export function AgentSessionMainSurface({
   focusTerminal = false,
   onOpenRoutine,
   onOpenAgentSettings,
+  renderHeader,
 }: {
   target: AgentSessionTarget;
   /** Move focus into the main area, as after "Expand"; the sidebar keeps it. */
@@ -33,6 +41,8 @@ export function AgentSessionMainSurface({
   focusTerminal?: boolean;
   onOpenRoutine(routine: RoutineLaunchLink): void;
   onOpenAgentSettings?: () => void;
+  /** Publishes the session's part of the main area top bar. */
+  renderHeader: (header: AgentSessionMainHeader) => ReactNode;
 }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   // The terminal takes focus itself once it is attached.
@@ -49,9 +59,41 @@ export function AgentSessionMainSurface({
         focusTerminal={focusTerminal}
         onOpenRoutine={onOpenRoutine}
         onOpenAgentSettings={onOpenAgentSettings}
+        renderChrome={(chrome) => (
+          <MainSessionHeader chrome={chrome} renderHeader={renderHeader} />
+        )}
       />
     </div>
   );
+}
+
+function MainSessionHeader({
+  chrome: { view, identity, status, menu },
+  renderHeader,
+}: {
+  chrome: AgentSessionChrome;
+  renderHeader: (header: AgentSessionMainHeader) => ReactNode;
+}) {
+  const space = useAgentSessionSpace(view.session);
+  const activeRootPath = useSpace((state) => state.activeRootPath);
+  return renderHeader({
+    spacePath: space?.spacePath ?? activeRootPath ?? "",
+    current: identity ? (
+      <>
+        <BreadcrumbPage className="flex min-w-0 max-w-[320px] items-center gap-1.5">
+          <span className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4">
+            {identity.icon}
+          </span>
+          <span className="truncate">{identity.title}</span>
+        </BreadcrumbPage>
+        {status}
+      </>
+    ) : (
+      <Skeleton className="h-4 w-40" />
+    ),
+    // The menu renders in the top bar, outside the session's providers.
+    menu: <ExternalTerminalAppProvider>{menu}</ExternalTerminalAppProvider>,
+  });
 }
 
 /** A new session draft as the one object of the main area; focus goes to its composer. */
@@ -82,41 +124,6 @@ export function AgentSessionDraftMainSurface({
         onOpenAgentSettings={onOpenAgentSettings}
         spaceChoices={spaceChoices}
       />
-    </div>
-  );
-}
-
-/** Window header breadcrumbs of a session in the main area: Space → session. */
-export function AgentSessionBreadcrumbs({
-  target,
-}: {
-  target: AgentSessionTarget;
-}) {
-  const session = useResolvedAgentSession(target);
-  const space = useAgentSessionSpace(session);
-  if (!session) return null;
-
-  return (
-    <div className="min-w-0 flex-1 px-2">
-      <Breadcrumb className="min-w-0">
-        <BreadcrumbList className="min-w-0 flex-nowrap overflow-hidden text-sm">
-          {space && (
-            <>
-              <BreadcrumbItem className="min-w-0">
-                <span className="block max-w-[220px] truncate">
-                  {space.name}
-                </span>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator className="shrink-0" />
-            </>
-          )}
-          <BreadcrumbItem className="min-w-0">
-            <BreadcrumbPage className="block max-w-[320px] truncate">
-              {session.title}
-            </BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
     </div>
   );
 }
