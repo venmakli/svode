@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import {
   InputGroup,
@@ -39,11 +39,14 @@ export function KnowledgeGraphScreen({
   spaces,
   openRequest,
   onOpenSource,
+  renderViewTools,
 }: {
   projectPath: string;
   spaces: KnowledgeSpaceOption[];
   openRequest: KnowledgeGraphOpenRequest | null;
   onOpenSource: (node: KnowledgeNode) => void | Promise<void>;
+  /** Hands search, scope, filters and reset to the host's top bar. */
+  renderViewTools: (tools: ReactNode) => ReactNode;
 }) {
   const [graphState, setGraphState] = useState<KnowledgeGraphState>(() =>
     stateFromRequest(openRequest),
@@ -82,50 +85,49 @@ export function KnowledgeGraphScreen({
 
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
-      <header className="flex items-center gap-3 border-b px-4 py-3">
-        <h1 className="shrink-0 text-base font-medium">
-          {m.knowledge_graph_title()}
-        </h1>
-        <InputGroup className="min-w-48 flex-1">
-          <InputGroupInput
-            value={graphState.query}
-            placeholder={m.search_placeholder()}
-            onChange={(event) => {
+      {renderViewTools(
+        <>
+          <InputGroup className="w-48">
+            <InputGroupInput
+              value={graphState.query}
+              placeholder={m.search_placeholder()}
+              onChange={(event) => {
+                setFocusedNodeId(null);
+                setGraphState((previous) => ({
+                  ...previous,
+                  query: event.target.value,
+                  selectedNodeId: null,
+                }));
+              }}
+            />
+            <InputGroupAddon>
+              <Search />
+            </InputGroupAddon>
+          </InputGroup>
+          <KnowledgeToolbar
+            scope={graphState.scope}
+            filters={graphState.filters}
+            spaces={spaces}
+            onScopeChange={(scope) => {
               setFocusedNodeId(null);
               setGraphState((previous) => ({
                 ...previous,
-                query: event.target.value,
+                scope,
                 selectedNodeId: null,
               }));
             }}
+            onFiltersChange={(filters) => {
+              setFocusedNodeId(null);
+              setGraphState((previous) => ({
+                ...previous,
+                filters,
+                selectedNodeId: null,
+              }));
+            }}
+            onReset={() => setResetKey((value) => value + 1)}
           />
-          <InputGroupAddon>
-            <Search />
-          </InputGroupAddon>
-        </InputGroup>
-        <KnowledgeToolbar
-          scope={graphState.scope}
-          filters={graphState.filters}
-          spaces={spaces}
-          onScopeChange={(scope) => {
-            setFocusedNodeId(null);
-            setGraphState((previous) => ({
-              ...previous,
-              scope,
-              selectedNodeId: null,
-            }));
-          }}
-          onFiltersChange={(filters) => {
-            setFocusedNodeId(null);
-            setGraphState((previous) => ({
-              ...previous,
-              filters,
-              selectedNodeId: null,
-            }));
-          }}
-          onReset={() => setResetKey((value) => value + 1)}
-        />
-      </header>
+        </>,
+      )}
       <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
         <ResizablePanel defaultSize="65%" minSize="40%">
           <KnowledgeGraphView

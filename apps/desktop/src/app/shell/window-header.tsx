@@ -1,6 +1,6 @@
 import { shortcutLabel } from "@/shared/lib/shortcut-description";
 import { sidebarShortcut } from "./model/shortcut-descriptions";
-import { ChangesControl, useMainChangesTarget } from "@/features/changes";
+import { ChangesControl } from "@/features/changes";
 import { useLayoutEffect, useRef } from "react";
 import { PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,9 @@ import { GitSyncStatusWidget } from "@/features/git/app-shell";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectExternalOpenButton } from "@/features/external-open";
 import { HomeSidebarHeader } from "@/features/home";
+import { KnowledgeGraphBreadcrumb } from "@/features/knowledge";
+import { ViewToolsGroup } from "@/shared/ui/view-tools-group";
+import { useMainHeaderContribution } from "./main-header-contribution";
 import { ProjectSwitcher } from "./project-switcher";
 import { useShellView } from "./shell-view";
 import { passNavigationGuards } from "./navigation-guards";
@@ -100,8 +103,14 @@ export function ShellChrome() {
   );
 }
 
+/**
+ * The main top bar: `[breadcrumbs] ⓘ ⋯ ··· [view tools] · Changes · Git sync ·
+ * Open with`. The open main surface contributes its parts through
+ * `usePublishMainHeader`; the header owns their order and narrow-width
+ * behavior: the breadcrumbs shrink first, then the view tools collapse.
+ */
 export function WindowHeader() {
-  const changesTarget = useMainChangesTarget();
+  const contribution = useMainHeaderContribution();
   const { selection } = useActiveContentSelection();
   const mainSurface = useShellStore((state) => state.mainSurface);
   const mainSessionTarget = useShellStore((state) =>
@@ -124,6 +133,9 @@ export function WindowHeader() {
     projectShown &&
     (!mainSessionTarget || sessionSpace?.spacePath === activeSpacePath);
   const sidebarHidden = state === "collapsed";
+  const changesTarget = contribution?.changes;
+  const objectActions = projectShown ? contribution?.objectActions : null;
+  const viewTools = projectShown ? contribution?.viewTools : null;
 
   return (
     <header
@@ -134,31 +146,41 @@ export function WindowHeader() {
           : undefined
       }
       className={cn(
-        "flex h-[44px] shrink-0 items-center justify-between gap-2 border-b border-transparent pr-2 transition-[padding-left] duration-200 ease-linear",
+        "flex h-[44px] shrink-0 items-center gap-2 border-b border-transparent pr-2 transition-[padding-left] duration-200 ease-linear",
         !sidebarHidden && "pl-2",
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div
+        data-main-header-object
+        className="flex min-w-0 shrink-[10000] items-center gap-1 has-[[data-slot=breadcrumb]]:min-w-32"
+      >
         {showBreadcrumbs && (
           <MainBreadcrumbs onBeforeNavigation={passNavigationGuards} />
         )}
         {projectShown && mainSessionTarget && (
           <AgentSessionBreadcrumbs target={mainSessionTarget} />
         )}
+        {projectShown && mainSurface === "graph" && (
+          <KnowledgeGraphBreadcrumb />
+        )}
+        {objectActions ? (
+          <div className="flex shrink-0 items-center gap-1">
+            {objectActions}
+          </div>
+        ) : null}
       </div>
 
+      {viewTools ? (
+        <ViewToolsGroup>{viewTools}</ViewToolsGroup>
+      ) : (
+        <div className="flex-1" />
+      )}
+
       <div className="flex shrink-0 items-center gap-1">
-        {showGitSync && (
-          <GitSyncStatusWidget
-            activateAccess={mainSurface === "content"}
-            onOpenRepositorySettings={(repositoryPath) =>
-              openSpaceSettings(repositoryPath, "git")
-            }
-          />
-        )}
         {projectShown &&
         mainSurface === "content" &&
-        changesTarget &&
+        changesTarget?.name &&
+        changesTarget.spacePath &&
         selection &&
         changesTarget.sessionKey ===
           (selection.kind === "artifact"
@@ -186,8 +208,19 @@ export function WindowHeader() {
             }}
           />
         ) : null}
+        {showGitSync && (
+          <GitSyncStatusWidget
+            activateAccess={mainSurface === "content"}
+            onOpenRepositorySettings={(repositoryPath) =>
+              openSpaceSettings(repositoryPath, "git")
+            }
+          />
+        )}
         {activeRootPath ? (
-          <ProjectExternalOpenButton projectPath={activeRootPath} />
+          <ProjectExternalOpenButton
+            projectPath={activeRootPath}
+            objectGroup={contribution?.openWith}
+          />
         ) : null}
       </div>
     </header>

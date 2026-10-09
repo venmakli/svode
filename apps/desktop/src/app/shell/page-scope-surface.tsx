@@ -1,6 +1,6 @@
 import { useActiveContentSelection } from "@/features/artifact";
 import { useState } from "react";
-import { usePublishMainChangesTarget } from "@/features/changes";
+import { usePublishMainHeader } from "./main-header-contribution";
 import type { PageSurfaceLayout } from "@/features/page/app-shell";
 import {
   usePageDetailContext,
@@ -37,8 +37,8 @@ export function PageScopeSurface({
     setOwnerKeys({ current: owner.ownerKey, previous: ownerKeys.current });
   }
 
-  usePublishMainChangesTarget(
-    detail.page
+  usePublishMainHeader({
+    changes: detail.page
       ? {
           kind: "page",
           projectPath: owner.projectPath,
@@ -50,7 +50,7 @@ export function PageScopeSurface({
           name: detail.page.meta.title,
         }
       : null,
-  );
+  });
 
   const contributions = createScopeSurfaceContributions({
     ...createScopeContentRenderers({ readOnly: pageSurface.readOnly }),

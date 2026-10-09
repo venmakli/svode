@@ -210,7 +210,8 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   const { useScopeOwner } = await import("@/features/scope-surfaces");
   const { openPage, publishPageTitleOutcome } =
     await import("@/features/page/navigation");
-  const { useMainChangesTarget } = await import("@/features/changes");
+  const { useMainHeaderContribution } =
+    await import("./main-header-contribution");
   const { PageScopeSurface } = await import("./page-scope-surface");
   const { getSpaceTreeSyncSnapshot, registerRootSpace } =
     await import("@/features/space");
@@ -353,7 +354,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     openPage(initialPath, "root");
     function Harness() {
       const { selection, activePathRetarget } = useActiveContentSelection();
-      const changes = useMainChangesTarget();
+      const changes = useMainHeaderContribution()?.changes;
       const targetPath =
         selection?.kind === "artifact"
           ? selection.request.intent.target.path

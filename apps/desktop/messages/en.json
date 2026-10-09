@@ -2619,5 +2619,6 @@
   "voice_input_settings_delete_title": "Delete {name}?",
   "voice_input_settings_delete_description": "Voice input will be unavailable until another installed model is chosen.",
   "markdown_reader_copy_code": "Copy code",
-  "markdown_reader_diagram_error": "The diagram could not be drawn: {reason}"
+  "markdown_reader_diagram_error": "The diagram could not be drawn: {reason}",
+  "view_tools": "View tools"
 }

@@ -6,6 +6,7 @@ import {
 } from "@/features/knowledge";
 import { useSelectResult } from "@/features/search/app-shell";
 import { useSpace } from "@/features/space";
+import { PublishMainHeader } from "./main-header-contribution";
 
 export function GraphSurface({
   openRequest,
@@ -45,6 +46,7 @@ export function GraphSurface({
       ]}
       openRequest={openRequest}
       onOpenSource={handleOpenSource}
+      renderViewTools={(tools) => <PublishMainHeader viewTools={tools} />}
     />
   );
 }

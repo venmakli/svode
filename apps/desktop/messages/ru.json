@@ -2619,5 +2619,6 @@
   "voice_input_settings_delete_title": "Удалить «{name}»?",
   "voice_input_settings_delete_description": "Голосовой ввод будет недоступен, пока не выбрана другая установленная модель.",
   "markdown_reader_copy_code": "Копировать код",
-  "markdown_reader_diagram_error": "Не удалось построить диаграмму: {reason}"
+  "markdown_reader_diagram_error": "Не удалось построить диаграмму: {reason}",
+  "view_tools": "Инструменты просмотра"
 }

@@ -29,6 +29,7 @@ export {
   KnowledgeGraphScreen,
   type KnowledgeGraphOpenRequest,
 } from "./ui/knowledge-graph-screen";
+export { KnowledgeGraphBreadcrumb } from "./ui/knowledge-graph-breadcrumb";
 export { KnowledgeGraphView } from "./ui/knowledge-graph-view";
 export {
   KnowledgeCommandResults,

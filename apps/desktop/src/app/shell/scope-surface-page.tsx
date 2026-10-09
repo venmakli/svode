@@ -1,4 +1,3 @@
-import { usePublishMainChangesTarget } from "@/features/changes";
 import {
   useCallback,
   useEffect,
@@ -9,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { AgentContextSurface } from "@/features/agent-context";
+import { usePublishMainHeader } from "./main-header-contribution";
 import { AgentSessionsSurface } from "@/features/agent-sessions";
 import { ActorsSurface } from "@/features/actors";
 import { RoutinesSurface } from "@/features/routines";
@@ -297,21 +297,23 @@ function ScopePageSurfaceHost({
       registerNavigationGuard?.(() => pageSurface.prepareToLeave()),
     [pageSurface, registerNavigationGuard],
   );
-  usePublishMainChangesTarget(
+  usePublishMainHeader(
     props.presentation === "full"
       ? {
-          kind:
-            props.owner.identityKind === "registered-space"
-              ? props.owner.spacePath === props.owner.projectPath
-                ? "project"
-                : "space"
-              : "owner",
-          sourceShape: "directory",
-          spacePath: props.owner.spacePath,
-          projectPath: props.owner.projectPath,
-          sessionKey: props.openRequestKey,
-          path: props.owner.readmePath,
-          name: detail.page?.meta.title ?? detail.fallbackTitle,
+          changes: {
+            kind:
+              props.owner.identityKind === "registered-space"
+                ? props.owner.spacePath === props.owner.projectPath
+                  ? "project"
+                  : "space"
+                : "owner",
+            sourceShape: "directory",
+            spacePath: props.owner.spacePath,
+            projectPath: props.owner.projectPath,
+            sessionKey: props.openRequestKey,
+            path: props.owner.readmePath,
+            name: detail.page?.meta.title ?? detail.fallbackTitle,
+          },
         }
       : null,
   );

@@ -303,4 +303,101 @@ if (process.env.SVODE_EXTERNAL_OPEN_DOM !== "1") {
       root?.unmount();
     });
   });
+
+  test("an object group leads the menu and gives the primary action", async () => {
+    const { TooltipProvider, ProjectExternalOpenButton } = await setup();
+    const { DropdownMenuGroup, DropdownMenuItem } =
+      await import("@/components/ui/dropdown-menu");
+    const { OpenWithControl } = await import("@/features/external-open");
+    installed = [VSCODE, FINDER];
+    globalThis.ResizeObserver ??= class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    const runs: string[] = [];
+    function objectGroup(pending = false) {
+      return {
+        primary: {
+          label: "Open in Preview",
+          renderIcon: () => <span data-object-icon />,
+          run: () => runs.push("primary"),
+        },
+        pending,
+        items: (
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              data-object-item
+              onSelect={() => runs.push("item")}
+            >
+              Preview
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        ),
+      };
+    }
+    const root = createRoot(doc.getElementById("app")!);
+    async function render(pending = false) {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ProjectExternalOpenButton
+              projectPath="/work/project"
+              objectGroup={objectGroup(pending)}
+            />
+          </TooltipProvider>,
+        );
+        await settle();
+      });
+    }
+
+    await render();
+    expect(primary().getAttribute("aria-label")).toBe("Open in Preview");
+    expect(primary().querySelector("[data-object-icon]") === null).toBe(false);
+    opened.length = 0;
+    await clickPrimary();
+    expect(runs).toEqual(["primary"]);
+    expect(opened).toEqual([]);
+
+    // Object entries first, then a separator, then the project applications.
+    await openMenu();
+    const menu = doc.querySelector('[role="menu"]')!;
+    const entries = [
+      ...menu.querySelectorAll<HTMLElement>(
+        "[data-object-item], [data-open-with-group-separator], [data-external-app]",
+      ),
+    ].map((entry) =>
+      "objectItem" in entry.dataset
+        ? "object"
+        : "openWithGroupSeparator" in entry.dataset
+          ? "separator"
+          : entry.dataset.externalApp,
+    );
+    expect(entries).toEqual(["object", "separator", "vscode", "file_manager"]);
+    await select("vscode");
+    expect(opened).toEqual([{ projectPath: "/work/project", app: "vscode" }]);
+    // A project choice is remembered for projects but leaves the primary to the object.
+    expect(primary().getAttribute("aria-label")).toBe("Open in Preview");
+
+    // A running object action blocks the whole control.
+    await render(true);
+    expect(primary().disabled).toBe(true);
+    expect(chevron().disabled).toBe(true);
+
+    // Without an object group the control is the project control of DF-098.
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <OpenWithControl groups={[objectGroup()]} />
+        </TooltipProvider>,
+      );
+      await settle();
+    });
+    await openMenu();
+    expect(doc.querySelector("[data-open-with-group-separator]")).toBeNull();
+    await closeMenu();
+    await act(async () => {
+      root.unmount();
+    });
+  });
 }

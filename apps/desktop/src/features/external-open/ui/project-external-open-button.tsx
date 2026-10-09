@@ -5,14 +5,37 @@ import * as m from "@/paraglide/messages.js";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 
 import { projectExternalOpenTarget } from "../api/project-target";
-import type { ExternalApp } from "../model/types";
-import { ExternalOpenButton } from "./external-open-button";
+import { useExternalOpenGroup } from "../hooks/use-external-open-group";
+import type { ExternalApp, OpenWithGroup } from "../model/types";
+import { OpenWithControl } from "./open-with-control";
 
-/** External open of the active project root, with failures reported as a toast. */
+/**
+ * External open of the active project root, with failures reported as a
+ * toast. An object group of the open screen leads the control and gives its
+ * primary action; the project applications follow it.
+ */
 export function ProjectExternalOpenButton({
   projectPath,
+  objectGroup,
 }: {
   projectPath: string;
+  objectGroup?: OpenWithGroup;
+}) {
+  return (
+    <ProjectOpenWith
+      key={projectPath}
+      projectPath={projectPath}
+      objectGroup={objectGroup}
+    />
+  );
+}
+
+function ProjectOpenWith({
+  projectPath,
+  objectGroup,
+}: {
+  projectPath: string;
+  objectGroup?: OpenWithGroup;
 }) {
   const target = useMemo(
     () => projectExternalOpenTarget(projectPath),
@@ -27,12 +50,11 @@ export function ProjectExternalOpenButton({
       { description: getNativeErrorMessage(error) },
     );
   }, []);
+  const projectGroup = useExternalOpenGroup({ target, onError: handleError });
 
   return (
-    <ExternalOpenButton
-      key={projectPath}
-      target={target}
-      onError={handleError}
+    <OpenWithControl
+      groups={objectGroup ? [objectGroup, projectGroup] : [projectGroup]}
     />
   );
 }

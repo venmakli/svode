@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { ExternalAppDto } from "@/platform/project-openers";
 
 export type ExternalApp = ExternalAppDto;
@@ -17,4 +19,25 @@ export interface ExternalOpenTarget {
 export interface ExternalOpenBinding {
   target: ExternalOpenTarget;
   onError(error: unknown, app: ExternalApp | null): void;
+}
+
+/** The action of the primary button of an "Open with" control. */
+export interface OpenWithAction {
+  label: string;
+  renderIcon(dataIcon?: "inline-start"): ReactNode;
+  run(): void;
+}
+
+/**
+ * One group of an "Open with" control. The first group of a control gives
+ * the primary button; menus show the groups in order between separators.
+ */
+export interface OpenWithGroup {
+  primary: OpenWithAction;
+  /** Menu entries: one or more `DropdownMenuGroup`s, separated inside. */
+  items: ReactNode;
+  /** Blocks the whole control while an action of the group runs. */
+  pending: boolean;
+  /** Refreshes what the group offers each time the menu opens. */
+  onMenuOpen?(): void;
 }
