@@ -7,6 +7,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import * as m from "@/paraglide/messages.js";
+import { ViewToolsGroup } from "./view-tools-group";
 
 /**
  * The top bar of every peek: `[identity] ⓘ ⋯ ··· [view tools] · Changes ·
@@ -46,13 +47,17 @@ export function PeekTopBar({
       data-peek-top-bar
       className="flex min-h-9 shrink-0 items-center gap-1 px-2 pb-2"
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1">
+      <div className="flex min-w-0 shrink-[10000] items-center gap-1">
         {identity}
         {info}
         {menu}
       </div>
+      {viewTools ? (
+        <ViewToolsGroup>{viewTools}</ViewToolsGroup>
+      ) : (
+        <div className="flex-1" />
+      )}
       <div className="flex shrink-0 items-center gap-1">
-        {viewTools}
         {changes}
         {openWith}
         {onExpand ? (

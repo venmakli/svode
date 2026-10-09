@@ -62,6 +62,8 @@ if (process.env.SVODE_PEEK_TOP_BAR_TEST !== "1") {
         bar.querySelector(`[aria-label="${m.peek_close()}"]`)!,
       ];
       expect(slots.every(Boolean)).toBe(true);
+      // The tools sit in the shared group that collapses on a narrow bar.
+      expect(slots[3].closest("[data-view-tools]") === null).toBe(false);
       for (let index = 1; index < slots.length; index += 1)
         expect(precedes(slots[index - 1], slots[index])).toBe(true);
       expect(bar.querySelector("[data-peek-identity]")?.textContent).toBe(
