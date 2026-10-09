@@ -6,7 +6,6 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 
@@ -16,9 +15,11 @@ use tempfile::TempDir;
 
 const LAUNCHER: &str = env!("CARGO_BIN_EXE_svode-launcher");
 
-/// Starts a binary the test has just written. On Linux a parallel test
-/// that forks meanwhile keeps the file open for writing until its child
-/// execs, and exec fails with ETXTBSY; the next attempt succeeds.
+/// Starts a launcher of `~/.svode/bin`. When a test takes desktop ownership,
+/// the product `install_launchers` writes them in this process, so on Linux
+/// a parallel test that forks meanwhile keeps the file open for writing until
+/// its child execs, and exec fails with ETXTBSY; the next attempt succeeds.
+/// The files a test writes itself come from `svode_testkit` and start at once.
 trait Run {
     fn run(&mut self) -> Output;
     fn start(&mut self) -> Child;
@@ -94,13 +95,15 @@ impl Machine {
     fn install(&self, archive: &Path) -> Output {
         self.command(&archive.join("bin/svode-launcher"))
             .arg("install")
-            .run()
+            .output()
+            .unwrap()
     }
 
     fn uninstall(&self) -> Output {
         self.command(&self.layout().active_binary("svode-launcher"))
             .arg("uninstall")
-            .run()
+            .output()
+            .unwrap()
     }
 
     /// Runs the `svode` launcher and returns its stdout.
@@ -118,10 +121,11 @@ fn runtime_files(binaries: &Path, payload: &Path, marker: &str) {
     fs::create_dir_all(binaries).unwrap();
     for name in ["svode", "svode-mcp", "svode-lfs"] {
         let path = binaries.join(name);
-        fs::write(&path, format!("#!/bin/sh\necho \"{name} {marker} $*\"\n")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        svode_testkit::write_executable(&path, format!("#!/bin/sh\necho \"{name} {marker} $*\"\n"))
+            .unwrap();
     }
-    fs::copy(LAUNCHER, binaries.join("svode-launcher")).unwrap();
+    svode_testkit::write_executable(binaries.join("svode-launcher"), fs::read(LAUNCHER).unwrap())
+        .unwrap();
     fs::create_dir_all(payload.join(".claude-plugin")).unwrap();
     fs::create_dir_all(payload.join("skills/svode")).unwrap();
     fs::write(
@@ -211,7 +215,7 @@ fn a_clean_standalone_install_needs_no_desktop_and_gives_stable_launchers_and_pa
 fn an_update_switches_the_version_without_breaking_a_running_process() {
     let machine = Machine::new();
     let archive = machine.archive("A");
-    fs::write(
+    svode_testkit::write_executable(
         archive.join("bin/svode-mcp"),
         "#!/bin/sh\necho started\nread line\necho \"svode-mcp A $line\"\n",
     )
@@ -383,8 +387,8 @@ fn launchers_without_any_installation_report_it() {
     let machine = Machine::new();
     let bin = machine.home.join(".svode/bin");
     fs::create_dir_all(&bin).unwrap();
-    fs::copy(LAUNCHER, bin.join("svode")).unwrap();
-    let output = machine.command(&bin.join("svode")).run();
+    svode_testkit::write_executable(bin.join("svode"), fs::read(LAUNCHER).unwrap()).unwrap();
+    let output = machine.command(&bin.join("svode")).output().unwrap();
     assert_eq!(output.status.code(), Some(69));
     assert!(
         stderr(&output).contains("the Svode runtime is not installed"),
@@ -460,16 +464,14 @@ fn a_home_that_is_a_svode_project_is_refused() {
 /// Replaces `svode` of an unpacked archive with a script that logs its
 /// arguments to `log` and answers like `svode integration --json`.
 fn log_integration(archive: &Path, log: &Path, changed: bool) {
-    let path = archive.join("bin/svode");
-    fs::write(
-        &path,
+    svode_testkit::write_executable(
+        archive.join("bin/svode"),
         format!(
             "#!/bin/sh\necho \"$*\" >> '{}'\necho '{{\"schemaVersion\":1,\"ok\":true,\"changed\":{changed}}}'\n",
             log.display()
         ),
     )
     .unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 #[test]

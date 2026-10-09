@@ -3,7 +3,6 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -31,8 +30,8 @@ fn install_runtime(home: &Path) {
     fs::create_dir_all(&binaries).unwrap();
     for name in svode_install::RUNTIME_BINARIES {
         let path = binaries.join(name);
-        fs::write(&path, "#!/bin/sh\necho svode-desktop-bridge-v1\n").unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        svode_testkit::write_executable(&path, "#!/bin/sh\necho svode-desktop-bridge-v1\n")
+            .unwrap();
     }
     fs::create_dir_all(payload.join(".claude-plugin")).unwrap();
     fs::create_dir_all(payload.join("skills/svode")).unwrap();

@@ -84,9 +84,9 @@ fn home_with_agents(agents: &[&Agent]) -> (Home, Machine) {
             exe = agent.executable,
             config = agent.config,
         );
-        let path = format!("bin/{}", agent.executable);
-        home.write(&path, &script);
-        fs::set_permissions(home.path(&path), fs::Permissions::from_mode(0o755)).unwrap();
+        let path = home.path(&format!("bin/{}", agent.executable));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        svode_testkit::write_executable(&path, script).unwrap();
     }
     let machine = home.machine().with_search_path(Some(&search_path(&home)));
     (home, machine)

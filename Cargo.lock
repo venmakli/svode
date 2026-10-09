@@ -5474,6 +5474,7 @@ dependencies = [
  "svode-connect",
  "svode-core",
  "svode-install",
+ "svode-testkit",
  "svode-tools",
  "tempfile",
  "tokio",
@@ -5489,6 +5490,7 @@ dependencies = [
  "serde_yml",
  "svode-core",
  "svode-install",
+ "svode-testkit",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
 ]
@@ -5557,6 +5559,7 @@ dependencies = [
  "svode-install",
  "svode-mcp",
  "svode-speech",
+ "svode-testkit",
  "svode-tools",
  "sysinfo",
  "tauri",
@@ -5586,6 +5589,7 @@ version = "0.0.9"
 dependencies = [
  "serde",
  "serde_json",
+ "svode-testkit",
  "tempfile",
 ]
 
@@ -5612,6 +5616,7 @@ dependencies = [
  "svode-connect",
  "svode-core",
  "svode-install",
+ "svode-testkit",
  "svode-tools",
  "tempfile",
  "tokio",

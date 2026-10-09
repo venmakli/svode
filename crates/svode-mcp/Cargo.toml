@@ -24,6 +24,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 [dev-dependencies]
 svode-install = { path = "../svode-install" }
 svode-core = { path = "../svode-core" }
+svode-testkit = { path = "../svode-testkit" }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

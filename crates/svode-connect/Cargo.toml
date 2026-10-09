@@ -20,4 +20,5 @@ toml = "0.9"
 serde_yml = "0.0.12"
 
 [dev-dependencies]
+svode-testkit = { path = "../svode-testkit" }
 tempfile = "3"

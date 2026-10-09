@@ -556,12 +556,12 @@ async fn git_failure_and_missing_git_leave_successful_crud_without_secret_diagno
     );
 }
 fn fail_commit(repo: &Path) {
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
     let hook = repo.join(".git/hooks/pre-commit");
-    fs::write(&hook, "#!/bin/sh\necho synthetic-secret >&2\nexit 1\n").unwrap();
     #[cfg(unix)]
-    fs::set_permissions(hook, fs::Permissions::from_mode(0o755)).unwrap();
+    svode_testkit::write_executable(&hook, "#!/bin/sh\necho synthetic-secret >&2\nexit 1\n")
+        .unwrap();
+    #[cfg(not(unix))]
+    fs::write(&hook, "#!/bin/sh\necho synthetic-secret >&2\nexit 1\n").unwrap();
 }
 
 #[tokio::test]

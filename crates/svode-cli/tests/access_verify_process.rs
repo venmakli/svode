@@ -179,15 +179,13 @@ fn a_denied_push_is_read_only_and_keeps_the_write_gate_closed() {
     let bin = temp.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let wrapper = bin.join("git");
-    std::fs::write(
+    svode_testkit::write_executable(
         &wrapper,
         format!(
             "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = push ]; then\n    echo 'remote: Write access to repository not granted.' >&2\n    exit 1\n  fi\ndone\nexec '{real}' \"$@\"\n"
         ),
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
     let path = format!(
         "{}:{}",
         bin.display(),

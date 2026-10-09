@@ -1291,8 +1291,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn setup_and_start_share_recovered_path_including_children_and_respect_overrides() {
-        use std::os::unix::fs::PermissionsExt;
-
         let temp = tempfile::tempdir().unwrap();
         let recovered_bin = temp.path().join("recovered bin");
         let override_bin = temp.path().join("override bin");
@@ -1300,13 +1298,11 @@ mod tests {
             std::fs::create_dir(bin).unwrap();
             let program = bin.join("svode-path-probe");
             let helper = bin.join("svode-path-helper");
-            std::fs::write(&program, "#!/bin/sh\nexec svode-path-helper \"$@\"\n").unwrap();
-            std::fs::write(&helper, format!(
+            svode_testkit::write_executable(&program, "#!/bin/sh\nexec svode-path-helper \"$@\"\n")
+                .unwrap();
+            svode_testkit::write_executable(&helper, format!(
                 "#!/bin/sh\nphase=$1\nshift\nprintf '%s\\n' '{label}' \"$@\" > \"$phase.txt\"\nif [ \"$phase\" = start ]; then exec /bin/sleep 30; fi\n",
             )).unwrap();
-            for path in [program, helper] {
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
         }
         let recovered_path = std::env::join_paths([
             recovered_bin.as_path(),
