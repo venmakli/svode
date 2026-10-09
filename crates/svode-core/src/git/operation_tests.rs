@@ -571,15 +571,13 @@ async fn changed_target_rejects_queued_work_and_dropped_client_does_not_cancel_p
 
 #[tokio::test]
 async fn native_ssh_dns_failure_keeps_configured_remote_error() {
-    use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
     let ssh = f.root.parent().unwrap().join("failed-ssh");
-    std::fs::write(
+    svode_testkit::write_executable(
         &ssh,
         "#!/bin/sh\necho 'ssh: Could not resolve hostname fixture.invalid' >&2\nexit 255\n",
     )
     .unwrap();
-    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
     git(
         &f.root,
         &["config", "core.sshCommand", ssh.to_str().unwrap()],
@@ -870,7 +868,6 @@ fn shared_errors_preserve_original_structured_ipc_payloads() {
 
 #[tokio::test]
 async fn transport_change_during_pull_does_not_redirect_the_following_push() {
-    use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
     let writer = f.root.parent().unwrap().join("remote-writer");
     let wrong = f.root.parent().unwrap().join("wrong.git");
@@ -898,7 +895,7 @@ async fn transport_change_during_pull_does_not_redirect_the_following_push() {
     let before = git(&wrong, &["rev-parse", "main"]);
     commit(&f.root, "note", "outgoing change");
     let hook = f.root.join(".git/hooks/post-merge");
-    std::fs::write(
+    svode_testkit::write_executable(
         &hook,
         format!(
             "#!/bin/sh\ngit config remote.origin.pushurl '{}'\n",
@@ -906,7 +903,6 @@ async fn transport_change_during_pull_does_not_redirect_the_following_push() {
         ),
     )
     .unwrap();
-    std::fs::set_permissions(hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     let error = sync::sync(&f.cli, &f.root).await.unwrap_err();
     assert_eq!(error.kind(), "git_publication_blocked");
     assert_eq!(git(&wrong, &["rev-parse", "main"]), before);
@@ -921,7 +917,7 @@ async fn transport_change_during_pull_does_not_redirect_the_following_push() {
 async fn readers_join_child_and_parent_without_fetch_then_independent_focus_reads_again() {
     let f = Fixture::new();
     let commands = f._temp.path().join("reader-commands");
-    std::fs::write(f._temp.path().join("git-test"), format!("#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg in \"$@\"; do case \"$arg\" in fetch|pull|push|ls-remote) echo \"$arg\" >> '{}'; break;; esac; done\nexec git -c protocol.file.allow=always \"$@\"\n", commands.display())).unwrap();
+    svode_testkit::write_executable(f._temp.path().join("git-test"), format!("#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg in \"$@\"; do case \"$arg\" in fetch|pull|push|ls-remote) echo \"$arg\" >> '{}'; break;; esac; done\nexec git -c protocol.file.allow=always \"$@\"\n", commands.display())).unwrap();
     commit(&f.child, "note", "reader coverage");
     policy(&f.child, 7);
     policy(&f.root, 7);

@@ -1,0 +1,14 @@
+[package]
+name = "svode-testkit"
+version = "0.0.1"
+edition = "2024"
+authors = ["Kamnev Ilya"]
+repository = "https://github.com/venmakli/svode"
+description = "Svode test infrastructure, a dev-only dependency: executable files that tests write and then run without ETXTBSY."
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"

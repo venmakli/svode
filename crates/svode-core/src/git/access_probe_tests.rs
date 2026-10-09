@@ -1,5 +1,4 @@
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 
 struct Fixture {
@@ -42,7 +41,7 @@ impl Fixture {
         fs::write(repo.join("note"), "unstaged\n").unwrap();
         let wrapper = temp.path().join("git-fault");
         let real_path = real.git_path().to_string_lossy().replace('\'', "'\\''");
-        fs::write(
+        svode_testkit::write_executable(
             &wrapper,
             format!(
                 r#"#!/bin/sh
@@ -55,7 +54,6 @@ exec '{real_path}' "$@"
             ),
         )
         .unwrap();
-        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
         Self {
             _temp: temp,
             repo,
@@ -237,12 +235,11 @@ async fn push_failure_matrix_requires_explicit_remote_permission_evidence() {
 async fn actual_hook_rejection_is_not_repository_permission_evidence() {
     let fixture = Fixture::new("").await;
     let hook = fixture.remote.join("hooks/pre-receive");
-    fs::write(
+    svode_testkit::write_executable(
         &hook,
         "#!/bin/sh\necho 'Write access to repository not granted.' >&2\nexit 1\n",
     )
     .unwrap();
-    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
     let before = fixture.user_state().await;
     assert_eq!(
         fixture.probe().await.unwrap(),

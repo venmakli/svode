@@ -7,7 +7,7 @@ fn shell(value: &Path) -> String {
 fn traced(f: &Fixture, injection: &str) -> PathBuf {
     let log = f._temp.path().join("commands");
     std::fs::write(&log, "").unwrap();
-    std::fs::write(f.cli.git_path(), format!(
+    svode_testkit::write_executable(f.cli.git_path(), format!(
         "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nprintf '%s\\t%s\\n' \"$PWD\" \"$*\" >> {}\n{}\nexec git -c protocol.file.allow=always \"$@\"\n", shell(&log), injection,
     )).unwrap();
     log

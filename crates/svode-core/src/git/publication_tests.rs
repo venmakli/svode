@@ -6,7 +6,7 @@ mod push_rejection_tests;
 #[path = "publication_reuse_tests.rs"]
 mod reuse_tests;
 use super::*;
-use std::{os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{path::PathBuf, process::Command};
 
 fn git(repo: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -85,8 +85,7 @@ impl Fixture {
         git(&child, &["config", "user.name", "Fixture"]);
         git(&child, &["config", "user.email", "fixture@example.test"]);
         let wrapper = temp.path().join("git-test");
-        std::fs::write(&wrapper, "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        svode_testkit::write_executable(&wrapper, "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
         Self {
             _temp: temp,
             root,
@@ -117,12 +116,11 @@ fn counting_hook(repo: &Path, body: &str) -> PathBuf {
     ));
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("pre-push");
-    std::fs::write(
+    svode_testkit::write_executable(
         &hook,
         format!("#!/bin/sh\nprintf 'hook\\n' >> \"$(dirname \"$0\")/pre-push-calls\"\n{body}\n"),
     )
     .unwrap();
-    std::fs::set_permissions(hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     let calls = hooks.join("pre-push-calls");
     std::fs::write(&calls, "").unwrap();
     calls
@@ -366,7 +364,7 @@ async fn content_only_sync_does_not_contact_unchanged_submodule_sources() {
         "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg do\nif [ \"$arg\" = '{}' ]; then echo 'unchanged child must not be contacted' >&2; exit 99; fi\ndone\nexec git -c protocol.file.allow=always \"$@\"\n",
         f.source.display()
     );
-    std::fs::write(f.cli.git_path(), script).unwrap();
+    svode_testkit::write_executable(f.cli.git_path(), script).unwrap();
     let result = super::super::sync::sync(&f.cli, &f.root).await;
     assert!(
         matches!(result, Ok(super::super::sync::SyncResult::Success { .. })),
@@ -389,7 +387,7 @@ async fn source_proof_reuses_local_objects_without_downloading_known_history() {
         "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\ngit -c protocol.file.allow=always \"$@\"\nresult=$?\ncase \"$PWD\" in */source-*) case \" $* \" in *' fetch '*) git count-objects -v > '{}' ;; esac ;; esac\nexit $result\n",
         report.display()
     );
-    std::fs::write(f.cli.git_path(), script).unwrap();
+    svode_testkit::write_executable(f.cli.git_path(), script).unwrap();
     assert_eq!(f.push().await.unwrap().exit_code, 0);
     let objects = std::fs::read_to_string(report).unwrap();
     assert!(objects.lines().any(|line| line == "count: 0"), "{objects}");
@@ -781,7 +779,7 @@ async fn ref_or_target_change_during_proof_requires_a_new_attempt() {
             marker.display(),
             mutation
         );
-        std::fs::write(f.cli.git_path(), script).unwrap();
+        svode_testkit::write_executable(f.cli.git_path(), script).unwrap();
         assert!(matches!(
             f.push().await,
             Err(GitError::PublicationBlocked {
@@ -826,8 +824,7 @@ async fn parent_permission_is_optional_after_child_save_and_publication() {
             .map(|_| ());
         if denied == "read_only" {
             let wrapper = f._temp.path().join("git-denial");
-            std::fs::write(&wrapper, "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg in \"$@\"; do if [ \"$arg\" = push ]; then echo 'remote: Write access to repository not granted.' >&2; exit 1; fi; done\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
-            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+            svode_testkit::write_executable(&wrapper, "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nfor arg in \"$@\"; do if [ \"$arg\" = push ]; then echo 'remote: Write access to repository not granted.' >&2; exit 1; fi; done\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
             let denial_cli = GitCli::for_test(wrapper);
             let snapshot = access.verify(&denial_cli, &f.root, &store).await.unwrap();
             assert_eq!(
@@ -954,14 +951,9 @@ async fn late_parent_rejection_and_policy_skip_keep_child_published() {
             .await;
     assert_eq!(serde_json::to_value(report).unwrap()["policySkipped"], true);
     assert_eq!(git(&f.root, &["rev-parse", "HEAD"]), root);
-    std::fs::write(
+    svode_testkit::write_executable(
         f.remote.join("hooks/pre-receive"),
         "#!/bin/sh\necho 'permission denied' >&2\nexit 1\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        f.remote.join("hooks/pre-receive"),
-        std::fs::Permissions::from_mode(0o755),
     )
     .unwrap();
     let report =

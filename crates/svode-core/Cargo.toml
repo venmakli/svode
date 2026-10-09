@@ -28,3 +28,6 @@ ulid = "1"
 tempfile = "3"
 url = "2.5.8"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+[dev-dependencies]
+svode-testkit = { path = "../svode-testkit" }

@@ -20,8 +20,7 @@ fn remote_hook(remote: &Path, body: Option<&str>) {
     match body {
         Some(body) => {
             std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-            std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+            svode_testkit::write_executable(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
         }
         None => std::fs::remove_file(&hook).unwrap(),
     }

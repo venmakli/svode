@@ -391,15 +391,13 @@ async fn probe_only_refresh_is_equivalent_and_corrects_polluted_snapshot() {
 
 #[cfg(unix)]
 fn wrapper(cli: &GitCli, directory: &Path, body: &str) -> GitCli {
-    use std::os::unix::fs::PermissionsExt;
     let script = directory.join("git-wrapper");
     let real = cli.git_path().to_string_lossy().replace('\'', "'\\''");
-    fs::write(
+    svode_testkit::write_executable(
         &script,
         format!("#!/bin/sh\n{body}\nexec '{real}' \"$@\"\n"),
     )
     .unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     GitCli::for_test(script)
 }
 

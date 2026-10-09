@@ -1576,8 +1576,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn child_commit_failure_does_not_create_root_gitlink() {
-        use std::os::unix::fs::PermissionsExt;
-
         let Ok(cli) = GitCli::detect() else {
             return;
         };
@@ -1585,10 +1583,7 @@ mod tests {
         let child = init_metadata_only_submodule(&cli, root.path()).await;
         std::fs::write(child.join(".mailmap"), "Actor <actor@example.test>\n").unwrap();
         let hook = child.join(".git/hooks/pre-commit");
-        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-        let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&hook, permissions).unwrap();
+        svode_testkit::write_executable(&hook, "#!/bin/sh\nexit 1\n").unwrap();
 
         let child_commit =
             commit_exact_path(&cli, &child, ".mailmap", "Update contributor identities").await;
@@ -1608,8 +1603,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn root_gitlink_failure_keeps_child_commit_and_allows_pointer_only_recovery() {
-        use std::os::unix::fs::PermissionsExt;
-
         let Ok(cli) = GitCli::detect() else {
             return;
         };
@@ -1631,10 +1624,7 @@ mod tests {
             .unwrap();
 
         let hook = root.path().join(".git/hooks/pre-commit");
-        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-        let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&hook, permissions).unwrap();
+        svode_testkit::write_executable(&hook, "#!/bin/sh\nexit 1\n").unwrap();
         assert!(
             commit_exact_path(&cli, root.path(), "space", "Update space pointer")
                 .await
@@ -1867,8 +1857,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn failed_new_exact_path_commit_restores_its_index_state() {
-        use std::os::unix::fs::PermissionsExt;
-
         let Ok(cli) = GitCli::detect() else {
             return;
         };
@@ -1883,10 +1871,7 @@ mod tests {
             0
         );
         let hook = repo.path().join(".git/hooks/pre-commit");
-        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-        let mut permissions = std::fs::metadata(&hook).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&hook, permissions).unwrap();
+        svode_testkit::write_executable(&hook, "#!/bin/sh\nexit 1\n").unwrap();
 
         assert!(
             commit_exact_path(

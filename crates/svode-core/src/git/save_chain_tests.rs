@@ -527,12 +527,10 @@ async fn a_refused_commit_returns_the_chain_and_a_retry_commits_it() {
     let before = fixture.head().await;
     let hook = fixture.root().join(".git/hooks/pre-commit");
     fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    svode_testkit::write_executable(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(not(unix))]
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
     let pending_before = fixture.pending();
 
     let error = fixture

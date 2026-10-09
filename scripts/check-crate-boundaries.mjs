@@ -13,6 +13,8 @@
 // agent runtime, reaches only svode-core and svode-tools, whose tool catalog
 // names the objects a Svode MCP call changes. svode-speech, the speech recognition
 // process and the client Desktop drives it with, reaches no other Svode package.
+// svode-testkit, the test infrastructure, reaches no other Svode package and
+// is only ever a dev-dependency, so no package ships it.
 
 import { execFileSync } from "node:child_process";
 
@@ -26,6 +28,7 @@ const packages = [
   "svode-install",
   "svode-connect",
   "svode-speech",
+  "svode-testkit",
 ];
 const hostBound = (name) => name === "svode-desktop" || /^tauri(-|$)/.test(name);
 const extraForbidden = {
@@ -36,6 +39,7 @@ const extraForbidden = {
   "svode-install": ["svode-core", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs", "svode-connect"],
   "svode-connect": ["svode-tools", "svode-mcp", "svode-cli", "svode-lfs"],
   "svode-speech": ["svode-core", "svode-agents", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs", "svode-install", "svode-connect"],
+  "svode-testkit": ["svode-core", "svode-agents", "svode-tools", "svode-mcp", "svode-cli", "svode-lfs", "svode-install", "svode-connect", "svode-speech"],
 };
 const forbidden = (pkg, name) => hostBound(name) || (extraForbidden[pkg] ?? []).includes(name);
 
@@ -72,9 +76,37 @@ for (const pkg of packages) {
   }
 }
 
+const testkitDependents = execFileSync(
+  "cargo",
+  [
+    "tree",
+    "--workspace",
+    "--invert",
+    "svode-testkit",
+    "--edges",
+    "normal,build",
+    "--target",
+    "all",
+    "--prefix",
+    "none",
+    "--format",
+    "{p}",
+  ],
+  { encoding: "utf8" },
+)
+  .split("\n")
+  .map((line) => line.trim().split(" ")[0])
+  .filter((name) => name && name !== "svode-testkit");
+if (testkitDependents.length > 0) {
+  failed = true;
+  console.error(
+    `[crate-boundaries] ${[...new Set(testkitDependents)].join(", ")} depend on svode-testkit outside dev-dependencies`,
+  );
+}
+
 if (failed) {
   process.exit(1);
 }
 console.log(
-  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install and svode-core; svode-agents reaches only svode-core and svode-tools; svode-speech is self-contained`,
+  `[crate-boundaries] ok: ${packages.join(", ")} are host-free; svode-cli and svode-mcp are independent over svode-tools; svode-install is self-contained; svode-connect reaches only svode-install and svode-core; svode-agents reaches only svode-core and svode-tools; svode-speech and svode-testkit are self-contained; svode-testkit is a dev-dependency only`,
 );

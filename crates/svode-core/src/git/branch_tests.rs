@@ -1,7 +1,6 @@
 #![cfg(unix)]
 
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -85,8 +84,7 @@ impl Fixture {
         git(&child, &["config", "user.email", "fixture@example.test"]);
         git(&child, &["checkout", "--detach"]);
         let wrapper = temp.path().join("git-test");
-        std::fs::write(&wrapper, "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        svode_testkit::write_executable(&wrapper, "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
         Self {
             _temp: temp,
             root,
@@ -479,7 +477,7 @@ async fn auth_failure_and_custom_tracking_refspec_fail_without_local_mutations()
         f.branch("develop");
         if auth {
             let wrapper = f.cli.git_path();
-            std::fs::write(wrapper, "#!/bin/sh\ncase \" $* \" in *' ls-remote '*) echo 'Authentication failed' >&2; exit 128;; esac\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
+            svode_testkit::write_executable(wrapper, "#!/bin/sh\ncase \" $* \" in *' ls-remote '*) echo 'Authentication failed' >&2; exit 128;; esac\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\nexec git -c protocol.file.allow=always \"$@\"\n").unwrap();
         } else {
             git(
                 &f.child,

@@ -1727,7 +1727,6 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn external_change_during_load_and_failure_preserve_publication_guards() {
-        use std::os::unix::fs::PermissionsExt;
         let repo = init_repo("Initial", "initial@example.test");
         commit(repo.path(), "one.txt", "one", "one");
         let cli = GitCli::detect().unwrap();
@@ -1737,7 +1736,7 @@ mod tests {
         let script = helper.path().join("git-wrapper");
         let marker = helper.path().join("changed");
         // Change sources after the history command has captured its old output.
-        fs::write(
+        svode_testkit::write_executable(
             &script,
             format!(
                 r#"#!/bin/sh
@@ -1757,7 +1756,6 @@ exec '{git}' "$@"
             ),
         )
         .unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         let racing = GitCli::for_test(script.clone());
         let updated = state.refresh(&racing, repo.path()).await.unwrap();
         assert_eq!(updated.current_email(), Some("concurrent@example.test"));
@@ -1768,7 +1766,7 @@ exec '{git}' "$@"
                 .iter()
                 .any(|row| row.email == "concurrent@example.test" && row.commit_count == 1)
         );
-        fs::write(
+        svode_testkit::write_executable(
             &script,
             format!(
                 r#"#!/bin/sh

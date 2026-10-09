@@ -383,22 +383,16 @@ async fn deletion_rename_directory_noop_and_unborn() {
 }
 
 #[cfg(unix)]
-pub(super) fn executable(path: &Path, content: &str) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::write(path, content).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-#[cfg(unix)]
 pub(super) fn fault_cli(tmp: &Path, real: &GitCli, body: &str) -> GitCli {
     let script = tmp.join("fault-git");
-    executable(
+    svode_testkit::write_executable(
         &script,
-        &format!(
+        format!(
             "#!/bin/sh\n{body}\nexec '{}' \"$@\"\n",
             real.git_path().display()
         ),
-    );
+    )
+    .unwrap();
     GitCli::for_test(script)
 }
 
@@ -449,10 +443,11 @@ async fn staging_faults_and_hook_text_never_report_success_or_leak_output() {
     let tmp = repo(&real, true).await;
     let root = tmp.path();
     write(root, "baseline.md", "changed\n");
-    executable(
-        &root.join(".git/hooks/pre-commit"),
+    svode_testkit::write_executable(
+        root.join(".git/hooks/pre-commit"),
         "#!/bin/sh\necho 'nothing to commit SECRET_HOME_AND_TOKEN' >&2\nexit 1\n",
-    );
+    )
+    .unwrap();
     let err = ops::commit_paths(&real, root, &["baseline.md".into()])
         .await
         .unwrap_err();

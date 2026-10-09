@@ -5509,6 +5509,7 @@ dependencies = [
  "serde_yml",
  "sha2 0.10.9",
  "sqlx",
+ "svode-testkit",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -5630,6 +5631,13 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transcribe-cpp",
+]
+
+[[package]]
+name = "svode-testkit"
+version = "0.0.1"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

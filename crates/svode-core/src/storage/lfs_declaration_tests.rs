@@ -236,9 +236,7 @@ fn real_git_lfs_uses_agent_with_declaration_and_rejects_client_without_agent() {
 }
 
 fn write_test_agent(path: &Path) {
-    std::fs::write(
-        path,
-        r#"#!/bin/sh
+    let agent = r#"#!/bin/sh
 store="$1"
 while IFS= read -r line; do
   oid=$(printf '%s' "$line" | sed -n 's/.*"oid":"\([0-9a-f]*\)".*/\1/p')
@@ -254,14 +252,11 @@ while IFS= read -r line; do
     *'"event":"terminate"'*) exit 0 ;;
   esac
 done
-"#,
-    )
-    .unwrap();
+"#;
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    svode_testkit::write_executable(path, agent).unwrap();
+    #[cfg(not(unix))]
+    std::fs::write(path, agent).unwrap();
 }
 
 /// Git runner isolated from the developer's global and system config.
