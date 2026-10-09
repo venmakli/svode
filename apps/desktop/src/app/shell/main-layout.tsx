@@ -27,6 +27,7 @@ import {
 import {
   TerminalEventBridge,
   TerminalPanelHost,
+  TerminalPanelToggle,
   useNewSpaceTerminal,
 } from "@/features/terminal";
 import { CollectionDetailPeekHost } from "@/features/collection/app-shell";
@@ -276,6 +277,7 @@ function ShellLayoutContent({
       identityEmail={identityEmail}
       onOpenProfile={() => onOpenAppSettings("git-identity")}
       onOpenSettings={() => onOpenAppSettings()}
+      actions={view === "space" ? <TerminalPanelToggle /> : null}
     />
   );
 

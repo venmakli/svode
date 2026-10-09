@@ -6,6 +6,7 @@ import {
   spawnTerminal,
 } from "@/features/terminal/api/terminal";
 import { clearTerminalOutput } from "@/features/terminal/lib/output-bus";
+import { waitForPaneSize } from "@/features/terminal/lib/pane-size-handoff";
 import {
   createInvalidationGuard,
   createLatestTaskQueue,
@@ -22,6 +23,7 @@ import type {
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+const PANE_SIZE_TIMEOUT_MS = 500;
 const DEFAULT_PANEL_RATIO = 0.38;
 const MIN_PANEL_RATIO = 0.22;
 const MAX_PANEL_RATIO = 0.72;
@@ -118,10 +120,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }));
 
     try {
+      // The shell pads its first prompt to the PTY width, so a PTY wider than
+      // the pane leaves a stray PROMPT_SP mark above it.
+      const { cols, rows } = await waitForPaneSize(
+        tabId,
+        { cols: DEFAULT_COLS, rows: DEFAULT_ROWS },
+        PANE_SIZE_TIMEOUT_MS,
+      );
+      if (!get().tabs.some((item) => item.id === tabId)) return;
       const session = await spawnTerminal(
         target.path,
-        DEFAULT_COLS,
-        DEFAULT_ROWS,
+        cols,
+        rows,
         target.mcpProjectPath ?? target.path,
       );
       if (!get().tabs.some((item) => item.id === tabId)) {

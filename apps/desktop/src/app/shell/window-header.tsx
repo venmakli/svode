@@ -18,7 +18,6 @@ import { cn } from "@/shared/lib/utils";
 import { GitSyncStatusWidget } from "@/features/git/app-shell";
 import { MainBreadcrumbs } from "@/features/space/app-shell";
 import { ProjectExternalOpenButton } from "@/features/external-open";
-import { TerminalPanelToggle } from "@/features/terminal";
 import { HomeSidebarHeader } from "@/features/home";
 import { ProjectSwitcher } from "./project-switcher";
 import { useShellView } from "./shell-view";
@@ -114,7 +113,6 @@ export function WindowHeader() {
   const activeRootPath = useSpace((state) => state.activeRootPath);
   const activeSpacePath = useSpace(selectActiveSpacePath);
   const { state } = useSidebar();
-  const view = useShellView();
 
   // Home without an active project shows no project chrome.
   const projectShown = activeRootPath !== null;
@@ -189,10 +187,7 @@ export function WindowHeader() {
           />
         ) : null}
         {activeRootPath ? (
-          <>
-            {view === "space" && <TerminalPanelToggle />}
-            <ProjectExternalOpenButton projectPath={activeRootPath} />
-          </>
+          <ProjectExternalOpenButton projectPath={activeRootPath} />
         ) : null}
       </div>
     </header>

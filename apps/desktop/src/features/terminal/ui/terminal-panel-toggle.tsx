@@ -10,7 +10,7 @@ import { useTerminalPanelToggle } from "@/features/terminal/hooks/use-terminal-p
 import { terminalToggleShortcut } from "@/features/terminal/model/shortcuts";
 import * as m from "@/paraglide/messages.js";
 
-/** Window header toggle of the terminal panel, pressed while it is open. */
+/** Sidebar footer toggle of the terminal panel, pressed while it is open. */
 export function TerminalPanelToggle() {
   const { panelOpen, available, toggle } = useTerminalPanelToggle();
   if (!available) return null;
@@ -31,7 +31,7 @@ export function TerminalPanelToggle() {
           <SquareTerminal />
         </Toggle>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{label}</TooltipContent>
+      <TooltipContent side="top">{label}</TooltipContent>
     </Tooltip>
   );
 }

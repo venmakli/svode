@@ -7,6 +7,7 @@ import {
 } from "@/features/terminal/api/terminal";
 import { isTerminalToggleShortcut } from "@/features/terminal/lib/is-terminal-toggle-shortcut";
 import { subscribeTerminalOutput } from "@/features/terminal/lib/output-bus";
+import { reportPaneSize } from "@/features/terminal/lib/pane-size-handoff";
 import type { TerminalTab } from "@/features/terminal/model/types";
 import { useTerminalDrop } from "@/features/terminal/hooks/use-terminal-drop";
 
@@ -55,6 +56,7 @@ export function useTerminalPaneRuntime({
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const tabIdRef = useRef(tab.id);
   const ptyIdRef = useRef<string | null>(tab.ptyId);
   const activeRef = useRef(active);
   const autoFocusRef = useRef(autoFocus);
@@ -68,7 +70,19 @@ export function useTerminalPaneRuntime({
   const firstWriteParsedFitRef = useRef(false);
 
   useEffect(() => {
+    tabIdRef.current = tab.id;
+  }, [tab.id]);
+
+  useEffect(() => {
     ptyIdRef.current = tab.ptyId;
+    // Resizes before the PTY existed were dropped; catch it up to the pane.
+    const terminal = terminalRef.current;
+    if (!tab.ptyId || !terminal) return;
+    void resizeTerminal(tab.ptyId, terminal.cols, terminal.rows).catch(
+      (error) => {
+        console.warn("Failed to resize terminal:", error);
+      },
+    );
   }, [tab.ptyId]);
 
   useEffect(() => {
@@ -96,6 +110,10 @@ export function useTerminalPaneRuntime({
     if (container.clientWidth <= 0 || container.clientHeight <= 0) return;
 
     fitAddon.fit();
+    reportPaneSize(tabIdRef.current, {
+      cols: terminal.cols,
+      rows: terminal.rows,
+    });
     if (options.scrollToBottom) terminal.scrollToBottom();
     if (options.focus && activeRef.current && panelOpenRef.current) {
       terminal.focus();
