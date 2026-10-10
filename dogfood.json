@@ -8,14 +8,19 @@
       "commit": "d3369339e3f060fc42d810c99a9e85aa821b67d1",
       "sourceRef": "main",
       "runId": 38008526479,
-      "publishedAt": "2026-10-10T00:45:52.300Z",
-      "expiresAt": "2026-10-13T00:45:52.300Z",
+      "publishedAt": "2026-10-10T01:00:42.750Z",
+      "expiresAt": "2026-10-13T01:00:42.750Z",
       "reason": "Верхняя панель",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/38008526479/artifacts/11653330011",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/38008526479",
           "artifactName": "Svode-linux-deb"
+        },
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/38008526479/artifacts/11653610980",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/38008526479",
+          "artifactName": "Svode-windows-nsis"
         }
       }
     },
