@@ -190,9 +190,11 @@ export function SessionChat({
           />
         }
       />
+      {/* The timeline's column plus its padding and scrollbar room, so the
+          composer lines up with the messages. */}
       <div
         {...{ [BOTTOM_ATTRIBUTE]: "" }}
-        className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-1.5 px-6 pt-2"
+        className="mx-auto flex w-full max-w-[calc(var(--container-3xl)+--spacing(16))] shrink-0 flex-col gap-1.5 px-8 pt-2"
       >
         {composer.refusal && <RefusalLine refusal={composer.refusal} />}
         {settings.refusal && (

@@ -117,7 +117,8 @@ export function NewSessionDraft({
     >
       {renderHeader?.({ spacePath: draft.spacePath })}
       <div className="min-h-0 flex-1" />
-      <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-1.5 px-6 pt-2">
+      {/* As wide as the chat's message column. */}
+      <div className="mx-auto flex w-full max-w-[calc(var(--container-3xl)+--spacing(16))] shrink-0 flex-col gap-1.5 px-8 pt-2">
         {noAgents ? (
           <NoChatAgents onOpenSettings={onOpenAgentSettings} />
         ) : (

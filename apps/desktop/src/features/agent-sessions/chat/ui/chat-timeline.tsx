@@ -110,7 +110,9 @@ function TimelineView({ session, snapshot, header }: ChatTimelineProps) {
       <MessageScroller className="@container min-h-0 flex-1">
         <MessageScrollerViewport
           aria-label={m.sessions_chat_timeline_label()}
-          className="px-6"
+          // The scrollbar's room on both edges keeps the column centred, in
+          // line with the composer, whether or not the history scrolls.
+          className="px-6 [scrollbar-gutter:stable_both-edges]"
         >
           <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-4 py-4">
             {header}

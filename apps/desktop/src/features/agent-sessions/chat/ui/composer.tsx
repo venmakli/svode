@@ -181,7 +181,9 @@ export function Composer({
   return (
     <InputGroup
       className={cn(
-        "@container/composer h-auto flex-col items-stretch rounded-xl bg-background shadow-xs has-[[data-slot=input-group-control]:focus]:border-ring has-[[data-slot=input-group-control]:focus]:ring-3 has-[[data-slot=input-group-control]:focus]:ring-ring/50",
+        // Looks the same in every state: a disabled send or attach button
+        // does not dim the group, and the caret alone marks focus.
+        "@container/composer h-auto flex-col items-stretch rounded-xl bg-background shadow-xs has-disabled:bg-background has-disabled:opacity-100 has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-0 dark:has-disabled:bg-input/30",
         className,
       )}
       data-sending={sending || undefined}
