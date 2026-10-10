@@ -39,7 +39,8 @@ export function useOpenSessionInMainArea() {
 /**
  * "New session" in a Space as the main area object: a chat draft with focus
  * in its composer, or without a chat agent a managed terminal with focus in
- * it. The guards pass first: a cancelled one opens nothing.
+ * it. The guards pass first: a cancelled one opens nothing. A draft of that
+ * Space already in the main area stays the one draft.
  */
 export function useStartSessionInMainArea() {
   const showSession = useShowSessionInMainArea();
@@ -48,6 +49,13 @@ export function useStartSessionInMainArea() {
 
   return useCallback(
     async (scope: AgentSessionScopeGroup) => {
+      const { mainSurface, mainSessionDraft } = useShellStore.getState();
+      if (
+        mainSurface === "session" &&
+        mainSessionDraft?.spacePath === scope.path
+      ) {
+        return;
+      }
       if (!(await passNavigationGuards())) return;
       const opening = await openNewSession(scope.path);
       if (!opening) return;

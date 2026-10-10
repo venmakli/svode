@@ -2,7 +2,7 @@ import { useCallback, type CSSProperties, type RefObject } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  BotMessageSquare,
+  SquarePen,
   ChevronRight,
   Database,
   Ellipsis,
@@ -296,7 +296,7 @@ export function SpaceRow({
             {(onNewSession || onNewTerminal) && <DropdownMenuSeparator />}
             {onNewSession && (
               <DropdownMenuItem onClick={() => onNewSession(ws.path)}>
-                <BotMessageSquare />
+                <SquarePen />
                 {m.sessions_action_new()}
               </DropdownMenuItem>
             )}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { PortalContext } from "@ariakit/react";
-import { Plus } from "lucide-react";
+import { SquarePen } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -120,7 +120,7 @@ export function AgentSessionPeek({
                   <PeekTopBar
                     identity={
                       <PeekIdentity
-                        icon={<Plus />}
+                        icon={<SquarePen />}
                         name={m.sessions_new_title()}
                       />
                     }

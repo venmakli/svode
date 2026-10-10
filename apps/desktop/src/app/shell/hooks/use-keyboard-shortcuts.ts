@@ -13,7 +13,10 @@ import {
   useActiveContentPath,
   useActiveContentSpaceId,
 } from "@/features/artifact";
-import { isInsideAgentSessionContent } from "@/features/agent-sessions";
+import {
+  isInsideAgentSessionContent,
+  useNewSessionTarget,
+} from "@/features/agent-sessions";
 import {
   commitSaveScopeAndMaybeSync,
   dirtyPathsForGitSaveScope,
@@ -40,7 +43,9 @@ import {
 import { useShellStore } from "../model";
 import { useWorkingSetActions } from "../working-set";
 import { useShellView } from "../shell-view";
+import { useStartSessionInMainArea } from "../agent-session-peek-host";
 import { useGoHome } from "./use-go-home";
+import { useNewSessionSpace } from "./use-new-session-space";
 import * as m from "@/paraglide/messages.js";
 import { useCollectionActivePresentationId } from "@/features/collection";
 
@@ -52,6 +57,10 @@ export function useKeyboardShortcuts() {
   const toggleCommandPalette = useToggleCommandPalette();
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const goHome = useGoHome();
+  const newSessionTarget = useNewSessionTarget(useNewSessionSpace());
+  const newSessionScope =
+    newSessionTarget.status === "ready" ? newSessionTarget.scope : null;
+  const startSession = useStartSessionInMainArea();
   // Home has no terminal panel, Search or Graph, and ⌘0 is where it is.
   const home = useShellView() === "home";
   const activeScopeSpace = useSpace((s) => {
@@ -103,6 +112,16 @@ export function useKeyboardShortcuts() {
         if (isTerminalKeyboardEvent(e) && !isMacKeyboardPlatform()) return;
         e.preventDefault();
         if (!home) void goHome();
+        return;
+      }
+      // ⌘⇧N starts a session in the Space of the main area object, as the
+      // "New session" row does. In a terminal it works only as Cmd: Ctrl+Shift+N
+      // belongs to the shell.
+      if (matchesPhysicalShortcut(e, "KeyN", true)) {
+        if (isTerminalKeyboardEvent(e) && !isMacKeyboardPlatform()) return;
+        if (home || !activeRootPath) return;
+        e.preventDefault();
+        if (newSessionScope) void startSession(newSessionScope);
         return;
       }
       if (isTerminalKeyboardEvent(e)) return;
@@ -169,6 +188,8 @@ export function useKeyboardShortcuts() {
     openAppSettings,
     goHome,
     home,
+    newSessionScope,
+    startSession,
     terminalAvailable,
     toggleTerminal,
   ]);

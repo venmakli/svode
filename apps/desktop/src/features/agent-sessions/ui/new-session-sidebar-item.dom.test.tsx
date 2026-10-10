@@ -131,6 +131,11 @@ if (process.env.SVODE_NEW_SESSION_ITEM_DOM !== "1") {
             <SidebarMenu>
               <NewSessionSidebarItem
                 space={{ spaceId }}
+                shortcut={{
+                  id: "new-session",
+                  label: () => "New session",
+                  keys: [["Mod", "Shift", "N"]],
+                }}
                 onStart={(scope) => started.push(scope.path)}
               />
             </SidebarMenu>
@@ -147,10 +152,14 @@ if (process.env.SVODE_NEW_SESSION_ITEM_DOM !== "1") {
       "New session in “Docs”",
     );
     expect(mainButton().getAttribute("aria-disabled")).toBeNull();
+    expect(mainButton().getAttribute("aria-keyshortcuts")).toBe(
+      "Control+Shift+N",
+    );
     // The Space chooser is the only action; the terminal toggle is gone.
+    expect(document.querySelectorAll("li button").length).toBe(2);
     expect(
-      document.querySelectorAll('[data-sidebar="menu-action"]').length,
-    ).toBe(1);
+      document.querySelector('[data-sidebar="menu-badge"]')?.textContent,
+    ).toBe("Ctrl+Shift+N");
     await act(async () => mainButton().click());
     expect(started).toEqual(["/project/docs"]);
 

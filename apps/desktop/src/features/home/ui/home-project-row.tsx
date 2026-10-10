@@ -6,7 +6,7 @@ import {
   Copy,
   Ellipsis,
   FolderOpen,
-  MessageSquarePlus,
+  SquarePen,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -156,7 +156,7 @@ export function HomeProjectRow({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" side="bottom">
                 <DropdownMenuItem onSelect={onStartChat}>
-                  <MessageSquarePlus />
+                  <SquarePen />
                   {m.home_project_start_chat()}
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -199,7 +199,7 @@ export function HomeProjectRow({
               })}
               onClick={onStartChat}
             >
-              <MessageSquarePlus />
+              <SquarePen />
             </SidebarMenuAction>
             <RemoveProjectDialog
               open={removeOpen}

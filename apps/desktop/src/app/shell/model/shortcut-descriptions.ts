@@ -16,6 +16,13 @@ export const allProjectsShortcut: ShortcutDescription = {
   context: m.shortcuts_all_projects_context,
 };
 
+export const newSessionShortcut: ShortcutDescription = {
+  id: "new-session",
+  label: m.shortcuts_new_session,
+  keys: [["Mod", "Shift", "N"]],
+  context: m.shortcuts_all_projects_context,
+};
+
 export const shellShortcuts = [
   {
     id: "palette",
@@ -30,6 +37,7 @@ export const shellShortcuts = [
     context: m.shortcuts_close_content_context,
   },
   allProjectsShortcut,
+  newSessionShortcut,
   sidebarShortcut,
   terminalToggleShortcut,
   { id: "open-folder", label: m.shortcuts_open_folder, keys: [["Mod", "O"]] },

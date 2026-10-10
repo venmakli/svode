@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { SquarePen } from "lucide-react";
 import { BreadcrumbPage } from "@/components/ui/breadcrumb";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { OpenWithGroup } from "@/features/external-open";
@@ -140,7 +140,7 @@ export function AgentSessionDraftMainSurface({
             spacePath,
             current: (
               <BreadcrumbPage className="flex min-w-0 items-center gap-1.5">
-                <Plus
+                <SquarePen
                   className="size-4 shrink-0 text-muted-foreground"
                   aria-hidden
                 />

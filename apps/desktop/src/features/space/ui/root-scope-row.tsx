@@ -1,5 +1,5 @@
 import {
-  BotMessageSquare,
+  SquarePen,
   ChevronRight,
   Database,
   Ellipsis,
@@ -131,7 +131,7 @@ export function RootScopeRow({
             {(onNewSession || onNewTerminal) && <DropdownMenuSeparator />}
             {onNewSession && (
               <DropdownMenuItem onClick={onNewSession}>
-                <BotMessageSquare />
+                <SquarePen />
                 {m.sessions_action_new()}
               </DropdownMenuItem>
             )}

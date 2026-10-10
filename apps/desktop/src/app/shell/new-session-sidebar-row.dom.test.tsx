@@ -89,6 +89,7 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
     useSpace: (selector: (state: unknown) => unknown) =>
       selector({
         activeRootId: "root",
+        spaces: [{ id: "docs", path: "/project/docs" }],
         openSpace: async (spaceId: string) => openedSpaces.push(spaceId),
         clearActiveSpace: () => openedSpaces.push(null),
       }),
@@ -137,6 +138,38 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
       draftId: "d1",
       spacePath: "/project/docs",
     });
+  });
+
+  test("an open draft is the one draft of its Space", async () => {
+    await reset();
+    chatAvailable = true;
+    await setShell({
+      mainSurface: "session",
+      mainSessionDraft: { draftId: "d0", spacePath: "/project/docs" },
+    });
+    await render();
+    // The row stays available and names the draft's Space.
+    expect(lastSpace).toEqual({ spaceId: "docs" });
+    await act(async () =>
+      onStart!({ kind: "space", scopeId: "docs", path: "/project/docs" }),
+    );
+    expect(openedSpaces).toEqual([]);
+    expect(useShellStore.getState().mainSessionDraft).toEqual({
+      draftId: "d0",
+      spacePath: "/project/docs",
+    });
+
+    // Another Space chosen in the chooser opens its own draft.
+    await act(async () =>
+      onStart!({ kind: "project", scopeId: "root", path: "/project" }),
+    );
+    expect(openedSpaces).toEqual([null]);
+    expect(useShellStore.getState().mainSessionDraft).toEqual({
+      draftId: "d1",
+      spacePath: "/project",
+    });
+    await render();
+    expect(lastSpace).toEqual({ spaceId: null });
   });
 
   test("the target follows the Space of the main area object", async () => {
