@@ -8,13 +8,18 @@
       "commit": "45a3a635c80cb57f55cd4d90275405787b9b7226",
       "sourceRef": "main",
       "runId": 38150278853,
-      "publishedAt": "2026-10-11T15:29:11.759Z",
-      "expiresAt": "2026-10-14T15:29:11.759Z",
+      "publishedAt": "2026-10-11T15:57:06.659Z",
+      "expiresAt": "2026-10-14T15:57:06.659Z",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/38150278853/artifacts/11707010618",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/38150278853",
           "artifactName": "Svode-linux-deb"
+        },
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/38150278853/artifacts/11707616582",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/38150278853",
+          "artifactName": "Svode-windows-nsis"
         }
       }
     },
