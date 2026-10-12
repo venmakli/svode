@@ -104,7 +104,9 @@ export function useSessionComposer(
     });
     try {
       accept(await promptAgentSession(session, promptParts(draft.parts)));
-      updateDraft(() => ({ parts: [] }));
+      // The session may have shown the turn first and settled the send;
+      // what was typed since stays.
+      updateDraft((latest) => (latest.sending ? { parts: [] } : latest));
     } catch (error) {
       const code = agentRuntimeErrorCode(error);
       if (code) {

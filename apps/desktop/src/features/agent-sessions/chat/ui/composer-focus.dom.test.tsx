@@ -54,7 +54,18 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
       selection!.addRange(caret);
     }
   };
-  // WebKit takes focus off a field that stops being editable.
+  // WebKit takes focus off a field that stops being editable, keeping the
+  // page selection and reporting no selection change.
+  let quietSelectionChanges = 0;
+  dom.window.addEventListener(
+    "selectionchange",
+    (event) => {
+      if (quietSelectionChanges === 0) return;
+      quietSelectionChanges -= 1;
+      event.stopImmediatePropagation();
+    },
+    true,
+  );
   new dom.window.MutationObserver((mutations) => {
     for (const { target } of mutations) {
       const element = target as HTMLElement;
@@ -62,7 +73,13 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
         element.getAttribute("contenteditable") === "false" &&
         element.contains(document.activeElement)
       ) {
+        const selection = dom.window.document.getSelection()!;
+        const kept = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
         (document.activeElement as HTMLElement).blur();
+        if (kept) {
+          quietSelectionChanges += 2;
+          selection.addRange(kept);
+        }
       }
     }
   }).observe(dom.window.document.body, {
@@ -91,6 +108,8 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   let promptAnswer: () => Promise<string> = async () => "turn-1";
   let writer = "acp";
   const prompts: unknown[] = [];
+  /** The activity channel of each session and its next message index. */
+  const channels = new Map<string, { id: number; index: number }>();
 
   const { mockNativeIpc, mockNativeWindow } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
@@ -99,6 +118,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
       case "agent_runtime_subscribe": {
         const channel = payload.channel as { id: number };
         const session = payload.session as AgentSessionKeyDto;
+        channels.set(session.sessionId, { id: channel.id, index: 1 });
         setTimeout(() =>
           runCallback(channel.id, {
             index: 0,
@@ -248,6 +268,55 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   async function click(element: Element) {
     await act(async () => {
       element.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await settle();
+  }
+
+  /** The session's turn changes, which renders the chat and its field. */
+  function turnChange(
+    phase: "none" | "running" | "cancelling",
+    lastOutcome: string | null = null,
+    sessionId = "s1",
+  ) {
+    const channel = channels.get(sessionId)!;
+    const index = channel.index++;
+    runCallback(channel.id, {
+      index,
+      message: {
+        type: "delta",
+        value: {
+          seq: index,
+          change: "turn",
+          value: {
+            turnId: "turn-1",
+            phase,
+            lastOutcome,
+            status: {
+              state: phase === "none" ? "idle" : "working",
+              stopReason: null,
+              source: "svode_runtime",
+              confidence: "exact",
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /** A click into the field at `offset` of its text while the turn renders it. */
+  async function clickDuringTurn(offset: number) {
+    await act(async () => {
+      field().focus();
+      const text = field().querySelector("[data-slate-string]")?.firstChild;
+      const range = document.createRange();
+      if (text) range.setStart(text, offset);
+      else range.setStart(field(), 0);
+      range.collapse(true);
+      document.getSelection()!.removeAllRanges();
+      document.getSelection()!.addRange(range);
+      // An update of the turn renders the field before the editor reads
+      // the new page selection.
+      turnChange("running");
     });
     await settle();
   }
@@ -421,6 +490,75 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(prompts.length).toBe(1);
     expect(Boolean(document.querySelector("[data-session-chat-bottom]"))).toBe(true);
     expect(await fieldFocused()).toBe(true);
+  });
+
+  focusTest("during a turn a click puts the caret in the field and typing reaches the draft", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
+    await mount(chat());
+    await focusField();
+    await pressEnter();
+    await act(async () => turnChange("running"));
+    await settle();
+    await pastFocusRetries();
+    expect(stored()).toBe("");
+    await clickDuringTurn(0);
+    await type("next");
+    expect(stored()).toBe("next");
+    expect(field().textContent).toBe("next");
+  });
+
+  focusTest("during a turn a click in the middle of the draft puts the caret there", async () => {
+    await mount(chat());
+    await focusField();
+    await type("abc def");
+    await act(async () => turnChange("running"));
+    await settle();
+    await clickDuringTurn(3);
+    await type("X");
+    expect(stored()).toBe("abcX def");
+  });
+
+  focusTest("a prompt that returns after the session showed its turn keeps what was typed since", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
+    await mount(chat());
+    await focusField();
+    const send = deferred();
+    promptAnswer = () => send.promise;
+    await pressEnter();
+    // The session shows the new turn first: the send is accepted.
+    await act(async () => turnChange("running"));
+    await settle();
+    await pastFocusRetries();
+    expect(stored()).toBe("");
+    await type("next");
+    await act(async () => send.resolve("turn-1"));
+    await settle();
+    expect(stored()).toBe("next");
+    expect(field().textContent).toBe("next");
+  });
+
+  focusTest("a draft typed during a turn stays after it completes or is cancelled", async () => {
+    writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
+    await mount(chat());
+    await focusField();
+    await pressEnter();
+    await act(async () => turnChange("running"));
+    await settle();
+    await pastFocusRetries();
+    await type("next");
+    await act(async () => turnChange("none", "end_turn"));
+    await settle();
+    expect(stored()).toBe("next");
+    expect(field().textContent).toBe("next");
+
+    await act(async () => turnChange("running"));
+    await settle();
+    await type(" more");
+    await act(async () => turnChange("cancelling"));
+    await act(async () => turnChange("none", "cancelled"));
+    await settle();
+    expect(stored()).toBe("next more");
+    expect(field().textContent).toBe("next more");
   });
 
   function snapshot(session: AgentSessionKeyDto) {

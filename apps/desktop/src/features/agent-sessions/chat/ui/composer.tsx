@@ -1,15 +1,23 @@
 import {
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
 import { ArrowUp, Loader2, Square } from "lucide-react";
 import { MentionInputPlugin, MentionPlugin } from "@platejs/mention/react";
-import { SingleBlockPlugin } from "platejs";
-import { createPlatePlugin, Plate, usePlateEditor } from "platejs/react";
+import { SingleBlockPlugin, type Value } from "platejs";
+import {
+  createPlatePlugin,
+  Plate,
+  usePlateEditor,
+  type PlateEditor,
+} from "platejs/react";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import {
   InputGroup,
@@ -188,6 +196,43 @@ export function Composer({
     return false;
   };
 
+  // The field reads its handlers when keys and changes come, so a render of
+  // the composer — as every update of a running turn — does not render it.
+  const fieldEventsRef = useRef<FieldEvents | null>(null);
+  useLayoutEffect(() => {
+    fieldEventsRef.current = {
+      onChange: (value) => {
+        const next = draftParts(value);
+        const key = JSON.stringify(next);
+        if (key === emittedRef.current) return;
+        emittedRef.current = key;
+        onPartsChange(next);
+      },
+      onKeyDown: (event) => {
+        // Enter and Esc in an open `@` or `/` search choose or close
+        // it first.
+        // Before the editor's own handling, which takes some keys.
+        if (dictationKey(event.nativeEvent)) return;
+        if (isKeyTaken(event.nativeEvent)) return;
+        const action = composerKeyAction(event.nativeEvent, running);
+        if (action === "send") {
+          event.preventDefault();
+          if (!running && !sendDisabled) send();
+        } else if (action === "stop") {
+          takeEscape(event.nativeEvent);
+          onStop();
+        }
+      },
+    };
+  });
+  const fieldEvents = useMemo<FieldEvents>(
+    () => ({
+      onChange: (value) => fieldEventsRef.current?.onChange(value),
+      onKeyDown: (event) => fieldEventsRef.current?.onKeyDown(event),
+    }),
+    [],
+  );
+
   // ↑ sends once the dictated text is in the draft.
   useEffect(() => {
     if (sendAfterRef.current === null || sendAfterRef.current !== partsKey) return;
@@ -208,50 +253,14 @@ export function Composer({
       // Focus on the recording row's buttons.
       onKeyDown={(event) => dictationKey(event.nativeEvent)}
     >
-      <Plate
+      <ComposerField
         editor={editor}
-        readOnly={sending}
-        onChange={({ value }) => {
-          const next = draftParts(value);
-          const key = JSON.stringify(next);
-          if (key === emittedRef.current) return;
-          emittedRef.current = key;
-          onPartsChange(next);
-        }}
-      >
-        <FocusReturn draftKey={draftKey} root={rootRef} />
-        <EditorContainer className="max-h-60 min-h-0 overflow-y-auto">
-          <Editor
-            data-slot="input-group-control"
-            variant="none"
-            aria-label={m.sessions_chat_composer_label()}
-            placeholder={placeholder}
-            className={cn(
-              "min-h-11 px-3 pt-3 pb-1 text-sm",
-              sending && "text-muted-foreground",
-            )}
-            onPaste={(event) => pasteAttachments(editor, event)}
-            // Files and sidebar resources go to the session surface, which
-            // inserts them as badges, rather than in as their text.
-            onDrop={(event) => isResourceDrag(event.dataTransfer)}
-            onKeyDown={(event) => {
-              // Enter and Esc in an open `@` or `/` search choose or close
-              // it first.
-              // Before the editor's own handling, which takes some keys.
-              if (dictationKey(event.nativeEvent)) return;
-              if (isKeyTaken(event.nativeEvent)) return;
-              const action = composerKeyAction(event.nativeEvent, running);
-              if (action === "send") {
-                event.preventDefault();
-                if (!running && !sendDisabled) send();
-              } else if (action === "stop") {
-                takeEscape(event.nativeEvent);
-                onStop();
-              }
-            }}
-          />
-        </EditorContainer>
-      </Plate>
+        draftKey={draftKey}
+        root={rootRef}
+        sending={sending}
+        placeholder={placeholder}
+        events={fieldEvents}
+      />
       <InputGroupAddon align="block-end" className="gap-1 pt-1">
         {showsRecordingRow(dictation.state) ? (
           <RecordingRow
@@ -290,6 +299,60 @@ export function Composer({
 }
 
 const NO_COMMANDS: AgentSessionCommandDto[] = [];
+
+interface FieldEvents {
+  onChange: (value: Value) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+}
+
+/**
+ * The editor of the composer. Slate puts the page caret back where its own
+ * selection is on every render, so a render between a click and its
+ * reading of the click would move the caret: the field renders only when
+ * what it shows changes, not on updates of a running turn (DF-197).
+ */
+const ComposerField = memo(function ComposerField({
+  editor,
+  draftKey,
+  root,
+  sending,
+  placeholder,
+  events,
+}: {
+  editor: PlateEditor;
+  draftKey: string;
+  root: RefObject<HTMLElement | null>;
+  sending: boolean;
+  placeholder: string;
+  events: FieldEvents;
+}) {
+  return (
+    <Plate
+      editor={editor}
+      readOnly={sending}
+      onChange={({ value }) => events.onChange(value)}
+    >
+      <FocusReturn draftKey={draftKey} root={root} />
+      <EditorContainer className="max-h-60 min-h-0 overflow-y-auto">
+        <Editor
+          data-slot="input-group-control"
+          variant="none"
+          aria-label={m.sessions_chat_composer_label()}
+          placeholder={placeholder}
+          className={cn(
+            "min-h-11 px-3 pt-3 pb-1 text-sm",
+            sending && "text-muted-foreground",
+          )}
+          onPaste={(event) => pasteAttachments(editor, event)}
+          // Files and sidebar resources go to the session surface, which
+          // inserts them as badges, rather than in as their text.
+          onDrop={(event) => isResourceDrag(event.dataTransfer)}
+          onKeyDown={events.onKeyDown}
+        />
+      </EditorContainer>
+    </Plate>
+  );
+});
 
 function FocusReturn({
   draftKey,
