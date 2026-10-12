@@ -5508,6 +5508,7 @@ dependencies = [
  "croner",
  "dirs",
  "iana-time-zone",
+ "indexmap 2.13.0",
  "keyring",
  "regex",
  "saphyr-parser",
@@ -5542,6 +5543,7 @@ dependencies = [
  "croner",
  "gtk",
  "iana-time-zone",
+ "indexmap 2.13.0",
  "jsonc-parser",
  "keyring",
  "md-5",
@@ -5654,6 +5656,7 @@ dependencies = [
 name = "svode-tools"
 version = "0.0.1"
 dependencies = [
+ "indexmap 2.13.0",
  "serde",
  "serde_json",
  "serde_norway",

@@ -2,6 +2,8 @@ pub mod create;
 pub mod dates;
 pub mod entry;
 mod error;
+#[cfg(test)]
+mod field_order_tests;
 pub mod fields;
 pub mod filename;
 pub mod frontmatter;

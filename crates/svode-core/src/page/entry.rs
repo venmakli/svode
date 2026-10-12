@@ -7,7 +7,6 @@ pub use model::{
 };
 pub use persistence::{entry_from_source, read, read_with_git_dates, replaced_by_staged_copy};
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -236,7 +235,7 @@ pub fn create_with_contextual_defaults(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
-    contextual_defaults: Option<HashMap<String, serde_norway::Value>>,
+    contextual_defaults: Option<frontmatter::FrontmatterFields>,
 ) -> Result<Entry, PageError> {
     create_with_options(space, parent_path, title, contextual_defaults, false, false)
 }
@@ -246,7 +245,7 @@ pub fn create_with_options(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
-    contextual_defaults: Option<HashMap<String, serde_norway::Value>>,
+    contextual_defaults: Option<frontmatter::FrontmatterFields>,
     allocate_unique_title: bool,
     as_readme: bool,
 ) -> Result<Entry, PageError> {
@@ -606,7 +605,7 @@ pub fn write(
     content: &str,
     title: Option<&str>,
     icon: Option<&str>,
-    extra: Option<HashMap<String, serde_norway::Value>>,
+    extra: Option<frontmatter::FrontmatterFields>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
@@ -633,7 +632,7 @@ pub fn write_with_relation_plan(
     content: &str,
     title: Option<&str>,
     icon: Option<&str>,
-    extra: Option<HashMap<String, serde_norway::Value>>,
+    extra: Option<frontmatter::FrontmatterFields>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
@@ -674,13 +673,40 @@ pub fn write_with_relation_plan(
     )
 }
 
+/// Keeps the fields of the file in place and appends new ones in the order of
+/// the item's collection columns, then by name. An unreadable schema only
+/// leaves new keys in name order.
+fn order_fields_for_write(
+    space: &str,
+    path: &str,
+    previous: &frontmatter::FrontmatterFields,
+    next: frontmatter::FrontmatterFields,
+) -> frontmatter::FrontmatterFields {
+    let columns = if next.keys().any(|key| !previous.contains_key(key)) {
+        crate::collections::engine::resolve_collection_schema_result(space, path)
+            .ok()
+            .flatten()
+            .map(|(schema, _)| {
+                schema
+                    .columns
+                    .into_iter()
+                    .map(|column| column.name)
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    frontmatter::order_fields(previous, next, &columns)
+}
+
 pub fn write_under_name_lock(
     space: &str,
     path: &str,
     content: &str,
     title: Option<&str>,
     icon: Option<&str>,
-    extra: Option<HashMap<String, serde_norway::Value>>,
+    extra: Option<frontmatter::FrontmatterFields>,
     metadata: Option<EntryMeta>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
@@ -703,8 +729,7 @@ pub fn write_under_name_lock(
     let (existing, parsed_existing) = persistence::read_existing(&abs_path)?;
     let fallback_meta = || meta_for_file_without_frontmatter(&abs_path, path);
     let title_changes_fallback = |t: &str| t != fallback_title_for_path(path);
-    let extra_changes_empty =
-        |incoming: &HashMap<String, serde_norway::Value>| !incoming.is_empty();
+    let extra_changes_empty = |incoming: &frontmatter::FrontmatterFields| !incoming.is_empty();
     // Only a title in the request names the file; a body or metadata write
     // never renames it.
     let naming_title = title.filter(|_| !skip_rename);
@@ -765,6 +790,7 @@ pub fn write_under_name_lock(
         }
     };
 
+    let previous_extra = meta.extra.clone();
     if let Some(candidate) = metadata {
         meta = candidate;
     }
@@ -783,6 +809,12 @@ pub fn write_under_name_lock(
     if let Some(e) = extra {
         meta.extra = e;
     }
+    meta.extra = order_fields_for_write(
+        space,
+        path,
+        &previous_extra,
+        std::mem::take(&mut meta.extra),
+    );
 
     // Skip the write entirely if neither body nor persisted meta changed AND no
     // rename is pending.
@@ -1125,7 +1157,7 @@ fn update_field_inner(
         crate::collections::engine::validate_entry_field_value(space, path, field, &yaml_value)?;
         meta.extra.insert(field.to_string(), yaml_value);
     } else if is_custom {
-        meta.extra.remove(field);
+        meta.extra.shift_remove(field);
     } else {
         apply_entry_field_update(&mut meta, field, value)?;
     }
@@ -2617,7 +2649,7 @@ mod tests {
         fs::write(ws.join("target/README.md"), "target").unwrap();
         fs::write(ws.join("target/a.md"), "a").unwrap();
         fs::write(ws.join("target/z.md"), "z").unwrap();
-        let mut order = HashMap::new();
+        let mut order = std::collections::HashMap::new();
         order.insert(
             ".".to_string(),
             vec!["source".to_string(), "target".to_string()],

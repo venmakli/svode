@@ -1,14 +1,12 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use serde_norway::Value;
 
 use crate::collections::engine;
 use crate::content_tree;
 use crate::page::PageError;
 use crate::page::entry::{self, Entry, EntryMeta};
-use crate::page::{filename, frontmatter};
+use crate::page::filename;
+use crate::page::frontmatter::{self, FrontmatterFields};
 
 use crate::collections::engine::{
     README_FILE, TEMPLATES_DIR, TemplateSource, humanize_template_slug as humanize_slug,
@@ -151,7 +149,7 @@ pub fn instantiate(
     initial_title: Option<String>,
     allocate_unique_title: bool,
     force_folder: bool,
-    contextual_defaults: Option<HashMap<String, Value>>,
+    contextual_defaults: Option<FrontmatterFields>,
 ) -> Result<InstantiatedTemplate, PageError> {
     crate::page::naming::with_document_name_lock(space, || {
         instantiate_inner(
@@ -175,7 +173,7 @@ fn instantiate_inner(
     initial_title: Option<String>,
     allocate_unique_title: bool,
     force_folder: bool,
-    contextual_defaults: Option<HashMap<String, Value>>,
+    contextual_defaults: Option<FrontmatterFields>,
 ) -> Result<InstantiatedTemplate, PageError> {
     let source = resolve_template_source(space, collection_path, template_slug)?;
     let contextual_defaults = contextual_defaults.unwrap_or_default();
@@ -369,7 +367,7 @@ fn instantiate_hierarchy(
     head_abs: &Path,
     head_rel: &str,
     root_title: &str,
-    contextual_defaults: &HashMap<String, Value>,
+    contextual_defaults: &FrontmatterFields,
 ) -> Result<(), PageError> {
     let stage_root = create_stage_dir()?.join(
         dest_root_abs
@@ -427,7 +425,7 @@ fn rewrite_markdown_identities(
     root_head: Option<&Path>,
     root_title: Option<&str>,
     root_schema_path: Option<(&str, &str)>,
-    contextual_defaults: Option<&HashMap<String, Value>>,
+    contextual_defaults: Option<&FrontmatterFields>,
     title_suffix: Option<&str>,
 ) -> Result<(), PageError> {
     let mut docs = Vec::new();
@@ -488,7 +486,7 @@ fn read_markdown_doc(path: &Path) -> Result<MarkdownDoc, PageError> {
 fn validate_contextual_defaults(
     space: &str,
     head_rel: &str,
-    contextual_defaults: &HashMap<String, Value>,
+    contextual_defaults: &FrontmatterFields,
 ) -> Result<(), PageError> {
     let mut meta = EntryMeta::new_persisted("");
     engine::apply_contextual_defaults_for_path_strict(

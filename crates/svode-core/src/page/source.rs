@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::frontmatter::FrontmatterFields;
 use super::naming::{DocumentNameConflict, document_name_conflict};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,7 +81,7 @@ pub struct PageSourceMeta {
     pub icon: Option<String>,
     pub description: Option<String>,
     pub cover: Option<Cover>,
-    pub extra: HashMap<String, serde_norway::Value>,
+    pub extra: FrontmatterFields,
     pub title_present: bool,
     pub icon_present: bool,
     pub description_present: bool,
@@ -95,7 +95,7 @@ impl PageSourceMeta {
             icon: None,
             description: None,
             cover: None,
-            extra: HashMap::new(),
+            extra: FrontmatterFields::new(),
             title_present: false,
             icon_present: false,
             description_present: false,

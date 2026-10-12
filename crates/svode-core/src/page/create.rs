@@ -1,6 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use indexmap::IndexMap;
 
 use crate::collections::engine as collections;
 use crate::index::state::IndexRuntimeState;
@@ -17,7 +19,7 @@ pub struct PageCreate {
     pub icon: Option<String>,
     pub description: Option<String>,
     pub cover: Option<entry::Cover>,
-    pub properties: Option<HashMap<String, serde_json::Value>>,
+    pub properties: Option<IndexMap<String, serde_json::Value>>,
     pub contextual_defaults: bool,
     pub allocate_unique_title: bool,
     pub as_readme: bool,
@@ -251,7 +253,7 @@ where
                             ))
                         })
                 })
-                .collect::<Result<HashMap<_, _>, _>>()
+                .collect::<Result<crate::page::frontmatter::FrontmatterFields, _>>()
         })
         .transpose()?;
     for (field, value) in &properties {
@@ -541,7 +543,7 @@ mod tests {
             icon: Some("wallet".into()),
             description: Some("  keep whitespace  ".into()),
             cover: None,
-            properties: Some(HashMap::from([("id".into(), json!("custom"))])),
+            properties: Some(IndexMap::from([("id".into(), json!("custom"))])),
             contextual_defaults: false,
             allocate_unique_title: false,
             as_readme: false,
@@ -588,7 +590,7 @@ mod tests {
         .unwrap();
         let mut input = request(temp.path());
         input.parent_path = Some("Tasks".into());
-        input.properties = Some(HashMap::from([("Status".into(), serde_json::Value::Null)]));
+        input.properties = Some(IndexMap::from([("Status".into(), serde_json::Value::Null)]));
         let outcome = create(
             input,
             &IndexRuntimeState::default(),
@@ -673,7 +675,7 @@ mod tests {
         )
         .unwrap();
         let mut input = request(temp.path());
-        input.properties = Some(HashMap::from([("Key".into(), json!(42))]));
+        input.properties = Some(IndexMap::from([("Key".into(), json!(42))]));
         let result = create(
             input,
             &IndexRuntimeState::default(),

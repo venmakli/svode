@@ -1,9 +1,10 @@
 //! Page, owner README and Collection item writes through the shared core
 //! Page operations.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::Path;
 
+use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use svode_core::collections::engine::EntryFieldBatchIntent;
@@ -55,7 +56,7 @@ pub(crate) struct CreatePageArgs {
     #[serde(default)]
     cover: Option<Cover>,
     #[serde(default)]
-    properties: Option<HashMap<String, Value>>,
+    properties: Option<IndexMap<String, Value>>,
 }
 
 /// Metadata patch of a Page or Collection item: missing keeps a field,

@@ -100,7 +100,7 @@ pub async fn create_page(
     space: String,
     parent_path: Option<String>,
     title: String,
-    contextual_defaults: Option<HashMap<String, serde_json::Value>>,
+    contextual_defaults: Option<indexmap::IndexMap<String, serde_json::Value>>,
     allocate_unique_title: Option<bool>,
     as_readme: Option<bool>,
     project_path: Option<String>,

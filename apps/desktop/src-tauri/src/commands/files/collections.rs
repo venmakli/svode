@@ -97,7 +97,7 @@ pub async fn instantiate_template(
     initial_title: Option<String>,
     allocate_unique_title: Option<bool>,
     force_folder: bool,
-    contextual_defaults: Option<HashMap<String, serde_json::Value>>,
+    contextual_defaults: Option<indexmap::IndexMap<String, serde_json::Value>>,
     project_path: Option<String>,
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
@@ -109,7 +109,7 @@ pub async fn instantiate_template(
             defaults
                 .into_iter()
                 .map(|(field, value)| Ok((field, json_to_yaml_value(value)?)))
-                .collect::<Result<HashMap<_, _>, AppError>>()
+                .collect::<Result<svode_core::page::frontmatter::FrontmatterFields, AppError>>()
         })
         .transpose()?;
     let instantiated = templates::instantiate(

@@ -178,7 +178,7 @@ pub fn change_schema_type_with_warnings_and_project(
         let mut unconverted_relation_rows = 0usize;
         for file in &files {
             mutate_frontmatter(file, |meta| {
-                if let Some(value) = meta.extra.remove(column_name) {
+                if let Some((index, _, value)) = meta.extra.shift_remove_full(column_name) {
                     if let Some(extra_field) = unconverted_relation_field.as_deref() {
                         let relation_target_space =
                             relation_target_space.as_deref().ok_or_else(|| {
@@ -193,7 +193,8 @@ pub fn change_schema_type_with_warnings_and_project(
                             value,
                         )?;
                         if let Some(converted) = converted {
-                            meta.extra.insert(column_name.to_string(), converted);
+                            meta.extra
+                                .shift_insert(index, column_name.to_string(), converted);
                         }
                         if let Some(extra) = extra {
                             meta.extra.insert(extra_field.to_string(), extra);
@@ -205,10 +206,12 @@ pub fn change_schema_type_with_warnings_and_project(
                             column_snapshot.type_,
                             &mut collected_options,
                         ) {
-                            meta.extra.insert(column_name.to_string(), converted);
+                            meta.extra
+                                .shift_insert(index, column_name.to_string(), converted);
                         }
                     } else {
-                        meta.extra.insert(
+                        meta.extra.shift_insert(
+                            index,
                             column_name.to_string(),
                             convert_value_for_type_from_old(
                                 value,
@@ -308,8 +311,8 @@ pub fn rename_schema_column_with_project(
         for file in &files {
             mutate_frontmatter(file, |meta| {
                 if !meta.extra.contains_key(new_name) {
-                    if let Some(value) = meta.extra.remove(old_name) {
-                        meta.extra.insert(new_name.to_string(), value);
+                    if let Some(index) = meta.extra.get_index_of(old_name) {
+                        let _ = meta.extra.replace_index(index, new_name.to_string());
                     }
                 }
                 Ok(())
@@ -437,7 +440,7 @@ fn rewrite_actor_cardinality_values(
                     .as_sequence()
                     .is_some_and(|sequence| sequence.is_empty())
             {
-                meta.extra.remove(&new_column.name);
+                meta.extra.shift_remove(&new_column.name);
             } else {
                 meta.extra.insert(new_column.name.clone(), next);
             }
@@ -527,7 +530,7 @@ pub fn delete_schema_column_with_project(
             let files = collection_markdown_files(space, collection_path)?;
             for file in &files {
                 mutate_frontmatter(file, |meta| {
-                    meta.extra.remove(column_name);
+                    meta.extra.shift_remove(column_name);
                     Ok(())
                 })?;
             }
@@ -646,7 +649,7 @@ pub fn delete_option(
                                 .as_sequence()
                                 .is_some_and(|sequence| sequence.is_empty())
                         {
-                            meta.extra.remove(column_name);
+                            meta.extra.shift_remove(column_name);
                         }
                     }
                     Ok(())
@@ -669,7 +672,7 @@ pub fn clear_field_values(
     with_rollback(files.clone(), || {
         for file in &files {
             let did_change = mutate_frontmatter(file, |meta| {
-                meta.extra.remove(field);
+                meta.extra.shift_remove(field);
                 Ok(())
             })?;
             if did_change {
@@ -712,7 +715,7 @@ pub fn clear_option_values(
                             .as_sequence()
                             .is_some_and(|sequence| sequence.is_empty())
                     {
-                        meta.extra.remove(column_name);
+                        meta.extra.shift_remove(column_name);
                     }
                 }
                 Ok(())

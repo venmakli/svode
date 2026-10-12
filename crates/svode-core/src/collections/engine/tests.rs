@@ -430,7 +430,7 @@ fn two_way_relation_detects_and_repairs_value_drift() {
     );
 
     mutate_frontmatter(&space.join("tasks/a.md"), |meta| {
-        meta.extra.remove("Sprint");
+        meta.extra.shift_remove("Sprint");
         Ok(())
     })
     .unwrap();

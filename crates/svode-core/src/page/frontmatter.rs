@@ -1,7 +1,8 @@
 //! Persisted Page frontmatter model, parser/serializer and field rules.
 
-use std::collections::HashMap;
 use std::path::Path;
+
+use indexmap::IndexMap;
 
 use serde::{
     Deserialize,
@@ -20,6 +21,9 @@ pub enum FrontmatterError {
     #[error("invalid entry field: {0}")]
     InvalidField(String),
 }
+
+/// User-defined frontmatter fields in the order of the source file.
+pub type FrontmatterFields = IndexMap<String, serde_norway::Value>;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
@@ -43,7 +47,7 @@ pub struct EntryMeta {
     pub updated: String,
     /// User-defined custom fields from frontmatter YAML.
     #[serde(flatten)]
-    pub extra: HashMap<String, serde_norway::Value>,
+    pub extra: FrontmatterFields,
     #[serde(skip)]
     pub frontmatter_keys: FrontmatterKeys,
 }
@@ -81,7 +85,7 @@ impl EntryMeta {
             cover: None,
             created: String::new(),
             updated: String::new(),
-            extra: HashMap::new(),
+            extra: FrontmatterFields::new(),
             frontmatter_keys: FrontmatterKeys {
                 title: true,
                 ..FrontmatterKeys::default()
@@ -101,7 +105,7 @@ impl EntryMeta {
             cover: None,
             created: created.into(),
             updated: updated.into(),
-            extra: HashMap::new(),
+            extra: FrontmatterFields::new(),
             frontmatter_keys: FrontmatterKeys::default(),
         }
     }
@@ -111,7 +115,7 @@ impl EntryMeta {
         icon: Option<String>,
         description: Option<String>,
         cover: Option<Cover>,
-        extra: HashMap<String, serde_norway::Value>,
+        extra: FrontmatterFields,
         frontmatter_keys: FrontmatterKeys,
     ) -> Self {
         Self {
@@ -179,6 +183,8 @@ pub fn title_from_stem(stem: &str) -> String {
 
 const FRONTMATTER_DELIMITER: &str = "---";
 
+// A transient parse result that callers destructure at once.
+#[allow(clippy::large_enum_variant)]
 pub enum ParseStatus {
     Missing { body: String },
     Valid { meta: EntryMeta, body: String },
@@ -322,6 +328,31 @@ fn serialize_yaml(meta: &EntryMeta) -> String {
     }
 }
 
+/// Orders the next field set against the fields of the source file: a key
+/// the file already has keeps its position, new keys follow in `columns`
+/// order and then by name.
+pub fn order_fields(
+    previous: &FrontmatterFields,
+    mut next: FrontmatterFields,
+    columns: &[String],
+) -> FrontmatterFields {
+    let mut ordered = FrontmatterFields::with_capacity(next.len());
+    for key in previous.keys() {
+        if let Some(value) = next.swap_remove(key) {
+            ordered.insert(key.clone(), value);
+        }
+    }
+    let rank = |key: &str| {
+        columns
+            .iter()
+            .position(|column| column == key)
+            .unwrap_or(columns.len())
+    };
+    next.sort_by(|a, _, b, _| rank(a).cmp(&rank(b)).then_with(|| a.cmp(b)));
+    ordered.extend(next);
+    ordered
+}
+
 fn invalid_entry_field(message: impl Into<String>) -> FrontmatterError {
     FrontmatterError::InvalidField(message.into())
 }
@@ -435,7 +466,7 @@ pub fn apply_entry_field_update(
         }
         custom => {
             if value.is_null() {
-                meta.extra.remove(custom);
+                meta.extra.shift_remove(custom);
             } else {
                 let yaml_value = serde_norway::to_value(value)
                     .map_err(|e| invalid_entry_field(format!("{custom}: {e}")))?;

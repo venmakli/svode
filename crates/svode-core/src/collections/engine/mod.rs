@@ -35,7 +35,7 @@ use crate::collections::traversal::collection_markdown_files;
 use crate::content_tree::child_folder_names;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::page::ColorName;
-use crate::page::frontmatter::{self, EntryMeta};
+use crate::page::frontmatter::{self, EntryMeta, FrontmatterFields};
 
 const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
@@ -939,7 +939,7 @@ fn detach_two_way_relation_with_project(
     }
     for file in collection_markdown_files(&target_space, &relation)? {
         mutate_frontmatter(&file, |meta| {
-            meta.extra.remove(reverse_name);
+            meta.extra.shift_remove(reverse_name);
             Ok(())
         })?;
     }
@@ -1010,7 +1010,7 @@ pub fn cascade_clean_deleted_entries_with_project(
                                         .as_sequence()
                                         .is_some_and(|sequence| sequence.is_empty())
                                 {
-                                    meta.extra.remove(&column.name);
+                                    meta.extra.shift_remove(&column.name);
                                 } else {
                                     meta.extra.insert(column.name.clone(), next);
                                 }
@@ -1135,7 +1135,7 @@ fn cascade_clean_deleted_entries_current_scope(
                                     .as_sequence()
                                     .is_some_and(|sequence| sequence.is_empty())
                             {
-                                meta.extra.remove(&column.name);
+                                meta.extra.shift_remove(&column.name);
                             } else {
                                 meta.extra.insert(column.name.clone(), next);
                             }
@@ -1701,7 +1701,7 @@ fn rewrite_copied_relation_values(
                             .as_sequence()
                             .is_some_and(|sequence| sequence.is_empty())
                     {
-                        meta.extra.remove(&column.name);
+                        meta.extra.shift_remove(&column.name);
                     } else {
                         meta.extra.insert(column.name.clone(), next);
                     }
@@ -1851,7 +1851,7 @@ fn rewrite_relation_value_refs_for_target_space(
                                     .as_sequence()
                                     .is_some_and(|sequence| sequence.is_empty())
                             {
-                                meta.extra.remove(&column.name);
+                                meta.extra.shift_remove(&column.name);
                             } else {
                                 meta.extra.insert(column.name.clone(), next);
                             }
@@ -1941,7 +1941,7 @@ pub fn update_relation_entry_field(
                 .as_sequence()
                 .is_some_and(|sequence| sequence.is_empty())
         {
-            meta.extra.remove(field);
+            meta.extra.shift_remove(field);
         } else {
             meta.extra.insert(field.to_string(), normalized);
         }
@@ -2056,7 +2056,7 @@ pub fn prepare_entry_field_batch(
                 .as_sequence()
                 .is_some_and(|sequence| sequence.is_empty())
         {
-            metadata.extra.remove(field);
+            metadata.extra.shift_remove(field);
         } else {
             metadata.extra.insert(field.clone(), normalized);
         }
@@ -2399,7 +2399,7 @@ fn mutate_relation_reverse_file_with_limit_policy(
                 .as_sequence()
                 .is_some_and(|sequence| sequence.is_empty())
         {
-            meta.extra.remove(reverse_name);
+            meta.extra.shift_remove(reverse_name);
         } else {
             meta.extra.insert(reverse_name.to_string(), next);
         }
@@ -2549,7 +2549,7 @@ fn enforce_relation_limit_one_existing_values(
             }
             let next = relation_value_from_values(column, values);
             if next.is_null() {
-                meta.extra.remove(&column.name);
+                meta.extra.shift_remove(&column.name);
             } else {
                 meta.extra.insert(column.name.clone(), next);
             }
@@ -2746,7 +2746,7 @@ pub fn repair_two_way_relation_with_project(
         "from_this_side" => {
             for file in collection_markdown_files(&target_space, &relation)? {
                 mutate_frontmatter(&file, |meta| {
-                    meta.extra.remove(reverse_name);
+                    meta.extra.shift_remove(reverse_name);
                     Ok(())
                 })?;
             }
@@ -2760,7 +2760,7 @@ pub fn repair_two_way_relation_with_project(
         "from_related_side" => {
             for file in collection_markdown_files(space, collection_path)? {
                 mutate_frontmatter(&file, |meta| {
-                    meta.extra.remove(column_name);
+                    meta.extra.shift_remove(column_name);
                     Ok(())
                 })?;
             }

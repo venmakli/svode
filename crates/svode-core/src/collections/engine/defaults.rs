@@ -29,7 +29,7 @@ pub fn apply_contextual_defaults_for_path(
     space: &str,
     file_path: &str,
     meta: &mut EntryMeta,
-    contextual_defaults: &HashMap<String, Value>,
+    contextual_defaults: &FrontmatterFields,
 ) -> Result<bool, CollectionError> {
     if contextual_defaults.is_empty() {
         return Ok(false);
@@ -40,16 +40,11 @@ pub fn apply_contextual_defaults_for_path(
     };
 
     let mut changed = false;
-    for (field, value) in contextual_defaults {
-        let Some(column) = schema.columns.iter().find(|column| column.name == *field) else {
+    for column in &schema.columns {
+        let Some(value) = contextual_defaults.get(&column.name) else {
             continue;
         };
-        let value = normalize_property_value_for_write(column, value.clone())?;
-        if value.is_null() {
-            meta.extra.remove(field);
-        } else {
-            meta.extra.insert(field.clone(), value);
-        }
+        apply_contextual_default(meta, column, value)?;
         changed = true;
     }
     Ok(changed)
@@ -59,7 +54,7 @@ pub fn apply_contextual_defaults_for_path_strict(
     space: &str,
     file_path: &str,
     meta: &mut EntryMeta,
-    contextual_defaults: &HashMap<String, Value>,
+    contextual_defaults: &FrontmatterFields,
 ) -> Result<bool, CollectionError> {
     if contextual_defaults.is_empty() {
         return Ok(false);
@@ -71,22 +66,37 @@ pub fn apply_contextual_defaults_for_path_strict(
         ));
     };
 
+    if let Some(field) = contextual_defaults
+        .keys()
+        .find(|field| !schema.columns.iter().any(|column| column.name == **field))
+    {
+        return Err(schema_error(format!(
+            "unknown contextual default field '{field}'"
+        )));
+    }
     let mut changed = false;
-    for (field, value) in contextual_defaults {
-        let column = schema
-            .columns
-            .iter()
-            .find(|column| column.name == *field)
-            .ok_or_else(|| schema_error(format!("unknown contextual default field '{field}'")))?;
-        let value = normalize_property_value_for_write(column, value.clone())?;
-        if value.is_null() {
-            meta.extra.remove(field);
-        } else {
-            meta.extra.insert(field.clone(), value);
-        }
+    for column in &schema.columns {
+        let Some(value) = contextual_defaults.get(&column.name) else {
+            continue;
+        };
+        apply_contextual_default(meta, column, value)?;
         changed = true;
     }
     Ok(changed)
+}
+
+fn apply_contextual_default(
+    meta: &mut EntryMeta,
+    column: &Column,
+    value: &Value,
+) -> Result<(), CollectionError> {
+    let value = normalize_property_value_for_write(column, value.clone())?;
+    if value.is_null() {
+        meta.extra.shift_remove(&column.name);
+    } else {
+        meta.extra.insert(column.name.clone(), value);
+    }
+    Ok(())
 }
 
 pub fn apply_schema_defaults_to_entry_tree(

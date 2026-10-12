@@ -45,6 +45,7 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 croner = "3.0.1"
 iana-time-zone = "0.1"
+indexmap = { version = "2.13", features = ["serde"] }
 regex = "1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 which = "7"
