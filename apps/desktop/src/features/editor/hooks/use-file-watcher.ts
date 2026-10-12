@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { getSpaceSnapshot } from "@/features/space";
 import { useEditorStore } from "../model";
 import {
+  type EditorFileEvent,
   listenToEditorFileChanged,
   listenToEditorFileCreated,
   listenToEditorFileDeleted,
@@ -57,28 +58,29 @@ export function useFileWatcher({
       unlisteners.push(unlisten);
     };
 
+    // Own-write echoes and structural operations (nest/move/unnest) are not
+    // changes of the source by another writer.
+    const isOwnChange = (event: EditorFileEvent) => {
+      const nonce = event.writeNonce;
+      if (nonce && ownNoncesRef.current.has(nonce)) {
+        ownNoncesRef.current.delete(nonce);
+        return true;
+      }
+      return useEditorStore.getState().isSuppressed(spacePath, event.path);
+    };
+
     // file:changed
     listenToEditorFileChanged((event) => {
       if (event.space && event.space !== spacePath) return;
 
       const changedPath = event.path;
-      const nonce = event.writeNonce;
 
       if (isSchemaPath(changedPath)) {
         reindexProjectForSchemaChange();
         return;
       }
 
-      // Own-write echo filter: drop events produced by our own Page write.
-      if (nonce && ownNoncesRef.current.has(nonce)) {
-        ownNoncesRef.current.delete(nonce);
-        return;
-      }
-
-      // Ignore events from structural operations (nest/move/unnest)
-      if (useEditorStore.getState().isSuppressed(spacePath, changedPath)) {
-        return;
-      }
+      if (isOwnChange(event)) return;
 
       if (changedPath === activeDocRef.current) {
         // Reloaded without a draft; a draft against a changed body is kept
@@ -99,13 +101,18 @@ export function useFileWatcher({
       }
     }).then(trackUnlisten);
 
-    // file:created
+    // file:created — an external replacement of the open document may arrive
+    // as a creation of its path; the source sync treats it as a change.
     listenToEditorFileCreated((event) => {
       if (event.space && event.space !== spacePath) return;
 
       if (isSchemaPath(event.path)) {
         reindexProjectForSchemaChange();
+        return;
       }
+
+      if (event.path !== activeDocRef.current || isOwnChange(event)) return;
+      onActiveDocumentChanged(event.path);
     }).then(trackUnlisten);
 
     return () => {

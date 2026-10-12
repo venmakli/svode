@@ -600,6 +600,37 @@ for (const presentation of ["full", "compact"] as const) {
   });
 }
 
+for (const target of ["readme", "page"] as const) {
+  test(`${target} header shows the date of a replaced file and of a file changed while closed`, async () => {
+    const shownDate = (view: Awaited<ReturnType<typeof readyHarness>>) =>
+      view.dom.window.document.querySelector("time")?.getAttribute("datetime");
+    const view = await readyHarness({ target });
+    try {
+      expect(shownDate(view)).toBe("2026-09-20T10:00:00Z");
+      view.pages.set(
+        README,
+        readmePage({ updated: "2026-10-12T11:11:00Z" }, "Replaced body"),
+      );
+      await view.fileEvent(README, "file:created");
+      expect(view.context().page?.meta.updated).toBe("2026-10-12T11:11:00Z");
+      expect(shownDate(view)).toBe("2026-10-12T11:11:00Z");
+    } finally {
+      await view.cleanup();
+    }
+
+    const reopened = await readyHarness(
+      { target },
+      readmePage({ updated: "2026-10-12T12:29:00Z" }, "Agent body"),
+    );
+    try {
+      expect(shownDate(reopened)).toBe("2026-10-12T12:29:00Z");
+      expect(reopened.context().page?.body).toBe("Agent body");
+    } finally {
+      await reopened.cleanup();
+    }
+  });
+}
+
 test("a field saved during a refresh keeps its value and its echo changes nothing", async () => {
   const view = await readyHarness();
   try {

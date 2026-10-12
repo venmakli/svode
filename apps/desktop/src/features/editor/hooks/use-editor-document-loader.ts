@@ -241,6 +241,9 @@ export function useEditorDocumentLoader({
       editorState.hasAiModified(spacePath, currentDocument) ||
       editorState.hasStale(spacePath, currentDocument);
     const cachedBody = cached && !wasExternallyModified ? cached : null;
+    const cachedBaseline = cachedBody
+      ? getDocumentBaseline(currentCacheKey)
+      : null;
     const initialPageSpacePathForDocument = initialPageSpacePathRef.current;
     // Without its source version a provided Page cannot be a write baseline.
     const initialForDocument =
@@ -249,14 +252,8 @@ export function useEditorDocumentLoader({
       initialPageRef.current.source_version
         ? initialPageRef.current
         : null;
-    const bodyOnlyMetaForDocument =
-      initialPageSpacePathForDocument === spacePath
-        ? bodyOnlyMetaRef.current
-        : null;
-    const metaForCachedBody =
-      initialForDocument?.meta ?? bodyOnlyMetaForDocument;
 
-    const nextDocumentLoading = !cachedBody;
+    const nextDocumentLoading = !cachedBaseline;
     queueMicrotask(() => {
       if (sequence === loadSeqRef.current) {
         setDocumentLoading(nextDocumentLoading);
@@ -280,33 +277,47 @@ export function useEditorDocumentLoader({
       });
     };
 
-    if (cachedBody) {
+    const openSourcePage = (page: Page) => {
+      applyLoadedPage(page);
+      adoptPageBaseline(currentCacheKey, page);
+      const value = deserializeWithConflicts(editor, page.body);
+      const loadedValue = loadEditorValue(value);
+      setCachedDocumentValue(spacePath, currentDocument, loadedValue);
+      clearUnsaved(spacePath, currentDocument);
+    };
+
+    if (cachedBody && cachedBaseline) {
+      // A cached body opens only in the source version it was loaded from or
+      // written as. A provided Page in that version proves it without a read;
+      // otherwise the source is read, since a provided Page keeps the version
+      // of its first read, and a source in another version opens its body.
+      const providedIsCurrent =
+        initialForDocument?.source_version === cachedBaseline.version;
       void (async () => {
+        let source: "cache" | "cache-meta-read" | "read-page" =
+          providedIsCurrent ? "cache" : "cache-meta-read";
         try {
-          const hasBaseline = Boolean(getDocumentBaseline(currentCacheKey));
-          const pageMeta =
-            (hasBaseline ? metaForCachedBody : null) ??
-            (await readPage({ spacePath, path: currentDocument }));
+          const page = providedIsCurrent
+            ? null
+            : await readPage({ spacePath, path: currentDocument });
           if (sequence !== loadSeqRef.current) return;
-          if ("meta" in pageMeta) {
-            applyLoadedPage(pageMeta);
-            if (!hasBaseline) adoptPageBaseline(currentCacheKey, pageMeta);
-          } else {
-            applyMeta(pageMeta);
+          if (page && page.source_version !== cachedBaseline.version) {
+            source = "read-page";
+            openSourcePage(page);
+            finish("ok", false, source);
+            return;
           }
+          if (page) applyLoadedPage(page);
+          else if (initialForDocument) applyMeta(initialForDocument.meta);
           const loadedValue = loadEditorValue(cachedBody);
           setCachedDocumentValue(spacePath, currentDocument, loadedValue);
           clearUnsaved(spacePath, currentDocument);
-          finish("ok", true, metaForCachedBody ? "cache" : "cache-meta-read");
+          finish("ok", true, source);
         } catch (err) {
           if (sequence !== loadSeqRef.current) return;
-          console.error("Failed to load document meta:", err);
+          console.error("Failed to load document:", err);
           toast.error(m.editor_error_load());
-          finish(
-            "error",
-            true,
-            metaForCachedBody ? "cache" : "cache-meta-read",
-          );
+          finish("error", source !== "read-page", source);
         }
       })();
     } else {
@@ -320,12 +331,7 @@ export function useEditorDocumentLoader({
             initialForDocument ??
             (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
-          applyLoadedPage(page);
-          adoptPageBaseline(currentCacheKey, page);
-          const value = deserializeWithConflicts(editor, page.body);
-          const loadedValue = loadEditorValue(value);
-          setCachedDocumentValue(spacePath, currentDocument, loadedValue);
-          clearUnsaved(spacePath, currentDocument);
+          openSourcePage(page);
           finish("ok", false, source);
         } catch (err) {
           if (sequence !== loadSeqRef.current) return;
