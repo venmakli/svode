@@ -68,7 +68,7 @@ import {
   type ToolRow,
 } from "../model/timeline";
 import { formatDuration } from "../model/format";
-import { ItemDetail } from "./item-detail";
+import { detailNotice, ItemDetail } from "./item-detail";
 import { LiveTurnEnd, LiveTurnMarker } from "./live-turn-marker";
 import { TurnChangedFiles } from "./turn-changed-files";
 import { TurnRail } from "./turn-rail";
@@ -346,14 +346,30 @@ function ItemText({
     : item.summary;
   if (!markdown) return <>{text}</>;
   if (item.kind !== "agent_message") return <AgentText text={text} />;
+  // The summary is the start of a longer answer: one the detail cannot
+  // show in full is marked so, not passed off as the whole answer.
+  const notice =
+    item.hasDetail && detail && detailText(detail) === null
+      ? (detailNotice(detail) ?? m.sessions_chat_detail_not_provided())
+      : null;
   return (
-    <AgentMessageContent
-      session={session}
-      itemId={item.id}
-      text={text}
-      media={item.media}
-      streaming={streaming}
-    />
+    <>
+      <AgentMessageContent
+        session={session}
+        itemId={item.id}
+        text={text}
+        media={item.media}
+        streaming={streaming}
+      />
+      {notice !== null && (
+        <p
+          className="text-xs text-muted-foreground"
+          data-agent-message-incomplete
+        >
+          {m.sessions_chat_message_incomplete({ reason: notice })}
+        </p>
+      )}
+    </>
   );
 }
 

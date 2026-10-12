@@ -116,12 +116,21 @@ export interface MarkdownReaderProps {
   className?: string;
   content: string;
   policy: MarkdownReaderPolicy;
+  /**
+   * A text written over time, as a streamed answer: it renders block by
+   * block, so a longer text redraws only the blocks that changed and its
+   * completion redraws nothing it does not change. While `growing`, a
+   * construct its end leaves open renders as if closed. Without it the text
+   * renders as one document.
+   */
+  stream?: "growing" | "complete";
 }
 
 export function MarkdownReader({
   className,
   content,
   policy,
+  stream,
 }: MarkdownReaderProps) {
   const readerRef = useRef<HTMLDivElement>(null);
   const colorScheme = useDocumentColorScheme();
@@ -173,7 +182,8 @@ export function MarkdownReader({
     () => (
       <Streamdown
         className="w-full min-w-0 max-w-full"
-        mode="static"
+        mode={stream ? "streaming" : "static"}
+        parseIncompleteMarkdown={stream === "growing"}
         animated={false}
         components={components}
         controls={readerControls}
@@ -189,7 +199,7 @@ export function MarkdownReader({
         {content}
       </Streamdown>
     ),
-    [colorScheme, components, content, copyCode, rehypePlugins],
+    [colorScheme, components, content, copyCode, rehypePlugins, stream],
   );
 
   useEffect(() => {

@@ -40,28 +40,10 @@ export function DetailView({
       </div>
     );
   }
-  if (detail.outcome === "error") {
+  if (detail.outcome !== "available" || detail.blocks.length === 0) {
     return (
       <p className={cn("text-xs text-muted-foreground", className)}>
-        {m.sessions_chat_detail_error({ message: detail.message })}
-      </p>
-    );
-  }
-  if (detail.outcome === "unavailable") {
-    const text =
-      detail.reason === "too_large"
-        ? m.sessions_chat_detail_too_large()
-        : detail.reason === "released"
-          ? m.sessions_chat_detail_released()
-          : m.sessions_chat_detail_not_provided();
-    return (
-      <p className={cn("text-xs text-muted-foreground", className)}>{text}</p>
-    );
-  }
-  if (detail.blocks.length === 0) {
-    return (
-      <p className={cn("text-xs text-muted-foreground", className)}>
-        {m.sessions_chat_detail_not_provided()}
+        {detailNotice(detail)}
       </p>
     );
   }
@@ -72,6 +54,22 @@ export function DetailView({
       ))}
     </div>
   );
+}
+
+/** Why a read detail shows no blocks, or `null` when it has them. */
+export function detailNotice(detail: AgentDetailOutcomeDto): string | null {
+  if (detail.outcome === "error") {
+    return m.sessions_chat_detail_error({ message: detail.message });
+  }
+  if (detail.outcome === "unavailable") {
+    return detail.reason === "too_large"
+      ? m.sessions_chat_detail_too_large()
+      : detail.reason === "released"
+        ? m.sessions_chat_detail_released()
+        : m.sessions_chat_detail_not_provided();
+  }
+  if (detail.blocks.length === 0) return m.sessions_chat_detail_not_provided();
+  return null;
 }
 
 const OUTPUT =

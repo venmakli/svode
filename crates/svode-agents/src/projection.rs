@@ -1309,6 +1309,10 @@ fn block_size(block: &DetailBlock) -> usize {
 }
 
 #[cfg(test)]
+#[path = "projection_stream_tests.rs"]
+mod stream_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;

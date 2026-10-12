@@ -89,7 +89,15 @@ export function AgentText({
     () => withMediaImages(text, { complete: !streaming }),
     [text, streaming],
   );
-  return <MarkdownReader content={content} policy={agentTextPolicy} />;
+  // Rendered as a stream whether or not the agent still writes it, so the
+  // end of the turn keeps every block it drew.
+  return (
+    <MarkdownReader
+      content={content}
+      policy={agentTextPolicy}
+      stream={streaming ? "growing" : "complete"}
+    />
+  );
 }
 
 /**

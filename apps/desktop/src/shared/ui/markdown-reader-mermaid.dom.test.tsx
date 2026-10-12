@@ -290,6 +290,36 @@ if (process.env.SVODE_MARKDOWN_READER_MERMAID_DOM !== "1") {
     }
   });
 
+  // Agent text renders as a stream (DF-195): text written after a diagram
+  // and the end of the turn leave its SVG in place.
+  test("a streamed text keeps the diagram SVG as it grows and when it completes", async () => {
+    const container = dom.window.document.createElement("div");
+    dom.window.document.body.append(container);
+    const root = createRoot(container);
+    const render = (content: string, stream: "growing" | "complete") =>
+      act(async () => {
+        root.render(
+          <MarkdownReader content={content} policy={policy} stream={stream} />,
+        );
+      });
+    const diagram = "Intro.\n\n```mermaid\nflowchart TD\n  A --> B\n```";
+    const selector = '[data-streamdown="mermaid"] svg[id^="mermaid-"]';
+
+    try {
+      await render(diagram, "growing");
+      const svg = await waitFor(() => container.querySelector(selector));
+      await render(`${diagram}\n\nTail`, "growing");
+      await render(`${diagram}\n\nTail grows\n\nMore`, "growing");
+      expect(container.querySelector(selector)).toBe(svg);
+      await render(`${diagram}\n\nTail grows\n\nMore`, "complete");
+      expect(container.querySelector(selector)).toBe(svg);
+      expect(container.textContent?.includes("More")).toBe(true);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   test("Streamdown keeps the diagram SVG when it is drawn again with new props", async () => {
     const { Streamdown } = await import("streamdown");
     const { mermaid } = await import("@streamdown/mermaid");

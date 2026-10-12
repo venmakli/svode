@@ -401,6 +401,61 @@ test("Reader boundary falls back to escaped plaintext after a renderer error", a
   }
 });
 
+test("Reader in stream mode redraws only the blocks a longer text changes and nothing at completion", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  // The policy runs each time a block with inline code is drawn.
+  const drawn: Record<string, number> = {};
+  const policy: MarkdownReaderPolicy = {
+    renderInlineCode: (code, element) => {
+      drawn[code] = (drawn[code] ?? 0) + 1;
+      return element;
+    },
+  };
+  const render = (content: string, stream: "growing" | "complete") =>
+    act(async () => {
+      root.render(
+        <MarkdownReader content={content} policy={policy} stream={stream} />,
+      );
+    });
+  const paragraphs = () =>
+    Array.from(
+      dom.window.document.querySelectorAll("[data-markdown-reader] p"),
+    );
+  const start = "First `alpha` block.\n\nSecond `beta`";
+
+  try {
+    await render(start, "growing");
+    const first = paragraphs()[0];
+    const alpha = drawn.alpha;
+    expect(alpha > 0).toBe(true);
+
+    await render(`${start} grows`, "growing");
+    await render(`${start} grows\n\nThird \`gamma`, "growing");
+    expect(drawn.alpha).toBe(alpha);
+    expect(drawn.gamma > 0).toBe(true);
+    expect(paragraphs()[0]).toBe(first);
+
+    const finished = paragraphs();
+    const counts = { ...drawn };
+    await render(`${start} grows\n\nThird \`gamma\``, "growing");
+    const closed = { ...drawn };
+    await render(`${start} grows\n\nThird \`gamma\``, "complete");
+    expect(drawn).toEqual(closed);
+    expect(drawn.alpha).toBe(counts.alpha);
+    expect(drawn.beta).toBe(counts.beta);
+    paragraphs().forEach((node, index) => expect(node).toBe(finished[index]));
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function ThrowingRenderer(): ReactNode {
   throw new Error("Fixture renderer failed");
 }

@@ -2398,6 +2398,7 @@
   "sessions_chat_live_waiting": "Waiting for your answer",
   "sessions_chat_live_working": "Working",
   "sessions_chat_live_writing": "Writing the answer",
+  "sessions_chat_message_incomplete": "The answer is shown in part. {reason}",
   "sessions_chat_model": "Model",
   "sessions_chat_no_agents": "No agent can chat right now. Turn one on or set it up in the agent settings.",
   "sessions_chat_not_sent": "Not sent: the agent did not get this message",
