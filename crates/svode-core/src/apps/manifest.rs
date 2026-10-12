@@ -1,13 +1,11 @@
-use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use saphyr_parser::{Event, Parser, ScalarStyle};
 use serde::Serialize;
-use serde_yml::Value;
-use serde_yml::libyml::parser::{Event, Parser};
+use serde_yml::{Mapping, Value};
 
 use crate::content_tree::child_folder_names;
 use crate::git::GitError;
@@ -111,11 +109,8 @@ pub struct ResolvedAppOwner {
 }
 
 enum YamlContainer {
-    Mapping {
-        expecting_key: bool,
-        keys: HashSet<String>,
-    },
-    Sequence,
+    Mapping { map: Mapping, key: Option<Value> },
+    Sequence(Vec<Value>),
 }
 
 pub fn has_direct_app_manifest(directory: &Path) -> bool {
@@ -235,34 +230,30 @@ pub fn validate_manifest_source(
             "app.yaml exceeds the 64 KiB limit",
         )]);
     }
-    validate_safe_yaml(source)?;
-    let value = serde_yml::from_str::<Value>(source).map_err(|error| {
-        vec![diagnostic(
-            "invalid_yaml",
-            "$",
-            format!("Cannot parse app.yaml: {error}"),
-        )]
-    })?;
+    let value = parse_manifest_yaml(source)?;
     validate_manifest_value(&value)
 }
 
-fn validate_safe_yaml(source: &str) -> Result<(), Vec<AppManifestDiagnostic>> {
-    let mut parser = Parser::new(Cow::Borrowed(source.as_bytes()));
+/// Parses `app.yaml` once: the same event stream enforces the safe-YAML rules
+/// and builds the manifest value, so no second parser can read it differently.
+fn parse_manifest_yaml(source: &str) -> Result<Value, Vec<AppManifestDiagnostic>> {
     let mut documents = 0_u8;
     let mut containers: Vec<YamlContainer> = Vec::new();
+    let mut root = None;
 
-    loop {
-        let event = parser.parse_next_event().map_err(|error| {
+    for event in Parser::new_from_str(source) {
+        let (event, _) = event.map_err(|error| {
             vec![diagnostic(
                 "invalid_yaml",
                 "$",
                 format!("Cannot parse app.yaml: {error}"),
             )]
         })?;
-        match event.0 {
-            Event::StreamStart => {}
-            Event::StreamEnd => break,
-            Event::DocumentStart => {
+        let node = match event {
+            Event::Nothing | Event::StreamStart | Event::StreamEnd | Event::DocumentEnd => {
+                continue;
+            }
+            Event::DocumentStart(_) => {
                 documents += 1;
                 if documents > 1 {
                     return Err(vec![diagnostic(
@@ -271,8 +262,8 @@ fn validate_safe_yaml(source: &str) -> Result<(), Vec<AppManifestDiagnostic>> {
                         "app.yaml must contain exactly one YAML document",
                     )]);
                 }
+                continue;
             }
-            Event::DocumentEnd => {}
             Event::Alias(_) => {
                 return Err(vec![diagnostic(
                     "unsafe_yaml",
@@ -280,116 +271,195 @@ fn validate_safe_yaml(source: &str) -> Result<(), Vec<AppManifestDiagnostic>> {
                     "YAML aliases are not allowed",
                 )]);
             }
-            Event::Scalar(scalar) => {
-                if scalar.anchor.is_some() || scalar.tag.is_some() {
-                    return Err(vec![diagnostic(
-                        "unsafe_yaml",
-                        "$",
-                        "YAML anchors and tags are not allowed",
-                    )]);
-                }
+            Event::Scalar(text, style, anchor, tag) => {
+                reject_node_properties(anchor, tag.is_some())?;
                 if let Some(YamlContainer::Mapping {
-                    expecting_key,
-                    keys,
+                    map,
+                    key: key @ None,
                 }) = containers.last_mut()
                 {
-                    if *expecting_key {
-                        let key = String::from_utf8_lossy(&scalar.value).into_owned();
-                        if key == "<<" {
-                            return Err(vec![diagnostic(
-                                "unsafe_yaml",
-                                "$",
-                                "YAML merge keys are not allowed",
-                            )]);
-                        }
-                        if !keys.insert(key.clone()) {
-                            return Err(vec![diagnostic(
-                                "duplicate_key",
-                                "$",
-                                format!("Duplicate mapping key: {key}"),
-                            )]);
-                        }
-                        *expecting_key = false;
-                    } else {
-                        *expecting_key = true;
+                    if text == "<<" {
+                        return Err(vec![diagnostic(
+                            "unsafe_yaml",
+                            "$",
+                            "YAML merge keys are not allowed",
+                        )]);
                     }
+                    let value = scalar_value(&text, style);
+                    if map.contains_key(&value) {
+                        return Err(vec![diagnostic(
+                            "duplicate_key",
+                            "$",
+                            format!("Duplicate mapping key: {text}"),
+                        )]);
+                    }
+                    *key = Some(value);
+                    continue;
                 }
+                scalar_value(&text, style)
             }
-            Event::SequenceStart(sequence) => {
-                if sequence.anchor.is_some() || sequence.tag.is_some() {
-                    return Err(vec![diagnostic(
-                        "unsafe_yaml",
-                        "$",
-                        "YAML anchors and tags are not allowed",
-                    )]);
-                }
-                consume_collection_value(&mut containers)?;
-                containers.push(YamlContainer::Sequence);
+            Event::SequenceStart(anchor, tag) => {
+                reject_node_properties(anchor, tag.is_some())?;
+                reject_collection_key(&containers)?;
+                containers.push(YamlContainer::Sequence(Vec::new()));
+                continue;
             }
-            Event::MappingStart(mapping) => {
-                if mapping.anchor.is_some() || mapping.tag.is_some() {
-                    return Err(vec![diagnostic(
-                        "unsafe_yaml",
-                        "$",
-                        "YAML anchors and tags are not allowed",
-                    )]);
-                }
-                consume_collection_value(&mut containers)?;
+            Event::MappingStart(anchor, tag) => {
+                reject_node_properties(anchor, tag.is_some())?;
+                reject_collection_key(&containers)?;
                 containers.push(YamlContainer::Mapping {
-                    expecting_key: true,
-                    keys: HashSet::new(),
+                    map: Mapping::new(),
+                    key: None,
                 });
+                continue;
             }
-            Event::SequenceEnd => {
-                if !matches!(containers.pop(), Some(YamlContainer::Sequence)) {
-                    return Err(vec![diagnostic(
-                        "invalid_yaml",
-                        "$",
-                        "Unexpected sequence end",
-                    )]);
-                }
-            }
-            Event::MappingEnd => {
-                if matches!(
-                    containers.pop(),
-                    Some(YamlContainer::Mapping {
-                        expecting_key: false,
-                        ..
-                    })
-                ) {
-                    return Err(vec![diagnostic(
-                        "invalid_yaml",
-                        "$",
-                        "Mapping key has no value",
-                    )]);
-                }
+            Event::SequenceEnd => match containers.pop() {
+                Some(YamlContainer::Sequence(values)) => Value::Sequence(values),
+                _ => return Err(unbalanced_yaml()),
+            },
+            Event::MappingEnd => match containers.pop() {
+                Some(YamlContainer::Mapping { map, key: None }) => Value::Mapping(map),
+                _ => return Err(unbalanced_yaml()),
+            },
+        };
+        match containers.last_mut() {
+            None => root = Some(node),
+            Some(YamlContainer::Sequence(values)) => values.push(node),
+            Some(YamlContainer::Mapping { map, key }) => {
+                let Some(key) = key.take() else {
+                    return Err(unbalanced_yaml());
+                };
+                map.insert(key, node);
             }
         }
     }
-    if documents != 1 {
-        return Err(vec![diagnostic(
+    match root {
+        Some(root) if documents == 1 && containers.is_empty() => Ok(root),
+        _ => Err(vec![diagnostic(
             "invalid_yaml",
             "$",
             "app.yaml must contain one YAML document",
+        )]),
+    }
+}
+
+fn reject_node_properties(anchor: usize, tagged: bool) -> Result<(), Vec<AppManifestDiagnostic>> {
+    if anchor != 0 || tagged {
+        return Err(vec![diagnostic(
+            "unsafe_yaml",
+            "$",
+            "YAML anchors and tags are not allowed",
         )]);
     }
     Ok(())
 }
 
-fn consume_collection_value(
-    containers: &mut [YamlContainer],
-) -> Result<(), Vec<AppManifestDiagnostic>> {
-    if let Some(YamlContainer::Mapping { expecting_key, .. }) = containers.last_mut() {
-        if *expecting_key {
-            return Err(vec![diagnostic(
-                "invalid_schema",
-                "$",
-                "Mapping keys must be strings",
-            )]);
-        }
-        *expecting_key = true;
+fn reject_collection_key(containers: &[YamlContainer]) -> Result<(), Vec<AppManifestDiagnostic>> {
+    if matches!(
+        containers.last(),
+        Some(YamlContainer::Mapping { key: None, .. })
+    ) {
+        return Err(vec![diagnostic(
+            "invalid_schema",
+            "$",
+            "Mapping keys must be strings",
+        )]);
     }
     Ok(())
+}
+
+fn unbalanced_yaml() -> Vec<AppManifestDiagnostic> {
+    vec![diagnostic(
+        "invalid_yaml",
+        "$",
+        "Unbalanced YAML collection events",
+    )]
+}
+
+/// Quoted and block scalars are strings; plain scalars resolve by the YAML 1.2
+/// core schema, so `yes` stays a string while `true`, `3210` and `~` do not.
+fn scalar_value(text: &str, style: ScalarStyle) -> Value {
+    if style != ScalarStyle::Plain {
+        return Value::String(text.to_string());
+    }
+    match text {
+        "" | "~" | "null" | "Null" | "NULL" => return Value::Null,
+        "true" | "True" | "TRUE" => return Value::Bool(true),
+        "false" | "False" | "FALSE" => return Value::Bool(false),
+        ".nan" | ".NaN" | ".NAN" => return Value::Number(f64::NAN.into()),
+        _ => {}
+    }
+    let (sign, unsigned) = match text.as_bytes().first() {
+        Some(b'-') => (-1.0, &text[1..]),
+        Some(b'+') => (1.0, &text[1..]),
+        _ => (1.0, text),
+    };
+    if matches!(unsigned, ".inf" | ".Inf" | ".INF") {
+        return Value::Number((sign * f64::INFINITY).into());
+    }
+    let radix_digits = text
+        .strip_prefix("0o")
+        .filter(|digits| {
+            !digits.is_empty() && digits.bytes().all(|byte| matches!(byte, b'0'..=b'7'))
+        })
+        .map(|digits| (digits, 8))
+        .or_else(|| {
+            text.strip_prefix("0x")
+                .filter(|digits| {
+                    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                .map(|digits| (digits, 16))
+        });
+    if let Some((digits, radix)) = radix_digits {
+        return Value::Number(match u64::from_str_radix(digits, radix) {
+            Ok(value) => value.into(),
+            Err(_) => digits
+                .chars()
+                .filter_map(|digit| digit.to_digit(radix))
+                .fold(0.0, |value, digit| {
+                    value * f64::from(radix) + f64::from(digit)
+                })
+                .into(),
+        });
+    }
+    if !unsigned.is_empty() && unsigned.bytes().all(|byte| byte.is_ascii_digit()) {
+        if let Ok(value) = text.parse::<i64>() {
+            return Value::Number(value.into());
+        }
+        if let Ok(value) = text.parse::<u64>() {
+            return Value::Number(value.into());
+        }
+    }
+    if is_core_float(unsigned) {
+        if let Ok(value) = text.parse::<f64>() {
+            return Value::Number(value.into());
+        }
+    }
+    Value::String(text.to_string())
+}
+
+/// `(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?` from the YAML 1.2 core schema, without the sign.
+fn is_core_float(text: &str) -> bool {
+    let (mantissa, exponent) = match text.find(['e', 'E']) {
+        Some(index) => (&text[..index], Some(&text[index + 1..])),
+        None => (text, None),
+    };
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (mantissa, None),
+    };
+    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    let mantissa_valid = match fraction {
+        Some(fraction) => {
+            digits(whole) && digits(fraction) && (!whole.is_empty() || !fraction.is_empty())
+        }
+        None => !whole.is_empty() && digits(whole),
+    };
+    let exponent_valid = exponent.is_none_or(|exponent| {
+        let exponent = exponent.strip_prefix(['-', '+']).unwrap_or(exponent);
+        !exponent.is_empty() && digits(exponent)
+    });
+    mantissa_valid && exponent_valid
 }
 
 fn validate_manifest_value(value: &Value) -> Result<ValidatedRuntime, Vec<AppManifestDiagnostic>> {
@@ -499,7 +569,7 @@ fn validate_manifest_value(value: &Value) -> Result<ValidatedRuntime, Vec<AppMan
 }
 
 fn parse_command(
-    command: &serde_yml::Mapping,
+    command: &Mapping,
     path: &str,
     allow_inputs: bool,
 ) -> Result<AppCommandRecipe, Vec<AppManifestDiagnostic>> {
@@ -612,7 +682,7 @@ fn validate_relative_path_array(
 }
 
 fn required_relative_path(
-    map: &serde_yml::Mapping,
+    map: &Mapping,
     key: &str,
     path: &str,
     allow_root: bool,
@@ -636,7 +706,7 @@ fn required_relative_path(
 }
 
 fn required_http_url(
-    map: &serde_yml::Mapping,
+    map: &Mapping,
     key: &str,
     path: &str,
 ) -> Result<String, Vec<AppManifestDiagnostic>> {
@@ -659,7 +729,7 @@ fn required_http_url(
 }
 
 fn reject_unknown(
-    map: &serde_yml::Mapping,
+    map: &Mapping,
     allowed: &[&str],
     path: &str,
 ) -> Result<(), Vec<AppManifestDiagnostic>> {
@@ -687,10 +757,7 @@ fn reject_unknown(
     Ok(())
 }
 
-fn mapping<'a>(
-    value: &'a Value,
-    path: &str,
-) -> Result<&'a serde_yml::Mapping, Vec<AppManifestDiagnostic>> {
+fn mapping<'a>(value: &'a Value, path: &str) -> Result<&'a Mapping, Vec<AppManifestDiagnostic>> {
     match value {
         Value::Mapping(map) => Ok(map),
         _ => Err(vec![diagnostic(
@@ -702,10 +769,10 @@ fn mapping<'a>(
 }
 
 fn required_mapping<'a>(
-    map: &'a serde_yml::Mapping,
+    map: &'a Mapping,
     key: &str,
     path: &str,
-) -> Result<&'a serde_yml::Mapping, Vec<AppManifestDiagnostic>> {
+) -> Result<&'a Mapping, Vec<AppManifestDiagnostic>> {
     let value = get(map, key).ok_or_else(|| {
         vec![diagnostic(
             "missing_field",
@@ -717,15 +784,15 @@ fn required_mapping<'a>(
 }
 
 fn optional_mapping<'a>(
-    map: &'a serde_yml::Mapping,
+    map: &'a Mapping,
     key: &str,
     path: &str,
-) -> Result<Option<&'a serde_yml::Mapping>, Vec<AppManifestDiagnostic>> {
+) -> Result<Option<&'a Mapping>, Vec<AppManifestDiagnostic>> {
     get(map, key).map(|value| mapping(value, path)).transpose()
 }
 
 fn required_string(
-    map: &serde_yml::Mapping,
+    map: &Mapping,
     key: &str,
     path: &str,
 ) -> Result<String, Vec<AppManifestDiagnostic>> {
@@ -750,7 +817,7 @@ fn string<'a>(value: &'a Value, path: &str) -> Result<&'a str, Vec<AppManifestDi
     }
 }
 
-fn get<'a>(map: &'a serde_yml::Mapping, key: &str) -> Option<&'a Value> {
+fn get<'a>(map: &'a Mapping, key: &str) -> Option<&'a Value> {
     map.get(Value::String(key.to_string()))
 }
 
@@ -845,18 +912,108 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_yaml_and_multiple_documents() {
-        for source in [
-            "runtime: &runtime\n  type: url\n  url: https://example.com\n",
-            "runtime: *runtime\n",
-            "runtime: !custom { type: url, url: https://example.com }\n",
-            "runtime: { type: url, url: https://example.com }\n---\nruntime: { type: url, url: https://example.org }\n",
-            "runtime: { type: url, type: static, url: https://example.com }\n",
+        for (source, code) in [
+            (
+                "runtime: { type: url, url: https://example.com }\n---\nruntime: { type: url, url: https://example.org }\n",
+                "multiple_documents",
+            ),
+            (
+                "base: &base https://example.com\nruntime:\n  type: url\n  url: *base\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime: &runtime\n  type: url\n  url: https://example.com\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime:\n  type: url\n  url: &url https://example.com\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime: !custom { type: url, url: https://example.com }\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime:\n  type: !!str url\n  url: https://example.com\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime: !!map { type: url, url: https://example.com }\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime:\n  type: url\n  url: !<tag:yaml.org,2002:str> https://example.com\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime:\n  <<: { type: url }\n  url: https://example.com\n",
+                "unsafe_yaml",
+            ),
+            (
+                "runtime: { type: url, url: https://example.com }\nruntime: { type: url, url: https://example.org }\n",
+                "duplicate_key",
+            ),
+            (
+                "runtime:\n  type: url\n  type: static\n  url: https://example.com\n",
+                "duplicate_key",
+            ),
+            (
+                "runtime: { type: url, type: static, url: https://example.com }\n",
+                "duplicate_key",
+            ),
+            (
+                "? [runtime]\n: { type: url, url: https://example.com }\n",
+                "invalid_schema",
+            ),
+            (
+                "runtime: { type: url, url: https://example.com }\n1: value\n",
+                "invalid_schema",
+            ),
+            ("runtime: [unclosed\n", "invalid_yaml"),
+            ("", "invalid_yaml"),
         ] {
-            assert!(
-                validate_manifest_source(source).is_err(),
-                "accepted {source}"
-            );
+            let diagnostics = validate_manifest_source(source).unwrap_err();
+            assert_eq!(diagnostics[0].code, code, "{source}");
+            assert_eq!(diagnostics[0].path, "$", "{source}");
         }
+    }
+
+    #[test]
+    fn resolves_plain_scalars_by_the_core_schema() {
+        for (field, path) in [
+            ("url: true", "runtime.url"),
+            ("url: 3210", "runtime.url"),
+            ("url: null", "runtime.url"),
+            ("url: ~", "runtime.url"),
+            ("url:", "runtime.url"),
+            ("url: 0x1F", "runtime.url"),
+            ("url: -1.5e3", "runtime.url"),
+            ("url: .inf", "runtime.url"),
+        ] {
+            let source = format!("runtime:\n  type: url\n  {field}\n");
+            let diagnostics = validate_manifest_source(&source).unwrap_err();
+            assert_eq!(diagnostics[0].code, "invalid_schema", "{field}");
+            assert_eq!(diagnostics[0].path, path, "{field}");
+        }
+
+        let runtime = validate_manifest_source(
+            "runtime:\n  type: process\n  start:\n    argv:\n      - tool\n      - '3210'\n      - \"true\"\n      - yes\n      - 1.2.3\n      - 0x\n      - |\n        block\n  url: http://127.0.0.1:3210\nenvironment:\n  PORT: '3210'\n",
+        );
+        let ValidatedRuntime::Process(process) = runtime.unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(
+            process.start.argv,
+            ["tool", "3210", "true", "yes", "1.2.3", "0x", "block\n"]
+        );
+        assert_eq!(process.environment["PORT"], "3210");
+
+        let number_argv = validate_manifest_source(
+            "runtime:\n  type: process\n  start:\n    argv: [tool, 3210]\n  url: http://127.0.0.1:3210\n",
+        )
+        .unwrap_err();
+        assert_eq!(number_argv[0].code, "invalid_schema");
+        assert_eq!(number_argv[0].path, "runtime.start.argv");
     }
 
     #[test]
