@@ -424,7 +424,7 @@ async fn apply_schema_mutation(
     ))
 }
 
-fn json_to_yaml(value: Value) -> Result<serde_yml::Value, ToolError> {
-    serde_yml::to_value(value)
+fn json_to_yaml(value: Value) -> Result<serde_norway::Value, ToolError> {
+    serde_norway::to_value(value)
         .map_err(|error| ToolError::new("INVALID_YAML_VALUE", error.to_string()))
 }

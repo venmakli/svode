@@ -43,7 +43,7 @@ pub struct EntryMeta {
     pub updated: String,
     /// User-defined custom fields from frontmatter YAML.
     #[serde(flatten)]
-    pub extra: HashMap<String, serde_yml::Value>,
+    pub extra: HashMap<String, serde_norway::Value>,
     #[serde(skip)]
     pub frontmatter_keys: FrontmatterKeys,
 }
@@ -111,7 +111,7 @@ impl EntryMeta {
         icon: Option<String>,
         description: Option<String>,
         cover: Option<Cover>,
-        extra: HashMap<String, serde_yml::Value>,
+        extra: HashMap<String, serde_norway::Value>,
         frontmatter_keys: FrontmatterKeys,
     ) -> Self {
         Self {
@@ -277,48 +277,48 @@ fn split_frontmatter(content: &str) -> Result<FrontmatterParts, FrontmatterError
 /// Serialize frontmatter + body into a full markdown string.
 pub fn serialize(meta: &EntryMeta, body: &str) -> String {
     let yaml = serialize_yaml(meta);
-    // serde_yml adds a trailing newline, so we don't need an extra one
+    // serde_norway adds a trailing newline, so we don't need an extra one
     format!("---\n{yaml}---\n{body}")
 }
 
 fn serialize_yaml(meta: &EntryMeta) -> String {
-    let mut mapping = serde_yml::Mapping::new();
+    let mut mapping = serde_norway::Mapping::new();
     if meta.frontmatter_keys.title {
         mapping.insert(
-            serde_yml::Value::String("title".into()),
-            serde_yml::Value::String(meta.title.clone()),
+            serde_norway::Value::String("title".into()),
+            serde_norway::Value::String(meta.title.clone()),
         );
     }
     if meta.frontmatter_keys.icon {
         if let Some(icon) = meta.icon.clone() {
             mapping.insert(
-                serde_yml::Value::String("icon".into()),
-                serde_yml::Value::String(icon),
+                serde_norway::Value::String("icon".into()),
+                serde_norway::Value::String(icon),
             );
         }
     }
     if meta.frontmatter_keys.description {
         if let Some(description) = meta.description.clone() {
             mapping.insert(
-                serde_yml::Value::String("description".into()),
-                serde_yml::Value::String(description),
+                serde_norway::Value::String("description".into()),
+                serde_norway::Value::String(description),
             );
         }
     }
     if meta.frontmatter_keys.cover {
         if let Some(cover) = meta.cover.as_ref() {
-            if let Ok(value) = serde_yml::to_value(cover) {
-                mapping.insert(serde_yml::Value::String("cover".into()), value);
+            if let Ok(value) = serde_norway::to_value(cover) {
+                mapping.insert(serde_norway::Value::String("cover".into()), value);
             }
         }
     }
     for (key, value) in &meta.extra {
-        mapping.insert(serde_yml::Value::String(key.clone()), value.clone());
+        mapping.insert(serde_norway::Value::String(key.clone()), value.clone());
     }
     if mapping.is_empty() {
         String::new()
     } else {
-        serde_yml::to_string(&mapping).unwrap_or_default()
+        serde_norway::to_string(&mapping).unwrap_or_default()
     }
 }
 
@@ -437,7 +437,7 @@ pub fn apply_entry_field_update(
             if value.is_null() {
                 meta.extra.remove(custom);
             } else {
-                let yaml_value = serde_yml::to_value(value)
+                let yaml_value = serde_norway::to_value(value)
                     .map_err(|e| invalid_entry_field(format!("{custom}: {e}")))?;
                 meta.extra.insert(custom.to_string(), yaml_value);
             }
@@ -497,8 +497,10 @@ Body
     #[test]
     fn extra_fields_stay_flat_in_frontmatter() {
         let mut meta = EntryMeta::new_persisted("With Extra");
-        meta.extra
-            .insert("Статус".into(), serde_yml::Value::String("В работе".into()));
+        meta.extra.insert(
+            "Статус".into(),
+            serde_norway::Value::String("В работе".into()),
+        );
 
         let raw = serialize(&meta, "Body\n");
         let (parsed_meta, _) = parse(&raw).unwrap();
@@ -512,8 +514,10 @@ Body
         let mut meta = EntryMeta::new_persisted("With Extra");
         meta.created = "2026-03-17T00:00:00Z".into();
         meta.updated = "2026-03-17T00:00:00Z".into();
-        meta.extra
-            .insert("Статус".into(), serde_yml::Value::String("В работе".into()));
+        meta.extra.insert(
+            "Статус".into(),
+            serde_norway::Value::String("В работе".into()),
+        );
 
         let json = serde_json::to_value(&meta).unwrap();
 
@@ -549,15 +553,19 @@ Body
 
         assert_eq!(meta.title, "Imported");
         assert_eq!(
-            meta.extra.get("id").and_then(serde_yml::Value::as_str),
+            meta.extra.get("id").and_then(serde_norway::Value::as_str),
             Some("old-id")
         );
         assert_eq!(
-            meta.extra.get("created").and_then(serde_yml::Value::as_str),
+            meta.extra
+                .get("created")
+                .and_then(serde_norway::Value::as_str),
             Some("2026-01-01T00:00:00Z")
         );
         assert_eq!(
-            meta.extra.get("updated").and_then(serde_yml::Value::as_str),
+            meta.extra
+                .get("updated")
+                .and_then(serde_norway::Value::as_str),
             Some("2026-01-02T00:00:00Z")
         );
 
@@ -568,16 +576,144 @@ Body
             reserialized
                 .extra
                 .get("created")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("2026-01-01T00:00:00Z")
         );
         assert_eq!(
             reserialized
                 .extra
                 .get("updated")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("2026-01-02T00:00:00Z")
         );
+    }
+
+    #[test]
+    fn reads_yaml_values_with_unchanged_semantics() {
+        use serde_norway::Value;
+        use serde_norway::value::{Tag, TaggedValue};
+
+        let raw = r#"---
+title: Values
+yes_word: yes
+no_word: no
+on_word: on
+off_word: off
+y_word: y
+n_word: n
+date: 2026-04-20
+datetime: 2026-04-20T10:00:00Z
+quoted_number: '42'
+quoted_float: "1.5"
+number: 42
+negative: -7
+float: 1.5
+flag: true
+tilde: ~
+null_word: null
+empty:
+unicode: Привет, 世界 ✓
+multiline: |
+  first line
+  second line
+folded: >
+  folded
+  text
+list: [a, 1, null]
+nested:
+  1: one
+  key: value
+anchored: &shared reused
+aliased: *shared
+tagged: !custom value
+---
+Body
+"#;
+        let (meta, _) = parse(raw).unwrap();
+        let string = |value: &str| Value::String(value.into());
+        let mut nested = serde_norway::Mapping::new();
+        nested.insert(Value::Number(1.into()), string("one"));
+        nested.insert(string("key"), string("value"));
+        let expected = [
+            ("yes_word", string("yes")),
+            ("no_word", string("no")),
+            ("on_word", string("on")),
+            ("off_word", string("off")),
+            ("y_word", string("y")),
+            ("n_word", string("n")),
+            ("date", string("2026-04-20")),
+            ("datetime", string("2026-04-20T10:00:00Z")),
+            ("quoted_number", string("42")),
+            ("quoted_float", string("1.5")),
+            ("number", Value::Number(42.into())),
+            ("negative", Value::Number((-7).into())),
+            ("float", Value::Number(1.5.into())),
+            ("flag", Value::Bool(true)),
+            ("tilde", Value::Null),
+            ("null_word", Value::Null),
+            ("empty", Value::Null),
+            ("unicode", string("Привет, 世界 ✓")),
+            ("multiline", string("first line\nsecond line\n")),
+            ("folded", string("folded text\n")),
+            (
+                "list",
+                Value::Sequence(vec![string("a"), Value::Number(1.into()), Value::Null]),
+            ),
+            ("nested", Value::Mapping(nested)),
+            ("anchored", string("reused")),
+            ("aliased", string("reused")),
+            (
+                "tagged",
+                Value::Tagged(Box::new(TaggedValue {
+                    tag: Tag::new("custom"),
+                    value: string("value"),
+                })),
+            ),
+        ];
+
+        assert_eq!(meta.extra.len(), expected.len());
+        for (key, value) in expected {
+            assert_eq!(meta.extra.get(key), Some(&value), "{key}");
+        }
+        assert!(matches!(
+            parse_status("---\ntitle: One\ntitle: Two\n---\nBody\n"),
+            ParseStatus::Malformed { .. }
+        ));
+        assert!(matches!(
+            parse_status("---\ntitle: One\nnested:\n  key: a\n  key: b\n---\nBody\n"),
+            ParseStatus::Malformed { .. }
+        ));
+    }
+
+    #[test]
+    fn written_frontmatter_reads_back_into_the_same_values() {
+        let source = r#"---
+title: 'yes'
+description: '2026-04-20'
+yes_word: 'yes'
+off_word: 'off'
+date: '2026-04-20'
+datetime: '2026-04-20T10:00:00Z'
+quoted_number: '42'
+quoted_null: 'null'
+unicode: Привет, 世界 ✓
+multiline: "first line\nsecond line\n"
+empty: null
+list: ['no', 42, 'on', null]
+nested:
+  'true': 'y'
+  inner: [a, '1.5']
+---
+Body
+"#;
+        let (meta, body) = parse(source).unwrap();
+        let written = serialize(&meta, &body);
+        let (reread, reread_body) = parse(&written).unwrap();
+
+        assert_eq!(reread.title, "yes");
+        assert_eq!(reread.description.as_deref(), Some("2026-04-20"));
+        assert_eq!(reread.extra, meta.extra);
+        assert_eq!(reread_body, body);
     }
 
     #[test]

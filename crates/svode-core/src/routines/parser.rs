@@ -221,7 +221,7 @@ pub fn parse_routine(raw: &str, filename: &str, owner_kind: RoutineOwnerKind) ->
         }
     };
 
-    let frontmatter: RoutineFrontmatter = match serde_yml::from_str(yaml) {
+    let frontmatter: RoutineFrontmatter = match serde_norway::from_str(yaml) {
         Ok(frontmatter) => frontmatter,
         Err(error) => {
             return ParsedRoutine {
@@ -888,7 +888,7 @@ pub fn serialize_definition(
         trigger: PortableRoutineTrigger::from(&definition.trigger),
         action: PortableRoutineAction::from(&definition.action),
     };
-    let yaml = serde_yml::to_string(&frontmatter).map_err(|error| error.to_string())?;
+    let yaml = serde_norway::to_string(&frontmatter).map_err(|error| error.to_string())?;
     Ok(format!("---\n{yaml}---\n{}", definition.body))
 }
 
@@ -1426,17 +1426,17 @@ pub fn scan_executor_references(
             let action = meta
                 .extra
                 .get("action")
-                .and_then(serde_yml::Value::as_mapping);
+                .and_then(serde_norway::Value::as_mapping);
             if action
                 .and_then(|value| value.get("type"))
-                .and_then(serde_yml::Value::as_str)
+                .and_then(serde_norway::Value::as_str)
                 != Some("run_agent")
             {
                 continue;
             }
             if action
                 .and_then(|value| value.get("executor"))
-                .and_then(serde_yml::Value::as_str)
+                .and_then(serde_norway::Value::as_str)
                 != Some(expected.as_str())
             {
                 continue;

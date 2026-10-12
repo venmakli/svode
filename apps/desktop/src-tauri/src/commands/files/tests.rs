@@ -95,7 +95,7 @@ async fn collection_create_rejects_invalid_schema_before_source_effects() {
     let tmp = TempDir::new().unwrap();
     crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
     std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
-    let schema: CollectionSchema = serde_yml::from_str(
+    let schema: CollectionSchema = serde_norway::from_str(
         "columns:\n  - { name: Status, type: text }\n  - { name: Status, type: number }\nviews: []\n",
     )
     .unwrap();
@@ -136,7 +136,7 @@ async fn collection_create_materializes_two_way_reverse_schema() {
         "columns: []\nviews: []\n",
     )
     .unwrap();
-    let schema: CollectionSchema = serde_yml::from_str(
+    let schema: CollectionSchema = serde_norway::from_str(
         "columns:\n  - name: Sprint\n    type: relation\n    relation: Sprints\n    two_way: Tasks\nviews: []\n",
     )
     .unwrap();
@@ -176,7 +176,7 @@ async fn collection_create_rolls_back_after_reverse_schema_conflict() {
     std::fs::create_dir_all(tmp.path().join("Sprints")).unwrap();
     let reverse_schema = "columns:\n  - { name: Tasks, type: text }\nviews: []\n";
     std::fs::write(tmp.path().join("Sprints/schema.yaml"), reverse_schema).unwrap();
-    let schema: CollectionSchema = serde_yml::from_str(
+    let schema: CollectionSchema = serde_norway::from_str(
         "columns:\n  - name: Sprint\n    type: relation\n    relation: Sprints\n    two_way: Tasks\nviews: []\n",
     )
     .unwrap();

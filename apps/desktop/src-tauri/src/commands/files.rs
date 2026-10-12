@@ -142,8 +142,8 @@ fn template_name_for_commit(space: &str, collection_path: &str, name: String) ->
     }
 }
 
-fn json_to_yaml_value(value: serde_json::Value) -> Result<serde_yml::Value, AppError> {
-    serde_yml::to_value(value)
+fn json_to_yaml_value(value: serde_json::Value) -> Result<serde_norway::Value, AppError> {
+    serde_norway::to_value(value)
         .map_err(|e| AppError::General(format!("could not convert JSON to YAML value: {e}")))
 }
 

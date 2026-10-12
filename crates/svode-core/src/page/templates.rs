@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_yml::Value;
+use serde_norway::Value;
 
 use crate::collections::engine;
 use crate::content_tree;

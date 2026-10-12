@@ -62,7 +62,7 @@ async fn source_only_read_preserves_source_and_rejects_owners_and_escape() {
             .meta
             .extra
             .get("id")
-            .and_then(serde_yml::Value::as_str),
+            .and_then(serde_norway::Value::as_str),
         Some("custom")
     );
     assert_eq!(
@@ -70,7 +70,7 @@ async fn source_only_read_preserves_source_and_rejects_owners_and_escape() {
             .meta
             .extra
             .get("created")
-            .and_then(serde_yml::Value::as_str),
+            .and_then(serde_norway::Value::as_str),
         Some("custom-created")
     );
     assert_eq!(first.body, "Body\n");

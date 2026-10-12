@@ -1005,10 +1005,10 @@ pub fn update_view(
             .iter()
             .position(|view| view.name() == view_name)
             .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
-        let mut raw = serde_yml::to_value(&schema.views[pos])
+        let mut raw = serde_norway::to_value(&schema.views[pos])
             .map_err(|e| schema_error(format!("could not encode view: {e}")))?;
         merge_mapping_patch(&mut raw, patch)?;
-        let mut view: View = serde_yml::from_value(raw)
+        let mut view: View = serde_norway::from_value(raw)
             .map_err(|e| schema_error(format!("invalid view patch: {e}")))?;
         normalize_view_for_schema(&schema, &mut view);
         schema.views[pos] = view;
@@ -1163,7 +1163,7 @@ fn normalize_column_for_new_type(
         PropertyType::Status => {
             if let Some(options) = strategy.and_then(|value| value.get("options")).cloned() {
                 column.options = Some(
-                    serde_yml::from_value(options)
+                    serde_norway::from_value(options)
                         .map_err(|e| schema_error(format!("invalid status options: {e}")))?,
                 );
             } else if let Some(groups) = strategy.and_then(|value| value.get("groups")) {
@@ -1211,7 +1211,7 @@ fn normalize_column_for_new_type(
                     None
                 } else {
                     Some(
-                        serde_yml::from_value(scope.clone())
+                        serde_norway::from_value(scope.clone())
                             .map_err(|e| schema_error(format!("invalid relation_scope: {e}")))?,
                     )
                 };
@@ -1221,7 +1221,7 @@ fn normalize_column_for_new_type(
                     None
                 } else {
                     Some(
-                        serde_yml::from_value(limit.clone())
+                        serde_norway::from_value(limit.clone())
                             .map_err(|e| schema_error(format!("invalid relation limit: {e}")))?,
                     )
                 };
@@ -1296,7 +1296,7 @@ fn apply_status_groups(column: &mut Column, groups: &Value) -> Result<(), Collec
             continue;
         };
         option.group = Some(
-            serde_yml::from_value(group_value.clone())
+            serde_norway::from_value(group_value.clone())
                 .map_err(|e| schema_error(format!("invalid status group: {e}")))?,
         );
     }
@@ -1366,7 +1366,7 @@ fn convert_value_for_type(value: Value, column: &Column) -> Value {
     let converted = match column.type_ {
         PropertyType::Text => value_to_scalar_string(&value).map(Value::String),
         PropertyType::Number => {
-            value_to_f64(&value).and_then(|number| serde_yml::to_value(number).ok())
+            value_to_f64(&value).and_then(|number| serde_norway::to_value(number).ok())
         }
         PropertyType::UniqueId => value_to_unique_id_number(&value).map(yaml_u64),
         PropertyType::Select | PropertyType::Status => {
@@ -1847,7 +1847,7 @@ where
     if value.is_null() {
         Ok(None)
     } else {
-        serde_yml::from_value(value.clone())
+        serde_norway::from_value(value.clone())
             .map(Some)
             .map_err(|e| schema_error(format!("invalid {key}: {e}")))
     }

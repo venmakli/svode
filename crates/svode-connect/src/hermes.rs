@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_yml::{Mapping, Value};
+use serde_norway::{Mapping, Value};
 
 use crate::entry::{self, Entry, Launch, MARKER};
 use crate::error::ConnectError;
@@ -190,7 +190,7 @@ fn parse(path: &Path, text: &str) -> Result<Value, ConnectError> {
     if text.trim().is_empty() {
         return Ok(Value::Null);
     }
-    serde_yml::from_str(text).map_err(|error| {
+    serde_norway::from_str(text).map_err(|error| {
         ConnectError::new("CONFIG_UNREADABLE", format!("{}: {error}", path.display()))
     })
 }

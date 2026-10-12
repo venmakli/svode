@@ -1,4 +1,4 @@
-use serde_yml::Value;
+use serde_norway::Value;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::HashMap;
 use std::collections::HashSet;

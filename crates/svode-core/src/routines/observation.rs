@@ -237,7 +237,7 @@ pub async fn queue_collection_events(
             return Ok(0);
         }
     };
-    let schema: CollectionSchema = match serde_yml::from_str(&schema_raw) {
+    let schema: CollectionSchema = match serde_norway::from_str(&schema_raw) {
         Ok(schema) => schema,
         Err(error) => {
             tracing::warn!(

@@ -750,8 +750,8 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
     }
     let raw = read_bounded_stable(&canonical_manifest)?;
     let (frontmatter, body) = split_frontmatter(&raw)?;
-    let document: serde_yml::Value =
-        serde_yml::from_str(frontmatter).map_err(|error| SkillFailure {
+    let document: serde_norway::Value =
+        serde_norway::from_str(frontmatter).map_err(|error| SkillFailure {
             code: "skill_frontmatter_parse",
             message: format!(
                 "Could not parse {} frontmatter: {error}",
@@ -925,7 +925,7 @@ fn frontmatter_failure() -> SkillFailure {
 }
 
 fn required_string(
-    mapping: &serde_yml::Mapping,
+    mapping: &serde_norway::Mapping,
     key: &'static str,
     path: &Path,
 ) -> Result<String, SkillFailure> {
@@ -960,7 +960,7 @@ fn required_string(
 }
 
 fn optional_string(
-    mapping: &serde_yml::Mapping,
+    mapping: &serde_norway::Mapping,
     key: &str,
     warnings: &mut Vec<String>,
 ) -> Option<String> {
@@ -981,7 +981,7 @@ fn optional_string(
 }
 
 fn optional_string_map(
-    mapping: &serde_yml::Mapping,
+    mapping: &serde_norway::Mapping,
     key: &str,
     warnings: &mut Vec<String>,
 ) -> Option<BTreeMap<String, String>> {

@@ -4,7 +4,7 @@ use super::schema::read_schema_at;
 use super::traversal::collection_markdown_files;
 use crate::page::{ParsedMarkdown, parse_markdown};
 use serde::Deserialize;
-use serde_yml::Value;
+use serde_norway::Value;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::{HashMap, HashSet};
 use std::fs;

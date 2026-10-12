@@ -2,7 +2,7 @@ use super::CollectionError;
 use super::model::*;
 use crate::git::path::{RootMode, normalize_repo_relative};
 use chrono::{NaiveDate, NaiveDateTime};
-use serde_yml::Value;
+use serde_norway::Value;
 use std::collections::HashSet;
 
 pub(super) const RESERVED_FIELDS: &[&str] = &[

@@ -243,7 +243,7 @@ where
             properties
                 .iter()
                 .map(|(field, value)| {
-                    serde_yml::to_value(value)
+                    serde_norway::to_value(value)
                         .map(|value| (field.clone(), value))
                         .map_err(|error| {
                             PageError::General(format!(
@@ -259,7 +259,7 @@ where
             continue;
         }
         collections::ensure_entry_field_writable(&request.space, &probe, field)?;
-        let yaml = serde_yml::to_value(value)
+        let yaml = serde_norway::to_value(value)
             .map_err(|error| PageError::General(format!("invalid property '{field}': {error}")))?;
         let normalized =
             collections::normalize_entry_field_value(&request.space, &probe, field, yaml)?;
@@ -572,7 +572,7 @@ mod tests {
         );
         assert_eq!(
             outcome.page.meta.extra.get("id"),
-            Some(&serde_yml::Value::String("custom".into()))
+            Some(&serde_norway::Value::String("custom".into()))
         );
     }
 
@@ -601,7 +601,7 @@ mod tests {
         assert!(!outcome.page.meta.extra.contains_key("Status"));
         assert_eq!(
             outcome.page.meta.extra.get("Key"),
-            Some(&serde_yml::Value::Number(1.into()))
+            Some(&serde_norway::Value::Number(1.into()))
         );
     }
 

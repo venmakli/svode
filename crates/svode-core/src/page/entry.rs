@@ -236,7 +236,7 @@ pub fn create_with_contextual_defaults(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
-    contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
+    contextual_defaults: Option<HashMap<String, serde_norway::Value>>,
 ) -> Result<Entry, PageError> {
     create_with_options(space, parent_path, title, contextual_defaults, false, false)
 }
@@ -246,7 +246,7 @@ pub fn create_with_options(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
-    contextual_defaults: Option<HashMap<String, serde_yml::Value>>,
+    contextual_defaults: Option<HashMap<String, serde_norway::Value>>,
     allocate_unique_title: bool,
     as_readme: bool,
 ) -> Result<Entry, PageError> {
@@ -606,7 +606,7 @@ pub fn write(
     content: &str,
     title: Option<&str>,
     icon: Option<&str>,
-    extra: Option<HashMap<String, serde_yml::Value>>,
+    extra: Option<HashMap<String, serde_norway::Value>>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
@@ -633,7 +633,7 @@ pub fn write_with_relation_plan(
     content: &str,
     title: Option<&str>,
     icon: Option<&str>,
-    extra: Option<HashMap<String, serde_yml::Value>>,
+    extra: Option<HashMap<String, serde_norway::Value>>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
@@ -680,7 +680,7 @@ pub fn write_under_name_lock(
     content: &str,
     title: Option<&str>,
     icon: Option<&str>,
-    extra: Option<HashMap<String, serde_yml::Value>>,
+    extra: Option<HashMap<String, serde_norway::Value>>,
     metadata: Option<EntryMeta>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
@@ -703,7 +703,8 @@ pub fn write_under_name_lock(
     let (existing, parsed_existing) = persistence::read_existing(&abs_path)?;
     let fallback_meta = || meta_for_file_without_frontmatter(&abs_path, path);
     let title_changes_fallback = |t: &str| t != fallback_title_for_path(path);
-    let extra_changes_empty = |incoming: &HashMap<String, serde_yml::Value>| !incoming.is_empty();
+    let extra_changes_empty =
+        |incoming: &HashMap<String, serde_norway::Value>| !incoming.is_empty();
     // Only a title in the request names the file; a body or metadata write
     // never renames it.
     let naming_title = title.filter(|_| !skip_rename);
@@ -1068,7 +1069,7 @@ fn update_field_inner(
     );
     if is_custom {
         crate::collections::engine::ensure_entry_field_writable(space, path, field)?;
-        let yaml_value = serde_yml::to_value(value.clone()).map_err(|e| {
+        let yaml_value = serde_norway::to_value(value.clone()).map_err(|e| {
             PageError::from(crate::page::frontmatter::FrontmatterError::InvalidField(
                 format!("{field}: {e}"),
             ))
@@ -1113,7 +1114,7 @@ fn update_field_inner(
         }
     };
     if is_custom && !value.is_null() {
-        let yaml_value = serde_yml::to_value(value.clone()).map_err(|e| {
+        let yaml_value = serde_norway::to_value(value.clone()).map_err(|e| {
             PageError::from(crate::page::frontmatter::FrontmatterError::InvalidField(
                 format!("{field}: {e}"),
             ))
@@ -2585,7 +2586,7 @@ mod tests {
                 .meta
                 .extra
                 .get("id")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("obsidian-id")
         );
         let raw = fs::read_to_string(resolve(ws, &entry.path)).unwrap();
@@ -2925,7 +2926,7 @@ mod tests {
                 .meta
                 .extra
                 .get("Key")
-                .and_then(serde_yml::Value::as_u64),
+                .and_then(serde_norway::Value::as_u64),
             Some(1)
         );
         fs::remove_file(space.join(&first.path)).unwrap();
@@ -2935,7 +2936,7 @@ mod tests {
                 .meta
                 .extra
                 .get("Key")
-                .and_then(serde_yml::Value::as_u64),
+                .and_then(serde_norway::Value::as_u64),
             Some(2)
         );
 
@@ -2945,7 +2946,7 @@ mod tests {
                 .meta
                 .extra
                 .get("Key")
-                .and_then(serde_yml::Value::as_u64),
+                .and_then(serde_norway::Value::as_u64),
             Some(3)
         );
 
@@ -2958,7 +2959,7 @@ mod tests {
         let raw = fs::read_to_string(&duplicated_path).unwrap();
         let (mut meta, body) = frontmatter::try_parse(&raw).unwrap().unwrap();
         meta.extra
-            .insert("Key".into(), serde_yml::Value::from(2_u64));
+            .insert("Key".into(), serde_norway::Value::from(2_u64));
         fs::write(&duplicated_path, frontmatter::serialize(&meta, &body)).unwrap();
         crate::collections::engine::assign_unique_id(space.to_str().unwrap(), &duplicated.path)
             .unwrap();
@@ -2968,7 +2969,7 @@ mod tests {
                 .meta
                 .extra
                 .get("Key")
-                .and_then(serde_yml::Value::as_u64),
+                .and_then(serde_norway::Value::as_u64),
             Some(4)
         );
         let schema = crate::collections::engine::normalize_unique_id_counter(
@@ -3015,7 +3016,7 @@ mod tests {
                 .meta
                 .extra
                 .get("Owner")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("me@example.com")
         );
 

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use saphyr_parser::{Event, Parser, ScalarStyle};
 use serde::Serialize;
-use serde_yml::{Mapping, Value};
+use serde_norway::{Mapping, Value};
 
 use crate::content_tree::child_folder_names;
 use crate::git::GitError;

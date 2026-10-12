@@ -1,7 +1,7 @@
 use crate::actors::ActorCatalogState;
 use crate::space::config::write_space_config;
 use crate::space::types::{SpaceConfig, SpaceRef, TreeSpaceConfig};
-use serde_yml::Value;
+use serde_norway::Value;
 use sqlx::SqlitePool;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -80,13 +80,13 @@ columns:
       - { name: "Фича", color: purple, icon: "▶" }
 views: []
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
     validate_schema(&schema).unwrap();
     assert_eq!(schema.columns[0].name, "Статус");
     assert_eq!(schema.columns[1].options.as_ref().unwrap()[0].name, "Баг");
 
-    let serialized = serde_yml::to_string(&schema).unwrap();
-    let parsed: CollectionSchema = serde_yml::from_str(&serialized).unwrap();
+    let serialized = serde_norway::to_string(&schema).unwrap();
+    let parsed: CollectionSchema = serde_norway::from_str(&serialized).unwrap();
     assert_eq!(parsed.columns[0].name, "Статус");
     assert_eq!(parsed.columns[1].options.as_ref().unwrap()[1].name, "Фича");
 }
@@ -182,13 +182,13 @@ fn prepared_relation_schema_mutation_reports_reverse_schema_and_values() {
 
 #[test]
 fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
-    let checkbox: CollectionSchema = serde_yml::from_str(
+    let checkbox: CollectionSchema = serde_norway::from_str(
         "columns:\n  - { name: Active, type: boolean, display: checkbox }\nviews: []\n",
     )
     .unwrap();
     validate_schema(&checkbox).unwrap();
 
-    let switch: CollectionSchema = serde_yml::from_str(
+    let switch: CollectionSchema = serde_norway::from_str(
         "columns:\n  - { name: Active, type: boolean, display: switch }\nviews: []\n",
     )
     .unwrap();
@@ -198,7 +198,7 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
         "columns:\n  - { name: Active, type: boolean, display: ring }\nviews: []\n",
         "columns:\n  - { name: Notes, type: text, display: switch }\nviews: []\n",
     ] {
-        let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+        let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
         let error = validate_schema(&schema).unwrap_err().to_string();
         assert!(error.contains("invalid display"));
         assert!(error.contains(if raw.contains("ring") {
@@ -229,7 +229,7 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
         space.to_str().unwrap(),
         "tasks",
         "Active",
-        serde_yml::from_str("display: switch").unwrap(),
+        serde_norway::from_str("display: switch").unwrap(),
     )
     .unwrap();
 
@@ -246,7 +246,7 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
         space.to_str().unwrap(),
         "tasks",
         "Active",
-        serde_yml::from_str("display: null").unwrap(),
+        serde_norway::from_str("display: null").unwrap(),
     )
     .unwrap();
     assert_eq!(defaulted.columns[0].display, None);
@@ -345,7 +345,7 @@ columns:
     two_way: Tasks
 views: []
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
     validate_schema(&schema).unwrap();
     let column = &schema.columns[0];
     assert_eq!(column.type_, PropertyType::Relation);
@@ -353,7 +353,7 @@ views: []
     assert_eq!(column.limit, Some(RelationLimit::One));
     assert_eq!(column.two_way.as_deref(), Some("Tasks"));
 
-    let serialized = serde_yml::to_string(&schema).unwrap();
+    let serialized = serde_norway::to_string(&schema).unwrap();
     assert!(serialized.contains("type: relation"));
     assert!(serialized.contains("relation: sprints"));
     assert!(serialized.contains("limit: one"));
@@ -376,7 +376,7 @@ columns:
       id: design
 views: []
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
     validate_schema(&schema).unwrap();
     assert_eq!(schema.columns[0].relation_scope, Some(RelationScope::Root));
     assert_eq!(
@@ -386,7 +386,7 @@ views: []
         })
     );
 
-    let serialized = serde_yml::to_string(&schema).unwrap();
+    let serialized = serde_norway::to_string(&schema).unwrap();
     assert!(serialized.contains("relation_scope: root"));
     assert!(serialized.contains("type: space"));
     assert!(serialized.contains("id: design"));
@@ -574,7 +574,7 @@ fn cross_scope_two_way_root_to_space_materializes_and_syncs_reverse() {
         Some(root.to_str().unwrap()),
         "decisions/decision-1.md",
         "Tasks",
-        serde_yml::to_value(Vec::<String>::new()).unwrap(),
+        serde_norway::to_value(Vec::<String>::new()).unwrap(),
     )
     .unwrap();
     let raw = fs::read_to_string(root.join("tasks/a.md")).unwrap();
@@ -667,7 +667,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
         Some(root.to_str().unwrap()),
         "tasks/a.md",
         "Decisions",
-        serde_yml::to_value(Vec::<String>::new()).unwrap(),
+        serde_norway::to_value(Vec::<String>::new()).unwrap(),
     )
     .unwrap();
     let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
@@ -887,7 +887,7 @@ fn cross_scope_one_way_child_to_sibling_space_updates_without_reverse_sync() {
 
 #[test]
 fn sensitivity_defaults_phone_email_and_preserves_explicit_none() {
-    let mut schema: CollectionSchema = serde_yml::from_str(
+    let mut schema: CollectionSchema = serde_norway::from_str(
         r#"
 columns:
   - { name: Email, type: email }
@@ -1044,7 +1044,7 @@ fn change_schema_type_to_relation_preserves_unconverted_values_as_orphan_extra()
         )
         .unwrap();
 
-    let strategy: Value = serde_yml::from_str("relation: sprints\nlimit: one\n").unwrap();
+    let strategy: Value = serde_norway::from_str("relation: sprints\nlimit: one\n").unwrap();
     let (schema, warnings) = change_schema_type_with_warnings(
         space.to_str().unwrap(),
         "tasks",
@@ -1128,7 +1128,8 @@ fn change_schema_type_to_scoped_relation_converts_against_target_space() {
     )
     .unwrap();
 
-    let strategy: Value = serde_yml::from_str("relation: tasks\nrelation_scope: root\n").unwrap();
+    let strategy: Value =
+        serde_norway::from_str("relation: tasks\nrelation_scope: root\n").unwrap();
     let (schema, warnings) = change_schema_type_with_warnings_and_project(
         child.to_str().unwrap(),
         "decisions",
@@ -1307,7 +1308,7 @@ fn two_way_relation_reverse_side_update_allows_paired_limit_one() {
         None,
         "sprints/sprint-1.md",
         "Tasks",
-        serde_yml::to_value(vec!["a.md"]).unwrap(),
+        serde_norway::to_value(vec!["a.md"]).unwrap(),
     )
     .unwrap();
 
@@ -1323,7 +1324,7 @@ fn two_way_relation_reverse_side_update_allows_paired_limit_one() {
         None,
         "sprints/sprint-2.md",
         "Tasks",
-        serde_yml::to_value(vec!["a.md"]).unwrap(),
+        serde_norway::to_value(vec!["a.md"]).unwrap(),
     );
     assert!(conflict.is_err());
 }
@@ -1436,7 +1437,7 @@ columns:
   - { name: title, type: text }
 views: []
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(duplicate).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(duplicate).unwrap();
     assert!(validate_schema(&schema).is_err());
 
     let bad_status = r#"
@@ -1446,7 +1447,7 @@ columns:
     options: ["Todo"]
 views: []
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(bad_status).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(bad_status).unwrap();
     assert!(validate_schema(&schema).is_err());
 }
 
@@ -1466,14 +1467,14 @@ columns:
     multiple: true
 views: []
 "#;
-    let mut schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+    let mut schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
     normalize_schema(&mut schema);
     validate_schema(&schema).unwrap();
     assert_eq!(schema.columns[0].prefix.as_deref(), Some("ISSUE"));
     assert_eq!(schema.columns[1].multiple, Some(false));
     assert_eq!(schema.columns[2].multiple, Some(true));
 
-    let hyphen_prefix: CollectionSchema = serde_yml::from_str(
+    let hyphen_prefix: CollectionSchema = serde_norway::from_str(
         r#"
 columns:
   - { name: Key, type: unique_id, prefix: "ISSUE-KEY", next: 1 }
@@ -1483,7 +1484,7 @@ views: []
     .unwrap();
     validate_schema(&hyphen_prefix).unwrap();
 
-    let bad_prefix: CollectionSchema = serde_yml::from_str(
+    let bad_prefix: CollectionSchema = serde_norway::from_str(
         r#"
 columns:
   - { name: Key, type: unique_id, prefix: "ISSUE KEY", next: 1 }
@@ -1493,7 +1494,7 @@ views: []
     .unwrap();
     assert!(validate_schema(&bad_prefix).is_err());
 
-    let duplicate_unique_id: CollectionSchema = serde_yml::from_str(
+    let duplicate_unique_id: CollectionSchema = serde_norway::from_str(
         r#"
 columns:
   - { name: Key, type: unique_id, next: 1 }
@@ -1504,7 +1505,7 @@ views: []
     .unwrap();
     assert!(validate_schema(&duplicate_unique_id).is_err());
 
-    let mut actor_schema: CollectionSchema = serde_yml::from_str(
+    let mut actor_schema: CollectionSchema = serde_norway::from_str(
         r#"
 columns:
   - { name: Owner, type: actor }
@@ -1578,7 +1579,7 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
     .unwrap();
 
     let schema: CollectionSchema =
-        serde_yml::from_str("columns:\n  - { name: Owner, type: actor }\nviews: []\n").unwrap();
+        serde_norway::from_str("columns:\n  - { name: Owner, type: actor }\nviews: []\n").unwrap();
     let filters = vec![Filter {
         field: "Owner".into(),
         op: FilterOp::Eq,
@@ -1739,10 +1740,10 @@ fn date_range_must_be_homogeneous() {
         next: None,
         multiple: None,
     };
-    let ok: Value = serde_yml::from_str("start: 2026-04-20\nend: 2026-04-22\n").unwrap();
+    let ok: Value = serde_norway::from_str("start: 2026-04-20\nend: 2026-04-22\n").unwrap();
     validate_property_value(&column, &ok).unwrap();
 
-    let bad: Value = serde_yml::from_str("start: 2026-04-20T09:00\nend: 2026-04-22\n").unwrap();
+    let bad: Value = serde_norway::from_str("start: 2026-04-20T09:00\nend: 2026-04-22\n").unwrap();
     assert!(validate_property_value(&column, &bad).is_err());
 }
 
@@ -1771,7 +1772,7 @@ views:
       - { field: Tags }
     visible_fields: [title]
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
     validate_schema(&schema).unwrap();
 
     let bad_op = r#"
@@ -1783,7 +1784,7 @@ views:
     filter:
       - { field: Effort, op: contains, value: "1" }
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(bad_op).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(bad_op).unwrap();
     assert!(validate_schema(&schema).is_err());
 
     let bad_macro = r#"
@@ -1795,7 +1796,7 @@ views:
     filter:
       - { field: Due, op: before, value: "@today+soon" }
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(bad_macro).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(bad_macro).unwrap();
     assert!(validate_schema(&schema).is_err());
 }
 

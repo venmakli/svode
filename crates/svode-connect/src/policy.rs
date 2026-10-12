@@ -37,11 +37,11 @@ fn hermes_skills(machine: &Machine) -> Vec<String> {
         return Vec::new();
     };
     let names = match &config["skills"]["disabled"] {
-        serde_yml::Value::Sequence(names) => names
+        serde_norway::Value::Sequence(names) => names
             .iter()
             .filter_map(|name| name.as_str().map(str::to_string))
             .collect(),
-        serde_yml::Value::String(names) => names
+        serde_norway::Value::String(names) => names
             .trim()
             .trim_start_matches('[')
             .trim_end_matches(']')

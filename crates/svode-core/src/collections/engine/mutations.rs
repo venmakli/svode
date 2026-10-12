@@ -644,7 +644,7 @@ mod tests {
             .unwrap();
         assert_eq!(renamed.changed_paths, [schema_path.clone()]);
 
-        let patch: Value = serde_yml::from_str("show_nested: false\n").unwrap();
+        let patch: Value = serde_norway::from_str("show_nested: false\n").unwrap();
         let updated = prepare_update_view(&space, "tasks", "Roadmap", patch.clone())
             .unwrap()
             .apply()

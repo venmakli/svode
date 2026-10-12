@@ -186,7 +186,7 @@ fn title_for_path(path: &Path) -> String {
 
 /// Serialize custom frontmatter fields as JSON for the `fields` column.
 /// System fields are stored in dedicated columns.
-/// `serde_yml::Value` round-trips through `serde_json::Value` for normal scalars,
+/// `serde_norway::Value` round-trips through `serde_json::Value` for normal scalars,
 /// sequences, and string-keyed mappings. YAML-only constructs (tags, non-string
 /// keys) fail; we log and fall back to `{}` rather than crash a reindex.
 fn serialize_fields(meta: &crate::page::PageSourceMeta, rel_path: &str) -> String {

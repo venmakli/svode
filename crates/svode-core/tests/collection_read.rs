@@ -1,6 +1,6 @@
 use std::fs;
 
-use serde_yml::Value;
+use serde_norway::Value;
 use sqlx::SqlitePool;
 use svode_core::collections::engine::read_collection_schema;
 use svode_core::collections::entries::entries_from_rows;

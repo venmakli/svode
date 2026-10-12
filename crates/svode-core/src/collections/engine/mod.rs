@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Duration, Local, NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
-use serde_yml::{Mapping, Value};
+use serde_norway::{Mapping, Value};
 
 use super::CollectionError;
 use crate::collections::relation_read::collection_root_for_fs;
@@ -136,7 +136,7 @@ pub fn schema_has_sensitive_columns(schema: &CollectionSchema) -> bool {
 }
 
 fn yaml_u64(value: u64) -> Value {
-    serde_yml::to_value(value).unwrap_or(Value::Null)
+    serde_norway::to_value(value).unwrap_or(Value::Null)
 }
 
 fn unique_id_value(value: &Value) -> Option<u64> {
@@ -427,7 +427,7 @@ fn write_schema_with_project(
     validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;
     let dir = collection_dir(space, collection_path);
     fs::create_dir_all(&dir)?;
-    let yaml = serde_yml::to_string(&schema)
+    let yaml = serde_norway::to_string(&schema)
         .map_err(|e| schema_error(format!("could not serialize schema: {e}")))?;
     fs::write(dir.join(SCHEMA_FILE), yaml)?;
     Ok(())
@@ -589,7 +589,7 @@ pub fn schema_type_target_mutation_paths_with_project(
                 if scope.is_null() {
                     None
                 } else {
-                    Some(serde_yml::from_value(scope.clone()).map_err(|error| {
+                    Some(serde_norway::from_value(scope.clone()).map_err(|error| {
                         schema_error(format!("invalid relation_scope: {error}"))
                     })?)
                 };
@@ -627,7 +627,7 @@ pub fn schema_column_patch_target_mutation_paths_with_project(
             None
         } else {
             Some(
-                serde_yml::from_value(scope.clone())
+                serde_norway::from_value(scope.clone())
                     .map_err(|error| schema_error(format!("invalid relation_scope: {error}")))?,
             )
         };
@@ -1723,7 +1723,7 @@ fn write_schema_without_relation_validation(
     validate_schema(&schema)?;
     let dir = collection_dir(space, collection_path);
     fs::create_dir_all(&dir)?;
-    let yaml = serde_yml::to_string(&schema)
+    let yaml = serde_norway::to_string(&schema)
         .map_err(|e| schema_error(format!("could not serialize schema: {e}")))?;
     fs::write(dir.join(SCHEMA_FILE), yaml)?;
     Ok(())
@@ -2030,7 +2030,7 @@ pub fn prepare_entry_field_batch(
         }
 
         ensure_entry_field_writable(space, file_path, field)?;
-        let yaml_value = serde_yml::to_value(value)
+        let yaml_value = serde_norway::to_value(value)
             .map_err(|error| schema_error(format!("{field}: {error}")))?;
         let prepared_relation = prepare_relation_field_update(
             space,

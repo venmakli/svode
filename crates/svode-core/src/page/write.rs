@@ -20,7 +20,7 @@ pub struct PageWrite<'a> {
     pub content: &'a str,
     pub title: Option<&'a str>,
     pub icon: Option<&'a str>,
-    pub extra: Option<HashMap<String, serde_yml::Value>>,
+    pub extra: Option<HashMap<String, serde_norway::Value>>,
     pub metadata: Option<entry::EntryMeta>,
     pub field_batch: Option<PreparedEntryFieldBatch>,
     pub skip_rename: bool,

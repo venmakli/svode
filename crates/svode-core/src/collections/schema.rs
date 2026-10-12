@@ -9,7 +9,7 @@ use super::schema_validation::{normalize_schema, validate_schema};
 
 pub fn read_schema_at(path: &Path) -> Result<CollectionSchema, CollectionError> {
     let raw = fs::read_to_string(path)?;
-    let mut schema: CollectionSchema = serde_yml::from_str(&raw).map_err(|error| {
+    let mut schema: CollectionSchema = serde_norway::from_str(&raw).map_err(|error| {
         CollectionError::Schema(format!("{}: invalid schema YAML: {error}", path.display()))
     })?;
     normalize_schema(&mut schema);

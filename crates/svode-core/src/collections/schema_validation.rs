@@ -1,7 +1,7 @@
 use super::CollectionError;
 use super::model::*;
 use super::schema_support::*;
-use serde_yml::Value;
+use serde_norway::Value;
 use std::collections::HashSet;
 
 pub fn validate_schema(schema: &CollectionSchema) -> Result<(), CollectionError> {

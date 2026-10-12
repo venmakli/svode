@@ -56,17 +56,17 @@ columns:
   - { name: Active, type: boolean, default: false }
 views: []
 "#;
-    let schema: CollectionSchema = serde_yml::from_str(raw).unwrap();
+    let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
     validate_schema(&schema).unwrap();
     assert_eq!(schema.columns[0].type_, PropertyType::Boolean);
     assert_eq!(schema.columns[0].default, Some(Value::Bool(false)));
     assert!(
-        serde_yml::to_string(&schema)
+        serde_norway::to_string(&schema)
             .unwrap()
             .contains("type: boolean")
     );
 
-    let legacy = serde_yml::from_str::<CollectionSchema>(
+    let legacy = serde_norway::from_str::<CollectionSchema>(
         "columns:\n  - { name: Active, type: checkbox }\nviews: []\n",
     )
     .unwrap_err()
@@ -74,7 +74,7 @@ views: []
     assert!(legacy.contains("checkbox"));
     assert!(legacy.contains("boolean"));
 
-    let invalid_default: CollectionSchema = serde_yml::from_str(
+    let invalid_default: CollectionSchema = serde_norway::from_str(
         "columns:\n  - { name: Active, type: boolean, default: yes }\nviews: []\n",
     )
     .unwrap();
@@ -276,11 +276,11 @@ fn relation_value_shape_normalizes_unique_many_and_rejects_dot_segments() {
         next: None,
         multiple: None,
     };
-    let value: Value = serde_yml::from_str("[a.md, a.md, folder/README.md]").unwrap();
+    let value: Value = serde_norway::from_str("[a.md, a.md, folder/README.md]").unwrap();
     let normalized = validate_relation_value_shape(&column, &value).unwrap();
     assert_eq!(normalized, vec!["a.md", "folder/README.md"]);
 
-    let bad: Value = serde_yml::from_str("../a.md").unwrap();
+    let bad: Value = serde_norway::from_str("../a.md").unwrap();
     assert!(validate_relation_value_shape(&column, &bad).is_err());
 }
 
@@ -455,9 +455,40 @@ fn two_way_relation_detects_and_repairs_value_drift() {
     );
 }
 
+#[test]
+fn written_schema_reads_back_into_the_same_values() {
+    let schema: CollectionSchema = serde_norway::from_str(
+        r#"
+columns:
+  - name: Ответ
+    type: select
+    options: ['yes', 'no', 'on', '2026-04-20', '42', 'null', Готово ✓]
+  - name: Stage
+    type: status
+    options:
+      - { name: 'off', group: todo }
+      - { name: 'y', group: done }
+  - name: Due
+    type: date
+views: []
+"#,
+    )
+    .unwrap();
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().to_str().unwrap();
+    fs::create_dir_all(tmp.path().join("tasks")).unwrap();
+
+    write_collection_schema(space, "tasks", &schema).unwrap();
+    let written = read_collection_schema(space, "tasks").unwrap();
+    write_collection_schema(space, "tasks", &written).unwrap();
+
+    assert_eq!(read_collection_schema(space, "tasks").unwrap(), written);
+    assert_eq!(written.columns, schema.columns);
+}
+
 #[tokio::test]
 async fn unique_id_and_actor_query_filters_use_numeric_and_multi_semantics() {
-    let schema: CollectionSchema = serde_yml::from_str(
+    let schema: CollectionSchema = serde_norway::from_str(
         r#"
 columns:
   - { name: Key, type: unique_id, prefix: ISSUE, next: 4 }
@@ -611,7 +642,7 @@ fn filtered_reorder_inserts_against_visible_positions() {
 
 #[tokio::test]
 async fn query_sql_filters_groups_and_sorts_option_indexes() {
-    let schema: CollectionSchema = serde_yml::from_str(
+    let schema: CollectionSchema = serde_norway::from_str(
         r#"
 columns:
   - name: Priority
@@ -771,7 +802,8 @@ views: []
 #[tokio::test]
 async fn boolean_query_uses_effective_false_for_missing_and_null() {
     let schema: CollectionSchema =
-        serde_yml::from_str("columns:\n  - { name: Active, type: boolean }\nviews: []\n").unwrap();
+        serde_norway::from_str("columns:\n  - { name: Active, type: boolean }\nviews: []\n")
+            .unwrap();
     validate_schema(&schema).unwrap();
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
@@ -941,7 +973,7 @@ fn df_133_collection(space: &Path, schema: &str, items: &[(&str, &str)]) -> Stri
 }
 
 fn df_133_column(raw: &str) -> Column {
-    serde_yml::from_str(raw).unwrap()
+    serde_norway::from_str(raw).unwrap()
 }
 
 fn df_133_option_names(schema: &CollectionSchema, column: &str) -> Vec<String> {
@@ -990,7 +1022,7 @@ fn df_133_select_columns_are_created_without_options() {
     .unwrap();
 
     let raw = fs::read_to_string(&schema_path).unwrap();
-    let written: Value = serde_yml::from_str(&raw).unwrap();
+    let written: Value = serde_norway::from_str(&raw).unwrap();
     for column in ["Choice", "Tags"] {
         let column = written["columns"]
             .as_sequence()
@@ -1087,7 +1119,7 @@ fn df_133_changing_text_to_multi_select_collects_items() {
     }
     assert_eq!(
         df_133_field(path, "c.md", "Note"),
-        Some(serde_yml::from_str("[y]").unwrap())
+        Some(serde_norway::from_str("[y]").unwrap())
     );
 }
 

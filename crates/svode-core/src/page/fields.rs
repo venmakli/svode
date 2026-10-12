@@ -180,12 +180,15 @@ mod tests {
             item.meta
                 .extra
                 .get("note")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("{{date}}")
         );
         assert_eq!(item.meta.description.as_deref(), Some("  "));
         assert_eq!(
-            item.meta.extra.get("id").and_then(serde_yml::Value::as_str),
+            item.meta
+                .extra
+                .get("id")
+                .and_then(serde_norway::Value::as_str),
             Some("external-id")
         );
         assert!(!item.meta.extra.contains_key("obsolete"));
@@ -193,7 +196,7 @@ mod tests {
             item.meta
                 .extra
                 .get("unknown")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("kept")
         );
         let person = entry::read(root.to_str().unwrap(), "people/Ada.md").unwrap();
@@ -202,9 +205,9 @@ mod tests {
                 .meta
                 .extra
                 .get("Tasks")
-                .and_then(serde_yml::Value::as_sequence)
+                .and_then(serde_norway::Value::as_sequence)
                 .and_then(|values| values.first())
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("New.md")
         );
         for expected in [
@@ -335,14 +338,14 @@ mod tests {
             item.meta
                 .extra
                 .get("note")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("second")
         );
         assert_eq!(
             item.meta
                 .extra
                 .get("Status")
-                .and_then(serde_yml::Value::as_str),
+                .and_then(serde_norway::Value::as_str),
             Some("Done")
         );
         assert_eq!(outcome.page.body, "Other body\n");
@@ -401,7 +404,7 @@ mod tests {
             .meta
             .extra
             .get("completed_at")
-            .and_then(serde_yml::Value::as_str)
+            .and_then(serde_norway::Value::as_str)
             .unwrap();
         assert_eq!(completed_at.len(), 10);
         assert_eq!(completed_at.as_bytes()[4], b'-');
@@ -409,7 +412,7 @@ mod tests {
         assert!(!updated.meta.extra.contains_key("note"));
         assert_eq!(
             updated.meta.extra.get("reviewed"),
-            Some(&serde_yml::Value::Bool(true))
+            Some(&serde_norway::Value::Bool(true))
         );
         assert_eq!(updated.body, "Body\n");
     }

@@ -1,6 +1,6 @@
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_yml::Value;
+use serde_norway::Value;
 
 use crate::page::ColorName;
 
@@ -141,7 +141,7 @@ impl<'de> Deserialize<'de> for PropertyOption {
             }),
             Value::Mapping(_) => {
                 let object: PropertyOptionObject =
-                    serde_yml::from_value(value).map_err(serde::de::Error::custom)?;
+                    serde_norway::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(Self {
                     name: object.name,
                     color: object.color,

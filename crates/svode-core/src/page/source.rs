@@ -81,7 +81,7 @@ pub struct PageSourceMeta {
     pub icon: Option<String>,
     pub description: Option<String>,
     pub cover: Option<Cover>,
-    pub extra: HashMap<String, serde_yml::Value>,
+    pub extra: HashMap<String, serde_norway::Value>,
     pub title_present: bool,
     pub icon_present: bool,
     pub description_present: bool,
@@ -326,11 +326,11 @@ fn parse_frontmatter(content: &str, path: &str) -> Result<(PageSourceMeta, Strin
     } else {
         closing_end
     };
-    let yaml: serde_yml::Value = serde_yml::from_str(&after_first[..end_pos])
+    let yaml: serde_norway::Value = serde_norway::from_str(&after_first[..end_pos])
         .map_err(|error| format!("invalid YAML frontmatter: {error}"))?;
     let mapping = match yaml {
-        serde_yml::Value::Null => serde_yml::Mapping::new(),
-        serde_yml::Value::Mapping(mapping) => mapping,
+        serde_norway::Value::Null => serde_norway::Mapping::new(),
+        serde_norway::Value::Mapping(mapping) => mapping,
         _ => return Err("invalid YAML frontmatter: expected a mapping".into()),
     };
     let mut meta = PageSourceMeta::fallback(path);
@@ -338,13 +338,13 @@ fn parse_frontmatter(content: &str, path: &str) -> Result<(PageSourceMeta, Strin
         meta.title.clear();
     }
     for (key, value) in mapping {
-        let serde_yml::Value::String(key) = key else {
+        let serde_norway::Value::String(key) = key else {
             return Err("invalid YAML frontmatter: keys must be strings".into());
         };
         match key.as_str() {
             "title" => {
                 meta.title_present = true;
-                meta.title = serde_yml::from_value(value)
+                meta.title = serde_norway::from_value(value)
                     .map_err(|error| format!("invalid YAML frontmatter: title: {error}"))?;
             }
             "icon" => {
@@ -368,13 +368,13 @@ fn parse_frontmatter(content: &str, path: &str) -> Result<(PageSourceMeta, Strin
 }
 
 fn parse_optional<T: serde::de::DeserializeOwned>(
-    value: serde_yml::Value,
+    value: serde_norway::Value,
     name: &str,
 ) -> Result<Option<T>, String> {
     if value.is_null() {
         return Ok(None);
     }
-    serde_yml::from_value(value)
+    serde_norway::from_value(value)
         .map(Some)
         .map_err(|error| format!("invalid YAML frontmatter: {name}: {error}"))
 }
