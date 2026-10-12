@@ -83,13 +83,13 @@ pub struct Retention {
     /// Bytes of the compact items one session keeps.
     pub session_bytes: usize,
     /// Detail of one item; beyond it text keeps its head and tail and other
-    /// detail is `too_large`.
+    /// detail is `too_large`. The text of an agent message is held whole.
     pub item_detail: usize,
     /// Data of one media segment without a file; beyond it the segment
     /// stays and its data is `too_large`.
     pub media_item: usize,
     /// Detail of all open sessions; beyond it the least recently opened
-    /// sessions release theirs.
+    /// sessions release theirs, except the text of agent messages.
     pub process_detail: usize,
     /// How long a session without a writer, a live turn or a subscriber is
     /// kept before it is released; opening it again replays it anew.

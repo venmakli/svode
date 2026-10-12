@@ -530,25 +530,29 @@ impl Projection {
 
     /// Releases the detail and media data of the oldest items outside the
     /// current turn until `need` bytes are freed; summaries and segments
-    /// stay. Returns the bytes freed.
+    /// stay, and so does the text of agent messages. Returns the bytes freed.
     pub(crate) fn release_detail(&mut self, need: usize) -> usize {
         let current = self.current_turn();
-        let candidates: Vec<String> = self
+        let candidates: Vec<(String, bool)> = self
             .snapshot
             .items
             .iter()
             .filter(|item| current.is_none() || item.turn_id != current)
-            .map(|item| item.id.clone())
+            .map(|item| {
+                let text_held = matches!(item.kind, ItemKind::AgentMessage { .. });
+                (item.id.clone(), text_held)
+            })
             .collect();
         let mut freed = 0;
-        for id in candidates {
+        for (id, text_held) in candidates {
             if freed >= need {
                 break;
             }
-            if self
-                .details
-                .get(&id)
-                .is_some_and(|detail| detail.size() > 0)
+            if !text_held
+                && self
+                    .details
+                    .get(&id)
+                    .is_some_and(|detail| detail.size() > 0)
             {
                 freed += self.set_detail(&id, Detail::Released);
             }
@@ -624,7 +628,12 @@ impl Projection {
             },
             MessageRole::Reasoning => ItemKind::Reasoning,
         };
-        let block = extend_text(known, text, self.retention.item_detail);
+        // The text of an agent message is held whole (C4 `02`).
+        let limit = match role {
+            MessageRole::Agent => usize::MAX,
+            MessageRole::User | MessageRole::Reasoning => self.retention.item_detail,
+        };
+        let block = extend_text(known, text, limit);
         self.put_text_block(id, kind, block);
     }
 
@@ -877,7 +886,7 @@ impl Projection {
     }
 
     /// Puts a text item whose detail `block` — text or its excerpt — is
-    /// already within the per-item bound.
+    /// already bounded.
     fn put_text_block(&mut self, id: String, kind: ItemKind, block: DetailBlock) {
         let (head, excerpted) = match &block {
             DetailBlock::Text { text } => (text.as_str(), false),

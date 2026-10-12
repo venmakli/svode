@@ -543,7 +543,7 @@ async fn a_diff_beyond_the_item_limit_is_too_large_and_client_methods_are_refuse
 }
 
 #[tokio::test]
-async fn long_live_text_keeps_its_head_and_follows_its_tail() {
+async fn long_live_text_keeps_its_head_and_follows_its_tail_but_an_agent_message_stays_whole() {
     let runtime = runtime_with(Retention {
         item_detail: 16,
         ..Retention::default()
@@ -576,6 +576,9 @@ async fn long_live_text_keeps_its_head_and_follows_its_tail() {
         .update("s1", json!({ "sessionUpdate": "tool_call_update", "toolCallId": "log", "status": "completed", "content": [{ "type": "content", "content": { "type": "text", "text": "0123456789abcdefXYZ-error" } }] }))
         .await;
     for chunk in ["0123456789", "abcdefXYZ", "-error"] {
+        agent.update("s1", json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": chunk } })).await;
+    }
+    for chunk in ["0123456789", "abcdefXYZ", "-answer"] {
         agent.update("s1", agent_chunk(chunk)).await;
     }
     agent
@@ -587,17 +590,97 @@ async fn long_live_text_keeps_its_head_and_follows_its_tail() {
         runtime.detail(&key, "log"),
         excerpt("01234567", 9, "YZ-error")
     );
-    let message = subscription
-        .snapshot
+    let item = |kind: fn(&ItemKind) -> bool| {
+        subscription
+            .snapshot
+            .items
+            .iter()
+            .find(|item| kind(&item.kind))
+            .unwrap()
+            .clone()
+    };
+    let reasoning = item(|kind| matches!(kind, ItemKind::Reasoning));
+    assert_eq!(reasoning.summary, "01234567");
+    assert!(reasoning.has_detail);
+    assert_eq!(
+        runtime.detail(&key, &reasoning.id),
+        excerpt("01234567", 9, "YZ-error")
+    );
+    // The text of an agent message is not shortened by the per-item bound.
+    let message = item(|kind| matches!(kind, ItemKind::AgentMessage { .. }));
+    assert_eq!(message.summary, "0123456789abcdefXYZ-answer");
+    assert!(!message.has_detail);
+    assert_eq!(
+        runtime.detail(&key, &message.id),
+        DetailOutcome::Available {
+            blocks: vec![DetailBlock::Text {
+                text: "0123456789abcdefXYZ-answer".into()
+            }]
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_replayed_agent_message_stays_whole_while_other_text_keeps_its_head_and_tail() {
+    let runtime = runtime_with(Retention {
+        item_detail: 16,
+        ..Retention::default()
+    });
+    let answer = "0123456789abcdefXYZ-answer".repeat(400);
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let mut replay = vec![
+        user_chunk("0123456789abcdefXYZ-question"),
+        json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "0123456789abcdefXYZ-thought" } }),
+        tool_call("t1", "0123456789abcdefXYZ-output"),
+    ];
+    replay.extend(
+        answer
+            .as_bytes()
+            .chunks(1000)
+            .map(|chunk| agent_chunk(std::str::from_utf8(chunk).unwrap())),
+    );
+    let _agent = reopened(&runtime, &launch(), &key, replay).await;
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    let excerpt = |tail: &str, omitted_chars: u64| DetailOutcome::Available {
+        blocks: vec![DetailBlock::Excerpt {
+            head: "01234567".into(),
+            omitted_chars,
+            tail: tail.into(),
+        }],
+    };
+    let id = |kind: fn(&ItemKind) -> bool| {
+        snapshot
+            .items
+            .iter()
+            .find(|item| kind(&item.kind))
+            .unwrap()
+            .id
+            .clone()
+    };
+    assert_eq!(
+        runtime.detail(
+            &key,
+            &id(|kind| matches!(kind, ItemKind::UserMessage { .. }))
+        ),
+        excerpt("question", 12)
+    );
+    assert_eq!(
+        runtime.detail(&key, &id(|kind| matches!(kind, ItemKind::Reasoning))),
+        excerpt("-thought", 11)
+    );
+    assert_eq!(runtime.detail(&key, "t1"), excerpt("Z-output", 10));
+    let message = snapshot
         .items
         .iter()
         .find(|item| matches!(item.kind, ItemKind::AgentMessage { .. }))
         .unwrap();
-    assert_eq!(message.summary, "01234567");
     assert!(message.has_detail);
     assert_eq!(
         runtime.detail(&key, &message.id),
-        excerpt("01234567", 9, "YZ-error")
+        DetailOutcome::Available {
+            blocks: vec![DetailBlock::Text { text: answer }]
+        }
     );
 }
 
@@ -1798,6 +1881,73 @@ async fn the_process_detail_bound_releases_the_least_recently_opened_session_fir
     let t1 = older_items.iter().find(|item| item.id == "t1").unwrap();
     assert_eq!(t1.summary, "Read file", "the summary stays");
     assert!(runtime.inner.detail_bytes.load(Ordering::Relaxed) <= 2_500);
+}
+
+#[tokio::test]
+async fn the_process_detail_bound_releases_other_detail_and_keeps_agent_messages() {
+    let runtime = runtime_with(Retention {
+        process_detail: 10_000,
+        ..Retention::default()
+    });
+    let answer = "a".repeat(5_000);
+    let older = SessionKey::from_acp("a", "s1", false);
+    let _a = reopened(
+        &runtime,
+        &agent_launch("a"),
+        &older,
+        vec![
+            user_chunk("q1"),
+            agent_chunk(&answer),
+            tool_call("t1", &"1".repeat(3_000)),
+            user_chunk("q2"),
+            tool_call("t2", &"2".repeat(3_000)),
+        ],
+    )
+    .await;
+    let released = DetailOutcome::Unavailable {
+        reason: UnavailableReason::Released,
+    };
+    let message = runtime
+        .subscribe(&older)
+        .unwrap()
+        .snapshot
+        .items
+        .into_iter()
+        .find(|item| matches!(item.kind, ItemKind::AgentMessage { .. }))
+        .unwrap();
+    assert!(message.has_detail);
+    let whole = DetailOutcome::Available {
+        blocks: vec![DetailBlock::Text {
+            text: answer.clone(),
+        }],
+    };
+    // The past turn's tool call is released in place of its agent message.
+    assert_eq!(runtime.detail(&older, "t1"), released);
+    assert_eq!(runtime.detail(&older, &message.id), whole);
+    assert!(matches!(
+        runtime.detail(&older, "t2"),
+        DetailOutcome::Available { .. }
+    ));
+
+    let newer = SessionKey::from_acp("b", "s1", false);
+    let _b = reopened(
+        &runtime,
+        &agent_launch("b"),
+        &newer,
+        vec![user_chunk("q"), tool_call("t1", &"3".repeat(3_000))],
+    )
+    .await;
+    assert_eq!(runtime.detail(&older, "t2"), released);
+    assert_eq!(runtime.detail(&older, &message.id), whole);
+    assert!(matches!(
+        runtime.detail(&newer, "t1"),
+        DetailOutcome::Available { .. }
+    ));
+    // The agent message still counts in the process bound.
+    assert_eq!(
+        runtime.inner.detail_bytes.load(Ordering::Relaxed),
+        answer.len() + 1 + 3_000
+    );
 }
 
 #[tokio::test]
