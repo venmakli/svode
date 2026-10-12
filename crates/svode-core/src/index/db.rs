@@ -107,14 +107,42 @@ pub async fn create_pool(db_path: &Path) -> Result<SqlitePool, IndexError> {
 
 /// SQLx 0.8 can publish a returning idle connection after the final idle
 /// sweep in close(). Drain that late return before moving SQLite families.
+///
+/// Connections returned to a closing pool are closed by their own tasks,
+/// concurrently with the idle ones. SQLite deletes `-wal` only when the
+/// closing connection is the last one of the file, so two final closes at
+/// once both leave it. A single connection then closes the file last.
 pub async fn close_pool(pool: &SqlitePool) {
     loop {
         pool.close().await;
         if pool.size() == 0 {
-            return;
+            break;
         }
         tokio::task::yield_now().await;
     }
+    close_file_alone(&pool.connect_options()).await;
+}
+
+/// Open the file once more, read its header and close it. Never creates the
+/// file, skips in-memory databases and does not wait for another holder; a
+/// failure here is not a close error.
+async fn close_file_alone(options: &SqliteConnectOptions) {
+    use sqlx::{ConnectOptions, Connection};
+
+    if !options.get_filename().is_file() {
+        return;
+    }
+    let options = options
+        .clone()
+        .create_if_missing(false)
+        .busy_timeout(Duration::ZERO);
+    let Ok(mut connection) = options.connect().await else {
+        return;
+    };
+    let _ = sqlx::query("PRAGMA schema_version")
+        .execute(&mut connection)
+        .await;
+    let _ = connection.close().await;
 }
 
 pub fn is_corrupt_database_error(error: &impl std::fmt::Display) -> bool {
@@ -446,6 +474,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), IndexError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::{Connection, SqliteConnection};
 
     #[tokio::test]
     async fn close_drains_connection_returned_after_final_idle_sweep() {
@@ -490,6 +519,89 @@ mod tests {
         resume.add_permits(1);
         closer.await.unwrap();
         assert_eq!(pool.size(), 0);
+    }
+
+    async fn wal_pool(path: &Path) -> SqlitePool {
+        let pool = create_pool(path).await.unwrap();
+        sqlx::query("CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    fn wal(path: &Path) -> std::path::PathBuf {
+        path.with_file_name("index.db-wal")
+    }
+
+    #[tokio::test]
+    async fn close_leaves_no_wal_when_connections_return_to_a_closing_pool() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut left = 0;
+        for attempt in 0..30 {
+            let path = temp.path().join(format!("{attempt}/index.db"));
+            let pool = wal_pool(&path).await;
+            let mut checked_out = Vec::new();
+            for value in 0..3 {
+                let mut connection = pool.acquire().await.unwrap();
+                sqlx::query("INSERT INTO t (v) VALUES (?)")
+                    .bind(value)
+                    .execute(&mut *connection)
+                    .await
+                    .unwrap();
+                checked_out.push(connection);
+            }
+            let closer = {
+                let pool = pool.clone();
+                tokio::spawn(async move { close_pool(&pool).await })
+            };
+            pool.close_event().await;
+            drop(checked_out);
+            closer.await.unwrap();
+            assert_eq!(pool.size(), 0);
+            left += usize::from(wal(&path).exists());
+        }
+        assert_eq!(left, 0, "{left} of 30 closes left the WAL");
+    }
+
+    #[tokio::test]
+    async fn close_does_not_recreate_a_moved_database() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("index.db");
+        let pool = wal_pool(&path).await;
+        close_pool(&pool).await;
+        quarantine_database_family(&path, QuarantineReason::Corrupt).unwrap();
+        close_pool(&pool).await;
+        assert!(!path.exists());
+        assert!(!wal(&path).exists());
+    }
+
+    #[tokio::test]
+    async fn close_does_not_wait_for_another_holder_of_the_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("index.db");
+        let pool = wal_pool(&path).await;
+        sqlx::query("INSERT INTO t (v) VALUES (1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut holder =
+            SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+                .await
+                .unwrap();
+        let mut reading = holder.begin().await.unwrap();
+        sqlx::query("SELECT count(*) FROM t")
+            .execute(&mut *reading)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), close_pool(&pool))
+            .await
+            .expect("close waited for the other holder");
+        assert_eq!(pool.size(), 0);
+        assert!(wal(&path).exists());
+        reading.commit().await.unwrap();
+        holder.close().await.unwrap();
+        assert!(!wal(&path).exists());
     }
 
     #[test]

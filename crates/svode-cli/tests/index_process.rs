@@ -349,11 +349,11 @@ fn a_signal_during_an_index_build_closes_the_pools() {
             &format!("---\ntitle: Page {index}\n---\nBulk body {index} with [link](page-0.md)\n"),
         );
     }
-    let mut child = Command::new(BIN)
+    let child = Command::new(BIN)
         .args(["search", "needle", "--json"])
         .current_dir(root)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     // Signal once the command is building the index.
@@ -366,10 +366,21 @@ fn a_signal_during_an_index_build_closes_the_pools() {
         .status()
         .unwrap();
     assert!(killed.success());
-    let status = child.wait().unwrap();
+    let output = child.wait_with_output().unwrap();
+    let status = output.status;
+    let stderr = String::from_utf8_lossy(&output.stderr);
     // The command either finished first or ended on the signal; both
     // closed what they opened.
-    assert!(matches!(status.code(), Some(0) | Some(143)), "{status}");
+    assert!(
+        matches!(status.code(), Some(0) | Some(143)),
+        "{status}\n{stderr}"
+    );
+    let svode = root.join(".svode");
+    assert!(
+        !svode.join("index.db-wal").exists(),
+        "index.db-wal left open after {status}, index.db-shm present: {}\n{stderr}",
+        svode.join("index.db-shm").exists()
+    );
     assert_closed(root);
 
     let search = ok(root, &["search", "needle"]);
