@@ -72,9 +72,9 @@ export function SessionChat({
   /** Receives the session and its turn while the chat shows it, then null. */
   onStateChange?: (state: ChatSessionState | null) => void;
 }) {
-  // The composer keeps focus when the chat replaces a surface that had it,
-  // as a new session draft does after its first send; it never takes focus
-  // from elsewhere.
+  // The composer takes focus when the chat opens with focus nowhere; it
+  // never takes focus from elsewhere. Focus held for a send that replaced
+  // the surface comes back by the composer's own focus return.
   const [autoFocus] = useState(
     () => typeof document !== "undefined" && document.activeElement === document.body,
   );

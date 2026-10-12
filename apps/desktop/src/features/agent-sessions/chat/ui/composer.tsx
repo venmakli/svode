@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { ArrowUp, Loader2, Square } from "lucide-react";
 import { MentionInputPlugin, MentionPlugin } from "@platejs/mention/react";
 import { SingleBlockPlugin } from "platejs";
@@ -35,6 +42,10 @@ import { takeEscape } from "@/shared/lib/escape-key";
 import { isKeyTaken } from "../../lib/session-content";
 import { composerKeyAction } from "../model/composer";
 import { useComposerDictation } from "../hooks/use-composer-dictation";
+import {
+  holdComposerFocus,
+  useComposerFocusReturn,
+} from "../hooks/use-composer-focus";
 import {
   useComposerDropReceiver,
   type ComposerDropReceiver,
@@ -115,6 +126,7 @@ export function Composer({
     plugins: COMPOSER_PLUGINS,
     value: draftValue(parts),
   });
+  const rootRef = useRef<HTMLDivElement>(null);
   const partsKey = JSON.stringify(parts);
   const emittedRef = useRef(partsKey);
 
@@ -152,6 +164,11 @@ export function Composer({
   }, [commands, editor]);
 
   const sendDisabled = isDraftBlank(parts) || !canSend || sending;
+  // The field takes focus back after the send (DF-197).
+  const send = useCallback(() => {
+    holdComposerFocus(draftKey, rootRef.current);
+    onSend();
+  }, [draftKey, onSend]);
 
   /**
    * The hotkey starts or stops dictation as ■; Esc cancels a recording
@@ -175,11 +192,12 @@ export function Composer({
   useEffect(() => {
     if (sendAfterRef.current === null || sendAfterRef.current !== partsKey) return;
     sendAfterRef.current = null;
-    if (!running && !sendDisabled) onSend();
-  }, [onSend, partsKey, running, sendAfterRef, sendDisabled]);
+    if (!running && !sendDisabled) send();
+  }, [send, partsKey, running, sendAfterRef, sendDisabled]);
 
   return (
     <InputGroup
+      ref={rootRef}
       className={cn(
         // Looks the same in every state: a disabled send or attach button
         // does not dim the group, and the caret alone marks focus.
@@ -201,6 +219,7 @@ export function Composer({
           onPartsChange(next);
         }}
       >
+        <FocusReturn draftKey={draftKey} root={rootRef} />
         <EditorContainer className="max-h-60 min-h-0 overflow-y-auto">
           <Editor
             data-slot="input-group-control"
@@ -224,7 +243,7 @@ export function Composer({
               const action = composerKeyAction(event.nativeEvent, running);
               if (action === "send") {
                 event.preventDefault();
-                if (!running && !sendDisabled) onSend();
+                if (!running && !sendDisabled) send();
               } else if (action === "stop") {
                 takeEscape(event.nativeEvent);
                 onStop();
@@ -259,7 +278,7 @@ export function Composer({
             cancelling={cancelling}
             sending={sending}
             disabled={sendDisabled}
-            onSend={onSend}
+            onSend={send}
             onStop={onStop}
           />
         </div>
@@ -271,6 +290,17 @@ export function Composer({
 }
 
 const NO_COMMANDS: AgentSessionCommandDto[] = [];
+
+function FocusReturn({
+  draftKey,
+  root,
+}: {
+  draftKey: string;
+  root: RefObject<HTMLElement | null>;
+}) {
+  useComposerFocusReturn(draftKey, root);
+  return null;
+}
 
 function PrimaryAction({
   running,

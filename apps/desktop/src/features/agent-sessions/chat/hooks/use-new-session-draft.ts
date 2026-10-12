@@ -13,10 +13,11 @@ import {
   promptParts,
   type DraftPart,
 } from "../model/attachments";
-import { newSessionDraftKey } from "../model/composer";
+import { newSessionDraftKey, sessionDraftKey } from "../model/composer";
 import { recheckAttachments } from "./use-attachment-preview";
 import { useChatAgents } from "./use-chat-agents";
 import { useComposerDraft } from "./use-composer-draft";
+import { passComposerFocus } from "./use-composer-focus";
 import { useDraftAgent, type DraftAgentState } from "./use-draft-agent";
 import { draftValues, useDraftSettings } from "./use-draft-settings";
 import { useSessionActivity } from "./use-session-activity";
@@ -104,6 +105,7 @@ export function useNewSessionDraft(
         updateDraft(() => ({ parts: [] }));
         // The first send keeps the new session in Now (`01`, decision 16).
         signalSessionMessage(started.sessionId);
+        passComposerFocus(draftKey, sessionDraftKey(started.sessionId));
         onStarted({ sessionId: started.sessionId, session: started.session });
         return;
       }
@@ -130,6 +132,7 @@ export function useNewSessionDraft(
   }, [
     agent,
     draft,
+    draftKey,
     hold,
     onStarted,
     ready,
