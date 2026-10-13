@@ -13,6 +13,7 @@ interface PendingInspection {
 const inspections: PendingInspection[] = [];
 const revoked: string[] = [];
 const controls: string[] = [];
+const variablesListeners = new Set<() => void>();
 const mock = (
   bunTest as unknown as {
     mock: { module(specifier: string, factory: () => unknown): void };
@@ -39,7 +40,10 @@ mock.module("../api/app-api", () => ({
       inspections.push({ owner, resolve });
     }),
   listenAppManifestChanges: () => Promise.resolve(() => undefined),
-  listenAppVariablesChanged: () => Promise.resolve(() => undefined),
+  listenAppVariablesChanged: (onChange: () => void) => {
+    variablesListeners.add(onChange);
+    return Promise.resolve(() => variablesListeners.delete(onChange));
+  },
   revokeAppSource: (token: string) => {
     revoked.push(token);
     return Promise.resolve();
@@ -165,14 +169,98 @@ test("checking an App blocked by Variables again re-inspects it with loading", a
   }
 });
 
+test("an App blocked by Variables is checked again without loading after a possible fix", async () => {
+  inspections.length = 0;
+  controls.length = 0;
+  variablesListeners.clear();
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const text = () => dom.window.document.body.textContent;
+  const render = (variablesOpen: boolean) =>
+    act(async () =>
+      root.render(
+        <Harness owner={owner("process")} variablesOpen={variablesOpen} />,
+      ),
+    );
+  const resolveLast = (inspection: AppManifestInspection) =>
+    act(async () => {
+      inspections.at(-1)!.resolve(inspection);
+      await Promise.resolve();
+    });
+
+  try {
+    await render(false);
+    await resolveLast(variablesBlocked("unreadable_app_variables"));
+    expect(variablesListeners.size).toBe(1);
+
+    // Return to the window.
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+    });
+    expect(inspections.length).toBe(2);
+    expect(text()).toBe("unavailable");
+    await resolveLast(variablesBlocked("unreadable_app_variables"));
+    expect(text()).toBe("unavailable");
+
+    // Closing the Variables window of this App.
+    await render(true);
+    expect(inspections.length).toBe(2);
+    await render(false);
+    expect(inspections.length).toBe(3);
+    expect(text()).toBe("unavailable");
+    await resolveLast(variablesBlocked("missing_app_variables"));
+
+    // A Variables change; a late answer never replaces a newer one.
+    await act(async () => {
+      for (const listener of variablesListeners) listener();
+    });
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+    });
+    expect(inspections.length).toBe(5);
+    expect(text()).toBe("unavailable");
+    await act(async () => {
+      inspections[4]!.resolve(processReady());
+      await Promise.resolve();
+    });
+    expect(text()).toBe("ready:http://127.0.0.1:43000");
+    await act(async () => {
+      inspections[3]!.resolve(variablesBlocked("missing_app_variables"));
+      await Promise.resolve();
+    });
+    expect(text()).toBe("ready:http://127.0.0.1:43000");
+    expect(controls).toEqual([]);
+
+    // A running App is not checked again by these triggers.
+    expect(variablesListeners.size).toBe(0);
+    const requested = inspections.length;
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+    });
+    await render(true);
+    await render(false);
+    expect(inspections.length).toBe(requested);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function Harness({
   owner,
+  variablesOpen,
   onSession,
 }: {
   owner: AppOwner;
+  variablesOpen?: boolean;
   onSession?: (session: ReturnType<typeof useAppSession>) => void;
 }) {
-  const appSession = useAppSession(owner);
+  const appSession = useAppSession(owner, variablesOpen);
   const { session } = appSession;
   onSession?.(appSession);
   return (

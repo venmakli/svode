@@ -14,12 +14,17 @@ import * as m from "@/paraglide/messages.js";
 
 export function AppSurface({
   owner,
+  variablesOpen,
   onOpenVariables,
 }: {
   owner: AppOwner;
+  variablesOpen?: boolean;
   onOpenVariables(): void;
 }) {
-  const { rerunSetup, restart, retry, session, stop } = useAppSession(owner);
+  const { rerunSetup, restart, retry, session, stop } = useAppSession(
+    owner,
+    variablesOpen,
+  );
 
   return (
     <AppViewport

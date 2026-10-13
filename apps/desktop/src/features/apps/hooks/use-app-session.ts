@@ -13,7 +13,8 @@ import type {
 } from "../model/types";
 import { isBlockedByVariables } from "../model/variables";
 
-export function useAppSession(owner: AppOwner) {
+// `variablesOpen`: the Variables window of this App is open in its host.
+export function useAppSession(owner: AppOwner, variablesOpen = false) {
   const { ownerPath, projectPath, spaceId, spacePath } = owner;
   const [requestKey, setRequestKey] = useState(0);
   const operationRef = useRef(0);
@@ -85,25 +86,31 @@ export function useAppSession(owner: AppOwner) {
     [result, sessionKey],
   );
 
+  const blockedByVariables = isBlockedByVariables(session);
+  // A fix may come without an event: on return to the window or after the
+  // Variables window closes, check the blocked App again without loading.
   useEffect(() => {
-    if (
-      session.status !== "unavailable" ||
-      session.runtimeType !== "process" ||
-      session.reason !== "missing_app_variables"
-    ) {
-      return;
-    }
+    if (!blockedByVariables) return;
+    const recheck = () => refresh(false);
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listenAppVariablesChanged(() => refresh(false)).then((next) => {
+    void listenAppVariablesChanged(recheck).then((next) => {
       if (disposed) next();
       else unlisten = next;
     });
+    window.addEventListener("focus", recheck);
     return () => {
       disposed = true;
       unlisten?.();
+      window.removeEventListener("focus", recheck);
     };
-  }, [refresh, session]);
+  }, [blockedByVariables, refresh]);
+
+  const [variablesWereOpen, setVariablesWereOpen] = useState(variablesOpen);
+  if (variablesWereOpen !== variablesOpen) {
+    setVariablesWereOpen(variablesOpen);
+    if (!variablesOpen && blockedByVariables) setRequestKey((key) => key + 1);
+  }
 
   useEffect(() => {
     const delay =

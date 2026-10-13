@@ -25,13 +25,19 @@ if (process.env.SVODE_APP_VARIABLES_HOST_TEST !== "1") {
   };
   let mounts = 0;
   mock.module("@/features/apps", () => ({
-    AppSurface: ({ onOpenVariables }: { onOpenVariables(): void }) => {
+    AppSurface: ({
+      variablesOpen,
+      onOpenVariables,
+    }: {
+      variablesOpen?: boolean;
+      onOpenVariables(): void;
+    }) => {
       const [draft, setDraft] = useState("unfinished setup");
       useEffect(() => {
         mounts += 1;
       }, []);
       return (
-        <div data-app-surface>
+        <div data-app-surface data-variables-open={String(variablesOpen)}>
           <button onClick={() => setDraft("changed setup")}>Edit setup</button>
           <output>{draft}</output>
           <button data-variables-trigger onClick={onOpenVariables}>
@@ -90,6 +96,8 @@ if (process.env.SVODE_APP_VARIABLES_HOST_TEST !== "1") {
         trigger.click();
       });
       expect(mounts).toBe(1);
+      const surface = dom.window.document.querySelector("[data-app-surface]")!;
+      expect(surface.getAttribute("data-variables-open")).toBe("true");
       expect(dom.window.document.querySelector("output")?.textContent).toBe(
         "changed setup",
       );
@@ -106,6 +114,7 @@ if (process.env.SVODE_APP_VARIABLES_HOST_TEST !== "1") {
           .click();
       });
       expect(dom.window.document.activeElement === trigger).toBe(true);
+      expect(surface.getAttribute("data-variables-open")).toBe("false");
       expect(mounts).toBe(1);
       await act(async () => trigger.click());
       await act(async () => {

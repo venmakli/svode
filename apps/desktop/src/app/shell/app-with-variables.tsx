@@ -38,6 +38,7 @@ function AppVariablesHost({ owner, name }: { owner: AppOwner; name?: string }) {
     >
       <AppSurface
         owner={owner}
+        variablesOpen={open}
         onOpenVariables={() => {
           triggerRef.current =
             document.activeElement instanceof HTMLElement
