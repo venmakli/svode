@@ -50,13 +50,26 @@ pub async fn sync(
     host: &Arc<dyn GitHost>,
     repo: &Path,
     background: bool,
-    resolve: bool,
 ) -> Result<SyncReport, SharedError> {
-    let intent = if resolve {
-        Intent::Resolve
-    } else {
-        Intent::Sync { background }
-    };
+    sync_report(runtime, host, repo, Intent::Sync { background }).await
+}
+
+/// Continues a sync merge with the paths the user resolved (relative to `repo`).
+pub async fn resolve(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    repo: &Path,
+    paths: Vec<String>,
+) -> Result<SyncReport, SharedError> {
+    sync_report(runtime, host, repo, Intent::Resolve { paths }).await
+}
+
+async fn sync_report(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    repo: &Path,
+    intent: Intent,
+) -> Result<SyncReport, SharedError> {
     match request(runtime, host, repo, intent).await? {
         Output::Sync(mut report) => {
             if report.remote_status.is_some() {
@@ -156,19 +169,19 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 &cli,
                 repo,
                 *background,
-                false,
+                None,
                 &request,
                 &mut parent_evidence,
             )
             .await
             .map(Output::Sync),
-            Intent::Resolve => sync_locked(
+            Intent::Resolve { paths } => sync_locked(
                 runtime,
                 host,
                 &cli,
                 repo,
                 false,
-                true,
+                Some(paths.as_slice()),
                 &request,
                 &mut parent_evidence,
             )
@@ -298,7 +311,7 @@ async fn sync_locked(
     cli: &GitCli,
     repo: &Path,
     background: bool,
-    resolve: bool,
+    resolve: Option<&[String]>,
     request: &Request,
     parent_evidence: &mut Option<ParentEvidence>,
 ) -> Result<SyncReport, GitError> {
@@ -727,12 +740,11 @@ async fn run_repository(
     host: &dyn GitHost,
     cli: &GitCli,
     repo: &Path,
-    resolve: bool,
+    resolve: Option<&[String]>,
 ) -> Result<SyncResult, GitError> {
-    let result = if resolve {
-        super::sync::resolve_and_continue(cli, repo).await
-    } else {
-        super::sync::sync(cli, repo).await
+    let result = match resolve {
+        Some(paths) => super::sync::resolve_and_continue(cli, repo, paths).await,
+        None => super::sync::sync(cli, repo).await,
     };
     let invalidate = match &result {
         Ok(SyncResult::AuthRequired { .. }) => true,

@@ -58,7 +58,7 @@ async fn every_publisher_uses_one_discovery_and_complete_local_destination_histo
                 .await
                 .unwrap(),
             "resolve" => {
-                crate::git::sync::resolve_and_continue(&f.cli, &f.root)
+                crate::git::sync::resolve_and_continue(&f.cli, &f.root, &[])
                     .await
                     .unwrap();
             }

@@ -873,6 +873,7 @@
   "git_remote_confirm_description": "New URL: {url}",
   "git_remote_confirm_action": "Change",
   "git_sync_conflict": "Sync conflict in {count} files",
+  "git_resolve_conflicts_remaining": "Conflict in “{page}” resolved. Files still in conflict: {count}",
   "git_sync_auth_required": "Sign in to the Git remote to sync.",
   "git_sync_failed": "Failed to sync",
   "git_remote_auth_title": "Sign in to remote",

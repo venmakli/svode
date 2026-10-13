@@ -197,7 +197,7 @@ impl GitHost for DesktopGitHost {
             let runtime = runtime(&app);
             let host = host(&app);
             if let Err(error) =
-                svode_core::git::flow::sync(&runtime, &host, &repository, true, false).await
+                svode_core::git::flow::sync(&runtime, &host, &repository, true).await
             {
                 tracing::warn!(kind = error.kind(), "auto-sync after commit failed");
             }

@@ -18,6 +18,8 @@ pub mod publication;
 pub mod published_pointer;
 pub mod push_rejection;
 pub mod readers;
+#[cfg(test)]
+mod resolve_tests;
 pub mod save;
 #[cfg(test)]
 mod save_chain_tests;

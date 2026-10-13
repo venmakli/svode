@@ -212,7 +212,7 @@ async fn every_publisher_runs_real_hooks_once_and_preserves_rejection() {
                         "{result:?}"
                     );
                 }),
-                "resolve" => sync::resolve_and_continue(&f.cli, &f.root)
+                "resolve" => sync::resolve_and_continue(&f.cli, &f.root, &[])
                     .await
                     .map(|result| {
                         assert!(
@@ -604,7 +604,7 @@ async fn all_publishers_refuse_unpublished_historical_gitlinks() {
     git(&f.root, &["checkout", "main"]);
     git(&f.root, &["merge", "--no-commit", "side"]);
     assert!(
-        super::super::sync::resolve_and_continue(&f.cli, &f.root)
+        super::super::sync::resolve_and_continue(&f.cli, &f.root, &[])
             .await
             .is_err()
     );

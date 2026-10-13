@@ -66,7 +66,7 @@ async fn every_publisher_types_provider_lfs_rejection_and_retries_after_recovery
             "push" => ops::push(&f.cli, &f.root).await,
             "publish" => ops::push_set_upstream(&f.cli, &f.root).await,
             "sync" | "first-sync" => sync::sync(&f.cli, &f.root).await.map(|_| ()),
-            "resolve" => sync::resolve_and_continue(&f.cli, &f.root)
+            "resolve" => sync::resolve_and_continue(&f.cli, &f.root, &[])
                 .await
                 .map(|_| ()),
             _ => unreachable!(),

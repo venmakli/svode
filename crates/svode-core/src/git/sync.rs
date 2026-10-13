@@ -5,6 +5,7 @@ use serde::Serialize;
 use super::GitError;
 use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::cli::GitCli;
+use super::path::{RootMode, normalize_repo_relative};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
@@ -20,6 +21,8 @@ pub enum SyncResult {
     AuthRequired {
         challenge: GitAuthChallenge,
     },
+    /// The last conflicted file was resolved while no merge was in progress.
+    Resolved,
 }
 
 #[cfg(test)]
@@ -256,19 +259,63 @@ pub async fn conflict_files(cli: &GitCli, space_dir: &Path) -> Result<Vec<String
         .collect()
 }
 
-/// Resolve conflicts: stage all and commit, then push.
-pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError> {
+/// Continue a sync merge with the conflicted `paths` (relative to `space_dir`)
+/// the user resolved. Only those without Git conflict markers are staged; the
+/// merge commit and push run once no file is left in conflict.
+pub async fn resolve_and_continue(
+    cli: &GitCli,
+    space_dir: &Path,
+    paths: &[String],
+) -> Result<SyncResult, GitError> {
     let target = super::operations::read_transport(cli, space_dir).await?;
-    // Stage all resolved files
-    let add_out = cli.exec(space_dir, &["add", "."]).await?;
-    if add_out.exit_code != 0 {
-        return Err(GitError::GitCommandFailed(format!(
-            "git add failed: {}",
-            add_out.stderr
-        )));
+    let mut resolved = Vec::new();
+    for path in paths {
+        let path = normalize_repo_relative(path, RootMode::Reject)?;
+        let literal = format!(":(literal){path}");
+        let unmerged = cli
+            .exec(space_dir, &["ls-files", "--unmerged", "-z", "--", &literal])
+            .await?;
+        if unmerged.exit_code != 0 {
+            return Err(GitError::GitCommandFailed(format!(
+                "git ls-files failed: {}",
+                unmerged.stderr
+            )));
+        }
+        if unmerged.stdout.is_empty() {
+            continue;
+        }
+        if has_conflict_markers(&space_dir.join(&path))? {
+            return Err(GitError::Conflict(format!(
+                "Conflict markers remain in {path}"
+            )));
+        }
+        resolved.push(literal);
+    }
+    if !resolved.is_empty() {
+        let mut args = vec!["add", "--"];
+        args.extend(resolved.iter().map(String::as_str));
+        let add_out = cli.exec(space_dir, &args).await?;
+        if add_out.exit_code != 0 {
+            return Err(GitError::GitCommandFailed(format!(
+                "git add failed: {}",
+                add_out.stderr
+            )));
+        }
     }
 
-    // Commit the merge
+    let files = conflict_files(cli, space_dir).await?;
+    if !files.is_empty() {
+        return Ok(SyncResult::Conflict { files });
+    }
+    let merge_head = cli
+        .exec(space_dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .await?;
+    if merge_head.exit_code != 0 {
+        // Conflicted files without a merge leave ordinary changes for an ordinary save.
+        return Ok(SyncResult::Resolved);
+    }
+
+    // The index holds the merge result and the resolved paths only.
     let commit_out = cli.exec(space_dir, &["commit", "--no-edit"]).await?;
     if commit_out.exit_code != 0 {
         return Err(GitError::GitCommandFailed(format!(
@@ -295,6 +342,20 @@ pub async fn resolve_and_continue(cli: &GitCli, space_dir: &Path) -> Result<Sync
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
     })
+}
+
+/// A line starting with a Git conflict marker; a lone `=======` is valid Markdown.
+fn has_conflict_markers(file: &Path) -> Result<bool, GitError> {
+    let content = match std::fs::read(file) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(content.split(|byte| *byte == b'\n').any(|line| {
+        [b"<<<<<<< ", b"||||||| ", b">>>>>>> "]
+            .iter()
+            .any(|marker| line.starts_with(*marker))
+    }))
 }
 
 /// Abort current merge.

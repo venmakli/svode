@@ -53,6 +53,7 @@ export interface GitRemoteAuthCredentials {
 export type SyncResult =
   | { type: "Success"; publishedHead?: string; parent?: ParentPublication }
   | { type: "Conflict"; files: string[] }
+  | { type: "Resolved" }
   | { type: "NoRemote" }
   | { type: "AuthRequired"; challenge: GitAuthChallenge | null };
 

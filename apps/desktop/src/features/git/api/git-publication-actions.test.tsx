@@ -352,7 +352,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
         useGitStore.getState().publications[path]?.parent.result?.type,
       ).toBe("Conflict");
       useGitStore.getState().clear(path);
-      await continueGitResolve(path);
+      await continueGitResolve(path, ["README.md"]);
       expect(
         useGitStore.getState().publications[path]?.parent.result?.type,
       ).toBe("Conflict");

@@ -434,7 +434,11 @@ export function useEditorDocumentWriter({
     const status = getGitSpaceStatus(spacePath);
     if (status?.hasConflicts) {
       try {
-        await continueGitResolve(spacePath);
+        await continueGitResolve(
+          spacePath,
+          currentDocument,
+          titleRef.current || currentDocument,
+        );
       } catch (error) {
         console.error("git merge resolution failed:", error);
         toast.error(m.git_sync_failed());
@@ -455,6 +459,7 @@ export function useEditorDocumentWriter({
     performWrite,
     projectPath,
     spacePath,
+    titleRef,
   ]);
 
   const handleSave = useCallback(async () => {

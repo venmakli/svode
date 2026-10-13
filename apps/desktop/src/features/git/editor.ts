@@ -1,4 +1,9 @@
-import { useGitStore, type GitSaveScope, type GitStatus } from "./model";
+import {
+  normalizeGitStatusPath,
+  useGitStore,
+  type GitSaveScope,
+  type GitStatus,
+} from "./model";
 import { refreshGitStatus } from "./api/git-status-actions";
 import {
   commitAllSpace as commitAllSpaceAction,
@@ -6,10 +11,12 @@ import {
   commitSaveScopeAndMaybeSync as commitSaveScopeAndMaybeSyncAction,
   continueGitResolve as continueGitResolveAction,
   syncSpace as syncSpaceAction,
-  type GitAutoSyncOptions,
   type GitCommitResult,
 } from "./api/git-actions";
-import { notifyGitSyncOutcome } from "./effects/git-notifications";
+import {
+  notifyGitResolveOutcome,
+  notifyGitSyncOutcome,
+} from "./effects/git-notifications";
 
 export type { GitCommitResult } from "./api/git-actions";
 export { registerPageSaveOwner } from "./model/page-save-owner";
@@ -23,10 +30,6 @@ export {
   type GitSaveScopeLabel,
   type GitSaveScopeTreeNode,
 } from "./model";
-
-const notifyResolve: GitAutoSyncOptions = {
-  onSyncOutcome: notifyGitSyncOutcome,
-};
 
 export function commitFileAndMaybeSync(
   spacePath: string,
@@ -57,8 +60,23 @@ export function commitSaveScopeAndMaybeSync(
   );
 }
 
-export function continueGitResolve(spacePath: string): Promise<void> {
-  return continueGitResolveAction(spacePath, notifyResolve);
+/** Continues the merge with the saved Page `path`, named `page` in feedback. */
+export function continueGitResolve(
+  spacePath: string,
+  path: string,
+  page: string,
+): Promise<void> {
+  const normalized = normalizeGitStatusPath(path);
+  const conflicted = getGitSpaceStatus(spacePath)?.files.some(
+    (file) =>
+      file.state === "conflict" &&
+      normalizeGitStatusPath(file.path) === normalized,
+  );
+  return continueGitResolveAction(spacePath, [path], {
+    onSyncOutcome: conflicted
+      ? (outcome) => notifyGitResolveOutcome(outcome, page)
+      : notifyGitSyncOutcome,
+  });
 }
 
 export async function syncSpace(spacePath: string): Promise<void> {

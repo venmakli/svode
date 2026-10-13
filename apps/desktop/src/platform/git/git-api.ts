@@ -124,8 +124,11 @@ export function commitGitPaths(input: {
   }).catch(rethrowGitSaveError);
 }
 
-export function continueGitResolve(spacePath: string): Promise<SyncResultDto> {
-  return invokeCommand<SyncResultDto>("git_resolve_continue", { spacePath });
+export function continueGitResolve(input: {
+  spacePath: string;
+  paths: string[];
+}): Promise<SyncResultDto> {
+  return invokeCommand<SyncResultDto>("git_resolve_continue", input);
 }
 
 export function publishGit(spacePath: string): Promise<GitStatusDto> {

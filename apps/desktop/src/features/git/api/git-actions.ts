@@ -108,6 +108,9 @@ async function runSync(
         await refreshGitStatus(spacePath);
         if (request.current()) git.setSyncError(spacePath, "conflict");
         return result;
+      case "Resolved":
+        await refreshGitStatus(spacePath);
+        return result;
       case "AuthRequired":
         git.setSyncError(spacePath, "auth");
         return result;
@@ -276,12 +279,16 @@ export async function commitSaveScopeAndMaybeSync(
   return commitPathsAndMaybeSync(spacePath, filePaths, projectPath);
 }
 
+/**
+ * Mark the resolved paths and finish the merge once no conflict remains.
+ */
 export async function continueGitResolve(
   spacePath: string,
+  paths: string[],
   options?: GitAutoSyncOptions,
 ): Promise<void> {
   const outcome = await runSync(spacePath, () =>
-    continuePlatformGitResolve(spacePath),
+    continuePlatformGitResolve({ spacePath, paths }),
   );
   options?.onSyncOutcome?.(outcome);
 }

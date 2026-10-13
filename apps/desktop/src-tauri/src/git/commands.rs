@@ -496,7 +496,6 @@ pub async fn git_sync(
         &host(&app),
         Path::new(&space_path),
         background.unwrap_or(false),
-        false,
     )
     .await
 }
@@ -607,13 +606,13 @@ pub async fn git_conflict_files(
 pub async fn git_resolve_continue(
     app: AppHandle,
     space_path: String,
+    paths: Vec<String>,
 ) -> Result<flow::SyncReport, SharedError> {
-    flow::sync(
+    flow::resolve(
         app.state::<GitState>().runtime(),
         &host(&app),
         Path::new(&space_path),
-        false,
-        true,
+        paths,
     )
     .await
 }

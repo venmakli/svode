@@ -118,7 +118,9 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
                     .await
                     .map(Output::Status);
             }
-            Intent::Resolve => sync::resolve_and_continue(&cli, &request.repo).await?,
+            Intent::Resolve { ref paths } => {
+                sync::resolve_and_continue(&cli, &request.repo, paths).await?
+            }
             _ => sync::sync(&cli, &request.repo).await?,
         };
         let mut parent_outcome = None;

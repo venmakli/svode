@@ -61,6 +61,7 @@ export type SyncResultDto =
       remoteStatus?: GitStatusDto;
     }
   | { type: "conflict"; files: string[] }
+  | { type: "resolved" }
   | { type: "noRemote" }
   | { type: "authRequired"; challenge?: GitAuthChallengeDto | null };
 

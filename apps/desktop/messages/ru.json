@@ -873,6 +873,7 @@
   "git_remote_confirm_description": "Новый URL: {url}",
   "git_remote_confirm_action": "Изменить",
   "git_sync_conflict": "Конфликт синхронизации в {count} файлах",
+  "git_resolve_conflicts_remaining": "Конфликт в «{page}» разрешён. Осталось файлов в конфликте: {count}",
   "git_sync_auth_required": "Войдите в Git remote, чтобы выполнить синхронизацию.",
   "git_sync_failed": "Не удалось синхронизировать",
   "git_remote_auth_title": "Вход в remote",

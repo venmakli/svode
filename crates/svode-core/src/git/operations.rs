@@ -49,7 +49,10 @@ pub enum Intent {
     },
     Push,
     Publish,
-    Resolve,
+    /// Resolved paths relative to the requested path; distinct sets never coalesce.
+    Resolve {
+        paths: Vec<String>,
+    },
     FetchStatus,
     InspectPublication,
     RetryParent {
@@ -86,7 +89,7 @@ impl Intent {
     fn reserves_parent(&self) -> bool {
         matches!(
             self,
-            Self::Sync { .. } | Self::Resolve | Self::RetryParent { .. }
+            Self::Sync { .. } | Self::Resolve { .. } | Self::RetryParent { .. }
         )
     }
 }

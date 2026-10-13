@@ -43,6 +43,8 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
   switch (dto.type) {
     case "conflict":
       return { type: "Conflict", files: [...dto.files] };
+    case "resolved":
+      return { type: "Resolved" };
     case "success":
       return {
         type: "Success",

@@ -28,7 +28,24 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
     case "Success":
       if (outcome.parent && outcome.parent.pointer !== "published") toast.info(m.git_publication_partial());
       break;
+    case "Resolved":
     case "NoRemote":
       break;
   }
+}
+
+export function notifyGitResolveOutcome(
+  outcome: GitSyncOutcome,
+  page: string,
+): void {
+  if (outcome.type === "Conflict") {
+    toast.info(
+      m.git_resolve_conflicts_remaining({
+        page,
+        count: String(outcome.files.length),
+      }),
+    );
+    return;
+  }
+  notifyGitSyncOutcome(outcome);
 }
