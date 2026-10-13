@@ -1634,3 +1634,123 @@ fn only_a_finishable_journal_is_reported_as_a_pending_save() {
     assert_eq!(service.catalog(&project).unwrap().entries.len(), 1);
     assert!(service.recover(&project).unwrap().is_none());
 }
+
+#[test]
+fn lookup_tells_missing_values_from_unreadable_owners() {
+    let root = fixture();
+    let secrets = Secrets::default();
+    let service = Service::new(&secrets);
+    let project = owner(root.path(), None);
+    let base = root.path().canonicalize().unwrap();
+    let inline = context(root.path(), Some("inline"));
+    let none = BTreeMap::new();
+    let pinned = |owner: SourceOwner, name: &str| {
+        BTreeMap::from([(
+            "KEY".to_string(),
+            SourceReference {
+                owner,
+                name: name.into(),
+            },
+        )])
+    };
+    let unreadable = |result: std::result::Result<Resolved, Unresolved>| match result {
+        Err(Unresolved::Unreadable { owner, failure }) => (owner, failure),
+        other => panic!("expected an unreadable owner, got {:?}", other.err()),
+    };
+
+    // Missing: no declaration, a Secret without a value, a collision, an absent explicit owner.
+    assert!(matches!(
+        service.lookup(&inline, "KEY", &none),
+        Err(Unresolved::Missing)
+    ));
+    save(&service, &project, "KEY", Mode::Git, Kind::Secret, None).unwrap();
+    assert!(matches!(
+        service.lookup(&inline, "KEY", &none),
+        Err(Unresolved::Missing)
+    ));
+    save(
+        &service,
+        &project,
+        "KEY",
+        Mode::Git,
+        Kind::Variable,
+        Some("git"),
+    )
+    .unwrap();
+    assert_eq!(service.lookup(&inline, "KEY", &none).unwrap().value, "git");
+    files::atomic_write(
+        &base.join(".svode/local.json"),
+        &json!({"variables":{"KEY":{"kind":"variable","value":"local"}}}),
+    )
+    .unwrap();
+    assert!(matches!(
+        service.lookup(&inline, "KEY", &none),
+        Err(Unresolved::Missing)
+    ));
+    std::fs::remove_file(base.join(".svode/local.json")).unwrap();
+    let other_space = pinned(SourceOwner::Space { id: "repo".into() }, "KEY");
+    assert!(matches!(
+        service.lookup(&inline, "KEY", &other_space),
+        Err(Unresolved::Missing)
+    ));
+
+    // An owner outside the lookup never blocks it.
+    let space_local = base.join("inline/.svode/local.json");
+    files::atomic_write(
+        &space_local,
+        &json!({"variables":{"version":1,"copyId":"old","entries":{},"secrets":{}}}),
+    )
+    .unwrap();
+    let project_only = pinned(SourceOwner::Project, "KEY");
+    assert_eq!(
+        service.lookup(&inline, "KEY", &project_only).unwrap().value,
+        "git"
+    );
+    let (owner, failure) = unreadable(service.lookup(&inline, "KEY", &none));
+    assert_eq!(
+        owner,
+        SourceOwner::Space {
+            id: "inline".into()
+        }
+    );
+    assert_eq!(failure.error, Error::LegacyFormat);
+    assert_eq!(failure.file.as_deref(), Some(space_local.as_path()));
+    assert_eq!(failure.section, Some(SECTION));
+    std::fs::remove_file(&space_local).unwrap();
+
+    // Application settings of an explicit Global source.
+    let settings = root.path().join("library/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(&settings, b"{not json").unwrap();
+    let (owner, failure) =
+        unreadable(service.lookup(&inline, "KEY", &pinned(SourceOwner::Global, "KEY")));
+    assert_eq!(owner, SourceOwner::Global);
+    assert_eq!(failure.error.category(), Category::InvalidConfig);
+    assert_eq!(failure.file.as_deref(), Some(settings.as_path()));
+    std::fs::remove_file(&settings).unwrap();
+
+    // A journal the project cannot finish blocks it.
+    let journal = base.join(".svode").join(files::PENDING_FILE);
+    std::fs::write(&journal, b"{broken").unwrap();
+    let (owner, failure) = unreadable(service.lookup(&inline, "KEY", &project_only));
+    assert_eq!(owner, SourceOwner::Project);
+    assert_eq!(failure.error.category(), Category::BlockedJournal);
+    assert_eq!(failure.file.as_deref(), Some(journal.as_path()));
+    std::fs::remove_file(&journal).unwrap();
+
+    // A secret store that refuses access is not a missing value.
+    save(
+        &service,
+        &project,
+        "TOKEN",
+        Mode::Local,
+        Kind::Secret,
+        Some("s"),
+    )
+    .unwrap();
+    secrets.denied.set(true);
+    let (owner, failure) = unreadable(service.lookup(&inline, "TOKEN", &none));
+    assert_eq!(owner, SourceOwner::Project);
+    assert_eq!(failure.error, Error::SecretStore);
+    assert_eq!(failure.file, None);
+}

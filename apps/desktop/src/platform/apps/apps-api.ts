@@ -1,5 +1,9 @@
 import { invokeCommand } from "@/platform/native/invoke";
 import { listen } from "@/platform/native/events";
+import type {
+  VariableOwnerDto,
+  VariablesProblemDto,
+} from "@/platform/settings/app-variables-api";
 
 export interface AppOwnerDto {
   projectPath: string;
@@ -36,6 +40,12 @@ export interface AppProcessDetailsDto {
 export interface MissingAppVariableDto {
   referenceName: string;
   entryName: string;
+}
+
+// Why a process App cannot read its Variables; the backend always names the owner.
+export interface AppVariablesProblemDto
+  extends Omit<VariablesProblemDto, "owner"> {
+  owner: VariableOwnerDto;
 }
 
 export type AppManifestInspectionDto =
@@ -85,6 +95,7 @@ export type AppManifestInspectionDto =
       browserUrl?: string;
       process: AppProcessDetailsDto;
       missingVariables?: MissingAppVariableDto[];
+      variablesProblem?: AppVariablesProblemDto;
     };
 
 interface AppFileEventDto {

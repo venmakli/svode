@@ -12,8 +12,8 @@ use super::{AppProcessState, AppSourceState};
 use crate::AppError;
 use crate::commands::app_variables::{APP_VARIABLES_CHANGED_EVENT, run_locked};
 use crate::space::app_variables::{
-    AppVariableOwnerContext, KeyringSecretStore, MissingAppVariable, VariableScope,
-    clear_owner_usage, resolve_environment,
+    AppEnvironment, AppVariableOwnerContext, KeyringSecretStore, MissingAppVariable, VariableScope,
+    VariablesProblem, clear_owner_usage, resolve_environment,
 };
 use crate::space::settings::AppSettingsState;
 use svode_core::apps::manifest::{
@@ -68,6 +68,8 @@ pub(crate) enum AppManifestInspection {
         process: Option<AppProcessDetails>,
         #[serde(rename = "missingVariables", skip_serializing_if = "Vec::is_empty")]
         missing_variables: Vec<MissingAppVariable>,
+        #[serde(rename = "variablesProblem", skip_serializing_if = "Option::is_none")]
+        variables_problem: Option<VariablesProblem>,
     },
 }
 
@@ -102,14 +104,14 @@ pub(crate) async fn app_manifest_inspect(
     let owner_directory = system_path::user_facing_path(&owner.owner_path);
     let Some(manifest) = read_and_validate_manifest(&owner.owner_path)? else {
         process_state.remove_owner(&owner.project_path, &owner.owner_path);
-        clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
+        clear_variable_usage(&app, &settings_state, &owner.owner_path).await;
         return Ok(AppManifestInspection::Missing { owner_directory });
     };
     let runtime = match manifest {
         Ok(runtime) => runtime,
         Err(diagnostics) => {
             process_state.remove_owner(&owner.project_path, &owner.owner_path);
-            clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
+            clear_variable_usage(&app, &settings_state, &owner.owner_path).await;
             return Ok(AppManifestInspection::Invalid {
                 owner_directory,
                 diagnostics,
@@ -120,7 +122,7 @@ pub(crate) async fn app_manifest_inspect(
     match runtime {
         ValidatedRuntime::Url { url } => {
             process_state.remove_owner(&owner.project_path, &owner.owner_path);
-            clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
+            clear_variable_usage(&app, &settings_state, &owner.owner_path).await;
             Ok(AppManifestInspection::Ready {
                 owner_directory,
                 runtime_type: AppRuntimeType::Url,
@@ -129,36 +131,28 @@ pub(crate) async fn app_manifest_inspect(
                 process: None,
             })
         }
-        ValidatedRuntime::Process(mut runtime) => {
+        ValidatedRuntime::Process(runtime) => {
             if let Some(snapshot) =
                 process_state.inspect_existing(&owner.project_path, &owner.owner_path, &runtime)
             {
                 return Ok(process_inspection(owner_directory, runtime.url, snapshot));
             }
-            let missing = resolve_runtime_environment(
+            let environment = resolve_runtime_environment(
                 &app,
                 &settings_state,
                 &owner.project_path,
                 space_id.as_deref(),
                 &owner.owner_path,
-                &mut runtime,
+                &runtime,
             )
             .await?;
-            if !missing.is_empty() {
-                process_state.remove_owner(&owner.project_path, &owner.owner_path);
-                return Ok(AppManifestInspection::Unavailable {
-                    owner_directory,
-                    runtime_type: AppRuntimeType::Process,
-                    reason: "missing_app_variables",
-                    browser_url: Some(runtime.url),
-                    process: Some(AppProcessDetails {
-                        managed: false,
-                        has_setup: runtime.setup.is_some(),
-                        logs: AppProcessLogs::default(),
-                    }),
-                    missing_variables: missing,
-                });
-            }
+            let runtime = match with_environment(runtime, environment, &owner_directory) {
+                Ok(runtime) => runtime,
+                Err(blocked) => {
+                    process_state.remove_owner(&owner.project_path, &owner.owner_path);
+                    return Ok(*blocked);
+                }
+            };
             let url = runtime.url.clone();
             let snapshot =
                 process_state.inspect_or_launch(&owner.project_path, &owner.owner_path, runtime);
@@ -166,7 +160,7 @@ pub(crate) async fn app_manifest_inspect(
         }
         ValidatedRuntime::Static { public_root, entry } => {
             process_state.remove_owner(&owner.project_path, &owner.owner_path);
-            clear_variable_usage(&app, &settings_state, &owner.owner_path).await?;
+            clear_variable_usage(&app, &settings_state, &owner.owner_path).await;
             let declared_root = owner.owner_path.join(&public_root);
             let root_metadata = fs::symlink_metadata(&declared_root);
             if !matches!(root_metadata, Ok(ref metadata) if metadata.is_dir() && !metadata.file_type().is_symlink())
@@ -178,6 +172,7 @@ pub(crate) async fn app_manifest_inspect(
                     browser_url: None,
                     process: None,
                     missing_variables: Vec::new(),
+                    variables_problem: None,
                 });
             }
             let canonical_root = fs::canonicalize(&declared_root)?;
@@ -202,6 +197,7 @@ pub(crate) async fn app_manifest_inspect(
                     browser_url: None,
                     process: None,
                     missing_variables: Vec::new(),
+                    variables_problem: None,
                 });
             }
             let canonical_entry = fs::canonicalize(&declared_entry)?;
@@ -253,30 +249,20 @@ pub(crate) async fn app_process_control(
         return Ok(process_inspection(owner_directory, url, snapshot));
     }
 
-    let mut runtime = current_process_runtime(&owner.owner_path)?;
-    let missing = resolve_runtime_environment(
+    let runtime = current_process_runtime(&owner.owner_path)?;
+    let environment = resolve_runtime_environment(
         &app,
         &settings_state,
         &owner.project_path,
         space_id.as_deref(),
         &owner.owner_path,
-        &mut runtime,
+        &runtime,
     )
     .await?;
-    if !missing.is_empty() {
-        return Ok(AppManifestInspection::Unavailable {
-            owner_directory,
-            runtime_type: AppRuntimeType::Process,
-            reason: "missing_app_variables",
-            browser_url: Some(runtime.url),
-            process: Some(AppProcessDetails {
-                managed: false,
-                has_setup: runtime.setup.is_some(),
-                logs: AppProcessLogs::default(),
-            }),
-            missing_variables: missing,
-        });
-    }
+    let runtime = match with_environment(runtime, environment, &owner_directory) {
+        Ok(runtime) => runtime,
+        Err(blocked) => return Ok(*blocked),
+    };
     let url = runtime.url.clone();
     let action = match action {
         AppProcessControlAction::Retry => AppProcessAction::Retry,
@@ -302,6 +288,37 @@ fn current_process_runtime(owner_path: &Path) -> Result<AppProcessRuntime, AppEr
             "App process controls require a process runtime".to_string(),
         )),
     }
+}
+
+/// Gives the process its environment, or the inspection of what Variables block.
+fn with_environment(
+    mut runtime: AppProcessRuntime,
+    environment: AppEnvironment,
+    owner_directory: &str,
+) -> Result<AppProcessRuntime, Box<AppManifestInspection>> {
+    let (reason, missing_variables, variables_problem) = match environment {
+        AppEnvironment::Ready(environment) => {
+            runtime.environment = environment;
+            return Ok(runtime);
+        }
+        AppEnvironment::Missing(missing) => ("missing_app_variables", missing, None),
+        AppEnvironment::Unreadable(problem) => {
+            ("unreadable_app_variables", Vec::new(), Some(problem))
+        }
+    };
+    Err(Box::new(AppManifestInspection::Unavailable {
+        owner_directory: owner_directory.to_string(),
+        runtime_type: AppRuntimeType::Process,
+        reason,
+        browser_url: Some(runtime.url),
+        process: Some(AppProcessDetails {
+            managed: false,
+            has_setup: runtime.setup.is_some(),
+            logs: AppProcessLogs::default(),
+        }),
+        missing_variables,
+        variables_problem,
+    }))
 }
 
 fn process_inspection(
@@ -357,6 +374,7 @@ fn process_inspection(
                 logs,
             }),
             missing_variables: Vec::new(),
+            variables_problem: None,
         },
         AppProcessSnapshot::Stopped {
             url,
@@ -373,28 +391,29 @@ fn process_inspection(
                 logs,
             }),
             missing_variables: Vec::new(),
+            variables_problem: None,
         },
     }
 }
 
+/// Usage of an App without Variables never decides its inspection; a usage
+/// left unsaved is recorded by the next successful check.
 async fn clear_variable_usage(
     app: &AppHandle,
     settings_state: &AppSettingsState,
     owner_path: &Path,
-) -> Result<(), AppError> {
+) {
     let owner_key = system_path::user_facing_path(owner_path);
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| AppError::General(error.to_string()))?;
+    let Ok(config_dir) = app.path().app_config_dir() else {
+        return;
+    };
     let changed = run_locked(settings_state, move || {
         clear_owner_usage(&config_dir, &owner_key)
     })
-    .await?;
-    if changed {
+    .await;
+    if matches!(changed, Ok(true)) {
         let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
     }
-    Ok(())
 }
 
 async fn resolve_runtime_environment(
@@ -403,9 +422,8 @@ async fn resolve_runtime_environment(
     project_path: &Path,
     space_id: Option<&str>,
     owner_path: &Path,
-    runtime: &mut AppProcessRuntime,
-) -> Result<Vec<MissingAppVariable>, AppError> {
-    let references = runtime.settings_references();
+    runtime: &AppProcessRuntime,
+) -> Result<AppEnvironment, AppError> {
     let owner_directory = system_path::user_facing_path(owner_path);
     let context = AppVariableOwnerContext {
         scope: VariableScope {
@@ -414,35 +432,26 @@ async fn resolve_runtime_environment(
         },
         owner_key: owner_directory.clone(),
         owner_directory,
-        references,
+        references: runtime.settings_references(),
     };
     let declaration = runtime.environment_declaration.clone();
     let config_dir = app
         .path()
         .app_config_dir()
         .map_err(|error| AppError::General(error.to_string()))?;
-    let unresolved: Vec<_> = context
-        .references
-        .iter()
-        .map(|name| MissingAppVariable {
-            reference_name: name.clone(),
-            entry_name: name.clone(),
-        })
-        .collect();
     let resolved = run_locked(settings_state, move || {
-        resolve_environment(&config_dir, &context, &declaration, &KeyringSecretStore)
+        Ok(resolve_environment(
+            &config_dir,
+            &context,
+            &declaration,
+            &KeyringSecretStore,
+        ))
     })
-    .await;
-    let resolved = match resolved {
-        Ok(resolved) => resolved,
-        Err(error) if unresolved.is_empty() => return Err(error),
-        Err(_) => return Ok(unresolved),
-    };
+    .await?;
     if resolved.usage_changed {
         let _ = app.emit(APP_VARIABLES_CHANGED_EVENT, ());
     }
-    runtime.environment = resolved.environment;
-    Ok(resolved.missing)
+    Ok(resolved.environment)
 }
 
 #[tauri::command]
@@ -476,4 +485,83 @@ pub(crate) fn app_open_browser(app: AppHandle, url: String) -> Result<(), AppErr
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|error| AppError::General(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use svode_core::apps::manifest::AppCommandRecipe;
+    use svode_core::variables::{Error, Failure, SourceOwner};
+
+    fn runtime() -> AppProcessRuntime {
+        AppProcessRuntime {
+            setup: None,
+            start: AppCommandRecipe {
+                argv: vec!["serve".into()],
+                cwd: None,
+                inputs: Vec::new(),
+            },
+            url: "http://127.0.0.1:4173".into(),
+            environment: BTreeMap::new(),
+            environment_declaration: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn unreadable_variables_block_the_process_with_their_cause_and_no_names() {
+        let problem = VariablesProblem::new(
+            Failure::at(
+                Error::LegacyFormat,
+                Path::new("/tmp/library/settings.json"),
+                Some("appVariableRegistry"),
+            ),
+            SourceOwner::Global,
+        );
+        let Err(inspection) = with_environment(
+            runtime(),
+            AppEnvironment::Unreadable(problem),
+            "/tmp/project/app",
+        ) else {
+            panic!("unreadable Variables must block the process");
+        };
+        let value = serde_json::to_value(inspection).unwrap();
+        assert_eq!(value["status"], "unavailable");
+        assert_eq!(value["runtimeType"], "process");
+        assert_eq!(value["reason"], "unreadable_app_variables");
+        assert_eq!(value["variablesProblem"]["category"], "legacy_format");
+        assert_eq!(value["variablesProblem"]["owner"]["scope"], "global");
+        assert_eq!(value["browserUrl"], "http://127.0.0.1:4173");
+        assert!(value.get("missingVariables").is_none());
+
+        let unknown =
+            serde_json::to_value(VariablesProblem::unknown(SourceOwner::Project)).unwrap();
+        assert_eq!(unknown["category"], "unknown");
+        assert!(unknown["code"].is_null());
+
+        let missing = vec![MissingAppVariable {
+            reference_name: "API_URL".into(),
+            entry_name: "API_URL".into(),
+        }];
+        let Err(inspection) = with_environment(
+            runtime(),
+            AppEnvironment::Missing(missing),
+            "/tmp/project/app",
+        ) else {
+            panic!("missing Variables must block the process");
+        };
+        let value = serde_json::to_value(inspection).unwrap();
+        assert_eq!(value["reason"], "missing_app_variables");
+        assert_eq!(value["missingVariables"][0]["referenceName"], "API_URL");
+        assert!(value.get("variablesProblem").is_none());
+
+        let environment = BTreeMap::from([("API_URL".to_string(), "http://x".to_string())]);
+        let ready = with_environment(
+            runtime(),
+            AppEnvironment::Ready(environment),
+            "/tmp/project/app",
+        )
+        .unwrap();
+        assert_eq!(ready.environment["API_URL"], "http://x");
+    }
 }

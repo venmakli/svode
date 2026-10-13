@@ -39,6 +39,7 @@ mock.module("../api/app-api", () => ({
       inspections.push({ owner, resolve });
     }),
   listenAppManifestChanges: () => Promise.resolve(() => undefined),
+  listenAppVariablesChanged: () => Promise.resolve(() => undefined),
   revokeAppSource: (token: string) => {
     revoked.push(token);
     return Promise.resolve();
@@ -121,8 +122,59 @@ test("navigating away from a process App does not stop its child", async () => {
   }
 });
 
-function Harness({ owner }: { owner: AppOwner }) {
-  const { session } = useAppSession(owner);
+test("checking an App blocked by Variables again re-inspects it with loading", async () => {
+  inspections.length = 0;
+  controls.length = 0;
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  let retry: () => void = () => undefined;
+
+  try {
+    await act(async () =>
+      root.render(
+        <Harness
+          owner={owner("process")}
+          onSession={(session) => (retry = session.retry)}
+        />,
+      ),
+    );
+    for (const reason of [
+      "unreadable_app_variables",
+      "missing_app_variables",
+    ] as const) {
+      await act(async () => {
+        inspections.at(-1)!.resolve(variablesBlocked(reason));
+        await Promise.resolve();
+      });
+      expect(dom.window.document.body.textContent).toBe("unavailable");
+
+      const requested = inspections.length;
+      await act(async () => retry());
+      expect(dom.window.document.body.textContent).toBe("loading");
+      expect(inspections.length).toBe(requested + 1);
+      expect(controls).toEqual([]);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+function Harness({
+  owner,
+  onSession,
+}: {
+  owner: AppOwner;
+  onSession?: (session: ReturnType<typeof useAppSession>) => void;
+}) {
+  const appSession = useAppSession(owner);
+  const { session } = appSession;
+  onSession?.(appSession);
   return (
     <span>
       {session.status}
@@ -147,6 +199,32 @@ function ready(ownerPath: "first" | "second", capabilityToken: string) {
     runtimeType: "static" as const,
     viewportUrl: `http://127.0.0.1:${ownerPath === "first" ? "42001" : "42002"}/index.html`,
     capabilityToken,
+  };
+}
+
+function variablesBlocked(
+  reason: "unreadable_app_variables" | "missing_app_variables",
+): AppManifestInspection {
+  return {
+    status: "unavailable",
+    ownerDirectory: "/repo/space/process",
+    runtimeType: "process",
+    reason,
+    browserUrl: "http://127.0.0.1:43000",
+    process: {
+      managed: false,
+      hasSetup: false,
+      logs: { stdout: "", stderr: "" },
+    },
+    ...(reason === "unreadable_app_variables"
+      ? {
+          variablesProblem: {
+            category: "legacy_format" as const,
+            owner: { scope: "global" as const },
+            file: "/library/settings.json",
+          },
+        }
+      : { missingVariables: [{ referenceName: "API_URL", entryName: "API_URL" }] }),
   };
 }
 

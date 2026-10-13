@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use svode_core::apps::environment;
-use svode_core::variables::{self as core, Context, Owner, Service, SourceOwner, SourceReference};
+use svode_core::variables::{
+    self as core, Context, Owner, Service, SourceOwner, SourceReference, Unresolved,
+};
 
 pub(crate) mod mutations;
 mod registry;
@@ -20,7 +22,8 @@ pub(crate) fn storage_error(error: core::Error) -> AppError {
 #[serde(rename_all = "camelCase")]
 pub struct VariablesProblem {
     pub category: core::Category,
-    pub code: core::Error,
+    /// Absent for a failure outside the Variables model.
+    pub code: Option<core::Error>,
     pub owner: SourceOwner,
     pub file: Option<String>,
     pub section: Option<&'static str>,
@@ -31,7 +34,7 @@ impl VariablesProblem {
         Self {
             category: failure.error.category(),
             recoverable: failure.error == core::Error::PendingRecovery,
-            code: failure.error,
+            code: Some(failure.error),
             owner,
             file: failure
                 .file
@@ -40,10 +43,24 @@ impl VariablesProblem {
             section: failure.section,
         }
     }
+    /// A failure outside the Variables model; its cause is not guessed.
+    pub fn unknown(owner: SourceOwner) -> Self {
+        Self {
+            category: core::Category::Unknown,
+            code: None,
+            owner,
+            file: None,
+            section: None,
+            recoverable: false,
+        }
+    }
 }
 impl std::fmt::Display for VariablesProblem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.code.fmt(f)
+        match &self.code {
+            Some(code) => code.fmt(f),
+            None => f.write_str("Variables cannot be read"),
+        }
     }
 }
 pub(crate) fn problem_error(failure: impl Into<core::Failure>, owner: SourceOwner) -> AppError {
@@ -139,9 +156,16 @@ pub(crate) struct MissingAppVariable {
     pub reference_name: String,
     pub entry_name: String,
 }
+/// What Variables give a process App before it starts.
+#[derive(Debug)]
+pub(crate) enum AppEnvironment {
+    Ready(BTreeMap<String, String>),
+    Missing(Vec<MissingAppVariable>),
+    /// Outranks missing references: some of them could not be checked.
+    Unreadable(VariablesProblem),
+}
 pub(crate) struct ResolvedAppEnvironment {
-    pub environment: BTreeMap<String, String>,
-    pub missing: Vec<MissingAppVariable>,
+    pub environment: AppEnvironment,
     pub usage_changed: bool,
 }
 
@@ -464,7 +488,38 @@ pub(crate) fn resolve_environment(
     context: &AppVariableOwnerContext,
     declaration: &BTreeMap<String, String>,
     secrets: &dyn SecretStore,
+) -> ResolvedAppEnvironment {
+    let unreadable = |problem| ResolvedAppEnvironment {
+        environment: AppEnvironment::Unreadable(problem),
+        usage_changed: false,
+    };
+    match resolve_references(config, context, declaration, secrets) {
+        Ok(resolved) => resolved,
+        // Only usage was at stake: the declaration needs no Variables.
+        Err(_) if context.references.is_empty() => {
+            match environment::resolve(declaration, &BTreeMap::new()) {
+                Ok(environment) => ResolvedAppEnvironment {
+                    environment: AppEnvironment::Ready(environment),
+                    usage_changed: false,
+                },
+                Err(_) => unreadable(VariablesProblem::unknown(context.scope.owner())),
+            }
+        }
+        Err(AppError::VariablesProblem(problem)) => unreadable(problem),
+        Err(_) => unreadable(VariablesProblem::unknown(context.scope.owner())),
+    }
+}
+
+fn resolve_references(
+    config: &Path,
+    context: &AppVariableOwnerContext,
+    declaration: &BTreeMap<String, String>,
+    secrets: &dyn SecretStore,
 ) -> Result<ResolvedAppEnvironment, AppError> {
+    let hierarchy = context
+        .scope
+        .context(config)
+        .map_err(|failure| problem_error(failure, context.scope.owner()))?;
     let context = &registry::prepare_context(config, context)?;
     let registry = registry::read(config)?;
     let bindings = registry
@@ -473,7 +528,6 @@ pub(crate) fn resolve_environment(
         .get(&context.owner_key)
         .cloned()
         .unwrap_or_default();
-    let hierarchy = context.scope.context(config)?;
     let service = Service::new(secrets);
     let mut missing = Vec::new();
     let mut sources = BTreeMap::new();
@@ -487,36 +541,43 @@ pub(crate) fn resolve_environment(
             .collect(),
         Err(_) => {
             for name in &context.references {
-                match service.resolve(&hierarchy, std::slice::from_ref(name), &bindings) {
+                match service.lookup(&hierarchy, name, &bindings) {
                     Ok(value) => {
-                        sources.insert(name.clone(), value[name].source.clone());
+                        sources.insert(name.clone(), value.source);
                     }
-                    Err(_) => missing.push(MissingAppVariable {
+                    Err(Unresolved::Missing) => missing.push(MissingAppVariable {
                         reference_name: name.clone(),
                         entry_name: bindings
                             .get(name)
                             .map(|s| s.name.clone())
                             .unwrap_or_else(|| name.clone()),
                     }),
+                    Err(Unresolved::Unreadable { owner, failure }) => {
+                        return Err(problem_error(failure, owner));
+                    }
                 }
             }
             // A concurrent external edit cannot turn the failed snapshot into a partial success.
             if missing.is_empty() {
-                return Err(storage_error(core::Error::StaleRevision));
+                return Err(problem_error(
+                    core::Error::StaleRevision,
+                    context.scope.owner(),
+                ));
             }
             BTreeMap::new()
         }
     };
     let usage_changed = registry::sync(config, context, sources)?;
     let environment = if missing.is_empty() {
-        environment::resolve(declaration, &values)
-            .map_err(|_| storage_error(core::Error::Missing))?
+        AppEnvironment::Ready(
+            environment::resolve(declaration, &values)
+                .map_err(|_| storage_error(core::Error::Missing))?,
+        )
     } else {
-        BTreeMap::new()
+        AppEnvironment::Missing(missing)
     };
     Ok(ResolvedAppEnvironment {
         environment,
-        missing,
         usage_changed,
     })
 }

@@ -145,6 +145,20 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 
+/// Why a declared reference has no value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unresolved {
+    /// The read configuration gives it no value: no declaration in the lookup
+    /// chain, an absent explicit source, a Secret without a value on this
+    /// device, a Local/Git collision or a wrong kind.
+    Missing,
+    /// An owner the lookup needs cannot be read; `owner` holds its files.
+    Unreadable {
+        owner: SourceOwner,
+        failure: Failure,
+    },
+}
+
 pub const SECTION: &str = "variables";
 
 pub fn valid_name(name: &str) -> bool {

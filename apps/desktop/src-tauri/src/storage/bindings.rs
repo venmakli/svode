@@ -335,9 +335,13 @@ mod tests {
                 .contains("private-value")
         );
         let declaration = BTreeMap::from([("TOKEN".into(), "Bearer ${TOKEN}".into())]);
-        let env =
-            app_variables::resolve_environment(dir.path(), &app, &declaration, &secrets).unwrap();
-        assert_eq!(env.environment["TOKEN"], "Bearer private-value");
+        let app_variables::AppEnvironment::Ready(env) =
+            app_variables::resolve_environment(dir.path(), &app, &declaration, &secrets)
+                .environment
+        else {
+            panic!("expected an environment");
+        };
+        assert_eq!(env["TOKEN"], "Bearer private-value");
         assert!(
             app_variables::bind(
                 dir.path(),

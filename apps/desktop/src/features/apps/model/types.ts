@@ -35,6 +35,20 @@ export interface MissingAppVariable {
   entryName: string;
 }
 
+export type AppVariablesProblemCategory =
+  | "unavailable"
+  | "legacy_format"
+  | "invalid_config"
+  | "blocked_journal"
+  | "pending_save"
+  | "unknown";
+
+export interface AppVariablesProblem {
+  category: AppVariablesProblemCategory;
+  owner: { scope: "global" } | { scope: "project" } | { scope: "space" };
+  file: string | null;
+}
+
 export type AppManifestInspection = Exclude<
   AppSession,
   { status: "loading" | "error" }
@@ -65,6 +79,7 @@ export type AppSession =
       browserUrl?: string;
       process: AppProcessDetails;
       missingVariables?: MissingAppVariable[];
+      variablesProblem?: AppVariablesProblem;
     }
   | {
       status: "launching";

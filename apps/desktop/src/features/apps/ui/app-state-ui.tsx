@@ -37,7 +37,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { AppProcessLogs, AppProcessPhase } from "../model/types";
+import type {
+  AppProcessLogs,
+  AppProcessPhase,
+  AppVariablesProblem,
+} from "../model/types";
 import * as m from "@/paraglide/messages.js";
 
 export function AppLoadingState() {
@@ -94,6 +98,7 @@ export function AppRecovery({
   onShowFiles,
   onOpenBrowser,
   onVariables,
+  onCheckAgain,
 }: {
   title: string;
   description: string;
@@ -104,6 +109,7 @@ export function AppRecovery({
   onShowFiles(): void;
   onOpenBrowser?: () => void;
   onVariables?: () => void;
+  onCheckAgain?: () => void;
 }) {
   return (
     <Empty className="h-full min-h-[20rem] border-0">
@@ -129,6 +135,12 @@ export function AppRecovery({
             >
               <KeyRound data-icon="inline-start" />
               {m.app_variables()}
+            </Button>
+          ) : null}
+          {onCheckAgain ? (
+            <Button variant="outline" onClick={onCheckAgain}>
+              <RefreshCw data-icon="inline-start" />
+              {m.app_check_again()}
             </Button>
           ) : null}
           {onRestart ? (
@@ -279,6 +291,12 @@ export function processFailureCopy(reason: string) {
       description: m.app_variables_missing_default_description(),
     };
   }
+  if (reason === "unreadable_app_variables") {
+    return {
+      title: m.app_variables_unreadable_title(),
+      description: m.app_variables_unreadable_blocked(),
+    };
+  }
   if (reason.startsWith("setup_")) {
     return {
       title: m.app_process_setup_failed_title(),
@@ -301,4 +319,33 @@ export function processFailureCopy(reason: string) {
     title: m.app_process_start_failed_title(),
     description: m.app_process_start_failed_description(),
   };
+}
+
+// Names the cause and area briefly; the Variables window explains how to fix it.
+export function variablesProblemDescription(problem: AppVariablesProblem) {
+  const area =
+    problem.owner.scope === "global"
+      ? m.app_variables_unreadable_area_shared()
+      : problem.owner.scope === "space"
+        ? m.app_variables_unreadable_area_space()
+        : m.app_variables_unreadable_area_project();
+  const cause = (() => {
+    switch (problem.category) {
+      case "legacy_format":
+        return m.app_variables_unreadable_legacy_format({ area });
+      case "invalid_config":
+        return m.app_variables_unreadable_invalid_config({ area });
+      case "blocked_journal":
+        return m.app_variables_unreadable_blocked_journal({ area });
+      case "pending_save":
+        return m.app_variables_unreadable_pending_save({ area });
+      case "unavailable":
+        return problem.file
+          ? m.app_variables_unreadable_unavailable_file({ area })
+          : m.app_variables_unreadable_unavailable_store();
+      case "unknown":
+        return m.app_variables_unreadable_unknown({ area });
+    }
+  })();
+  return `${cause} ${m.app_variables_unreadable_blocked()}`;
 }

@@ -11,6 +11,7 @@ import type {
   AppProcessControlAction,
   AppSession,
 } from "../model/types";
+import { isBlockedByVariables } from "../model/variables";
 
 export function useAppSession(owner: AppOwner) {
   const { ownerPath, projectPath, spaceId, spacePath } = owner;
@@ -140,7 +141,7 @@ export function useAppSession(owner: AppOwner) {
     if (
       session.status === "unavailable" &&
       session.runtimeType === "process" &&
-      session.reason !== "missing_app_variables"
+      !isBlockedByVariables(session)
     ) {
       runProcessControl("retry");
       return;

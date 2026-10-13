@@ -82,17 +82,38 @@ fn put(
         )
         .unwrap();
 }
-fn run(
-    config: &Path,
-    context: &AppVariableOwnerContext,
-    secrets: &Secrets,
-) -> ResolvedAppEnvironment {
+struct Run {
+    environment: BTreeMap<String, String>,
+    missing: Vec<MissingAppVariable>,
+}
+fn run(config: &Path, context: &AppVariableOwnerContext, secrets: &dyn SecretStore) -> Run {
     let declaration = context
         .references
         .iter()
         .map(|n| (n.clone(), format!("${{{n}}}")))
         .collect();
-    resolve_environment(config, context, &declaration, secrets).unwrap()
+    match resolve_environment(config, context, &declaration, secrets).environment {
+        AppEnvironment::Ready(environment) => Run {
+            environment,
+            missing: Vec::new(),
+        },
+        AppEnvironment::Missing(missing) => Run {
+            environment: BTreeMap::new(),
+            missing,
+        },
+        AppEnvironment::Unreadable(problem) => panic!("unexpected Variables problem {problem:?}"),
+    }
+}
+fn unreadable(
+    config: &Path,
+    context: &AppVariableOwnerContext,
+    secrets: &dyn SecretStore,
+) -> VariablesProblem {
+    let declaration = BTreeMap::from([("VALUE".into(), "static".into())]);
+    match resolve_environment(config, context, &declaration, secrets).environment {
+        AppEnvironment::Unreadable(problem) => problem,
+        other => panic!("expected a Variables problem, got {other:?}"),
+    }
 }
 #[test]
 fn scoped_apps_isolate_projects_and_stop_at_missing_nearest_declaration() {
@@ -255,8 +276,11 @@ fn missing_environment_is_never_partial_and_only_declared_values_are_expanded() 
         references: vec!["KEY".into()],
         ..app
     };
-    let resolved = resolve_environment(&config, &context, &declaration, &secrets).unwrap();
-    assert_eq!(resolved.environment["VALUE"], "prefix-${OTHER}-${OTHER}");
+    let resolved = resolve_environment(&config, &context, &declaration, &secrets);
+    let AppEnvironment::Ready(environment) = resolved.environment else {
+        panic!("expected an environment");
+    };
+    assert_eq!(environment["VALUE"], "prefix-${OTHER}-${OTHER}");
 }
 
 #[test]
@@ -437,8 +461,7 @@ fn app_runtime_reads_git_clone_checkout_and_collision_without_global_fallback() 
     assert_eq!(run(&config, &single, &secrets).environment["PUBLIC"], "v1");
     let path = clone.join(".svode/local.json");
     let mut local = core::files::read(&path, false).unwrap();
-    local["variables"]["PUBLIC"] =
-        json!({"id":ulid::Ulid::new().to_string(), "kind":"variable", "value":"conflict"});
+    local["variables"]["PUBLIC"] = json!({"kind":"variable", "value":"conflict"});
     core::files::atomic_write(&path, &local).unwrap();
     assert!(run(&config, &single, &secrets).environment.is_empty());
     assert_eq!(run(&config, &single, &secrets).missing.len(), 1);
@@ -722,4 +745,159 @@ fn variables_problem_serializes_as_a_structured_safe_error() {
         "/tmp/.svode/variables.pending.json"
     );
     assert!(value["message"].is_string());
+}
+
+struct DeniedSecrets;
+impl SecretStore for DeniedSecrets {
+    fn get(&self, _: &str) -> core::Result<Option<String>> {
+        Err(core::Error::SecretStore)
+    }
+    fn set(&self, _: &str, _: &str) -> core::Result<()> {
+        Err(core::Error::SecretStore)
+    }
+    fn remove(&self, _: &str) -> core::Result<()> {
+        Err(core::Error::SecretStore)
+    }
+}
+
+#[test]
+fn unreadable_variables_name_their_cause_instead_of_missing_references() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("library");
+    let root = dir.path().join("project");
+    project(&root);
+    let base = root.canonicalize().unwrap();
+    let secrets = Secrets::default();
+    let app = app(&root, false, &["API_URL"]);
+    put(
+        &config,
+        Some(&app.scope),
+        SourceOwner::Project,
+        "API_URL",
+        Mode::Local,
+        Kind::Variable,
+        Some("http://localhost"),
+        &secrets,
+    );
+    assert_eq!(
+        run(&config, &app, &secrets).environment["API_URL"],
+        "http://localhost"
+    );
+
+    // The shared App registry in application settings.
+    let settings = config.join("settings.json");
+    let old = json!({"appVariableRegistry":{"bindings":{"version":1,"legacyNormalized":true,"owners":{}},"usage":{}}}).to_string();
+    fs::write(&settings, &old).unwrap();
+    let problem = unreadable(&config, &app, &secrets);
+    assert_eq!(problem.category, core::Category::LegacyFormat);
+    assert_eq!(problem.owner, SourceOwner::Global);
+    assert_eq!(problem.section, Some("appVariableRegistry"));
+    assert_eq!(fs::read_to_string(&settings).unwrap(), old);
+    fs::write(&settings, "{not json").unwrap();
+    let problem = unreadable(&config, &app, &secrets);
+    assert_eq!(problem.category, core::Category::InvalidConfig);
+    assert_eq!(problem.owner, SourceOwner::Global);
+    fs::remove_file(&settings).unwrap();
+
+    // A participating Space owner.
+    let child = self::app(&root, true, &["API_URL"]);
+    let space_local = base.join("child/.svode/local.json");
+    fs::write(
+        &space_local,
+        json!({"variables":{"version":1,"copyId":"old","entries":{},"secrets":{}}}).to_string(),
+    )
+    .unwrap();
+    let problem = unreadable(&config, &child, &secrets);
+    assert_eq!(problem.category, core::Category::LegacyFormat);
+    assert_eq!(problem.owner, SourceOwner::Space { id: "child".into() });
+    assert!(problem.file.as_deref().unwrap().ends_with("local.json"));
+    // The root App does not look up the Space and still starts.
+    assert_eq!(
+        run(&config, &app, &secrets).environment["API_URL"],
+        "http://localhost"
+    );
+    fs::remove_file(&space_local).unwrap();
+
+    // An invalid project declaration is not a missing value.
+    let local = base.join(".svode/local.json");
+    let declared = fs::read(&local).unwrap();
+    let mut invalid = core::files::read(&local, false).unwrap();
+    invalid["variables"]["API_URL"]["id"] = json!("extra");
+    core::files::atomic_write(&local, &invalid).unwrap();
+    let problem = unreadable(&config, &app, &secrets);
+    assert_eq!(problem.category, core::Category::InvalidConfig);
+    assert_eq!(problem.owner, SourceOwner::Project);
+    assert_eq!(problem.section, Some("variables"));
+    fs::write(&local, &declared).unwrap();
+
+    // A finishable project journal.
+    let journal = json!({
+        "version": 2,
+        "beforePortable": core::files::digest(&core::files::read(&base.join(".svode/config.json"), true).unwrap()),
+        "beforeLocal": core::files::digest(&core::files::read(&local, false).unwrap()),
+        "portable": core::files::read(&base.join(".svode/config.json"), true).unwrap(),
+        "local": core::files::read(&local, false).unwrap(),
+        "names": ["API_URL"],
+        "cleanup": [],
+    });
+    let pending = base.join(".svode").join(core::files::PENDING_FILE);
+    core::files::atomic_write(&pending, &journal).unwrap();
+    let problem = unreadable(&config, &app, &secrets);
+    assert_eq!(problem.category, core::Category::PendingSave);
+    assert_eq!(problem.owner, SourceOwner::Project);
+    assert!(problem.recoverable);
+    fs::remove_file(&pending).unwrap();
+
+    // A missing reference before an unreadable one still reports the unreadable owner.
+    put(
+        &config,
+        Some(&app.scope),
+        SourceOwner::Project,
+        "TOKEN",
+        Mode::Local,
+        Kind::Secret,
+        Some("synthetic"),
+        &secrets,
+    );
+    let mixed = AppVariableOwnerContext {
+        references: vec!["ABSENT".into(), "TOKEN".into()],
+        ..app.clone()
+    };
+    assert_eq!(
+        run(&config, &mixed, &secrets).missing[0].reference_name,
+        "ABSENT"
+    );
+    let problem = unreadable(&config, &mixed, &DeniedSecrets);
+    assert_eq!(problem.category, core::Category::Unavailable);
+    assert_eq!(problem.code, Some(core::Error::SecretStore));
+    assert_eq!(problem.owner, SourceOwner::Project);
+    assert_eq!(problem.file, None);
+    let value = serde_json::to_value(&problem).unwrap();
+    assert!(!value.to_string().contains("synthetic"));
+}
+
+#[test]
+fn an_app_without_references_is_not_blocked_by_unreadable_variables() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("library");
+    let root = dir.path().join("project");
+    project(&root);
+    let secrets = Secrets::default();
+    let app = app(&root, false, &[]);
+    let settings = config.join("settings.json");
+    fs::create_dir_all(&config).unwrap();
+    let old = json!({"appVariableRegistry":{"bindings":{"version":1,"legacyNormalized":true,"owners":{}},"usage":{}}}).to_string();
+    fs::write(&settings, &old).unwrap();
+    let declaration = BTreeMap::from([("MODE".into(), "static".into())]);
+    let resolved = resolve_environment(&config, &app, &declaration, &secrets);
+    let AppEnvironment::Ready(environment) = resolved.environment else {
+        panic!("an App without references must start");
+    };
+    assert_eq!(environment["MODE"], "static");
+    assert!(!resolved.usage_changed);
+    assert!(clear_owner_usage(&config, &app.owner_directory).is_err());
+    assert_eq!(fs::read_to_string(&settings).unwrap(), old);
+    // Once the registry reads again, the usage is recorded as before.
+    fs::remove_file(&settings).unwrap();
+    assert!(resolve_environment(&config, &app, &declaration, &secrets).usage_changed);
 }

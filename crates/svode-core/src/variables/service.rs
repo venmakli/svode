@@ -11,6 +11,15 @@ use std::{
 };
 
 type Located<T> = std::result::Result<T, Failure>;
+/// A resolution failure with the owner whose files caused it, when one did.
+type Attributed<T> = std::result::Result<T, (Option<SourceOwner>, Failure)>;
+
+fn by(owner: &SourceOwner, failure: impl Into<Failure>) -> (Option<SourceOwner>, Failure) {
+    (Some(owner.clone()), failure.into())
+}
+fn unattributed(error: Error) -> (Option<SourceOwner>, Failure) {
+    (None, error.into())
+}
 
 fn read_at(path: &Path, required: bool, section: Option<&'static str>) -> Located<Value> {
     files::read(path, required).map_err(|error| Failure::at(error, path, section))
@@ -38,6 +47,14 @@ impl Context {
             context.owner(&SourceOwner::Space { id: id.clone() })?;
         }
         Ok(context)
+    }
+
+    /// The nearest owner: the Space when there is one, otherwise the Project.
+    fn scope_owner(&self) -> SourceOwner {
+        self.space_id
+            .as_ref()
+            .map(|id| SourceOwner::Space { id: id.clone() })
+            .unwrap_or(SourceOwner::Project)
     }
 
     fn owner(&self, owner: &SourceOwner) -> Located<Owner> {
@@ -554,6 +571,30 @@ impl<'a> Service<'a> {
         bindings: &BTreeMap<String, SourceReference>,
     ) -> Result<BTreeMap<String, Resolved>> {
         self.resolve_references(context, names, bindings, false)
+            .map_err(|(_, failure)| failure.error)
+    }
+
+    /// Resolves one reference and tells a missing value apart from an owner
+    /// that cannot be read, naming that owner and its file where known.
+    pub fn lookup(
+        &self,
+        context: &Context,
+        name: &str,
+        bindings: &BTreeMap<String, SourceReference>,
+    ) -> std::result::Result<Resolved, Unresolved> {
+        let names = [name.to_string()];
+        match self.resolve_references(context, &names, bindings, false) {
+            Ok(mut values) => values.remove(name).ok_or(Unresolved::Missing),
+            Err((owner, failure)) => match failure.error {
+                Error::Missing | Error::Collision | Error::WrongKind => Err(Unresolved::Missing),
+                // The explicitly selected owner is not in this hierarchy.
+                Error::InvalidOwner if bindings.contains_key(name) => Err(Unresolved::Missing),
+                _ => Err(Unresolved::Unreadable {
+                    owner: owner.unwrap_or_else(|| context.scope_owner()),
+                    failure,
+                }),
+            },
+        }
     }
 
     fn resolve_references(
@@ -562,15 +603,15 @@ impl<'a> Service<'a> {
         names: &[String],
         bindings: &BTreeMap<String, SourceReference>,
         secrets_only: bool,
-    ) -> Result<BTreeMap<String, Resolved>> {
+    ) -> Attributed<BTreeMap<String, Resolved>> {
         let mut sources = BTreeSet::new();
         for name in names {
             if !valid_name(name) {
-                return Err(Error::InvalidName);
+                return Err(unattributed(Error::InvalidName));
             }
             if let Some(source) = bindings.get(name) {
                 if !valid_name(&source.name) {
-                    return Err(Error::InvalidName);
+                    return Err(unattributed(Error::InvalidName));
                 }
                 sources.insert(source.owner.clone());
             } else {
@@ -582,21 +623,29 @@ impl<'a> Service<'a> {
         }
         let mut owners = sources
             .into_iter()
-            .map(|source| Ok((source.clone(), context.owner(&source)?)))
-            .collect::<Result<Vec<_>>>()?;
+            .map(|source| {
+                let owner = context.owner(&source).map_err(|f| by(&source, f))?;
+                Ok((source, owner))
+            })
+            .collect::<Attributed<Vec<_>>>()?;
         owners.sort_by(|a, b| a.1.directory.cmp(&b.1.directory));
-        let directories = owners
-            .iter()
-            .map(|(_, owner)| &owner.directory)
-            .collect::<BTreeSet<_>>();
-        let _guards = directories
-            .into_iter()
-            .map(|directory| files::lock(directory))
-            .collect::<Result<Vec<_>>>()?;
+        let mut locked = BTreeSet::new();
+        let mut guards = Vec::new();
+        for (source, owner) in &owners {
+            if locked.insert(&owner.directory) {
+                guards.push(
+                    files::lock(&owner.directory)
+                        .map_err(|e| by(source, Failure::at(e, &owner.directory, None)))?,
+                );
+            }
+        }
         let snapshots = owners
             .iter()
-            .map(|(source, owner)| Ok((source.clone(), (owner, Snapshot::read(owner)?))))
-            .collect::<Result<BTreeMap<_, _>>>()?;
+            .map(|(source, owner)| {
+                let snapshot = Snapshot::read(owner).map_err(|f| by(source, f))?;
+                Ok((source.clone(), (owner, snapshot)))
+            })
+            .collect::<Attributed<BTreeMap<_, _>>>()?;
         let mut selected = BTreeMap::new();
         for name in names {
             let candidates = if let Some(source) = bindings.get(name) {
@@ -617,16 +666,24 @@ impl<'a> Service<'a> {
             };
             let mut selected_source = None;
             for source in candidates {
-                let (_, snapshot) = snapshots.get(&source.owner).ok_or(Error::InvalidOwner)?;
-                if let Some((_, entry)) = snapshot.declaration(&source.name)? {
+                let (_, snapshot) = snapshots
+                    .get(&source.owner)
+                    .ok_or(unattributed(Error::InvalidOwner))?;
+                let declaration = snapshot
+                    .declaration(&source.name)
+                    .map_err(|e| by(&source.owner, e))?;
+                if let Some((_, entry)) = declaration {
                     if secrets_only && entry.kind != Some(Kind::Secret) {
-                        return Err(Error::WrongKind);
+                        return Err(by(&source.owner, Error::WrongKind));
                     }
                     selected_source = Some(source);
                     break;
                 }
             }
-            selected.insert(name.clone(), selected_source.ok_or(Error::Missing)?);
+            selected.insert(
+                name.clone(),
+                selected_source.ok_or(unattributed(Error::Missing))?,
+            );
         }
         // Validate all declarations first, then read each selected source once.
         let mut values: BTreeMap<SourceReference, Resolved> = BTreeMap::new();
@@ -635,10 +692,13 @@ impl<'a> Service<'a> {
             let value = match values.get(&source) {
                 Some(value) => value.clone(),
                 None => {
-                    let (_, snapshot) = snapshots.get(&source.owner).ok_or(Error::InvalidOwner)?;
+                    let (_, snapshot) = snapshots
+                        .get(&source.owner)
+                        .ok_or(unattributed(Error::InvalidOwner))?;
                     let value = self
-                        .resolve_locked(snapshot, source.clone())?
-                        .ok_or(Error::Missing)?;
+                        .resolve_locked(snapshot, source.clone())
+                        .map_err(|e| by(&source.owner, e))?
+                        .ok_or(unattributed(Error::Missing))?;
                     values.insert(source, value.clone());
                     value
                 }
@@ -646,9 +706,9 @@ impl<'a> Service<'a> {
             result.insert(name, value);
         }
         // Git does not participate in our locks: reject an observed external change.
-        for (owner, snapshot) in snapshots.values() {
-            if Snapshot::read(owner)?.revision != snapshot.revision {
-                return Err(Error::StaleRevision);
+        for (source, (owner, snapshot)) in &snapshots {
+            if Snapshot::read(owner).map_err(|f| by(source, f))?.revision != snapshot.revision {
+                return Err(by(source, Error::StaleRevision));
             }
         }
         Ok(result)
@@ -663,12 +723,14 @@ impl<'a> Service<'a> {
             ("ACCESS".into(), pair.access_key.clone()),
             ("SECRET".into(), pair.secret_key.clone()),
         ]);
-        let mut resolved = self.resolve_references(
-            context,
-            &["ACCESS".into(), "SECRET".into()],
-            &bindings,
-            true,
-        )?;
+        let mut resolved = self
+            .resolve_references(
+                context,
+                &["ACCESS".into(), "SECRET".into()],
+                &bindings,
+                true,
+            )
+            .map_err(|(_, failure)| failure.error)?;
         if resolved.values().any(|v| v.value.trim().is_empty()) {
             return Err(Error::Missing);
         }

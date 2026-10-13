@@ -7,6 +7,7 @@ import {
   AppRecovery,
   processFailureCopy,
   processPhaseCopy,
+  variablesProblemDescription,
 } from "./app-state-ui";
 import { ReadyAppViewport } from "./ready-app-viewport";
 import * as m from "@/paraglide/messages.js";
@@ -107,7 +108,13 @@ export function AppViewport({
         ? processFailureCopy(session.reason)
         : undefined;
     const needsVariables = session.reason === "missing_app_variables";
-    const canRetry = !needsVariables;
+    const variablesProblem =
+      session.runtimeType === "process" &&
+      session.reason === "unreadable_app_variables"
+        ? session.variablesProblem
+        : undefined;
+    const unreadableVariables = session.reason === "unreadable_app_variables";
+    const canRetry = !needsVariables && !unreadableVariables;
     const missingNames =
       session.runtimeType === "process"
         ? (session.missingVariables?.map((item) => item.referenceName) ?? [])
@@ -120,7 +127,9 @@ export function AppViewport({
             ? m.app_variables_missing_description({
                 names: missingNames.join(", "),
               })
-            : (processCopy?.description ?? m.app_unavailable_description())
+            : variablesProblem
+              ? variablesProblemDescription(variablesProblem)
+              : (processCopy?.description ?? m.app_unavailable_description())
         }
         logs={session.process?.logs}
         onRetry={canRetry ? onRetry : undefined}
@@ -134,6 +143,7 @@ export function AppViewport({
             ? onVariables
             : undefined
         }
+        onCheckAgain={unreadableVariables ? onRetry : undefined}
       />
     );
   }
