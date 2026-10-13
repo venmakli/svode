@@ -19,8 +19,11 @@ export interface ConflictElement extends TElement {
 // Matches a full conflict region. The `\n?` before `=======`/`>>>>>>>`
 // allows empty "ours" / "theirs" sections (one side deleted the whole block),
 // which git still writes as `<<<<<<<\n=======\n...` or `...\n=======\n>>>>>>>`.
+// The optional non-capturing group skips the base section that the `diff3` and
+// `zdiff3` conflict styles write between "ours" and `=======`, starting at a
+// line-leading `|||||||` marker, so neither side picks it up.
 const CONFLICT_RE =
-  /<{7} [^\n]*\n([\s\S]*?)\n?={7}\n([\s\S]*?)\n?>{7} [^\n]*(\n|$)/g;
+  /<{7} [^\n]*\n([\s\S]*?)\n?(?:(?<=\n)\|{7}(?: [^\n]*)?\n[\s\S]*?\n?)?={7}\n([\s\S]*?)\n?>{7} [^\n]*(\n|$)/g;
 
 /**
  * Split raw markdown on git conflict markers and deserialize each non-conflict
