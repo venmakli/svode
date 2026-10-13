@@ -158,6 +158,7 @@ impl From<ContentTreeError> for ToolError {
             ContentTreeError::PathNotAccessible(path) => path_not_accessible(path),
             ContentTreeError::Source(error) => error.into(),
             ContentTreeError::Invalid(message) => general(message),
+            error @ ContentTreeError::UnreadableOrder(_) => general(error.to_string()),
         }
     }
 }

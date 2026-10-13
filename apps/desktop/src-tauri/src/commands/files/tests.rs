@@ -1146,6 +1146,25 @@ fn shared_reorder_entries_rejects_invalid_permutation_without_writing() {
     }
 }
 
+#[test]
+fn tree_order_save_refuses_an_unreadable_order_file() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path();
+    std::fs::write(space.join("a.md"), "a").unwrap();
+    std::fs::create_dir_all(space.join(".svode")).unwrap();
+    let order_path = space.join(".svode/order.json");
+    let conflicted = "{\n<<<<<<< HEAD\n  \".\": [\"a.md\"]\n=======\n>>>>>>> theirs\n}\n";
+    std::fs::write(&order_path, conflicted).unwrap();
+
+    let order = HashMap::from([(".".to_string(), vec!["a.md".to_string()])]);
+    let error = crate::space::content_tree::replace_order(space, order).unwrap_err();
+
+    let value = serde_json::to_value(&error).unwrap();
+    assert_eq!(value["kind"], "tree_order_unreadable");
+    assert_eq!(value["path"], order_path.display().to_string());
+    assert_eq!(std::fs::read_to_string(&order_path).unwrap(), conflicted);
+}
+
 #[tokio::test]
 async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     let tmp = TempDir::new().unwrap();

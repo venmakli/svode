@@ -263,6 +263,9 @@ impl From<svode_core::content_tree::ContentTreeError> for AppError {
             ContentTreeError::PathNotAccessible(path) => Self::PathNotAccessible(path),
             ContentTreeError::Source(error) => error.into(),
             ContentTreeError::Invalid(message) => Self::General(message),
+            ContentTreeError::UnreadableOrder(path) => Self::TreeOrderUnreadable {
+                path: path.display().to_string(),
+            },
         }
     }
 }
@@ -525,6 +528,9 @@ pub enum AppError {
     #[error("Source changed after it was read: {path}; read it again and reapply the change")]
     SourceStale { path: String },
 
+    #[error("Page order file {path} cannot be read; fix or remove it, then reorder again")]
+    TreeOrderUnreadable { path: String },
+
     #[error("{0}")]
     AgentRuntime(svode_agents::AgentRuntimeError),
 
@@ -578,6 +584,7 @@ impl AppError {
             AppError::PageWriteRecovery { .. } => "page_write_recovery",
             AppError::SourceBusy { .. } => "source_busy",
             AppError::SourceStale { .. } => "source_stale",
+            AppError::TreeOrderUnreadable { .. } => "tree_order_unreadable",
             AppError::AgentRuntime(_) => "agent_runtime",
             AppError::AgentAdapter(_) => "agent_adapter",
             AppError::CustomAgent(_) => "custom_agent",
@@ -621,7 +628,9 @@ impl Serialize for AppError {
                 }
                 value.serialize(serializer)
             }
-            AppError::SourceBusy { path } | AppError::SourceStale { path } => {
+            AppError::SourceBusy { path }
+            | AppError::SourceStale { path }
+            | AppError::TreeOrderUnreadable { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
             }
             AppError::GitPublicationBlocked { repository, child, reason } => {

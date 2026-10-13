@@ -136,6 +136,7 @@ impl From<ContentTreeError> for PageError {
             ContentTreeError::PathNotAccessible(path) => Self::PathNotAccessible(path),
             ContentTreeError::Source(error) => error.into(),
             ContentTreeError::Invalid(message) => Self::General(message),
+            error @ ContentTreeError::UnreadableOrder(_) => Self::General(error.to_string()),
         }
     }
 }

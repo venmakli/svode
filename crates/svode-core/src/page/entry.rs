@@ -32,12 +32,13 @@ pub use crate::page::frontmatter::{apply_entry_field_update, title_from_stem};
 
 /// Append a filename to order.json for a given directory key.
 fn order_append(space: &Path, dir_key: &str, name: &str) {
-    let mut order = content_tree::read_order(space);
-    order
-        .entry(dir_key.to_string())
-        .or_default()
-        .push(name.to_string());
-    let _ = content_tree::write_order(space, &order);
+    let _ = content_tree::update_order(space, |order| {
+        order
+            .entry(dir_key.to_string())
+            .or_default()
+            .push(name.to_string());
+        true
+    });
 }
 
 /// Rename an entry in order.json (replace old_name with new_name in the given directory).
@@ -51,35 +52,36 @@ fn order_rename_checked(
     old_name: &str,
     new_name: &str,
 ) -> Result<(), PageError> {
-    let mut order = content_tree::read_order(space);
-    if let Some(list) = order.get_mut(dir_key) {
-        if let Some(pos) = list.iter().position(|name| name == old_name) {
-            list[pos] = new_name.to_string();
-            content_tree::write_order(space, &order)?;
-        }
-    }
+    content_tree::update_order(space, |order| {
+        let Some(list) = order.get_mut(dir_key) else {
+            return false;
+        };
+        let Some(pos) = list.iter().position(|name| name == old_name) else {
+            return false;
+        };
+        list[pos] = new_name.to_string();
+        true
+    })?;
     Ok(())
 }
 
 fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str) {
-    let mut order = content_tree::read_order(space);
-    let list = order.entry(dir_key.to_string()).or_default();
-    if list.iter().any(|item| item == name) {
-        return;
-    }
-    if let Some(pos) = list.iter().position(|item| item == after_name) {
-        list.insert(pos + 1, name.to_string());
-    } else {
-        list.push(name.to_string());
-    }
-    let _ = content_tree::write_order(space, &order);
+    let _ = content_tree::update_order(space, |order| {
+        let list = order.entry(dir_key.to_string()).or_default();
+        if list.iter().any(|item| item == name) {
+            return false;
+        }
+        if let Some(pos) = list.iter().position(|item| item == after_name) {
+            list.insert(pos + 1, name.to_string());
+        } else {
+            list.push(name.to_string());
+        }
+        true
+    });
 }
 
 fn order_remove_key(space: &Path, dir_key: &str) {
-    let mut order = content_tree::read_order(space);
-    if order.remove(dir_key).is_some() {
-        let _ = content_tree::write_order(space, &order);
-    }
+    let _ = content_tree::update_order(space, |order| order.remove(dir_key).is_some());
 }
 
 fn dir_key_for(parent: &Path) -> String {
@@ -958,21 +960,23 @@ pub fn write_under_name_lock(
             // Rename folder entry in parent's order list
             order_rename_checked(sp_path, &dir_key, &old_dir_name, &new_dir_name)?;
             // Rename the key itself (children order moves to new dir name)
-            let mut order = content_tree::read_order(sp_path);
             let old_key = if dir_key == "." {
                 old_dir_name.clone()
             } else {
                 format!("{}/{}", dir_key, old_dir_name)
             };
-            if let Some(children) = order.remove(&old_key) {
-                let new_key = if dir_key == "." {
-                    new_dir_name
-                } else {
-                    format!("{}/{}", dir_key, new_dir_name)
+            let new_key = if dir_key == "." {
+                new_dir_name
+            } else {
+                format!("{}/{}", dir_key, new_dir_name)
+            };
+            content_tree::update_order(sp_path, |order| {
+                let Some(children) = order.remove(&old_key) else {
+                    return false;
                 };
                 order.insert(new_key, children);
-                content_tree::write_order(sp_path, &order)?;
-            }
+                true
+            })?;
         } else {
             // Regular file: dir_key is the parent directory
             let parent_dir = Path::new(path).parent().unwrap_or(Path::new(""));
@@ -1294,31 +1298,31 @@ fn update_order_after_move(
         .and_then(|name| name.to_str())
         .ok_or_else(|| PageError::General("invalid destination path".to_string()))?;
 
-    let mut order = content_tree::read_order(space);
-    if let Some(items) = order.get_mut(&source_parent) {
-        items.retain(|item| item != source_name);
-    }
-    let target_items = order.entry(target_parent).or_default();
-    *target_items = target_sibling_order.to_vec();
-    target_items.push(target_name.to_string());
+    Ok(content_tree::update_order(space, |order| {
+        if let Some(items) = order.get_mut(&source_parent) {
+            items.retain(|item| item != source_name);
+        }
+        let target_items = order.entry(target_parent).or_default();
+        *target_items = target_sibling_order.to_vec();
+        target_items.push(target_name.to_string());
 
-    if moved_directory {
-        let source_key = from.trim_matches('/');
-        let target_key = to.trim_matches('/');
-        let prefix = format!("{source_key}/");
-        let moved_keys: Vec<(String, Vec<String>)> = order
-            .iter()
-            .filter(|(key, _)| *key == source_key || key.starts_with(&prefix))
-            .map(|(key, children)| {
-                let suffix = key.strip_prefix(source_key).unwrap_or_default();
-                (format!("{target_key}{suffix}"), children.clone())
-            })
-            .collect();
-        order.retain(|key, _| key != source_key && !key.starts_with(&prefix));
-        order.extend(moved_keys);
-    }
-
-    Ok(content_tree::write_order(space, &order)?)
+        if moved_directory {
+            let source_key = from.trim_matches('/');
+            let target_key = to.trim_matches('/');
+            let prefix = format!("{source_key}/");
+            let moved_keys: Vec<(String, Vec<String>)> = order
+                .iter()
+                .filter(|(key, _)| *key == source_key || key.starts_with(&prefix))
+                .map(|(key, children)| {
+                    let suffix = key.strip_prefix(source_key).unwrap_or_default();
+                    (format!("{target_key}{suffix}"), children.clone())
+                })
+                .collect();
+            order.retain(|key, _| key != source_key && !key.starts_with(&prefix));
+            order.extend(moved_keys);
+        }
+        true
+    })?)
 }
 
 /// Nest an entry: convert `foo.md` → `foo/readme.md`, making it a category.
@@ -2058,16 +2062,17 @@ fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
     let deleted_parent = root.parent().unwrap_or(Path::new(""));
     let deleted_parent_key = dir_key_for(deleted_parent);
 
-    let mut order = content_tree::read_order(space);
-    if let Some(items) = order.get_mut(&deleted_parent_key) {
-        items.retain(|item| item != deleted_name);
-    }
+    let _ = content_tree::update_order(space, |order| {
+        if let Some(items) = order.get_mut(&deleted_parent_key) {
+            items.retain(|item| item != deleted_name);
+        }
 
-    let deleted_key = deleted_root.trim_matches('/');
-    order.remove(deleted_key);
-    let child_prefix = format!("{deleted_key}/");
-    order.retain(|key, _| key == "." || key != deleted_key && !key.starts_with(&child_prefix));
-    let _ = content_tree::write_order(space, &order);
+        let deleted_key = deleted_root.trim_matches('/');
+        order.remove(deleted_key);
+        let child_prefix = format!("{deleted_key}/");
+        order.retain(|key, _| key == "." || key != deleted_key && !key.starts_with(&child_prefix));
+        true
+    });
 }
 
 /// Rename/move an entry on disk.
@@ -2137,21 +2142,23 @@ pub fn rename_with_project(
 
     // If it's a directory, also rename the key in order.json
     if abs_to.is_dir() {
-        let mut order = content_tree::read_order(sp_path);
         let old_key = if dir_key == "." {
             old_name
         } else {
             format!("{}/{}", dir_key, old_name)
         };
-        if let Some(children) = order.remove(&old_key) {
-            let new_key = if dir_key == "." {
-                new_name
-            } else {
-                format!("{}/{}", dir_key, new_name)
+        let new_key = if dir_key == "." {
+            new_name
+        } else {
+            format!("{}/{}", dir_key, new_name)
+        };
+        let _ = content_tree::update_order(sp_path, |order| {
+            let Some(children) = order.remove(&old_key) else {
+                return false;
             };
             order.insert(new_key, children);
-            let _ = content_tree::write_order(sp_path, &order);
-        }
+            true
+        });
     }
 
     Ok(())

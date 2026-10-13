@@ -3,6 +3,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import { toast } from "sonner";
 import type { TreeNode } from "../model/types";
 import type { Projection } from "../lib/tree-dnd-utilities";
+import { treeDragFailureToast } from "../lib/tree-drag-failure";
 import { useFileTreeDragCommand } from "./use-file-tree-drag-command";
 
 interface UseSortableFileTreeActionsInput {
@@ -32,7 +33,8 @@ export function useSortableFileTreeActions({
         });
       } catch (err) {
         console.error("Failed to move content item:", err);
-        toast.error("Failed to move file");
+        const { title, description } = treeDragFailureToast(err);
+        toast.error(title, { description });
       }
     },
     [commitFileTreeDrag, resetState],

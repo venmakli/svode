@@ -31,6 +31,11 @@ pub enum ContentTreeError {
     Source(#[from] crate::page::PageSourceError),
     #[error("{0}")]
     Invalid(String),
+    #[error(
+        "Page order file {} cannot be read; fix or remove it, then reorder again",
+        .0.display()
+    )]
+    UnreadableOrder(std::path::PathBuf),
 }
 
 #[derive(Deserialize)]
@@ -383,17 +388,53 @@ fn title_or_fallback(
 
 /// Read order.json from space .svode directory.
 /// Returns map: directory relative path -> ordered list of child names.
-/// Key "." means space root.
+/// Key "." means space root. An unreadable file yields the default order.
 pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
+    load_order(space).unwrap_or_default()
+}
+
+/// Read order.json for a write. A missing file is an empty order; an existing
+/// file that cannot be read or parsed (for example with Git conflict markers)
+/// is refused, so a default order never overwrites it.
+pub fn load_order(space: &Path) -> Result<HashMap<String, Vec<String>>, ContentTreeError> {
     let order_path = space.join(".svode").join("order.json");
-    match fs::read_to_string(&order_path) {
+    let parsed = match fs::read_to_string(&order_path) {
         Ok(data) => serde_json::from_str::<HashMap<String, Vec<String>>>(&data)
-            .unwrap_or_default()
+            .map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => Err(error.to_string()),
+    };
+    match parsed {
+        Ok(order) => Ok(order
             .into_iter()
             .map(|(key, value)| (key.replace('\\', "/"), value))
-            .collect(),
-        Err(_) => HashMap::new(),
+            .collect()),
+        Err(error) => {
+            tracing::warn!(
+                "page order file {} cannot be read, using default order: {error}",
+                order_path.display()
+            );
+            Err(ContentTreeError::UnreadableOrder(order_path))
+        }
     }
+}
+
+/// Apply an order update that accompanies a content change. `update` returns
+/// whether it changed the order. An unreadable order file is left untouched:
+/// the content change proceeds without updating the order.
+pub fn update_order(
+    space: &Path,
+    update: impl FnOnce(&mut HashMap<String, Vec<String>>) -> bool,
+) -> Result<(), ContentTreeError> {
+    let mut order = match load_order(space) {
+        Ok(order) => order,
+        Err(ContentTreeError::UnreadableOrder(_)) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if update(&mut order) {
+        write_order(space, &order)?;
+    }
+    Ok(())
 }
 
 /// Persist order.json for a Space.
@@ -1128,7 +1169,7 @@ pub fn reorder_content(
                     .ok_or_else(|| ContentTreeError::Invalid(format!("unknown child path: {path}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut order = read_order(Path::new(space));
+        let mut order = load_order(Path::new(space))?;
         order.insert(parent_path.clone(), names);
         write_order(Path::new(space), &order)?;
     }

@@ -23,7 +23,7 @@ pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
 }
 
 pub fn replace_order(space: &Path, order: HashMap<String, Vec<String>>) -> Result<bool, AppError> {
-    if svode_core::content_tree::read_order(space) == order {
+    if svode_core::content_tree::load_order(space)? == order {
         return Ok(false);
     }
     svode_core::content_tree::write_order(space, &order)?;

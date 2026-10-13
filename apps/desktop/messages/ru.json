@@ -126,6 +126,8 @@
   "sidebar_expand_all": "Развернуть всё",
   "sidebar_add_space": "Добавить пространство",
   "sidebar_all_projects": "Все проекты",
+  "sidebar_order_unreadable": "Порядок страниц не сохранён",
+  "sidebar_order_unreadable_description": "Не удаётся прочитать {path}. Исправьте или удалите файл и повторите.",
   "external_open_in": "Открыть в {name}",
   "external_open_default": "Открыть",
   "external_open_with": "Открыть с помощью",

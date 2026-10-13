@@ -12,6 +12,16 @@ export function treeLoadTargetFailure(
     : null;
 }
 
+/** Path of the Space page order file a tree order write refused as unreadable. */
+export function treeOrderUnreadablePath(error: unknown): string | null {
+  if (typeof error !== "object" || error === null) return null;
+  const value = error as Record<string, unknown>;
+  return value.kind === "tree_order_unreadable" &&
+    typeof value.path === "string"
+    ? value.path
+    : null;
+}
+
 export function createContentTreeFolder(input: {
   space: string;
   parentPath: string | null;

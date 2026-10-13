@@ -567,12 +567,14 @@ fn append_order(space: &Path, parent_rel: &str, name: &str) {
     } else {
         parent_rel.to_string()
     };
-    let mut order = content_tree::read_order(space);
-    let items = order.entry(key).or_default();
-    if !items.iter().any(|item| item == name) {
+    let _ = content_tree::update_order(space, |order| {
+        let items = order.entry(key).or_default();
+        if items.iter().any(|item| item == name) {
+            return false;
+        }
         items.push(name.to_string());
-        let _ = content_tree::write_order(space, &order);
-    }
+        true
+    });
 }
 
 fn rel_from_abs(space: &Path, path: &Path) -> String {

@@ -190,4 +190,7 @@ export function setActiveMcpContext(input: {
   return setMcpActiveContext(input);
 }
 
-export { treeLoadTargetFailure } from "@/platform/space/content-tree-api";
+export {
+  treeLoadTargetFailure,
+  treeOrderUnreadablePath,
+} from "@/platform/space/content-tree-api";

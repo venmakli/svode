@@ -219,3 +219,62 @@ async fn content_reorder_rejects_a_stale_child_set() {
     assert!(!dir.path().join(".svode/order.json").exists());
     let _ = Path::new(".");
 }
+
+#[tokio::test]
+async fn unreadable_order_is_kept_by_content_changes_and_refuses_reorder() {
+    use crate::content_tree::{ContentTreeError, list_tree_children, reorder_content};
+    use crate::page::entry;
+
+    let dir = TempDir::new().expect("space");
+    let space = dir.path().to_str().expect("utf8 path");
+    fs::write(dir.path().join("b.md"), "---\ntitle: B\n---\n").expect("b");
+    fs::write(dir.path().join("a.md"), "---\ntitle: A\n---\n").expect("a");
+    fs::create_dir_all(dir.path().join("folder")).expect("folder");
+    fs::write(
+        dir.path().join("folder/README.md"),
+        "---\ntitle: Folder\n---\n",
+    )
+    .expect("readme");
+    fs::create_dir_all(dir.path().join(".svode")).expect("svode dir");
+    let order_path = dir.path().join(".svode/order.json");
+    let conflicted = "{\n<<<<<<< HEAD\n  \".\": [\"folder\", \"b.md\", \"a.md\"]\n=======\n  \".\": [\"folder\", \"a.md\", \"b.md\"]\n>>>>>>> origin/main\n}\n";
+    fs::write(&order_path, conflicted).expect("order");
+
+    let created = entry::create(space, None, "Created").expect("create");
+    entry::create_folder(space, None, "Bare").expect("create folder");
+    let renamed = entry::write(
+        space,
+        &created.path,
+        "",
+        Some("Renamed"),
+        None,
+        None,
+        None,
+        None,
+        false,
+    )
+    .expect("rename by title")
+    .new_path
+    .expect("renamed path");
+    entry::rename(space, "Bare", "Bare renamed").expect("rename folder");
+    entry::move_entry_with_project(dir.path(), "b.md", "folder", None, None).expect("move");
+    entry::delete(space, "a.md", None).expect("delete");
+    assert_eq!(fs::read_to_string(&order_path).expect("order"), conflicted);
+
+    let children = list_tree_children(space, None).expect("tree");
+    let names = children
+        .iter()
+        .map(|child| child.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["Bare renamed", "folder", renamed.as_str()]);
+
+    let ordered = children
+        .iter()
+        .rev()
+        .map(|child| child.path.clone())
+        .collect::<Vec<_>>();
+    let error = reorder_content(space, "", ordered).expect_err("reorder refused");
+    assert!(matches!(error, ContentTreeError::UnreadableOrder(ref path) if *path == order_path));
+    assert!(error.to_string().contains(".svode/order.json"));
+    assert_eq!(fs::read_to_string(&order_path).expect("order"), conflicted);
+}
