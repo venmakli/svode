@@ -878,6 +878,7 @@
   "git_sync_failed": "Не удалось синхронизировать",
   "git_sync_stop_conflict_title": "Синхронизация остановлена конфликтом",
   "git_sync_stop_conflict_description": "Разрешите конфликт в каждом файле и сохраните — синхронизация продолжится.",
+  "git_sync_stop_unmerged_description": "В файлах остались маркеры конфликта после обновления. Ваша версия могла сохраниться в Git stash. Разрешите файлы в Page или через Git.",
   "git_sync_stop_conflict_files": "Файлы в конфликте",
   "git_sync_stop_resolved_in_git": "разрешается в Git",
   "git_sync_stop_open_page": "Открыть {path}",

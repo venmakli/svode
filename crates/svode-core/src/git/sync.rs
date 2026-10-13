@@ -28,6 +28,11 @@ pub enum SyncResult {
     OperationInProgress {
         operation: GitOperation,
     },
+    /// Files left in conflict while no Git operation runs, as an autostash
+    /// that failed to apply leaves them; sync stops before push.
+    UnmergedFiles {
+        files: Vec<String>,
+    },
 }
 
 #[cfg(test)]
@@ -70,6 +75,9 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
                 "rebase.autoStash=false",
                 "-c",
                 "merge.autoStash=false",
+                // Overrides both settings above since Git 2.51; older Git ignores it.
+                "-c",
+                "pull.autoStash=false",
                 "pull",
                 "--no-rebase",
                 "--no-recurse-submodules",
@@ -83,6 +91,11 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
         {
             return Ok(stopped);
         }
+    }
+    // A pull that succeeds, or the merge retried after setting matching
+    // edits aside, may still leave files in conflict.
+    if let Some(stopped) = preflight(cli, space_dir).await? {
+        return Ok(stopped);
     }
 
     // Push
@@ -108,11 +121,15 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
 
 /// The state that stops sync before branch preparation, pull and push.
 /// A merge in progress is the sync conflict with its files; any other
-/// operation is named and left to Git.
+/// operation is named and left to Git; conflicted files without an operation
+/// are left to the user, with no stash applied or dropped.
 pub async fn preflight(cli: &GitCli, repo: &Path) -> Result<Option<SyncResult>, GitError> {
     Ok(
         match super::branch::operation_in_progress(cli, repo).await? {
-            None => None,
+            None => {
+                let files = conflict_files(cli, repo).await?;
+                (!files.is_empty()).then_some(SyncResult::UnmergedFiles { files })
+            }
             Some(GitOperation::Merge) => Some(SyncResult::Conflict {
                 files: conflict_files(cli, repo).await?,
             }),
@@ -160,6 +177,8 @@ async fn sync_without_upstream(
                     "rebase.autoStash=false",
                     "-c",
                     "merge.autoStash=false",
+                    "-c",
+                    "pull.autoStash=false",
                     "pull",
                     "--no-rebase",
                     "--no-recurse-submodules",
@@ -174,6 +193,9 @@ async fn sync_without_upstream(
             {
                 return Ok(stopped);
             }
+        }
+        if let Some(stopped) = preflight(cli, space_dir).await? {
+            return Ok(stopped);
         }
     }
 
@@ -768,6 +790,9 @@ pub async fn merge_abort(cli: &GitCli, space_dir: &Path) -> Result<(), GitError>
 #[path = "pull_block_tests.rs"]
 mod pull_block_tests;
 
+#[cfg(test)]
+#[path = "sync_autostash_tests.rs"]
+mod autostash_tests;
 #[cfg(test)]
 #[path = "sync_preflight_tests.rs"]
 mod preflight_tests;

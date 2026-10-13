@@ -21,9 +21,13 @@ export function GitSyncStopNotice({
       <GitMerge />
       <AlertTitle className="break-words">{gitSyncStopTitle(stop)}</AlertTitle>
       <AlertDescription className="flex min-w-0 flex-col gap-2">
-        {stop.kind === "conflict" ? (
+        {stop.kind !== "operation" ? (
           <>
-            <div>{m.git_sync_stop_conflict_description()}</div>
+            <div>
+              {stop.kind === "conflict"
+                ? m.git_sync_stop_conflict_description()
+                : m.git_sync_stop_unmerged_description()}
+            </div>
             {stop.files.length > 0 && (
               <ul
                 aria-label={m.git_sync_stop_conflict_files()}

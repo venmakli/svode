@@ -218,6 +218,72 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
     }
   });
 
+  test("conflicted files without an operation show where the local version went, with no cancel", async () => {
+    const dom = await createTestDom();
+    mockGit();
+    preflight = { type: "unmergedFiles", files: ["q.md", "order.json"] };
+    const { useGitStore } = await import("../model/git-store");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { syncSpace } = await import("../api/git-actions");
+    const m = await import("@/paraglide/messages.js");
+    try {
+      await dom.render(
+        <TooltipProvider>
+          <GitSyncStatusWidget repositoryPath={path} onOpenPage={() => {}} />
+        </TooltipProvider>,
+      );
+      await settle();
+      await act(async () => {
+        dom.document
+          .querySelector<HTMLButtonElement>("[data-repository-control]")!
+          .click();
+      });
+      await settle();
+      const dialog = dom.document.querySelector<HTMLElement>("[role=dialog]")!;
+      const slot = dialog.querySelector<HTMLElement>(
+        "[data-git-sync-stop=unmerged]",
+      )!;
+      expect(
+        slot.textContent?.includes(m.git_sync_stop_unmerged_description()),
+      ).toBe(true);
+      expect(
+        slot.textContent?.includes(m.git_sync_stop_conflict_description()),
+      ).toBe(false);
+      const rows = Array.from(slot.querySelectorAll("li"));
+      expect(rows.map((row) => row.textContent)).toEqual([
+        "q.md",
+        `order.json${m.git_sync_stop_resolved_in_git()}`,
+      ]);
+      expect(rows[0].querySelector("button")?.title).toBe("q.md");
+      // Neither Sync nor any other action: the stash is left to the user.
+      const buttons = Array.from(dialog.querySelectorAll("button")).map(
+        (button) => button.textContent,
+      );
+      expect(buttons.includes(m.git_sync_action())).toBe(false);
+      expect(
+        Array.from(dialog.querySelectorAll("button[data-variant=destructive]"))
+          .length,
+      ).toBe(0);
+
+      syncReport = { type: "unmergedFiles", files: ["q.md"] };
+      expect(await syncSpace(path)).toEqual({
+        type: "UnmergedFiles",
+        files: ["q.md"],
+      });
+      expect(useGitStore.getState().syncStop[path]).toEqual({
+        kind: "unmerged",
+        files: ["q.md"],
+      });
+      expect(path in useGitStore.getState().syncError).toBe(false);
+    } finally {
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+    }
+  });
+
   test("sync attempts and background outcomes set and clear the stop", async () => {
     const dom = await createTestDom();
     mockGit();

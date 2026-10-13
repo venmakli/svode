@@ -64,6 +64,8 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
       };
     case "operationInProgress":
       return { type: "OperationInProgress", operation: dto.operation };
+    case "unmergedFiles":
+      return { type: "UnmergedFiles", files: [...dto.files] };
     default:
       throw new Error(`Unknown git sync result: ${JSON.stringify(dto)}`);
   }

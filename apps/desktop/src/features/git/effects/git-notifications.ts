@@ -18,6 +18,7 @@ export function notifyGitSyncFailed(): void {
 export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
   switch (outcome.type) {
     case "Conflict":
+    case "UnmergedFiles":
       notifyGitSyncConflict(outcome.files.length);
       break;
     case "AuthRequired":

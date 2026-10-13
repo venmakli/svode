@@ -878,6 +878,7 @@
   "git_sync_failed": "Failed to sync",
   "git_sync_stop_conflict_title": "Sync stopped by a conflict",
   "git_sync_stop_conflict_description": "Resolve the conflict in each file and save — sync will continue.",
+  "git_sync_stop_unmerged_description": "Conflict markers remain in files after the update. Your version may have been kept in Git stash. Resolve the files in the Page or in Git.",
   "git_sync_stop_conflict_files": "Files in conflict",
   "git_sync_stop_resolved_in_git": "resolved in Git",
   "git_sync_stop_open_page": "Open {path}",

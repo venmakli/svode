@@ -107,6 +107,7 @@ async function runSync(
         // Silent — no remote configured is a normal state.
         return result;
       case "Conflict":
+      case "UnmergedFiles":
         await refreshGitStatus(spacePath);
         return result;
       case "OperationInProgress":
