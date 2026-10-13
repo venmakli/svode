@@ -78,7 +78,11 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
         .await?;
 
     if pull_out.exit_code != 0 {
-        return handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await;
+        if let Some(stopped) =
+            handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await?
+        {
+            return Ok(stopped);
+        }
     }
 
     // Push
@@ -165,7 +169,11 @@ async fn sync_without_upstream(
             )
             .await?;
         if pull_out.exit_code != 0 {
-            return handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await;
+            if let Some(stopped) =
+                handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await?
+            {
+                return Ok(stopped);
+            }
         }
     }
 
@@ -215,16 +223,19 @@ async fn upstream_ref(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, 
     }
 }
 
+/// `None` when the merge completed after matching edits were set aside.
 async fn handle_pull_failure(
     cli: &GitCli,
     space_dir: &Path,
     stderr: &str,
     stdout: &str,
-) -> Result<SyncResult, GitError> {
+) -> Result<Option<SyncResult>, GitError> {
     let stderr = stderr.trim();
 
     if super::ops::is_git_auth_error(stderr) {
-        return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
+        return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr))
+            .await
+            .map(Some);
     }
 
     if stderr.contains("CONFLICT")
@@ -233,25 +244,218 @@ async fn handle_pull_failure(
         || stdout.contains("Automatic merge failed")
     {
         let files = conflict_files(cli, space_dir).await?;
-        return Ok(SyncResult::Conflict { files });
+        return Ok(Some(SyncResult::Conflict { files }));
     }
 
     if blocked_by_local_files(stderr) {
-        // A refused merge leaves FETCH_HEAD at the revision it would have merged.
-        match interfering_paths(cli, space_dir, "FETCH_HEAD").await {
+        match set_aside_matching_edits(cli, space_dir).await {
             Ok(files) if !files.is_empty() => {
                 return Err(GitError::PullBlocked {
                     repository: space_dir.to_string_lossy().into_owned(),
                     files,
                 });
             }
-            Ok(_) => tracing::warn!("git pull refused without interfering local files"),
+            Ok(_) => {
+                // The revision pull fetched and checked above.
+                let merge = cli
+                    .exec(
+                        space_dir,
+                        &[
+                            "-c",
+                            "submodule.recurse=false",
+                            "-c",
+                            "merge.autoStash=false",
+                            "merge",
+                            "--no-edit",
+                            "FETCH_HEAD",
+                        ],
+                    )
+                    .await?;
+                if merge.exit_code == 0 {
+                    return Ok(None);
+                }
+                return Box::pin(handle_pull_failure(
+                    cli,
+                    space_dir,
+                    &merge.stderr,
+                    &merge.stdout,
+                ))
+                .await;
+            }
             Err(error) => tracing::warn!("interfering local files unavailable: {error}"),
         }
     }
 
     let error = super::ops::git_remote_command_error("git pull", stderr);
-    remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await
+    remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error)
+        .await
+        .map(Some)
+}
+
+/// Interim measure of pull (DF-190 R2), removed together with pull once a
+/// merge engine replaces it.
+///
+/// Returns the paths that keep the fetched revision from merging. A path
+/// whose edit is no user work does not: the blob Git would store for the
+/// working file (with the filters and eol of the path) equals the incoming
+/// one, local commits left the path as in the merge base, and the index holds
+/// HEAD or the incoming version. Only when every interfering path is such,
+/// they are brought back to HEAD and the merge writes the same content;
+/// otherwise nothing changes.
+async fn set_aside_matching_edits(cli: &GitCli, repo: &Path) -> Result<Vec<String>, GitError> {
+    // A refused merge leaves FETCH_HEAD at the revision it would have merged.
+    let fetched = revision(
+        cli,
+        repo,
+        &["rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}"],
+    );
+    let Some(incoming) = fetched.await? else {
+        return Err(GitError::GitCommandFailed(
+            "fetched revision unavailable".into(),
+        ));
+    };
+    let paths = interfering_paths(cli, repo, &incoming).await?;
+    if paths.is_empty() {
+        return Err(GitError::GitCommandFailed(
+            "git pull refused without interfering local files".into(),
+        ));
+    }
+    let Some(base) = revision(cli, repo, &["merge-base", "HEAD", &incoming]).await? else {
+        return Ok(paths);
+    };
+    let committed = path_list(
+        cli,
+        repo,
+        &with_paths(
+            &["diff", "--name-only", "-z", "--no-renames", &base, "HEAD"],
+            &paths,
+        ),
+    )
+    .await?;
+    let incoming_blobs = entries(
+        cli,
+        repo,
+        &with_paths(&["ls-tree", "-z", &incoming], &paths),
+    )
+    .await?;
+    let head_blobs = entries(cli, repo, &with_paths(&["ls-tree", "-z", "HEAD"], &paths)).await?;
+    let index_blobs = entries(
+        cli,
+        repo,
+        &with_paths(&["ls-files", "-z", "--stage"], &paths),
+    )
+    .await?;
+    let candidates: Vec<&str> = paths
+        .iter()
+        .map(String::as_str)
+        .filter(|path| {
+            !committed.iter().any(|changed| changed == path)
+                && incoming_blobs
+                    .get(*path)
+                    .is_some_and(|(mode, _)| mode == "100644" || mode == "100755")
+                && std::fs::symlink_metadata(repo.join(path)).is_ok_and(|meta| meta.is_file())
+        })
+        .collect();
+    let mut matching = Vec::new();
+    if !candidates.is_empty() {
+        let mut args = vec!["hash-object", "--"];
+        args.extend(&candidates);
+        let out = cli.exec(repo, &args).await?;
+        if out.exit_code != 0 {
+            return Err(GitError::GitCommandFailed(format!(
+                "git hash-object failed: {}",
+                out.stderr.trim()
+            )));
+        }
+        for (path, worktree) in candidates.into_iter().zip(out.stdout.lines()) {
+            let blob = |entries: &'_ Entries| entries.get(path).map(|(_, oid)| oid.clone());
+            let incoming = blob(&incoming_blobs);
+            let index = blob(&index_blobs);
+            if incoming.as_deref() == Some(worktree)
+                && (index == blob(&head_blobs) || index == incoming)
+            {
+                matching.push(path.to_string());
+            }
+        }
+    }
+    if matching.len() < paths.len() {
+        return Ok(paths
+            .into_iter()
+            .filter(|path| !matching.contains(path))
+            .collect());
+    }
+    let (tracked, untracked): (Vec<String>, Vec<String>) = matching
+        .into_iter()
+        .partition(|path| head_blobs.contains_key(path));
+    for (args, paths) in [
+        (
+            &["restore", "--source=HEAD", "--staged", "--worktree"][..],
+            &tracked,
+        ),
+        (
+            &["rm", "--cached", "-q", "--ignore-unmatch"][..],
+            &untracked,
+        ),
+    ] {
+        if paths.is_empty() {
+            continue;
+        }
+        let out = cli.exec(repo, &with_paths(args, paths)).await?;
+        if out.exit_code != 0 {
+            return Err(GitError::GitCommandFailed(format!(
+                "git {} failed: {}",
+                args[0],
+                out.stderr.trim()
+            )));
+        }
+    }
+    for path in &untracked {
+        std::fs::remove_file(repo.join(path))?;
+    }
+    tracing::info!(
+        "Set aside {} local edits equal to incoming changes in {}",
+        tracked.len() + untracked.len(),
+        repo.display()
+    );
+    Ok(Vec::new())
+}
+
+/// `args` limited to exactly `paths`, without pathspec magic.
+fn with_paths<'a>(args: &[&'a str], paths: &'a [String]) -> Vec<&'a str> {
+    let mut all = vec!["--literal-pathspecs"];
+    all.extend_from_slice(args);
+    all.push("--");
+    all.extend(paths.iter().map(String::as_str));
+    all
+}
+
+/// Path → (mode, object id) of tree or stage 0 index entries.
+type Entries = std::collections::HashMap<String, (String, String)>;
+
+/// Reads `ls-tree -z` or `ls-files -z --stage` records.
+async fn entries(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<Entries, GitError> {
+    let command = args[1];
+    let out = cli.exec(repo, args).await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git {command} failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    Ok(out
+        .stdout
+        .split('\0')
+        .filter_map(|record| {
+            let (meta, path) = record.split_once('\t')?;
+            let fields: Vec<&str> = meta.split(' ').collect();
+            let (mode, oid) = match (command, fields.as_slice()) {
+                ("ls-tree", [mode, _, oid]) => (mode, oid),
+                ("ls-files", [mode, oid, "0"]) => (mode, oid),
+                _ => return None,
+            };
+            Some((path.to_string(), (mode.to_string(), oid.to_string())))
+        })
+        .collect())
 }
 
 async fn remote_error_to_sync_result(

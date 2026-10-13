@@ -25,6 +25,9 @@ fn identify(repo: &Path) {
     git(repo, &["config", "user.email", "fixture@example.test"]);
 }
 
+const INCOMING_IGNORE: &str = "target/\n.svode/local.json\n";
+const INCOMING_ATTRIBUTES: &str = "*.png filter=lfs\n";
+
 /// A clone of a remote whose next commit, pushed from another clone, changes
 /// `.gitignore` and adds `.gitattributes`.
 struct Fixture {
@@ -35,13 +38,24 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with(
+            &[(".gitignore", "target/\n"), ("note.md", "initial\n")],
+            &[
+                (".gitignore", INCOMING_IGNORE),
+                (".gitattributes", INCOMING_ATTRIBUTES),
+            ],
+        )
+    }
+
+    fn with(seed_files: &[(&str, &str)], incoming: &[(&str, &str)]) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let seed = temp.path().join("seed");
         std::fs::create_dir(&seed).unwrap();
         git(&seed, &["init", "-b", "main"]);
         identify(&seed);
-        std::fs::write(seed.join(".gitignore"), "target/\n").unwrap();
-        std::fs::write(seed.join("note.md"), "initial\n").unwrap();
+        for (path, content) in seed_files {
+            std::fs::write(seed.join(path), content).unwrap();
+        }
         git(&seed, &["add", "."]);
         git(&seed, &["commit", "-m", "initial"]);
         let remote = temp.path().join("remote.git");
@@ -56,8 +70,9 @@ impl Fixture {
         git(temp.path(), &["clone", url, local.to_str().unwrap()]);
         identify(&other);
         identify(&local);
-        std::fs::write(other.join(".gitignore"), "target/\n.svode/local.json\n").unwrap();
-        std::fs::write(other.join(".gitattributes"), "*.png filter=lfs\n").unwrap();
+        for (path, content) in incoming {
+            std::fs::write(other.join(path), content).unwrap();
+        }
         git(&other, &["add", "."]);
         git(&other, &["commit", "-m", "service files"]);
         git(&other, &["push"]);
@@ -177,4 +192,114 @@ fn only_overwrite_refusals_are_classified() {
     assert!(paths_overlap("docs", "docs/a.md"));
     assert!(paths_overlap("docs/a.md", "docs"));
     assert!(!paths_overlap("docs", "docs-old/a.md"));
+}
+
+impl Fixture {
+    /// Sync succeeds and leaves the incoming content with a clean status.
+    async fn synced(&self, incoming: &[(&str, &str)]) {
+        let result = sync(&self.cli, &self.local).await;
+        assert!(
+            matches!(result, Ok(SyncResult::Success { .. })),
+            "{result:?}"
+        );
+        for (path, content) in incoming {
+            assert_eq!(
+                std::fs::read_to_string(self.local.join(path)).unwrap(),
+                *content,
+                "{path}"
+            );
+        }
+        assert_eq!(git(&self.local, &["status", "--porcelain"]), "");
+        assert_eq!(
+            git(&self.local, &["rev-parse", "HEAD"]),
+            git(&self.local, &["rev-parse", "origin/main"])
+        );
+    }
+}
+
+#[tokio::test]
+async fn edits_equal_to_incoming_do_not_block_either_pull_call_site_or_a_merge() {
+    for case in ["upstream", "first publication", "merge"] {
+        let f = Fixture::new();
+        match case {
+            "first publication" => {
+                git(&f.local, &["branch", "--unset-upstream"]);
+            }
+            "merge" => {
+                f.write("local.md", "local commit\n");
+                git(&f.local, &["add", "local.md"]);
+                git(&f.local, &["commit", "-m", "local"]);
+            }
+            _ => {}
+        }
+        f.write(".gitignore", INCOMING_IGNORE);
+        f.write(".gitattributes", INCOMING_ATTRIBUTES);
+        // Untouched local work survives the sync.
+        f.write("draft.md", "untracked\n");
+
+        let result = sync(&f.cli, &f.local).await;
+
+        assert!(
+            matches!(result, Ok(SyncResult::Success { .. })),
+            "{case}: {result:?}"
+        );
+        for (path, content) in [
+            (".gitignore", INCOMING_IGNORE),
+            (".gitattributes", INCOMING_ATTRIBUTES),
+        ] {
+            assert_eq!(
+                std::fs::read_to_string(f.local.join(path)).unwrap(),
+                content,
+                "{case}: {path}"
+            );
+        }
+        assert_eq!(
+            git(&f.local, &["status", "--porcelain"]),
+            "?? draft.md",
+            "{case}"
+        );
+        assert_eq!(
+            git(&f.local, &["rev-parse", "HEAD"]),
+            git(&f.local, &["rev-parse", "origin/main"]),
+            "{case}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn edits_differing_from_incoming_only_in_line_endings_do_not_block() {
+    let incoming = [(".gitignore", INCOMING_IGNORE), ("docs.md", "line\n")];
+    let f = Fixture::with(
+        &[
+            (".gitattributes", "* text eol=lf\n"),
+            (".gitignore", "target/\n"),
+        ],
+        &incoming,
+    );
+    f.write(".gitignore", "target/\r\n.svode/local.json\r\n");
+    f.write("docs.md", "line\r\n");
+
+    f.synced(&incoming).await;
+}
+
+#[tokio::test]
+async fn a_matching_edit_of_a_locally_committed_path_or_next_to_a_differing_edit_refuses_unchanged()
+{
+    let f = Fixture::new();
+    f.write(".gitignore", "target/\nlocal/\n");
+    git(&f.local, &["commit", "-am", "local ignore"]);
+    f.write(".gitignore", INCOMING_IGNORE);
+    let before = f.snapshot();
+    let (_, files) = f.refusal().await;
+    assert_eq!(files, [".gitignore"]);
+    assert_eq!(f.snapshot(), before);
+
+    let f = Fixture::new();
+    f.write(".gitignore", "target/\nnode_modules/\n");
+    f.write(".gitattributes", INCOMING_ATTRIBUTES);
+    let before = f.snapshot();
+    let (_, files) = f.refusal().await;
+    // The matching edit is no user work and is not named, but stays untouched.
+    assert_eq!(files, [".gitignore"]);
+    assert_eq!(f.snapshot(), before);
 }
