@@ -130,7 +130,13 @@ pub async fn resolve(
             }
         }
     }
-    Ok(selected.into_iter().collect())
+    let selected = selected.into_iter().collect::<Vec<_>>();
+    // A Space checkout behind the project pointer is never staged over it.
+    let backward = super::published_pointer::backward(cli, repo, &selected).await?;
+    Ok(selected
+        .into_iter()
+        .filter(|path| !backward.contains(path))
+        .collect())
 }
 
 /// Keep the paths that still carry a change: present on disk, or with an index

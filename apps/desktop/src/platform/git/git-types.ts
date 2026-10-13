@@ -67,7 +67,7 @@ export type SyncResultDto =
 
 export interface ParentPublicationDto {
   repository: string;
-  pointer: "pending" | "local" | "published";
+  pointer: "pending" | "local" | "published" | "newer";
   target?: string;
   result?: SyncResultDto;
   error?: string | { kind: string; [key: string]: unknown };

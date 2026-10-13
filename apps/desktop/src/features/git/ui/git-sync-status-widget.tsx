@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
+import { isParentPointerPending } from "../model/publication";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
@@ -63,9 +64,7 @@ export function GitSyncStatusWidget({
   if (!sync.spacePath || (!sync.visible && !accessLabel)) return null;
 
   const busy = sync.syncing || sync.checkingRemote || sync.parent.busy;
-  const pendingParent =
-    sync.parent.publication &&
-    sync.parent.publication.parent.pointer !== "published";
+  const pendingParent = isParentPointerPending(sync.parent.publication);
   const error = sync.syncError ?? sync.remoteError;
   const hasSyncError = !!error;
   // An unreachable remote also leaves access unconfirmed; the sync warning covers both.

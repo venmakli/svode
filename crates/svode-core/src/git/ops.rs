@@ -309,6 +309,12 @@ pub async fn commit_exact_path_receipt(
     reject_local_variable_path(&path)?;
     let literal = format!(":(literal){path}");
     let paths = std::slice::from_ref(&path);
+    if !super::published_pointer::backward(cli, repo, paths)
+        .await?
+        .is_empty()
+    {
+        return Ok(None);
+    }
     let known = cli
         .exec_redacted(repo, &["ls-files", "--error-unmatch", "--", &literal])
         .await?;

@@ -4,8 +4,10 @@ import { gitSyncErrorMessage } from "../api/git-sync-error";
 
 export function publicationCopy(publication: GitPublicationStatus) {
   const { parent, child } = publication;
-  const summary =
-    parent.pointer === "published" && child === "published"
+  const newer = parent.pointer === "newer";
+  const summary = newer
+    ? m.git_publication_newer_summary()
+    : parent.pointer === "published" && child === "published"
       ? m.git_sync_success()
       : child === "unknown"
         ? m.git_publication_unchecked_summary()
@@ -41,7 +43,10 @@ export function publicationCopy(publication: GitPublicationStatus) {
         ? m.git_publication_parent_published()
         : parent.pointer === "local"
           ? m.git_publication_parent_local()
-          : m.git_publication_parent_pending(),
-    reason,
+          : newer
+            ? m.git_publication_parent_newer()
+            : m.git_publication_parent_pending(),
+    // Project-side causes do not apply while the project already holds a newer version.
+    reason: newer ? null : reason,
   };
 }

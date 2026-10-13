@@ -26,7 +26,10 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
       notifyGitSyncFailed();
       break;
     case "Success":
-      if (outcome.parent && outcome.parent.pointer !== "published") toast.info(m.git_publication_partial());
+      if (outcome.parent?.pointer === "newer")
+        toast.info(m.git_publication_newer_summary());
+      else if (outcome.parent && outcome.parent.pointer !== "published")
+        toast.info(m.git_publication_partial());
       break;
     case "Resolved":
     case "NoRemote":

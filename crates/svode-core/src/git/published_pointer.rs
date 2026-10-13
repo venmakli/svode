@@ -1,6 +1,115 @@
 use super::GitError;
 use super::cli::GitCli;
-use std::{fs::OpenOptions, path::Path};
+use std::{collections::BTreeSet, fs::OpenOptions, path::Path};
+
+/// The project pointer moves only forward: a Space revision may replace the
+/// recorded pointer only when its history contains that pointer.
+pub async fn contains(
+    cli: &GitCli,
+    child: &Path,
+    pointer: &str,
+    revision: &str,
+) -> Result<bool, GitError> {
+    if pointer == revision {
+        return Ok(true);
+    }
+    let out = cli
+        .exec(child, &["merge-base", "--is-ancestor", pointer, revision])
+        .await?;
+    match out.exit_code {
+        0 => Ok(true),
+        1 => Ok(false),
+        _ => {
+            // A pointer absent from the Space history is not contained in it.
+            let known = cli
+                .exec(child, &["cat-file", "-e", &format!("{pointer}^{{commit}}")])
+                .await?;
+            if known.exit_code != 0 {
+                Ok(false)
+            } else {
+                Err(GitError::GitCommandFailed(
+                    "Cannot compare the project pointer with the Space revision".into(),
+                ))
+            }
+        }
+    }
+}
+
+/// The Space pointer `revision` of the project records at `path`, if any.
+pub async fn recorded(
+    cli: &GitCli,
+    root: &Path,
+    revision: &str,
+    path: &str,
+) -> Result<Option<String>, GitError> {
+    let out = cli
+        .exec_redacted(
+            root,
+            &[
+                "ls-tree",
+                "-z",
+                revision,
+                "--",
+                &format!(":(literal){path}"),
+            ],
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Ok(None);
+    }
+    Ok(gitlinks(&out.stdout)
+        .find(|(entry, _)| *entry == path)
+        .map(|(_, pointer)| pointer.to_string()))
+}
+
+/// Gitlink entries of NUL-separated `ls-tree` output as `(path, pointer)`.
+fn gitlinks(listing: &str) -> impl Iterator<Item = (&str, &str)> {
+    listing.split('\0').filter_map(|entry| {
+        let (meta, path) = entry.split_once('\t')?;
+        Some((path, meta.strip_prefix("160000 commit ")?))
+    })
+}
+
+/// Recorded Space pointers among `paths` that the current Space checkout does
+/// not contain: committing that checkout would move the pointer back.
+pub async fn backward(
+    cli: &GitCli,
+    root: &Path,
+    paths: &[String],
+) -> Result<BTreeSet<String>, GitError> {
+    if paths.is_empty() || !root.join(".gitmodules").is_file() {
+        return Ok(BTreeSet::new());
+    }
+    let literals = paths
+        .iter()
+        .map(|path| format!(":(literal){path}"))
+        .collect::<Vec<_>>();
+    let mut args = vec!["ls-tree", "-r", "-z", "HEAD", "--"];
+    args.extend(literals.iter().map(String::as_str));
+    let out = cli.exec_redacted(root, &args).await?;
+    if out.exit_code != 0 {
+        // An unborn project records no pointer yet.
+        let head = cli.exec(root, &["rev-parse", "--verify", "HEAD"]).await?;
+        if head.exit_code != 0 {
+            return Ok(BTreeSet::new());
+        }
+        return Err(GitError::GitCommandFailed(
+            "Cannot read project pointers".into(),
+        ));
+    }
+    let mut backward = BTreeSet::new();
+    for (path, pointer) in gitlinks(&out.stdout) {
+        let child = root.join(path);
+        if child.join(".git").symlink_metadata().is_err() {
+            continue;
+        }
+        let head = cli.exec(&child, &["rev-parse", "--verify", "HEAD"]).await?;
+        if head.exit_code == 0 && !contains(cli, &child, pointer, head.stdout.trim()).await? {
+            backward.insert(path.to_string());
+        }
+    }
+    Ok(backward)
+}
 
 /// Commit only the revision that the child publisher actually sent. The caller
 /// holds child then root locks; index.lock also excludes external Git staging.
@@ -21,11 +130,18 @@ pub async fn commit(
             reason: super::publication::PublicationBlockReason::TargetChanged,
         });
     }
-    let current = cli
-        .exec(root, &["rev-parse", &format!("{old_head}:{path}")])
-        .await?;
-    if current.exit_code == 0 && current.stdout.trim() == published {
-        return Ok(false);
+    if let Some(current) = recorded(cli, root, &old_head, &path).await? {
+        if current == published {
+            return Ok(false);
+        }
+        // The step checked this before; a project HEAD moved meanwhile is a new target.
+        if !contains(cli, child, &current, published).await? {
+            return Err(GitError::PublicationBlocked {
+                repository: root.to_string_lossy().into_owned(),
+                child: Some(path),
+                reason: super::publication::PublicationBlockReason::TargetChanged,
+            });
+        }
     }
     let index = cli
         .exec(

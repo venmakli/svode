@@ -156,10 +156,14 @@ pub async fn inspect(
         repo,
         crate::git::path::RootMode::Reject,
     )?;
-    let pointer = cli
-        .exec(parent, &["rev-parse", &format!("HEAD:{path}")])
-        .await?;
-    let matches = pointer.exit_code == 0 && pointer.stdout.trim() == current.head;
+    let pointer = super::published_pointer::recorded(cli, parent, "HEAD", &path).await?;
+    let matches = pointer.as_deref() == Some(current.head.as_str());
+    let newer = match pointer.as_deref() {
+        Some(pointer) if !matches && !current.head.is_empty() => {
+            !super::published_pointer::contains(cli, repo, pointer, &current.head).await?
+        }
+        _ => false,
+    };
     let parent_covered = previous
         .and_then(|done| done.parent.as_ref())
         .is_some_and(|e| {
@@ -193,6 +197,8 @@ pub async fn inspect(
                 PointerState::Published
             } else if matches {
                 PointerState::Local
+            } else if newer {
+                PointerState::Newer
             } else {
                 PointerState::Pending
             },

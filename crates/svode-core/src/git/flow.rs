@@ -41,6 +41,8 @@ pub enum PointerState {
     Pending,
     Local,
     Published,
+    /// The project records a Space revision this checkout does not contain.
+    Newer,
 }
 
 /// Lock order is child then root, matching clone, manual save and Actors.
@@ -547,12 +549,24 @@ pub async fn parent_step_locked(
     if let Ok(path) =
         crate::git::path::repo_relative_from_base(&parent, repo, crate::git::path::RootMode::Reject)
     {
-        if let Ok(pointer) = cli
-            .exec(&parent, &["rev-parse", &format!("HEAD:{path}")])
-            .await
+        if let Ok(Some(pointer)) =
+            super::published_pointer::recorded(cli, parent, "HEAD", &path).await
         {
-            if pointer.exit_code == 0 && pointer.stdout.trim() == expected {
+            if pointer == expected {
                 outcome.pointer = PointerState::Local;
+            } else {
+                // The pointer moves only forward; a Space behind it is not an error.
+                match super::published_pointer::contains(cli, repo, &pointer, expected).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        outcome.pointer = PointerState::Newer;
+                        return outcome;
+                    }
+                    Err(error) => {
+                        outcome.error = Some(error.into());
+                        return outcome;
+                    }
+                }
             }
         }
     }

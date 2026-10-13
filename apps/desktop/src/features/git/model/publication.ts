@@ -7,12 +7,24 @@ export function isFullSyncSuccess(outcome: GitSyncOutcome) {
   );
 }
 
+/** The project version still waits for this Space's revision. */
+export function isParentPointerPending(
+  publication: GitPublicationStatus | undefined,
+) {
+  return (
+    !!publication &&
+    publication.parent.pointer !== "published" &&
+    publication.parent.pointer !== "newer"
+  );
+}
+
 export function parentRecoveryAction(
   publication: GitPublicationStatus | undefined,
 ) {
+  // A project pointer newer than this Space is never moved back; syncing the Space catches up.
   if (
     !publication ||
-    publication.parent.pointer === "published" ||
+    !isParentPointerPending(publication) ||
     publication.child !== "published"
   )
     return "sync";

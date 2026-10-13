@@ -59,7 +59,7 @@ export type SyncResult =
 
 export interface ParentPublication {
   repository: string;
-  pointer: "pending" | "local" | "published";
+  pointer: "pending" | "local" | "published" | "newer";
   target?: string;
   result?: SyncResult;
   error?: { kind: string; [key: string]: unknown };

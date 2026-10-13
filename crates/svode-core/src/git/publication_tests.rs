@@ -1,6 +1,8 @@
 #![cfg(unix)]
 #[path = "operation_tests.rs"]
 mod operation_tests;
+#[path = "pointer_forward_tests.rs"]
+mod pointer_forward_tests;
 #[path = "push_rejection_tests.rs"]
 mod push_rejection_tests;
 #[path = "publication_reuse_tests.rs"]
