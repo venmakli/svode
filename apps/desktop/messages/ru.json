@@ -696,6 +696,7 @@
   "settings_general_icon_name": "Иконка и название",
   "settings_general_load_error_title": "Не удалось загрузить основные настройки",
   "settings_general_load_error": "Повторите загрузку, прежде чем что-то менять.",
+  "settings_general_save_changes": "Сохранить изменения",
   "settings_spaces": "Пространства",
   "settings_spaces_empty": "В проекте пока нет вложенных пространств",
   "settings_space_git_type_unknown": "Неизвестный репозиторий",

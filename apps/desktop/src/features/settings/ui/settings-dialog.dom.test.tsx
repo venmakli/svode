@@ -96,7 +96,17 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
       new Promise((resolve) => loads.set(path, resolve)),
   }));
   mock.module("../hooks/use-space-settings-config-actions", () => ({
-    useSpaceSettingsConfigActions: () => ({ saveConfig: async () => true }),
+    useSpaceSettingsConfigActions: () => ({ saveConfig: async () => "saved" }),
+  }));
+  // Details recover refused writes; access recovery has its own tests.
+  mock.module("@/features/git", () => ({
+    useRepositoryAccessPreflight: () => ({
+      open: false,
+      pending: null,
+      recoverFromError: async () => false,
+    }),
+    RepositoryAccessInlineRecovery: () => null,
+    RepositoryAccessPrimaryButton: () => null,
   }));
   mock.module("../hooks/use-space-settings-health", () => ({
     useSpaceSettingsHealth: () => ({}),

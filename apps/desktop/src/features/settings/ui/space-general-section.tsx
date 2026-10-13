@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -7,6 +7,11 @@ import { EmojiPicker } from "@/components/ui/emoji-picker";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  RepositoryAccessInlineRecovery,
+  RepositoryAccessPrimaryButton,
+  type RepositoryAccessPreflightController,
+} from "@/features/git";
 import type { SpaceGitType } from "@/features/space";
 import { spaceGitTypeLabel } from "./owner-labels";
 import {
@@ -26,6 +31,10 @@ export interface SpaceGeneralEditor {
   onNameBlur: () => Promise<void>;
   onDescriptionChange: (value: string) => void;
   onDescriptionBlur: () => Promise<void>;
+  /** Repository access recovery of a write the gate refused. */
+  recovery?: RepositoryAccessPreflightController;
+  /** An explicit retry from the recovery is writing the drafts. */
+  saving?: boolean;
 }
 
 type Field = "icon" | "name" | "description";
@@ -43,10 +52,13 @@ export function SpaceGeneralSection({
   editor?: SpaceGeneralEditor;
 }) {
   const id = useId();
+  const nameRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<ReadonlySet<Field>>(() => new Set());
+  const ready = editor?.status === "ready" ? editor : undefined;
+  const saving = Boolean(ready?.saving);
   // Each field writes on its own; a field stays read-only until its write ends.
   function write(field: Field, action: () => Promise<void>) {
-    if (pending.has(field)) return;
+    if (pending.has(field) || saving) return;
     setPending((current) => new Set(current).add(field));
     void action().finally(() =>
       setPending((current) => {
@@ -56,10 +68,23 @@ export function SpaceGeneralSection({
       }),
     );
   }
-  const busy = (field: Field) => pending.has(field) || undefined;
+  const busy = (field: Field) => pending.has(field) || saving || undefined;
   const pendingClassName =
     "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
-  const ready = editor?.status === "ready" ? editor : undefined;
+  const recovery = ready?.recovery;
+  const recoveryOpen = Boolean(recovery?.open);
+  const recoveryWasOpenRef = useRef(false);
+  // A retry closes the recovery under its own button; focus stays in the
+  // block on the identity row instead of falling to the page.
+  useEffect(() => {
+    if (
+      recoveryWasOpenRef.current &&
+      !recoveryOpen &&
+      (!document.activeElement || document.activeElement === document.body)
+    )
+      nameRef.current?.focus();
+    recoveryWasOpenRef.current = recoveryOpen;
+  }, [recoveryOpen]);
   return (
     <SettingsGroup
       title={m.settings_general_details()}
@@ -102,9 +127,10 @@ export function SpaceGeneralSection({
             size="sm"
           />
           <Input
+            ref={nameRef}
             id={`${id}-name`}
             value={ready.name}
-            readOnly={pending.has("name")}
+            readOnly={Boolean(busy("name"))}
             aria-disabled={busy("name")}
             aria-busy={busy("name")}
             onChange={(event) => ready.onNameChange(event.target.value)}
@@ -112,7 +138,7 @@ export function SpaceGeneralSection({
             placeholder={m.space_name_placeholder()}
             className={`w-64 max-w-full ${pendingClassName}`}
           />
-          {pending.has("icon") || pending.has("name") ? (
+          {pending.has("icon") || pending.has("name") || saving ? (
             <Loader2
               aria-hidden
               className="size-4 animate-spin text-muted-foreground"
@@ -131,7 +157,7 @@ export function SpaceGeneralSection({
             <Textarea
               id={`${id}-description`}
               value={ready.description}
-              readOnly={pending.has("description")}
+              readOnly={Boolean(busy("description"))}
               aria-disabled={busy("description")}
               aria-busy={busy("description")}
               onChange={(event) =>
@@ -142,7 +168,7 @@ export function SpaceGeneralSection({
               rows={3}
               className={pendingClassName}
             />
-            {pending.has("description") ? (
+            {pending.has("description") || saving ? (
               <Loader2
                 aria-hidden
                 className="absolute top-2 right-2 size-4 animate-spin text-muted-foreground"
@@ -150,6 +176,17 @@ export function SpaceGeneralSection({
             ) : null}
           </div>
         </SettingsRow>
+      ) : null}
+      {recovery?.open ? (
+        <div
+          key="access-recovery"
+          className="flex min-w-0 flex-col gap-2 px-4 py-3"
+        >
+          <RepositoryAccessInlineRecovery recovery={recovery} />
+          <div className="flex flex-wrap justify-end gap-2">
+            <RepositoryAccessPrimaryButton recovery={recovery} />
+          </div>
+        </div>
       ) : null}
       {space ? (
         <SettingsRow

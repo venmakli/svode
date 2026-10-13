@@ -165,6 +165,8 @@ function OwnerDetails({
         onNameBlur: general.handleNameBlur,
         onDescriptionChange: general.setDescription,
         onDescriptionBlur: general.handleDescriptionBlur,
+        recovery: general.recovery,
+        saving: general.retrying,
       }}
     />
   );

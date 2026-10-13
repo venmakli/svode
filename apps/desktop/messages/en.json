@@ -696,6 +696,7 @@
   "settings_general_icon_name": "Icon and name",
   "settings_general_load_error_title": "Couldn't load the details",
   "settings_general_load_error": "Retry before you change anything.",
+  "settings_general_save_changes": "Save changes",
   "settings_spaces": "Spaces",
   "settings_spaces_empty": "This project has no child spaces yet",
   "settings_space_git_type_unknown": "Unknown repository",

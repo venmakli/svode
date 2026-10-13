@@ -47,7 +47,7 @@ test("saving space settings keeps the agent section of the config as it was", as
 
   try {
     await act(async () => root.render(<Harness />));
-    expect(await saveConfig({ name: "Renamed" })).toBe(true);
+    expect(await saveConfig({ name: "Renamed" })).toBe("saved");
     expect(saved).toEqual([
       {
         spacePath: "/project/docs",
