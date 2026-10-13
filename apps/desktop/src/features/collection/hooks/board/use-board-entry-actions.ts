@@ -1,5 +1,4 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import { toast } from "sonner";
 import type { Page } from "@/features/page";
 import type { Column } from "@/features/properties";
 import { entryParentDir } from "../../lib/entry-tree";
@@ -12,8 +11,10 @@ import {
   updateEntryGroupValue,
 } from "../../lib/board-entry";
 import { useCollectionEntryFieldSave, useCollectionTreeOrder } from "..";
-import { handleEntryCreateError } from "../error-feedback";
-import * as m from "@/paraglide/messages.js";
+import {
+  handleEntryCreateError,
+  handleEntryMoveError,
+} from "../error-feedback";
 
 interface MoveBoardCardArgs {
   activeEntryPath: string;
@@ -195,7 +196,7 @@ export function useBoardEntryActions({
         setEntries(previousEntries);
         setManualOrderEntries(previousManualOrderEntries);
         void loadEntries();
-        toast.error(m.board_move_error());
+        handleEntryMoveError(error);
       }
     },
     [

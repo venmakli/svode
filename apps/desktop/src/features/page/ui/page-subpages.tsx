@@ -14,12 +14,14 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { toast } from "sonner";
 import { FileText, Folder, GripVertical, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useOpenScopeOwner } from "@/features/artifact";
 import {
   createPage as createPageApi,
   savePageTreeOrderNames,
+  treeOrderUnreadableToast,
 } from "../page-api";
 import { useOpenPage } from "../navigation";
 import { getSpaceTreeSyncSnapshot, useSpaceTreeSync } from "@/features/space";
@@ -121,7 +123,9 @@ export function PageSubpages({
       await loadTreeChildren(spaceId, folderPath, { force: true });
     } catch (error) {
       setSubpages(subpages);
-      throw error;
+      const orderToast = treeOrderUnreadableToast(error);
+      if (!orderToast) throw error;
+      toast.error(orderToast.title, { description: orderToast.description });
     }
   }
 

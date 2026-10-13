@@ -1,11 +1,12 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
-import { toast } from "sonner";
 import type { Page } from "@/features/page";
 import { entryParentDir, reorderVisibleEntries } from "../../lib/entry-tree";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
-import { handleEntryCreateError } from "../error-feedback";
-import * as m from "@/paraglide/messages.js";
+import {
+  handleEntryCreateError,
+  handleEntryMoveError,
+} from "../error-feedback";
 
 interface UseGalleryEntryActionsOptions {
   collectionPath: string;
@@ -84,7 +85,7 @@ export function useGalleryEntryActions({
       } catch (error) {
         console.warn("Failed to reorder gallery entries:", error);
         setEntries(previousEntries);
-        toast.error(m.board_move_error());
+        handleEntryMoveError(error);
       }
     },
     [

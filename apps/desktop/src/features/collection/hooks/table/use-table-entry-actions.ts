@@ -2,6 +2,7 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { Page } from "@/features/page";
 import { entryParentDir, reorderVisibleEntries } from "../../lib/entry-tree";
+import { notifyTreeOrderUnreadable } from "../error-feedback";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
 
 interface UseTableEntryActionsOptions {
@@ -61,7 +62,12 @@ export function useTableEntryActions({
         String(active.id),
         newIndex,
       );
-      await saveOrder(collectionPath, fullOrder);
+      try {
+        await saveOrder(collectionPath, fullOrder);
+      } catch (error) {
+        if (!notifyTreeOrderUnreadable(error)) throw error;
+        return;
+      }
       setEntries((current) => {
         const children = current.filter(
           (entry) => entryParentDir(entry.path) !== collectionPath,

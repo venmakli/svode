@@ -1,6 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
-import { toast } from "sonner";
 import type { Page } from "@/features/page";
 import {
   entryParentDir,
@@ -9,8 +8,10 @@ import {
   siblingEntries,
 } from "../../lib/entry-tree";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
-import { handleEntryCreateError } from "../error-feedback";
-import * as m from "@/paraglide/messages.js";
+import {
+  handleEntryCreateError,
+  handleEntryMoveError,
+} from "../error-feedback";
 
 interface UseListEntryActionsOptions {
   collectionPath: string;
@@ -95,7 +96,7 @@ export function useListEntryActions({
       } catch (error) {
         console.warn("Failed to reorder list entries:", error);
         setEntries(previousEntries);
-        toast.error(m.board_move_error());
+        handleEntryMoveError(error);
       }
     },
     [entries, loadEntries, reloadOrderParent, rows, saveOrder, setEntries],
