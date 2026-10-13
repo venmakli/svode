@@ -1,4 +1,5 @@
 import { toGitPublicationBlockDto } from "@/platform/git/publication-errors";
+import { toGitPullBlockDto } from "@/platform/git/pull-block-errors";
 import { toGitPushRejectionDto } from "@/platform/git/push-rejection-errors";
 import { toRepositoryAccessDeniedDto } from "@/platform/git/repository-access-api";
 import { redactUrlCredentials } from "../model/remote-auth";
@@ -24,6 +25,9 @@ export function gitSyncErrorMessage(error: unknown): string {
     }[publication.reason]();
     return publication.child ? `${publication.child}: ${reason}` : reason;
   }
+  const pullBlock = toGitPullBlockDto(error);
+  if (pullBlock)
+    return m.git_sync_pull_blocked({ files: pullBlock.files.join(", ") });
   const rejection = toGitPushRejectionDto(error);
   if (rejection) {
     if (rejection.reason === "lfs_transfer_unconfigured")

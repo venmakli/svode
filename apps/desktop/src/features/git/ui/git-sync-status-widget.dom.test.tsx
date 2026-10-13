@@ -26,6 +26,20 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
     selectActiveSpacePath: () => activeSpacePath,
     useSpace: (select: (value: typeof space) => unknown) => select(space),
   }));
+  const toasts: unknown[] = [];
+  const record = (message: unknown) => {
+    toasts.push(message);
+  };
+  mock.module("sonner", () => ({
+    toast: Object.assign(record, {
+      error: record,
+      info: record,
+      success: record,
+      warning: record,
+      dismiss: () => {},
+      get: () => undefined,
+    }),
+  }));
   test("counter refresh never replaces the publication cause or invents an empty list", async () => {
     const dom = await createTestDom();
     const path = "/project";
@@ -226,6 +240,107 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
       useGitStore.getState().clear(other);
       useGitStore.getState().clear(activeSpacePath);
       await dom.dispose();
+    }
+  });
+
+  test("a pull blocked by local files names them in the Dialog after background and explicit sync", async () => {
+    const dom = await createTestDom();
+    const path = "/project";
+    activeSpacePath = path;
+    const blocked = {
+      kind: "git_pull_blocked",
+      repository: path,
+      files: [".gitattributes", ".gitignore"],
+    };
+    mockNativeIpc(
+      async (command) => {
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_get_remote")
+          return "https://example.test/project.git";
+        if (command === "git_publication_status") return null;
+        if (command === "git_fetch_status" || command === "git_status")
+          return { branch: "main", ahead: 0, behind: 1, files: [] };
+        if (command === "git_unpushed_commits") return [];
+        if (command === "git_sync") throw blocked;
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+    const { useGitStore } = await import("../model/git-store");
+    const { recordGitOperationOutcome } =
+      await import("../api/git-operation-events");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const m = await import("@/paraglide/messages.js");
+    const previousLocale = getLocale();
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+    const alertText = () =>
+      dom.document.querySelector("[role=dialog]")?.querySelector("[role=alert]")
+        ?.textContent ?? null;
+    try {
+      for (const locale of ["en", "ru"] as const) {
+        await setLocale(locale, { reload: false });
+        const expected = m.git_sync_pull_blocked({
+          files: ".gitattributes, .gitignore",
+        });
+        if (locale === "ru")
+          expect(String(expected)).toBe(
+            "Входящие изменения затрагивают файлы с несохранёнными правками: .gitattributes, .gitignore. Сохраните или отмените эти правки и повторите синхронизацию.",
+          );
+
+        // Background sync records the refusal on the repository, without toasts.
+        toasts.length = 0;
+        recordGitOperationOutcome({
+          repository: path,
+          active: false,
+          report: null,
+          error: blocked,
+        });
+        expect(toasts).toEqual([]);
+        await dom.render(
+          <TooltipProvider>
+            <GitSyncStatusWidget key={locale} repositoryPath={path} />
+          </TooltipProvider>,
+        );
+        await settle();
+        expect(
+          dom.document.querySelector("[data-git-sync-error]") === null,
+        ).toBe(false);
+        await act(async () => {
+          dom.document
+            .querySelector<HTMLButtonElement>("[data-repository-control]")!
+            .click();
+        });
+        await settle();
+        expect(alertText()).toBe(expected);
+
+        // An explicit retry that is refused again shows the same text.
+        useGitStore.getState().setSyncError(path, null);
+        await settle();
+        expect(alertText()).toBe(null);
+        const retry = Array.from(
+          dom.document.querySelectorAll<HTMLButtonElement>(
+            "[role=dialog] button",
+          ),
+        ).find((button) => button.textContent === m.git_sync_action());
+        await act(async () => {
+          retry!.click();
+        });
+        await settle();
+        expect(alertText()).toBe(expected);
+        await dom.render(null);
+        useGitStore.getState().clear(path);
+      }
+    } finally {
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+      await setLocale(previousLocale, { reload: false });
     }
   });
 }

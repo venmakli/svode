@@ -67,6 +67,11 @@ pub enum GitError {
         object_count: Option<usize>,
         lfs_declaration: Option<crate::storage::lfs_declaration::LfsDeclarationState>,
     },
+    #[error("Git pull blocked by uncommitted or untracked files in {repository}: {}", files.join(", "))]
+    PullBlocked {
+        repository: String,
+        files: Vec<String>,
+    },
     #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
     SaveFailed {
         stage: &'static str,
@@ -105,6 +110,7 @@ impl GitError {
             GitError::PublicationBlocked { .. } => "git_publication_blocked",
             GitError::BranchBlocked { .. } => "git_branch_blocked",
             GitError::PushRejected { .. } => "git_push_rejected",
+            GitError::PullBlocked { .. } => "git_pull_blocked",
             GitError::SaveFailed { .. } => "git_save_failed",
             GitError::Conflict(_) => "git_conflict",
             GitError::AuthRequired(_) => "git_auth_required",
@@ -146,6 +152,12 @@ impl serde::Serialize for GitError {
                 "reason": reason,
                 "objectCount": object_count,
                 "lfsDeclaration": lfs_declaration,
+            })
+            .serialize(serializer),
+            GitError::PullBlocked { repository, files } => serde_json::json!({
+                "kind": self.kind(),
+                "repository": repository,
+                "files": files,
             })
             .serialize(serializer),
             GitError::SaveFailed {

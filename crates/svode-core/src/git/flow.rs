@@ -486,6 +486,7 @@ async fn parent_step_recorded(
                 GitError::RepositoryAccessDenied { .. }
                     | GitError::BranchBlocked { .. }
                     | GitError::PublicationBlocked { .. }
+                    | GitError::PullBlocked { .. }
             )
         })
     {
@@ -762,7 +763,11 @@ async fn run_repository(
     };
     let invalidate = match &result {
         Ok(SyncResult::AuthRequired { .. }) => true,
-        Err(GitError::BranchBlocked { .. } | GitError::PublicationBlocked { .. }) => false,
+        Err(
+            GitError::BranchBlocked { .. }
+            | GitError::PublicationBlocked { .. }
+            | GitError::PullBlocked { .. },
+        ) => false,
         Err(_) => true,
         _ => false,
     };

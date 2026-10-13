@@ -2277,6 +2277,7 @@
   "git_sync_publication_uninitialized": "The required submodule is not initialized. Clone it before publishing this version.",
   "git_sync_publication_source_unavailable": "Cannot verify the submodule source. Check access and the connection to its remote, then retry.",
   "git_sync_conflict_recovery": "Resolve the merge conflicts before retrying synchronization.",
+  "git_sync_pull_blocked": "Incoming changes affect files with unsaved edits: {files}. Save or discard these edits and sync again.",
   "git_sync_remote_checking": "Checking remote status…",
   "git_sync_outgoing_unchecked": "The outgoing commit list is unavailable until remote status is checked.",
   "git_sync_access_read_only": "This repository is read-only. Publishing requires write access.",

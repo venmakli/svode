@@ -74,3 +74,27 @@ test("unknown push failures keep the existing redacted text", async () => {
     await setLocale(original, { reload: false });
   }
 });
+
+test("a pull blocked by local files names every file and the recovery", async () => {
+  const original = getLocale();
+  const blocked = {
+    kind: "git_pull_blocked",
+    repository: "/project/space",
+    files: [".gitattributes", ".gitignore", "docs/План.md"],
+  };
+  try {
+    await setLocale("ru", { reload: false });
+    expect(gitSyncErrorMessage(blocked)).toBe(
+      "Входящие изменения затрагивают файлы с несохранёнными правками: .gitattributes, .gitignore, docs/План.md. Сохраните или отмените эти правки и повторите синхронизацию.",
+    );
+    await setLocale("en", { reload: false });
+    expect(gitSyncErrorMessage(blocked)).toBe(
+      "Incoming changes affect files with unsaved edits: .gitattributes, .gitignore, docs/План.md. Save or discard these edits and sync again.",
+    );
+    expect(gitSyncErrorMessage({ ...blocked, files: [] })).toBe(
+      "Failed to sync",
+    );
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});

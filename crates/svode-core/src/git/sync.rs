@@ -214,6 +214,20 @@ async fn handle_pull_failure(
         return Ok(SyncResult::Conflict { files });
     }
 
+    if blocked_by_local_files(stderr) {
+        // A refused merge leaves FETCH_HEAD at the revision it would have merged.
+        match interfering_paths(cli, space_dir, "FETCH_HEAD").await {
+            Ok(files) if !files.is_empty() => {
+                return Err(GitError::PullBlocked {
+                    repository: space_dir.to_string_lossy().into_owned(),
+                    files,
+                });
+            }
+            Ok(_) => tracing::warn!("git pull refused without interfering local files"),
+            Err(error) => tracing::warn!("interfering local files unavailable: {error}"),
+        }
+    }
+
     let error = super::ops::git_remote_command_error("git pull", stderr);
     remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await
 }
@@ -242,6 +256,159 @@ async fn auth_required(
     Ok(SyncResult::AuthRequired {
         challenge: super::auth::build_auth_challenge(cli, space_dir, operation, detail).await,
     })
+}
+
+/// Git refused to start the merge because it would overwrite uncommitted or
+/// untracked files.
+fn blocked_by_local_files(stderr: &str) -> bool {
+    [
+        "would be overwritten by merge",
+        "would be removed by merge",
+        "would lose untracked files",
+    ]
+    .iter()
+    .any(|marker| stderr.contains(marker))
+}
+
+/// Uncommitted and untracked paths of `repo` that merging `incoming` into
+/// HEAD would overwrite: local edits overlapping paths the incoming side
+/// changed since the merge base. A merge that is not a fast-forward also
+/// requires the index to equal HEAD, so every staged path interferes then.
+/// Read-only: neither the index nor the working tree is refreshed.
+pub(crate) async fn interfering_paths(
+    cli: &GitCli,
+    repo: &Path,
+    incoming: &str,
+) -> Result<Vec<String>, GitError> {
+    let head = revision(cli, repo, &["rev-parse", "--verify", "-q", "HEAD"]).await?;
+    let (incoming_paths, staged, merge) = match head {
+        Some(head) => {
+            let base = revision(cli, repo, &["merge-base", "HEAD", incoming]).await?;
+            let from = base.as_deref().unwrap_or("HEAD");
+            let incoming_paths = path_list(
+                cli,
+                repo,
+                &["diff", "--name-only", "-z", "--no-renames", from, incoming],
+            )
+            .await?;
+            let staged = path_list(
+                cli,
+                repo,
+                &[
+                    "diff",
+                    "--cached",
+                    "--name-only",
+                    "-z",
+                    "--no-renames",
+                    "HEAD",
+                ],
+            )
+            .await?;
+            (
+                incoming_paths,
+                staged,
+                base.as_deref() != Some(head.as_str()),
+            )
+        }
+        None => {
+            let incoming_paths = path_list(
+                cli,
+                repo,
+                &[
+                    "ls-tree",
+                    "-r",
+                    "-z",
+                    "--name-only",
+                    "--full-tree",
+                    incoming,
+                ],
+            )
+            .await?;
+            let staged =
+                path_list(cli, repo, &["ls-files", "-z", "--full-name", "--", ":/"]).await?;
+            (incoming_paths, staged, false)
+        }
+    };
+    // Git leaves a submodule checkout alone when merging its gitlink.
+    let unstaged = path_list(
+        cli,
+        repo,
+        &[
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--ignore-submodules=all",
+        ],
+    )
+    .await?;
+    let untracked = path_list(
+        cli,
+        repo,
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--exclude-standard",
+            "--full-name",
+            "--",
+            ":/",
+        ],
+    )
+    .await?;
+    let mut files: std::collections::BTreeSet<String> = staged
+        .iter()
+        .chain(&unstaged)
+        .chain(&untracked)
+        .filter(|path| {
+            incoming_paths
+                .iter()
+                .any(|changed| paths_overlap(path, changed))
+        })
+        .cloned()
+        .collect();
+    if merge {
+        files.extend(staged);
+    }
+    Ok(files.into_iter().collect())
+}
+
+/// The same path, or one is a directory containing the other.
+fn paths_overlap(local: &str, incoming: &str) -> bool {
+    let nested = |outer: &str, inner: &str| {
+        inner
+            .strip_prefix(outer)
+            .is_some_and(|rest| rest.starts_with('/'))
+    };
+    local == incoming || nested(local, incoming) || nested(incoming, local)
+}
+
+async fn revision(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<Option<String>, GitError> {
+    let out = cli.exec(repo, args).await?;
+    let oid = out.stdout.trim();
+    Ok((out.exit_code == 0 && !oid.is_empty()).then(|| oid.to_string()))
+}
+
+async fn path_list(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<Vec<String>, GitError> {
+    let out = cli.exec(repo, args).await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git {} failed: {}",
+            args[0],
+            out.stderr.trim()
+        )));
+    }
+    out.stdout
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            // `ls-files --others` names an untracked nested repository as a directory.
+            crate::git::path::normalize_repo_relative(
+                path.trim_end_matches('/'),
+                crate::git::path::RootMode::Reject,
+            )
+        })
+        .collect()
 }
 
 /// Get list of conflicted files.
@@ -370,3 +537,7 @@ pub async fn merge_abort(cli: &GitCli, space_dir: &Path) -> Result<(), GitError>
     tracing::info!("Aborted merge in {}", space_dir.display());
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "pull_block_tests.rs"]
+mod pull_block_tests;
