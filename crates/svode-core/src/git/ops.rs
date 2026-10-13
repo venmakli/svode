@@ -1006,97 +1006,211 @@ pub fn validate_clone_url(url: &str) -> Result<(), GitError> {
 /// This is used both for newly initialized spaces and for existing git repos
 /// that Svode scaffolds later. The latter path must update `.gitignore` before
 /// staging `.svode/`, otherwise `.svode/local.json` can be committed.
+///
+/// The rules live in one `# svode:local` block. Records earlier versions
+/// wrote (`# Svode local files` runs, the S3 agent block, extra blocks) are
+/// merged into it at the position of the last one; a record above a negation
+/// stays in place, since moving it below would change what Git ignores.
 pub fn ensure_svode_gitignore(space_dir: &Path) -> Result<bool, GitError> {
     let gitignore = space_dir.join(".gitignore");
-    let content = if gitignore.exists() {
-        std::fs::read_to_string(&gitignore)?
-    } else {
-        String::new()
+    let content = read_gitignore(&gitignore)?;
+    let (lines, eol) = gitignore_lines(&content);
+    let records = local_records(&lines);
+    let updated = match records.last() {
+        None => append_block(&content, &managed_block("", [], LOCAL_BLOCK, eol), eol),
+        Some(last) => {
+            let merged = records
+                .iter()
+                .filter(|record| {
+                    !lines[record.start..last.start]
+                        .iter()
+                        .any(|line| line_text(line).trim_start().starts_with('!'))
+                })
+                .collect::<Vec<_>>();
+            let user = merged
+                .iter()
+                .flat_map(|record| record.user.iter().map(|&index| line_text(lines[index])));
+            let block = managed_block("", user, LOCAL_BLOCK, eol);
+            let mut updated = String::with_capacity(content.len() + block.len());
+            let mut index = 0;
+            for record in &merged {
+                updated.push_str(&lines[index..record.start].concat());
+                if record.start == last.start {
+                    updated.push_str(&block);
+                }
+                index = record.end;
+            }
+            updated.push_str(&lines[index..].concat());
+            updated
+        }
     };
-
-    if content.is_empty() {
-        std::fs::write(
-            &gitignore,
-            &format!("# Svode local files\n{}\n", super::policy::rules("")),
-        )?;
-        return Ok(true);
-    }
-
-    let missing: Vec<&str> = super::policy::ENTRIES
-        .iter()
-        .copied()
-        .filter(|entry| {
-            !content.lines().any(|line| {
-                let trimmed = line.trim();
-                trimmed == *entry || trimmed.strip_prefix('/') == Some(*entry)
-            })
-        })
-        .collect();
-
-    if missing.is_empty() {
+    if updated == content {
         return Ok(false);
     }
-
-    let mut new_content = content;
-    if !new_content.ends_with('\n') {
-        new_content.push('\n');
-    }
-    new_content.push_str("# Svode local files\n");
-    for entry in missing {
-        new_content.push_str(entry);
-        new_content.push('\n');
-    }
-    std::fs::write(&gitignore, new_content)?;
+    std::fs::write(&gitignore, updated)?;
     Ok(true)
 }
 
-const INLINE_BLOCK_START: &str = "# svode:inline:start";
-const INLINE_BLOCK_END: &str = "# svode:inline:end";
+const LOCAL_BLOCK: (&str, &str) = ("# svode:local:start", "# svode:local:end");
+const INLINE_BLOCK: (&str, &str) = ("# svode:inline:start", "# svode:inline:end");
 const SPACES_BLOCK_START: &str = "# svode:spaces:start";
 const SPACES_BLOCK_END: &str = "# svode:spaces:end";
 
-/// Ensure the inline wildcard block exists in root .gitignore.
-pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), GitError> {
-    let inline_rules = super::policy::rules("*/");
-    let gitignore = project_path.join(".gitignore");
-    let content = if gitignore.exists() {
-        std::fs::read_to_string(&gitignore)?
-    } else {
-        String::new()
-    };
+/// A Svode-owned record of local rules: lines `start..end` of `.gitignore`
+/// and the user lines inside it.
+struct LocalRecord {
+    start: usize,
+    end: usize,
+    user: Vec<usize>,
+}
 
-    if let Some((before, block, after)) =
-        extract_block(&content, INLINE_BLOCK_START, INLINE_BLOCK_END)
-    {
-        let mut entries = block
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        for entry in inline_rules.lines() {
-            if !entries.iter().any(|line| line.trim() == entry) {
-                entries.push(entry.to_string());
+/// Recognize Svode-owned records: `# svode:local` blocks, `# Svode local
+/// files` runs of lines Svode wrote and S3 agent blocks holding only its path.
+fn local_records(lines: &[&str]) -> Vec<LocalRecord> {
+    let mut records = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let text = line_text(lines[index]).trim();
+        let start = index;
+        index += 1;
+        if text == LOCAL_BLOCK.0 {
+            if let Some(end) = block_end(lines, start, LOCAL_BLOCK) {
+                let user = (start + 1..end)
+                    .filter(|&line| {
+                        let text = line_text(lines[line]);
+                        !text.trim().is_empty() && !super::policy::written(text, "")
+                    })
+                    .collect();
+                records.push(LocalRecord {
+                    start,
+                    end: end + 1,
+                    user,
+                });
+                index = end + 1;
+            }
+        } else if text == super::policy::LEGACY_S3_START {
+            let markers = (super::policy::LEGACY_S3_START, super::policy::LEGACY_S3_END);
+            if let Some(end) = block_end(lines, start, markers) {
+                if lines[start + 1..end]
+                    .iter()
+                    .all(|line| matches!(line_text(line).trim(), "" | super::policy::S3_AGENT))
+                {
+                    records.push(LocalRecord {
+                        start,
+                        end: end + 1,
+                        user: Vec::new(),
+                    });
+                }
+                index = end + 1;
+            }
+        } else if text == super::policy::LEGACY_HEADER {
+            let end = (index..lines.len())
+                .find(|&line| !super::policy::written(line_text(lines[line]), ""))
+                .unwrap_or(lines.len());
+            if end > index {
+                records.push(LocalRecord {
+                    start,
+                    end,
+                    user: Vec::new(),
+                });
+                index = end;
             }
         }
-        let updated = format!(
-            "{before}{INLINE_BLOCK_START}\n{}\n{INLINE_BLOCK_END}\n{after}",
-            entries.join("\n")
-        );
-        if updated != content {
-            std::fs::write(&gitignore, updated)?;
-        }
-        return Ok(());
     }
+    records
+}
 
-    let mut new_content = content;
-    if !new_content.is_empty() && !new_content.ends_with('\n') {
-        new_content.push('\n');
+fn read_gitignore(path: &Path) -> Result<String, GitError> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error.into()),
     }
-    new_content.push_str(&format!(
-        "{}\n{}\n{}\n",
-        INLINE_BLOCK_START, inline_rules, INLINE_BLOCK_END
-    ));
-    std::fs::write(&gitignore, new_content)?;
+}
+
+/// Lines of `.gitignore` with their own endings, so untouched lines keep their
+/// bytes, and the line ending the file uses.
+fn gitignore_lines(content: &str) -> (Vec<&str>, &'static str) {
+    let eol = match content.split_once('\n') {
+        Some((first, _)) if first.ends_with('\r') => "\r\n",
+        _ => "\n",
+    };
+    (content.split_inclusive('\n').collect(), eol)
+}
+
+fn line_text(line: &str) -> &str {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
+/// Line of the end marker closing the block opened at `start`, unless another
+/// start marker comes first.
+fn block_end(lines: &[&str], start: usize, (open, close): (&str, &str)) -> Option<usize> {
+    let end = start
+        + 1
+        + lines[start + 1..].iter().position(|line| {
+            let text = line_text(line).trim();
+            text == open || text == close
+        })?;
+    (line_text(lines[end]).trim() == close).then_some(end)
+}
+
+/// Managed block with every `ENTRIES` rule under `prefix`, then `user` lines.
+fn managed_block<'a>(
+    prefix: &str,
+    user: impl IntoIterator<Item = &'a str>,
+    (open, close): (&str, &str),
+    eol: &str,
+) -> String {
+    let mut block = format!("{open}{eol}");
+    for entry in super::policy::ENTRIES {
+        block.push_str(&format!("{prefix}{entry}{eol}"));
+    }
+    for line in user {
+        block.push_str(&format!("{line}{eol}"));
+    }
+    block.push_str(&format!("{close}{eol}"));
+    block
+}
+
+fn append_block(content: &str, block: &str, eol: &str) -> String {
+    let mut updated = content.to_owned();
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push_str(eol);
+    }
+    updated.push_str(block);
+    updated
+}
+
+/// Ensure the inline wildcard block exists in root .gitignore with every
+/// `ENTRIES` rule; lines earlier versions wrote are replaced, other lines of
+/// the block are kept after them.
+pub fn ensure_inline_gitignore(project_path: &Path) -> Result<(), GitError> {
+    let gitignore = project_path.join(".gitignore");
+    let content = read_gitignore(&gitignore)?;
+    let (lines, eol) = gitignore_lines(&content);
+    let block = lines
+        .iter()
+        .position(|line| line_text(line).trim() == INLINE_BLOCK.0)
+        .and_then(|start| block_end(&lines, start, INLINE_BLOCK).map(|end| (start, end)));
+    let updated = match block {
+        Some((start, end)) => {
+            let user = lines[start + 1..end]
+                .iter()
+                .map(|line| line_text(line))
+                .filter(|text| !text.trim().is_empty() && !super::policy::written(text, "*/"));
+            format!(
+                "{}{}{}",
+                lines[..start].concat(),
+                managed_block("*/", user, INLINE_BLOCK, eol),
+                lines[end + 1..].concat()
+            )
+        }
+        None => append_block(&content, &managed_block("*/", [], INLINE_BLOCK, eol), eol),
+    };
+    if updated != content {
+        std::fs::write(&gitignore, updated)?;
+    }
     Ok(())
 }
 
@@ -2062,8 +2176,10 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
 
         assert!(changed);
-        assert!(content.contains(".svode/local.json"));
-        assert!(content.contains(".svode/*.db*"));
+        assert_eq!(
+            content,
+            "# svode:local:start\n.svode/local.json\n.svode/navigation.*\n.svode/write.lock\n.svode/lfs-s3-agent.json\n.svode/variables.*\n.svode/*.db*\n# svode:local:end\n"
+        );
 
         let changed_again = ensure_svode_gitignore(tmp.path()).unwrap();
         let content_again = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
@@ -2085,9 +2201,9 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
 
         assert!(changed);
-        assert!(content.starts_with("target/\n/.svode/local.json\n"));
-        assert_eq!(content.matches(".svode/local.json").count(), 1);
-        assert!(content.contains(".svode/*.db*"));
+        assert!(content.starts_with("target/\n/.svode/local.json\n# svode:local:start\n"));
+        assert!(content.contains("\n.svode/local.json\n"));
+        assert!(content.ends_with(".svode/*.db*\n# svode:local:end\n"));
     }
 
     #[tokio::test]

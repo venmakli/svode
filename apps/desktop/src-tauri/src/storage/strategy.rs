@@ -252,15 +252,16 @@ pub async fn apply_strategy(
     }
 
     // --- LFS S3 custom transfer agent (svode-lfs) wiring/teardown. ---
-    // For LfsS3 we ensure the local agent config is ignored and register the
-    // svode-lfs sidecar as the standalone transfer agent, replacing any legacy
-    // lfs-dal registration. The caller publishes credentials after strategy
-    // apply and portable config persistence succeed. For any other strategy we
-    // tear our own git config back down — without disturbing a foreign active
-    // agent — so a stale agent doesn't fire on push.
+    // For LfsS3 we ensure the local agent config is ignored by the repository's
+    // `# svode:local` block and register the svode-lfs sidecar as the
+    // standalone transfer agent, replacing any legacy lfs-dal registration.
+    // The caller publishes credentials after strategy apply and portable
+    // config persistence succeed. For any other strategy we tear our own git
+    // config back down — without disturbing a foreign active agent — so a
+    // stale agent doesn't fire on push.
     if matches!(new, AssetsStrategy::LfsS3) {
         let bin = svode_lfs_path.expect("checked above");
-        svode_core::storage::s3::ensure_agent_gitignore(space_dir)?;
+        svode_core::git::ops::ensure_svode_gitignore(space_dir)?;
         if let Err(e) = write_managed_registration(&cli, space_dir, bin).await {
             result.warnings.push(StrategyWarning::with_detail(
                 StrategyWarningCode::LfsAgentSetupFailed,
@@ -574,6 +575,50 @@ mod tests {
             std::fs::read_to_string(repo.join(".lfsconfig"))?,
             "[lfs]\n\turl = https://lfs.example.test/\n"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lfs_s3_apply_ignores_agent_config_in_the_local_block() -> Result<(), AppError> {
+        let Some((git_state, temp, repo)) = setup_remote_tracking_repo().await? else {
+            return Ok(());
+        };
+        let cli = git_state.detected().expect("checked above");
+        if !cli.lfs_available() {
+            return Ok(());
+        }
+        let bin = make_fake_binary(&temp.path().join("bin"), "svode-lfs")?;
+        let s3 = AssetsS3Config {
+            endpoint: "https://s3.example.test".into(),
+            bucket: "bucket".into(),
+            region: "us-east-1".into(),
+            prefix: "project".into(),
+        };
+        let block = "# svode:local:start\n.svode/local.json\n.svode/navigation.*\n.svode/write.lock\n.svode/lfs-s3-agent.json\n.svode/variables.*\n.svode/*.db*\n# svode:local:end\n";
+        let legacy = "user/\n# Svode local files\n.svode/local.json\n.svode/*.db*\n# svode:lfs-s3-agent:start\n.svode/lfs-s3-agent.json\n# svode:lfs-s3-agent:end\n";
+
+        for (before, expected) in [
+            (None, block.to_string()),
+            (Some(legacy), format!("user/\n{block}")),
+        ] {
+            if let Some(before) = before {
+                std::fs::write(repo.join(".gitignore"), before)?;
+            }
+            apply_strategy(
+                &git_state,
+                &repo,
+                AssetsStrategy::LfsS3,
+                &legacy_routing(),
+                Some(&s3),
+                Some(&bin),
+            )
+            .await?;
+            assert_eq!(std::fs::read_to_string(repo.join(".gitignore"))?, expected);
+            assert_eq!(
+                git_stdout(cli, &repo, &["check-ignore", ".svode/lfs-s3-agent.json"]).await?,
+                ".svode/lfs-s3-agent.json"
+            );
+        }
         Ok(())
     }
 

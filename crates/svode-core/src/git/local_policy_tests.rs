@@ -21,6 +21,410 @@ const LOCALS: &[&str] = &[
     "agent-sessions.db.tmp-1",
 ];
 
+const LEGACY_S3: &str =
+    "# svode:lfs-s3-agent:start\n.svode/lfs-s3-agent.json\n# svode:lfs-s3-agent:end\n";
+
+const BLOCK: &str = "# svode:local:start
+.svode/local.json
+.svode/navigation.*
+.svode/write.lock
+.svode/lfs-s3-agent.json
+.svode/variables.*
+.svode/*.db*
+# svode:local:end
+";
+
+const INLINE_ENTRIES: &str = "# svode:inline:start
+*/.svode/local.json
+*/.svode/navigation.*
+*/.svode/write.lock
+*/.svode/lfs-s3-agent.json
+*/.svode/variables.*
+*/.svode/*.db*
+";
+
+/// `.gitignore` of a user project with S3 on 2026-09-28, verbatim (DF-151).
+const EVIDENCE: &str = "# Svode local files
+.svode/local.json
+.svode/*.db
+.svode/*.db-wal
+.svode/*.db-shm
+# svode:lfs-s3-agent:start
+.svode/lfs-s3-agent.json
+# svode:lfs-s3-agent:end
+# Svode local files
+.svode/*.db*
+# Svode local files
+.svode/variables.*
+# Svode local files
+.svode/write.lock
+";
+
+/// Root with independent Spaces and user rules between Svode records.
+const ROOT_WITH_USER_RULES: &str = "# Svode local files
+.svode/local.json
+.svode/*.db
+.svode/*.db-wal
+.svode/*.db-shm
+# svode:spaces:start
+sale/
+develop/
+compliance/
+support/
+marketing/
+# svode:spaces:end
+.DS_Store
+strategy/teamly-export/
+# Svode local files
+.svode/*.db*
+# Svode local files
+.svode/lfs-s3-agent.json
+.svode/variables.*
+# Svode local files
+.svode/write.lock
+# Svode local files
+.svode/navigation.*
+";
+
+/// Independent Space with the S3 agent path under a header and in its block.
+const SPACE_WITH_DOUBLE_S3: &str = "# Svode local files
+.svode/local.json
+.svode/*.db
+.svode/*.db-wal
+.svode/*.db-shm
+# Svode local files
+.svode/*.db*
+# Svode local files
+.svode/lfs-s3-agent.json
+.svode/variables.*
+# svode:lfs-s3-agent:start
+.svode/lfs-s3-agent.json
+# svode:lfs-s3-agent:end
+# Svode local files
+.svode/write.lock
+# Svode local files
+.svode/navigation.*
+";
+
+/// Pre-rename records, which repair leaves as they are.
+const COMBAI_RUN: &str = "# CombAI local files
+.combai/local.json
+.combai/*.db
+.combai/*.db-wal
+.combai/*.db-shm
+";
+
+const COMBAI_BLOCKS: &str = "# combai:inline:start
+*/.combai/local.json
+*/.combai/*.db
+*/.combai/*.db-*
+# combai:inline:end
+# combai:spaces:start
+vtoroj/
+# combai:spaces:end
+";
+
+const STALE_INLINE: &str = "# svode:inline:start
+*/.svode/local.json
+*/.svode/*.db
+*/.svode/*.db-*
+# svode:inline:end
+";
+
+const FOREIGN_BLOCKS: &str = "# svode:spaces:start
+soprovozhdenie/
+# svode:spaces:end
+# svode:assets-ignore:start
+.assets/
+# svode:assets-ignore:end
+";
+
+/// Later root lines of a renamed project and of its independent Space.
+const SVODE_RUNS: &str = "# Svode local files
+.svode/*.db*
+# Svode local files
+.svode/lfs-s3-agent.json
+.svode/variables.*
+# Svode local files
+.svode/write.lock
+# Svode local files
+.svode/navigation.*
+";
+
+const FIRST_RUN: &str = "# Svode local files
+.svode/local.json
+.svode/*.db
+.svode/*.db-wal
+.svode/*.db-shm
+";
+
+/// A user rule inside an upper block and its negation above a later record.
+const NEGATED_USER_RULE: &str = "# svode:local:start
+.svode/local.json
+*.log
+# svode:local:end
+!keep.log
+";
+
+/// A negated path of an `ENTRIES` class between two records.
+const NEGATED_LOCAL_CLASS: &str = "# Svode local files
+.svode/local.json
+.svode/*.db*
+!.svode/keep.db
+";
+
+/// Evidence fixtures: name, `.gitignore` before and after root repair.
+fn fixtures() -> Vec<(&'static str, String, String)> {
+    let renamed_root =
+        format!("{COMBAI_RUN}{COMBAI_BLOCKS}{FIRST_RUN}{STALE_INLINE}{FOREIGN_BLOCKS}{SVODE_RUNS}");
+    vec![
+        ("evidence 2026-09-28", EVIDENCE.into(), BLOCK.into()),
+        (
+            "root with user rules",
+            ROOT_WITH_USER_RULES.into(),
+            format!(
+                "# svode:spaces:start\nsale/\ndevelop/\ncompliance/\nsupport/\nmarketing/\n# svode:spaces:end\n.DS_Store\nstrategy/teamly-export/\n{BLOCK}"
+            ),
+        ),
+        (
+            "space with double S3",
+            SPACE_WITH_DOUBLE_S3.into(),
+            BLOCK.into(),
+        ),
+        (
+            "renamed root",
+            renamed_root,
+            format!("{COMBAI_RUN}{COMBAI_BLOCKS}{STALE_INLINE}{FOREIGN_BLOCKS}{BLOCK}"),
+        ),
+        (
+            "renamed space",
+            format!("{COMBAI_RUN}{FIRST_RUN}{SVODE_RUNS}"),
+            format!("{COMBAI_RUN}{BLOCK}"),
+        ),
+        (
+            "negated user rule",
+            format!("{NEGATED_USER_RULE}{LEGACY_S3}"),
+            format!("{NEGATED_USER_RULE}{BLOCK}"),
+        ),
+        (
+            "negated local class",
+            format!("{NEGATED_LOCAL_CLASS}{LEGACY_S3}"),
+            format!("{NEGATED_LOCAL_CLASS}{BLOCK}"),
+        ),
+    ]
+}
+
+/// Repair `before` as the root `.gitignore` of `dir`, check that a second
+/// repair keeps the bytes and that every `ENTRIES` rule is an exact line, so
+/// earlier versions find nothing missing.
+fn repair_text(dir: &std::path::Path, before: Option<&str>) -> String {
+    let path = dir.join(".gitignore");
+    match before {
+        Some(before) => std::fs::write(&path, before).unwrap(),
+        None => {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    assert!(ops::ensure_svode_gitignore(dir).unwrap());
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert!(!ops::ensure_svode_gitignore(dir).unwrap());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), after);
+    for entry in local_policy::ENTRIES {
+        assert!(
+            after
+                .lines()
+                .any(|line| line.trim_end_matches('\r') == *entry)
+        );
+    }
+    after
+}
+
+#[test]
+fn local_block_merges_evidence_records_and_repeats_byte_identical() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (name, before, expected) in fixtures() {
+        assert_eq!(repair_text(tmp.path(), Some(&before)), expected, "{name}");
+        // A block above a negation stays where it is (R3).
+        let blocks = if name == "negated user rule" { 2 } else { 1 };
+        assert_eq!(
+            expected.matches("# svode:local:start").count(),
+            blocks,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn local_block_boundaries_keep_user_lines_and_foreign_records() {
+    let tmp = tempfile::tempdir().unwrap();
+    let block =
+        |user: &str| BLOCK.replace("# svode:local:end", &format!("{user}# svode:local:end"));
+    for (before, expected) in [
+        // A user line ends the run and stays with everything below it.
+        (
+            "# Svode local files\n.svode/local.json\ncustom.log\n.svode/*.db\n".to_string(),
+            format!("{BLOCK}custom.log\n.svode/*.db\n"),
+        ),
+        // A header without a Svode line right below it is not a record.
+        (
+            "# Svode local files\n\n.svode/local.json\n".into(),
+            format!("# Svode local files\n\n.svode/local.json\n{BLOCK}"),
+        ),
+        (
+            "/.svode/local.json\n.svode/*.db\n".into(),
+            format!("/.svode/local.json\n.svode/*.db\n{BLOCK}"),
+        ),
+        (
+            format!("{BLOCK}user\n# Svode local files\n.svode/write.lock\n"),
+            format!("user\n{BLOCK}"),
+        ),
+        (
+            "# svode:local:start\n.svode/*.db\nbuild/\n.svode/local.json\n# svode:local:end\n".into(),
+            block("build/\n"),
+        ),
+        (
+            format!("{}mid\n{}", block("a/\n"), block("b/\n")),
+            format!("mid\n{}", block("a/\nb/\n")),
+        ),
+        (
+            "# svode:lfs-s3-agent:start\n.svode/lfs-s3-agent.json\ncustom\n# svode:lfs-s3-agent:end\n".into(),
+            format!("# svode:lfs-s3-agent:start\n.svode/lfs-s3-agent.json\ncustom\n# svode:lfs-s3-agent:end\n{BLOCK}"),
+        ),
+        (
+            EVIDENCE.replace('\n', "\r\n").replacen("# Svode", "user\r\n# Svode", 1),
+            format!("user\r\n{}", BLOCK.replace('\n', "\r\n")),
+        ),
+        (String::new(), BLOCK.into()),
+        ("user".into(), format!("user\n{BLOCK}")),
+        (
+            "user\n# Svode local files\n.svode/local.json".into(),
+            format!("user\n{BLOCK}"),
+        ),
+    ] {
+        assert_eq!(repair_text(tmp.path(), Some(&before)), expected, "{before:?}");
+    }
+    assert_eq!(repair_text(tmp.path(), None), BLOCK);
+}
+
+#[test]
+fn inline_block_canonicalizes_previous_lines_and_keeps_user_lines() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join(".gitignore");
+    for (before, expected) in [
+        (
+            "user-rule\n# svode:inline:start\n*/.svode/local.json\n*/.svode/*.db\n*/.svode/*.db-*\ncustom-local-rule\n*/.svode/variables.*\n# svode:inline:end\nafter-rule\n".to_string(),
+            format!("user-rule\n{INLINE_ENTRIES}custom-local-rule\n# svode:inline:end\nafter-rule\n"),
+        ),
+        (
+            format!("{COMBAI_RUN}{COMBAI_BLOCKS}{STALE_INLINE}{FOREIGN_BLOCKS}"),
+            format!("{COMBAI_RUN}{COMBAI_BLOCKS}{INLINE_ENTRIES}# svode:inline:end\n{FOREIGN_BLOCKS}"),
+        ),
+    ] {
+        std::fs::write(&path, &before).unwrap();
+        ops::ensure_inline_gitignore(tmp.path()).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after, expected);
+        ops::ensure_inline_gitignore(tmp.path()).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), after);
+    }
+}
+
+/// Paths of every DF-102 class, portable Svode files and user paths of the
+/// fixtures, at the root and inside an inline Space.
+fn probe_paths() -> Vec<String> {
+    let mut paths = Vec::new();
+    for prefix in ["", "child/"] {
+        for name in LOCALS
+            .iter()
+            .chain(&["config.json", "AGENTS.md", "keep.db"])
+        {
+            paths.push(format!("{prefix}.svode/{name}"));
+        }
+        paths.push(format!("{prefix}.combai/index.db"));
+    }
+    for path in [
+        "out.log",
+        "keep.log",
+        "vtoroj/page.md",
+        "soprovozhdenie/page.md",
+        ".assets/file.bin",
+        "strategy/teamly-export/data.csv",
+        ".DS_Store",
+    ] {
+        paths.push(path.into());
+    }
+    paths
+}
+
+async fn ignored(
+    cli: &super::cli::GitCli,
+    root: &std::path::Path,
+) -> std::collections::BTreeSet<String> {
+    let paths = probe_paths();
+    let mut args = vec!["check-ignore", "-v", "--no-index", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let out = cli.exec_redacted(root, &args).await.unwrap();
+    assert!(out.exit_code <= 1, "{}", out.stderr);
+    eprintln!("{}", out.stdout.trim_end());
+    // `-v` also lists paths whose last matching pattern is a negation.
+    out.stdout
+        .lines()
+        .filter_map(|line| {
+            let (source, path) = line.split_once('\t').unwrap();
+            let pattern = source.splitn(3, ':').nth(2).unwrap();
+            (!pattern.starts_with('!')).then(|| path.to_string())
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn local_block_repair_keeps_effective_git_ignores() {
+    let cli = cli();
+    for (name, before, _) in fixtures() {
+        let tmp = repo(&cli, false).await;
+        let root = tmp.path();
+        git(&cli, root, &["config", "core.excludesFile", "/dev/null"]).await;
+        for path in probe_paths() {
+            write(root, &path, "bytes\n");
+        }
+        write(root, ".gitignore", &before);
+        eprintln!("--- {name}: before");
+        let previous = ignored(&cli, root).await;
+        ops::ensure_svode_gitignore(root).unwrap();
+        if before.contains("# svode:inline:start") {
+            ops::ensure_inline_gitignore(root).unwrap();
+        }
+        eprintln!("--- {name}: after");
+        let current = ignored(&cli, root).await;
+        assert!(current.is_superset(&previous), "{name}");
+        for path in current.difference(&previous) {
+            let file = path.rsplit('/').next().unwrap();
+            assert!(
+                local_policy::contains(path) && (LOCALS.contains(&file) || file == "keep.db"),
+                "{name}: {path} is not a local class path"
+            );
+        }
+        for portable in [
+            ".svode/config.json",
+            ".svode/AGENTS.md",
+            "child/.svode/config.json",
+            "child/.svode/AGENTS.md",
+        ] {
+            assert!(!current.contains(portable), "{name}: {portable}");
+        }
+        if name == "negated user rule" {
+            assert!(previous.contains("out.log"));
+            assert!(!current.contains("keep.log"));
+        }
+        if name == "negated local class" {
+            // R3: a negated path of an `ENTRIES` class becomes ignored by
+            // the block below the negation, as any newly added class would.
+            assert!(!previous.contains(".svode/keep.db"));
+            assert!(current.contains(".svode/keep.db"));
+        }
+    }
+}
+
 #[tokio::test]
 async fn local_policy_effective_topology_and_storage_blocks() {
     let cli = cli();
@@ -62,7 +466,8 @@ async fn local_policy_effective_topology_and_storage_blocks() {
         };
         write(root.path(), ".gitattributes", attrs);
         if storage == "s3" {
-            crate::storage::s3::ensure_agent_gitignore(root.path()).unwrap();
+            let current = std::fs::read_to_string(root.path().join(".gitignore")).unwrap();
+            write(root.path(), ".gitignore", &format!("{current}{LEGACY_S3}"));
         }
         for target in [
             root.path().to_path_buf(),
@@ -173,6 +578,8 @@ async fn local_policy_effective_topology_and_storage_blocks() {
             before
         );
         let text = String::from_utf8(before).unwrap();
+        assert_eq!(text.matches("# svode:local:start").count(), 1);
+        assert!(!text.contains(local_policy::LEGACY_S3_START));
         assert!(text.contains("# user\nignored.md\n"));
         assert!(text.contains(assets));
         assert_eq!(

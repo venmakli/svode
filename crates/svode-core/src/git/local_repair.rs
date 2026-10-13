@@ -319,11 +319,9 @@ mod tests {
             git(&cli, root.path(), &["ls-files", "--stage", "-z"]).await,
             index
         );
-        assert!(
-            std::fs::read_to_string(root.path().join(".gitignore"))
-                .unwrap()
-                .starts_with(LEGACY)
-        );
+        let repaired = std::fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert!(repaired.starts_with("# user rules\ncustom.tmp\n# svode:local:start\n"));
+        assert!(!repaired.contains("# Svode local files"));
     }
 
     #[tokio::test]

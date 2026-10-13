@@ -15,12 +15,29 @@ pub const ENTRIES: &[&str] = &[
     ".svode/*.db*",
 ];
 
-pub fn rules(prefix: &str) -> String {
-    ENTRIES
-        .iter()
-        .map(|entry| format!("{prefix}{entry}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Root lines earlier versions wrote besides `ENTRIES`; `.svode/*.db*` covers
+/// them, so repair drops them together with their Svode-owned record.
+const LEGACY_ENTRIES: &[&str] = &[".svode/*.db", ".svode/*.db-wal", ".svode/*.db-shm"];
+
+/// Line only the inline block of earlier versions held, with the `*/` prefix.
+const LEGACY_INLINE_ENTRIES: &[&str] = &[".svode/*.db-*"];
+
+/// Unbounded header earlier versions wrote above each new set of root lines.
+pub(crate) const LEGACY_HEADER: &str = "# Svode local files";
+
+/// Markers of the block earlier versions wrote for the S3 agent config alone.
+pub(crate) const LEGACY_S3_START: &str = "# svode:lfs-s3-agent:start";
+pub(crate) const LEGACY_S3_END: &str = "# svode:lfs-s3-agent:end";
+
+/// Whether Svode has ever written `line` (trimmed) as a local rule of a
+/// repository root (`prefix` empty) or of the inline block (`prefix` `*/`).
+pub(crate) fn written(line: &str, prefix: &str) -> bool {
+    let Some(entry) = line.trim().strip_prefix(prefix) else {
+        return false;
+    };
+    ENTRIES.contains(&entry)
+        || LEGACY_ENTRIES.contains(&entry)
+        || (!prefix.is_empty() && LEGACY_INLINE_ENTRIES.contains(&entry))
 }
 
 pub fn contains(path: &str) -> bool {
