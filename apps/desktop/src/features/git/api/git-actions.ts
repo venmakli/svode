@@ -22,6 +22,7 @@ import {
   type GitSyncOutcome,
 } from "../model";
 import { toGitStatus, toSyncResult } from "./git-mappers";
+import { recordSyncStop } from "./git-sync-stop-actions";
 import { refreshGitRemoteStatus, refreshGitStatus } from "./git-status-actions";
 
 export interface GitCommitResult {
@@ -92,6 +93,7 @@ async function runSync(
       git.applyRemoteStatus(spacePath, toGitStatus(dto.remoteStatus));
     }
     recordSyncPublication(spacePath, result);
+    recordSyncStop(spacePath, result);
     switch (result.type) {
       case "Success":
         if (dto.type === "success" && !dto.remoteStatus) {
@@ -106,7 +108,8 @@ async function runSync(
         return result;
       case "Conflict":
         await refreshGitStatus(spacePath);
-        if (request.current()) git.setSyncError(spacePath, "conflict");
+        return result;
+      case "OperationInProgress":
         return result;
       case "Resolved":
         await refreshGitStatus(spacePath);

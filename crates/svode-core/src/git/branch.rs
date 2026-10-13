@@ -365,6 +365,27 @@ async fn ancestor(cli: &GitCli, repo: &Path, older: &str, newer: &str) -> Result
 }
 
 pub async fn ensure_no_operation(cli: &GitCli, repo: &Path) -> Result<(), GitError> {
+    match operation_in_progress(cli, repo).await? {
+        Some(_) => Err(blocked(BranchBlockReason::OperationInProgress)),
+        None => Ok(()),
+    }
+}
+
+/// Unfinished Git operation that only Git or its own recovery can conclude.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitOperation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+    Sequencer,
+}
+
+pub async fn operation_in_progress(
+    cli: &GitCli,
+    repo: &Path,
+) -> Result<Option<GitOperation>, GitError> {
     let path = |name| async move {
         checked(
             cli,
@@ -374,20 +395,28 @@ pub async fn ensure_no_operation(cli: &GitCli, repo: &Path) -> Result<(), GitErr
         .await
     };
     let paths = tokio::join!(
+        path("rebase-merge"),
+        path("rebase-apply"),
         path("MERGE_HEAD"),
         path("CHERRY_PICK_HEAD"),
         path("REVERT_HEAD"),
-        path("rebase-merge"),
-        path("rebase-apply"),
         path("sequencer"),
     );
-    for result in [paths.0, paths.1, paths.2, paths.3, paths.4, paths.5] {
-        let path = result?;
-        if Path::new(&path).exists() {
-            return Err(blocked(BranchBlockReason::OperationInProgress));
+    // A rebase may replay a merge, and a multi-commit pick keeps its sequencer:
+    // the most specific operation wins.
+    for (result, operation) in [
+        (paths.0, GitOperation::Rebase),
+        (paths.1, GitOperation::Rebase),
+        (paths.2, GitOperation::Merge),
+        (paths.3, GitOperation::CherryPick),
+        (paths.4, GitOperation::Revert),
+        (paths.5, GitOperation::Sequencer),
+    ] {
+        if Path::new(&result?).exists() {
+            return Ok(Some(operation));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Never repeat `submodule update` over an existing checkout, even after a partial clone.

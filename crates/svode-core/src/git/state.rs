@@ -7,6 +7,7 @@ use super::cli::GitCli;
 use super::operations::Operations;
 use super::pending::PendingPaths;
 use super::status::GitStatus;
+use super::sync::SyncResult;
 
 static DETECTED_CLI: OnceLock<Option<GitCli>> = OnceLock::new();
 
@@ -119,6 +120,14 @@ impl GitRuntime {
         };
         status.repository = Some(repository.to_string_lossy().into_owned());
         Ok(status)
+    }
+
+    /// What stops sync of the repository at `path` right now, as sync reports it.
+    pub async fn sync_preflight(&self, path: &Path) -> Result<Option<SyncResult>, GitError> {
+        let repository = super::access::resolve_repository(self.cli()?, path).await?;
+        let lock = self.get_lock(&repository).await;
+        let _guard = lock.lock().await;
+        super::sync::preflight(self.cli()?, path).await
     }
 }
 

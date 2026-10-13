@@ -87,7 +87,11 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
         },
       ]);
       const state = useGitStore.getState();
-      expect(state.syncError[spacePath]).toBe("conflict");
+      expect(spacePath in state.syncError).toBe(false);
+      expect(state.syncStop[spacePath]).toEqual({
+        kind: "conflict",
+        files: remaining,
+      });
       expect(state.statuses[spacePath]?.files.map((file) => file.path)).toEqual(
         remaining,
       );
@@ -129,11 +133,15 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
     });
     try {
       useGitStore.getState().applyStatus(spacePath, conflictStatus(["old.md"]));
+      useGitStore
+        .getState()
+        .setSyncStop(spacePath, { kind: "conflict", files: ["old.md"] });
       await continueGitResolve(spacePath, "old.md", "Old");
       expect(commands).toEqual(["git_resolve_continue", "git_status"]);
       expect(toasts).toEqual([]);
       const state = useGitStore.getState();
       expect(spacePath in state.syncError).toBe(false);
+      expect(spacePath in state.syncStop).toBe(false);
       expect(state.statuses[spacePath]?.hasConflicts).toBe(false);
     } finally {
       clearNativeMocks();

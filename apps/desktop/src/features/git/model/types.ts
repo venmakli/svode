@@ -55,7 +55,11 @@ export type SyncResult =
   | { type: "Conflict"; files: string[] }
   | { type: "Resolved" }
   | { type: "NoRemote" }
-  | { type: "AuthRequired"; challenge: GitAuthChallenge | null };
+  | { type: "AuthRequired"; challenge: GitAuthChallenge | null }
+  | { type: "OperationInProgress"; operation: GitOperation };
+
+/** Unfinished Git operation other than a merge, which is a sync conflict. */
+export type GitOperation = "rebase" | "cherry_pick" | "revert" | "sequencer";
 
 export interface ParentPublication {
   repository: string;

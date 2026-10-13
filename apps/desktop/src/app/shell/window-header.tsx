@@ -11,7 +11,12 @@ import {
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useActiveContentSelection } from "@/features/artifact";
-import { selectActiveSpacePath, useSpace } from "@/features/space";
+import {
+  getSpaceSnapshot,
+  selectActiveSpacePath,
+  useSpace,
+} from "@/features/space";
+import { openPage } from "@/features/page/navigation";
 import { useTrafficLightInset } from "./hooks/use-fullscreen";
 import { useShellStore } from "./model";
 import { cn } from "@/shared/lib/utils";
@@ -202,6 +207,7 @@ export function WindowHeader() {
             repositoryPath={repositoryPath}
             activateAccess={mainSurface === "content"}
             onOpenRepositorySettings={(path) => openSpaceSettings(path, "git")}
+            onOpenPage={openRepositoryPage}
           />
         ) : null}
         {activeRootPath ? (
@@ -213,4 +219,39 @@ export function WindowHeader() {
       </div>
     </header>
   );
+}
+
+/** Open a Page by its path in a repository: the root project or a Space. */
+function openRepositoryPage({
+  spacePath,
+  repositoryPath,
+  path,
+}: {
+  spacePath: string;
+  repositoryPath: string;
+  path: string;
+}) {
+  const { activeRootId, activeRootPath, activeSpaceId, spaces } =
+    getSpaceSnapshot();
+  // The repository identity may be the canonical path of the shown Space.
+  const owner = [repositoryPath, spacePath]
+    .map((candidate) =>
+      candidate === activeRootPath
+        ? { id: activeRootId, root: true }
+        : {
+            id: spaces.find((space) => space.path === candidate)?.id ?? null,
+            root: false,
+          },
+    )
+    .find((candidate) => candidate.id);
+  const spaceId = owner?.id;
+  if (!spaceId) return;
+  void passNavigationGuards().then((passed) => {
+    if (!passed) return;
+    const { clearActiveSpace, openSpace } = getSpaceSnapshot();
+    if (owner.root) {
+      if (activeSpaceId) clearActiveSpace();
+    } else if (spaceId !== activeSpaceId) void openSpace(spaceId);
+    openPage(path, spaceId);
+  });
 }

@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use super::GitError;
 use super::auth::{GitAuthChallenge, GitRemoteOperation};
+use super::branch::GitOperation;
 use super::cli::GitCli;
 use super::path::{RootMode, normalize_repo_relative};
 
@@ -23,6 +24,10 @@ pub enum SyncResult {
     },
     /// The last conflicted file was resolved while no merge was in progress.
     Resolved,
+    /// Sync stopped before pull and push: the operation is finished in Git.
+    OperationInProgress {
+        operation: GitOperation,
+    },
 }
 
 #[cfg(test)]
@@ -39,8 +44,10 @@ pub async fn sync_if_enabled(
 
 /// Pull then push. Handle conflicts, no-remote, and auth errors.
 pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError> {
+    if let Some(stopped) = preflight(cli, space_dir).await? {
+        return Ok(stopped);
+    }
     super::branch::prepare_existing(cli, space_dir).await?;
-    super::branch::ensure_no_operation(cli, space_dir).await?;
     // Check if remote is configured
     let remote_out = cli.exec(space_dir, &["remote"]).await?;
     if remote_out.stdout.trim().is_empty() {
@@ -93,6 +100,21 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
     })
+}
+
+/// The state that stops sync before branch preparation, pull and push.
+/// A merge in progress is the sync conflict with its files; any other
+/// operation is named and left to Git.
+pub async fn preflight(cli: &GitCli, repo: &Path) -> Result<Option<SyncResult>, GitError> {
+    Ok(
+        match super::branch::operation_in_progress(cli, repo).await? {
+            None => None,
+            Some(GitOperation::Merge) => Some(SyncResult::Conflict {
+                files: conflict_files(cli, repo).await?,
+            }),
+            Some(operation) => Some(SyncResult::OperationInProgress { operation }),
+        },
+    )
 }
 
 async fn sync_without_upstream(
@@ -541,3 +563,7 @@ pub async fn merge_abort(cli: &GitCli, space_dir: &Path) -> Result<(), GitError>
 #[cfg(test)]
 #[path = "pull_block_tests.rs"]
 mod pull_block_tests;
+
+#[cfg(test)]
+#[path = "sync_preflight_tests.rs"]
+mod preflight_tests;

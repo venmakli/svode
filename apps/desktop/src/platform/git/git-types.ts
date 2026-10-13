@@ -63,7 +63,11 @@ export type SyncResultDto =
   | { type: "conflict"; files: string[] }
   | { type: "resolved" }
   | { type: "noRemote" }
-  | { type: "authRequired"; challenge?: GitAuthChallengeDto | null };
+  | { type: "authRequired"; challenge?: GitAuthChallengeDto | null }
+  | { type: "operationInProgress"; operation: GitOperationDto };
+
+/** A merge in progress arrives as `conflict` with its files. */
+export type GitOperationDto = "rebase" | "cherry_pick" | "revert" | "sequencer";
 
 export interface ParentPublicationDto {
   repository: string;

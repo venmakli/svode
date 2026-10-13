@@ -67,6 +67,15 @@ export function getGitStatus(
   return invokeCommand<GitStatusDto>("git_status", { spacePath, remoteCounts });
 }
 
+/** The sync result an unfinished Git operation would give, without syncing. */
+export function getGitSyncPreflight(
+  spacePath: string,
+): Promise<SyncResultDto | null> {
+  return invokeCommand<SyncResultDto | null>("git_sync_preflight", {
+    spacePath,
+  });
+}
+
 export function fetchGitStatus(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_fetch_status", { spacePath });
 }

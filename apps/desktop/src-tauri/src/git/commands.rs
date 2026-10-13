@@ -381,6 +381,18 @@ pub async fn git_status(
     state.status(&path, remote_counts.unwrap_or(false)).await
 }
 
+/// The unfinished Git operation that stops sync, shown by the Git sync Dialog.
+#[tauri::command]
+pub async fn git_sync_preflight(
+    state: State<'_, GitState>,
+    space_path: String,
+) -> Result<Option<sync::SyncResult>, AppError> {
+    Ok(state
+        .runtime()
+        .sync_preflight(Path::new(&space_path))
+        .await?)
+}
+
 #[tauri::command]
 pub async fn git_fetch_status(
     app: AppHandle,

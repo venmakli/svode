@@ -393,6 +393,7 @@ pub fn run() {
             git::commands::git_init_space,
             git::commands::git_clone_space,
             git::commands::git_status,
+            git::commands::git_sync_preflight,
             git::commands::git_fetch_status,
             git::commands::git_commit_file,
             git::inspection::git_working_tree_item,

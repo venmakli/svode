@@ -34,6 +34,8 @@ import { isParentPointerPending } from "../model/publication";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
+import { gitSyncStopTitle } from "./git-sync-stop-copy";
+import { GitSyncStopNotice } from "./git-sync-stop-notice";
 import {
   repositoryAccessPresentation,
   type RepositoryAccessPresentation,
@@ -48,12 +50,19 @@ export interface GitSyncStatusWidgetProps {
   // indicator passively reads the canonical local snapshot.
   activateAccess?: boolean;
   onOpenRepositorySettings?: (repositoryPath: string) => void;
+  /** Open a Page listed in conflict; `path` is relative to `repositoryPath`. */
+  onOpenPage?: (target: {
+    spacePath: string;
+    repositoryPath: string;
+    path: string;
+  }) => void;
 }
 
 export function GitSyncStatusWidget({
   repositoryPath,
   activateAccess = false,
   onOpenRepositorySettings,
+  onOpenPage,
 }: GitSyncStatusWidgetProps) {
   const sync = useGitSyncWidget(repositoryPath);
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
@@ -65,8 +74,10 @@ export function GitSyncStatusWidget({
 
   const busy = sync.syncing || sync.checkingRemote || sync.parent.busy;
   const pendingParent = isParentPointerPending(sync.parent.publication);
+  const stop = sync.stop;
   const error = sync.syncError ?? sync.remoteError;
-  const hasSyncError = !!error;
+  // An unfinished Git operation explains why sync cannot run; it takes focus.
+  const hasSyncError = !!error && !stop;
   // An unreachable remote also leaves access unconfirmed; the sync warning covers both.
   const showAccessIndicator =
     !!accessLabel && !(hasSyncError && presentation.status === "unknown");
@@ -83,6 +94,7 @@ export function GitSyncStatusWidget({
           : null,
         pendingParent: !!pendingParent,
         remoteChecked: sync.remoteChecked,
+        stopLabel: stop ? gitSyncStopTitle(stop) : null,
         synced,
       })
     : null;
@@ -93,6 +105,21 @@ export function GitSyncStatusWidget({
   ]
     .filter(Boolean)
     .join(", ");
+  // Sync cannot run through an unfinished Git operation.
+  const footerAction =
+    sync.visible &&
+    sync.parent.action !== "none" &&
+    !(stop && sync.parent.action === "sync");
+  const openPage = onOpenPage
+    ? (path: string) => {
+        sync.setOpen(false);
+        onOpenPage({
+          spacePath: sync.spacePath,
+          repositoryPath: sync.repositoryPath,
+          path,
+        });
+      }
+    : undefined;
   const openSettings = onOpenRepositorySettings
     ? () => {
         sync.setOpen(false);
@@ -135,12 +162,13 @@ export function GitSyncStatusWidget({
                   >
                     {busy ? (
                       <RefreshCw className="animate-spin" />
-                    ) : hasSyncError || pendingParent ? (
+                    ) : hasSyncError || stop || pendingParent ? (
                       <AlertTriangle
                         className={
                           hasSyncError ? "text-destructive" : undefined
                         }
                         data-git-sync-error={hasSyncError || undefined}
+                        data-git-sync-stopped={!!stop || undefined}
                       />
                     ) : synced ? (
                       <Check data-git-sync-synced />
@@ -196,6 +224,9 @@ export function GitSyncStatusWidget({
                     publication={sync.parent.publication}
                     error={sync.parent.error}
                   />
+                )}
+                {stop && (
+                  <GitSyncStopNotice stop={stop} onOpenPage={openPage} />
                 )}
                 {hasSyncError && (
                   <Alert variant="destructive">
@@ -284,7 +315,7 @@ export function GitSyncStatusWidget({
           </div>
 
           <DialogFooter className="min-w-0">
-            {sync.visible && sync.parent.action !== "none" && (
+            {footerAction && (
               <Button
                 className="w-full sm:w-auto"
                 onClick={
@@ -378,6 +409,7 @@ function syncStateLabel({
   parentLabel,
   pendingParent,
   remoteChecked,
+  stopLabel,
   synced,
 }: {
   busy: boolean;
@@ -387,10 +419,12 @@ function syncStateLabel({
   parentLabel: string | null;
   pendingParent: boolean;
   remoteChecked: boolean;
+  stopLabel: string | null;
   synced: boolean;
 }): string {
   if (hasSyncError) return m.git_status_error();
   if (busy) return m.git_status_syncing();
+  if (stopLabel) return stopLabel;
   const counters = !remoteChecked
     ? m.git_sync_remote_unchecked_tooltip()
     : synced

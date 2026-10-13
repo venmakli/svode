@@ -1,6 +1,7 @@
 import { useParentPublication } from "./use-parent-publication";
 import { isFullSyncSuccess } from "../model/publication";
 import { refreshGitPublication } from "../api/git-publication-actions";
+import { refreshGitSyncStop } from "../api/git-sync-stop-actions";
 import { gitSyncErrorMessage } from "../api/git-sync-error";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import {
   type GitAuthChallenge,
   type GitRemoteAuthCredentials,
   type GitStatus,
+  type GitSyncStop,
   type GitUnpushedCommit,
 } from "../model";
 import { selectActiveSpacePath, useSpace } from "@/features/space";
@@ -28,6 +30,8 @@ import * as m from "@/paraglide/messages.js";
 export interface GitSyncWidget {
   parent: ReturnType<typeof useParentPublication>;
   spacePath: string;
+  /** The repository the conflict file paths are relative to. */
+  repositoryPath: string;
   visible: boolean;
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -39,6 +43,7 @@ export interface GitSyncWidget {
   syncError: string | null;
   remoteError: string | null;
   branchError: string | null;
+  stop: GitSyncStop | null;
   syncing: boolean;
   autoSync: boolean;
   savingAutoSync: boolean;
@@ -114,6 +119,9 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   const remoteError = useGitStore((state) =>
     repository ? (state.remoteError[repository] ?? null) : null,
   );
+  const stop = useGitStore((state) =>
+    repository ? (state.syncStop[repository] ?? null) : null,
+  );
 
   const [hasRemote, setHasRemote] = useState(false);
   const [autoSync, setAutoSyncState] = useState(false);
@@ -188,6 +196,12 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     void loadConfig();
   }, [loadConfig]);
 
+  const refreshStop = useCallback(() => {
+    if (spacePath) void refreshGitSyncStop(spacePath).catch(() => {});
+  }, [spacePath]);
+
+  useEffect(refreshStop, [refreshStop]);
+
   const loadCommits = useCallback(async () => {
     if (!spacePath) return;
     const identity = active.current;
@@ -214,6 +228,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     listenGitSyncCommits((committedSpacePath) => {
       if (cancelled) return;
       if (committedSpacePath !== spacePath) return;
+      refreshStop();
       void refreshRemote();
       void refreshGitPublication(spacePath).catch(() => {});
       if (open) {
@@ -228,13 +243,14 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       cancelled = true;
       if (unlistenCommit) unlistenCommit();
     };
-  }, [loadCommits, open, refreshRemote, spacePath]);
+  }, [loadCommits, open, refreshRemote, refreshStop, spacePath]);
 
   const openDialog = useCallback(async () => {
     if (!spacePath) return;
     const identity = active.current;
 
     setOpen(true);
+    refreshStop();
     void refreshGitPublication(spacePath).catch(() => {});
     const freshStatus = await refreshRemote();
     if (active.current !== identity) return;
@@ -243,7 +259,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       return;
     }
     await loadCommits();
-  }, [loadCommits, refreshRemote, spacePath]);
+  }, [loadCommits, refreshRemote, refreshStop, spacePath]);
 
   const syncNow = useCallback(async () => {
     if (!spacePath) return;
@@ -355,9 +371,14 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   return {
     parent,
     spacePath,
+    repositoryPath: repository,
     visible:
       !!spacePath &&
-      (hasRemote || !!syncError || !!remoteError || !!parent.publication),
+      (hasRemote ||
+        !!syncError ||
+        !!remoteError ||
+        !!stop ||
+        !!parent.publication),
     open,
     setOpen,
     branch: branchLabel(status),
@@ -368,6 +389,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     syncError: syncError ? gitSyncErrorMessage(syncError) : null,
     remoteError,
     branchError,
+    stop,
     syncing,
     autoSync,
     savingAutoSync,

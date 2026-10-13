@@ -1,6 +1,7 @@
 import * as m from "@/paraglide/messages.js";
 import type { GitPublicationStatus } from "../model";
 import { gitSyncErrorMessage } from "../api/git-sync-error";
+import { gitSyncStopTitle } from "./git-sync-stop-copy";
 
 export function publicationCopy(publication: GitPublicationStatus) {
   const { parent, child } = publication;
@@ -22,6 +23,8 @@ export function publicationCopy(publication: GitPublicationStatus) {
         : m.git_publication_unknown();
   else if (parent.result?.type === "Conflict")
     reason = m.git_publication_conflict();
+  else if (parent.result?.type === "OperationInProgress")
+    reason = `${gitSyncStopTitle({ kind: "operation", operation: parent.result.operation })}. ${m.git_sync_stop_operation_description()}`;
   else if (parent.result?.type === "AuthRequired")
     reason = m.git_publication_auth();
   else if (parent.result?.type === "NoRemote")

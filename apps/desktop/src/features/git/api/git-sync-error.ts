@@ -44,7 +44,6 @@ export function gitSyncErrorMessage(error: unknown): string {
     return `${m.git_push_lfs_objects_missing({ count: rejection.objectCount })} ${action}`;
   }
   if (error === "auth") return m.git_sync_auth_required();
-  if (error === "conflict") return m.git_sync_conflict_recovery();
   const detail =
     typeof error === "string"
       ? error

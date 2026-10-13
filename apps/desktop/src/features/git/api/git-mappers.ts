@@ -62,6 +62,8 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
         type: "AuthRequired",
         challenge: dto.challenge ? toGitAuthChallenge(dto.challenge) : null,
       };
+    case "operationInProgress":
+      return { type: "OperationInProgress", operation: dto.operation };
     default:
       throw new Error(`Unknown git sync result: ${JSON.stringify(dto)}`);
   }

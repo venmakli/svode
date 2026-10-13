@@ -4,6 +4,7 @@ import { gitBranchErrorMessage } from "./git-branch-error";
 import { gitSyncErrorMessage } from "./git-sync-error";
 import { toGitStatus, toSyncResult } from "./git-mappers";
 import { recordSyncPublication } from "./git-publication-actions";
+import { recordSyncStop } from "./git-sync-stop-actions";
 
 export function listenGitOperationOutcomes() {
   return listenGitSyncState(recordGitOperationOutcome);
@@ -29,9 +30,9 @@ export function recordGitOperationOutcome(
   if (!event.report) return;
   const outcome = toSyncResult(event.report);
   recordSyncPublication(path, outcome);
+  recordSyncStop(path, outcome);
   if (event.report.type === "success" && event.report.remoteStatus) {
     git.applyRemoteStatus(path, toGitStatus(event.report.remoteStatus));
   }
   if (outcome.type === "AuthRequired") git.setSyncError(path, "auth");
-  if (outcome.type === "Conflict") git.setSyncError(path, "conflict");
 }

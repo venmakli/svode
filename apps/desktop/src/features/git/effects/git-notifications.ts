@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
-import type { GitSyncOutcome } from "../model";
+import { syncStopFromResult, type GitSyncOutcome } from "../model";
+import { gitSyncStopTitle } from "../ui/git-sync-stop-copy";
 
 export function notifyGitSyncConflict(fileCount: number): void {
   toast.error(m.git_sync_conflict({ count: String(fileCount) }));
@@ -22,6 +23,14 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
     case "AuthRequired":
       notifyGitSyncAuthRequired();
       break;
+    case "OperationInProgress": {
+      const stop = syncStopFromResult(outcome);
+      if (stop)
+        toast.info(gitSyncStopTitle(stop), {
+          description: m.git_sync_stop_operation_description(),
+        });
+      break;
+    }
     case "Failed":
       notifyGitSyncFailed();
       break;
