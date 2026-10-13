@@ -216,6 +216,23 @@ async fn a_measurement_never_changes_the_active_model() {
     assert_eq!(store.settings().active_model.as_deref(), Some("b"));
 }
 
+#[test]
+fn a_recorded_measurement_reads_back_bit_for_bit() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ModelStore::open(dir.path().join("speech"));
+    // A CI measurement whose shortest representation a fast float parser
+    // reads one ULP lower.
+    let seconds = std::time::Duration::from_nanos(1_724_515_294).as_secs_f64();
+    let recorded = Measurement {
+        seconds,
+        ..measurement()
+    };
+
+    store.record_measurement("a", recorded.clone()).unwrap();
+
+    assert_eq!(store.settings().measurements.get("a"), Some(&recorded));
+}
+
 #[tokio::test]
 async fn the_speech_language_is_kept_across_models_and_launches() {
     let dir = tempfile::tempdir().unwrap();

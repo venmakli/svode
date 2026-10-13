@@ -23,7 +23,7 @@ engine = ["dep:transcribe-cpp"]
 [dependencies]
 hound = "3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["process", "time", "macros", "rt", "io-util", "sync", "fs"] }
