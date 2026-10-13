@@ -748,6 +748,110 @@ async fn independently_published_child_is_proven_without_cached_tracking_refs() 
 }
 
 #[tokio::test]
+async fn pulled_pointer_to_published_revision_missing_from_child_is_published() {
+    for published in [true, false] {
+        let f = Fixture::new();
+        let external = f._temp.path().join("external");
+        git(
+            f._temp.path(),
+            &[
+                "clone",
+                f.source.to_str().unwrap(),
+                external.to_str().unwrap(),
+            ],
+        );
+        git(&external, &["config", "user.name", "Fixture"]);
+        git(&external, &["config", "user.email", "fixture@example.test"]);
+        commit(&external, "note", "revision of a collaborator");
+        if published {
+            git(&external, &["push", "origin", "main"]);
+        }
+        let revision = git(&external, &["rev-parse", "HEAD"]);
+        let other = f._temp.path().join("collaborator");
+        git(
+            f._temp.path(),
+            &["clone", f.remote.to_str().unwrap(), other.to_str().unwrap()],
+        );
+        git(&other, &["config", "user.name", "Fixture"]);
+        git(&other, &["config", "user.email", "fixture@example.test"]);
+        git(
+            &other,
+            &[
+                "update-index",
+                "--cacheinfo",
+                &format!("160000,{revision},Пространство one"),
+            ],
+        );
+        git(&other, &["commit", "-m", "collaborator pointer"]);
+        git(&other, &["push", "--recurse-submodules=no"]);
+        let collaborator = git(&other, &["rev-parse", "HEAD"]);
+        commit(&f.root, "note", "local content");
+        let child_state = || {
+            [
+                git(&f.child, &["rev-parse", "HEAD"]),
+                git(&f.child, &["show-ref"]),
+                git(&f.child, &["ls-files", "--stage"]),
+                git(&f.child, &["status", "--porcelain=v2", "--branch"]),
+                git(&f.child, &["config", "--local", "--list"]),
+            ]
+        };
+        let has_revision = || {
+            Command::new("git")
+                .args(["cat-file", "-e", &format!("{revision}^{{commit}}")])
+                .current_dir(&f.child)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        let before = child_state();
+        assert!(!has_revision());
+        let result = super::super::sync::sync(&f.cli, &f.root).await;
+        if published {
+            assert!(
+                matches!(result, Ok(super::super::sync::SyncResult::Success { .. })),
+                "{result:?}"
+            );
+            assert_eq!(
+                git(&f.remote, &["rev-parse", "main"]),
+                git(&f.root, &["rev-parse", "HEAD"])
+            );
+            assert_eq!(
+                git(&f.remote, &["rev-parse", "main:Пространство one"]),
+                revision
+            );
+        } else {
+            assert!(
+                matches!(
+                    result,
+                    Err(GitError::PublicationBlocked {
+                        reason: PublicationBlockReason::RevisionUnavailable,
+                        ..
+                    })
+                ),
+                "{result:?}"
+            );
+            assert_eq!(git(&f.remote, &["rev-parse", "main"]), collaborator);
+        }
+        assert_eq!(child_state(), before, "{published}");
+        assert!(!before[1].contains("svode-publication-"));
+        assert_eq!(has_revision(), published);
+        assert!(
+            !PathBuf::from(git(
+                &f.child,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-path",
+                    "FETCH_HEAD"
+                ],
+            ))
+            .exists()
+        );
+    }
+}
+
+#[tokio::test]
 async fn ref_or_target_change_during_proof_requires_a_new_attempt() {
     for change_head in [true, false] {
         let f = Fixture::new();

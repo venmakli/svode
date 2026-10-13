@@ -445,11 +445,34 @@ async fn prove(cli: &GitCli, repo: &Path, snapshot: &Snapshot) -> Result<NativeE
                 .exec(&child, &["cat-file", "-e", &format!("{oid}^{{commit}}")])
                 .await?;
             if object.exit_code != 0 {
-                return Err(blocked(
-                    repo,
-                    Some(path),
-                    PublicationBlockReason::RevisionUnavailable,
-                ));
+                // The revision is proven published; copy its history from the
+                // fetched source into the child's object store only. Protocol
+                // v2 accepts the unadvertised oid, and no ref or FETCH_HEAD of
+                // the child changes.
+                let fetched = cli
+                    .exec(
+                        &child,
+                        &[
+                            "-c",
+                            "protocol.version=2",
+                            "fetch",
+                            "--no-recurse-submodules",
+                            "--no-tags",
+                            "--no-write-fetch-head",
+                            "--no-auto-maintenance",
+                            "--",
+                            &source_repo.to_string_lossy(),
+                            oid,
+                        ],
+                    )
+                    .await?;
+                if fetched.exit_code != 0 {
+                    return Err(blocked(
+                        repo,
+                        Some(path),
+                        PublicationBlockReason::RevisionUnavailable,
+                    ));
+                }
             }
             // Native --check reads local remote refs. These unique, disposable
             // refs convey the fresh source proof without replacing origin/*.
