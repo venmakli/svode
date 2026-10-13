@@ -49,6 +49,8 @@ pub enum Intent {
     },
     Push,
     Publish,
+    /// Abandon the merge a sync stopped in (`git merge --abort`).
+    AbortMerge,
     /// Resolved paths relative to the requested path; distinct sets never coalesce.
     Resolve {
         paths: Vec<String>,

@@ -198,3 +198,91 @@ fn operation_result_serializes_with_the_operation_name() {
         serde_json::json!({ "type": "operationInProgress", "operation": "cherry_pick" })
     );
 }
+
+mod abort_merge {
+    use super::*;
+    use crate::git::{flow, staging_tests::TestHost, state::GitRuntime};
+    use std::sync::Arc;
+
+    async fn abort(
+        f: &Fixture,
+        host: Arc<TestHost>,
+    ) -> Result<crate::git::ops::GitStatus, crate::git::operations::SharedError> {
+        let runtime = Arc::new(GitRuntime::new());
+        let host: Arc<dyn crate::git::host::GitHost> = host;
+        flow::abort_merge(&runtime, &host, &f.local).await
+    }
+
+    fn events(host: &TestHost) -> Vec<(PathBuf, bool)> {
+        host.sync_states.lock().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn abort_returns_to_head_before_the_merge_and_keeps_other_work() {
+        let f = Fixture::new();
+        commit(&f.local, &[("keep.md", Some("kept\n"))], "keep");
+        f.conflicted_sync().await;
+        let head = git(&f.local, &["rev-parse", "HEAD"]);
+        std::fs::write(f.local.join("keep.md"), "unsaved\n").unwrap();
+        std::fs::write(f.local.join("draft.md"), "draft\n").unwrap();
+        let host = Arc::new(TestHost::default());
+
+        let status = abort(&f, host.clone()).await.unwrap();
+
+        assert_eq!(git(&f.local, &["rev-parse", "HEAD"]), head);
+        assert!(
+            !run(&f.local, &["rev-parse", "--verify", "MERGE_HEAD"])
+                .status
+                .success()
+        );
+        assert!(!status.has_conflicts);
+        assert_eq!(
+            std::fs::read_to_string(f.local.join("Page.md")).unwrap(),
+            "local\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.local.join("keep.md")).unwrap(),
+            "unsaved\n"
+        );
+        assert!(f.local.join("draft.md").exists());
+        let repository = std::fs::canonicalize(&f.local).unwrap();
+        assert_eq!(
+            events(&host),
+            [(repository.clone(), true), (repository, false)]
+        );
+        assert!(preflight(&f.cli, &f.local).await.unwrap().is_none());
+
+        // The incoming changes were not applied: the next sync meets them again.
+        std::fs::remove_file(f.local.join("draft.md")).unwrap();
+        git(&f.local, &["checkout", "--", "keep.md"]);
+        assert!(matches!(
+            sync(&f.cli, &f.local).await.unwrap(),
+            SyncResult::Conflict { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn refused_abort_keeps_the_merge_and_reports_why() {
+        let f = Fixture::new();
+        f.conflicted_sync().await;
+        let merge_head = git(&f.local, &["rev-parse", "MERGE_HEAD"]);
+        let denied = Arc::new(TestHost::denied(GitError::RepositoryAccessDenied {
+            repository_id: "fixture".into(),
+            status: "read_only".into(),
+            reason: "permission_denied".into(),
+        }));
+
+        let error = abort(&f, denied.clone()).await.unwrap_err();
+
+        assert!(matches!(&*error, GitError::RepositoryAccessDenied { .. }));
+        assert_eq!(git(&f.local, &["rev-parse", "MERGE_HEAD"]), merge_head);
+        assert_eq!(events(&denied).len(), 2);
+
+        git(&f.local, &["merge", "--abort"]);
+        let error = abort(&f, Arc::new(TestHost::default())).await.unwrap_err();
+        assert!(
+            matches!(&*error, GitError::GitCommandFailed(detail) if detail.contains("MERGE_HEAD")),
+            "{error}"
+        );
+    }
+}

@@ -9,7 +9,7 @@ import {
   LockKeyhole,
   RefreshCw,
 } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,11 +29,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
+import { useGitSyncAbort } from "../hooks/use-git-sync-abort";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
 import { isParentPointerPending } from "../model/publication";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
+import { GitSyncAbortButton } from "./git-sync-abort-button";
 import { gitSyncStopTitle } from "./git-sync-stop-copy";
 import { GitSyncStopNotice } from "./git-sync-stop-notice";
 import {
@@ -65,6 +67,7 @@ export function GitSyncStatusWidget({
   onOpenPage,
 }: GitSyncStatusWidgetProps) {
   const sync = useGitSyncWidget(repositoryPath);
+  const abort = useGitSyncAbort(sync.spacePath, sync.stop?.kind === "conflict");
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
   const access = useRepositoryAccess(sync.spacePath);
   const presentation = repositoryAccessPresentation(access);
@@ -225,6 +228,15 @@ export function GitSyncStatusWidget({
                     error={sync.parent.error}
                   />
                 )}
+                {stop?.kind === "conflict" && abort.error && (
+                  <Alert variant="destructive" data-git-sync-abort-error>
+                    <AlertTriangle />
+                    <AlertTitle>{m.git_sync_abort_failed()}</AlertTitle>
+                    <AlertDescription className="whitespace-pre-wrap break-words">
+                      {abort.error}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {stop && (
                   <GitSyncStopNotice stop={stop} onOpenPage={openPage} />
                 )}
@@ -315,6 +327,13 @@ export function GitSyncStatusWidget({
           </div>
 
           <DialogFooter className="min-w-0">
+            {sync.visible && stop?.kind === "conflict" && (
+              <GitSyncAbortButton
+                aborting={abort.aborting}
+                disabled={busy}
+                onConfirm={() => void abort.abort()}
+              />
+            )}
             {footerAction && (
               <Button
                 className="w-full sm:w-auto"

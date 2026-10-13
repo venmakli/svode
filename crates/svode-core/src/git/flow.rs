@@ -123,16 +123,37 @@ pub async fn push(
     } else {
         Intent::Push
     };
-    let Output::Status(mut status) = request(runtime, host, path, intent).await? else {
+    let Output::Status(status) = request(runtime, host, path, intent).await? else {
         unreachable!("push result")
     };
+    caller_status(runtime, path, status).await
+}
+
+/// Cancel the sync stopped by a merge conflict: the repository returns to
+/// its HEAD before the merge, with the incoming changes not applied.
+pub async fn abort_merge(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    path: &Path,
+) -> Result<ops::GitStatus, SharedError> {
+    let Output::Status(status) = request(runtime, host, path, Intent::AbortMerge).await? else {
+        unreachable!("abort result")
+    };
+    caller_status(runtime, path, status).await
+}
+
+async fn caller_status(
+    runtime: &Arc<GitRuntime>,
+    path: &Path,
+    mut status: ops::GitStatus,
+) -> Result<ops::GitStatus, SharedError> {
     let cli = runtime.require_cli()?;
     let repository = access::resolve_repository(&cli, path).await?;
     status.repository = Some(repository.to_string_lossy().into_owned());
     if std::fs::canonicalize(path).map_err(GitError::from)? == repository {
         return Ok(status);
     }
-    // The publication is repository-scoped; each inline caller keeps its
+    // The operation is repository-scoped; each inline caller keeps its
     // original display/status scope. This read never starts another publisher.
     let lock = runtime.get_lock(&repository).await;
     let _guard = lock.lock().await;
@@ -194,6 +215,9 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                     .await
                     .map(Output::Status)
             }
+            Intent::AbortMerge => abort_merge_locked(host, &cli, repo)
+                .await
+                .map(Output::Status),
             Intent::RetryParent {
                 head,
                 parent,
@@ -303,6 +327,16 @@ async fn direct_push_locked(
         return Err(error);
     }
     host.record_write_evidence(cli, repo).await;
+    ops::status(cli, repo).await
+}
+
+async fn abort_merge_locked(
+    host: &dyn GitHost,
+    cli: &GitCli,
+    repo: &Path,
+) -> Result<ops::GitStatus, GitError> {
+    host.authorize_repository(repo).await?;
+    super::sync::merge_abort(cli, repo).await?;
     ops::status(cli, repo).await
 }
 

@@ -702,15 +702,13 @@ async fn emit_sync_domain_invalidations(
 }
 
 #[tauri::command]
-pub async fn git_merge_abort(
-    state: State<'_, GitState>,
-    space_path: String,
-) -> Result<(), AppError> {
-    let path = PathBuf::from(&space_path);
-    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
-    let lock = state.get_lock(&repository).await;
-    let _guard = lock.lock().await;
-    Ok(sync::merge_abort(state.cli()?, &path).await?)
+pub async fn git_merge_abort(app: AppHandle, space_path: String) -> Result<GitStatus, SharedError> {
+    flow::abort_merge(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+    )
+    .await
 }
 
 #[tauri::command]

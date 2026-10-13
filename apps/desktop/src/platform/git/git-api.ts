@@ -140,6 +140,11 @@ export function continueGitResolve(input: {
   return invokeCommand<SyncResultDto>("git_resolve_continue", input);
 }
 
+/** Abandon the merge a sync stopped in; returns the status after it. */
+export function abortGitMerge(spacePath: string): Promise<GitStatusDto> {
+  return invokeCommand<GitStatusDto>("git_merge_abort", { spacePath });
+}
+
 export function publishGit(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_publish", { spacePath });
 }
