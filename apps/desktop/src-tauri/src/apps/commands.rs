@@ -261,7 +261,11 @@ pub(crate) async fn app_process_control(
     .await?;
     let runtime = match with_environment(runtime, environment, &owner_directory) {
         Ok(runtime) => runtime,
-        Err(blocked) => return Ok(*blocked),
+        Err(blocked) => {
+            // Like inspection: a blocked App keeps no process or stale snapshot.
+            process_state.remove_owner(&owner.project_path, &owner.owner_path);
+            return Ok(*blocked);
+        }
     };
     let url = runtime.url.clone();
     let action = match action {
