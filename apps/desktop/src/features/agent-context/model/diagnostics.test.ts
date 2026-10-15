@@ -73,3 +73,42 @@ test("groups from stable metadata, keeps unknown codes, and appends the raw refr
     "Unknown diagnostic remains visible",
   );
 });
+
+test("plugin manifests and the plugin registries of the agents form their own group", () => {
+  const groups = buildAgentContextDiagnosticReadModel({
+    diagnostics: [
+      {
+        adapterId: "claude-code",
+        code: "claude_plugin_registry_parse",
+        message: "Could not parse the Claude Code plugin registry",
+        path: "/home/user/.claude/plugins/installed_plugins.json",
+        severity: "warning",
+      },
+      {
+        adapterId: "codex",
+        code: "plugin_manifest_parse",
+        message: "Could not parse plugin manifest",
+        path: "/home/user/.codex/plugins/cache/m/p/1/plugin.json",
+        severity: "warning",
+      },
+      {
+        adapterId: "claude-code",
+        code: "claude_settings_parse",
+        message: "Could not parse Claude Code settings",
+        path: "/home/user/.claude/settings.json",
+        severity: "warning",
+      },
+    ],
+    refreshError: null,
+  });
+
+  expect(
+    groups.map((group) => [
+      group.id,
+      group.diagnostics.map(({ code }) => code),
+    ]),
+  ).toEqual([
+    ["instructions", ["claude_settings_parse"]],
+    ["plugins", ["claude_plugin_registry_parse", "plugin_manifest_parse"]],
+  ]);
+});

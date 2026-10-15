@@ -148,6 +148,29 @@ pub(super) fn apply_skill_dirs(policy: &mut AgentSourcePolicy, dirs: &[PathBuf])
     }
 }
 
+/// `plugins.enabled` and `plugins.disabled` of the profile's config, the
+/// names of the plugins Hermes loads and skips.
+pub(super) fn plugin_lists(
+    environment: &SourceRegistryEnvironment,
+    result: &mut DiscoveryResult,
+) -> (Vec<String>, Vec<String>) {
+    let path = environment.hermes_home.join("config.yaml");
+    result.observed_personal_paths.push(path_string(&path));
+    let Some(plugins) =
+        read_config(&path, result).and_then(|config| config.get("plugins").cloned())
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let names = |key: &str| match plugins.get(key) {
+        Some(serde_norway::Value::Sequence(values)) => values
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+    (names("enabled"), names("disabled"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

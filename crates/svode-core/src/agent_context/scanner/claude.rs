@@ -613,6 +613,134 @@ fn lexical_normalize(path: &Path) -> Option<PathBuf> {
     Some(normalized)
 }
 
+/// A plugin `installed_plugins.json` of Claude Code names.
+#[derive(Debug, Clone)]
+pub(super) struct InstalledPlugin {
+    /// `<plugin>@<marketplace>`.
+    pub id: String,
+    /// `user`, `project`, `local` or `managed`.
+    pub scope: String,
+    pub project_path: Option<PathBuf>,
+    pub install_path: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct InstalledRegistry {
+    #[serde(default)]
+    plugins: BTreeMap<String, Vec<InstalledEntry>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledEntry {
+    scope: Option<String>,
+    project_path: Option<String>,
+    install_path: Option<String>,
+}
+
+/// The installs of the Claude Code plugin registry, which `adapter_id` reads.
+pub(super) fn installed_plugins(
+    registry: &Path,
+    adapter_id: AgentAdapterKind,
+    result: &mut DiscoveryResult,
+) -> Vec<InstalledPlugin> {
+    result.observed_personal_paths.push(path_string(registry));
+    let Some(text) = super::io::read_config_text(
+        registry,
+        Some(adapter_id),
+        "claude_plugin_registry",
+        "Claude Code plugin registry",
+        &mut result.diagnostics,
+    ) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = serde_json::from_str::<InstalledRegistry>(&text) else {
+        result.diagnostics.push(diagnostic(
+            registry,
+            Some(adapter_id),
+            "claude_plugin_registry_parse",
+            "Could not parse the Claude Code plugin registry".to_string(),
+        ));
+        return Vec::new();
+    };
+    parsed
+        .plugins
+        .into_iter()
+        .flat_map(|(id, entries)| {
+            entries.into_iter().filter_map(move |entry| {
+                Some(InstalledPlugin {
+                    id: id.clone(),
+                    scope: entry.scope.unwrap_or_else(|| "user".to_string()),
+                    project_path: entry.project_path.map(PathBuf::from),
+                    install_path: PathBuf::from(entry.install_path?),
+                })
+            })
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct PluginSettings {
+    #[serde(default, rename = "enabledPlugins")]
+    enabled_plugins: BTreeMap<String, serde_json::Value>,
+}
+
+/// `enabledPlugins` of the Claude Code settings: the user settings in
+/// `user_dir` when given, then `.claude/settings.json` and
+/// `.claude/settings.local.json` of the target; a later file wins.
+pub(super) fn enabled_plugins(
+    user_dir: Option<&Path>,
+    target_root: &Path,
+    adapter_id: AgentAdapterKind,
+    result: &mut DiscoveryResult,
+) -> BTreeMap<String, bool> {
+    let mut files = Vec::new();
+    if let Some(user_dir) = user_dir {
+        let user = user_dir.join("settings.json");
+        result.observed_personal_paths.push(path_string(&user));
+        files.push(user);
+    }
+    for name in ["settings.json", "settings.local.json"] {
+        let project = target_root.join(".claude").join(name);
+        result.observed_project_paths.push(path_string(&project));
+        files.push(project);
+    }
+    let mut enabled = BTreeMap::new();
+    for file in files {
+        let Some(text) = super::io::read_config_text(
+            &file,
+            Some(adapter_id),
+            "claude_settings",
+            "Claude Code settings",
+            &mut result.diagnostics,
+        ) else {
+            continue;
+        };
+        let settings = match serde_json::from_str::<PluginSettings>(&text) {
+            Ok(settings) => settings,
+            Err(error) => {
+                result.diagnostics.push(diagnostic(
+                    &file,
+                    Some(adapter_id),
+                    "claude_settings_parse",
+                    format!(
+                        "Could not parse Claude Code settings at line {}, column {}",
+                        error.line(),
+                        error.column()
+                    ),
+                ));
+                continue;
+            }
+        };
+        for (id, value) in settings.enabled_plugins {
+            if let Some(on) = value.as_bool() {
+                enabled.insert(id, on);
+            }
+        }
+    }
+    enabled
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

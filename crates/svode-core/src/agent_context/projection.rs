@@ -63,9 +63,7 @@ fn in_knowledge(alias: &SkillDiscoveryAlias) -> bool {
         && KNOWLEDGE_AGENTS.contains(&alias.adapter_id)
         && !matches!(
             alias.discovery_kind,
-            SkillDiscoveryKind::CodexProjectConfig
-                | SkillDiscoveryKind::CodexHome
-                | SkillDiscoveryKind::ClaudeProjectPlugin
+            SkillDiscoveryKind::CodexProjectConfig | SkillDiscoveryKind::CodexHome
         )
 }
 
@@ -443,6 +441,7 @@ mod tests {
                 ),
             ],
             skills: Vec::new(),
+            plugins: Vec::new(),
             diagnostics: Vec::new(),
             observed_project_paths: Vec::new(),
             observed_personal_paths: Vec::new(),
@@ -472,6 +471,7 @@ mod tests {
             repository_root: temp.path().to_string_lossy().to_string(),
             instructions: vec![native_superseded, recognized],
             skills: Vec::new(),
+            plugins: Vec::new(),
             diagnostics: Vec::new(),
             observed_project_paths: Vec::new(),
             observed_personal_paths: Vec::new(),
@@ -599,15 +599,18 @@ mod tests {
                 .any(|path| path.starts_with("codex:codex_project:")),
             "{discovery:?}"
         );
-        for kind in [
-            "codex_project_config",
-            "codex_home",
-            "claude_project_plugin",
-        ] {
+        for kind in ["codex_project_config", "codex_home"] {
             assert!(
                 discovery.iter().all(|path| !path.contains(kind)),
                 "{discovery:?}"
             );
         }
+        // Skills of a skills-dir plugin are its components, not skills.
+        assert!(
+            discovery
+                .iter()
+                .all(|path| !(path.starts_with("claude-code:") && path.contains("plugin-skill"))),
+            "{discovery:?}"
+        );
     }
 }

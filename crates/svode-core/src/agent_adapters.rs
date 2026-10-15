@@ -455,6 +455,9 @@ pub enum SourceSwitch {
     OpencodeCompatibility,
     /// A Grok Build compatibility cell: `[compat.<vendor>] <surface>`.
     GrokCompat(GrokVendor, GrokSurface),
+    /// `HERMES_ENABLE_PROJECT_PLUGINS`, which lets Hermes load the plugins
+    /// of the project.
+    HermesProjectPlugins,
 }
 
 /// A skills root of an agent, in the agent's registration order.
@@ -483,11 +486,150 @@ pub struct InstructionDiscoveryCapability {
     pub policy: InstructionDiscoveryPolicy,
 }
 
+/// How the folders of a plugin root hold plugins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginLayout {
+    /// Each folder directly in the root.
+    Children,
+    /// Each folder directly in the root or in one of its group folders.
+    Grouped,
+    /// `<marketplace>/<plugin>/<version>`: the `local` version, else the
+    /// highest.
+    Cache,
+    /// Folders of a skills root that hold `.claude-plugin`: the skills-dir
+    /// plugins of Claude Code.
+    ClaudeSkillsDir,
+    /// `*.ts` and `*.js` files and package folders: plugins whose code
+    /// registers what they bring.
+    CodeModules,
+}
+
+/// A file that names the installed plugins of an agent, or the agent's
+/// config that lists them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginRegistry {
+    /// `installed_plugins.json` of Claude Code: `installPath` by
+    /// `<plugin>@<marketplace>` and scope.
+    ClaudeInstalled(String),
+    /// `installed.json` of Kimi Code: `root` and `enabled` of each plugin.
+    KimiInstalled(String),
+    /// `[plugins] paths` of the Grok Build config.
+    GrokConfigPaths,
+    /// `plugins` of the opencode configs: npm, git and path entries.
+    OpencodeConfig,
+    /// `packages` of the pi settings.
+    PiPackages,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginPlace {
+    Folder {
+        place: SkillPlace,
+        layout: PluginLayout,
+    },
+    Registry(PluginRegistry),
+}
+
+/// What a manifest format says about the plugin's components.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginScheme {
+    /// Agent Plugins 1.0: `skills/` and `mcp.json`.
+    AgentPlugins,
+    /// The folders of Claude Code plugins, which Codex, Cursor and Grok
+    /// Build share: manifest paths or `skills/`, `commands/`, `agents/`,
+    /// `hooks/hooks.json`, `.mcp.json`, `.lsp.json`, `bin/`, `themes/`,
+    /// `output-styles/` and `rules/`.
+    ClientFolders,
+    /// A Qwen Code extension: client folders and `contextFileName`
+    /// instructions, `QWEN.md` by default.
+    QwenExtension,
+    /// A Kimi Code plugin: manifest `skills` or a root `SKILL.md`, agents,
+    /// commands, hooks and a system prompt.
+    KimiPlugin,
+    /// The plugin's code registers its components.
+    Code,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginManifestRule {
+    /// Relative to the plugin folder.
+    pub path: String,
+    pub scheme: PluginScheme,
+}
+
+/// Where an agent keeps whether an installed plugin is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginEnablement {
+    /// An installed plugin is on.
+    Installed,
+    /// `enabledPlugins` of the Claude Code settings, user < project <
+    /// local; without an entry the manifest's `defaultEnabled`, else
+    /// `default_on`.
+    ClaudeEnabledPlugins { default_on: bool },
+    /// `[plugins."<plugin>@<marketplace>"] enabled` of the Codex config; a
+    /// plugin with a remote install marker is on without it, unverified.
+    CodexConfig,
+    /// Kept by the agent's server: an installed plugin counts as on,
+    /// unverified; `plugins.<name>.enabled = false` of the project
+    /// `.cursor/settings.json` turns it off.
+    CursorServer,
+    /// `[plugins] enabled` and `disabled` of the Grok Build config: off
+    /// until enabled.
+    GrokConfig,
+    /// `extension-store/state.json` of Qwen Code: the workspace override,
+    /// else the default activation.
+    QwenExtensionStore,
+    /// `enabled` of the plugin in the Kimi Code registry.
+    KimiRegistry,
+    /// `plugins.enabled` and `disabled` of the Hermes config: off until
+    /// enabled.
+    HermesConfig,
+    /// `-<id>` entries of the opencode `plugins` lists.
+    OpencodeConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginSourceRule {
+    pub place: PluginPlace,
+    /// Manifests in the agent's order; the first that exists counts.
+    pub manifests: Vec<PluginManifestRule>,
+    /// A folder without a manifest is a plugin only with a component
+    /// folder of `ClientFolders`.
+    pub manifest_required: bool,
+    pub enablement: PluginEnablement,
+    /// The source counts only while this setting is on.
+    pub switch: Option<SourceSwitch>,
+}
+
+/// How an agent chooses between plugins of one name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginPrecedence {
+    Coexist,
+    /// The plugin of the first source in the agent's order wins.
+    FirstWinsByName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginDiscoveryCapability {
+    pub precedence: PluginPrecedence,
+    pub sources: Vec<PluginSourceRule>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterSourceCapabilities {
     pub instructions: InstructionDiscoveryCapability,
     pub skills: SkillDiscoveryCapability,
+    pub plugins: PluginDiscoveryCapability,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -525,6 +667,8 @@ pub struct SourceRegistryEnvironment {
     pub grok_switches: Vec<(SourceSwitch, bool)>,
     /// The Hermes home of the active profile.
     pub hermes_home: PathBuf,
+    /// `HERMES_ENABLE_PROJECT_PLUGINS` is set.
+    pub hermes_project_plugins: bool,
     /// Stable Svode install root. Client skill links point into its payload,
     /// so discovery reads it like a personal root.
     pub svode_home: PathBuf,
@@ -563,6 +707,8 @@ impl SourceRegistryEnvironment {
                 set("HERMES_HOME"),
                 cfg!(windows).then(|| set("LOCALAPPDATA")).flatten(),
             ),
+            hermes_project_plugins: variable("HERMES_ENABLE_PROJECT_PLUGINS")
+                .is_some_and(|value| parse_switch(&value) == Some(true)),
             svode_home: home_dir.join(".svode"),
             home_dir,
         }
@@ -1311,8 +1457,289 @@ impl AgentAdapterRegistry {
                     policy: instructions,
                 },
                 skills,
+                plugins: plugin_capability(id, environment),
             },
         })
+    }
+}
+
+/// Plugins and extensions of an agent by E02 «Плагины»: where they lie, the
+/// manifests the agent reads and where it keeps whether one is on.
+fn plugin_capability(
+    id: AgentAdapterKind,
+    environment: &SourceRegistryEnvironment,
+) -> PluginDiscoveryCapability {
+    let home = &environment.home_dir;
+    let manifests = |rules: &[(&str, PluginScheme)]| {
+        rules
+            .iter()
+            .map(|(path, scheme)| PluginManifestRule {
+                path: (*path).to_string(),
+                scheme: *scheme,
+            })
+            .collect::<Vec<_>>()
+    };
+    let source = |place, manifests: &Vec<PluginManifestRule>, enablement| PluginSourceRule {
+        place,
+        manifests: manifests.clone(),
+        manifest_required: true,
+        enablement,
+        switch: None,
+    };
+    let folder = |place, layout| PluginPlace::Folder { place, layout };
+    let personal = |path: &Path| SkillPlace::Personal(path_string(path));
+    let walk = |walk, relative: &str| SkillPlace::Walk {
+        walk,
+        relative: relative.to_string(),
+    };
+    let claude_installed = |root: &Path| {
+        PluginPlace::Registry(PluginRegistry::ClaudeInstalled(path_string(
+            &root.join("plugins/installed_plugins.json"),
+        )))
+    };
+    let code = manifests(&[("package.json", PluginScheme::Code)]);
+    match id {
+        // Claude Code 2.1.289: skills-dir plugins of its skills roots and
+        // the plugins `installed_plugins.json` names, on by `enabledPlugins`
+        // or the manifest's default.
+        AgentAdapterKind::ClaudeCode => {
+            let claude = manifests(&[(".claude-plugin/plugin.json", PluginScheme::ClientFolders)]);
+            let enablement = PluginEnablement::ClaudeEnabledPlugins { default_on: true };
+            let mut installed = source(
+                claude_installed(&environment.claude_config_dir),
+                &claude,
+                enablement,
+            );
+            installed.manifest_required = false;
+            PluginDiscoveryCapability {
+                precedence: PluginPrecedence::Coexist,
+                sources: vec![
+                    source(
+                        folder(
+                            walk(DirectoryWalk::RepositoryToTarget, ".claude/skills"),
+                            PluginLayout::ClaudeSkillsDir,
+                        ),
+                        &claude,
+                        enablement,
+                    ),
+                    source(
+                        folder(
+                            personal(&environment.claude_config_dir.join("skills")),
+                            PluginLayout::ClaudeSkillsDir,
+                        ),
+                        &claude,
+                        enablement,
+                    ),
+                    installed,
+                ],
+            }
+        }
+        // Codex 0.159: the active version of each plugin of its cache, on by
+        // its config; Agent Plugins and the client manifests it reads.
+        AgentAdapterKind::Codex => PluginDiscoveryCapability {
+            precedence: PluginPrecedence::Coexist,
+            sources: vec![source(
+                folder(
+                    personal(&environment.codex_home.join("plugins/cache")),
+                    PluginLayout::Cache,
+                ),
+                &manifests(&[
+                    ("plugin.json", PluginScheme::AgentPlugins),
+                    (".codex-plugin/plugin.json", PluginScheme::ClientFolders),
+                    (".claude-plugin/plugin.json", PluginScheme::ClientFolders),
+                    (".cursor-plugin/plugin.json", PluginScheme::ClientFolders),
+                ]),
+                PluginEnablement::CodexConfig,
+            )],
+        },
+        // Cursor CLI 2026.10.01: its local plugins, the marketplace cache
+        // switched on its server, and the Claude Code plugins on by
+        // `enabledPlugins`.
+        AgentAdapterKind::Cursor => {
+            let cursor = manifests(&[
+                (".cursor-plugin/plugin.json", PluginScheme::ClientFolders),
+                (".claude-plugin/plugin.json", PluginScheme::ClientFolders),
+                ("plugin.json", PluginScheme::AgentPlugins),
+            ]);
+            let mut claude = source(
+                claude_installed(&home.join(".claude")),
+                &manifests(&[(".claude-plugin/plugin.json", PluginScheme::ClientFolders)]),
+                PluginEnablement::ClaudeEnabledPlugins { default_on: false },
+            );
+            claude.manifest_required = false;
+            PluginDiscoveryCapability {
+                precedence: PluginPrecedence::Coexist,
+                sources: vec![
+                    source(
+                        folder(
+                            personal(&home.join(".cursor/plugins/local")),
+                            PluginLayout::Children,
+                        ),
+                        &cursor,
+                        PluginEnablement::Installed,
+                    ),
+                    source(
+                        folder(
+                            personal(&home.join(".cursor/plugins/cache")),
+                            PluginLayout::Cache,
+                        ),
+                        &cursor,
+                        PluginEnablement::CursorServer,
+                    ),
+                    claude,
+                ],
+            }
+        }
+        // Grok Build 1.0.46: project then user plugin folders of Grok and
+        // Claude Code, marketplace installs, the Claude Code registry and
+        // `[plugins] paths`; off until `[plugins] enabled`; a name of an
+        // earlier source wins.
+        AgentAdapterKind::GrokBuild => {
+            let grok = manifests(&[
+                ("plugin.json", PluginScheme::AgentPlugins),
+                (".grok-plugin/plugin.json", PluginScheme::ClientFolders),
+                (".claude-plugin/plugin.json", PluginScheme::ClientFolders),
+            ]);
+            let conventional = |place| {
+                let mut rule = source(place, &grok, PluginEnablement::GrokConfig);
+                rule.manifest_required = false;
+                rule
+            };
+            let children = |place| folder(place, PluginLayout::Children);
+            PluginDiscoveryCapability {
+                precedence: PluginPrecedence::FirstWinsByName,
+                sources: vec![
+                    conventional(children(walk(
+                        DirectoryWalk::TargetToRepository,
+                        ".grok/plugins",
+                    ))),
+                    conventional(children(walk(
+                        DirectoryWalk::TargetToRepository,
+                        ".claude/plugins",
+                    ))),
+                    conventional(children(personal(&environment.grok_home.join("plugins")))),
+                    conventional(children(personal(&home.join(".claude/plugins")))),
+                    conventional(children(personal(
+                        &environment.grok_home.join("installed-plugins"),
+                    ))),
+                    conventional(claude_installed(&home.join(".claude"))),
+                    conventional(PluginPlace::Registry(PluginRegistry::GrokConfigPaths)),
+                ],
+            }
+        }
+        // Qwen Code 0.24.7: user extensions, its own manifest or Agent
+        // Plugins, on by its extension store.
+        AgentAdapterKind::QwenCode => PluginDiscoveryCapability {
+            precedence: PluginPrecedence::Coexist,
+            sources: vec![source(
+                folder(
+                    personal(&environment.qwen_home.join("extensions")),
+                    PluginLayout::Children,
+                ),
+                &manifests(&[
+                    ("qwen-extension.json", PluginScheme::QwenExtension),
+                    ("plugin.json", PluginScheme::AgentPlugins),
+                ]),
+                PluginEnablement::QwenExtensionStore,
+            )],
+        },
+        // Kimi Code 2.1.1: the plugins of its registry, user scope only.
+        AgentAdapterKind::KimiCode => PluginDiscoveryCapability {
+            precedence: PluginPrecedence::Coexist,
+            sources: vec![source(
+                PluginPlace::Registry(PluginRegistry::KimiInstalled(path_string(
+                    &environment.kimi_code_home.join("plugins/installed.json"),
+                ))),
+                &manifests(&[
+                    ("kimi.plugin.json", PluginScheme::KimiPlugin),
+                    (".kimi-plugin/plugin.json", PluginScheme::KimiPlugin),
+                ]),
+                PluginEnablement::KimiRegistry,
+            )],
+        },
+        // Hermes 2026.9.24: plugins of the profile, directly or in a
+        // category folder, and of the project with
+        // `HERMES_ENABLE_PROJECT_PLUGINS`; native `plugin.yaml` is code,
+        // Agent Plugins are declared; opt-in by `plugins.enabled`.
+        AgentAdapterKind::Hermes => {
+            let hermes = manifests(&[
+                ("plugin.yaml", PluginScheme::Code),
+                ("plugin.yml", PluginScheme::Code),
+                ("plugin.json", PluginScheme::AgentPlugins),
+            ]);
+            let mut project = source(
+                folder(
+                    walk(DirectoryWalk::Target, ".hermes/plugins"),
+                    PluginLayout::Children,
+                ),
+                &hermes,
+                PluginEnablement::HermesConfig,
+            );
+            project.switch = Some(SourceSwitch::HermesProjectPlugins);
+            PluginDiscoveryCapability {
+                precedence: PluginPrecedence::FirstWinsByName,
+                sources: vec![
+                    project,
+                    source(
+                        folder(
+                            personal(&environment.hermes_home.join("plugins")),
+                            PluginLayout::Grouped,
+                        ),
+                        &hermes,
+                        PluginEnablement::HermesConfig,
+                    ),
+                ],
+            }
+        }
+        // opencode 2.0.22: modules of its plugin folders and the `plugins`
+        // of its configs; their code registers what they bring.
+        AgentAdapterKind::Opencode => {
+            let modules = |place| {
+                let mut rule = source(
+                    folder(place, PluginLayout::CodeModules),
+                    &code,
+                    PluginEnablement::OpencodeConfig,
+                );
+                rule.manifest_required = false;
+                rule
+            };
+            let config = &environment.opencode_config_dir;
+            let mut declared = modules(walk(DirectoryWalk::Target, ""));
+            declared.place = PluginPlace::Registry(PluginRegistry::OpencodeConfig);
+            PluginDiscoveryCapability {
+                precedence: PluginPrecedence::Coexist,
+                sources: vec![
+                    modules(personal(&config.join("plugin"))),
+                    modules(personal(&config.join("plugins"))),
+                    modules(walk(DirectoryWalk::FilesystemToTarget, ".opencode/plugin")),
+                    modules(walk(DirectoryWalk::FilesystemToTarget, ".opencode/plugins")),
+                    declared,
+                ],
+            }
+        }
+        // pi 1.0.0: extensions of its agent folder and the project, and the
+        // packages of its settings; their code registers what they bring.
+        AgentAdapterKind::Pi => {
+            let modules = |place| {
+                let mut rule = source(
+                    folder(place, PluginLayout::CodeModules),
+                    &code,
+                    PluginEnablement::Installed,
+                );
+                rule.manifest_required = false;
+                rule
+            };
+            let mut packages = modules(walk(DirectoryWalk::Target, ""));
+            packages.place = PluginPlace::Registry(PluginRegistry::PiPackages);
+            PluginDiscoveryCapability {
+                precedence: PluginPrecedence::Coexist,
+                sources: vec![
+                    modules(personal(&environment.pi_agent_dir.join("extensions"))),
+                    modules(walk(DirectoryWalk::Target, ".pi/extensions")),
+                    packages,
+                ],
+            }
+        }
     }
 }
 

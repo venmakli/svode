@@ -52,17 +52,35 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
         },
       ],
       skill: null,
+      plugin: null,
+      components: [],
+      icon: null,
+      managedBySvode: false,
       sources: [
         {
           linkKind: "direct",
           path: "/workspace/AGENTS.md",
-          readers: [{ agent: "codex", supersededBy: null }],
+          readers: [
+            {
+              agent: "codex",
+              disabled: false,
+              supersededBy: null,
+              unverified: false,
+            },
+          ],
           target: null,
         },
         {
           linkKind: "symbolic_link",
           path: "/workspace/CLAUDE.md",
-          readers: [{ agent: "claude-code", supersededBy: null }],
+          readers: [
+            {
+              agent: "claude-code",
+              disabled: false,
+              supersededBy: null,
+              unverified: false,
+            },
+          ],
           target: "/workspace/AGENTS.md",
         },
       ],
@@ -82,6 +100,10 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
       preview: { ...preview, truncated: true },
       providers: [],
       references: [],
+      plugin: null,
+      components: [],
+      icon: null,
+      managedBySvode: false,
       skill: {
         directory: "/workspace/.claude/skills/review",
         hasFiles: true,
@@ -108,6 +130,8 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
             {
               agent: "claude-code",
               supersededBy: "/home/user/.claude/skills/review",
+              disabled: false,
+              unverified: false,
             },
           ],
           target: null,
@@ -140,7 +164,14 @@ test("transport becomes one frozen set of items with their application", () => {
   expect(instruction?.providers).toEqual(["codex", "claude-code"]);
   expect(instruction?.sources[1]).toEqual({
     path: "/workspace/CLAUDE.md",
-    readers: [{ agent: "claude-code", supersededBy: null }],
+    readers: [
+      {
+        agent: "claude-code",
+        disabled: false,
+        supersededBy: null,
+        unverified: false,
+      },
+    ],
     target: "/workspace/AGENTS.md",
   });
   expect(instruction?.references.map((reference) => reference.status)).toEqual([
@@ -169,4 +200,49 @@ test("transport becomes one frozen set of items with their application", () => {
   expect(Object.isFrozen(skill?.skill?.metadata)).toBe(true);
   expect(snapshot.diagnostics).toEqual(dto.diagnostics);
   expect(Object.isFrozen(snapshot.diagnostics[0])).toBe(true);
+});
+
+test("a plugin keeps its facts and its components as items of their own", () => {
+  const [instruction, skill] = dto.items;
+  const snapshot = toAgentContextSnapshot({
+    ...dto,
+    items: [
+      {
+        ...skill!,
+        components: [{ ...instruction!, id: "plugin:/kit#instruction" }],
+        icon: "data:image/png;base64,AA==",
+        id: "plugin:/kit",
+        kind: "plugin",
+        managedBySvode: true,
+        plugin: {
+          composition: "declared",
+          counts: [{ count: 2, kind: "hooks" }],
+          directory: "/kit",
+          hasReadme: true,
+          manifest: {
+            author: "Team",
+            file: "plugin.json",
+            homepage: null,
+            keywords: ["kit"],
+            license: null,
+            repository: null,
+            version: "1.0.0",
+          },
+        },
+        skill: null,
+        unapplied: { kind: "disabled" },
+      },
+    ],
+  });
+  const [plugin] = snapshot.items;
+
+  expect(plugin?.kind).toBe("plugin");
+  expect(plugin?.unapplied).toEqual({ kind: "disabled" });
+  expect(plugin?.managedBySvode).toBe(true);
+  expect(plugin?.plugin?.manifest?.keywords).toEqual(["kit"]);
+  expect(plugin?.components.map((component) => component.id)).toEqual([
+    "plugin:/kit#instruction",
+  ]);
+  expect(plugin?.components[0]?.body).toBe("# Guide");
+  expect(Object.isFrozen(plugin?.components)).toBe(true);
 });

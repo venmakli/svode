@@ -132,16 +132,35 @@ export function toAgentContextSnapshot(
 function normalizeItem(item: AgentContextItemDto): AgentContextItem {
   return Object.freeze({
     body: item.preview.markdown,
+    components: Object.freeze(item.components.map(normalizeItem)),
     description: item.description,
     health: item.health,
     healthReasons: Object.freeze([...item.healthReasons]),
+    icon: item.icon,
     id: item.id,
     kind: item.kind,
     location: Object.freeze({ ...item.location }),
+    managedBySvode: item.managedBySvode,
     modifiedAt: item.modifiedAt,
     name: item.name,
     ownerPath: item.ownerRoot,
     path: item.path,
+    plugin: item.plugin
+      ? Object.freeze({
+          composition: item.plugin.composition,
+          counts: Object.freeze(
+            item.plugin.counts.map((count) => Object.freeze({ ...count })),
+          ),
+          directory: item.plugin.directory,
+          hasReadme: item.plugin.hasReadme,
+          manifest: item.plugin.manifest
+            ? Object.freeze({
+                ...item.plugin.manifest,
+                keywords: Object.freeze([...item.plugin.manifest.keywords]),
+              })
+            : null,
+        })
+      : null,
     providers: Object.freeze([...item.providers]),
     references: Object.freeze(
       item.references.map((reference) =>
@@ -178,7 +197,9 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
             source.readers.map((reader) =>
               Object.freeze({
                 agent: reader.agent,
+                disabled: reader.disabled,
                 supersededBy: reader.supersededBy,
+                unverified: reader.unverified,
               }),
             ),
           ),
@@ -187,20 +208,26 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
       ),
     ),
     truncated: item.preview.truncated,
-    unapplied: item.unapplied
-      ? Object.freeze(
-          item.unapplied.kind === "not_found"
-            ? {
-                kind: "not_found" as const,
-                readers: Object.freeze([...item.unapplied.readers]),
-              }
-            : {
-                by: Object.freeze([...item.unapplied.by]),
-                kind: "superseded" as const,
-              },
-        )
-      : null,
+    unapplied: item.unapplied ? unapplied(item.unapplied) : null,
   });
+}
+
+function unapplied(
+  value: NonNullable<AgentContextItemDto["unapplied"]>,
+): NonNullable<AgentContextItem["unapplied"]> {
+  if (value.kind === "not_found") {
+    return Object.freeze({
+      kind: "not_found",
+      readers: Object.freeze([...value.readers]),
+    });
+  }
+  if (value.kind === "superseded") {
+    return Object.freeze({
+      by: Object.freeze([...value.by]),
+      kind: "superseded",
+    });
+  }
+  return Object.freeze({ kind: "disabled" });
 }
 
 function skillMetadataValue(

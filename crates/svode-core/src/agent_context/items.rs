@@ -12,9 +12,10 @@ use crate::agent_adapters::{AgentAdapterKind, SourceRegistryEnvironment};
 
 use super::model::{
     AgentContextDiscovery, AgentContextSnapshotContent, ContextItem, ContextItemKind,
-    ContextItemReader, ContextItemSource, ContextLocation, ContextLocationKind, ContextSkillFacts,
-    InstructionReference, InstructionRow, SkillRow, SourceHealth, SourceLinkKind, SourceResolution,
-    SourceSupport, UnappliedReason,
+    ContextItemReader, ContextItemSource, ContextLocation, ContextLocationKind, ContextPluginFacts,
+    ContextSkillFacts, InstructionReference, InstructionRow, MarkdownPreview, PluginRow,
+    PluginSwitch, SkillRow, SourceHealth, SourceLinkKind, SourceResolution, SourceSupport,
+    UnappliedReason,
 };
 use super::scanner::skill_files;
 
@@ -26,6 +27,10 @@ struct Finding {
     link_kind: SourceLinkKind,
     /// Set when the agent takes another file instead.
     superseded_by: Option<String>,
+    /// The agent has the plugin installed but off.
+    disabled: bool,
+    /// The agent keeps the plugin's switch outside the device's files.
+    unverified: bool,
 }
 
 pub(super) fn snapshot(
@@ -41,6 +46,7 @@ pub(super) fn snapshot(
             .home_dir
             .canonicalize()
             .unwrap_or_else(|_| environment.home_dir.clone()),
+        svode_home: environment.svode_home.canonicalize().ok(),
     };
     let mut items = instruction_items(&discovery.instructions, &places, &enabled);
     items.extend(
@@ -48,6 +54,12 @@ pub(super) fn snapshot(
             .skills
             .iter()
             .map(|row| skill_item(row, &places, &enabled)),
+    );
+    items.extend(
+        discovery
+            .plugins
+            .iter()
+            .map(|row| plugin_item(row, &places, &enabled)),
     );
     items.sort_by(|left, right| {
         left.name
@@ -132,6 +144,8 @@ fn instruction_items(
                     target: (row.link_kind != SourceLinkKind::Direct).then(|| canonical.clone()),
                     link_kind: row.link_kind,
                     superseded_by: superseded_by(row.resolution, &row.superseded_by),
+                    disabled: false,
+                    unverified: false,
                 })
                 .collect::<Vec<_>>();
             let (health, health_reasons) =
@@ -154,6 +168,9 @@ fn instruction_items(
                     preview,
                     references,
                     skill: None,
+                    plugin: None,
+                    icon: None,
+                    managed_by_svode: false,
                 },
                 findings,
                 enabled,
@@ -167,7 +184,6 @@ fn skill_item(
     places: &Places,
     enabled: &BTreeSet<AgentAdapterKind>,
 ) -> ContextItem {
-    let canonical = Path::new(&row.canonical_path);
     let findings = row
         .aliases
         .iter()
@@ -177,34 +193,144 @@ fn skill_item(
             target: (alias.link_kind != SourceLinkKind::Direct).then(|| row.canonical_path.clone()),
             link_kind: alias.link_kind,
             superseded_by: superseded_by(alias.resolution, &alias.superseded_by),
+            disabled: false,
+            unverified: false,
         })
         .collect();
-    item(
+    item(skill_facts(row, row.id.clone(), places), findings, enabled)
+}
+
+fn skill_facts(row: &SkillRow, id: String, places: &Places) -> ItemFacts {
+    let canonical = Path::new(&row.canonical_path);
+    ItemFacts {
+        id,
+        kind: ContextItemKind::Skill,
+        name: row.name.clone(),
+        description: Some(row.description.clone()),
+        location: places.location(canonical.parent().unwrap_or(canonical)),
+        modified_at: modified_at(Path::new(&row.path)),
+        path: row.path.clone(),
+        owner_root: row.owner.root.clone(),
+        health: row.health,
+        health_reasons: row.health_reasons.clone(),
+        preview: row.preview.clone(),
+        references: Vec::new(),
+        skill: Some(ContextSkillFacts {
+            directory: row.canonical_path.clone(),
+            has_files: skill_files::has_skill_files(canonical),
+            license: row.license.clone(),
+            compatibility: row.compatibility.clone(),
+            metadata: row.metadata.clone(),
+            allowed_tools: row.allowed_tools.clone(),
+        }),
+        plugin: None,
+        icon: None,
+        managed_by_svode: places.managed_by_svode(canonical),
+    }
+}
+
+/// A plugin with its skills and instructions as nested rows, which take its
+/// providers, sources and location.
+fn plugin_item(
+    row: &PluginRow,
+    places: &Places,
+    enabled: &BTreeSet<AgentAdapterKind>,
+) -> ContextItem {
+    let findings = row
+        .findings
+        .iter()
+        .map(|finding| Finding {
+            agent: finding.adapter_id,
+            path: finding.path.clone(),
+            target: (finding.link_kind != SourceLinkKind::Direct).then(|| row.directory.clone()),
+            link_kind: finding.link_kind,
+            superseded_by: finding.superseded_by.clone(),
+            disabled: finding.switch == PluginSwitch::Off,
+            unverified: finding.switch == PluginSwitch::Unverified,
+        })
+        .collect::<Vec<_>>();
+    let directory = Path::new(&row.directory);
+    let location = places.location(Path::new(&row.place));
+    let managed_by_svode = places.managed_by_svode(directory);
+    let mut plugin = item(
         ItemFacts {
             id: row.id.clone(),
-            kind: ContextItemKind::Skill,
+            kind: ContextItemKind::Plugin,
             name: row.name.clone(),
-            description: Some(row.description.clone()),
-            location: places.location(canonical.parent().unwrap_or(canonical)),
+            description: row.description.clone(),
+            location: location.clone(),
             modified_at: modified_at(Path::new(&row.path)),
             path: row.path.clone(),
-            owner_root: row.owner.root.clone(),
+            owner_root: row.owner_root.clone(),
             health: row.health,
             health_reasons: row.health_reasons.clone(),
-            preview: row.preview.clone(),
-            references: Vec::new(),
-            skill: Some(ContextSkillFacts {
-                directory: row.canonical_path.clone(),
-                has_files: skill_files::has_skill_files(canonical),
-                license: row.license.clone(),
-                compatibility: row.compatibility.clone(),
-                metadata: row.metadata.clone(),
-                allowed_tools: row.allowed_tools.clone(),
+            preview: row.readme.clone().unwrap_or(MarkdownPreview {
+                markdown: String::new(),
+                truncated: false,
+                bytes_read: 0,
+                total_bytes: 0,
             }),
+            references: Vec::new(),
+            skill: None,
+            plugin: Some(ContextPluginFacts {
+                directory: row.directory.clone(),
+                composition: row.composition,
+                manifest: row.manifest.clone(),
+                counts: row.counts.clone(),
+                has_readme: row.readme.is_some(),
+            }),
+            icon: row.icon.clone(),
+            managed_by_svode,
         },
         findings,
         enabled,
-    )
+    );
+    let nested = |mut component: ContextItem| {
+        component.location = location.clone();
+        component.providers = plugin.providers.clone();
+        component.unapplied = plugin.unapplied.clone();
+        component.sources = plugin.sources.clone();
+        component.managed_by_svode = managed_by_svode;
+        component
+    };
+    let mut components = row
+        .skills
+        .iter()
+        .map(|skill| {
+            let id = format!("{}#{}", row.id, skill.id);
+            nested(item(skill_facts(skill, id, places), Vec::new(), enabled))
+        })
+        .collect::<Vec<_>>();
+    components.extend(row.instructions.iter().map(|instruction| {
+        let path = Path::new(&instruction.path);
+        nested(item(
+            ItemFacts {
+                id: format!(
+                    "{}#instruction:{}:{}",
+                    row.id, instruction.path, instruction.name
+                ),
+                kind: ContextItemKind::Instruction,
+                name: instruction.name.clone(),
+                description: None,
+                location: location.clone(),
+                modified_at: modified_at(path),
+                path: instruction.path.clone(),
+                owner_root: row.owner_root.clone(),
+                health: SourceHealth::Normal,
+                health_reasons: Vec::new(),
+                preview: instruction.preview.clone(),
+                references: Vec::new(),
+                skill: None,
+                plugin: None,
+                icon: None,
+                managed_by_svode,
+            },
+            Vec::new(),
+            enabled,
+        ))
+    }));
+    plugin.components = components;
+    plugin
 }
 
 struct ItemFacts {
@@ -218,9 +344,12 @@ struct ItemFacts {
     owner_root: String,
     health: SourceHealth,
     health_reasons: Vec<String>,
-    preview: super::model::MarkdownPreview,
+    preview: MarkdownPreview,
     references: Vec<InstructionReference>,
     skill: Option<ContextSkillFacts>,
+    plugin: Option<ContextPluginFacts>,
+    icon: Option<String>,
+    managed_by_svode: bool,
 }
 
 /// "Providers" are the enabled agents that apply the item. Sources keep the
@@ -240,7 +369,7 @@ fn item(
         .collect::<Vec<_>>();
     let providers = enabled_findings
         .iter()
-        .filter(|finding| finding.superseded_by.is_none())
+        .filter(|finding| finding.superseded_by.is_none() && !finding.disabled)
         .map(|finding| finding.agent)
         .collect::<BTreeSet<_>>();
     let unapplied = if !providers.is_empty() {
@@ -249,6 +378,8 @@ fn item(
         Some(UnappliedReason::NotFound {
             readers: readers.into_iter().collect(),
         })
+    } else if enabled_findings.iter().any(|finding| finding.disabled) {
+        Some(UnappliedReason::Disabled)
     } else {
         Some(UnappliedReason::Superseded {
             by: enabled_findings
@@ -279,6 +410,8 @@ fn item(
             source.readers.push(ContextItemReader {
                 agent: finding.agent,
                 superseded_by: finding.superseded_by,
+                disabled: finding.disabled,
+                unverified: finding.unverified,
             });
         }
     }
@@ -303,6 +436,10 @@ fn item(
         preview: facts.preview,
         references: facts.references,
         skill: facts.skill,
+        plugin: facts.plugin,
+        components: Vec::new(),
+        icon: facts.icon,
+        managed_by_svode: facts.managed_by_svode,
     }
 }
 
@@ -333,9 +470,18 @@ struct Places {
     target_root: PathBuf,
     repository_root: PathBuf,
     home: PathBuf,
+    svode_home: Option<PathBuf>,
 }
 
 impl Places {
+    /// The Svode integration lies in the stable Svode folder (Stage 9 `06`):
+    /// client links lead there.
+    fn managed_by_svode(&self, canonical: &Path) -> bool {
+        self.svode_home
+            .as_ref()
+            .is_some_and(|svode| canonical.starts_with(svode))
+    }
+
     /// A short path: inside the repository boundary from the target root, in
     /// the home directory from `~`, otherwise absolute.
     fn location(&self, directory: &Path) -> ContextLocation {
@@ -553,7 +699,9 @@ mod tests {
             shadowed.sources[0].readers,
             vec![ContextItemReader {
                 agent: CODEX,
-                superseded_by: Some(by)
+                superseded_by: Some(by),
+                disabled: false,
+                unverified: false,
             }]
         );
     }
@@ -817,11 +965,15 @@ mod tests {
             vec![
                 ContextItemReader {
                     agent: CODEX,
-                    superseded_by: None
+                    superseded_by: None,
+                    disabled: false,
+                    unverified: false,
                 },
                 ContextItemReader {
                     agent: CLAUDE,
-                    superseded_by: Some(path_string(&claude))
+                    superseded_by: Some(path_string(&claude)),
+                    disabled: false,
+                    unverified: false,
                 },
             ]
         );

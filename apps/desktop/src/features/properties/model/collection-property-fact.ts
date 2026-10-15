@@ -22,7 +22,10 @@ export type CollectionPropertyFactValue =
   | { kind: "code"; code: string | null }
   | { kind: "link"; label: string; onSelect(): void };
 
-/** Facts of one source under its label, such as "From SKILL.md". */
+/**
+ * Facts of one source under its label, such as "From SKILL.md"; facts with
+ * an empty label follow the rows above without a heading.
+ */
 export interface CollectionPropertyFactGroup {
   key: string;
   label: string;

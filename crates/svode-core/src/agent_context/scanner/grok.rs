@@ -1,6 +1,7 @@
 //! The Grok Build config, TOML (E02, Grok Build 1.0.46): its compatibility
-//! cells and `[skills] paths` and `ignore`. Only those keys are kept: the
-//! config also holds API keys.
+//! cells, `[skills] paths` and `ignore`, and `[plugins] enabled`,
+//! `disabled` and `paths`. Only those keys are kept: the config also holds
+//! API keys.
 
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -28,6 +29,12 @@ pub(super) struct Config {
     pub skill_paths: Vec<PathBuf>,
     /// `[skills] ignore`: the skills under these paths are hidden.
     pub ignored_paths: Vec<PathBuf>,
+    /// `[plugins] enabled`: plugins are off until named here.
+    pub plugins_enabled: Vec<String>,
+    /// `[plugins] disabled`, which wins over `enabled`.
+    pub plugins_disabled: Vec<String>,
+    /// `[plugins] paths`: more plugin folders, on unless disabled.
+    pub plugin_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -36,6 +43,18 @@ struct ConfigFile {
     compat: CompatFile,
     #[serde(default)]
     skills: SkillsFile,
+    #[serde(default)]
+    plugins: PluginsFile,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PluginsFile {
+    #[serde(default)]
+    enabled: Vec<String>,
+    #[serde(default)]
+    disabled: Vec<String>,
+    #[serde(default)]
+    paths: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -122,6 +141,9 @@ pub(super) fn config(
             switched_off,
             skill_paths: file.skills.paths.iter().filter_map(expand).collect(),
             ignored_paths: file.skills.ignore.iter().filter_map(expand).collect(),
+            plugins_enabled: file.plugins.enabled,
+            plugins_disabled: file.plugins.disabled,
+            plugin_paths: file.plugins.paths.iter().filter_map(expand).collect(),
         },
         result,
     )

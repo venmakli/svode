@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -49,6 +49,17 @@ export function AgentContextSurface({
   const [openedItem, setOpenedItem] = useState<OpenedAgentContextItem | null>(
     null,
   );
+  // Plugins of "All" whose components are shown, for the session.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const togglePlugin = useCallback((itemId: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(itemId)) next.add(itemId);
+      return next;
+    });
+  }, []);
   const instanceKey = `agent-context:${owner.ownerKey}`;
   const diagnosticGroups = useMemo(
     () =>
@@ -68,11 +79,16 @@ export function AgentContextSurface({
     () =>
       AGENT_CONTEXT_PRESETS.map((id) =>
         createAgentContextPresentation({
+          ...(id === "all"
+            ? { expansion: { expanded, onToggle: togglePlugin } }
+            : {}),
           id,
           onActivate: createCollectionDetailActivation({
             controller: detailController,
             createContent: (item) =>
-              createAgentContextItemDetailContent(item, properties),
+              createAgentContextItemDetailContent(item, properties, {
+                onOpenProviders,
+              }),
             instanceKey,
             onRequested: (rowId) =>
               setOpenedItem({ presentationId: id, rowId }),
@@ -87,7 +103,16 @@ export function AgentContextSurface({
           ),
         }),
       ),
-    [detailController, instanceKey, onOpenProviders, properties, retry, state],
+    [
+      detailController,
+      expanded,
+      instanceKey,
+      onOpenProviders,
+      properties,
+      retry,
+      state,
+      togglePlugin,
+    ],
   );
   const instance = useMemo<CollectionInstance>(
     () => ({
@@ -102,7 +127,15 @@ export function AgentContextSurface({
 
   useEffect(() => {
     if (!openedItem || state.phase !== "ready" || !detailController) return;
-    if (state.snapshot.items.some((item) => item.id === openedItem.rowId)) {
+    if (
+      state.snapshot.items.some(
+        (item) =>
+          item.id === openedItem.rowId ||
+          item.components.some(
+            (component) => component.id === openedItem.rowId,
+          ),
+      )
+    ) {
       return;
     }
 

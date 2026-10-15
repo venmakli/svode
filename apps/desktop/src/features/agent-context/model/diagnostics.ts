@@ -4,6 +4,7 @@ export type AgentContextDiagnosticGroupId =
   | "clients"
   | "instructions"
   | "skills"
+  | "plugins"
   | "runtime"
   | "other";
 
@@ -21,6 +22,7 @@ const groupOrder: readonly AgentContextDiagnosticGroupId[] = [
   "clients",
   "instructions",
   "skills",
+  "plugins",
   "runtime",
   "other",
 ];
@@ -85,6 +87,14 @@ export function countAgentContextDiagnostics(
 function diagnosticGroup(code: string): AgentContextDiagnosticGroupId {
   if (code.startsWith("adapter_")) return "clients";
   if (code.startsWith("skill_")) return "skills";
+  if (
+    code.startsWith("plugin_") ||
+    /^(claude_plugin|kimi_plugin|qwen_extension|cursor_settings|pi_settings)_/.test(
+      code,
+    )
+  ) {
+    return "plugins";
+  }
   if (
     code.startsWith("instruction_") ||
     code.startsWith("codex_") ||

@@ -1,4 +1,10 @@
-import { FileText, Layers, Sparkles, TriangleAlert } from "lucide-react";
+import {
+  FileText,
+  Layers,
+  Puzzle,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 
 import {
   Empty,
@@ -16,6 +22,7 @@ import {
   defineCollectionPresentation,
   normalizeCollectionSearchText,
   type CollectionPresentationDescriptor,
+  type CollectionPresentationLayout,
   type CollectionPresentationState,
 } from "@/features/collection";
 import type { CollectionPropertyDefinition } from "@/features/properties";
@@ -30,19 +37,32 @@ import {
 } from "./item-properties";
 
 /** Built-in presets over the one set of items, "All" first. */
-export const AGENT_CONTEXT_PRESETS = ["all", "instructions", "skills"] as const;
+export const AGENT_CONTEXT_PRESETS = [
+  "all",
+  "instructions",
+  "skills",
+  "plugins",
+] as const;
 export type AgentContextPresetId = (typeof AGENT_CONTEXT_PRESETS)[number];
 
 const presetKinds: Readonly<
   Record<Exclude<AgentContextPresetId, "all">, AgentContextItemKind>
-> = { instructions: "instruction", skills: "skill" };
+> = { instructions: "instruction", plugins: "plugin", skills: "skill" };
+
+/** Which plugins of "All" show their components. */
+export interface AgentContextExpansion {
+  expanded: ReadonlySet<string>;
+  onToggle(itemId: string): void;
+}
 
 export function createAgentContextPresentation({
+  expansion,
   id,
   onActivate,
   properties,
   state,
 }: {
+  expansion?: AgentContextExpansion;
   id: AgentContextPresetId;
   onActivate?: CollectionPresentationDescriptor<AgentContextItem>["onActivate"];
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
@@ -57,12 +77,15 @@ export function createAgentContextPresentation({
         id === "all"
           ? {
               density: "compact",
+              ...(expansion
+                ? { hierarchy: agentContextPluginHierarchy(expansion) }
+                : {}),
               kind: "table",
               primaryProperty: "name",
               renderLeading: (item) => (
                 <AgentContextItemIcon
                   className="size-4 text-muted-foreground"
-                  kind={item.kind}
+                  item={item}
                 />
               ),
               visibleProperties: [
@@ -77,7 +100,7 @@ export function createAgentContextPresentation({
           : {
               cardSize: "medium",
               density: "compact",
-              ...(id === "skills"
+              ...(id === "skills" || id === "plugins"
                 ? {
                     getDescription: (item: AgentContextItem) => (
                       <span className="line-clamp-3 leading-relaxed">
@@ -91,7 +114,7 @@ export function createAgentContextPresentation({
               renderLeading: (item) => (
                 <AgentContextItemIcon
                   className="size-4 text-muted-foreground"
-                  kind={item.kind}
+                  item={item}
                 />
               ),
               renderOverlays: (item) => <ItemProblemsMarker item={item} />,
@@ -107,12 +130,14 @@ export function createAgentContextPresentation({
               fixedPredicate: (item: AgentContextItem) =>
                 item.kind === presetKinds[id],
             }),
+        // A plugin is found by the names of its components too.
         getSearchText: (item) =>
           [
             item.name,
             item.description ?? "",
             agentContextItemKindLabel(item.kind),
             agentContextLocationLabel(item.location),
+            ...item.components.map((component) => component.name),
           ].join(" "),
         getSortTieBreakId: (item) => item.id,
       },
@@ -121,30 +146,67 @@ export function createAgentContextPresentation({
   });
 }
 
+/**
+ * A plugin with declared components expands in the Table like a folder of
+ * "Attachments"; its components are not top-level rows.
+ */
+function agentContextPluginHierarchy({
+  expanded,
+  onToggle,
+}: AgentContextExpansion): Extract<
+  CollectionPresentationLayout<AgentContextItem>,
+  { kind: "table" }
+>["hierarchy"] {
+  return {
+    getBranch: (item) =>
+      item.components.length > 0
+        ? { expanded: expanded.has(item.id), rows: item.components }
+        : null,
+    getLabel: (item) => item.name,
+    onToggle: (item) => onToggle(item.id),
+  };
+}
+
+const presetEmpty: Readonly<
+  Record<
+    AgentContextPresetId,
+    { icon: typeof Layers; title(): string; description(): string }
+  >
+> = {
+  all: {
+    description: m.agent_context_all_empty_description,
+    icon: Layers,
+    title: m.agent_context_all_empty_title,
+  },
+  instructions: {
+    description: m.agent_context_empty_description,
+    icon: FileText,
+    title: m.agent_context_empty_title,
+  },
+  plugins: {
+    description: m.agent_context_plugins_empty_description,
+    icon: Puzzle,
+    title: m.agent_context_plugins_empty_title,
+  },
+  skills: {
+    description: m.agent_context_skills_empty_description,
+    icon: Sparkles,
+    title: m.agent_context_skills_empty_title,
+  },
+};
+
 /** The empty set of a preset, named by its type. */
 export function AgentContextPresetEmpty({ id }: { id: AgentContextPresetId }) {
-  const Icon =
-    id === "skills" ? Sparkles : id === "instructions" ? FileText : Layers;
+  const empty = presetEmpty[id];
+  const Icon = empty.icon;
   return (
     <Empty className="min-h-48 flex-none border">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Icon />
         </EmptyMedia>
-        <EmptyTitle>
-          {id === "skills"
-            ? m.agent_context_skills_empty_title()
-            : id === "instructions"
-              ? m.agent_context_empty_title()
-              : m.agent_context_all_empty_title()}
-        </EmptyTitle>
-        <EmptyDescription>
-          {id === "skills"
-            ? m.agent_context_skills_empty_description()
-            : id === "instructions"
-              ? m.agent_context_empty_description()
-              : m.agent_context_all_empty_description()}
-        </EmptyDescription>
+        <EmptyTitle>{empty.title()}</EmptyTitle>
+        <EmptyDescription>{empty.description()}</EmptyDescription>
       </EmptyHeader>
     </Empty>
   );
@@ -165,6 +227,7 @@ export function compareItemsByDefault(
 function presetLabel(id: AgentContextPresetId) {
   if (id === "instructions") return m.agent_context_instructions();
   if (id === "skills") return m.agent_context_skills();
+  if (id === "plugins") return m.agent_context_plugins();
   return m.agent_context_preset_all();
 }
 

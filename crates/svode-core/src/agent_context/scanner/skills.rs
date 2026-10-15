@@ -331,6 +331,7 @@ fn switch_on(
 ) -> bool {
     match switch {
         SourceSwitch::GrokCompat(..) => !grok_off.contains(&switch),
+        SourceSwitch::HermesProjectPlugins => environment.hermes_project_plugins,
         SourceSwitch::OpencodeCompatibility => super::opencode::built_in_plugin_enabled(
             "opencode.config.compatibility",
             environment,
@@ -602,19 +603,13 @@ impl Scan<'_> {
             return;
         }
         let has_manifest = canonical_entry.join("SKILL.md").exists();
-        if matches!(
-            root.discovery_kind,
-            SkillDiscoveryKind::ClaudePersonal | SkillDiscoveryKind::ClaudeProject
-        ) && !has_manifest
+        // A skills-dir plugin of Claude Code is a plugin, not a skill; its
+        // skills are its components, also for the agents that walk the
+        // Claude skills folders deeper.
+        if root.root.ends_with(".claude/skills")
+            && !has_manifest
             && canonical_entry.join(CLAUDE_PLUGIN_MANIFEST).is_file()
         {
-            self.scan_claude_plugin(
-                root,
-                entry,
-                &canonical_entry,
-                entry_is_alias || metadata.file_type().is_symlink(),
-                folders,
-            );
             return;
         }
         if !has_manifest && !direct_children {
@@ -763,81 +758,6 @@ impl Scan<'_> {
             },
         );
     }
-
-    /// Scans `skills/*` of a Claude Code skills-dir plugin. The plugin's
-    /// skills resolve through the plugin address, and plugins do not nest.
-    fn scan_claude_plugin(
-        &mut self,
-        root: &RootSpec<'_>,
-        plugin: &Path,
-        canonical_plugin: &Path,
-        plugin_is_alias: bool,
-        folders: &mut BTreeSet<PathBuf>,
-    ) {
-        let plugin_root = RootSpec {
-            adapter: root.adapter,
-            scope: root.scope,
-            discovery_kind: match root.discovery_kind {
-                SkillDiscoveryKind::ClaudeProject => SkillDiscoveryKind::ClaudeProjectPlugin,
-                _ => SkillDiscoveryKind::ClaudePersonalPlugin,
-            },
-            layout: SkillLayout::DIRECT_CHILDREN,
-            root: plugin.join("skills"),
-            owner: root.owner.clone(),
-            excluded_names: root.excluded_names,
-            nearness: root.nearness,
-        };
-        let canonical_skills = match plugin_root.root.canonicalize() {
-            Ok(path) if path.is_dir() => path,
-            Ok(_) => {
-                self.failure(
-                    root.adapter.id,
-                    &plugin_root.root,
-                    "skill_root_not_directory",
-                    format!(
-                        "Skill root is not a directory: {}",
-                        plugin_root.root.display()
-                    ),
-                );
-                return;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) => {
-                self.failure(
-                    root.adapter.id,
-                    &plugin_root.root,
-                    "skill_root_alias_unresolved",
-                    format!(
-                        "Could not resolve skill root {}: {error}",
-                        plugin_root.root.display()
-                    ),
-                );
-                return;
-            }
-        };
-        if !canonical_skills.starts_with(canonical_plugin) {
-            self.failure(
-                root.adapter.id,
-                &plugin_root.root,
-                "skill_root_outside_boundary",
-                format!(
-                    "Skill root {} resolves outside its plugin and was not scanned",
-                    plugin_root.root.display()
-                ),
-            );
-            return;
-        }
-        let skills_is_alias =
-            plugin_is_alias || canonical_skills != canonical_plugin.join("skills");
-        self.scan_directory(
-            &plugin_root,
-            &plugin_root.root,
-            &canonical_skills,
-            1,
-            skills_is_alias,
-            folders,
-        );
-    }
 }
 
 struct BoundedEntries {
@@ -898,6 +818,41 @@ fn canonical_skill_owner(
         .iter()
         .find(|boundary| canonical_entry.starts_with(&boundary.root))
         .map(|boundary| boundary.owner.clone())
+}
+
+/// A skill a plugin brings: its row without discovery paths, which are the
+/// plugin's. A failure is a diagnostic code and message.
+pub(super) fn plugin_skill(
+    canonical_entry: &Path,
+    owner: &InstructionOwner,
+) -> Result<SkillRow, (&'static str, String)> {
+    let parsed = parse_skill(canonical_entry).map_err(|failure| (failure.code, failure.message))?;
+    Ok(SkillRow {
+        id: format!("skill:{}", path_string(canonical_entry)),
+        name: parsed.name,
+        description: parsed.description,
+        path: path_string(&parsed.manifest_path),
+        canonical_path: path_string(canonical_entry),
+        owner: owner.clone(),
+        license: parsed.license,
+        compatibility: parsed.compatibility,
+        metadata: parsed.metadata,
+        allowed_tools: parsed.allowed_tools,
+        validation: if parsed.warnings.is_empty() {
+            SkillValidationStatus::Valid
+        } else {
+            SkillValidationStatus::Warning
+        },
+        health: if parsed.warnings.is_empty() {
+            SourceHealth::Normal
+        } else {
+            SourceHealth::Degraded
+        },
+        health_reasons: parsed.warnings.clone(),
+        warnings: parsed.warnings,
+        preview: parsed.preview,
+        aliases: Vec::new(),
+    })
 }
 
 fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
@@ -1287,12 +1242,7 @@ fn apply_personal_shadowing(
     let mut personal_names = BTreeMap::new();
     for row in rows.values() {
         for alias in &row.aliases {
-            // Claude namespaces plugin skills as `plugin:skill`, so they
-            // never take a project skill's name.
-            if adapters.contains(&alias.adapter_id)
-                && alias.scope == SkillScope::Personal
-                && alias.discovery_kind != SkillDiscoveryKind::ClaudePersonalPlugin
-            {
+            if adapters.contains(&alias.adapter_id) && alias.scope == SkillScope::Personal {
                 personal_names
                     .entry((alias.adapter_id, row.name.clone()))
                     .or_insert_with(|| alias.path.clone());
@@ -1301,9 +1251,7 @@ fn apply_personal_shadowing(
     }
     for row in rows.values_mut() {
         for alias in &mut row.aliases {
-            if alias.scope != SkillScope::Project
-                || alias.discovery_kind == SkillDiscoveryKind::ClaudeProjectPlugin
-            {
+            if alias.scope != SkillScope::Project {
                 continue;
             }
             if let Some(personal) = personal_names.get(&(alias.adapter_id, row.name.clone())) {
@@ -1424,11 +1372,9 @@ fn discovery_kind_order(kind: SkillDiscoveryKind) -> u8 {
         SkillDiscoveryKind::CodexProject => 2,
         SkillDiscoveryKind::CodexProjectConfig => 3,
         SkillDiscoveryKind::ClaudePersonal => 4,
-        SkillDiscoveryKind::ClaudePersonalPlugin => 5,
-        SkillDiscoveryKind::ClaudeProject => 6,
-        SkillDiscoveryKind::ClaudeProjectPlugin => 7,
-        SkillDiscoveryKind::PersonalRoot => 8,
-        SkillDiscoveryKind::ProjectRoot => 9,
+        SkillDiscoveryKind::ClaudeProject => 5,
+        SkillDiscoveryKind::PersonalRoot => 6,
+        SkillDiscoveryKind::ProjectRoot => 7,
     }
 }
 
@@ -1985,18 +1931,12 @@ mod tests {
             InstructionOwnerKind::ClientConfiguration
         );
         assert_eq!(payload.owner.root, path_string(&home.path().join(".svode")));
-        assert_eq!(codex_and_claude(payload).len(), 2);
+        // Claude Code reads it through its plugin, a plugin row of its own.
+        assert_eq!(codex_and_claude(payload).len(), 1);
         assert!(payload.aliases.iter().any(|alias| {
             alias.adapter_id == AgentAdapterKind::Codex
                 && alias.discovery_kind == SkillDiscoveryKind::CodexStandardPersonal
                 && alias.link_kind == SkillLinkKind::SymbolicLink
-                && alias.resolution == SourceResolution::Included
-        }));
-        assert!(payload.aliases.iter().any(|alias| {
-            alias.adapter_id == AgentAdapterKind::ClaudeCode
-                && alias.discovery_kind == SkillDiscoveryKind::ClaudePersonalPlugin
-                && alias.link_kind == SkillLinkKind::DirectoryAlias
-                && alias.path == path_string(&home.path().join(".claude/skills/svode/skills/svode"))
                 && alias.resolution == SourceResolution::Included
         }));
         let project_svode = snapshot
@@ -2504,8 +2444,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_project_skills_dir_plugin_brings_namespaced_skills_that_personal_ones_do_not_shadow()
-    {
+    fn claude_project_skills_dir_plugin_skills_are_no_claude_skills() {
         let (project, home, environment) = setup();
         let plugin = project.path().join(".claude/skills/kit");
         fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
@@ -2528,15 +2467,20 @@ mod tests {
         );
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
-        let plugin_alias = snapshot
+        let claude_paths = snapshot
             .skills
             .iter()
             .filter(|row| row.name == "review")
             .flat_map(codex_and_claude)
-            .find(|alias| alias.discovery_kind == SkillDiscoveryKind::ClaudeProjectPlugin)
-            .unwrap();
+            .map(|alias| alias.path.clone())
+            .collect::<Vec<_>>();
 
-        assert_eq!(plugin_alias.resolution, SourceResolution::Included);
+        // The plugin's skill is its component; only the personal one is a
+        // skill of Claude Code.
+        assert_eq!(
+            claude_paths,
+            vec![path_string(&home.path().join(".claude/skills/review"))]
+        );
         assert!(
             snapshot
                 .diagnostics

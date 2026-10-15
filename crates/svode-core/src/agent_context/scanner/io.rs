@@ -183,6 +183,49 @@ pub(super) fn diagnostic(
     }
 }
 
+/// The largest config or manifest file the scanner reads.
+pub(super) const CONFIG_BYTES: u64 = 256 * 1024;
+
+/// The text of a config or manifest file, `None` when it is missing. A
+/// failure is a `<code>_read` or `<code>_limit` diagnostic that never quotes
+/// the file, which may hold secrets.
+pub(super) fn read_config_text(
+    path: &Path,
+    adapter_id: Option<AgentAdapterKind>,
+    code: &str,
+    label: &str,
+    diagnostics: &mut Vec<AgentContextDiagnostic>,
+) -> Option<String> {
+    let mut failed = |suffix: &str, message: String| {
+        diagnostics.push(diagnostic(
+            path,
+            adapter_id,
+            &format!("{code}_{suffix}"),
+            message,
+        ));
+        None
+    };
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => return failed("read", format!("Could not read {label}: {}", error.kind())),
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = file.take(CONFIG_BYTES + 1).read_to_end(&mut bytes) {
+        return failed("read", format!("Could not read {label}: {}", error.kind()));
+    }
+    if bytes.len() as u64 > CONFIG_BYTES {
+        return failed(
+            "limit",
+            format!("{label} exceeds the supported 256 KiB scan limit"),
+        );
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => Some(text.trim_start_matches('\u{feff}').to_string()),
+        Err(_) => failed("read", format!("{label} is not valid UTF-8")),
+    }
+}
+
 pub(super) fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }

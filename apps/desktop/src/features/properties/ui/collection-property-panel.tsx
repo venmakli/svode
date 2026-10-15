@@ -74,12 +74,14 @@ export function CollectionPropertyPanel<Row>({
       })}
       {visibleGroups.map((group) => (
         <Fragment key={`group:${group.key}`}>
-          <h3
-            className="col-span-2 px-1.5 pt-3 pb-1 text-xs font-medium text-muted-foreground"
-            data-collection-panel-fact-group={group.key}
-          >
-            {group.label}
-          </h3>
+          {group.label ? (
+            <h3
+              className="col-span-2 px-1.5 pt-3 pb-1 text-xs font-medium text-muted-foreground"
+              data-collection-panel-fact-group={group.key}
+            >
+              {group.label}
+            </h3>
+          ) : null}
           {group.facts.map((fact) => (
             <PanelRow
               key={`fact:${group.key}:${fact.key}`}

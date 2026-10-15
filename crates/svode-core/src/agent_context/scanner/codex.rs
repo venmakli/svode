@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -22,6 +23,14 @@ struct CodexConfig {
     #[serde(default)]
     project_doc_fallback_filenames: Vec<String>,
     project_doc_max_bytes: Option<usize>,
+    #[serde(default)]
+    plugins: BTreeMap<String, CodexPlugin>,
+}
+
+/// Only whether a plugin is on; its MCP overrides are not read.
+#[derive(Debug, Default, Deserialize)]
+struct CodexPlugin {
+    enabled: Option<bool>,
 }
 
 /// `global` reads the Codex home: its config and personal instructions.
@@ -346,6 +355,21 @@ fn validated_fallbacks(
         }
     }
     valid
+}
+
+/// `[plugins."<plugin>@<marketplace>"] enabled` of the Codex config; a table
+/// without `enabled` is on.
+pub(super) fn plugin_switches(
+    environment: &SourceRegistryEnvironment,
+    result: &mut DiscoveryResult,
+) -> BTreeMap<String, bool> {
+    let (config, read) = read_config(environment, AgentAdapterKind::Codex);
+    result.append(read);
+    config
+        .plugins
+        .into_iter()
+        .map(|(id, plugin)| (id, plugin.enabled.unwrap_or(true)))
+        .collect()
 }
 
 #[cfg(test)]

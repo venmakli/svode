@@ -1,4 +1,6 @@
-import { FileText, Sparkles } from "lucide-react";
+import { FileText, Puzzle, Sparkles } from "lucide-react";
+
+import { cn } from "@/shared/lib/utils";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -23,22 +25,41 @@ import type {
 } from "../model/types";
 import { agentContextHealthProperty } from "./health-property";
 
-/** The icon of an item: the fallback of its type, everywhere it is shown. */
+/**
+ * The icon of an item everywhere it is shown: the Svode logo on the Svode
+ * integration, the image its source declares, else the fallback of its type.
+ */
 export function AgentContextItemIcon({
   className,
-  kind,
+  item,
 }: {
   className?: string;
-  kind: AgentContextItemKind;
+  item: Pick<AgentContextItem, "icon" | "kind" | "managedBySvode">;
 }) {
-  const Icon = kind === "skill" ? Sparkles : FileText;
+  const image = item.managedBySvode ? "/logo.png" : item.icon;
+  if (image) {
+    return (
+      <img
+        alt=""
+        className={cn("size-4 shrink-0 object-contain", className)}
+        data-agent-context-icon={item.managedBySvode ? "svode" : "source"}
+        src={image}
+      />
+    );
+  }
+  const Icon =
+    item.kind === "skill"
+      ? Sparkles
+      : item.kind === "plugin"
+        ? Puzzle
+        : FileText;
   return <Icon className={className} aria-hidden />;
 }
 
 export function agentContextItemKindLabel(kind: AgentContextItemKind) {
-  return kind === "skill"
-    ? m.agent_context_type_skill()
-    : m.agent_context_type_instruction();
+  if (kind === "skill") return m.agent_context_type_skill();
+  if (kind === "plugin") return m.agent_context_type_plugin();
+  return m.agent_context_type_instruction();
 }
 
 /** A short path: the Space root by name, home paths from `~`. */
@@ -54,6 +75,9 @@ export function agentContextLocationLabel(location: AgentContextLocation) {
 
 /** Why "Providers" is empty, in one line. */
 export function agentContextUnappliedText(item: AgentContextItem) {
+  if (item.unapplied?.kind === "disabled") {
+    return m.agent_context_unapplied_disabled();
+  }
   if (item.unapplied?.kind === "superseded") {
     return item.unapplied.by.length > 0
       ? m.agent_context_unapplied_superseded_by({
@@ -100,6 +124,7 @@ export function createAgentContextItemProperties({
         options: [
           { color: "blue", name: m.agent_context_type_instruction() },
           { color: "purple", name: m.agent_context_type_skill() },
+          { color: "orange", name: m.agent_context_type_plugin() },
         ],
         type: "select",
       },
@@ -238,14 +263,25 @@ function ProvidersDetail({
     item.unapplied?.kind === "not_found" ? item.unapplied.readers : [],
   );
   if (item.providers.length > 0) {
+    const unverified = agentNames(agents, unverifiedProviders(item));
     return (
-      <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
-        {item.providers.map((agent) => (
-          <span key={agent} className="inline-flex items-center gap-1.5">
-            <AgentIcon agent={agent} />
-            {agents.label(agent)}
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
+          {item.providers.map((agent) => (
+            <span key={agent} className="inline-flex items-center gap-1.5">
+              <AgentIcon agent={agent} />
+              {agents.label(agent)}
+            </span>
+          ))}
+        </div>
+        {unverified ? (
+          <span
+            className="text-xs text-muted-foreground"
+            data-agent-context-providers-unverified
+          >
+            {m.agent_context_unverified_note({ agents: unverified })}
           </span>
-        ))}
+        ) : null}
       </div>
     );
   }
@@ -255,7 +291,11 @@ function ProvidersDetail({
       data-agent-context-providers-reason
     >
       <span className="text-muted-foreground">-</span>
-      {item.unapplied?.kind === "superseded" ? (
+      {item.unapplied?.kind === "disabled" ? (
+        <span className="text-xs text-muted-foreground">
+          {m.agent_context_unapplied_disabled()}
+        </span>
+      ) : item.unapplied?.kind === "superseded" ? (
         <div className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground">
           <span>{m.agent_context_unapplied_superseded()}</span>
           {item.unapplied.by.map((path) => (
@@ -289,6 +329,18 @@ function ProvidersDetail({
       )}
     </div>
   );
+}
+
+/** Providers that apply a plugin whose switch they keep outside files. */
+function unverifiedProviders(item: AgentContextItem): string[] {
+  const unverified = new Set(
+    item.sources.flatMap((source) =>
+      source.readers
+        .filter((reader) => reader.unverified)
+        .map((reader) => reader.agent),
+    ),
+  );
+  return item.providers.filter((agent) => unverified.has(agent));
 }
 
 function agentNames(

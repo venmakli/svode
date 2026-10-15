@@ -61,16 +61,51 @@ export interface AgentContextItemSourceDto {
   path: string;
   target: string | null;
   linkKind: AgentContextLinkKindDto;
-  readers: { agent: AgentIdDto; supersededBy: string | null }[];
+  readers: {
+    agent: AgentIdDto;
+    supersededBy: string | null;
+    /** The agent has the plugin installed but off. */
+    disabled: boolean;
+    /** The agent keeps whether the plugin is on outside the device's files. */
+    unverified: boolean;
+  }[];
 }
 
 export type AgentContextUnappliedDto =
   | { kind: "not_found"; readers: AgentIdDto[] }
-  | { kind: "superseded"; by: string[] };
+  | { kind: "superseded"; by: string[] }
+  | { kind: "disabled" };
+
+export type AgentContextPluginComponentKindDto =
+  | "commands"
+  | "subagents"
+  | "hooks"
+  | "rules"
+  | "executables"
+  | "lsp_servers"
+  | "themes";
+
+export interface AgentContextPluginDto {
+  directory: string;
+  composition: "declared" | "code";
+  manifest: {
+    /** The manifest's file name, such as `plugin.json`. */
+    file: string;
+    version: string | null;
+    author: string | null;
+    homepage: string | null;
+    repository: string | null;
+    license: string | null;
+    keywords: string[];
+  } | null;
+  counts: { kind: AgentContextPluginComponentKindDto; count: number }[];
+  /** The item's preview is the plugin's `README.md`. */
+  hasReadme: boolean;
+}
 
 export interface AgentContextItemDto {
   id: string;
-  kind: "instruction" | "skill";
+  kind: "instruction" | "skill" | "plugin";
   name: string;
   description: string | null;
   path: string;
@@ -94,6 +129,13 @@ export interface AgentContextItemDto {
     metadata: Record<string, AgentContextSkillMetadataValueDto> | null;
     allowedTools: string | null;
   } | null;
+  plugin: AgentContextPluginDto | null;
+  /** A plugin's skills and instructions, with its providers and sources. */
+  components: AgentContextItemDto[];
+  /** The image the source declares, as a data URI. */
+  icon: string | null;
+  /** A part of the Svode integration. */
+  managedBySvode: boolean;
 }
 
 export interface AgentContextSnapshotDto {

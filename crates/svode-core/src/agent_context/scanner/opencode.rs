@@ -1,10 +1,10 @@
-//! The `plugins` lists of the opencode configs, JSON with comments, as far
-//! as they turn its built-in plugins off and on again. Only those lists are
-//! kept: the configs also hold provider keys and MCP secrets.
+//! The `plugins` lists of the opencode configs, JSON with comments: the
+//! plugins they add and turn off and on again. Only those lists are kept:
+//! the configs also hold provider keys and MCP secrets.
 
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -23,11 +23,16 @@ struct Config {
     plugin: Option<Vec<serde_json::Value>>,
 }
 
-/// Whether the built-in plugin `id` is on, as the opencode configs leave it:
-/// the global config, then the configs in the directories from the
-/// filesystem root down to the target, then their `.opencode` configs; a
-/// later mention wins. Configs outside the repository boundary count only
-/// when `global`.
+/// A `plugins` entry of an opencode config, in the order opencode applies
+/// them.
+#[derive(Debug, Clone)]
+pub(super) struct ConfiguredPlugin {
+    pub config: PathBuf,
+    pub inside: bool,
+    pub entry: String,
+}
+
+/// Whether the built-in plugin `id` is on, as the opencode configs leave it.
 pub(super) fn built_in_plugin_enabled(
     id: &str,
     environment: &SourceRegistryEnvironment,
@@ -35,6 +40,19 @@ pub(super) fn built_in_plugin_enabled(
     global: bool,
     result: &mut DiscoveryResult,
 ) -> bool {
+    plugin_switched_on(&configured_plugins(environment, places, global, result), id)
+}
+
+/// The `plugins` entries of the global config, then the configs in the
+/// directories from the filesystem root down to the target, then their
+/// `.opencode` configs. Configs outside the repository boundary count only
+/// when `global`.
+pub(super) fn configured_plugins(
+    environment: &SourceRegistryEnvironment,
+    places: &TargetPlaces,
+    global: bool,
+    result: &mut DiscoveryResult,
+) -> Vec<ConfiguredPlugin> {
     let mut configs = Vec::new();
     if global {
         configs.extend(
@@ -57,7 +75,7 @@ pub(super) fn built_in_plugin_enabled(
         }
     }
 
-    let mut enabled = true;
+    let mut entries = Vec::new();
     for (config, inside) in configs {
         let observed = path_string(&config);
         if inside {
@@ -66,13 +84,26 @@ pub(super) fn built_in_plugin_enabled(
             result.observed_personal_paths.push(observed);
         }
         for entry in plugin_entries(&config, result) {
-            let (switch_on, pattern) = match entry.strip_prefix('-') {
-                Some(pattern) => (false, pattern),
-                None => (true, entry.as_str()),
-            };
-            if matches(pattern, id) {
-                enabled = switch_on;
-            }
+            entries.push(ConfiguredPlugin {
+                config: config.clone(),
+                inside,
+                entry,
+            });
+        }
+    }
+    entries
+}
+
+/// A later mention wins; `-<pattern>` turns plugins off.
+pub(super) fn plugin_switched_on(entries: &[ConfiguredPlugin], id: &str) -> bool {
+    let mut enabled = true;
+    for entry in entries {
+        let (switch_on, pattern) = match entry.entry.strip_prefix('-') {
+            Some(pattern) => (false, pattern),
+            None => (true, entry.entry.as_str()),
+        };
+        if matches(pattern, id) {
+            enabled = switch_on;
         }
     }
     enabled
@@ -114,6 +145,12 @@ fn plugin_entries(config: &Path, result: &mut DiscoveryResult) -> Vec<String> {
         .flatten()
         .filter_map(|entry| match entry {
             serde_json::Value::String(entry) => Some(entry),
+            // `{ package, options }`: the options may hold keys and are not
+            // kept.
+            serde_json::Value::Object(entry) => entry
+                .get("package")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
             _ => None,
         })
         .collect()

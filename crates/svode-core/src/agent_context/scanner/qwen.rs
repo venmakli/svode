@@ -1,5 +1,6 @@
-//! `context.fileName` of the Qwen Code settings, JSON with comments. Only
-//! that key is kept: the settings also hold keys and other secrets.
+//! `context.fileName` of the Qwen Code settings, JSON with comments, and the
+//! activation of its extensions. Only those keys are kept: the settings
+//! also hold keys and other secrets.
 
 use std::fs::File;
 use std::io::Read;
@@ -128,4 +129,61 @@ fn read_settings(settings: &Path, result: &mut DiscoveryResult) -> Option<String
             None
         }
     }
+}
+
+#[derive(Deserialize)]
+struct ExtensionStore {
+    #[serde(default)]
+    extensions: std::collections::BTreeMap<String, ExtensionPolicy>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExtensionPolicy {
+    name: String,
+    default_activation: Option<String>,
+    #[serde(default)]
+    workspace_overrides: std::collections::BTreeMap<String, String>,
+}
+
+/// Whether the extensions of the Qwen Code extension store are on in the
+/// target, by name: the target's override, else the default activation.
+/// An extension the store does not name is on.
+pub(super) fn extension_activation(
+    environment: &SourceRegistryEnvironment,
+    target_root: &Path,
+    result: &mut DiscoveryResult,
+) -> std::collections::BTreeMap<String, bool> {
+    let path = environment.qwen_home.join("extension-store/state.json");
+    result.observed_personal_paths.push(path_string(&path));
+    let Some(text) = super::io::read_config_text(
+        &path,
+        Some(AgentAdapterKind::QwenCode),
+        "qwen_extension_store",
+        "Qwen Code extension store",
+        &mut result.diagnostics,
+    ) else {
+        return Default::default();
+    };
+    let Ok(store) = serde_json::from_str::<ExtensionStore>(&text) else {
+        result.diagnostics.push(diagnostic(
+            &path,
+            Some(AgentAdapterKind::QwenCode),
+            "qwen_extension_store_parse",
+            "Could not parse the Qwen Code extension store".to_string(),
+        ));
+        return Default::default();
+    };
+    let target = path_string(target_root);
+    store
+        .extensions
+        .into_values()
+        .map(|policy| {
+            let activation = match policy.workspace_overrides.get(&target).map(String::as_str) {
+                Some(value @ ("enabled" | "disabled")) => value.to_string(),
+                _ => policy.default_activation.unwrap_or_default(),
+            };
+            (policy.name, activation != "disabled")
+        })
+        .collect()
 }

@@ -90,12 +90,23 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     sources: [
       {
         path: "/workspace/AGENTS.md",
-        readers: [{ agent: "codex", supersededBy: null }],
+        readers: [
+          {
+            agent: "codex",
+            disabled: false,
+            supersededBy: null,
+            unverified: false,
+          },
+        ],
         target: null,
       },
     ],
     truncated: false,
     unapplied: null,
+    components: [],
+    icon: null,
+    managedBySvode: false,
+    plugin: null,
   };
   const skill: AgentContextItem = {
     body: "# Review",
@@ -122,12 +133,23 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     sources: [
       {
         path: "/workspace/.agents/skills/review",
-        readers: [{ agent: "codex", supersededBy: null }],
+        readers: [
+          {
+            agent: "codex",
+            disabled: false,
+            supersededBy: null,
+            unverified: false,
+          },
+        ],
         target: null,
       },
     ],
     truncated: false,
     unapplied: null,
+    components: [],
+    icon: null,
+    managedBySvode: false,
+    plugin: null,
   };
 
   const doc = dom.window.document;
@@ -237,7 +259,11 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       CollectionDetailPeekHost,
       useCollectionDetailController,
       detail: (item: AgentContextItem) =>
-        createAgentContextItemDetailContent(item, properties),
+        createAgentContextItemDetailContent(item, properties, {
+          onOpenProviders: () => {
+            openedProviders += 1;
+          },
+        }),
     };
   }
 
@@ -477,13 +503,22 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
             {
               agent: "codex",
               supersededBy: "/workspace/AGENTS.override.md",
+              disabled: false,
+              unverified: false,
             },
           ],
           target: null,
         },
         {
           path: "/workspace/CLAUDE.md",
-          readers: [{ agent: "claude-code", supersededBy: null }],
+          readers: [
+            {
+              agent: "claude-code",
+              disabled: false,
+              supersededBy: null,
+              unverified: false,
+            },
+          ],
           target: "/workspace/AGENTS.md",
         },
       ],
@@ -545,7 +580,14 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         skill.sources[0]!,
         {
           path: "/home/user/.claude/skills/review",
-          readers: [{ agent: "claude-code", supersededBy: null }],
+          readers: [
+            {
+              agent: "claude-code",
+              disabled: false,
+              supersededBy: null,
+              unverified: false,
+            },
+          ],
           target: "/workspace/.agents/skills/review",
         },
       ],
@@ -805,6 +847,163 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
     expect(openedProviders).toBe(1);
+
+    await act(async () => {
+      root?.unmount();
+      await settle();
+    });
+  });
+
+  test("a plugin shows its manifest, README and components, which open in the same peek", async () => {
+    const env = await setup();
+    let controller: CollectionDetailController | null = null;
+    function CaptureController() {
+      controller = env.useCollectionDetailController();
+      return null;
+    }
+    let root: Root | null = null;
+    await act(async () => {
+      root = createRoot(doc.getElementById("app")!);
+      root.render(
+        <env.TooltipProvider>
+          <CaptureController />
+          <env.CollectionDetailPeekHost />
+        </env.TooltipProvider>,
+      );
+      await settle();
+    });
+    async function open(item: AgentContextItem) {
+      await act(async () => {
+        await controller!.open({
+          ...env.detail(item),
+          selection: {
+            instanceKey: "agent-context:space:root",
+            presentationId: "all",
+            rowId: item.id,
+          },
+        });
+        await settle();
+      });
+    }
+    const tabs = () =>
+      doc.querySelector<HTMLElement>("[data-agent-context-item-tabs]");
+    const tabLabels = () =>
+      [...(tabs()?.querySelectorAll('[role="tab"]') ?? [])].map(
+        (tab) => tab.textContent,
+      );
+    const component: AgentContextItem = {
+      ...skill,
+      id: "plugin:/home/user/kit#skill:/home/user/kit/skills/review",
+      ownerPath: "/home/user/kit",
+      path: "/home/user/kit/skills/review/SKILL.md",
+    };
+    const plugin: AgentContextItem = {
+      ...skill,
+      body: "# Kit\nAbout the kit.",
+      components: [component],
+      description: "Team kit",
+      icon: "data:image/svg+xml;base64,PHN2Zy8+",
+      id: "plugin:/home/user/kit",
+      kind: "plugin",
+      name: "kit",
+      ownerPath: "/home/user/kit",
+      path: "/home/user/kit/.claude-plugin/plugin.json",
+      plugin: {
+        composition: "declared",
+        counts: [{ count: 3, kind: "commands" }],
+        directory: "/home/user/kit",
+        hasReadme: true,
+        manifest: {
+          author: "Team",
+          file: "plugin.json",
+          homepage: null,
+          keywords: ["team"],
+          license: null,
+          repository: null,
+          version: "1.2.0",
+        },
+      },
+      skill: null,
+    };
+
+    await open(plugin);
+    expect(
+      doc
+        .querySelector("[data-peek-identity] img[data-agent-context-icon]")
+        ?.getAttribute("src"),
+    ).toBe(plugin.icon);
+    expect(
+      doc.querySelector('[data-collection-panel-fact-group="plugin-manifest"]')
+        ?.textContent,
+    ).toBe("From plugin.json");
+    expect(
+      doc
+        .querySelector('[data-collection-panel-fact="version"]')
+        ?.textContent?.includes("1.2.0"),
+    ).toBe(true);
+    expect(tabLabels()).toEqual(["Description", "Components"]);
+    expect(
+      tabs()
+        ?.querySelector("[data-markdown-reader]")
+        ?.textContent?.includes("About the kit."),
+    ).toBe(true);
+    await act(async () => {
+      tabs()!
+        .querySelectorAll<HTMLElement>('[role="tab"]')[1]!
+        .dispatchEvent(
+          new dom.window.MouseEvent("mousedown", { bubbles: true, button: 0 }),
+        );
+      await settle();
+    });
+    expect(
+      doc.querySelector("[data-agent-context-plugin-counts]")?.textContent,
+    ).toBe("Also: commands: 3");
+    const componentRow = doc.querySelector<HTMLElement>(
+      `[data-collection-row="${component.id}"]`,
+    )!;
+    expect(componentRow.textContent?.includes("review")).toBe(true);
+    await act(async () => {
+      componentRow
+        .querySelector<HTMLElement>("[data-collection-primary]")!
+        .click();
+      await settle();
+    });
+    expect(topBar().querySelector("[data-peek-identity]")?.textContent).toBe(
+      "review",
+    );
+    expect(doc.querySelectorAll("[data-peek-top-bar]").length).toBe(1);
+
+    // Without README there is no Description; a code plugin says why it
+    // has no components.
+    await open({
+      ...plugin,
+      components: [],
+      plugin: { ...plugin.plugin!, composition: "code", hasReadme: false },
+    });
+    expect(tabLabels()).toEqual([]);
+    expect(
+      doc
+        .querySelector("[data-agent-context-plugin-code]")
+        ?.textContent?.includes("code defines what it brings"),
+    ).toBe(true);
+
+    // The Svode integration: its logo and the way to Providers.
+    await open({ ...plugin, managedBySvode: true });
+    expect(
+      doc
+        .querySelector("[data-peek-identity] img[data-agent-context-icon]")
+        ?.getAttribute("data-agent-context-icon"),
+    ).toBe("svode");
+    const managed = doc.querySelector<HTMLElement>(
+      '[data-collection-panel-fact="managed-by-svode"]',
+    )!;
+    expect(managed.textContent).toBe("Managed by SvodeOpen Providers");
+    const before = openedProviders;
+    await act(async () => {
+      managed.querySelector("button")!.click();
+      await settle();
+    });
+    expect(openedProviders).toBe(before + 1);
 
     await act(async () => {
       root?.unmount();

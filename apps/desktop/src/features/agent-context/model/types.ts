@@ -11,7 +11,7 @@ export interface AgentContextDiagnostic {
 
 export type AgentContextSourceHealth = "degraded" | "normal";
 
-export type AgentContextItemKind = "instruction" | "skill";
+export type AgentContextItemKind = "instruction" | "skill" | "plugin";
 
 export interface AgentContextReference {
   path: string;
@@ -35,6 +35,10 @@ export interface AgentContextSourceReader {
   agent: AgentId;
   /** What shadows the item for this agent; `""` when not known. */
   supersededBy: string | null;
+  /** The agent has the plugin installed but off. */
+  disabled: boolean;
+  /** The agent keeps whether the plugin is on outside the device's files. */
+  unverified: boolean;
 }
 
 /** A path by which enabled agents find an item. */
@@ -50,7 +54,9 @@ export type AgentContextUnapplied =
   /** No enabled agent finds it; `readers` read it by their policy. */
   | { kind: "not_found"; readers: readonly AgentId[] }
   /** Every enabled agent that finds it takes another file. */
-  | { kind: "superseded"; by: readonly string[] };
+  | { kind: "superseded"; by: readonly string[] }
+  /** The enabled agents that find the plugin have it off. */
+  | { kind: "disabled" };
 
 /** A `metadata` value of `SKILL.md` as the scanner keeps it. */
 export type AgentContextSkillMetadataLeaf =
@@ -75,13 +81,47 @@ export interface AgentContextSkillFacts {
   metadata: Readonly<Record<string, AgentContextSkillMetadataValue>> | null;
 }
 
+/** A kind of plugin component that is no row of the "Context". */
+export type AgentContextPluginComponentKind =
+  | "commands"
+  | "subagents"
+  | "hooks"
+  | "rules"
+  | "executables"
+  | "lsp_servers"
+  | "themes";
+
+export interface AgentContextPluginManifest {
+  /** The manifest's file name, such as `plugin.json`. */
+  file: string;
+  version: string | null;
+  author: string | null;
+  homepage: string | null;
+  repository: string | null;
+  license: string | null;
+  keywords: readonly string[];
+}
+
+export interface AgentContextPluginFacts {
+  directory: string;
+  /** `code`: the plugin's code registers what it brings. */
+  composition: "declared" | "code";
+  manifest: AgentContextPluginManifest | null;
+  counts: readonly {
+    kind: AgentContextPluginComponentKind;
+    count: number;
+  }[];
+  /** The item's body is the plugin's `README.md`. */
+  hasReadme: boolean;
+}
+
 /** One canonical source of the target's context: one row of "Context". */
 export interface AgentContextItem {
   id: string;
   kind: AgentContextItemKind;
   name: string;
   description: string | null;
-  /** The canonical file the item opens: the instruction or `SKILL.md`. */
+  /** The file the item opens: the instruction, `SKILL.md` or the plugin's manifest. */
   path: string;
   ownerPath: string;
   location: AgentContextLocation;
@@ -97,6 +137,13 @@ export interface AgentContextItem {
   truncated: boolean;
   references: readonly AgentContextReference[];
   skill: AgentContextSkillFacts | null;
+  plugin: AgentContextPluginFacts | null;
+  /** A plugin's skills and instructions, with its providers and sources. */
+  components: readonly AgentContextItem[];
+  /** The image the source declares, as a data URI. */
+  icon: string | null;
+  /** A part of the Svode integration, which "Providers" manages. */
+  managedBySvode: boolean;
 }
 
 export interface AgentContextSnapshot {

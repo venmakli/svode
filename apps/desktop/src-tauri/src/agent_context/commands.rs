@@ -201,6 +201,10 @@ mod tests {
                 metadata: None,
                 allowed_tools: None,
             }),
+            plugin: None,
+            components: Vec::new(),
+            icon: None,
+            managed_by_svode: false,
         };
         let state = AgentContextState::new();
         state

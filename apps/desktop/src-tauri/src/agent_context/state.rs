@@ -51,13 +51,14 @@ impl AgentContextState {
         })
     }
 
-    /// The folder of a skill some published snapshot holds: the only
-    /// folders whose files the Context reads.
+    /// The folder of a skill some published snapshot holds, a plugin's
+    /// skill too: the only folders whose files the Context reads.
     pub fn skill_directory(&self, item_id: &str) -> Option<PathBuf> {
         let snapshots = self.snapshots.lock().ok()?;
         snapshots
             .values()
             .flat_map(|snapshot| &snapshot.content.items)
+            .flat_map(|item| std::iter::once(item).chain(&item.components))
             .find(|item| item.id == item_id && item.kind == ContextItemKind::Skill)
             .and_then(|item| item.skill.as_ref())
             .map(|skill| PathBuf::from(&skill.directory))
@@ -119,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn only_skills_of_published_snapshots_name_a_folder() {
+    fn only_skills_of_published_snapshots_name_a_folder_plugin_skills_too() {
         use svode_core::agent_context::model::{
             ContextItem, ContextLocation, ContextLocationKind, ContextSkillFacts, MarkdownPreview,
             SourceHealth,
@@ -150,6 +151,10 @@ mod tests {
             },
             references: Vec::new(),
             skill,
+            plugin: None,
+            components: Vec::new(),
+            icon: None,
+            managed_by_svode: false,
         };
         let state = AgentContextState::new();
         let mut snapshot = content("/project");
@@ -168,12 +173,31 @@ mod tests {
             ),
             item("instruction:/AGENTS.md", ContextItemKind::Instruction, None),
         ];
+        let mut plugin = item("plugin:/kit", ContextItemKind::Plugin, None);
+        plugin.components = vec![item(
+            "plugin:/kit#skill:/kit/skills/lint",
+            ContextItemKind::Skill,
+            Some(ContextSkillFacts {
+                directory: "/kit/skills/lint".to_string(),
+                has_files: false,
+                license: None,
+                compatibility: None,
+                metadata: None,
+                allowed_tools: None,
+            }),
+        )];
+        snapshot.items.push(plugin);
         state.publish("key".into(), snapshot).unwrap();
 
         assert_eq!(
             state.skill_directory("skill:/skills/review"),
             Some(PathBuf::from("/skills/review"))
         );
+        assert_eq!(
+            state.skill_directory("plugin:/kit#skill:/kit/skills/lint"),
+            Some(PathBuf::from("/kit/skills/lint"))
+        );
+        assert_eq!(state.skill_directory("plugin:/kit"), None);
         assert_eq!(state.skill_directory("instruction:/AGENTS.md"), None);
         assert_eq!(state.skill_directory("skill:/elsewhere"), None);
     }

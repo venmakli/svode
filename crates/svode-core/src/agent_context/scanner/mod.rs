@@ -1,10 +1,15 @@
 mod claude;
 mod codex;
+mod cursor;
 mod declared;
 mod grok;
 mod hermes;
 mod io;
+mod kimi;
 mod opencode;
+mod pi;
+mod plugin_folder;
+mod plugins;
 mod qwen;
 pub mod skill_files;
 mod skills;
@@ -20,7 +25,8 @@ use crate::agent_adapters::{
 use super::model::{
     AgentContextDiagnostic, AgentContextDiscovery, AgentContextSnapshotContent,
     InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
-    InstructionRow, InstructionSourceKind, SkillRow, SourceHealth, SourceResolution, SourceSupport,
+    InstructionRow, InstructionSourceKind, PluginRow, SkillRow, SourceHealth, SourceResolution,
+    SourceSupport,
 };
 use io::{inspect, path_string};
 
@@ -31,6 +37,7 @@ const DEFAULT_PREVIEW_BYTES: usize = 64 * 1024;
 pub(super) struct DiscoveryResult {
     rows: Vec<InstructionRow>,
     skills: Vec<SkillRow>,
+    plugins: Vec<PluginRow>,
     diagnostics: Vec<AgentContextDiagnostic>,
     observed_project_paths: Vec<String>,
     observed_personal_paths: Vec<String>,
@@ -40,6 +47,7 @@ impl DiscoveryResult {
     fn append(&mut self, mut other: Self) {
         self.rows.append(&mut other.rows);
         self.skills.append(&mut other.skills);
+        self.plugins.append(&mut other.plugins);
         self.diagnostics.append(&mut other.diagnostics);
         self.observed_project_paths
             .append(&mut other.observed_project_paths);
@@ -132,6 +140,13 @@ pub fn discover(
         &grok.switched_off,
     ));
     grok::apply_ignore(&mut result.skills, &grok);
+    result.append(plugins::discover(
+        &places,
+        &adapters,
+        global_agents,
+        environment,
+        &grok,
+    ));
 
     result.rows.sort_by(|left, right| {
         row_sort_key(left)
@@ -144,6 +159,10 @@ pub fn discover(
             .cmp(&right.adapter_id.map(AgentAdapterKind::as_str))
             .then_with(|| left.path.cmp(&right.path))
             .then_with(|| left.code.cmp(&right.code))
+    });
+    // Configs that several sources read report a failure once.
+    result.diagnostics.dedup_by(|left, right| {
+        left.adapter_id == right.adapter_id && left.path == right.path && left.code == right.code
     });
     result.skills.sort_by(|left, right| {
         left.name
@@ -160,6 +179,7 @@ pub fn discover(
         repository_root: path_string(&repository_root),
         instructions: result.rows,
         skills: result.skills,
+        plugins: result.plugins,
         diagnostics: result.diagnostics,
         observed_project_paths: result.observed_project_paths,
         observed_personal_paths: result.observed_personal_paths,

@@ -51,7 +51,9 @@ export function AgentContextItemInfo({ item }: { item: AgentContextItem }) {
       title={
         item.kind === "skill"
           ? m.agent_context_info_skill()
-          : m.agent_context_info_instruction()
+          : item.kind === "plugin"
+            ? m.agent_context_info_plugin()
+            : m.agent_context_info_instruction()
       }
     />
   );
@@ -71,20 +73,26 @@ function SourceReaders({
           <AgentIcon agent={reader.agent} className="mt-0.5 size-3.5" />
           <span className="min-w-0 break-all">
             {agents.label(reader.agent)}
-            {reader.supersededBy === null
-              ? null
-              : ` · ${
-                  reader.supersededBy
-                    ? m.agent_context_reader_superseded_by({
-                        path: reader.supersededBy,
-                      })
-                    : m.agent_context_reader_superseded()
-                }`}
+            {readerException(reader)}
           </span>
         </li>
       ))}
     </ul>
   );
+}
+
+/** Only exceptions are labelled: shadowed, turned off, unchecked switch. */
+function readerException(reader: AgentContextSourceReader) {
+  if (reader.disabled) return ` · ${m.agent_context_reader_disabled()}`;
+  if (reader.supersededBy !== null) {
+    return ` · ${
+      reader.supersededBy
+        ? m.agent_context_reader_superseded_by({ path: reader.supersededBy })
+        : m.agent_context_reader_superseded()
+    }`;
+  }
+  if (reader.unverified) return ` · ${m.agent_context_reader_unverified()}`;
+  return null;
 }
 
 function referenceStatusLabel(status: AgentContextReference["status"]) {
