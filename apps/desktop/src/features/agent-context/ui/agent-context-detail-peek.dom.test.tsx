@@ -332,4 +332,145 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
   });
+
+  test("ⓘ details show discovery paths with links and every instruction import with its status", async () => {
+    const env = await setup();
+    let controller: CollectionDetailController | null = null;
+    function CaptureController() {
+      controller = env.useCollectionDetailController();
+      return null;
+    }
+    let root: Root | null = null;
+    await act(async () => {
+      root = createRoot(doc.getElementById("app")!);
+      root.render(
+        <env.TooltipProvider>
+          <CaptureController />
+          <env.CollectionDetailPeekHost />
+        </env.TooltipProvider>,
+      );
+      await settle();
+    });
+
+    async function openDetails(
+      content: CollectionDetailContent,
+      rowId: string,
+    ) {
+      await act(async () => {
+        await controller!.open({
+          ...content,
+          selection: {
+            instanceKey: "agent-context:space:root",
+            presentationId: "detail",
+            rowId,
+          },
+        });
+        await settle();
+      });
+      const trigger = topBar().querySelector<HTMLButtonElement>(
+        "[data-collection-detail-info-trigger]",
+      )!;
+      // ⓘ stands right after the identity.
+      expect(
+        topBar().querySelector("[data-peek-identity]")?.nextElementSibling,
+      ).toBe(trigger);
+      await act(async () => {
+        trigger.click();
+        await settle();
+      });
+      return doc.querySelector<HTMLElement>("[data-collection-detail-info]")!;
+    }
+
+    const linkedInstruction: AgentContextInstructionRow = {
+      ...instruction,
+      canonicalPath: "/workspace/shared/CLAUDE.md",
+      discoveryPath: "/workspace/CLAUDE.md",
+      id: "claude:project:/workspace/CLAUDE.md",
+      linkKind: "symbolic_link",
+      linkTargetPath: "/workspace/shared/CLAUDE.md",
+      references: [
+        { path: "/workspace/docs/style.md", status: "available" },
+        { path: "/etc/outside.md", status: "outside_boundary" },
+        { path: "~/.claude/notes.md", status: "requires_client_approval" },
+        { path: "/workspace/missing.md", status: "unreadable" },
+        { path: "/workspace/docs/style.md", status: "available" },
+      ],
+    };
+    let info = await openDetails(
+      env.createInstructionDetailContent(linkedInstruction),
+      linkedInstruction.id,
+    );
+    expect(info.textContent?.includes("Instruction details")).toBe(true);
+    const sources = info.querySelector(
+      '[data-collection-detail-info-group="sources"]',
+    )!;
+    expect(sources.textContent).toBe(
+      "Sources/workspace/CLAUDE.md → /workspace/shared/CLAUDE.mdSymbolic link",
+    );
+    const imports = [
+      ...info.querySelectorAll(
+        '[data-collection-detail-info-group="imports"] li',
+      ),
+    ].map((item) => item.textContent);
+    expect(imports).toEqual([
+      "/workspace/docs/style.mdAvailable",
+      "/etc/outside.mdOutside the scan boundary",
+      "~/.claude/notes.mdRequires approval in the client",
+      "/workspace/missing.mdCould not be read",
+    ]);
+    // The peek ends with the content: no sources block after the body.
+    const detail = doc.querySelector(
+      "[data-agent-context-instruction-detail]",
+    )!;
+    expect(detail.lastElementChild?.hasAttribute("data-markdown-reader")).toBe(
+      true,
+    );
+    await act(async () => {
+      doc.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+        }),
+      );
+      await settle();
+    });
+
+    const linkedSkill: AgentContextSkillRow = {
+      ...skill,
+      aliases: [
+        skill.aliases[0]!,
+        {
+          ...skill.aliases[0]!,
+          discoveryPath: "/home/user/.claude/skills/review",
+          linkKind: "directory_alias",
+          location: "global",
+          sourceFamily: "claude",
+        },
+      ],
+    };
+    info = await openDetails(
+      env.createSkillDetailContent(linkedSkill),
+      linkedSkill.id,
+    );
+    expect(info.textContent?.includes("Skill details")).toBe(true);
+    expect(
+      [
+        ...info.querySelectorAll(
+          '[data-collection-detail-info-group="sources"] li',
+        ),
+      ].map((item) => item.textContent),
+    ).toEqual([
+      "/workspace/.agents/skills/review",
+      "/home/user/.claude/skills/review → /workspace/.agents/skills/reviewDirectory alias",
+    ]);
+    // A skill has no imports group.
+    expect(
+      info.querySelector('[data-collection-detail-info-group="imports"]'),
+    ).toBe(null);
+
+    await act(async () => {
+      root?.unmount();
+      await settle();
+    });
+  });
 }

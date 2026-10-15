@@ -16,6 +16,8 @@ export interface CollectionDetailRequest {
    * below it then stay for screen readers only.
    */
   identity?: { icon: ReactNode; name: string };
+  /** The ⓘ details next to the identity, see `CollectionDetailInfo`. */
+  info?: ReactNode;
   headerActions?: ReactNode;
   /** The "Open with" control of the object in the top bar. */
   openWith?: ReactNode;

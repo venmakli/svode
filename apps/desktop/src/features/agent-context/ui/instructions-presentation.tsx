@@ -31,6 +31,7 @@ import {
   agentContextHealthProperty,
   agentContextHealthWarnings,
 } from "./health-property";
+import { AgentContextInstructionInfo } from "./detail-info";
 import { AgentContextInstructionDetail } from "./instruction-detail";
 import { sourceLinkKindLabel, sourceLocationLabel } from "./provenance-labels";
 
@@ -79,6 +80,7 @@ export function createInstructionDetailContent(
     ),
     description: m.agent_context_detail_description(),
     identity: { icon: <FileText />, name: row.filename },
+    info: <AgentContextInstructionInfo row={row} />,
     openWith: (
       <AgentContextArtifactOpenWith
         canonicalArtifactPath={row.canonicalPath}

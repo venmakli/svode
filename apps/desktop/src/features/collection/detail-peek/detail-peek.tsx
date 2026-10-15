@@ -113,6 +113,7 @@ export function CollectionDetailPeekFrame({
         identity={
           request.identity ? <PeekIdentity {...request.identity} /> : undefined
         }
+        info={request.info}
         // The row actions of a fixed Collection keep their place before ×
         // until its detail gets the shared identity and menu.
         openWith={

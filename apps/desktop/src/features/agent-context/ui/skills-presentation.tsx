@@ -51,6 +51,7 @@ import {
   agentContextHealthProperty,
   agentContextHealthWarnings,
 } from "./health-property";
+import { AgentContextSkillInfo } from "./detail-info";
 import { AgentContextSkillDetail } from "./skill-detail";
 
 export function createAgentContextSkillsPresentation({
@@ -103,6 +104,7 @@ export function createSkillDetailContent(
     ),
     description: row.description,
     identity: { icon: <Sparkles />, name: row.name },
+    info: <AgentContextSkillInfo row={row} />,
     openWith: (
       <AgentContextArtifactOpenWith
         canonicalArtifactPath={row.manifestPath}

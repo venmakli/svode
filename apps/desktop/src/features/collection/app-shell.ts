@@ -6,6 +6,11 @@ export {
 } from "./detail-peek/detail-peek";
 export { createCollectionDetailActivation } from "./detail-peek/detail-activation";
 export { CollectionDetailHeader } from "./detail-peek/detail-header";
+export { CollectionDetailInfo } from "./detail-peek/detail-info";
+export type {
+  CollectionDetailInfoGroup,
+  CollectionDetailInfoRow,
+} from "./detail-peek/detail-info";
 export type { CalendarScope } from "./model/calendar-types";
 export type {
   CollectionDetailContent,
