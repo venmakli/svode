@@ -776,6 +776,8 @@ mod tests {
         let item = by_path(&items, &flat);
         assert_eq!(item.kind, ContextItemKind::Skill);
         assert_eq!(item.providers, vec![AgentAdapterKind::Opencode]);
+        // A flat skill has no folder of its own, so no attachments.
+        assert!(!item.skill.as_ref().unwrap().has_files);
         assert_eq!(
             item.location,
             ContextLocation {
