@@ -97,6 +97,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   }));
   mock.module("@/features/properties/panel", () => ({
     PropertyPanel: () => null,
+    CollectionPropertyPanel: () => null,
   }));
   mock.module("@/features/page/ui/page-identity-header", () => ({
     PageIdentityHeader: ({
