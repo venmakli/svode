@@ -391,12 +391,16 @@ pub struct SkillLayout {
     /// deeper levels are folders of skills.
     pub max_depth: usize,
     pub flat: FlatSkills,
+    /// The agent also looks for skills inside a skill directory.
+    #[serde(default)]
+    pub descend_into_skills: bool,
 }
 
 impl SkillLayout {
     pub const DIRECT_CHILDREN: Self = Self {
         max_depth: 1,
         flat: FlatSkills::None,
+        descend_into_skills: false,
     };
 }
 
@@ -558,12 +562,14 @@ impl AgentAdapterRegistry {
         let (personal_root, instructions, skills) = match id {
             // Codex 0.159: `.agents/skills` and `.codex/skills` from the
             // project root, `~/.agents/skills` and `$CODEX_HOME/skills`, each
-            // walked six folders deep; skills of one name coexist. Its bundled
+            // walked six folders deep, into skill directories too; skills of
+            // one name coexist. Its bundled
             // `$CODEX_HOME/skills/.system` stays out, like other built-ins.
             AgentAdapterKind::Codex => {
                 let layout = SkillLayout {
                     max_depth: CODEX_SKILL_DEPTH,
                     flat: FlatSkills::None,
+                    descend_into_skills: true,
                 };
                 let walk = |kind, relative: &str| SkillRootRule {
                     kind,
@@ -625,6 +631,7 @@ impl AgentAdapterRegistry {
                 let layout = SkillLayout {
                     max_depth: MAX_SKILL_DEPTH,
                     flat: FlatSkills::Root,
+                    descend_into_skills: false,
                 };
                 let mut roots = Vec::new();
                 let compatible = |mut root: SkillRootRule| {
@@ -702,10 +709,12 @@ impl AgentAdapterRegistry {
                 let pi_layout = SkillLayout {
                     max_depth: MAX_SKILL_DEPTH,
                     flat: FlatSkills::Root,
+                    descend_into_skills: false,
                 };
                 let agents_layout = SkillLayout {
                     max_depth: MAX_SKILL_DEPTH,
                     flat: FlatSkills::Nested,
+                    descend_into_skills: false,
                 };
                 (
                     agent_dir,
@@ -843,6 +852,7 @@ impl AgentAdapterRegistry {
                 let layout = SkillLayout {
                     max_depth: MAX_SKILL_DEPTH,
                     flat: FlatSkills::Root,
+                    descend_into_skills: false,
                 };
                 let nonempty = |mut rule: InstructionRule| {
                     rule.skip_empty = true;

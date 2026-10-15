@@ -10,7 +10,8 @@ use crate::agent_adapters::{AgentAdapterKind, system_source_registry_environment
 use crate::git::path::{RootMode, repo_relative_from_base};
 
 use super::model::{
-    AgentContextDiscovery, InstructionOwnerKind, InstructionSourceKind, SkillScope,
+    AgentContextDiscovery, InstructionDiscoveryPolicy, InstructionOwnerKind, InstructionSourceKind,
+    SkillDiscoveryAlias, SkillDiscoveryKind, SkillScope,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -54,6 +55,19 @@ impl ProjectKnowledgeArtifact {
 /// Stage 7 input. Sources that only later policies find stay out of it.
 pub const KNOWLEDGE_AGENTS: [AgentAdapterKind; 2] =
     [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode];
+
+/// A project skill path of the Stage 7 input. The paths that Codex and Claude
+/// Code gained after Stage 7 stay out of it too.
+fn in_knowledge(alias: &SkillDiscoveryAlias) -> bool {
+    alias.scope == SkillScope::Project
+        && KNOWLEDGE_AGENTS.contains(&alias.adapter_id)
+        && !matches!(
+            alias.discovery_kind,
+            SkillDiscoveryKind::CodexProjectConfig
+                | SkillDiscoveryKind::CodexHome
+                | SkillDiscoveryKind::ClaudeProjectPlugin
+        )
+}
 
 /// Prepared, target-specific Agent Context projection. This is called only by
 /// existing index write paths; Knowledge reads consume the materialized rows.
@@ -100,6 +114,7 @@ fn normalize_project_snapshot(
         if instruction
             .adapter_id
             .is_some_and(|agent| !KNOWLEDGE_AGENTS.contains(&agent))
+            || instruction.discovery.policy == InstructionDiscoveryPolicy::ClaudeAgentsMd
             || instruction.owner.kind != InstructionOwnerKind::TargetSpace
             || !matches!(
                 instruction.source_kind,
@@ -193,9 +208,7 @@ fn normalize_project_snapshot(
         let project_aliases = skill
             .aliases
             .iter()
-            .filter(|alias| {
-                alias.scope == SkillScope::Project && KNOWLEDGE_AGENTS.contains(&alias.adapter_id)
-            })
+            .filter(|alias| in_knowledge(alias))
             .filter_map(|alias| {
                 safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
             })
@@ -226,9 +239,7 @@ fn normalize_project_snapshot(
             references: BTreeSet::new(),
             truncated: skill.preview.truncated,
         });
-        for alias in skill.aliases.iter().filter(|alias| {
-            alias.scope == SkillScope::Project && KNOWLEDGE_AGENTS.contains(&alias.adapter_id)
-        }) {
+        for alias in skill.aliases.iter().filter(|alias| in_knowledge(alias)) {
             if let Some(path) =
                 safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
             {
@@ -526,5 +537,77 @@ mod tests {
                 .iter()
                 .all(|discovery| discovery.starts_with("codex:"))
         );
+    }
+
+    #[test]
+    fn knowledge_leaves_out_sources_that_later_codex_and_claude_policies_add() {
+        let project = TempDir::new().unwrap();
+        fs::create_dir(project.path().join(".git")).unwrap();
+        let write = |relative: &str, text: &str| {
+            let path = project.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        let skill = |name: &str| format!("---\nname: {name}\ndescription: {name}\n---\n");
+        write("AGENTS.md", "agents");
+        write(".agents/skills/stage-seven/SKILL.md", &skill("stage-seven"));
+        write(
+            ".codex/skills/codex-config/SKILL.md",
+            &skill("codex-config"),
+        );
+        write(".claude/skills/kit/.claude-plugin/plugin.json", "{}");
+        write(
+            ".claude/skills/kit/skills/plugin-skill/SKILL.md",
+            &skill("plugin-skill"),
+        );
+        let home = TempDir::new().unwrap();
+        let environment =
+            crate::agent_adapters::SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
+        let content = super::super::scanner::discover(
+            project.path(),
+            project.path(),
+            &environment,
+            &[AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode],
+        )
+        .unwrap();
+
+        let projected =
+            normalize_project_snapshot(project.path(), project.path(), &content).unwrap();
+
+        let agents = projected
+            .iter()
+            .find(|artifact| artifact.source_path == "AGENTS.md")
+            .unwrap();
+        assert!(
+            agents
+                .discovery
+                .iter()
+                .all(|discovery| !discovery.starts_with("claude-code:")),
+            "{:?}",
+            agents.discovery
+        );
+        // Other agents may still find these paths; the kinds Codex and
+        // Claude Code gained after Stage 7 never reach Knowledge.
+        let discovery = projected
+            .iter()
+            .filter(|artifact| artifact.kind == "skill")
+            .flat_map(|artifact| &artifact.discovery)
+            .collect::<Vec<_>>();
+        assert!(
+            discovery
+                .iter()
+                .any(|path| path.starts_with("codex:codex_project:")),
+            "{discovery:?}"
+        );
+        for kind in [
+            "codex_project_config",
+            "codex_home",
+            "claude_project_plugin",
+        ] {
+            assert!(
+                discovery.iter().all(|path| !path.contains(kind)),
+                "{discovery:?}"
+            );
+        }
     }
 }

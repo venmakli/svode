@@ -615,7 +615,22 @@ impl Scan<'_> {
             .entry(canonical_entry.clone())
             .or_insert_with(|| parse_skill(&canonical_entry))
             .clone();
-        self.register(root, entry, canonical_entry, link_kind, parsed);
+        self.register(root, entry, canonical_entry.clone(), link_kind, parsed);
+        // Codex also finds skills inside a skill directory.
+        if root.layout.descend_into_skills
+            && depth < root.layout.max_depth
+            && folders.insert(canonical_entry.clone())
+            && folders.len() <= MAX_SKILL_FOLDERS
+        {
+            self.scan_directory(
+                root,
+                entry,
+                &canonical_entry,
+                depth + 1,
+                entry_is_alias,
+                folders,
+            );
+        }
     }
 
     /// A skill the root's agent finds by `entry`: a new row for its canonical
@@ -2361,6 +2376,8 @@ mod tests {
         );
         let agents = project.path().join(".agents/skills");
         write_skill(&agents.join("group"), "grouped", "grouped", Some("Grouped"));
+        let outer = write_skill(&agents, "outer", "outer", Some("Outer"));
+        write_skill(&outer, "inner", "inner", Some("Inner"));
         let mut deep = agents.clone();
         for level in 1..6 {
             deep.push(format!("d{level}"));
@@ -2393,7 +2410,7 @@ mod tests {
             kinds_of(&snapshot, "home"),
             vec![SkillDiscoveryKind::CodexHome]
         );
-        for name in ["grouped", "sixth"] {
+        for name in ["grouped", "outer", "inner", "sixth"] {
             assert_eq!(
                 kinds_of(&snapshot, name),
                 vec![SkillDiscoveryKind::CodexProject],
@@ -2420,6 +2437,7 @@ mod tests {
         let claude = project.path().join(".claude/skills");
         write_skill(&claude, "direct", "direct", Some("Direct"));
         write_skill(&claude.join("group"), "grouped", "grouped", Some("Grouped"));
+        write_skill(&claude.join("direct"), "inner", "inner", Some("Inner"));
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
 
@@ -2428,6 +2446,7 @@ mod tests {
             vec![SkillDiscoveryKind::ClaudeProject]
         );
         assert!(kinds_of(&snapshot, "grouped").is_empty());
+        assert!(kinds_of(&snapshot, "inner").is_empty());
     }
 
     #[test]
