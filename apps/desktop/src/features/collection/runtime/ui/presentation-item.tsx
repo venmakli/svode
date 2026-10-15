@@ -4,6 +4,10 @@ import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import { TableCell } from "@/components/ui/table";
+import {
+  CollectionInlineDiagnostic,
+  CollectionPropertyValue,
+} from "@/features/properties/display";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -18,11 +22,7 @@ import type {
   CollectionInteractionError,
   CollectionPresentationDescriptor,
 } from "../model/types";
-import {
-  CollectionPropertyControl,
-  CollectionPropertyValue,
-  CollectionInlineDiagnostic,
-} from "./property-renderers";
+import { CollectionPropertyControl } from "./property-renderers";
 import {
   CollectionRowActionsContextMenu,
   CollectionRowActionsDropdownMenu,

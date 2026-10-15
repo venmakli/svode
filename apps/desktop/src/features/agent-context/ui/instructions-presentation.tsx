@@ -27,8 +27,12 @@ import * as m from "@/paraglide/messages.js";
 
 import type { AgentContextInstructionRow } from "../model/types";
 import { AgentContextArtifactOpenWith } from "./artifact-open-with";
+import {
+  agentContextHealthProperty,
+  agentContextHealthWarnings,
+} from "./health-property";
 import { AgentContextInstructionDetail } from "./instruction-detail";
-import { sourceLinkKindLabel } from "./provenance-labels";
+import { sourceLinkKindLabel, sourceLocationLabel } from "./provenance-labels";
 
 export function createAgentContextInstructionsPresentation({
   onActivate,
@@ -37,8 +41,7 @@ export function createAgentContextInstructionsPresentation({
   onActivate?: CollectionPresentationDescriptor<AgentContextInstructionRow>["onActivate"];
   state: CollectionPresentationState<AgentContextInstructionRow>;
 }) {
-  const properties: readonly CollectionPropertyDefinition<AgentContextInstructionRow>[] =
-    [instructionSourceField()];
+  const properties = createInstructionProperties();
 
   return defineCollectionPresentation<AgentContextInstructionRow>({
     descriptor: {
@@ -68,7 +71,12 @@ export function createInstructionDetailContent(
   row: AgentContextInstructionRow,
 ): CollectionDetailContent {
   return {
-    content: <AgentContextInstructionDetail row={row} />,
+    content: (
+      <AgentContextInstructionDetail
+        properties={createInstructionProperties()}
+        row={row}
+      />
+    ),
     description: m.agent_context_detail_description(),
     identity: { icon: <FileText />, name: row.filename },
     openWith: (
@@ -98,10 +106,7 @@ export function AgentContextInstructionsEmpty() {
 }
 
 function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
-  const warning =
-    row.health === "degraded"
-      ? row.healthReasons.join(" · ") || m.agent_context_health_degraded()
-      : null;
+  const warning = agentContextHealthWarnings(row).join(" · ") || null;
 
   if (row.linkKind === "direct" && !warning) return null;
 
@@ -139,30 +144,47 @@ function InstructionCardOverlays({ row }: { row: AgentContextInstructionRow }) {
   );
 }
 
+/** The properties of an instruction for its gallery cards and detail panel. */
+function createInstructionProperties(): readonly CollectionPropertyDefinition<AgentContextInstructionRow>[] {
+  return [
+    instructionSourceField(),
+    agentContextHealthProperty<AgentContextInstructionRow>(),
+  ];
+}
+
 function instructionSourceField(): CollectionPropertyDefinition<AgentContextInstructionRow> {
   return defineDomainSpecificCollectionProperty({
     featureId: "agent-context",
     getValue: (row) => [row.location, row.support],
     key: "source",
     label: m.agent_context_source(),
-    render: (_value, row) => {
-      const showGlobal = row.location === "global";
-      const showRecognized = row.support === "svode_recognized";
-      if (!showGlobal && !showRecognized) return null;
-      return (
-        <div className="flex flex-wrap gap-1">
-          {showGlobal ? (
-            <Badge variant="outline">{m.agent_context_location_global()}</Badge>
-          ) : null}
-          {showRecognized ? (
-            <Badge variant="outline">
-              {m.agent_context_source_recognized()}
-            </Badge>
-          ) : null}
-        </div>
-      );
-    },
+    render: (_value, row) =>
+      instructionSourceBadges(
+        row.location === "global" ? row.location : null,
+        row.support,
+      ),
+    // The detail names the location of every instruction.
+    renderDetail: (_value, row) =>
+      instructionSourceBadges(row.location, row.support),
   });
+}
+
+function instructionSourceBadges(
+  location: AgentContextInstructionRow["location"] | null,
+  support: AgentContextInstructionRow["support"],
+) {
+  const showRecognized = support === "svode_recognized";
+  if (!location && !showRecognized) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {location ? (
+        <Badge variant="outline">{sourceLocationLabel(location)}</Badge>
+      ) : null}
+      {showRecognized ? (
+        <Badge variant="outline">{m.agent_context_source_recognized()}</Badge>
+      ) : null}
+    </div>
+  );
 }
 
 function instructionLinkTooltip(row: AgentContextInstructionRow) {

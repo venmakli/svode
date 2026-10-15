@@ -82,12 +82,26 @@ test("instructions use the common coverless Gallery and safe reader detail", () 
   const detailHtml = renderToStaticMarkup(detail.content);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
-  expect(detailHtml.includes("Source and location")).toBe(true);
-  expect(detailHtml.includes('aria-expanded="false"')).toBe(true);
-  expect(detailHtml.includes("Canonical source")).toBe(false);
-  expect(detailHtml.includes("Discovery sources")).toBe(false);
-  expect(detailHtml.includes("Space")).toBe(true);
-  expect(detailHtml.includes("Direct")).toBe(false);
+  // No header: the panel opens the content right below the top bar.
+  expect(detailHtml.includes("data-collection-detail-header")).toBe(false);
+  expect(
+    detailHtml.startsWith(
+      `<div class="flex min-w-0 flex-col gap-4" data-agent-context-instruction-detail="${selected.id}"><div class="grid`,
+    ),
+  ).toBe(true);
+  expect(detailHtml.includes('data-collection-panel-property="source"')).toBe(
+    true,
+  );
+  expect(detailHtml.includes('data-collection-panel-property="health"')).toBe(
+    true,
+  );
+  expect(
+    detailHtml.indexOf("data-collection-property-panel") <
+      detailHtml.indexOf("data-markdown-reader"),
+  ).toBe(true);
+  expect(detailHtml.includes("Source and location")).toBe(false);
+  expect(detailHtml.includes(">Space<")).toBe(true);
+  expect(detailHtml.includes("aria-expanded")).toBe(false);
 });
 
 test("superseded aliases keep neutral link provenance without a warning", () => {
@@ -126,8 +140,8 @@ test("superseded aliases keep neutral link provenance without a warning", () => 
     createInstructionDetailContent(linkedRow).content,
   );
   expect(detailHtml.includes("Superseded")).toBe(false);
-  expect(detailHtml.includes("Directory alias")).toBe(true);
-  expect(detailHtml.includes("Canonical source")).toBe(false);
+  expect(detailHtml.includes("Directory alias")).toBe(false);
+  expect(detailHtml.includes("Has problems")).toBe(false);
 });
 
 test("instruction cards show only exceptional factual source metadata", () => {

@@ -47,7 +47,11 @@ import {
   sourceLinkKindLabel,
   sourceLocationLabel,
 } from "./provenance-labels";
-import { AgentContextSkillDetail, skillWarnings } from "./skill-detail";
+import {
+  agentContextHealthProperty,
+  agentContextHealthWarnings,
+} from "./health-property";
+import { AgentContextSkillDetail } from "./skill-detail";
 
 export function createAgentContextSkillsPresentation({
   onActivate,
@@ -56,26 +60,7 @@ export function createAgentContextSkillsPresentation({
   onActivate?: CollectionPresentationDescriptor<AgentContextSkillRow>["onActivate"];
   state: CollectionPresentationState<AgentContextSkillRow>;
 }) {
-  const properties: readonly CollectionPropertyDefinition<AgentContextSkillRow>[] =
-    [
-      multiValueField(
-        "source",
-        m.agent_context_source(),
-        skillSourceFamilies,
-        ["agents", "claude"] satisfies readonly AgentContextSourceFamily[],
-        sourceFamilyLabel,
-        m.agent_context_filter_source_placeholder(),
-      ),
-      multiValueField(
-        "location",
-        m.agent_context_location(),
-        skillSourceLocations,
-        ["space", "global"] satisfies readonly AgentContextSourceLocation[],
-        sourceLocationLabel,
-        m.agent_context_filter_location_placeholder(),
-        (values) => values.filter((value) => value === "global"),
-      ),
-    ];
+  const properties = createSkillProperties();
 
   return defineCollectionPresentation<AgentContextSkillRow>({
     descriptor: {
@@ -113,37 +98,43 @@ export function createSkillDetailContent(
   row: AgentContextSkillRow,
 ): CollectionDetailContent {
   return {
-    content: <AgentContextSkillDetail row={row} />,
-    description: (
-      <span className="sr-only">
-        {m.agent_context_skill_detail_description()}
-      </span>
+    content: (
+      <AgentContextSkillDetail properties={createSkillProperties()} row={row} />
     ),
+    description: row.description,
+    identity: { icon: <Sparkles />, name: row.name },
     openWith: (
       <AgentContextArtifactOpenWith
         canonicalArtifactPath={row.manifestPath}
         ownerRoot={row.ownerPath}
       />
     ),
-    title: skillDetailTitle(row),
+    title: row.name,
   };
 }
 
-export function skillDetailTitle(row: AgentContextSkillRow) {
-  return (
-    <span className="flex min-w-0 items-start gap-3 text-left">
-      <Sparkles
-        className="mt-0.5 size-6 shrink-0 text-muted-foreground"
-        aria-hidden
-      />
-      <span className="flex min-w-0 flex-col">
-        <span className="break-words [overflow-wrap:anywhere]">{row.name}</span>
-        <span className="whitespace-normal break-words text-sm font-normal text-muted-foreground [overflow-wrap:anywhere]">
-          {row.description}
-        </span>
-      </span>
-    </span>
-  );
+/** The properties of a skill for its gallery cards and its detail panel. */
+function createSkillProperties(): readonly CollectionPropertyDefinition<AgentContextSkillRow>[] {
+  return [
+    multiValueField(
+      "source",
+      m.agent_context_source(),
+      skillSourceFamilies,
+      ["agents", "claude"] satisfies readonly AgentContextSourceFamily[],
+      sourceFamilyLabel,
+      m.agent_context_filter_source_placeholder(),
+    ),
+    multiValueField(
+      "location",
+      m.agent_context_location(),
+      skillSourceLocations,
+      ["space", "global"] satisfies readonly AgentContextSourceLocation[],
+      sourceLocationLabel,
+      m.agent_context_filter_location_placeholder(),
+      (values) => values.filter((value) => value === "global"),
+    ),
+    agentContextHealthProperty<AgentContextSkillRow>(),
+  ];
 }
 
 export function AgentContextSkillsEmpty() {
@@ -210,19 +201,26 @@ function multiValueField<Value extends string>(
     getValue: getValues,
     key,
     label,
-    render: (_value, row) => {
-      const values = getVisibleValues(getValues(row));
-      return values.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {values.map((value) => (
-            <Badge key={value} variant="outline">
-              {getLabel(value)}
-            </Badge>
-          ))}
-        </div>
-      ) : null;
-    },
+    render: (_value, row) =>
+      valueBadges(getVisibleValues(getValues(row)), getLabel),
+    // The detail names every value, not only the exceptional ones.
+    renderDetail: (_value, row) => valueBadges(getValues(row), getLabel),
   });
+}
+
+function valueBadges<Value extends string>(
+  values: readonly Value[],
+  getLabel: (value: Value) => string,
+) {
+  return values.length > 0 ? (
+    <div className="flex flex-wrap gap-1">
+      {values.map((value) => (
+        <Badge key={value} variant="outline">
+          {getLabel(value)}
+        </Badge>
+      ))}
+    </div>
+  ) : null;
 }
 
 function SkillFilterEditor<Value extends string>({
@@ -261,7 +259,7 @@ function SkillCardOverlays({ row }: { row: AgentContextSkillRow }) {
   const linkedAliases = row.aliases.filter(
     (alias) => alias.linkKind !== "direct",
   );
-  const warnings = skillWarnings(row);
+  const warnings = agentContextHealthWarnings(row);
   if (linkedAliases.length === 0 && warnings.length === 0) return null;
 
   return (

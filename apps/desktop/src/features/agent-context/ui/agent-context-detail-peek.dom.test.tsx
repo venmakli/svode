@@ -286,11 +286,29 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       },
     });
 
-    // Skill: the identity block below the top bar stays; Open with replaces ⋯.
+    // Instruction: no header, the property panel follows the top bar.
+    expect(doc.querySelector("[data-collection-detail-header]")).toBe(null);
+    expect(
+      doc
+        .querySelector("[data-agent-context-instruction-detail]")
+        ?.firstElementChild?.hasAttribute("data-collection-property-panel"),
+    ).toBe(true);
+
+    // Skill: identity in the top bar, a page-like header below it.
     await open(env.createSkillDetailContent(skill), skill.id);
-    expect(topBar().querySelector("[data-peek-identity]")).toBe(null);
-    expect(sheetHeader().className.includes("sr-only")).toBe(false);
-    expect(sheetHeader().textContent?.includes("review")).toBe(true);
+    expect(topBar().querySelector("[data-peek-identity]")?.textContent).toBe(
+      "review",
+    );
+    expect(sheetHeader().className.includes("sr-only")).toBe(true);
+    const header = doc.querySelector<HTMLElement>(
+      "[data-collection-detail-header]",
+    )!;
+    expect(header.textContent).toBe("reviewReview project changes.");
+    expect(
+      header.compareDocumentPosition(
+        doc.querySelector("[data-collection-property-panel]")!,
+      ) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
     expect(topBar().querySelector('[aria-label="Row actions"]')).toBe(null);
     await act(async () => {
       topBar()

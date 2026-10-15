@@ -7,11 +7,14 @@ import {
 } from "@/features/properties";
 import type {
   CollectionPropertyActionState,
-  CollectionPropertyApplicability,
   CollectionPropertyDefinition,
 } from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
-import { PropertyValue } from "@/features/properties/display";
+import {
+  CollectionInlineDiagnostic,
+  CollectionPropertyPassiveState,
+  readCollectionPropertyApplicability,
+} from "@/features/properties/display";
 import * as m from "@/paraglide/messages.js";
 
 import { runCollectionCallback } from "../lib/interaction";
@@ -19,94 +22,6 @@ import { runCollectionCallback } from "../lib/interaction";
 interface CollectionPropertyProps {
   property: CollectionPropertyDefinition<unknown>;
   row: unknown;
-}
-
-export function CollectionInlineDiagnostic({ message }: { message: string }) {
-  return (
-    <span
-      role="alert"
-      className="text-xs text-destructive"
-      data-collection-diagnostic
-    >
-      {message}
-    </span>
-  );
-}
-
-export function CollectionPropertyValue({
-  property,
-  row,
-}: CollectionPropertyProps) {
-  const applicability = readPropertyApplicability(property, row);
-  if (applicability.status === "hidden") return null;
-  if (applicability.status !== "applicable") {
-    return (
-      <CollectionPropertyPassiveState
-        applicability={applicability}
-        propertyKey={property.key}
-      />
-    );
-  }
-
-  const value = property.getValue(row);
-
-  const column = resolveStandardPropertyColumn(property);
-  if (column) {
-    return (
-      <PropertyValue
-        actors={property.actorCandidates}
-        column={column}
-        value={value}
-      />
-    );
-  }
-
-  if (property.semantics.kind === "custom") {
-    return property.semantics.render(value, row);
-  }
-
-  return (
-    <CollectionInlineDiagnostic
-      message={m.collection_property_renderer_unavailable({
-        property: property.key,
-      })}
-    />
-  );
-}
-
-function readPropertyApplicability(
-  property: CollectionPropertyDefinition<unknown>,
-  row: unknown,
-): CollectionPropertyApplicability {
-  try {
-    return property.getApplicability?.(row) ?? { status: "applicable" };
-  } catch {
-    return {
-      label: m.collection_callback_error(),
-      status: "unavailable",
-    };
-  }
-}
-
-function CollectionPropertyPassiveState({
-  applicability,
-  propertyKey,
-}: {
-  applicability: Exclude<
-    CollectionPropertyApplicability,
-    { status: "applicable" | "hidden" }
-  >;
-  propertyKey: string;
-}) {
-  return (
-    <span
-      className="text-xs text-muted-foreground"
-      data-collection-property={propertyKey}
-      data-collection-property-applicability={applicability.status}
-    >
-      {applicability.label}
-    </span>
-  );
 }
 
 function readPropertyState(
@@ -139,7 +54,7 @@ export function CollectionPropertyControl({
   const [localPending, setLocalPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const applicability = readPropertyApplicability(property, row);
+  const applicability = readCollectionPropertyApplicability(property, row);
   if (applicability.status === "hidden") return null;
   if (applicability.status !== "applicable") {
     return (

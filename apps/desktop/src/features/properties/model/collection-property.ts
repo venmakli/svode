@@ -42,6 +42,8 @@ export type CollectionPropertyValueSemantics<Row> =
   | {
       kind: "custom";
       render(value: unknown, row: Row): ReactNode;
+      /** The value in the row's detail when it differs from the cell. */
+      renderDetail?(value: unknown, row: Row): ReactNode;
     };
 
 export interface CollectionPropertyFilterRule {
@@ -157,16 +159,20 @@ export function defineComputedCollectionProperty<Row>({
 export function defineDomainSpecificCollectionProperty<Row>({
   featureId,
   render,
+  renderDetail,
   ...definition
 }: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
   featureId: string;
   render(value: unknown, row: Row): ReactNode;
+  renderDetail?(value: unknown, row: Row): ReactNode;
 }): CollectionPropertyDefinition<Row> {
   return {
     ...definition,
     origin: "domain_specific",
     owner: { featureId, kind: "feature" },
-    semantics: { kind: "custom", render },
+    semantics: renderDetail
+      ? { kind: "custom", render, renderDetail }
+      : { kind: "custom", render },
   };
 }
 

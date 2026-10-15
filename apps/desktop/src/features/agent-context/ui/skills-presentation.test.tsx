@@ -11,7 +11,6 @@ import {
 } from "@/features/collection";
 
 import type { ArtifactOpenTarget } from "../api/agent-context-api";
-import { skillDetailProvenance } from "../model/detail-provenance";
 import type { AgentContextSkillRow } from "../model/types";
 import {
   compareSkillsByDefault,
@@ -100,61 +99,78 @@ test("skills render as coverless Gallery cards with bounded Reader detail", () =
 
   const request = createSkillDetailContent(reviewSkill);
   const detailHtml = renderToStaticMarkup(request.content);
-  const detailTitleHtml = renderToStaticMarkup(request.title);
-  const detailDescriptionHtml = renderToStaticMarkup(request.description);
   expect(detailHtml.includes("data-agent-context-skill-detail")).toBe(true);
   expect(detailHtml.includes("data-markdown-reader-blocked-link")).toBe(true);
   expect(detailHtml.includes('href="https://example.com"')).toBe(false);
-  expect(detailHtml.includes("Source and location")).toBe(true);
-  expect(detailHtml.includes('aria-expanded="false"')).toBe(true);
-  expect(detailHtml.includes("Canonical source")).toBe(false);
-  expect(detailHtml.includes("Discovery sources")).toBe(false);
-  expect(detailHtml.includes(".agents")).toBe(true);
-  expect(detailHtml.includes("Space")).toBe(true);
-  expect(detailHtml.includes("Sources: 1")).toBe(true);
-  expect(detailHtml.includes("Direct")).toBe(false);
-  expect(detailTitleHtml.includes("lucide-sparkles")).toBe(true);
-  expect(detailTitleHtml.includes(">review<")).toBe(true);
+  // The provenance chips and both disclosures are gone.
+  expect(detailHtml.includes("Source and location")).toBe(false);
+  expect(detailHtml.includes("Skill parameters")).toBe(false);
+  expect(detailHtml.includes("aria-expanded")).toBe(false);
+  // Identity is the top bar's; the header below it reads like a page header.
+  expect(request.identity?.name).toBe("review");
   expect(
-    (
-      detailTitleHtml.match(/Review changes against project conventions\./g) ??
-      []
-    ).length,
-  ).toBe(1);
-  expect(detailTitleHtml.includes(">Skill<")).toBe(false);
-  expect(detailDescriptionHtml.includes("sr-only")).toBe(true);
-  expect(detailDescriptionHtml.includes("Read-only skill source")).toBe(true);
+    renderToStaticMarkup(request.identity?.icon).includes("lucide-sparkles"),
+  ).toBe(true);
+  expect(request.title).toBe("review");
+  expect(request.description).toBe(
+    "Review changes against project conventions.",
+  );
+  const headerIndex = detailHtml.indexOf("data-collection-detail-header");
+  const panelIndex = detailHtml.indexOf("data-collection-property-panel");
+  const readerIndex = detailHtml.indexOf("data-markdown-reader");
+  expect(headerIndex >= 0).toBe(true);
+  expect(panelIndex > headerIndex).toBe(true);
+  expect(readerIndex > panelIndex).toBe(true);
   expect(
     (detailHtml.match(/Review changes against project conventions\./g) ?? [])
       .length,
-  ).toBe(0);
+  ).toBe(1);
+  // Properties of the gallery are the rows of the panel.
+  expect(detailHtml.includes('data-collection-panel-property="source"')).toBe(
+    true,
+  );
+  expect(detailHtml.includes('data-collection-panel-property="location"')).toBe(
+    true,
+  );
+  expect(detailHtml.includes('data-collection-panel-property="health"')).toBe(
+    true,
+  );
+  expect(detailHtml.includes(".agents")).toBe(true);
+  expect(detailHtml.includes(">Space<")).toBe(true);
+  // Without optional frontmatter there is no fact group.
+  expect(detailHtml.includes("data-collection-panel-fact-group")).toBe(false);
 });
 
-test("skill Detail keeps source and optional parameters collapsed before the Reader", () => {
+test("skill Detail shows SKILL.md frontmatter as facts after the properties", () => {
   const withFrontmatter: AgentContextSkillRow = {
     ...reviewSkill,
-    allowedTools: "Read",
+    allowedTools: "Read Bash(git log:*)",
     compatibility: "Requires git",
-    license: "MIT",
-    metadata: { author: "Svode" },
+    license: null,
+    metadata: { zeta: "last", alpha: "first" },
   };
-  const request = createSkillDetailContent(withFrontmatter);
-  const detailHtml = renderToStaticMarkup(request.content);
-  const sourceIndex = detailHtml.indexOf(
-    "data-agent-context-source-disclosure",
+  const detailHtml = renderToStaticMarkup(
+    createSkillDetailContent(withFrontmatter).content,
   );
-  const parametersIndex = detailHtml.indexOf(
-    "data-agent-context-skill-frontmatter",
+  const healthIndex = detailHtml.indexOf(
+    'data-collection-panel-property="health"',
   );
-  const readerIndex = detailHtml.indexOf("data-markdown-reader");
-
-  expect(sourceIndex >= 0).toBe(true);
-  expect(parametersIndex > sourceIndex).toBe(true);
-  expect(readerIndex > parametersIndex).toBe(true);
-  expect((detailHtml.match(/aria-expanded="false"/g) ?? []).length).toBe(2);
-  expect(detailHtml.includes("Requires git")).toBe(false);
-  expect(detailHtml.includes("# Review")).toBe(false);
-  expect(detailHtml.includes(">Review<")).toBe(true);
+  const groupIndex = detailHtml.indexOf(
+    'data-collection-panel-fact-group="skill-md"',
+  );
+  expect(groupIndex > healthIndex).toBe(true);
+  expect(detailHtml.includes(">From SKILL.md<")).toBe(true);
+  expect(detailHtml.includes('data-collection-panel-fact="license"')).toBe(
+    false,
+  );
+  expect(detailHtml.includes("Requires git")).toBe(true);
+  expect(detailHtml.includes(">Read<")).toBe(true);
+  expect(detailHtml.includes(">Bash(git log:*)<")).toBe(true);
+  expect(
+    detailHtml.indexOf('data-collection-panel-fact="metadata:alpha"') <
+      detailHtml.indexOf('data-collection-panel-fact="metadata:zeta"'),
+  ).toBe(true);
+  expect(detailHtml.indexOf("data-markdown-reader") > groupIndex).toBe(true);
 });
 
 test("search and multivalue Source/Location filters use factual alias unions", () => {
@@ -182,6 +198,7 @@ test("search and multivalue Source/Location filters use factual alias unions", (
   ).toEqual([
     { key: "source", label: "Source" },
     { key: "location", label: "Location" },
+    { key: "health", label: "Status" },
   ]);
 
   expect(
@@ -321,15 +338,21 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
   expect(html.includes("Claude link support is not proven")).toBe(false);
   expect(html.includes("Name does not match its directory")).toBe(true);
 
-  const provenanceOnlyDetail = renderToStaticMarkup(
+  const degradedDetail = renderToStaticMarkup(
     createSkillDetailContent(warning).content,
   );
-  expect(
-    provenanceOnlyDetail.includes("data-agent-context-content-health"),
-  ).toBe(false);
-  expect(
-    provenanceOnlyDetail.includes("Name does not match its directory"),
-  ).toBe(false);
+  expect(degradedDetail.includes("data-agent-context-content-health")).toBe(
+    false,
+  );
+  expect(degradedDetail.includes("data-agent-context-health")).toBe(true);
+  expect(degradedDetail.includes("Has problems")).toBe(true);
+  expect(degradedDetail.includes("Name does not match its directory")).toBe(
+    true,
+  );
+  const normalDetail = renderToStaticMarkup(
+    createSkillDetailContent(reviewSkill).content,
+  );
+  expect(normalDetail.includes("Has problems")).toBe(false);
 
   const truncatedDetail = renderToStaticMarkup(
     createSkillDetailContent({ ...warning, truncated: true }).content,
@@ -342,52 +365,6 @@ test("safe aliases stay neutral while degraded manifest health warns", () => {
       "Preview is bounded and was truncated by the scanner.",
     ),
   ).toBe(true);
-});
-
-test("Detail projection keeps discovery location independent from canonical ownership", () => {
-  const spaceAliasToGlobal: AgentContextSkillRow = {
-    ...reviewSkill,
-    aliases: [
-      {
-        ...reviewSkill.aliases[0]!,
-        discoveryPath: "/workspace/.agents/skills/global-link",
-        linkKind: "symbolic_link",
-        location: "space",
-      },
-    ],
-    canonicalPath: "/home/user/.agents/skills/global-source",
-    id: "skill:/home/user/.agents/skills/global-source",
-    manifestPath: "/home/user/.agents/skills/global-source/SKILL.md",
-    ownerPath: "/home/user/.agents/skills",
-  };
-  const globalAliasToSpace: AgentContextSkillRow = {
-    ...reviewSkill,
-    aliases: [
-      {
-        ...reviewSkill.aliases[0]!,
-        discoveryPath: "/home/user/.claude/skills/space-link",
-        linkKind: "directory_alias",
-        location: "global",
-        sourceFamily: "claude",
-      },
-    ],
-  };
-
-  const spaceAliasDetail = skillDetailProvenance(spaceAliasToGlobal);
-  expect(spaceAliasDetail.canonicalOwnerPath).toBe("/home/user/.agents/skills");
-  expect(spaceAliasDetail.sources[0]?.linkKind).toBe("symbolic_link");
-  expect(spaceAliasDetail.sources[0]?.location).toBe("space");
-  expect(spaceAliasDetail.sources[0]?.path).toBe(
-    "/workspace/.agents/skills/global-link",
-  );
-
-  const globalAliasDetail = skillDetailProvenance(globalAliasToSpace);
-  expect(globalAliasDetail.canonicalOwnerPath).toBe("/workspace");
-  expect(globalAliasDetail.sources[0]?.linkKind).toBe("directory_alias");
-  expect(globalAliasDetail.sources[0]?.location).toBe("global");
-  expect(globalAliasDetail.sources[0]?.path).toBe(
-    "/home/user/.claude/skills/space-link",
-  );
 });
 
 test("skills open their manifest from the detail top bar, not from collection menus", () => {
@@ -415,8 +392,8 @@ test("skills open their manifest from the detail top bar, not from collection me
   expect(html.includes("data-collection-action")).toBe(false);
 
   const request = createSkillDetailContent(reviewSkill);
-  // The identity block below the top bar stays for skills.
-  expect(request.identity).toBe(undefined);
+  // The identity is the top bar's; the page-like header follows it.
+  expect(request.identity?.name).toBe(reviewSkill.name);
   expect(request.headerActions).toBe(undefined);
   expect((request.openWith as ReactElement<ArtifactOpenTarget>).props).toEqual({
     canonicalArtifactPath: "/workspace/.agents/skills/review/SKILL.md",
