@@ -114,14 +114,14 @@ interface AgentContextTargetInput extends Record<string, unknown> {
 
 export function getAgentContext(projectPath: string, spacePath: string) {
   return invokeCommand<AgentContextSnapshotDto>(
-    "agent_context_get_instructions",
+    "agent_context_get_items",
     { projectPath, spacePath } satisfies AgentContextTargetInput,
   );
 }
 
 export function refreshAgentContext(projectPath: string, spacePath: string) {
   return invokeCommand<AgentContextSnapshotDto>(
-    "agent_context_refresh_instructions",
+    "agent_context_refresh_items",
     { projectPath, spacePath } satisfies AgentContextTargetInput,
   );
 }

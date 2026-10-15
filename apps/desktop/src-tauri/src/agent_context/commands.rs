@@ -10,7 +10,7 @@ use svode_core::agent_context::model::AgentContextSnapshot;
 use svode_core::agent_context::scanner;
 
 #[tauri::command]
-pub async fn agent_context_get_instructions(
+pub async fn agent_context_get_items(
     state: State<'_, AgentContextState>,
     agents: State<'_, AgentSetupState>,
     project_path: String,
@@ -20,7 +20,7 @@ pub async fn agent_context_get_instructions(
 }
 
 #[tauri::command]
-pub async fn agent_context_refresh_instructions(
+pub async fn agent_context_refresh_items(
     state: State<'_, AgentContextState>,
     agents: State<'_, AgentSetupState>,
     project_path: String,
