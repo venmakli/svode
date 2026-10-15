@@ -101,6 +101,16 @@ impl TreeIgnorePolicy {
         !is_user_included
     }
 
+    /// Whether the root `.gitignore` alone ignores `path`, without the
+    /// system and user rules of the content tree.
+    pub fn is_git_ignored_abs(&self, path: &Path, kind: TreePathKind) -> bool {
+        let Ok(rel) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        let rel = normalize_path(rel);
+        !rel.is_empty() && self.is_git_ignored(&rel, kind)
+    }
+
     fn is_git_ignored(&self, rel: &str, kind: TreePathKind) -> bool {
         let last_match = self
             .git_rules

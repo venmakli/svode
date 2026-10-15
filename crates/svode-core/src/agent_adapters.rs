@@ -288,6 +288,23 @@ pub enum InstructionSelection {
     All,
     /// The first readable file; the others are shadowed by it.
     First,
+    /// The first file found over the whole walk, even an empty one; the
+    /// files after it are shadowed by it.
+    FirstInWalk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrokVendor {
+    Claude,
+    Cursor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrokSurface {
+    Agents,
+    Skills,
 }
 
 /// A setting of the agent that replaces the names of a rule.
@@ -319,6 +336,13 @@ pub struct InstructionRule {
     pub selection: InstructionSelection,
     /// The agent skips a file that is empty after trimming.
     pub skip_empty: bool,
+    /// The agent skips a file the repository's `.gitignore` ignores.
+    pub skip_gitignored: bool,
+    pub switch: Option<SourceSwitch>,
+    /// Rules with the same group are alternatives in their declared order:
+    /// the agent loads the first one that yields a non-empty file, and its
+    /// first file shadows the files of the others.
+    pub alternatives: Option<usize>,
 }
 
 /// One file of an instruction slot.
@@ -358,6 +382,9 @@ pub enum SkillPrecedence {
     ClaudePersonalShadowsProject,
     /// The first registered skill wins.
     FirstWins(SkillKey),
+    /// A project skill nearer the target wins, in root order within one
+    /// directory, before personal roots in their order.
+    NearestFirstWins(SkillKey),
     /// The last registered skill wins.
     LastWins(SkillKey),
 }
@@ -371,6 +398,9 @@ pub enum SkillKey {
     /// The skill directory name, or the file name of a flat skill without
     /// `.md`.
     PathId,
+    /// The path of the skill inside its root, under the folder that holds
+    /// the root's client folder (`<parent>/.cursor/skills`).
+    RootParentPath,
 }
 
 /// Plain `*.md` files the agent itself takes as skills.
@@ -415,13 +445,16 @@ pub enum SkillPlace {
     Personal(String),
 }
 
-/// A setting of an agent that turns a group of its sources off.
+/// A setting of an agent that turns a group of its sources off: a rule or
+/// a skills root counts only while it is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceSwitch {
     /// The built-in plugin `opencode.config.compatibility` of opencode,
     /// which reads the skills of Claude Code and of `.agents`.
     OpencodeCompatibility,
+    /// A Grok Build compatibility cell: `[compat.<vendor>] <surface>`.
+    GrokCompat(GrokVendor, GrokSurface),
 }
 
 /// A skills root of an agent, in the agent's registration order.
@@ -431,6 +464,8 @@ pub struct SkillRootRule {
     pub kind: SkillDiscoveryKind,
     pub place: SkillPlace,
     pub layout: SkillLayout,
+    /// Skill names the agent never takes from this root.
+    pub excluded_names: Vec<String>,
     /// The root counts only while this setting is on.
     pub switch: Option<SourceSwitch>,
 }
@@ -483,6 +518,13 @@ pub struct SourceRegistryEnvironment {
     pub qwen_home: PathBuf,
     /// `KIMI_CODE_HOME`, else `~/.kimi-code`.
     pub kimi_code_home: PathBuf,
+    /// `GROK_HOME`, else `~/.grok`.
+    pub grok_home: PathBuf,
+    /// Grok Build compatibility cells `GROK_<VENDOR>_<SURFACE>_ENABLED`
+    /// that are set; they win over its config.
+    pub grok_switches: Vec<(SourceSwitch, bool)>,
+    /// The Hermes home of the active profile.
+    pub hermes_home: PathBuf,
     /// Stable Svode install root. Client skill links point into its payload,
     /// so discovery reads it like a personal root.
     pub svode_home: PathBuf,
@@ -508,6 +550,19 @@ impl SourceRegistryEnvironment {
             pi_agent_dir: set("PI_CODING_AGENT_DIR").unwrap_or_else(|| home_dir.join(".pi/agent")),
             qwen_home: set("QWEN_HOME").unwrap_or_else(|| home_dir.join(".qwen")),
             kimi_code_home: set("KIMI_CODE_HOME").unwrap_or_else(|| home_dir.join(".kimi-code")),
+            grok_home: set("GROK_HOME").unwrap_or_else(|| home_dir.join(".grok")),
+            grok_switches: GROK_SWITCH_VARIABLES
+                .iter()
+                .filter_map(|(name, switch)| {
+                    let value = variable(name)?;
+                    Some((*switch, parse_switch(&value)?))
+                })
+                .collect(),
+            hermes_home: hermes_home(
+                &home_dir,
+                set("HERMES_HOME"),
+                cfg!(windows).then(|| set("LOCALAPPDATA")).flatten(),
+            ),
             svode_home: home_dir.join(".svode"),
             home_dir,
         }
@@ -516,6 +571,70 @@ impl SourceRegistryEnvironment {
     pub fn for_tests(home_dir: PathBuf) -> Self {
         Self::from_variables(home_dir, |_| None)
     }
+}
+
+const GROK_SWITCH_VARIABLES: [(&str, SourceSwitch); 4] = [
+    (
+        "GROK_CLAUDE_AGENTS_ENABLED",
+        SourceSwitch::GrokCompat(GrokVendor::Claude, GrokSurface::Agents),
+    ),
+    (
+        "GROK_CLAUDE_SKILLS_ENABLED",
+        SourceSwitch::GrokCompat(GrokVendor::Claude, GrokSurface::Skills),
+    ),
+    (
+        "GROK_CURSOR_AGENTS_ENABLED",
+        SourceSwitch::GrokCompat(GrokVendor::Cursor, GrokSurface::Agents),
+    ),
+    (
+        "GROK_CURSOR_SKILLS_ENABLED",
+        SourceSwitch::GrokCompat(GrokVendor::Cursor, GrokSurface::Skills),
+    ),
+];
+
+fn parse_switch(value: &OsStr) -> Option<bool> {
+    match value.to_str()?.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// The Hermes home as Hermes resolves it at start (E02, Hermes 2026.9.24):
+/// a `HERMES_HOME` that names a profile as is; otherwise the profile that
+/// `active_profile` of the Hermes root names, else `HERMES_HOME` or the
+/// platform default.
+fn hermes_home(
+    home_dir: &Path,
+    configured: Option<PathBuf>,
+    local_app_data: Option<PathBuf>,
+) -> PathBuf {
+    let native = match local_app_data {
+        Some(local) => local.join("hermes"),
+        None if cfg!(windows) => home_dir.join("AppData/Local/hermes"),
+        None => home_dir.join(".hermes"),
+    };
+    if let Some(configured) = &configured
+        && configured
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "profiles")
+    {
+        return configured.clone();
+    }
+    let root = match &configured {
+        Some(configured) if !configured.starts_with(&native) => configured.clone(),
+        _ => native.clone(),
+    };
+    let active = std::fs::read_to_string(root.join("active_profile")).unwrap_or_default();
+    let active = active.trim_start_matches('\u{feff}').trim();
+    if !active.is_empty() && active != "default" {
+        let profile = root.join("profiles").join(active);
+        if profile.is_dir() {
+            return profile;
+        }
+    }
+    configured.unwrap_or(native)
 }
 
 fn expand_home(home_dir: &Path, path: PathBuf) -> PathBuf {
@@ -578,12 +697,14 @@ impl AgentAdapterRegistry {
                         relative: relative.to_string(),
                     },
                     layout,
+                    excluded_names: Vec::new(),
                     switch: None,
                 };
                 let personal = |kind, path: &Path| SkillRootRule {
                     kind,
                     place: SkillPlace::Personal(path_string(path)),
                     layout,
+                    excluded_names: Vec::new(),
                     switch: None,
                 };
                 (
@@ -921,8 +1042,264 @@ impl AgentAdapterRegistry {
                     },
                 )
             }
-            AgentAdapterKind::Cursor | AgentAdapterKind::Hermes | AgentAdapterKind::GrokBuild => {
-                return None;
+            // Cursor CLI 2026.10.01: `AGENTS.md`, `CLAUDE.md` and
+            // `CLAUDE.local.md` in the target and every folder above it up
+            // to the filesystem root; the skill folders of five clients in
+            // the target and in `~`, the first of one path under one parent.
+            AgentAdapterKind::Cursor => {
+                let families: [(&str, &[&str]); 5] = [
+                    (".cursor", &[]),
+                    (".claude", &[]),
+                    (".codex", CURSOR_CODEX_SYSTEM_SKILLS),
+                    (".grok", &[]),
+                    (".agents", &[]),
+                ];
+                let layout = SkillLayout {
+                    max_depth: 10,
+                    flat: FlatSkills::None,
+                    descend_into_skills: false,
+                };
+                let mut roots = families
+                    .iter()
+                    .map(|(family, excluded)| {
+                        excluding(
+                            skill_root(
+                                SkillPlace::Walk {
+                                    walk: DirectoryWalk::Target,
+                                    relative: format!("{family}/skills"),
+                                },
+                                layout,
+                            ),
+                            excluded,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                roots.extend(families.iter().map(|(family, excluded)| {
+                    excluding(
+                        skill_root(
+                            SkillPlace::Personal(path_string(&home.join(family).join("skills"))),
+                            layout,
+                        ),
+                        excluded,
+                    )
+                }));
+                (
+                    &home.join(".cursor"),
+                    InstructionDiscoveryPolicy::Declared(DeclaredInstructions {
+                        rules: vec![rule(
+                            InstructionDirectories::Walk(DirectoryWalk::FilesystemToTarget),
+                            &["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"],
+                            InstructionSelection::All,
+                        )],
+                        slots: Vec::new(),
+                    }),
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::FirstWins(SkillKey::RootParentPath),
+                        roots,
+                    },
+                )
+            }
+            // Grok Build 1.0.46: instruction names in its home, the Claude
+            // and Cursor homes and from the git root down to the target,
+            // without gitignored files; skills of `.grok`, `.agents`,
+            // `.claude` and `.cursor` from the target up, then of the user;
+            // the Claude and Cursor parts by the compatibility cells.
+            AgentAdapterKind::GrokBuild => {
+                let grok_home = &environment.grok_home;
+                let claude = |surface| Some(SourceSwitch::GrokCompat(GrokVendor::Claude, surface));
+                let cursor = |surface| Some(SourceSwitch::GrokCompat(GrokVendor::Cursor, surface));
+                let switched = |mut rule: InstructionRule, switch| {
+                    rule.switch = switch;
+                    rule
+                };
+                let mut project_names = rule(
+                    InstructionDirectories::Walk(DirectoryWalk::RepositoryToTarget),
+                    GROK_INSTRUCTION_NAMES,
+                    InstructionSelection::All,
+                );
+                project_names.skip_gitignored = true;
+                let mut project_claude = rule(
+                    InstructionDirectories::Walk(DirectoryWalk::RepositoryToTarget),
+                    &[".claude/CLAUDE.md", ".claude/CLAUDE.local.md"],
+                    InstructionSelection::All,
+                );
+                project_claude.skip_gitignored = true;
+                project_claude.switch = claude(GrokSurface::Agents);
+                // Its walk goes on inside skill directories.
+                let layout = SkillLayout {
+                    max_depth: 6,
+                    flat: FlatSkills::None,
+                    descend_into_skills: true,
+                };
+                let walk_root = |family: &str, excluded: &[&str], switch| {
+                    let mut root = excluding(
+                        skill_root(
+                            SkillPlace::Walk {
+                                walk: DirectoryWalk::TargetToRepository,
+                                relative: format!("{family}/skills"),
+                            },
+                            layout,
+                        ),
+                        excluded,
+                    );
+                    root.switch = switch;
+                    root
+                };
+                let personal_root = |path: PathBuf, excluded: &[&str], switch| {
+                    let mut root = excluding(
+                        skill_root(SkillPlace::Personal(path_string(&path)), layout),
+                        excluded,
+                    );
+                    root.switch = switch;
+                    root
+                };
+                (
+                    grok_home,
+                    InstructionDiscoveryPolicy::Declared(DeclaredInstructions {
+                        rules: vec![
+                            rule(
+                                InstructionDirectories::Personal(path_string(grok_home)),
+                                GROK_INSTRUCTION_NAMES,
+                                InstructionSelection::All,
+                            ),
+                            switched(
+                                rule(
+                                    InstructionDirectories::Personal(path_string(
+                                        &home.join(".claude"),
+                                    )),
+                                    GROK_INSTRUCTION_NAMES,
+                                    InstructionSelection::All,
+                                ),
+                                claude(GrokSurface::Agents),
+                            ),
+                            switched(
+                                rule(
+                                    InstructionDirectories::Personal(path_string(
+                                        &home.join(".cursor"),
+                                    )),
+                                    GROK_INSTRUCTION_NAMES,
+                                    InstructionSelection::All,
+                                ),
+                                cursor(GrokSurface::Agents),
+                            ),
+                            project_names,
+                            project_claude,
+                        ],
+                        slots: Vec::new(),
+                    }),
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::NearestFirstWins(SkillKey::Name),
+                        roots: vec![
+                            walk_root(".grok", &[], None),
+                            walk_root(".agents", &[], None),
+                            walk_root(
+                                ".claude",
+                                GROK_CLAUDE_DEFAULT_SKILLS,
+                                claude(GrokSurface::Skills),
+                            ),
+                            walk_root(
+                                ".cursor",
+                                GROK_CURSOR_DEFAULT_SKILLS,
+                                cursor(GrokSurface::Skills),
+                            ),
+                            personal_root(grok_home.join("skills"), &[], None),
+                            personal_root(home.join(".agents/skills"), &[], None),
+                            personal_root(
+                                home.join(".claude/skills"),
+                                GROK_CLAUDE_DEFAULT_SKILLS,
+                                claude(GrokSurface::Skills),
+                            ),
+                            personal_root(
+                                home.join(".cursor/skills"),
+                                GROK_CURSOR_DEFAULT_SKILLS,
+                                cursor(GrokSurface::Skills),
+                            ),
+                        ],
+                    },
+                )
+            }
+            // Hermes 2026.9.24: `SOUL.md` of the profile and one project
+            // instruction type, the first that yields a non-empty file —
+            // the nearest `.hermes.md` / `HERMES.md` up to the git root, the
+            // `AGENTS` chain from the git root, `CLAUDE.md` of the target;
+            // skills of the git root before the profile's own, the first of
+            // a name wins. `.cursorrules` and `.cursor/rules`, its last type,
+            // are rules and no instructions of the "Context".
+            AgentAdapterKind::Hermes => {
+                let hermes_home = &environment.hermes_home;
+                let mut soul = rule(
+                    InstructionDirectories::Personal(path_string(hermes_home)),
+                    &["SOUL.md"],
+                    InstructionSelection::All,
+                );
+                soul.skip_empty = true;
+                let alternative = |mut rule: InstructionRule, skip_empty| {
+                    rule.alternatives = Some(0);
+                    rule.skip_empty = skip_empty;
+                    rule
+                };
+                // Its walk goes on inside skill directories.
+                let layout = SkillLayout {
+                    max_depth: MAX_SKILL_DEPTH,
+                    flat: FlatSkills::None,
+                    descend_into_skills: true,
+                };
+                (
+                    hermes_home,
+                    InstructionDiscoveryPolicy::Declared(DeclaredInstructions {
+                        rules: vec![
+                            soul,
+                            alternative(
+                                rule(
+                                    InstructionDirectories::Walk(DirectoryWalk::TargetToRepository),
+                                    &[".hermes.md", "HERMES.md"],
+                                    InstructionSelection::FirstInWalk,
+                                ),
+                                false,
+                            ),
+                            alternative(
+                                rule(
+                                    InstructionDirectories::Walk(DirectoryWalk::RepositoryToTarget),
+                                    &["AGENTS.override.md", "AGENTS.md", "agents.md"],
+                                    InstructionSelection::First,
+                                ),
+                                true,
+                            ),
+                            alternative(
+                                rule(
+                                    InstructionDirectories::Walk(DirectoryWalk::Target),
+                                    &["CLAUDE.md", "claude.md"],
+                                    InstructionSelection::First,
+                                ),
+                                true,
+                            ),
+                        ],
+                        slots: Vec::new(),
+                    }),
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::FirstWins(SkillKey::Name),
+                        roots: vec![
+                            skill_root(
+                                SkillPlace::Walk {
+                                    walk: DirectoryWalk::RepositoryRoot,
+                                    relative: ".hermes/skills".to_string(),
+                                },
+                                layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Walk {
+                                    walk: DirectoryWalk::RepositoryRoot,
+                                    relative: ".agents/skills".to_string(),
+                                },
+                                layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Personal(path_string(&hermes_home.join("skills"))),
+                                layout,
+                            ),
+                        ],
+                    },
+                )
             }
         };
         Some(AgentSourcePolicy {
@@ -944,6 +1321,47 @@ const MAX_SKILL_DEPTH: usize = 8;
 /// Codex finds a skill directory at most six levels below its root.
 const CODEX_SKILL_DEPTH: usize = 6;
 
+/// Cursor CLI never reads these skills of a `.codex/skills` root.
+const CURSOR_CODEX_SYSTEM_SKILLS: &[&str] = &[
+    "imagegen",
+    "openai-docs",
+    "plugin-creator",
+    "skill-creator",
+    "skill-installer",
+];
+const GROK_INSTRUCTION_NAMES: &[&str] = &[
+    "Agents.md",
+    "Claude.md",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENT.md",
+    "AGENTS.md",
+];
+/// Grok Build drops the default skills Cursor and Claude Code ship when it
+/// finds them in their folders.
+const GROK_CURSOR_DEFAULT_SKILLS: &[&str] = &[
+    "babysit",
+    "canvas",
+    "create-hook",
+    "create-rule",
+    "create-skill",
+    "create-subagent",
+    "loop",
+    "migrate-to-skills",
+    "sdk",
+    "shell",
+    "split-to-prs",
+    "statusline",
+    "update-cli-config",
+    "update-cursor-settings",
+];
+const GROK_CLAUDE_DEFAULT_SKILLS: &[&str] = &["pdf", "docx", "xlsx", "pptx", "skill-creator"];
+
+fn excluding(mut root: SkillRootRule, names: &[&str]) -> SkillRootRule {
+    root.excluded_names = names.iter().map(|name| (*name).to_string()).collect();
+    root
+}
+
 fn rule(
     directories: InstructionDirectories,
     names: &[&str],
@@ -955,6 +1373,9 @@ fn rule(
         names_setting: None,
         selection,
         skip_empty: false,
+        skip_gitignored: false,
+        switch: None,
+        alternatives: None,
     }
 }
 
@@ -968,6 +1389,7 @@ fn skill_root(place: SkillPlace, layout: SkillLayout) -> SkillRootRule {
         kind,
         place,
         layout,
+        excluded_names: Vec::new(),
         switch: None,
     }
 }
@@ -980,6 +1402,7 @@ fn walk_skills(kind: SkillDiscoveryKind, walk: DirectoryWalk, relative: &str) ->
             relative: relative.to_string(),
         },
         layout: SkillLayout::DIRECT_CHILDREN,
+        excluded_names: Vec::new(),
         switch: None,
     }
 }
@@ -989,6 +1412,7 @@ fn personal_skills(kind: SkillDiscoveryKind, path: &Path) -> SkillRootRule {
         kind,
         place: SkillPlace::Personal(path_string(path)),
         layout: SkillLayout::DIRECT_CHILDREN,
+        excluded_names: Vec::new(),
         switch: None,
     }
 }
@@ -1249,27 +1673,62 @@ mod tests {
     }
 
     #[test]
-    fn agents_without_decided_sources_have_no_source_policy() {
+    fn every_built_in_agent_has_a_source_policy() {
         let environment = SourceRegistryEnvironment::for_tests(PathBuf::from("/home/test"));
         let policies = AgentAdapterRegistry.source_policies(&environment);
 
         assert_eq!(
             policies.iter().map(|policy| policy.id).collect::<Vec<_>>(),
+            AgentAdapterKind::ALL
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn grok_and_hermes_homes_follow_the_agent_environment_and_the_active_profile() {
+        let home = tempfile::TempDir::new().unwrap();
+        let home = home.path().to_path_buf();
+        let defaults = SourceRegistryEnvironment::from_variables(home.clone(), |_| None);
+        assert_eq!(defaults.grok_home, home.join(".grok"));
+        assert_eq!(defaults.hermes_home, home.join(".hermes"));
+        assert!(defaults.grok_switches.is_empty());
+
+        let set = SourceRegistryEnvironment::from_variables(home.clone(), |name| {
             [
-                AgentAdapterKind::Codex,
-                AgentAdapterKind::ClaudeCode,
-                AgentAdapterKind::Opencode,
-                AgentAdapterKind::Pi,
-                AgentAdapterKind::QwenCode,
-                AgentAdapterKind::KimiCode,
+                ("GROK_HOME", "/srv/grok"),
+                ("GROK_CLAUDE_SKILLS_ENABLED", "false"),
+                ("GROK_CURSOR_AGENTS_ENABLED", "1"),
+                ("GROK_CURSOR_SKILLS_ENABLED", "maybe"),
+                ("HERMES_HOME", "/srv/hermes/profiles/work"),
+            ]
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| OsString::from(value))
+        });
+        assert_eq!(set.grok_home, PathBuf::from("/srv/grok"));
+        assert_eq!(
+            set.grok_switches,
+            vec![
+                (
+                    SourceSwitch::GrokCompat(GrokVendor::Claude, GrokSurface::Skills),
+                    false
+                ),
+                (
+                    SourceSwitch::GrokCompat(GrokVendor::Cursor, GrokSurface::Agents),
+                    true
+                ),
             ]
         );
-        assert!(
-            AgentAdapterRegistry
-                .identities()
-                .iter()
-                .any(|identity| identity.id == AgentAdapterKind::GrokBuild)
-        );
+        assert_eq!(set.hermes_home, PathBuf::from("/srv/hermes/profiles/work"));
+
+        std::fs::create_dir_all(home.join(".hermes/profiles/coder")).unwrap();
+        let resolve = || SourceRegistryEnvironment::for_tests(home.clone()).hermes_home;
+        std::fs::write(home.join(".hermes/active_profile"), "coder\n").unwrap();
+        assert_eq!(resolve(), home.join(".hermes/profiles/coder"));
+        std::fs::write(home.join(".hermes/active_profile"), "default").unwrap();
+        assert_eq!(resolve(), home.join(".hermes"));
+        std::fs::write(home.join(".hermes/active_profile"), "gone").unwrap();
+        assert_eq!(resolve(), home.join(".hermes"));
     }
 
     #[test]

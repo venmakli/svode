@@ -19,6 +19,17 @@ use super::{DiscoveryResult, TargetPlaces};
 const MAX_ROOT_ENTRIES: usize = 512;
 /// Folders of skills followed below one root.
 const MAX_SKILL_FOLDERS: usize = 256;
+/// Folders of dependencies and builds a walk over folders of skills never
+/// enters.
+const WALK_EXCLUDED_DIRS: &[&str] = &[
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    "venv",
+    "site-packages",
+    "__pycache__",
+];
 const MAX_SKILL_BYTES: usize = 256 * 1024;
 /// Claude Code keeps claude.ai synced skills here and never reads it as a
 /// skills-dir entry.
@@ -52,6 +63,10 @@ struct RootSpec<'a> {
     layout: SkillLayout,
     root: PathBuf,
     owner: InstructionOwner,
+    excluded_names: &'a [String],
+    /// The root's place in the agent's precedence by nearness: project roots
+    /// by their directory's distance from the target, then rule order.
+    nearness: (u8, usize, usize),
 }
 
 #[derive(Debug)]
@@ -65,6 +80,8 @@ struct Registration {
     agent: AgentAdapterKind,
     canonical: PathBuf,
     path: String,
+    root: String,
+    nearness: (u8, usize, usize),
 }
 
 /// What the scans of all roots share.
@@ -85,6 +102,7 @@ pub(super) fn discover(
     adapters: &[AgentSourcePolicy],
     global_agents: &[AgentAdapterKind],
     environment: &SourceRegistryEnvironment,
+    grok_off: &BTreeSet<SourceSwitch>,
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
     let switched_off = adapters
@@ -105,6 +123,7 @@ pub(super) fn discover(
                 environment,
                 places,
                 global_agents.contains(agent),
+                grok_off,
                 &mut result,
             )
         })
@@ -226,7 +245,7 @@ fn roots<'a>(
             })
             .collect::<Vec<_>>();
         let mut seen = Vec::<PathBuf>::new();
-        for rule in &adapter.capabilities.skills.roots {
+        for (rule_index, rule) in adapter.capabilities.skills.roots.iter().enumerate() {
             if rule
                 .switch
                 .is_some_and(|switch| switched_off.contains(&(adapter.id, switch)))
@@ -242,8 +261,14 @@ fn roots<'a>(
                         if personal.contains(&canonical_or_self(&root)) {
                             return None;
                         }
+                        let distance = places
+                            .target_root
+                            .ancestors()
+                            .position(|path| path == directory.path)
+                            .unwrap_or(0);
                         Some(if directory.inside {
                             (
+                                distance,
                                 root,
                                 SkillScope::Project,
                                 InstructionOwner {
@@ -256,11 +281,12 @@ fn roots<'a>(
                                 kind: InstructionOwnerKind::ClientConfiguration,
                                 root: path_string(&root),
                             };
-                            (root, SkillScope::Personal, owner)
+                            (distance, root, SkillScope::Personal, owner)
                         })
                     })
                     .collect::<Vec<_>>(),
                 SkillPlace::Personal(path) => vec![(
+                    0,
                     PathBuf::from(path),
                     SkillScope::Personal,
                     InstructionOwner {
@@ -269,7 +295,7 @@ fn roots<'a>(
                     },
                 )],
             };
-            for (root, scope, owner) in places_of_rule {
+            for (distance, root, scope, owner) in places_of_rule {
                 if (scope == SkillScope::Personal && !global) || seen.contains(&root) {
                     continue;
                 }
@@ -281,6 +307,12 @@ fn roots<'a>(
                     layout: rule.layout,
                     root,
                     owner,
+                    excluded_names: &rule.excluded_names,
+                    nearness: (
+                        u8::from(scope == SkillScope::Personal),
+                        distance,
+                        rule_index,
+                    ),
                 });
             }
         }
@@ -294,9 +326,11 @@ fn switch_on(
     environment: &SourceRegistryEnvironment,
     places: &TargetPlaces,
     global: bool,
+    grok_off: &BTreeSet<SourceSwitch>,
     result: &mut DiscoveryResult,
 ) -> bool {
     match switch {
+        SourceSwitch::GrokCompat(..) => !grok_off.contains(&switch),
         SourceSwitch::OpencodeCompatibility => super::opencode::built_in_plugin_enabled(
             "opencode.config.compatibility",
             environment,
@@ -470,7 +504,7 @@ impl Scan<'_> {
             return;
         };
         if entry_name.starts_with('.')
-            || (depth > 1 && entry_name == "node_modules")
+            || (depth > 1 && WALK_EXCLUDED_DIRS.contains(&entry_name))
             || (root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
                 && entry_name == CLAUDE_SYNCED_SKILLS_DIR)
         {
@@ -655,6 +689,9 @@ impl Scan<'_> {
                 return;
             }
         };
+        if root.excluded_names.contains(&parsed.name) {
+            return;
+        }
         let Some(owner) = canonical_skill_owner(
             &canonical_entry,
             &self.places.repository_root,
@@ -688,6 +725,8 @@ impl Scan<'_> {
             agent: root.adapter.id,
             canonical: canonical_entry.clone(),
             path: alias.path.clone(),
+            root: alias.root.clone(),
+            nearness: root.nearness,
         });
         if let Some(row) = self.rows.get_mut(&canonical_entry) {
             row.aliases.push(alias);
@@ -745,6 +784,8 @@ impl Scan<'_> {
             layout: SkillLayout::DIRECT_CHILDREN,
             root: plugin.join("skills"),
             owner: root.owner.clone(),
+            excluded_names: root.excluded_names,
+            nearness: root.nearness,
         };
         let canonical_skills = match plugin_root.root.canonicalize() {
             Ok(path) if path.is_dir() => path,
@@ -1281,19 +1322,23 @@ fn apply_registration_precedence(
     registrations: &[Registration],
 ) {
     for adapter in adapters {
-        let (key, last_wins) = match adapter.capabilities.skills.precedence {
-            SkillPrecedence::FirstWins(key) => (key, false),
-            SkillPrecedence::LastWins(key) => (key, true),
+        let (key, last_wins, nearest) = match adapter.capabilities.skills.precedence {
+            SkillPrecedence::FirstWins(key) => (key, false, false),
+            SkillPrecedence::LastWins(key) => (key, true, false),
+            SkillPrecedence::NearestFirstWins(key) => (key, false, true),
             SkillPrecedence::Coexist | SkillPrecedence::ClaudePersonalShadowsProject => continue,
         };
-        let keyed = registrations
+        let mut keyed = registrations
             .iter()
             .filter(|registration| registration.agent == adapter.id)
             .filter_map(|registration| {
                 let row = rows.get(&registration.canonical)?;
-                Some((skill_key(key, row, &registration.path), registration))
+                Some((skill_key(key, row, registration), registration))
             })
             .collect::<Vec<_>>();
+        if nearest {
+            keyed.sort_by_key(|(_, registration)| registration.nearness);
+        }
         let mut winners = BTreeMap::<&str, &Registration>::new();
         for (key, registration) in &keyed {
             if last_wins || !winners.contains_key(key.as_str()) {
@@ -1327,7 +1372,8 @@ fn apply_registration_precedence(
     }
 }
 
-fn skill_key(key: SkillKey, row: &SkillRow, path: &str) -> String {
+fn skill_key(key: SkillKey, row: &SkillRow, registration: &Registration) -> String {
+    let path = registration.path.as_str();
     match key {
         SkillKey::Name => row.name.clone(),
         SkillKey::NameIgnoringCase => row.name.to_lowercase(),
@@ -1340,6 +1386,14 @@ fn skill_key(key: SkillKey, row: &SkillRow, path: &str) -> String {
             };
             id.map(|id| id.to_string_lossy().into_owned())
                 .unwrap_or_default()
+        }
+        SkillKey::RootParentPath => {
+            let root = Path::new(&registration.root);
+            let parent = root.parent().and_then(Path::parent).unwrap_or(root);
+            let inside = Path::new(path)
+                .strip_prefix(root)
+                .unwrap_or(Path::new(path));
+            format!("{}\0{}", parent.display(), inside.display())
         }
     }
 }

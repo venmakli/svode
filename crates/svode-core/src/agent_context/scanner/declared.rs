@@ -1,12 +1,14 @@
 //! Instructions of agents whose source policy declares them as rules and
 //! slots (Stage 10 `05`): every agent's declaration is read the same way.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::agent_adapters::{
     AgentAdapterKind, DeclaredInstructions, InstructionDirectories, InstructionNamesSetting,
-    InstructionSelection, InstructionSlotFile, SourceRegistryEnvironment,
+    InstructionSelection, InstructionSlotFile, SourceRegistryEnvironment, SourceSwitch,
 };
+use crate::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 
 use super::super::model::{
     InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
@@ -36,17 +38,34 @@ struct Group {
 }
 
 /// `global` reads the files outside the repository boundary: the agent's
-/// configuration and the directories of walks above the boundary.
+/// configuration and the directories of walks above the boundary. A rule
+/// whose switch is in `switched_off` is not read.
 pub(super) fn discover(
     agent: AgentAdapterKind,
     declared: &DeclaredInstructions,
     places: &TargetPlaces,
     environment: &SourceRegistryEnvironment,
     global: bool,
+    switched_off: &BTreeSet<SourceSwitch>,
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
     let mut configured_names = None;
+    let gitignore = places
+        .repository_root
+        .join(".git")
+        .symlink_metadata()
+        .is_ok()
+        .then(|| TreeIgnorePolicy::system_only(&places.repository_root));
+    // The rows of each group of alternative rules, rule by rule.
+    let mut alternatives = BTreeMap::<usize, Vec<Vec<InstructionRow>>>::new();
     for rule in &declared.rules {
+        if rule
+            .switch
+            .is_some_and(|switch| switched_off.contains(&switch))
+        {
+            continue;
+        }
+        let mut rule_result = DiscoveryResult::default();
         let names = match rule.names_setting {
             Some(InstructionNamesSetting::QwenContextFileName) => configured_names
                 .get_or_insert_with(|| {
@@ -69,11 +88,26 @@ pub(super) fn discover(
                 )]
             }
         };
+        let mut walk_candidates = Vec::new();
         for (directory_depth, place) in directories.into_iter().enumerate() {
             if place.source_kind == InstructionSourceKind::Personal && !global {
                 continue;
             }
-            let candidates = names.iter().map(|name| place.candidate(name)).collect();
+            let candidates = names
+                .iter()
+                .map(|name| place.candidate(name))
+                .filter(|candidate| {
+                    !rule.skip_gitignored
+                        || candidate.source_kind != InstructionSourceKind::Project
+                        || !gitignore.as_ref().is_some_and(|gitignore| {
+                            gitignore.is_git_ignored_abs(&candidate.path, TreePathKind::File)
+                        })
+                })
+                .collect::<Vec<_>>();
+            if rule.selection == InstructionSelection::FirstInWalk {
+                walk_candidates.extend(candidates);
+                continue;
+            }
             read_group(
                 agent,
                 Group {
@@ -83,9 +117,33 @@ pub(super) fn discover(
                     policy: InstructionDiscoveryPolicy::DirectoryChain,
                     directory_depth,
                 },
-                &mut result,
+                &mut rule_result,
             );
         }
+        if rule.selection == InstructionSelection::FirstInWalk {
+            read_group(
+                agent,
+                Group {
+                    candidates: walk_candidates,
+                    selection: InstructionSelection::FirstInWalk,
+                    skip_empty: rule.skip_empty,
+                    policy: InstructionDiscoveryPolicy::DirectoryChain,
+                    directory_depth: 0,
+                },
+                &mut rule_result,
+            );
+        }
+        match rule.alternatives {
+            Some(group) => {
+                let rows = std::mem::take(&mut rule_result.rows);
+                alternatives.entry(group).or_default().push(rows);
+                result.append(rule_result);
+            }
+            None => result.append(rule_result),
+        }
+    }
+    for rules in alternatives.into_values() {
+        result.rows.extend(resolve_alternatives(rules));
     }
     for slot in &declared.slots {
         let candidates = slot
@@ -207,7 +265,7 @@ fn read_group(agent: AgentAdapterKind, group: Group, result: &mut DiscoveryResul
     }
     let selected = match group.selection {
         InstructionSelection::All => None,
-        InstructionSelection::First => inspected
+        InstructionSelection::First | InstructionSelection::FirstInWalk => inspected
             .iter()
             .position(|(_, source)| source.preview.is_some()),
     };
@@ -224,10 +282,8 @@ fn read_group(agent: AgentAdapterKind, group: Group, result: &mut DiscoveryResul
         }
         let (resolution, superseded_by) = match group.selection {
             InstructionSelection::All => (SourceResolution::Included, None),
-            InstructionSelection::First if selected == Some(precedence) => {
-                (SourceResolution::Selected, None)
-            }
-            InstructionSelection::First => (SourceResolution::Superseded, selected_path.clone()),
+            _ if selected == Some(precedence) => (SourceResolution::Selected, None),
+            _ => (SourceResolution::Superseded, selected_path.clone()),
         };
         let path = path_string(&candidate.path);
         result.rows.push(InstructionRow {
@@ -261,6 +317,42 @@ fn read_group(agent: AgentAdapterKind, group: Group, result: &mut DiscoveryResul
             references: Vec::new(),
         });
     }
+}
+
+/// The agent loads the first of the alternative rules that yields a
+/// non-empty file. Files of the other rules are shadowed by that rule's
+/// first loaded file; an empty file it selected loads nothing and is no
+/// row, though it still shadows the files after it.
+fn resolve_alternatives(rules: Vec<Vec<InstructionRow>>) -> Vec<InstructionRow> {
+    let applied = |row: &InstructionRow| row.resolution != SourceResolution::Superseded;
+    let loaded = |row: &InstructionRow| {
+        applied(row)
+            && row
+                .preview
+                .as_ref()
+                .is_some_and(|preview| !preview.markdown.trim().is_empty())
+    };
+    let winner = rules.iter().position(|rows| rows.iter().any(&loaded));
+    let winner_path = winner.and_then(|index| {
+        rules[index]
+            .iter()
+            .find(|row| loaded(row))
+            .map(|row| row.path.clone())
+    });
+    let mut resolved = Vec::new();
+    for (index, rows) in rules.into_iter().enumerate() {
+        for mut row in rows {
+            if applied(&row) && !loaded(&row) {
+                continue;
+            }
+            if winner != Some(index) && applied(&row) {
+                row.resolution = SourceResolution::Superseded;
+                row.superseded_by = winner_path.clone();
+            }
+            resolved.push(row);
+        }
+    }
+    resolved
 }
 
 #[cfg(test)]

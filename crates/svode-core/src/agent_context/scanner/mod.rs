@@ -1,6 +1,8 @@
 mod claude;
 mod codex;
 mod declared;
+mod grok;
+mod hermes;
 mod io;
 mod opencode;
 mod qwen;
@@ -85,8 +87,21 @@ pub fn discover(
         target_root: target_root.clone(),
         directory_chain: directory_chain.clone(),
     };
-    let adapters = AgentAdapterRegistry.source_policies(environment);
+    let global = |agent| global_agents.contains(&agent);
     let mut result = DiscoveryResult::default();
+    let (grok, grok_result) = grok::config(environment, global(AgentAdapterKind::GrokBuild));
+    result.append(grok_result);
+    let (hermes_dirs, hermes_result) =
+        hermes::skill_dirs(environment, global(AgentAdapterKind::Hermes));
+    result.append(hermes_result);
+    let mut adapters = AgentAdapterRegistry.source_policies(environment);
+    for adapter in &mut adapters {
+        match adapter.id {
+            AgentAdapterKind::GrokBuild => grok::apply_skill_paths(adapter, &grok),
+            AgentAdapterKind::Hermes => hermes::apply_skill_dirs(adapter, &hermes_dirs),
+            _ => {}
+        }
+    }
     for adapter in &adapters {
         let global = global_agents.contains(&adapter.id);
         result.append(match &adapter.capabilities.instructions.policy {
@@ -98,9 +113,14 @@ pub fn discover(
                 global,
             ),
             InstructionPolicy::ClaudeMemory => claude::discover(&places, environment, global),
-            InstructionPolicy::Declared(declared) => {
-                declared::discover(adapter.id, declared, &places, environment, global)
-            }
+            InstructionPolicy::Declared(declared) => declared::discover(
+                adapter.id,
+                declared,
+                &places,
+                environment,
+                global,
+                &grok.switched_off,
+            ),
         });
     }
     result.append(discover_recognized(&target_root));
@@ -109,7 +129,9 @@ pub fn discover(
         &adapters,
         global_agents,
         environment,
+        &grok.switched_off,
     ));
+    grok::apply_ignore(&mut result.skills, &grok);
 
     result.rows.sort_by(|left, right| {
         row_sort_key(left)
