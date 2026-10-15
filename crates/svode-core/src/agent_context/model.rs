@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_adapters::{AgentAdapterKind, AgentSourcePolicy};
+use crate::agent_adapters::AgentAdapterKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +112,8 @@ pub struct InstructionRow {
     pub health: SourceHealth,
     pub health_reasons: Vec<String>,
     pub discovery: InstructionDiscovery,
+    /// The file that shadows this one for its agent when `superseded`.
+    pub superseded_by: Option<String>,
     pub preview: Option<MarkdownPreview>,
     pub references: Vec<InstructionReference>,
 }
@@ -164,6 +166,8 @@ pub struct SkillDiscoveryAlias {
     pub owner: InstructionOwner,
     pub support: SourceSupport,
     pub resolution: SourceResolution,
+    /// The skill that shadows this path for its agent when `superseded`.
+    pub superseded_by: Option<String>,
     pub link_kind: SkillLinkKind,
 }
 
@@ -223,15 +227,124 @@ pub struct AgentContextDiagnostic {
     pub adapter_id: Option<AgentAdapterKind>,
 }
 
+/// What the source policies find for a target: one record per agent and
+/// discovery path. Agent Context builds its items from it, and the project
+/// Knowledge projection reads its project part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentContextDiscovery {
+    pub project_root: String,
+    pub target_root: String,
+    pub repository_root: String,
+    pub instructions: Vec<InstructionRow>,
+    pub skills: Vec<SkillRow>,
+    pub diagnostics: Vec<AgentContextDiagnostic>,
+    pub observed_project_paths: Vec<String>,
+    pub observed_personal_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextItemKind {
+    Instruction,
+    Skill,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextLocationKind {
+    /// Inside the repository boundary of the target, relative to the target
+    /// root; an empty path is the target root itself.
+    Target,
+    /// In the home directory, relative to it; an empty path is `~` itself.
+    Home,
+    Absolute,
+}
+
+/// Where an item lies: the folder of its canonical file, or the folder that
+/// holds its skill directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextLocation {
+    pub kind: ContextLocationKind,
+    pub path: String,
+}
+
+/// An agent that reads an item by one path; a shadowed one names what
+/// shadows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextItemReader {
+    pub agent: AgentAdapterKind,
+    pub superseded_by: Option<String>,
+}
+
+/// A path by which enabled agents find an item, with a link's target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextItemSource {
+    pub path: String,
+    pub target: Option<String>,
+    pub link_kind: SourceLinkKind,
+    pub readers: Vec<ContextItemReader>,
+}
+
+/// Why no enabled agent applies an item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UnappliedReason {
+    /// No enabled agent finds it; `readers` read it by their policy.
+    NotFound { readers: Vec<AgentAdapterKind> },
+    /// Every enabled agent that finds it takes another file instead.
+    Superseded { by: Vec<String> },
+}
+
+/// Optional frontmatter of `SKILL.md`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextSkillFacts {
+    pub license: Option<String>,
+    pub compatibility: Option<String>,
+    pub metadata: Option<BTreeMap<String, SkillMetadataValue>>,
+    pub allowed_tools: Option<String>,
+}
+
+/// One canonical source of the target's context: one row of the "Context"
+/// collection, whichever agents and paths find it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextItem {
+    pub id: String,
+    pub kind: ContextItemKind,
+    pub name: String,
+    pub description: Option<String>,
+    /// The canonical file the item opens: the instruction or `SKILL.md`.
+    pub path: String,
+    /// The root an external open re-validates the file against.
+    pub owner_root: String,
+    pub location: ContextLocation,
+    pub modified_at: Option<String>,
+    pub health: SourceHealth,
+    pub health_reasons: Vec<String>,
+    /// Enabled agents that apply the item.
+    pub providers: Vec<AgentAdapterKind>,
+    /// Set when `providers` is empty.
+    pub unapplied: Option<UnappliedReason>,
+    pub sources: Vec<ContextItemSource>,
+    pub preview: MarkdownPreview,
+    pub references: Vec<InstructionReference>,
+    pub skill: Option<ContextSkillFacts>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentContextSnapshotContent {
     pub project_root: String,
     pub target_root: String,
     pub repository_root: String,
-    pub adapters: Vec<AgentSourcePolicy>,
-    pub instructions: Vec<InstructionRow>,
-    pub skills: Vec<SkillRow>,
+    /// The agents enabled in Providers whose sources outside the repository
+    /// boundary were scanned.
+    pub enabled_agents: Vec<AgentAdapterKind>,
+    pub items: Vec<ContextItem>,
     pub diagnostics: Vec<AgentContextDiagnostic>,
     pub observed_project_paths: Vec<String>,
     pub observed_personal_paths: Vec<String>,

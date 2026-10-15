@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import {
   CollectionHost,
   useCollectionState,
@@ -13,49 +14,42 @@ import {
 } from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 
-import { useAgentContextInstructions } from "../hooks/use-agent-context-instructions";
+import { useAgentContext } from "../hooks/use-agent-context";
 import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
 import { AgentContextDiagnosticsDialog } from "./agent-context-diagnostics-dialog";
 import { toAgentContextPresentationState } from "./agent-context-presentation-state";
 import {
-  AgentContextInstructionsEmpty,
-  createInstructionDetailContent,
-  createAgentContextInstructionsPresentation,
-} from "./instructions-presentation";
-import {
-  AgentContextSkillsEmpty,
-  createSkillDetailContent,
-  createAgentContextSkillsPresentation,
-} from "./skills-presentation";
+  AGENT_CONTEXT_PRESETS,
+  AgentContextPresetEmpty,
+  createAgentContextPresentation,
+  type AgentContextPresetId,
+} from "./context-presentations";
+import { createAgentContextItemDetailContent } from "./item-detail";
+import { createAgentContextItemProperties } from "./item-properties";
 
-interface OpenedAgentContextRow {
-  presentationId: "instructions" | "skills";
+interface OpenedAgentContextItem {
+  presentationId: AgentContextPresetId;
   rowId: string;
 }
 
-export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
-  const { retry, state } = useAgentContextInstructions({
+export function AgentContextSurface({
+  onOpenProviders,
+  owner,
+}: ScopeSurfaceRenderContext & {
+  /** Opens App Settings "Providers", where agents are enabled. */
+  onOpenProviders?: () => void;
+}) {
+  const { retry, state } = useAgentContext({
     ownerKey: owner.ownerKey,
     projectPath: owner.projectPath,
     spacePath: owner.spacePath,
   });
+  const agents = useAgentAdapterDictionary();
   const detailController = useCollectionDetailController();
-  const [openedRow, setOpenedRow] = useState<OpenedAgentContextRow | null>(
+  const [openedItem, setOpenedItem] = useState<OpenedAgentContextItem | null>(
     null,
   );
   const instanceKey = `agent-context:${owner.ownerKey}`;
-  const instructionsState = toAgentContextPresentationState(
-    state,
-    (snapshot) => snapshot.rows,
-    <AgentContextInstructionsEmpty />,
-    retry,
-  );
-  const skillsState = toAgentContextPresentationState(
-    state,
-    (snapshot) => snapshot.skills,
-    <AgentContextSkillsEmpty />,
-    retry,
-  );
   const diagnosticGroups = useMemo(
     () =>
       state.phase === "ready"
@@ -66,61 +60,58 @@ export function AgentContextSurface({ owner }: ScopeSurfaceRenderContext) {
         : [],
     [state],
   );
-  const instructionsPresentation = useMemo(
-    () =>
-      createAgentContextInstructionsPresentation({
-        onActivate: createCollectionDetailActivation({
-          controller: detailController,
-          createContent: createInstructionDetailContent,
-          instanceKey,
-          onRequested: (rowId) =>
-            setOpenedRow({ presentationId: "instructions", rowId }),
-          presentationId: "instructions",
-        }),
-        state: instructionsState,
-      }),
-    [detailController, instanceKey, instructionsState],
+  const properties = useMemo(
+    () => createAgentContextItemProperties({ agents, onOpenProviders }),
+    [agents, onOpenProviders],
   );
-  const skillsPresentation = useMemo(
+  const presentations = useMemo(
     () =>
-      createAgentContextSkillsPresentation({
-        onActivate: createCollectionDetailActivation({
-          controller: detailController,
-          createContent: createSkillDetailContent,
-          instanceKey,
-          onRequested: (rowId) =>
-            setOpenedRow({ presentationId: "skills", rowId }),
-          presentationId: "skills",
+      AGENT_CONTEXT_PRESETS.map((id) =>
+        createAgentContextPresentation({
+          id,
+          onActivate: createCollectionDetailActivation({
+            controller: detailController,
+            createContent: (item) =>
+              createAgentContextItemDetailContent(item, properties),
+            instanceKey,
+            onRequested: (rowId) =>
+              setOpenedItem({ presentationId: id, rowId }),
+            presentationId: id,
+          }),
+          properties,
+          state: toAgentContextPresentationState(
+            state,
+            <AgentContextPresetEmpty id={id} />,
+            retry,
+            onOpenProviders,
+          ),
         }),
-        state: skillsState,
-      }),
-    [detailController, instanceKey, skillsState],
+      ),
+    [detailController, instanceKey, onOpenProviders, properties, retry, state],
   );
   const instance = useMemo<CollectionInstance>(
     () => ({
-      defaultPresentationId: "instructions",
+      defaultPresentationId: "all",
       instanceKey,
-      presentations: [instructionsPresentation, skillsPresentation],
+      presentations,
       stateScope: "session",
     }),
-    [instanceKey, instructionsPresentation, skillsPresentation],
+    [instanceKey, presentations],
   );
   const collectionState = useCollectionState(instance);
 
   useEffect(() => {
-    if (!openedRow || state.phase !== "ready" || !detailController) return;
-    const rows =
-      openedRow.presentationId === "instructions"
-        ? state.snapshot.rows
-        : state.snapshot.skills;
-    if (rows.some((row) => row.id === openedRow.rowId)) return;
+    if (!openedItem || state.phase !== "ready" || !detailController) return;
+    if (state.snapshot.items.some((item) => item.id === openedItem.rowId)) {
+      return;
+    }
 
     void detailController.close({
       instanceKey,
-      presentationId: openedRow.presentationId,
-      rowId: openedRow.rowId,
+      presentationId: openedItem.presentationId,
+      rowId: openedItem.rowId,
     });
-  }, [detailController, instanceKey, openedRow, state]);
+  }, [detailController, instanceKey, openedItem, state]);
 
   if (collectionState.phase === "blocking_error") {
     return (

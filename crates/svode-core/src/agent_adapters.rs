@@ -305,6 +305,8 @@ pub struct AgentSourcePolicy {
 
 #[derive(Debug, Clone)]
 pub struct SourceRegistryEnvironment {
+    /// Agent Context shows locations in it relative to `~`.
+    pub home_dir: PathBuf,
     pub codex_home: PathBuf,
     pub codex_standard_skills_dir: PathBuf,
     pub claude_config_dir: PathBuf,
@@ -320,6 +322,7 @@ impl SourceRegistryEnvironment {
             codex_standard_skills_dir: home_dir.join(".agents/skills"),
             claude_config_dir: home_dir.join(".claude"),
             svode_home: home_dir.join(".svode"),
+            home_dir,
         }
     }
 }
@@ -418,6 +421,7 @@ pub fn system_source_registry_environment() -> Result<SourceRegistryEnvironment,
         codex_standard_skills_dir: home_dir.join(".agents/skills"),
         claude_config_dir,
         svode_home: home_dir.join(".svode"),
+        home_dir,
     })
 }
 

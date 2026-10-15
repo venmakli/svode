@@ -1,12 +1,14 @@
 import {
-  getAgentContextInstructions,
-  refreshAgentContextInstructions,
-  type AgentContextInstructionsSnapshotDto,
+  getAgentContext,
+  listenAgentContextChanged,
+  refreshAgentContext,
+  type AgentContextItemDto,
   type AgentContextReferenceDto,
   type AgentContextSkillMetadataLeafDto,
   type AgentContextSkillMetadataValueDto,
-  listenAgentContextChanged,
+  type AgentContextSnapshotDto,
 } from "@/platform/agent-context/agent-context-api";
+import { listenAgentsEnabledChanged } from "@/platform/agent-setup/agent-setup-api";
 import {
   listArtifactApps,
   openArtifactInApp,
@@ -21,32 +23,26 @@ import {
 export type { ArtifactOpenTarget };
 
 import type {
-  AgentContextInstructionsSnapshot,
+  AgentContextItem,
   AgentContextReference,
   AgentContextSkillMetadataLeaf,
   AgentContextSkillMetadataValue,
-  AgentContextSkillRow,
+  AgentContextSnapshot,
 } from "../model/types";
-import {
-  sourceFamilyFromSkillDiscovery,
-  sourceLocationFromScope,
-} from "../model/provenance";
 
-export async function loadAgentContextInstructions(
+export async function loadAgentContext(
   projectPath: string,
   spacePath: string,
-): Promise<AgentContextInstructionsSnapshot> {
-  return toAgentContextInstructionsSnapshot(
-    await getAgentContextInstructions(projectPath, spacePath),
-  );
+): Promise<AgentContextSnapshot> {
+  return toAgentContextSnapshot(await getAgentContext(projectPath, spacePath));
 }
 
-export async function refreshAgentContextInstructionsSnapshot(
+export async function refreshAgentContextSnapshot(
   projectPath: string,
   spacePath: string,
-): Promise<AgentContextInstructionsSnapshot> {
-  return toAgentContextInstructionsSnapshot(
-    await refreshAgentContextInstructions(projectPath, spacePath),
+): Promise<AgentContextSnapshot> {
+  return toAgentContextSnapshot(
+    await refreshAgentContext(projectPath, spacePath),
   );
 }
 
@@ -54,6 +50,11 @@ export function listenAgentContextInvalidation(
   handler: (payload: { spacePath: string; paths: readonly string[] }) => void,
 ) {
   return listenAgentContextChanged((event) => handler(event.payload));
+}
+
+/** Enabling or disabling an agent changes which sources every target reads. */
+export function listenAgentContextEnabledAgentsChanged(handler: () => void) {
+  return listenAgentsEnabledChanged(handler);
 }
 
 /** External open of an instruction or skill file, re-validated inside its owner root. */
@@ -68,9 +69,9 @@ export function agentContextArtifactExternalOpenTarget(
   };
 }
 
-export function toAgentContextInstructionsSnapshot(
-  dto: AgentContextInstructionsSnapshotDto,
-): AgentContextInstructionsSnapshot {
+export function toAgentContextSnapshot(
+  dto: AgentContextSnapshotDto,
+): AgentContextSnapshot {
   return Object.freeze({
     diagnostics: Object.freeze(
       dto.diagnostics.map((diagnostic) =>
@@ -83,89 +84,83 @@ export function toAgentContextInstructionsSnapshot(
         }),
       ),
     ),
+    enabledAgents: Object.freeze([...dto.enabledAgents]),
     generation: dto.generation,
     hasPersonalSources: dto.observedPersonalPaths.length > 0,
-    rows: Object.freeze(
-      dto.instructions.map((row) =>
-        Object.freeze({
-          adapterId: row.adapterId,
-          body: row.preview?.markdown ?? "",
-          canonicalPath: row.canonicalPath ?? row.path,
-          discoveryPath: row.path,
-          filename: row.name,
-          health: row.health,
-          healthReasons: Object.freeze([...row.healthReasons]),
-          id: row.id,
-          linkKind: row.linkKind,
-          linkTargetPath:
-            row.canonicalPath && row.canonicalPath !== row.path
-              ? row.canonicalPath
-              : null,
-          ownerPath: row.owner.root,
-          precedence: row.discovery.precedence,
-          references: Object.freeze(
-            row.references.map((reference) =>
-              Object.freeze({
-                path: reference.path,
-                status: referenceStatus(reference),
-              }),
-            ),
-          ),
-          role: row.discovery.policy,
-          resolution: row.resolution,
-          location: sourceLocationFromScope(
-            row.sourceKind === "personal" ? "personal" : "project",
-          ),
-          support: row.support,
-          truncated: row.preview?.truncated ?? false,
-        }),
-      ),
-    ),
-    skills: Object.freeze(dto.skills.map(normalizeSkillRow)),
+    items: Object.freeze(dto.items.map(normalizeItem)),
     targetPath: dto.targetRoot,
   });
 }
 
-function normalizeSkillRow(
-  row: AgentContextInstructionsSnapshotDto["skills"][number],
-): AgentContextSkillRow {
-  const aliases = Object.freeze(
-    row.aliases.map((alias) =>
-      Object.freeze({
-        discoveryPath: alias.path,
-        linkKind: alias.linkKind,
-        location: sourceLocationFromScope(alias.scope),
-        resolution: alias.resolution,
-        sourceFamily: sourceFamilyFromSkillDiscovery(alias.discoveryKind),
-        support: alias.support,
-      }),
-    ),
-  );
+function normalizeItem(item: AgentContextItemDto): AgentContextItem {
   return Object.freeze({
-    allowedTools: row.allowedTools,
-    aliases,
-    body: row.preview.markdown,
-    canonicalPath: row.canonicalPath,
-    compatibility: row.compatibility,
-    description: row.description,
-    health: row.health,
-    healthReasons: Object.freeze([...row.healthReasons]),
-    id: row.id,
-    license: row.license,
-    manifestPath: row.path,
-    metadata: row.metadata
-      ? Object.freeze(
-          Object.fromEntries(
-            Object.entries(row.metadata).map(([key, value]) => [
-              key,
-              skillMetadataValue(value),
-            ]),
+    body: item.preview.markdown,
+    description: item.description,
+    health: item.health,
+    healthReasons: Object.freeze([...item.healthReasons]),
+    id: item.id,
+    kind: item.kind,
+    location: Object.freeze({ ...item.location }),
+    modifiedAt: item.modifiedAt,
+    name: item.name,
+    ownerPath: item.ownerRoot,
+    path: item.path,
+    providers: Object.freeze([...item.providers]),
+    references: Object.freeze(
+      item.references.map((reference) =>
+        Object.freeze({
+          path: reference.path,
+          status: referenceStatus(reference),
+        }),
+      ),
+    ),
+    skill: item.skill
+      ? Object.freeze({
+          allowedTools: item.skill.allowedTools,
+          compatibility: item.skill.compatibility,
+          license: item.skill.license,
+          metadata: item.skill.metadata
+            ? Object.freeze(
+                Object.fromEntries(
+                  Object.entries(item.skill.metadata).map(([key, value]) => [
+                    key,
+                    skillMetadataValue(value),
+                  ]),
+                ),
+              )
+            : null,
+        })
+      : null,
+    sources: Object.freeze(
+      item.sources.map((source) =>
+        Object.freeze({
+          path: source.path,
+          readers: Object.freeze(
+            source.readers.map((reader) =>
+              Object.freeze({
+                agent: reader.agent,
+                supersededBy: reader.supersededBy,
+              }),
+            ),
           ),
+          target: source.target,
+        }),
+      ),
+    ),
+    truncated: item.preview.truncated,
+    unapplied: item.unapplied
+      ? Object.freeze(
+          item.unapplied.kind === "not_found"
+            ? {
+                kind: "not_found" as const,
+                readers: Object.freeze([...item.unapplied.readers]),
+              }
+            : {
+                by: Object.freeze([...item.unapplied.by]),
+                kind: "superseded" as const,
+              },
         )
       : null,
-    name: row.name,
-    ownerPath: row.owner.root,
-    truncated: row.preview.truncated,
   });
 }
 

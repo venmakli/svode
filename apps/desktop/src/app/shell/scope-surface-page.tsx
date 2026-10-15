@@ -147,7 +147,12 @@ export function ScopeSurfacePage({
             onOpenRepositorySettings={openRepositorySettings}
           />
         ),
-        context: (context) => <AgentContextSurface {...context} />,
+        context: (context) => (
+          <AgentContextSurface
+            {...context}
+            onOpenProviders={openProvidersSettings}
+          />
+        ),
         routines: (context) => (
           <RoutinesSurface
             {...context}
@@ -293,8 +298,7 @@ function ScopePageSurfaceHost({
     onIdentityChange?.({ title: identityTitle, icon: identityIcon });
   }, [identityTitle, identityIcon, onIdentityChange]);
   useEffect(
-    () =>
-      registerNavigationGuard?.(() => pageSurface.prepareToLeave()),
+    () => registerNavigationGuard?.(() => pageSurface.prepareToLeave()),
     [pageSurface, registerNavigationGuard],
   );
   usePublishMainHeader(

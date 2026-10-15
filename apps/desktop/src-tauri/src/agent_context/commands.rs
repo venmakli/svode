@@ -5,37 +5,44 @@ use tauri::State;
 use crate::AppError;
 
 use super::state::AgentContextState;
+use crate::agent_setup::AgentSetupState;
 use svode_core::agent_context::model::AgentContextSnapshot;
 use svode_core::agent_context::scanner;
 
 #[tauri::command]
 pub async fn agent_context_get_instructions(
     state: State<'_, AgentContextState>,
+    agents: State<'_, AgentSetupState>,
     project_path: String,
     space_path: String,
 ) -> Result<AgentContextSnapshot, AppError> {
-    discover_and_publish(&state, project_path, space_path).await
+    discover_and_publish(&state, &agents, project_path, space_path).await
 }
 
 #[tauri::command]
 pub async fn agent_context_refresh_instructions(
     state: State<'_, AgentContextState>,
+    agents: State<'_, AgentSetupState>,
     project_path: String,
     space_path: String,
 ) -> Result<AgentContextSnapshot, AppError> {
-    discover_and_publish(&state, project_path, space_path).await
+    discover_and_publish(&state, &agents, project_path, space_path).await
 }
 
+/// The agents enabled in Providers are the scan's input: sources outside the
+/// target's repository boundary are read only for them.
 async fn discover_and_publish(
     state: &AgentContextState,
+    agents: &AgentSetupState,
     project_path: String,
     space_path: String,
 ) -> Result<AgentContextSnapshot, AppError> {
     let environment = svode_core::agent_adapters::system_source_registry_environment()?;
+    let enabled_agents = agents.enabled_agents().await;
     let project_path = PathBuf::from(project_path);
     let space_path = PathBuf::from(space_path);
     let content = tokio::task::spawn_blocking(move || {
-        scanner::scan(&project_path, &space_path, &environment)
+        scanner::scan(&project_path, &space_path, &environment, &enabled_agents)
     })
     .await
     .map_err(|error| AppError::General(format!("agent context scan task failed: {error}")))??;

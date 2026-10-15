@@ -1,176 +1,158 @@
 import { expect, test } from "bun:test";
 
-import { toAgentContextInstructionsSnapshot } from "./agent-context-api";
+import { toAgentContextSnapshot } from "./agent-context-api";
 
-const dto: Parameters<typeof toAgentContextInstructionsSnapshot>[0] = {
-  adapters: [
-    {
-      capabilities: {
-        instructions: {
-          policy: "claude_memory",
-        },
-        skills: {
-          personalRoots: [
-            {
-              kind: "standard_personal",
-              path: "/home/user/.claude/skills",
-            },
-          ],
-          policy: "claude_personal_shadows_project",
-          projectRelativeRoot: ".claude/skills",
-        },
-      },
-      displayName: "Claude Code",
-      id: "claude-code",
-      personalRoot: "/home/user/.claude",
-    },
-  ],
+const preview = {
+  bytesRead: 7,
+  markdown: "# Guide",
+  totalBytes: 7,
+  truncated: false,
+};
+
+const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
   diagnostics: [
     {
       adapterId: "claude-code",
-      code: "external_import",
+      code: "claude_import_external",
       message: "Import requires client approval",
       path: "/workspace/CLAUDE.md",
       severity: "warning",
     },
-    {
-      adapterId: null,
-      code: "skill_manifest_warning",
-      message: "Skill name does not match its canonical directory name",
-      path: "/workspace/shared/review/SKILL.md",
-      severity: "warning",
-    },
-    {
-      adapterId: "codex",
-      code: "skill_manifest_missing",
-      message: "Skill directory has no SKILL.md",
-      path: "/workspace/.agents/skills/legacy/SKILL.md",
-      severity: "warning",
-    },
   ],
+  enabledAgents: ["codex", "claude-code"],
   generation: 3,
-  instructions: [
+  items: [
     {
-      adapterId: "claude-code",
-      canonicalPath: "/workspace/shared/CLAUDE.md",
-      discovery: {
-        directoryDepth: 0,
-        policy: "claude_hierarchy",
-        precedence: 2,
-      },
+      description: null,
       health: "normal",
       healthReasons: [],
-      id: "claude:/workspace/CLAUDE.md",
-      linkKind: "symbolic_link",
-      name: "CLAUDE.md",
-      owner: { kind: "target_space", root: "/workspace" },
-      path: "/workspace/CLAUDE.md",
-      preview: {
-        bytesRead: 20,
-        markdown: "# Linked instructions",
-        totalBytes: 20,
-        truncated: false,
-      },
-      resolution: "included",
+      id: "instruction:/workspace/AGENTS.md",
+      kind: "instruction",
+      location: { kind: "target", path: "" },
+      modifiedAt: "2026-10-15T08:00:00Z",
+      name: "AGENTS.md",
+      ownerRoot: "/workspace",
+      path: "/workspace/AGENTS.md",
+      preview,
+      providers: ["codex", "claude-code"],
       references: [
         {
           canonicalPath: null,
           depth: 1,
-          path: "../personal.md",
+          path: "~/.claude/notes.md",
           preview: null,
           status: "requires_client_approval",
         },
+        {
+          canonicalPath: "/workspace/docs/style.md",
+          depth: 1,
+          path: "/workspace/docs/style.md",
+          preview: null,
+          status: "included",
+        },
       ],
-      sourceKind: "project",
-      support: "client_native",
+      skill: null,
+      sources: [
+        {
+          linkKind: "direct",
+          path: "/workspace/AGENTS.md",
+          readers: [{ agent: "codex", supersededBy: null }],
+          target: null,
+        },
+        {
+          linkKind: "symbolic_link",
+          path: "/workspace/CLAUDE.md",
+          readers: [{ agent: "claude-code", supersededBy: null }],
+          target: "/workspace/AGENTS.md",
+        },
+      ],
+      unapplied: null,
+    },
+    {
+      description: "Review project changes.",
+      health: "degraded",
+      healthReasons: ["Skill name does not match its canonical directory name"],
+      id: "skill:/workspace/.claude/skills/review",
+      kind: "skill",
+      location: { kind: "target", path: ".claude/skills" },
+      modifiedAt: null,
+      name: "review",
+      ownerRoot: "/workspace",
+      path: "/workspace/.claude/skills/review/SKILL.md",
+      preview: { ...preview, truncated: true },
+      providers: [],
+      references: [],
+      skill: {
+        allowedTools: "Read Bash(git:*)",
+        compatibility: null,
+        license: "MIT",
+        metadata: {
+          author: { kind: "text", value: "Svode" },
+          owner: {
+            kind: "object",
+            value: {
+              channels: { kind: "list", value: ["desk", "mail"] },
+              team: { kind: "text", value: "core" },
+            },
+          },
+          tags: { kind: "list", value: ["review", "git"] },
+        },
+      },
+      sources: [
+        {
+          linkKind: "direct",
+          path: "/workspace/.claude/skills/review",
+          readers: [
+            {
+              agent: "claude-code",
+              supersededBy: "/home/user/.claude/skills/review",
+            },
+          ],
+          target: null,
+        },
+      ],
+      unapplied: {
+        by: ["/home/user/.claude/skills/review"],
+        kind: "superseded",
+      },
     },
   ],
   observedPersonalPaths: ["/home/user/.claude/CLAUDE.md"],
-  observedProjectPaths: ["/workspace/CLAUDE.md"],
+  observedProjectPaths: ["/workspace/AGENTS.md"],
   projectRoot: "/workspace",
   repositoryRoot: "/workspace",
-  skills: [
-    {
-      allowedTools: "Read Bash(git:*)",
-      aliases: [
-        {
-          adapterId: "codex",
-          discoveryKind: "codex_project",
-          linkKind: "direct",
-          owner: { kind: "target_space", root: "/workspace" },
-          path: "/workspace/.agents/skills/review",
-          resolution: "selected",
-          root: "/workspace/.agents/skills",
-          scope: "project",
-          support: "client_native",
-        },
-        {
-          adapterId: "claude-code",
-          discoveryKind: "claude_project",
-          linkKind: "symbolic_link",
-          owner: { kind: "target_space", root: "/workspace" },
-          path: "/workspace/.claude/skills/review",
-          resolution: "included",
-          root: "/workspace/.claude/skills",
-          scope: "project",
-          support: "client_native",
-        },
-      ],
-      canonicalPath: "/workspace/shared/review",
-      compatibility: null,
-      description: "Review changes against project conventions",
-      health: "degraded",
-      healthReasons: ["Skill name does not match its canonical directory name"],
-      id: "skill:/workspace/shared/review",
-      license: "MIT",
-      metadata: {
-        author: { kind: "text", value: "Svode" },
-        tags: { kind: "list", value: ["review", "git"] },
-        owner: {
-          kind: "object",
-          value: {
-            channels: { kind: "list", value: ["desk", "mail"] },
-            team: { kind: "text", value: "core" },
-          },
-        },
-      },
-      name: "review",
-      owner: { kind: "target_space", root: "/workspace" },
-      path: "/workspace/shared/review/SKILL.md",
-      preview: {
-        bytesRead: 24,
-        markdown: "# Review\n\nRead the diff.",
-        totalBytes: 24,
-        truncated: false,
-      },
-      validation: "warning",
-      warnings: ["Skill name does not match its canonical directory name"],
-    },
-  ],
   targetRoot: "/workspace",
 };
 
-test("transport keeps source semantics independent without message parsing", () => {
-  const snapshot = toAgentContextInstructionsSnapshot(dto);
-  const row = snapshot.rows[0];
+test("transport becomes one frozen set of items with their application", () => {
+  const snapshot = toAgentContextSnapshot(dto);
+  const [instruction, skill] = snapshot.items;
 
   expect(snapshot.targetPath).toBe("/workspace");
   expect(snapshot.generation).toBe(3);
   expect(snapshot.hasPersonalSources).toBe(true);
-  expect(row?.support).toBe("client_native");
-  expect(row?.resolution).toBe("included");
-  expect(row?.health).toBe("normal");
-  expect(row?.healthReasons).toEqual([]);
-  expect(row?.location).toBe("space");
-  expect(row?.linkKind).toBe("symbolic_link");
-  expect(row?.precedence).toBe(2);
-  expect(row?.linkTargetPath).toBe("/workspace/shared/CLAUDE.md");
-  expect(row?.references[0]?.status).toBe("requires_client_approval");
-  expect(snapshot.skills[0]?.ownerPath).toBe("/workspace");
-  expect(snapshot.skills[0]?.allowedTools).toBe("Read Bash(git:*)");
-  expect(snapshot.skills[0]?.metadata).toEqual({
+  expect(snapshot.enabledAgents).toEqual(["codex", "claude-code"]);
+  expect(instruction?.kind).toBe("instruction");
+  expect(instruction?.ownerPath).toBe("/workspace");
+  expect(instruction?.body).toBe("# Guide");
+  expect(instruction?.providers).toEqual(["codex", "claude-code"]);
+  expect(instruction?.sources[1]).toEqual({
+    path: "/workspace/CLAUDE.md",
+    readers: [{ agent: "claude-code", supersededBy: null }],
+    target: "/workspace/AGENTS.md",
+  });
+  expect(instruction?.references.map((reference) => reference.status)).toEqual([
+    "requires_client_approval",
+    "available",
+  ]);
+  expect(skill?.unapplied).toEqual({
+    by: ["/home/user/.claude/skills/review"],
+    kind: "superseded",
+  });
+  expect(skill?.truncated).toBe(true);
+  expect(skill?.skill?.allowedTools).toBe("Read Bash(git:*)");
+  expect(skill?.skill?.metadata).toEqual({
     author: { kind: "text", text: "Svode" },
-    tags: { items: ["review", "git"], kind: "list" },
     owner: {
       entries: [
         ["channels", { items: ["desk", "mail"], kind: "list" }],
@@ -178,18 +160,11 @@ test("transport keeps source semantics independent without message parsing", () 
       ],
       kind: "object",
     },
+    tags: { items: ["review", "git"], kind: "list" },
   });
-  expect(Object.isFrozen(snapshot.skills[0]?.metadata)).toBe(true);
-  expect(snapshot.skills[0]?.aliases[0]?.sourceFamily).toBe("agents");
-  expect(snapshot.skills[0]?.aliases[1]?.sourceFamily).toBe("claude");
-  expect(snapshot.skills[0]?.aliases[1]?.location).toBe("space");
-  expect(snapshot.skills[0]?.aliases[1]?.linkKind).toBe("symbolic_link");
-  expect(snapshot.skills[0]?.health).toBe("degraded");
-  expect(snapshot.skills[0]?.healthReasons).toEqual([
-    "Skill name does not match its canonical directory name",
-  ]);
-  expect(snapshot.skills[0]?.truncated).toBe(false);
+  expect(Object.isFrozen(snapshot.items)).toBe(true);
+  expect(Object.isFrozen(skill?.sources[0]?.readers)).toBe(true);
+  expect(Object.isFrozen(skill?.skill?.metadata)).toBe(true);
   expect(snapshot.diagnostics).toEqual(dto.diagnostics);
-  expect(Object.isFrozen(snapshot.diagnostics)).toBe(true);
   expect(Object.isFrozen(snapshot.diagnostics[0])).toBe(true);
 });

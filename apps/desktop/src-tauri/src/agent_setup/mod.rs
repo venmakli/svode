@@ -146,13 +146,10 @@ impl AgentSetupState {
     }
 
     /// The built-in agents with a native catalogue source whose store
-    /// Svode reads (Stage 10 `07` N1): the available ones (`03` A1), found
-    /// on the device and not disabled by the user.
+    /// Svode reads (Stage 10 `07` N1): the enabled ones.
     pub(crate) async fn native_catalog_agents(&self) -> Vec<AgentAdapterKind> {
-        let Ok(target) = commands::target().await else {
-            return Vec::new();
-        };
-        AgentAdapterKind::ALL
+        self.enabled_agents()
+            .await
             .into_iter()
             .filter(|agent| {
                 AdapterRuntimeRegistry
@@ -160,6 +157,17 @@ impl AgentSetupState {
                     .iter()
                     .any(|source| matches!(source, CatalogSource::Native(_)))
             })
+            .collect()
+    }
+
+    /// The built-in agents enabled in Providers (`03` A1): found on the
+    /// device and not disabled by the user.
+    pub(crate) async fn enabled_agents(&self) -> Vec<AgentAdapterKind> {
+        let Ok(target) = commands::target().await else {
+            return Vec::new();
+        };
+        AgentAdapterKind::ALL
+            .into_iter()
             .filter(|agent| {
                 let install = adapter_pin(*agent).map(|pin| self.store.state(pin));
                 agent_enabled(self.choice(agent.as_str()), install.as_ref())

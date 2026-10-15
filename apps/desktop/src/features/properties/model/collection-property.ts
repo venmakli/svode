@@ -34,10 +34,21 @@ export type CollectionPropertyActionState =
 
 export type CollectionStandardPropertySemantics = Omit<Column, "name">;
 
+/**
+ * How the owner draws a value whose type, filter and sort stay standard;
+ * without it the standard display of the type draws the value.
+ */
+export interface CollectionPropertyDisplay<Row> {
+  render(value: unknown, row: Row): ReactNode;
+  /** The value in the row's detail when it differs from the cell. */
+  renderDetail?(value: unknown, row: Row): ReactNode;
+}
+
 export type CollectionPropertyValueSemantics<Row> =
   | {
       kind: "standard";
       standard: CollectionStandardPropertySemantics;
+      display?: CollectionPropertyDisplay<Row>;
     }
   | {
       kind: "custom";
@@ -131,6 +142,7 @@ export function defineOwnerDefinedCollectionProperty<Row>({
 }: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
   featureId: string;
   standard: CollectionStandardPropertySemantics;
+  display?: CollectionPropertyDisplay<Row>;
 }): CollectionPropertyDefinition<Row> {
   return defineFeatureStandardProperty({
     ...definition,
@@ -147,6 +159,7 @@ export function defineComputedCollectionProperty<Row>({
 }: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
   featureId: string;
   standard: CollectionStandardPropertySemantics;
+  display?: CollectionPropertyDisplay<Row>;
 }): CollectionPropertyDefinition<Row> {
   return defineFeatureStandardProperty({
     ...definition,
@@ -193,11 +206,13 @@ function standardSemanticsFromColumn(
 }
 
 function defineFeatureStandardProperty<Row>({
+  display,
   featureId,
   origin,
   standard,
   ...definition
 }: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+  display?: CollectionPropertyDisplay<Row>;
   featureId: string;
   origin: "owner_defined" | "computed";
   standard: CollectionStandardPropertySemantics;
@@ -206,6 +221,8 @@ function defineFeatureStandardProperty<Row>({
     ...definition,
     origin,
     owner: { featureId, kind: "feature" },
-    semantics: { kind: "standard", standard },
+    semantics: display
+      ? { display, kind: "standard", standard }
+      : { kind: "standard", standard },
   };
 }

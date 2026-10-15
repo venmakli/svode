@@ -5,33 +5,13 @@ import {
 } from "@/platform/native/events";
 import { invokeCommand } from "@/platform/native/invoke";
 
-/** The id of an agent that takes part in Agent Context. */
-export type SupportedAdapterIdDto = string;
-export type AgentContextSourceSupportDto = "client_native" | "svode_recognized";
-export type AgentContextSourceResolutionDto =
-  | "included"
-  | "selected"
-  | "superseded";
+/** The id of a built-in agent of the registry. */
+export type AgentIdDto = string;
 export type AgentContextSourceHealthDto = "degraded" | "normal";
-
-export interface AgentContextSourcePolicyDto {
-  id: SupportedAdapterIdDto;
-  displayName: string;
-  personalRoot: string;
-  capabilities: {
-    instructions: {
-      policy: "codex_agents" | "claude_memory";
-    };
-    skills: {
-      policy: "codex_directory_chain" | "claude_personal_shadows_project";
-      projectRelativeRoot: string;
-      personalRoots: {
-        kind: "standard_personal";
-        path: string;
-      }[];
-    };
-  };
-}
+export type AgentContextLinkKindDto =
+  | "direct"
+  | "symbolic_link"
+  | "directory_alias";
 
 export interface AgentContextReferenceDto {
   path: string;
@@ -53,62 +33,12 @@ interface AgentContextMarkdownPreviewDto {
   totalBytes: number;
 }
 
-export interface AgentContextInstructionRowDto {
-  id: string;
-  adapterId: SupportedAdapterIdDto | null;
-  name: string;
-  path: string;
-  canonicalPath: string | null;
-  owner: {
-    kind: "target_space" | "client_configuration";
-    root: string;
-  };
-  sourceKind: "personal" | "project" | "recognized";
-  support: AgentContextSourceSupportDto;
-  resolution: AgentContextSourceResolutionDto;
-  health: AgentContextSourceHealthDto;
-  healthReasons: string[];
-  linkKind: "direct" | "symbolic_link" | "directory_alias";
-  discovery: {
-    policy:
-      | "codex_user_precedence"
-      | "codex_directory_precedence"
-      | "claude_hierarchy"
-      | "claude_import"
-      | "target_root_recognition";
-    directoryDepth: number;
-    precedence: number;
-  };
-  preview: AgentContextMarkdownPreviewDto | null;
-  references: AgentContextReferenceDto[];
-}
-
 export interface AgentContextDiagnosticDto {
   code: string;
   severity: "warning" | "error";
   message: string;
   path: string | null;
-  adapterId: SupportedAdapterIdDto | null;
-}
-
-export interface AgentContextSkillAliasDto {
-  adapterId: SupportedAdapterIdDto;
-  scope: "personal" | "project";
-  discoveryKind:
-    | "codex_project"
-    | "codex_standard_personal"
-    | "claude_project"
-    | "claude_personal"
-    | "claude_personal_plugin";
-  path: string;
-  root: string;
-  owner: {
-    kind: "target_space" | "client_configuration";
-    root: string;
-  };
-  support: AgentContextSourceSupportDto;
-  resolution: AgentContextSourceResolutionDto;
-  linkKind: "direct" | "symbolic_link" | "directory_alias";
+  adapterId: AgentIdDto | null;
 }
 
 export type AgentContextSkillMetadataLeafDto =
@@ -119,36 +49,54 @@ export type AgentContextSkillMetadataValueDto =
   | AgentContextSkillMetadataLeafDto
   | { kind: "object"; value: Record<string, AgentContextSkillMetadataLeafDto> };
 
-export interface AgentContextSkillRowDto {
-  allowedTools: string | null;
-  id: string;
-  name: string;
-  description: string;
+export interface AgentContextLocationDto {
+  /** `target`: from the target root, `""` being the root itself; `home`: from `~`. */
+  kind: "target" | "home" | "absolute";
   path: string;
-  canonicalPath: string;
-  owner: {
-    kind: "target_space" | "client_configuration";
-    root: string;
-  };
-  license: string | null;
-  compatibility: string | null;
-  metadata: Record<string, AgentContextSkillMetadataValueDto> | null;
-  validation: "valid" | "warning";
-  health: AgentContextSourceHealthDto;
-  healthReasons: string[];
-  warnings: string[];
-  preview: AgentContextMarkdownPreviewDto;
-  aliases: AgentContextSkillAliasDto[];
 }
 
-export interface AgentContextInstructionsSnapshotDto {
+export interface AgentContextItemSourceDto {
+  path: string;
+  target: string | null;
+  linkKind: AgentContextLinkKindDto;
+  readers: { agent: AgentIdDto; supersededBy: string | null }[];
+}
+
+export type AgentContextUnappliedDto =
+  | { kind: "not_found"; readers: AgentIdDto[] }
+  | { kind: "superseded"; by: string[] };
+
+export interface AgentContextItemDto {
+  id: string;
+  kind: "instruction" | "skill";
+  name: string;
+  description: string | null;
+  path: string;
+  ownerRoot: string;
+  location: AgentContextLocationDto;
+  modifiedAt: string | null;
+  health: AgentContextSourceHealthDto;
+  healthReasons: string[];
+  providers: AgentIdDto[];
+  unapplied: AgentContextUnappliedDto | null;
+  sources: AgentContextItemSourceDto[];
+  preview: AgentContextMarkdownPreviewDto;
+  references: AgentContextReferenceDto[];
+  skill: {
+    license: string | null;
+    compatibility: string | null;
+    metadata: Record<string, AgentContextSkillMetadataValueDto> | null;
+    allowedTools: string | null;
+  } | null;
+}
+
+export interface AgentContextSnapshotDto {
   generation: number;
   projectRoot: string;
   targetRoot: string;
   repositoryRoot: string;
-  adapters: AgentContextSourcePolicyDto[];
-  instructions: AgentContextInstructionRowDto[];
-  skills: AgentContextSkillRowDto[];
+  enabledAgents: AgentIdDto[];
+  items: AgentContextItemDto[];
   diagnostics: AgentContextDiagnosticDto[];
   observedProjectPaths: string[];
   observedPersonalPaths: string[];
@@ -164,21 +112,15 @@ interface AgentContextTargetInput extends Record<string, unknown> {
   spacePath: string;
 }
 
-export function getAgentContextInstructions(
-  projectPath: string,
-  spacePath: string,
-) {
-  return invokeCommand<AgentContextInstructionsSnapshotDto>(
+export function getAgentContext(projectPath: string, spacePath: string) {
+  return invokeCommand<AgentContextSnapshotDto>(
     "agent_context_get_instructions",
     { projectPath, spacePath } satisfies AgentContextTargetInput,
   );
 }
 
-export function refreshAgentContextInstructions(
-  projectPath: string,
-  spacePath: string,
-) {
-  return invokeCommand<AgentContextInstructionsSnapshotDto>(
+export function refreshAgentContext(projectPath: string, spacePath: string) {
+  return invokeCommand<AgentContextSnapshotDto>(
     "agent_context_refresh_instructions",
     { projectPath, spacePath } satisfies AgentContextTargetInput,
   );

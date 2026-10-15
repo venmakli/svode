@@ -1,4 +1,4 @@
-import type { AgentContextDiagnostic, SupportedAdapterId } from "./types";
+import type { AgentContextDiagnostic, AgentId } from "./types";
 
 export type AgentContextDiagnosticGroupId =
   | "clients"
@@ -120,8 +120,8 @@ function compareDiagnostics(
 }
 
 function compareNullableStrings(
-  left: SupportedAdapterId | string | null,
-  right: SupportedAdapterId | string | null,
+  left: AgentId | string | null,
+  right: AgentId | string | null,
 ): number {
   if (left === right) return 0;
   if (left === null) return 1;

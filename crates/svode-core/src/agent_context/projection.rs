@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -11,7 +10,7 @@ use crate::agent_adapters::system_source_registry_environment;
 use crate::git::path::{RootMode, repo_relative_from_base};
 
 use super::model::{
-    AgentContextSnapshotContent, InstructionOwnerKind, InstructionSourceKind, SkillScope,
+    AgentContextDiscovery, InstructionOwnerKind, InstructionSourceKind, SkillScope,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -62,8 +61,15 @@ pub async fn target_knowledge_projection(
     let target = target_root.to_path_buf();
     let scan_project = project.clone();
     let scan_target = target.clone();
+    // Knowledge keeps the Stage 7 projection: every agent's sources,
+    // whichever agents are enabled.
     let content = tokio::task::spawn_blocking(move || {
-        super::scanner::scan(&scan_project, &scan_target, &environment)
+        super::scanner::discover(
+            &scan_project,
+            &scan_target,
+            &environment,
+            &crate::agent_adapters::AgentAdapterKind::ALL,
+        )
     })
     .await
     .map_err(|error| {
@@ -75,7 +81,7 @@ pub async fn target_knowledge_projection(
 fn normalize_project_snapshot(
     project_root: &Path,
     target_root: &Path,
-    content: &AgentContextSnapshotContent,
+    content: &AgentContextDiscovery,
 ) -> Result<Vec<ProjectKnowledgeArtifact>, AgentContextError> {
     let canonical_project = project_root.canonicalize().map_err(|error| {
         AgentContextError::General(format!(
@@ -338,11 +344,10 @@ fn safe_alias_path(root: &Path, path: &Path) -> Option<String> {
 }
 
 fn modified_at(path: &Path) -> String {
-    let time = fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-    let date: DateTime<Utc> = time.into();
-    date.to_rfc3339_opts(SecondsFormat::Secs, true)
+    super::items::modified_at(path).unwrap_or_else(|| {
+        let date: DateTime<Utc> = SystemTime::UNIX_EPOCH.into();
+        date.to_rfc3339_opts(SecondsFormat::Secs, true)
+    })
 }
 
 fn enum_value<T: Serialize>(value: &T) -> String {
@@ -360,6 +365,7 @@ mod tests {
         InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionRow,
         MarkdownPreview, SourceHealth, SourceLinkKind, SourceResolution, SourceSupport,
     };
+    use std::fs;
     use tempfile::TempDir;
 
     fn preview(text: &str) -> MarkdownPreview {
@@ -401,14 +407,14 @@ mod tests {
                 directory_depth: 0,
                 precedence: 0,
             },
+            superseded_by: None,
             preview: Some(preview("project")),
             references: Vec::new(),
         };
-        let content = AgentContextSnapshotContent {
+        let content = AgentContextDiscovery {
             project_root: temp.path().to_string_lossy().to_string(),
             target_root: temp.path().to_string_lossy().to_string(),
             repository_root: temp.path().to_string_lossy().to_string(),
-            adapters: Vec::new(),
             instructions: vec![
                 row(
                     Some(AgentAdapterKind::Codex),
@@ -447,11 +453,10 @@ mod tests {
         let mut recognized = row(None, InstructionSourceKind::Recognized);
         recognized.support = SourceSupport::SvodeRecognized;
         recognized.resolution = SourceResolution::Included;
-        let mixed = AgentContextSnapshotContent {
+        let mixed = AgentContextDiscovery {
             project_root: temp.path().to_string_lossy().to_string(),
             target_root: temp.path().to_string_lossy().to_string(),
             repository_root: temp.path().to_string_lossy().to_string(),
-            adapters: Vec::new(),
             instructions: vec![native_superseded, recognized],
             skills: Vec::new(),
             diagnostics: Vec::new(),

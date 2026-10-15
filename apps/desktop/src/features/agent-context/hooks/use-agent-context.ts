@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  listenAgentContextEnabledAgentsChanged,
   listenAgentContextInvalidation,
-  loadAgentContextInstructions,
-  refreshAgentContextInstructionsSnapshot,
+  loadAgentContext,
+  refreshAgentContextSnapshot,
 } from "../api/agent-context-api";
 import {
   beginAgentContextRetry,
@@ -11,13 +12,13 @@ import {
   failAgentContextRefresh,
   type AgentContextCatalogState,
 } from "../model/catalog-state";
-import type { AgentContextInstructionsSnapshot } from "../model/types";
+import type { AgentContextSnapshot } from "../model/types";
 import { AgentContextRefreshCoordinator } from "./agent-context-refresh-coordinator";
 
 const personalSourceRefreshIntervalMs = 30_000;
 const projectSourceRefreshDebounceMs = 120;
 
-export function useAgentContextInstructions({
+export function useAgentContext({
   ownerKey,
   projectPath,
   spacePath,
@@ -32,9 +33,7 @@ export function useAgentContextInstructions({
     targetPath: spacePath,
   });
   const coordinatorRef =
-    useRef<AgentContextRefreshCoordinator<AgentContextInstructionsSnapshot> | null>(
-      null,
-    );
+    useRef<AgentContextRefreshCoordinator<AgentContextSnapshot> | null>(null);
   const currentState =
     state.ownerKey === ownerKey && state.targetPath === spacePath
       ? state
@@ -45,8 +44,8 @@ export function useAgentContextInstructions({
       debounceMs: projectSourceRefreshDebounceMs,
       load: (request) =>
         request === "initial"
-          ? loadAgentContextInstructions(projectPath, spacePath)
-          : refreshAgentContextInstructionsSnapshot(projectPath, spacePath),
+          ? loadAgentContext(projectPath, spacePath)
+          : refreshAgentContextSnapshot(projectPath, spacePath),
       onFailure: (error) => {
         setState((current) =>
           failAgentContextRefresh(
@@ -81,22 +80,30 @@ export function useAgentContextInstructions({
     const coordinator = coordinatorRef.current;
     if (!coordinator) return;
     let disposed = false;
-    let unlisten: (() => void) | undefined;
-
-    void listenAgentContextInvalidation((payload) => {
-      if (payload.spacePath === spacePath) {
-        coordinator.invalidate();
-      }
-    })
-      .then((nextUnlisten) => {
-        if (disposed) nextUnlisten();
-        else unlisten = nextUnlisten;
-      })
-      .catch(() => undefined);
+    const unlisteners: (() => void)[] = [];
+    const follow = (listen: Promise<() => void>) => {
+      void listen
+        .then((nextUnlisten) => {
+          if (disposed) nextUnlisten();
+          else unlisteners.push(nextUnlisten);
+        })
+        .catch(() => undefined);
+    };
+    follow(
+      listenAgentContextInvalidation((payload) => {
+        if (payload.spacePath === spacePath) {
+          coordinator.invalidate();
+        }
+      }),
+    );
+    // Enabling or disabling an agent rebuilds the target's set.
+    follow(
+      listenAgentContextEnabledAgentsChanged(() => coordinator.invalidate()),
+    );
 
     return () => {
       disposed = true;
-      unlisten?.();
+      unlisteners.forEach((unlisten) => unlisten());
     };
   }, [spacePath]);
 

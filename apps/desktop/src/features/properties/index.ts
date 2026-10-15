@@ -38,6 +38,7 @@ export type {
   CollectionPropertyApplicability,
   CollectionPropertyCapabilities,
   CollectionPropertyDefinition,
+  CollectionPropertyDisplay,
   CollectionPropertyEdit,
   CollectionPropertyFilterEditorInput,
   CollectionPropertyFilterRule,

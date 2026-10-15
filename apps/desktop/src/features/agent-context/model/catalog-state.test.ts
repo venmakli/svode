@@ -6,14 +6,14 @@ import {
   failAgentContextRefresh,
   type AgentContextCatalogState,
 } from "./catalog-state";
-import type { AgentContextInstructionsSnapshot } from "./types";
+import type { AgentContextSnapshot } from "./types";
 
-const snapshot: AgentContextInstructionsSnapshot = {
+const snapshot: AgentContextSnapshot = {
   diagnostics: [],
+  enabledAgents: ["codex"],
   generation: 4,
   hasPersonalSources: true,
-  rows: [],
-  skills: [],
+  items: [],
   targetPath: "/workspace/space",
 };
 

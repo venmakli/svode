@@ -24,14 +24,20 @@ struct CodexConfig {
     project_doc_max_bytes: Option<usize>,
 }
 
+/// `global` reads the Codex home: its config and personal instructions.
 pub(super) fn discover(
     repository_root: &Path,
     _target_root: &Path,
     directory_chain: &[PathBuf],
     environment: &SourceRegistryEnvironment,
+    global: bool,
 ) -> DiscoveryResult {
     let adapter_id = AgentAdapterKind::Codex;
-    let (config, mut result) = read_config(environment, adapter_id);
+    let (config, mut result) = if global {
+        read_config(environment, adapter_id)
+    } else {
+        (CodexConfig::default(), DiscoveryResult::default())
+    };
     let max_bytes = config
         .project_doc_max_bytes
         .unwrap_or(DEFAULT_PROJECT_DOC_BYTES)
@@ -42,26 +48,28 @@ pub(super) fn discover(
         &mut result.diagnostics,
     );
 
-    let personal_candidates = ["AGENTS.override.md", "AGENTS.md"]
-        .into_iter()
-        .map(|name| environment.codex_home.join(name))
-        .collect::<Vec<_>>();
-    result
-        .observed_personal_paths
-        .extend(personal_candidates.iter().map(|path| path_string(path)));
-    discover_group(
-        &personal_candidates,
-        &environment.codex_home,
-        InstructionSourceKind::Personal,
-        InstructionOwner {
-            kind: InstructionOwnerKind::ClientConfiguration,
-            root: path_string(&environment.codex_home),
-        },
-        InstructionDiscoveryPolicy::CodexUserPrecedence,
-        0,
-        max_bytes,
-        &mut result,
-    );
+    if global {
+        let personal_candidates = ["AGENTS.override.md", "AGENTS.md"]
+            .into_iter()
+            .map(|name| environment.codex_home.join(name))
+            .collect::<Vec<_>>();
+        result
+            .observed_personal_paths
+            .extend(personal_candidates.iter().map(|path| path_string(path)));
+        discover_group(
+            &personal_candidates,
+            &environment.codex_home,
+            InstructionSourceKind::Personal,
+            InstructionOwner {
+                kind: InstructionOwnerKind::ClientConfiguration,
+                root: path_string(&environment.codex_home),
+            },
+            InstructionDiscoveryPolicy::CodexUserPrecedence,
+            0,
+            max_bytes,
+            &mut result,
+        );
+    }
 
     let mut active_budget = max_bytes;
     for (directory_depth, directory) in directory_chain.iter().enumerate() {
@@ -117,6 +125,7 @@ fn discover_group(
     let selected = inspected
         .iter()
         .position(|(_, source)| source.preview.is_some());
+    let selected_path = selected.map(|index| path_string(inspected[index].0));
 
     for (precedence, (path, mut source)) in inspected.drain(..).enumerate() {
         let mut health_reasons = Vec::new();
@@ -141,6 +150,11 @@ fn discover_group(
             } else {
                 SourceResolution::Superseded
             },
+            if effective {
+                None
+            } else {
+                selected_path.clone()
+            },
             health_reasons,
         ));
     }
@@ -156,6 +170,7 @@ fn instruction_row(
     directory_depth: usize,
     precedence: usize,
     resolution: SourceResolution,
+    superseded_by: Option<String>,
     health_reasons: Vec<String>,
 ) -> InstructionRow {
     InstructionRow {
@@ -183,6 +198,7 @@ fn instruction_row(
             directory_depth,
             precedence,
         },
+        superseded_by,
         preview: source.preview,
         references: Vec::new(),
     }
@@ -333,6 +349,7 @@ mod tests {
             project.path(),
             &[project.path().to_path_buf()],
             &environment,
+            true,
         );
         let project_rows = result
             .rows
@@ -363,6 +380,7 @@ mod tests {
             project.path(),
             &[project.path().to_path_buf()],
             &environment,
+            true,
         );
         let project_rows = result
             .rows

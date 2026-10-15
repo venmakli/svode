@@ -46,22 +46,13 @@ export function CollectionPropertyValue({
 
   const value = property.getValue(row);
 
-  const column = resolveStandardPropertyColumn(property);
-  if (column) {
-    return (
-      <PropertyValue
-        actors={property.actorCandidates}
-        column={column}
-        value={value}
-      />
-    );
-  }
-
-  if (property.semantics.kind === "custom") {
-    if (context === "cell") return property.semantics.render(value, row);
-    const rendered = (
-      property.semantics.renderDetail ?? property.semantics.render
-    )(value, row);
+  const display =
+    property.semantics.kind === "custom"
+      ? property.semantics
+      : property.semantics.display;
+  if (display) {
+    if (context === "cell") return display.render(value, row);
+    const rendered = (display.renderDetail ?? display.render)(value, row);
     // An empty custom value reads like an empty standard one.
     return rendered === null ||
       rendered === undefined ||
@@ -70,6 +61,17 @@ export function CollectionPropertyValue({
       <span className="text-muted-foreground">-</span>
     ) : (
       rendered
+    );
+  }
+
+  const column = resolveStandardPropertyColumn(property);
+  if (column) {
+    return (
+      <PropertyValue
+        actors={property.actorCandidates}
+        column={column}
+        value={value}
+      />
     );
   }
 

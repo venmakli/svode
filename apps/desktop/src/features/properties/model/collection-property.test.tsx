@@ -131,3 +131,79 @@ test("Collection Properties preserve explicit ownership across all supported ori
       .diagnostics,
   ).toEqual([]);
 });
+
+test("an owner display draws a standard value while its filter stays standard", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { CollectionPropertyValue } =
+    await import("../ui/collection-property-value");
+  const { defineComputedCollectionProperty } =
+    await import("./collection-property");
+  const property = defineComputedCollectionProperty<Row>({
+    capabilities: { filter: { kind: "standard" } },
+    display: {
+      render: (value) => <b>{String(value)} icon</b>,
+      renderDetail: (value) => <i>{String(value)} with name</i>,
+    },
+    featureId: "agents",
+    getValue: (current) => [current.source],
+    key: "providers",
+    label: "Providers",
+    standard: { options: [{ name: "codex" }], type: "multi_select" },
+  });
+
+  expect(resolveStandardPropertyColumn(property)?.type).toBe("multi_select");
+  expect(
+    renderToStaticMarkup(
+      <CollectionPropertyValue
+        property={property as CollectionPropertyDefinition<unknown>}
+        row={row}
+      />,
+    ),
+  ).toBe("<b>codex icon</b>");
+  expect(
+    renderToStaticMarkup(
+      <CollectionPropertyValue
+        context="detail"
+        property={property as CollectionPropertyDefinition<unknown>}
+        row={row}
+      />,
+    ),
+  ).toBe("<i>codex with name</i>");
+  const presentation = defineCollectionPresentation<Row>({
+    descriptor: {
+      getRowId: (current) => current.id,
+      id: "all",
+      label: "All",
+      layout: {
+        getTitle: (current) => current.title,
+        kind: "list",
+        visibleProperties: ["providers"],
+      },
+      properties: [property],
+      query: {},
+    },
+    state: { phase: "ready", rows: [row] },
+  });
+  const descriptor = (
+    presentation as unknown as {
+      instance: {
+        descriptor: Parameters<
+          typeof applyCollectionQuery<Row>
+        >[0]["descriptor"];
+      };
+    }
+  ).instance.descriptor;
+  expect(
+    applyCollectionQuery({
+      descriptor,
+      query: {
+        filters: [
+          { operator: "contains", propertyKey: "providers", value: "codex" },
+        ],
+        search: "",
+        sort: [],
+      },
+      rows: [row],
+    }).rows,
+  ).toEqual([row]);
+});

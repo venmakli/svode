@@ -3,15 +3,18 @@ import type { CollectionPresentationState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import type { AgentContextCatalogState } from "../model/catalog-state";
+import type { AgentContextItem } from "../model/types";
 
-export function toAgentContextPresentationState<Row>(
+/**
+ * The state of one preset. Without an enabled agent the set holds only
+ * project items, and the one hint above them leads to Providers.
+ */
+export function toAgentContextPresentationState(
   state: AgentContextCatalogState,
-  selectRows: (
-    snapshot: Extract<AgentContextCatalogState, { phase: "ready" }>["snapshot"],
-  ) => readonly Row[],
   sourceEmpty: React.ReactNode,
   onRetry: () => void,
-): CollectionPresentationState<Row> {
+  onOpenProviders?: () => void,
+): CollectionPresentationState<AgentContextItem> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {
@@ -32,10 +35,38 @@ export function toAgentContextPresentationState<Row>(
   }
 
   return {
+    ...(state.snapshot.enabledAgents.length === 0
+      ? { attention: <NoEnabledAgentsHint onOpenProviders={onOpenProviders} /> }
+      : {}),
     phase: "ready",
-    rows: selectRows(state.snapshot),
+    rows: state.snapshot.items,
     sourceEmpty,
   };
+}
+
+function NoEnabledAgentsHint({
+  onOpenProviders,
+}: {
+  onOpenProviders?: () => void;
+}) {
+  return (
+    <span
+      className="flex flex-col items-start gap-2"
+      data-agent-context-no-enabled-agents
+    >
+      <span>{m.agent_context_no_enabled_agents()}</span>
+      {onOpenProviders ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onOpenProviders}
+        >
+          {m.agent_context_open_providers()}
+        </Button>
+      ) : null}
+    </span>
+  );
 }
 
 function AgentContextRetryButton({

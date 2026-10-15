@@ -1,38 +1,17 @@
-/** The id of an agent that takes part in Agent Context. */
-export type SupportedAdapterId = string;
+/** The id of a built-in agent of the registry. */
+export type AgentId = string;
 
 export interface AgentContextDiagnostic {
-  adapterId: SupportedAdapterId | null;
+  adapterId: AgentId | null;
   code: string;
   message: string;
   path: string | null;
   severity: "warning" | "error";
 }
 
-export type AgentContextSourceSupport = "client_native" | "svode_recognized";
-
-export type AgentContextSourceResolution =
-  | "included"
-  | "selected"
-  | "superseded";
-
 export type AgentContextSourceHealth = "degraded" | "normal";
 
-export type AgentContextSourceFamily = "agents" | "claude";
-
-export type AgentContextSourceLocation = "global" | "space";
-
-export type AgentContextLinkKind =
-  | "direct"
-  | "symbolic_link"
-  | "directory_alias";
-
-export type AgentContextInstructionRole =
-  | "codex_user_precedence"
-  | "codex_directory_precedence"
-  | "claude_hierarchy"
-  | "claude_import"
-  | "target_root_recognition";
+export type AgentContextItemKind = "instruction" | "skill";
 
 export interface AgentContextReference {
   path: string;
@@ -43,42 +22,35 @@ export interface AgentContextReference {
     | "unreadable";
 }
 
-export interface AgentContextInstructionRow {
-  id: string;
-  adapterId: SupportedAdapterId | null;
-  role: AgentContextInstructionRole;
-  filename: string;
-  location: AgentContextSourceLocation;
-  linkKind: AgentContextLinkKind;
-  support: AgentContextSourceSupport;
-  resolution: AgentContextSourceResolution;
-  health: AgentContextSourceHealth;
-  healthReasons: readonly string[];
-  ownerPath: string;
-  canonicalPath: string;
-  discoveryPath: string;
-  linkTargetPath: string | null;
-  precedence: number | null;
-  body: string;
-  truncated: boolean;
-  references: readonly AgentContextReference[];
+/** Where an item lies, as a short path. */
+export type AgentContextLocation =
+  /** From the target root; `""` is the root itself. */
+  | { kind: "target"; path: string }
+  /** From `~`; `""` is the home directory itself. */
+  | { kind: "home"; path: string }
+  | { kind: "absolute"; path: string };
+
+/** An agent that reads an item by one path. */
+export interface AgentContextSourceReader {
+  agent: AgentId;
+  /** What shadows the item for this agent; `""` when not known. */
+  supersededBy: string | null;
 }
 
-export type AgentContextSkillDiscoveryKind =
-  | "codex_project"
-  | "codex_standard_personal"
-  | "claude_project"
-  | "claude_personal"
-  | "claude_personal_plugin";
-
-export interface AgentContextSkillAlias {
-  sourceFamily: AgentContextSourceFamily;
-  location: AgentContextSourceLocation;
-  support: AgentContextSourceSupport;
-  resolution: AgentContextSourceResolution;
-  discoveryPath: string;
-  linkKind: AgentContextLinkKind;
+/** A path by which enabled agents find an item. */
+export interface AgentContextItemSource {
+  path: string;
+  /** Where a link or alias leads; null for a direct path. */
+  target: string | null;
+  readers: readonly AgentContextSourceReader[];
 }
+
+/** Why no enabled agent applies an item. */
+export type AgentContextUnapplied =
+  /** No enabled agent finds it; `readers` read it by their policy. */
+  | { kind: "not_found"; readers: readonly AgentId[] }
+  /** Every enabled agent that finds it takes another file. */
+  | { kind: "superseded"; by: readonly string[] };
 
 /** A `metadata` value of `SKILL.md` as the scanner keeps it. */
 export type AgentContextSkillMetadataLeaf =
@@ -92,29 +64,43 @@ export type AgentContextSkillMetadataValue =
       entries: readonly (readonly [string, AgentContextSkillMetadataLeaf])[];
     };
 
-export interface AgentContextSkillRow {
+export interface AgentContextSkillFacts {
   allowedTools: string | null;
-  aliases: readonly AgentContextSkillAlias[];
-  body: string;
-  canonicalPath: string;
   compatibility: string | null;
-  description: string;
-  health: AgentContextSourceHealth;
-  healthReasons: readonly string[];
-  id: string;
   license: string | null;
-  manifestPath: string;
   metadata: Readonly<Record<string, AgentContextSkillMetadataValue>> | null;
-  name: string;
-  ownerPath: string;
-  truncated: boolean;
 }
 
-export interface AgentContextInstructionsSnapshot {
+/** One canonical source of the target's context: one row of "Context". */
+export interface AgentContextItem {
+  id: string;
+  kind: AgentContextItemKind;
+  name: string;
+  description: string | null;
+  /** The canonical file the item opens: the instruction or `SKILL.md`. */
+  path: string;
+  ownerPath: string;
+  location: AgentContextLocation;
+  modifiedAt: string | null;
+  health: AgentContextSourceHealth;
+  healthReasons: readonly string[];
+  /** Enabled agents that apply the item. */
+  providers: readonly AgentId[];
+  /** Set when `providers` is empty. */
+  unapplied: AgentContextUnapplied | null;
+  sources: readonly AgentContextItemSource[];
+  body: string;
+  truncated: boolean;
+  references: readonly AgentContextReference[];
+  skill: AgentContextSkillFacts | null;
+}
+
+export interface AgentContextSnapshot {
   targetPath: string;
   generation: number;
   diagnostics: readonly AgentContextDiagnostic[];
-  rows: readonly AgentContextInstructionRow[];
-  skills: readonly AgentContextSkillRow[];
+  items: readonly AgentContextItem[];
+  /** Agents enabled in Providers; without any, only project items show. */
+  enabledAgents: readonly AgentId[];
   hasPersonalSources: boolean;
 }

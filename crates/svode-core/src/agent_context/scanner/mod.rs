@@ -12,9 +12,9 @@ use crate::agent_adapters::{
 };
 
 use super::model::{
-    AgentContextDiagnostic, AgentContextSnapshotContent, InstructionDiscovery,
-    InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind, InstructionRow,
-    InstructionSourceKind, SkillRow, SourceHealth, SourceResolution, SourceSupport,
+    AgentContextDiagnostic, AgentContextDiscovery, AgentContextSnapshotContent,
+    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
+    InstructionRow, InstructionSourceKind, SkillRow, SourceHealth, SourceResolution, SourceSupport,
 };
 use io::{inspect, path_string};
 
@@ -42,11 +42,32 @@ impl DiscoveryResult {
     }
 }
 
+/// The "Context" of a target (Stage 10 `05`): sources inside its repository
+/// boundary by the policies of every agent, sources outside it only of the
+/// `enabled_agents`, as one set of items with their application by the
+/// enabled agents.
 pub fn scan(
     project_path: &Path,
     space_path: &Path,
     environment: &SourceRegistryEnvironment,
+    enabled_agents: &[AgentAdapterKind],
 ) -> Result<AgentContextSnapshotContent, AgentContextError> {
+    let discovery = discover(project_path, space_path, environment, enabled_agents)?;
+    Ok(super::items::snapshot(
+        discovery,
+        environment,
+        enabled_agents,
+    ))
+}
+
+/// Every source the policies find for the target. Sources outside its
+/// repository boundary are read only for `global_agents`.
+pub fn discover(
+    project_path: &Path,
+    space_path: &Path,
+    environment: &SourceRegistryEnvironment,
+    global_agents: &[AgentAdapterKind],
+) -> Result<AgentContextDiscovery, AgentContextError> {
     let project_root = canonical_directory(project_path, "project")?;
     let target_root = canonical_directory(space_path, "target space")?;
     let repository_root = nearest_repository_root(&target_root, &project_root);
@@ -63,6 +84,7 @@ pub fn scan(
             &target_root,
             &directory_chain,
             environment,
+            global_agents.contains(&adapter.id),
         ));
     }
     result.append(discover_recognized(&target_root));
@@ -70,6 +92,7 @@ pub fn scan(
         &repository_root,
         &directory_chain,
         &adapters,
+        global_agents,
         &environment.svode_home,
     ));
 
@@ -94,11 +117,10 @@ pub fn scan(
     sort_dedup(&mut result.observed_project_paths);
     sort_dedup(&mut result.observed_personal_paths);
 
-    Ok(AgentContextSnapshotContent {
+    Ok(AgentContextDiscovery {
         project_root: path_string(&project_root),
         target_root: path_string(&target_root),
         repository_root: path_string(&repository_root),
-        adapters,
         instructions: result.rows,
         skills: result.skills,
         diagnostics: result.diagnostics,
@@ -186,6 +208,7 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
                     directory_depth: 0,
                     precedence,
                 },
+                superseded_by: None,
                 preview: source.preview,
                 references: Vec::new(),
             });
@@ -215,6 +238,7 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
                 directory_depth: 0,
                 precedence,
             },
+            superseded_by: None,
             preview: Some(preview),
             references: Vec::new(),
         });
@@ -249,6 +273,14 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn discover_all(
+        project: &Path,
+        space: &Path,
+        environment: &SourceRegistryEnvironment,
+    ) -> Result<AgentContextDiscovery, AgentContextError> {
+        discover(project, space, environment, &AgentAdapterKind::ALL)
+    }
+
     #[test]
     fn repository_chain_stops_at_nearest_nested_git_boundary() {
         let project = TempDir::new().unwrap();
@@ -277,10 +309,11 @@ mod tests {
         let home = TempDir::new().unwrap();
         let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
-        let root = scan(project.path(), project.path(), &environment).unwrap();
-        let inline_snapshot = scan(project.path(), &inline, &environment).unwrap();
-        let independent_snapshot = scan(project.path(), &independent, &environment).unwrap();
-        let codex_project_paths = |snapshot: &AgentContextSnapshotContent| {
+        let root = discover_all(project.path(), project.path(), &environment).unwrap();
+        let inline_snapshot = discover_all(project.path(), &inline, &environment).unwrap();
+        let independent_snapshot =
+            discover_all(project.path(), &independent, &environment).unwrap();
+        let codex_project_paths = |snapshot: &AgentContextDiscovery| {
             snapshot
                 .instructions
                 .iter()
@@ -293,14 +326,21 @@ mod tests {
         };
 
         assert_eq!(codex_project_paths(&root).len(), 1);
-        let transport = serde_json::to_value(&root).unwrap();
-        assert_eq!(transport["adapters"][0]["id"], "codex");
-        assert_eq!(transport["adapters"][1]["id"], "claude-code");
+        let transport = serde_json::to_value(
+            scan(
+                project.path(),
+                project.path(),
+                &environment,
+                &AgentAdapterKind::ALL,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert!(transport["targetRoot"].is_string());
-        assert!(transport["instructions"].is_array());
-        assert_eq!(transport["instructions"][0]["linkKind"], "direct");
-        assert!(transport["skills"].is_array());
-        assert!(transport["adapters"][0].get("executable").is_none());
+        assert_eq!(transport["enabledAgents"][0], "codex");
+        assert_eq!(transport["items"][0]["kind"], "instruction");
+        assert_eq!(transport["items"][0]["sources"][0]["linkKind"], "direct");
+        assert!(transport.get("instructions").is_none());
         assert!(
             root.diagnostics
                 .iter()
@@ -327,7 +367,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
-        let snapshot = scan(project.path(), &child, &environment).unwrap();
+        let snapshot = discover_all(project.path(), &child, &environment).unwrap();
         let recognized = snapshot
             .instructions
             .iter()
@@ -355,7 +395,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
-        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+        let snapshot = discover_all(project.path(), project.path(), &environment).unwrap();
         let claude = snapshot
             .instructions
             .iter()

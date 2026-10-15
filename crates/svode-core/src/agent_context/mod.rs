@@ -1,3 +1,4 @@
+mod items;
 pub mod model;
 pub mod projection;
 pub mod scanner;

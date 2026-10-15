@@ -56,14 +56,16 @@ struct CanonicalOwnerBoundary {
     owner: InstructionOwner,
 }
 
+/// Project roots of every adapter; personal roots only of `global_agents`.
 pub(super) fn discover(
     repository_root: &Path,
     directory_chain: &[PathBuf],
     adapters: &[AgentSourcePolicy],
+    global_agents: &[AgentAdapterKind],
     svode_home: &Path,
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
-    let roots = roots(directory_chain, adapters);
+    let roots = roots(directory_chain, adapters, global_agents);
     let mut allowed_boundaries = vec![repository_root.to_path_buf()];
     let mut personal_owner_boundaries = Vec::new();
     for root in roots
@@ -152,7 +154,11 @@ pub(super) fn discover(
     result
 }
 
-fn roots<'a>(directory_chain: &[PathBuf], adapters: &'a [AgentSourcePolicy]) -> Vec<RootSpec<'a>> {
+fn roots<'a>(
+    directory_chain: &[PathBuf],
+    adapters: &'a [AgentSourcePolicy],
+    global_agents: &[AgentAdapterKind],
+) -> Vec<RootSpec<'a>> {
     let mut roots = Vec::new();
     for adapter in adapters {
         let project_relative_root = Path::new(&adapter.capabilities.skills.project_relative_root);
@@ -172,6 +178,9 @@ fn roots<'a>(directory_chain: &[PathBuf], adapters: &'a [AgentSourcePolicy]) -> 
                     root: path_string(directory),
                 },
             });
+        }
+        if !global_agents.contains(&adapter.id) {
+            continue;
         }
         for personal_root in &adapter.capabilities.skills.personal_roots {
             roots.push(RootSpec {
@@ -539,6 +548,7 @@ fn scan_entry(
         owner: root.owner.clone(),
         support: SourceSupport::ClientNative,
         resolution: SourceResolution::Included,
+        superseded_by: None,
         link_kind,
     };
     if let Some(row) = rows.get_mut(&canonical_entry) {
@@ -1065,27 +1075,29 @@ fn apply_personal_shadowing(
     rows: &mut BTreeMap<PathBuf, SkillRow>,
     adapters: &BTreeSet<AgentAdapterKind>,
 ) {
-    let personal_names = rows
-        .values()
-        .flat_map(|row| {
-            row.aliases
-                .iter()
-                // Claude namespaces plugin skills as `plugin:skill`, so they
-                // never take a project skill's name.
-                .filter(|alias| {
-                    adapters.contains(&alias.adapter_id)
-                        && alias.scope == SkillScope::Personal
-                        && alias.discovery_kind != SkillDiscoveryKind::ClaudePersonalPlugin
-                })
-                .map(|alias| (alias.adapter_id, row.name.clone()))
-        })
-        .collect::<BTreeSet<_>>();
+    let mut personal_names = BTreeMap::new();
+    for row in rows.values() {
+        for alias in &row.aliases {
+            // Claude namespaces plugin skills as `plugin:skill`, so they
+            // never take a project skill's name.
+            if adapters.contains(&alias.adapter_id)
+                && alias.scope == SkillScope::Personal
+                && alias.discovery_kind != SkillDiscoveryKind::ClaudePersonalPlugin
+            {
+                personal_names
+                    .entry((alias.adapter_id, row.name.clone()))
+                    .or_insert_with(|| alias.path.clone());
+            }
+        }
+    }
     for row in rows.values_mut() {
         for alias in &mut row.aliases {
-            if alias.scope == SkillScope::Project
-                && personal_names.contains(&(alias.adapter_id, row.name.clone()))
-            {
+            if alias.scope != SkillScope::Project {
+                continue;
+            }
+            if let Some(personal) = personal_names.get(&(alias.adapter_id, row.name.clone())) {
                 alias.resolution = SourceResolution::Superseded;
+                alias.superseded_by = Some(personal.clone());
             }
         }
     }
@@ -1124,7 +1136,7 @@ fn discovery_kind_order(kind: SkillDiscoveryKind) -> u8 {
 mod tests {
     use super::*;
     use crate::agent_adapters::SourceRegistryEnvironment;
-    use crate::agent_context::scanner::scan;
+    use crate::agent_context::model::AgentContextDiscovery;
     use std::collections::HashSet;
     use tempfile::TempDir;
 
@@ -1140,6 +1152,14 @@ mod tests {
         )
         .unwrap();
         skill
+    }
+
+    fn scan(
+        project: &Path,
+        space: &Path,
+        environment: &SourceRegistryEnvironment,
+    ) -> Result<AgentContextDiscovery, crate::agent_context::AgentContextError> {
+        crate::agent_context::scanner::discover(project, space, environment, &AgentAdapterKind::ALL)
     }
 
     fn setup() -> (TempDir, TempDir, SourceRegistryEnvironment) {
@@ -1558,7 +1578,7 @@ mod tests {
         let root = scan(project.path(), project.path(), &environment).unwrap();
         let inline_snapshot = scan(project.path(), &inline, &environment).unwrap();
         let independent_snapshot = scan(project.path(), &independent, &environment).unwrap();
-        let names = |snapshot: &super::super::super::model::AgentContextSnapshotContent| {
+        let names = |snapshot: &AgentContextDiscovery| {
             snapshot
                 .skills
                 .iter()

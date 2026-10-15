@@ -1,4 +1,4 @@
-import type { AgentContextInstructionsSnapshot } from "./types";
+import type { AgentContextSnapshot } from "./types";
 
 interface AgentContextCatalogStateBase {
   ownerKey: string;
@@ -14,7 +14,7 @@ export type AgentContextCatalogState =
     })
   | (AgentContextCatalogStateBase & {
       phase: "ready";
-      snapshot: AgentContextInstructionsSnapshot;
+      snapshot: AgentContextSnapshot;
       refreshError: string | null;
       retrying: boolean;
     });
@@ -40,7 +40,7 @@ export function completeAgentContextRefresh(
   state: AgentContextCatalogState,
   ownerKey: string,
   targetPath: string,
-  snapshot: AgentContextInstructionsSnapshot,
+  snapshot: AgentContextSnapshot,
 ): AgentContextCatalogState {
   if (
     state.phase === "ready" &&

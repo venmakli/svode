@@ -10,10 +10,7 @@ import type {
   CollectionDetailController,
 } from "@/features/collection/app-shell";
 
-import type {
-  AgentContextInstructionRow,
-  AgentContextSkillRow,
-} from "../model/types";
+import type { AgentContextItem } from "../model/types";
 
 if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
   test("agent context detail peek DOM", () => {
@@ -75,55 +72,65 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     removeEventListener() {},
   })) as unknown as typeof window.matchMedia;
 
-  const instruction: AgentContextInstructionRow = {
-    adapterId: "codex",
+  const instruction: AgentContextItem = {
     body: "# Project instructions",
-    canonicalPath: "/workspace/AGENTS.md",
-    discoveryPath: "/workspace/AGENTS.md",
-    filename: "AGENTS.md",
+    description: null,
     health: "normal",
     healthReasons: [],
-    id: "codex:project:/workspace/AGENTS.md",
-    linkKind: "direct",
-    linkTargetPath: null,
-    location: "space",
+    id: "instruction:/workspace/AGENTS.md",
+    kind: "instruction",
+    location: { kind: "target", path: "" },
+    modifiedAt: "2026-10-15T08:00:00Z",
+    name: "AGENTS.md",
     ownerPath: "/workspace",
-    precedence: 1,
+    path: "/workspace/AGENTS.md",
+    providers: ["codex"],
     references: [],
-    role: "codex_directory_precedence",
-    support: "client_native",
-    resolution: "selected",
-    truncated: false,
-  };
-  const skill: AgentContextSkillRow = {
-    allowedTools: null,
-    aliases: [
+    skill: null,
+    sources: [
       {
-        discoveryPath: "/workspace/.agents/skills/review",
-        linkKind: "direct",
-        location: "space",
-        resolution: "selected",
-        sourceFamily: "agents",
-        support: "client_native",
+        path: "/workspace/AGENTS.md",
+        readers: [{ agent: "codex", supersededBy: null }],
+        target: null,
       },
     ],
+    truncated: false,
+    unapplied: null,
+  };
+  const skill: AgentContextItem = {
     body: "# Review",
-    canonicalPath: "/workspace/.agents/skills/review",
-    compatibility: null,
     description: "Review project changes.",
     health: "normal",
     healthReasons: [],
     id: "skill:/workspace/.agents/skills/review",
-    license: null,
-    manifestPath: "/workspace/.agents/skills/review/SKILL.md",
-    metadata: null,
+    kind: "skill",
+    location: { kind: "target", path: ".agents/skills" },
+    modifiedAt: null,
     name: "review",
     ownerPath: "/workspace",
+    path: "/workspace/.agents/skills/review/SKILL.md",
+    providers: ["codex"],
+    references: [],
+    skill: {
+      allowedTools: null,
+      compatibility: null,
+      license: "MIT",
+      metadata: null,
+    },
+    sources: [
+      {
+        path: "/workspace/.agents/skills/review",
+        readers: [{ agent: "codex", supersededBy: null }],
+        target: null,
+      },
+    ],
     truncated: false,
+    unapplied: null,
   };
 
   const doc = dom.window.document;
   const calls: Array<{ command: string; args: unknown }> = [];
+  let openedProviders = 0;
 
   async function settle() {
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -150,20 +157,38 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       ) {
         return null;
       }
+      if (command === "agent_adapters_list_identities") {
+        return [
+          { displayName: "Codex", id: "codex" },
+          { displayName: "Claude Code", id: "claude-code" },
+        ];
+      }
       throw new Error(`Unexpected command: ${command}`);
     });
     const { TooltipProvider } = await import("@/components/ui/tooltip");
     const { CollectionDetailPeekHost, useCollectionDetailController } =
       await import("@/features/collection/app-shell");
-    const { createInstructionDetailContent } =
-      await import("./instructions-presentation");
-    const { createSkillDetailContent } = await import("./skills-presentation");
+    const { createAgentAdapterDictionary } =
+      await import("@/features/agent-adapters");
+    const { createAgentContextItemDetailContent } =
+      await import("./item-detail");
+    const { createAgentContextItemProperties } =
+      await import("./item-properties");
+    const properties = createAgentContextItemProperties({
+      agents: createAgentAdapterDictionary([
+        { displayName: "Codex", id: "codex" },
+        { displayName: "Claude Code", id: "claude-code" },
+      ]),
+      onOpenProviders: () => {
+        openedProviders += 1;
+      },
+    });
     return {
       TooltipProvider,
       CollectionDetailPeekHost,
       useCollectionDetailController,
-      createInstructionDetailContent,
-      createSkillDetailContent,
+      detail: (item: AgentContextItem) =>
+        createAgentContextItemDetailContent(item, properties),
     };
   }
 
@@ -209,7 +234,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     }
 
     // Instruction: the file name is the identity of the top bar only.
-    await open(env.createInstructionDetailContent(instruction), instruction.id);
+    await open(env.detail(instruction), instruction.id);
     const identity = topBar().querySelector("[data-peek-identity]");
     expect(identity?.textContent).toBe("AGENTS.md");
     expect(sheetHeader().className.includes("sr-only")).toBe(true);
@@ -286,16 +311,22 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       },
     });
 
-    // Instruction: no header, the property panel follows the top bar.
+    // Instruction: no header, the property panel follows the top bar and
+    // shows every property but the name the identity already says.
     expect(doc.querySelector("[data-collection-detail-header]")).toBe(null);
     expect(
       doc
-        .querySelector("[data-agent-context-instruction-detail]")
+        .querySelector('[data-agent-context-item-detail="instruction"]')
         ?.firstElementChild?.hasAttribute("data-collection-property-panel"),
     ).toBe(true);
+    expect(
+      [...doc.querySelectorAll("[data-collection-panel-property]")].map((row) =>
+        row.getAttribute("data-collection-panel-property"),
+      ),
+    ).toEqual(["type", "providers", "health", "location", "modified"]);
 
     // Skill: identity in the top bar, a page-like header below it.
-    await open(env.createSkillDetailContent(skill), skill.id);
+    await open(env.detail(skill), skill.id);
     expect(topBar().querySelector("[data-peek-identity]")?.textContent).toBe(
       "review",
     );
@@ -381,32 +412,58 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       return doc.querySelector<HTMLElement>("[data-collection-detail-info]")!;
     }
 
-    const linkedInstruction: AgentContextInstructionRow = {
+    const linkedInstruction: AgentContextItem = {
       ...instruction,
-      canonicalPath: "/workspace/shared/CLAUDE.md",
-      discoveryPath: "/workspace/CLAUDE.md",
-      id: "claude:project:/workspace/CLAUDE.md",
-      linkKind: "symbolic_link",
-      linkTargetPath: "/workspace/shared/CLAUDE.md",
+      providers: ["claude-code"],
       references: [
         { path: "/workspace/docs/style.md", status: "available" },
         { path: "/etc/outside.md", status: "outside_boundary" },
         { path: "~/.claude/notes.md", status: "requires_client_approval" },
         { path: "/workspace/missing.md", status: "unreadable" },
-        { path: "/workspace/docs/style.md", status: "available" },
+      ],
+      sources: [
+        {
+          path: "/workspace/AGENTS.md",
+          readers: [
+            {
+              agent: "codex",
+              supersededBy: "/workspace/AGENTS.override.md",
+            },
+          ],
+          target: null,
+        },
+        {
+          path: "/workspace/CLAUDE.md",
+          readers: [{ agent: "claude-code", supersededBy: null }],
+          target: "/workspace/AGENTS.md",
+        },
       ],
     };
     let info = await openDetails(
-      env.createInstructionDetailContent(linkedInstruction),
+      env.detail(linkedInstruction),
       linkedInstruction.id,
     );
     expect(info.textContent?.includes("Instruction details")).toBe(true);
-    const sources = info.querySelector(
-      '[data-collection-detail-info-group="sources"]',
-    )!;
-    expect(sources.textContent).toBe(
-      "Sources/workspace/CLAUDE.md → /workspace/shared/CLAUDE.mdSymbolic link",
-    );
+    // A line per path with the agents reading by it; only the exception is
+    // marked.
+    expect(
+      [
+        ...info.querySelectorAll(
+          '[data-collection-detail-info-group="sources"] li > code',
+        ),
+      ].map((code) => code.textContent),
+    ).toEqual([
+      "/workspace/AGENTS.md",
+      "/workspace/CLAUDE.md → /workspace/AGENTS.md",
+    ]);
+    expect(
+      [...info.querySelectorAll("[data-agent-context-readers]")].map(
+        (readers) => readers.textContent,
+      ),
+    ).toEqual([
+      "Codex · shadowed by /workspace/AGENTS.override.md",
+      "Claude Code",
+    ]);
     const imports = [
       ...info.querySelectorAll(
         '[data-collection-detail-info-group="imports"] li',
@@ -419,9 +476,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       "/workspace/missing.mdCould not be read",
     ]);
     // The peek ends with the content: no sources block after the body.
-    const detail = doc.querySelector(
-      "[data-agent-context-instruction-detail]",
-    )!;
+    const detail = doc.querySelector("[data-agent-context-item-detail]")!;
     expect(detail.lastElementChild?.hasAttribute("data-markdown-reader")).toBe(
       true,
     );
@@ -435,38 +490,91 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
 
-    const linkedSkill: AgentContextSkillRow = {
+    const linkedSkill: AgentContextItem = {
       ...skill,
-      aliases: [
-        skill.aliases[0]!,
+      sources: [
+        skill.sources[0]!,
         {
-          ...skill.aliases[0]!,
-          discoveryPath: "/home/user/.claude/skills/review",
-          linkKind: "directory_alias",
-          location: "global",
-          sourceFamily: "claude",
+          path: "/home/user/.claude/skills/review",
+          readers: [{ agent: "claude-code", supersededBy: null }],
+          target: "/workspace/.agents/skills/review",
         },
       ],
     };
-    info = await openDetails(
-      env.createSkillDetailContent(linkedSkill),
-      linkedSkill.id,
-    );
+    info = await openDetails(env.detail(linkedSkill), linkedSkill.id);
     expect(info.textContent?.includes("Skill details")).toBe(true);
     expect(
       [
         ...info.querySelectorAll(
-          '[data-collection-detail-info-group="sources"] li',
+          '[data-collection-detail-info-group="sources"] li > code',
         ),
       ].map((item) => item.textContent),
     ).toEqual([
       "/workspace/.agents/skills/review",
-      "/home/user/.claude/skills/review → /workspace/.agents/skills/reviewDirectory alias",
+      "/home/user/.claude/skills/review → /workspace/.agents/skills/review",
     ]);
     // A skill has no imports group.
     expect(
       info.querySelector('[data-collection-detail-info-group="imports"]'),
     ).toBe(null);
+
+    await act(async () => {
+      root?.unmount();
+      await settle();
+    });
+  });
+
+  test("an empty Providers row explains itself in the panel and leads to Providers", async () => {
+    const env = await setup();
+    let controller: CollectionDetailController | null = null;
+    function CaptureController() {
+      controller = env.useCollectionDetailController();
+      return null;
+    }
+    let root: Root | null = null;
+    await act(async () => {
+      root = createRoot(doc.getElementById("app")!);
+      root.render(
+        <env.TooltipProvider>
+          <CaptureController />
+          <env.CollectionDetailPeekHost />
+        </env.TooltipProvider>,
+      );
+      await settle();
+    });
+    const unread: AgentContextItem = {
+      ...skill,
+      providers: [],
+      sources: [],
+      unapplied: { kind: "not_found", readers: ["claude-code"] },
+    };
+    await act(async () => {
+      await controller!.open({
+        ...env.detail(unread),
+        selection: {
+          instanceKey: "agent-context:space:root",
+          presentationId: "all",
+          rowId: unread.id,
+        },
+      });
+      await settle();
+    });
+
+    const reason = doc.querySelector<HTMLElement>(
+      "[data-agent-context-providers-reason]",
+    )!;
+    expect(reason.textContent).toBe(
+      "-No enabled agent finds itRead by their own rules: Claude CodeOpen Providers",
+    );
+    // No agent finds it by an enabled path: no "Sources" and no ⓘ.
+    expect(
+      topBar().querySelector("[data-collection-detail-info-trigger]"),
+    ).toBe(null);
+    await act(async () => {
+      reason.querySelector("button")!.click();
+      await settle();
+    });
+    expect(openedProviders).toBe(1);
 
     await act(async () => {
       root?.unmount();

@@ -2,70 +2,89 @@ import {
   CollectionDetailInfo,
   type CollectionDetailInfoGroup,
 } from "@/features/collection/app-shell";
+import {
+  AgentIcon,
+  useAgentAdapterDictionary,
+  type AgentAdapterDictionary,
+} from "@/features/agent-adapters";
 import * as m from "@/paraglide/messages.js";
 
-import {
-  instructionImports,
-  instructionSourceLines,
-  skillSourceLines,
-  type AgentContextSourceLine,
-} from "../model/detail-info";
 import type {
-  AgentContextInstructionRow,
+  AgentContextItem,
   AgentContextReference,
-  AgentContextSkillRow,
+  AgentContextSourceReader,
 } from "../model/types";
-import { sourceLinkKindLabel } from "./provenance-labels";
 
-/** ⓘ "Instruction details": its discovery path and its imports. */
-export function AgentContextInstructionInfo({
-  row,
+/**
+ * ⓘ "Details": "Sources" — a line per path by which enabled agents find the
+ * item, with the agents reading by it and only the shadowed ones marked —
+ * and the imports of an instruction.
+ */
+export function AgentContextItemInfo({ item }: { item: AgentContextItem }) {
+  const agents = useAgentAdapterDictionary();
+  const groups: CollectionDetailInfoGroup[] = [
+    {
+      key: "sources",
+      label: m.agent_context_info_sources(),
+      rows: item.sources.map((source) => ({
+        detail: <SourceReaders agents={agents} readers={source.readers} />,
+        key: source.path,
+        path: source.path,
+        target: source.target,
+      })),
+    },
+  ];
+  if (item.kind === "instruction") {
+    groups.push({
+      key: "imports",
+      label: m.agent_context_info_imports(),
+      rows: item.references.map((reference) => ({
+        detail: referenceStatusLabel(reference.status),
+        key: `${reference.status}:${reference.path}`,
+        path: reference.path,
+      })),
+    });
+  }
+  return (
+    <CollectionDetailInfo
+      groups={groups}
+      title={
+        item.kind === "skill"
+          ? m.agent_context_info_skill()
+          : m.agent_context_info_instruction()
+      }
+    />
+  );
+}
+
+function SourceReaders({
+  agents,
+  readers,
 }: {
-  row: AgentContextInstructionRow;
+  agents: AgentAdapterDictionary;
+  readers: readonly AgentContextSourceReader[];
 }) {
   return (
-    <CollectionDetailInfo
-      groups={[
-        sourcesGroup(instructionSourceLines(row)),
-        {
-          key: "imports",
-          label: m.agent_context_info_imports(),
-          rows: instructionImports(row).map((reference) => ({
-            detail: referenceStatusLabel(reference.status),
-            key: `${reference.status}:${reference.path}`,
-            path: reference.path,
-          })),
-        },
-      ]}
-      title={m.agent_context_info_instruction()}
-    />
+    <ul className="flex min-w-0 flex-col gap-0.5" data-agent-context-readers>
+      {readers.map((reader) => (
+        <li key={reader.agent} className="flex min-w-0 items-start gap-1.5">
+          <AgentIcon agent={reader.agent} className="mt-0.5 size-3.5" />
+          <span className="min-w-0 break-all">
+            {agents.label(reader.agent)}
+            {reader.supersededBy === null
+              ? null
+              : ` · ${
+                  reader.supersededBy
+                    ? m.agent_context_reader_superseded_by({
+                        path: reader.supersededBy,
+                      })
+                    : m.agent_context_reader_superseded()
+                }`}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
-}
-
-/** ⓘ "Skill details": the paths by which clients discover the skill. */
-export function AgentContextSkillInfo({ row }: { row: AgentContextSkillRow }) {
-  return (
-    <CollectionDetailInfo
-      groups={[sourcesGroup(skillSourceLines(row))]}
-      title={m.agent_context_info_skill()}
-    />
-  );
-}
-
-function sourcesGroup(
-  lines: readonly AgentContextSourceLine[],
-): CollectionDetailInfoGroup {
-  return {
-    key: "sources",
-    label: m.agent_context_info_sources(),
-    rows: lines.map((line) => ({
-      detail:
-        line.linkKind === "direct" ? null : sourceLinkKindLabel(line.linkKind),
-      key: line.path,
-      path: line.path,
-      target: line.target,
-    })),
-  };
 }
 
 function referenceStatusLabel(status: AgentContextReference["status"]) {

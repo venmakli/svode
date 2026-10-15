@@ -8,6 +8,7 @@ import { invokeCommand } from "@/platform/native/invoke";
 import type { TerminalSession } from "@/platform/terminal";
 
 const CUSTOM_AGENTS_CHANGED_EVENT = "agents:custom-changed";
+const AGENTS_ENABLED_CHANGED_EVENT = "agents:enabled-changed";
 
 /** Executable, CLI version and sign-in from the bounded diagnostic commands. */
 export interface AgentCliDiagnosticDto {
@@ -209,6 +210,13 @@ export function listenCustomAgentsChanged(
   handler: () => void,
 ): Promise<UnlistenFn> {
   return listen<void>(CUSTOM_AGENTS_CHANGED_EVENT, () => handler());
+}
+
+/** A built-in agent was enabled or disabled in any window. */
+export function listenAgentsEnabledChanged(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen<void>(AGENTS_ENABLED_CHANGED_EVENT, () => handler());
 }
 
 /** One agent a new session offers for chat. */

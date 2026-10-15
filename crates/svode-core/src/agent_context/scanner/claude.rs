@@ -17,26 +17,30 @@ const PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_IMPORT_DEPTH: usize = 5;
 const MAX_IMPORT_REFERENCES: usize = 128;
 
+/// `global` reads the personal `CLAUDE.md` of the Claude configuration.
 pub(super) fn discover(
     repository_root: &Path,
     _target_root: &Path,
     directory_chain: &[PathBuf],
     environment: &SourceRegistryEnvironment,
+    global: bool,
 ) -> DiscoveryResult {
     let mut result = DiscoveryResult::default();
-    let personal = environment.claude_config_dir.join("CLAUDE.md");
-    result.observed_personal_paths.push(path_string(&personal));
-    discover_group(
-        &[personal],
-        &environment.claude_config_dir,
-        InstructionSourceKind::Personal,
-        InstructionOwner {
-            kind: InstructionOwnerKind::ClientConfiguration,
-            root: path_string(&environment.claude_config_dir),
-        },
-        0,
-        &mut result,
-    );
+    if global {
+        let personal = environment.claude_config_dir.join("CLAUDE.md");
+        result.observed_personal_paths.push(path_string(&personal));
+        discover_group(
+            &[personal],
+            &environment.claude_config_dir,
+            InstructionSourceKind::Personal,
+            InstructionOwner {
+                kind: InstructionOwnerKind::ClientConfiguration,
+                root: path_string(&environment.claude_config_dir),
+            },
+            0,
+            &mut result,
+        );
+    }
 
     for (directory_depth, directory) in directory_chain.iter().enumerate() {
         let candidates = [
@@ -128,6 +132,7 @@ fn discover_group(
                 directory_depth,
                 precedence,
             },
+            superseded_by: None,
             preview: source.preview,
             references,
         });
@@ -318,6 +323,7 @@ mod tests {
             project.path(),
             &[project.path().to_path_buf()],
             &environment,
+            true,
         );
         let root = result
             .rows
