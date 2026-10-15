@@ -6,7 +6,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 
 use super::AgentContextError;
-use crate::agent_adapters::system_source_registry_environment;
+use crate::agent_adapters::{AgentAdapterKind, system_source_registry_environment};
 use crate::git::path::{RootMode, repo_relative_from_base};
 
 use super::model::{
@@ -50,6 +50,11 @@ impl ProjectKnowledgeArtifact {
     }
 }
 
+/// The agents whose sources the project Knowledge projection keeps: the
+/// Stage 7 input. Sources that only later policies find stay out of it.
+pub const KNOWLEDGE_AGENTS: [AgentAdapterKind; 2] =
+    [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode];
+
 /// Prepared, target-specific Agent Context projection. This is called only by
 /// existing index write paths; Knowledge reads consume the materialized rows.
 pub async fn target_knowledge_projection(
@@ -61,15 +66,9 @@ pub async fn target_knowledge_projection(
     let target = target_root.to_path_buf();
     let scan_project = project.clone();
     let scan_target = target.clone();
-    // Knowledge keeps the Stage 7 projection: every agent's sources,
-    // whichever agents are enabled.
+    // Knowledge keeps the Stage 7 projection, whichever agents are enabled.
     let content = tokio::task::spawn_blocking(move || {
-        super::scanner::discover(
-            &scan_project,
-            &scan_target,
-            &environment,
-            &crate::agent_adapters::AgentAdapterKind::ALL,
-        )
+        super::scanner::discover(&scan_project, &scan_target, &environment, &KNOWLEDGE_AGENTS)
     })
     .await
     .map_err(|error| {
@@ -98,7 +97,10 @@ fn normalize_project_snapshot(
     let mut rows = BTreeMap::<(String, String, String), Accumulator>::new();
 
     for instruction in &content.instructions {
-        if instruction.owner.kind != InstructionOwnerKind::TargetSpace
+        if instruction
+            .adapter_id
+            .is_some_and(|agent| !KNOWLEDGE_AGENTS.contains(&agent))
+            || instruction.owner.kind != InstructionOwnerKind::TargetSpace
             || !matches!(
                 instruction.source_kind,
                 InstructionSourceKind::Project | InstructionSourceKind::Recognized
@@ -182,16 +184,7 @@ fn normalize_project_snapshot(
         if skill.owner.kind != InstructionOwnerKind::TargetSpace {
             continue;
         }
-        // A flat skill is its own manifest; a skill directory holds `SKILL.md`.
-        let flat = skill.path == skill.canonical_path;
-        let manifest = |path: &str| {
-            if flat {
-                Path::new(path).to_path_buf()
-            } else {
-                Path::new(path).join("SKILL.md")
-            }
-        };
-        let canonical_manifest = manifest(&skill.canonical_path);
+        let canonical_manifest = Path::new(&skill.canonical_path).join("SKILL.md");
         let Some((owner_scope, owner_root, source_path)) =
             projection_location(&canonical_project, &canonical_target, &canonical_manifest)
         else {
@@ -200,8 +193,12 @@ fn normalize_project_snapshot(
         let project_aliases = skill
             .aliases
             .iter()
-            .filter(|alias| alias.scope == SkillScope::Project)
-            .filter_map(|alias| safe_alias_path(owner_root, &manifest(&alias.path)))
+            .filter(|alias| {
+                alias.scope == SkillScope::Project && KNOWLEDGE_AGENTS.contains(&alias.adapter_id)
+            })
+            .filter_map(|alias| {
+                safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
+            })
             .collect::<Vec<_>>();
         if project_aliases.is_empty() {
             continue;
@@ -229,12 +226,12 @@ fn normalize_project_snapshot(
             references: BTreeSet::new(),
             truncated: skill.preview.truncated,
         });
-        for alias in skill
-            .aliases
-            .iter()
-            .filter(|alias| alias.scope == SkillScope::Project)
-        {
-            if let Some(path) = safe_alias_path(owner_root, &manifest(&alias.path)) {
+        for alias in skill.aliases.iter().filter(|alias| {
+            alias.scope == SkillScope::Project && KNOWLEDGE_AGENTS.contains(&alias.adapter_id)
+        }) {
+            if let Some(path) =
+                safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
+            {
                 row.aliases.insert(path);
             }
             row.support.insert(enum_value(&alias.support));
@@ -479,16 +476,20 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_project_skill_is_its_own_manifest() {
+    fn sources_only_later_policies_read_stay_out_of_the_projection() {
         let project = TempDir::new().unwrap();
         fs::create_dir(project.path().join(".git")).unwrap();
-        let skills = project.path().join(".opencode/skills");
-        fs::create_dir_all(&skills).unwrap();
-        fs::write(
-            skills.join("quick.md"),
-            "---\nname: quick\ndescription: Quick skill\n---\n# Quick\n",
-        )
-        .unwrap();
+        let write = |relative: &str, text: &str| {
+            let path = project.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        let skill = |name: &str| format!("---\nname: {name}\ndescription: {name}\n---\n# {name}\n");
+        write("AGENTS.md", "shared");
+        write("QWEN.md", "qwen");
+        write(".pi/skills/pi-only/SKILL.md", &skill("pi-only"));
+        write(".opencode/skills/quick.md", &skill("quick"));
+        write(".agents/skills/shared/SKILL.md", &skill("shared"));
         let home = TempDir::new().unwrap();
         let environment =
             crate::agent_adapters::SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
@@ -496,20 +497,34 @@ mod tests {
             project.path(),
             project.path(),
             &environment,
-            &AgentAdapterKind::ALL,
+            &KNOWLEDGE_AGENTS,
         )
         .unwrap();
 
         let projected =
             normalize_project_snapshot(project.path(), project.path(), &discovery).unwrap();
 
-        let skill = projected
+        let mut sources = projected
+            .iter()
+            .map(|artifact| (artifact.kind.as_str(), artifact.source_path.as_str()))
+            .collect::<Vec<_>>();
+        sources.sort();
+        assert_eq!(
+            sources,
+            vec![
+                ("agent_instruction", "AGENTS.md"),
+                ("skill", ".agents/skills/shared/SKILL.md"),
+            ]
+        );
+        let shared = projected
             .iter()
             .find(|artifact| artifact.kind == "skill")
             .unwrap();
-        assert_eq!(skill.source_path, ".opencode/skills/quick.md");
-        assert_eq!(skill.aliases, vec![".opencode/skills/quick.md".to_string()]);
-        assert!(skill.is_effectively_applicable());
-        assert_ne!(skill.source_updated_at, "1970-01-01T00:00:00Z");
+        assert!(
+            shared
+                .discovery
+                .iter()
+                .all(|discovery| discovery.starts_with("codex:"))
+        );
     }
 }
