@@ -268,6 +268,9 @@ pub enum DirectoryWalk {
     RepositoryRoot,
     /// From the repository root down to the target.
     RepositoryToTarget,
+    /// From the parent of the repository root down to the target: Qwen Code
+    /// stops its walk one directory above the git root.
+    RepositoryParentToTarget,
     /// From the target up to the repository root.
     TargetToRepository,
     /// From the filesystem root down to the target.
@@ -408,6 +411,15 @@ pub enum SkillPlace {
     Personal(String),
 }
 
+/// A setting of an agent that turns a group of its sources off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceSwitch {
+    /// The built-in plugin `opencode.config.compatibility` of opencode,
+    /// which reads the skills of Claude Code and of `.agents`.
+    OpencodeCompatibility,
+}
+
 /// A skills root of an agent, in the agent's registration order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -415,6 +427,8 @@ pub struct SkillRootRule {
     pub kind: SkillDiscoveryKind,
     pub place: SkillPlace,
     pub layout: SkillLayout,
+    /// The root counts only while this setting is on.
+    pub switch: Option<SourceSwitch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -587,21 +601,25 @@ impl AgentAdapterRegistry {
                     flat: FlatSkills::Root,
                 };
                 let mut roots = Vec::new();
+                let compatible = |mut root: SkillRootRule| {
+                    root.switch = Some(SourceSwitch::OpencodeCompatibility);
+                    root
+                };
                 for (personal, relative) in [
                     (home.join(".claude/skills"), ".claude/skills"),
                     (home.join(".agents/skills"), ".agents/skills"),
                 ] {
-                    roots.push(skill_root(
+                    roots.push(compatible(skill_root(
                         SkillPlace::Personal(path_string(&personal)),
                         layout,
-                    ));
-                    roots.push(skill_root(
+                    )));
+                    roots.push(compatible(skill_root(
                         SkillPlace::Walk {
                             walk: DirectoryWalk::FilesystemToTarget,
                             relative: relative.to_string(),
                         },
                         layout,
-                    ));
+                    )));
                 }
                 for name in ["skill", "skills"] {
                     roots.push(skill_root(
@@ -723,7 +741,8 @@ impl AgentAdapterRegistry {
                 )
             }
             // Qwen Code 0.24.7: `QWEN.md` and `AGENTS.md` (or
-            // `context.fileName`) from the git root, `QWEN.local.md` there,
+            // `context.fileName`) from the parent of the git root,
+            // `QWEN.local.md` in the git root,
             // `output-language.md`; skills only in the target, project first.
             AgentAdapterKind::QwenCode => {
                 let qwen_home = &environment.qwen_home;
@@ -735,7 +754,7 @@ impl AgentAdapterRegistry {
                 );
                 personal.names_setting = Some(InstructionNamesSetting::QwenContextFileName);
                 let mut chain = rule(
-                    InstructionDirectories::Walk(DirectoryWalk::RepositoryToTarget),
+                    InstructionDirectories::Walk(DirectoryWalk::RepositoryParentToTarget),
                     &names,
                     InstructionSelection::All,
                 );
@@ -911,6 +930,7 @@ fn skill_root(place: SkillPlace, layout: SkillLayout) -> SkillRootRule {
         kind,
         place,
         layout,
+        switch: None,
     }
 }
 
@@ -922,6 +942,7 @@ fn walk_skills(kind: SkillDiscoveryKind, walk: DirectoryWalk, relative: &str) ->
             relative: relative.to_string(),
         },
         layout: SkillLayout::DIRECT_CHILDREN,
+        switch: None,
     }
 }
 
@@ -930,6 +951,7 @@ fn personal_skills(kind: SkillDiscoveryKind, path: &Path) -> SkillRootRule {
         kind,
         place: SkillPlace::Personal(path_string(path)),
         layout: SkillLayout::DIRECT_CHILDREN,
+        switch: None,
     }
 }
 

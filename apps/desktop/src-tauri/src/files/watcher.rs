@@ -311,7 +311,11 @@ fn process_published_events(
                 {
                     agent_context_targets.insert(space.to_string());
                 }
-                continue;
+                // Another observed source, such as `QWEN.md` or
+                // `opencode.json`, may also be content of the Space.
+                if standard_agent_context_path.is_some() {
+                    continue;
+                }
             }
             // Detect `.assets/`-scoped changes so we can emit a targeted
             // event for the storage reactor to re-scan the assets table.

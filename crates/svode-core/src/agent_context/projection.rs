@@ -477,4 +477,39 @@ mod tests {
         assert_eq!(projected[0].resolution, vec!["included", "superseded"]);
         assert!(!projected[0].is_effectively_applicable());
     }
+
+    #[test]
+    fn a_flat_project_skill_is_its_own_manifest() {
+        let project = TempDir::new().unwrap();
+        fs::create_dir(project.path().join(".git")).unwrap();
+        let skills = project.path().join(".opencode/skills");
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(
+            skills.join("quick.md"),
+            "---\nname: quick\ndescription: Quick skill\n---\n# Quick\n",
+        )
+        .unwrap();
+        let home = TempDir::new().unwrap();
+        let environment =
+            crate::agent_adapters::SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
+        let discovery = crate::agent_context::scanner::discover(
+            project.path(),
+            project.path(),
+            &environment,
+            &AgentAdapterKind::ALL,
+        )
+        .unwrap();
+
+        let projected =
+            normalize_project_snapshot(project.path(), project.path(), &discovery).unwrap();
+
+        let skill = projected
+            .iter()
+            .find(|artifact| artifact.kind == "skill")
+            .unwrap();
+        assert_eq!(skill.source_path, ".opencode/skills/quick.md");
+        assert_eq!(skill.aliases, vec![".opencode/skills/quick.md".to_string()]);
+        assert!(skill.is_effectively_applicable());
+        assert_ne!(skill.source_updated_at, "1970-01-01T00:00:00Z");
+    }
 }

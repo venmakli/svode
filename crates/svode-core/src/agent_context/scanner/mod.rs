@@ -2,6 +2,7 @@ mod claude;
 mod codex;
 mod declared;
 mod io;
+mod opencode;
 mod qwen;
 pub mod skill_files;
 mod skills;
@@ -113,7 +114,7 @@ pub fn discover(
         &places,
         &adapters,
         global_agents,
-        &environment.svode_home,
+        environment,
     ));
 
     result.rows.sort_by(|left, right| {
@@ -181,6 +182,12 @@ impl TargetPlaces {
             DirectoryWalk::Target => vec![self.target_root.clone()],
             DirectoryWalk::RepositoryRoot => self.directory_chain[..1].to_vec(),
             DirectoryWalk::RepositoryToTarget => self.directory_chain.clone(),
+            DirectoryWalk::RepositoryParentToTarget => self.directory_chain[0]
+                .parent()
+                .map(Path::to_path_buf)
+                .into_iter()
+                .chain(self.directory_chain.iter().cloned())
+                .collect(),
             DirectoryWalk::TargetToRepository => {
                 self.directory_chain.iter().rev().cloned().collect()
             }

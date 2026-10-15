@@ -720,4 +720,69 @@ mod tests {
         assert_eq!(by_path(&items, &own).location.path, "");
         assert_eq!(by_path(&items, &root).location.path, "..");
     }
+
+    #[test]
+    fn the_shared_agents_file_and_skill_are_one_item_each_with_the_enabled_readers() {
+        use AgentAdapterKind::{KimiCode, Opencode, Pi, QwenCode};
+        let fixture = Fixture::new();
+        let agents = fixture.write(fixture.project.path(), "AGENTS.md", "shared");
+        let shared = fixture.write(
+            fixture.project.path(),
+            ".agents/skills/shared/SKILL.md",
+            &skill("shared"),
+        );
+
+        let items = fixture.items(&[CODEX, Opencode, QwenCode, KimiCode]);
+
+        assert_eq!(items.len(), 2);
+        let instruction = by_path(&items, &agents);
+        assert_eq!(
+            instruction.providers,
+            vec![CODEX, Opencode, QwenCode, KimiCode]
+        );
+        assert_eq!(instruction.sources.len(), 1);
+        assert_eq!(
+            instruction.sources[0]
+                .readers
+                .iter()
+                .map(|reader| reader.agent)
+                .collect::<Vec<_>>(),
+            vec![CODEX, Opencode, QwenCode, KimiCode]
+        );
+        let skill_item = by_path(&items, &shared);
+        assert_eq!(
+            skill_item.providers,
+            vec![CODEX, Opencode, QwenCode, KimiCode]
+        );
+        assert_eq!(skill_item.sources.len(), 1);
+
+        // pi reads the same file and skill once it is enabled.
+        let with_pi = fixture.items(&[Pi]);
+        assert_eq!(by_path(&with_pi, &agents).providers, vec![Pi]);
+        assert_eq!(by_path(&with_pi, &shared).providers, vec![Pi]);
+    }
+
+    #[test]
+    fn a_flat_skill_lies_in_its_skills_folder() {
+        let fixture = Fixture::new();
+        let flat = fixture.write(
+            fixture.project.path(),
+            ".opencode/skills/quick.md",
+            &skill("quick"),
+        );
+
+        let items = fixture.items(&[AgentAdapterKind::Opencode]);
+
+        let item = by_path(&items, &flat);
+        assert_eq!(item.kind, ContextItemKind::Skill);
+        assert_eq!(item.providers, vec![AgentAdapterKind::Opencode]);
+        assert_eq!(
+            item.location,
+            ContextLocation {
+                kind: ContextLocationKind::Target,
+                path: path_string(Path::new(".opencode/skills")),
+            }
+        );
+        assert!(item.modified_at.is_some());
+    }
 }

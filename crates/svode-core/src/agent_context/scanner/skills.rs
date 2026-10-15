@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agent_adapters::{
     AgentAdapterKind, AgentSourcePolicy, FlatSkills, SkillKey, SkillLayout, SkillPlace,
-    SkillPrecedence,
+    SkillPrecedence, SourceRegistryEnvironment, SourceSwitch,
 };
 
 use super::super::model::{
@@ -84,9 +84,33 @@ pub(super) fn discover(
     places: &TargetPlaces,
     adapters: &[AgentSourcePolicy],
     global_agents: &[AgentAdapterKind],
-    svode_home: &Path,
+    environment: &SourceRegistryEnvironment,
 ) -> DiscoveryResult {
-    let roots = roots(places, adapters, global_agents);
+    let mut result = DiscoveryResult::default();
+    let switched_off = adapters
+        .iter()
+        .flat_map(|adapter| {
+            adapter
+                .capabilities
+                .skills
+                .roots
+                .iter()
+                .filter_map(move |root| Some((adapter.id, root.switch?)))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|(agent, switch)| {
+            !switch_on(
+                *switch,
+                environment,
+                places,
+                global_agents.contains(agent),
+                &mut result,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let roots = roots(places, adapters, global_agents, &switched_off);
+    let svode_home = &environment.svode_home;
     let mut allowed_boundaries = vec![places.repository_root.clone()];
     let mut personal_owner_boundaries = Vec::new();
     for root in roots
@@ -130,7 +154,7 @@ pub(super) fn discover(
         parsed_cache: BTreeMap::new(),
         rows: BTreeMap::new(),
         registrations: Vec::new(),
-        result: DiscoveryResult::default(),
+        result,
     };
     for root in &roots {
         scan.observe_root(root);
@@ -186,6 +210,7 @@ fn roots<'a>(
     places: &TargetPlaces,
     adapters: &'a [AgentSourcePolicy],
     global_agents: &[AgentAdapterKind],
+    switched_off: &BTreeSet<(AgentAdapterKind, SourceSwitch)>,
 ) -> Vec<RootSpec<'a>> {
     let mut roots = Vec::new();
     for adapter in adapters {
@@ -202,6 +227,12 @@ fn roots<'a>(
             .collect::<Vec<_>>();
         let mut seen = Vec::<PathBuf>::new();
         for rule in &adapter.capabilities.skills.roots {
+            if rule
+                .switch
+                .is_some_and(|switch| switched_off.contains(&(adapter.id, switch)))
+            {
+                continue;
+            }
             let places_of_rule = match &rule.place {
                 SkillPlace::Walk { walk, relative } => places
                     .walk(*walk)
@@ -255,6 +286,25 @@ fn roots<'a>(
         }
     }
     roots
+}
+
+/// Whether the agent's setting leaves the sources it switches on.
+fn switch_on(
+    switch: SourceSwitch,
+    environment: &SourceRegistryEnvironment,
+    places: &TargetPlaces,
+    global: bool,
+    result: &mut DiscoveryResult,
+) -> bool {
+    match switch {
+        SourceSwitch::OpencodeCompatibility => super::opencode::built_in_plugin_enabled(
+            "opencode.config.compatibility",
+            environment,
+            places,
+            global,
+            result,
+        ),
+    }
 }
 
 fn canonical_or_self(path: &Path) -> PathBuf {
@@ -446,7 +496,9 @@ impl Scan<'_> {
             }
         };
         if metadata.is_file() && !flat {
-            if direct_children {
+            // A `*.md` file is a flat skill of other agents reading the
+            // same root, not a materialized link.
+            if direct_children && !entry_name.ends_with(".md") {
                 self.failure(
                     root.adapter.id,
                     entry,
@@ -462,7 +514,7 @@ impl Scan<'_> {
         let canonical_entry = match entry.canonicalize() {
             Ok(path) if path.is_dir() || (flat && path.is_file()) => path,
             Ok(_) => {
-                if direct_children {
+                if direct_children && !entry_name.ends_with(".md") {
                     self.failure(
                         root.adapter.id,
                         entry,
@@ -1912,5 +1964,347 @@ mod tests {
         assert!(codes.contains("skill_materialized_symlink"));
         assert!(codes.contains("skill_outside_boundary"));
         assert!(!format!("{snapshot:?}").contains("Secret"));
+    }
+
+    /// Skills of the agents of the `.agents` family in a repository at
+    /// `~/work/repo` with an inline target `docs`.
+    struct AgentsFixture {
+        _home: TempDir,
+        environment: SourceRegistryEnvironment,
+    }
+
+    impl AgentsFixture {
+        fn new() -> Self {
+            let home = TempDir::new().unwrap();
+            let home_path = home.path().canonicalize().unwrap();
+            fs::create_dir_all(home_path.join("work/repo/.git")).unwrap();
+            fs::create_dir_all(home_path.join("work/repo/docs")).unwrap();
+            Self {
+                environment: SourceRegistryEnvironment::for_tests(home_path),
+                _home: home,
+            }
+        }
+
+        fn home(&self) -> &Path {
+            &self.environment.home_dir
+        }
+
+        fn skill(&self, relative: &str, name: &str) {
+            let directory = self.home().join(relative);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(
+                directory.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: {name} skill\n---\n# {name}\n"),
+            )
+            .unwrap();
+        }
+
+        fn flat(&self, relative: &str, name: &str) {
+            let path = self.home().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(
+                path,
+                format!("---\nname: {name}\ndescription: {name} skill\n---\n# {name}\n"),
+            )
+            .unwrap();
+        }
+
+        fn discover(&self, target: &str, enabled: &[AgentAdapterKind]) -> AgentContextDiscovery {
+            let repo = self.home().join("work/repo");
+            crate::agent_context::scanner::discover(
+                &repo,
+                &repo.join(target),
+                &self.environment,
+                enabled,
+            )
+            .unwrap()
+        }
+
+        /// The paths by which `agent` finds skills, from `~`, with how it
+        /// takes them.
+        fn found_by(
+            &self,
+            discovery: &AgentContextDiscovery,
+            agent: AgentAdapterKind,
+        ) -> Vec<(String, SourceResolution)> {
+            let mut found = discovery
+                .skills
+                .iter()
+                .flat_map(|row| &row.aliases)
+                .filter(|alias| alias.adapter_id == agent)
+                .map(|alias| {
+                    (
+                        Path::new(&alias.path)
+                            .strip_prefix(self.home())
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                        alias.resolution,
+                    )
+                })
+                .collect::<Vec<_>>();
+            found.sort_by(|left, right| left.0.cmp(&right.0));
+            found
+        }
+    }
+
+    fn found(entries: &[(&str, SourceResolution)]) -> Vec<(String, SourceResolution)> {
+        let mut found = entries
+            .iter()
+            .map(|(path, resolution)| ((*path).to_string(), *resolution))
+            .collect::<Vec<_>>();
+        found.sort_by(|left, right| left.0.cmp(&right.0));
+        found
+    }
+
+    #[test]
+    fn opencode_finds_claude_and_agents_skills_up_to_the_filesystem_root_and_the_last_wins() {
+        use SourceResolution::{Included, Superseded};
+        let fixture = AgentsFixture::new();
+        fixture.skill(".claude/skills/claude-only", "claude-only");
+        fixture.skill(".agents/skills/review", "review");
+        fixture.skill("work/.agents/skills/above", "above");
+        fixture.skill("work/repo/.claude/skills/review", "review");
+        fixture.flat("work/repo/.agents/skills/notes.md", "notes");
+        fixture.flat("work/repo/.agents/skills/group/nested.md", "nested");
+        fixture.skill("work/repo/.agents/skills/group/deep", "deep");
+        fixture.skill("work/repo/.opencode/skills/review", "review");
+
+        let disabled = fixture.discover("", &[]);
+        assert_eq!(
+            fixture.found_by(&disabled, AgentAdapterKind::Opencode),
+            found(&[
+                ("work/repo/.agents/skills/group/deep", Included),
+                ("work/repo/.agents/skills/notes.md", Included),
+                ("work/repo/.claude/skills/review", Superseded),
+                ("work/repo/.opencode/skills/review", Included),
+            ])
+        );
+
+        let enabled = fixture.discover("", &[AgentAdapterKind::Opencode]);
+        assert_eq!(
+            fixture.found_by(&enabled, AgentAdapterKind::Opencode),
+            found(&[
+                (".agents/skills/review", Superseded),
+                (".claude/skills/claude-only", Included),
+                ("work/.agents/skills/above", Included),
+                ("work/repo/.agents/skills/group/deep", Included),
+                ("work/repo/.agents/skills/notes.md", Included),
+                ("work/repo/.claude/skills/review", Superseded),
+                ("work/repo/.opencode/skills/review", Included),
+            ])
+        );
+        let above = enabled
+            .skills
+            .iter()
+            .find(|row| row.name == "above")
+            .unwrap();
+        assert_eq!(above.aliases[0].scope, SkillScope::Personal);
+        let notes = enabled
+            .skills
+            .iter()
+            .find(|row| row.name == "notes")
+            .unwrap();
+        assert_eq!(notes.path, notes.canonical_path);
+        assert!(notes.path.ends_with("notes.md"));
+        assert_eq!(notes.preview.markdown, "# notes\n");
+        assert!(
+            notes
+                .aliases
+                .iter()
+                .all(|alias| alias.adapter_id != AgentAdapterKind::Codex)
+        );
+    }
+
+    #[test]
+    fn pi_takes_flat_skills_by_its_two_modes_and_the_first_of_a_name() {
+        use SourceResolution::{Included, Superseded};
+        let fixture = AgentsFixture::new();
+        fixture.skill(".pi/agent/skills/review", "review");
+        fixture.flat(".pi/agent/skills/personal.md", "personal");
+        fixture.skill("work/repo/.pi/skills/review", "review");
+        fixture.flat("work/repo/.pi/skills/flat.md", "flat");
+        fixture.flat("work/repo/.agents/skills/root.md", "root");
+        fixture.flat("work/repo/.agents/skills/group/nested.md", "nested");
+        fixture.skill("work/.agents/skills/above", "above");
+
+        let enabled = fixture.discover("", &[AgentAdapterKind::Pi]);
+        assert_eq!(
+            fixture.found_by(&enabled, AgentAdapterKind::Pi),
+            found(&[
+                (".pi/agent/skills/personal.md", Included),
+                (".pi/agent/skills/review", Superseded),
+                ("work/repo/.agents/skills/group/nested.md", Included),
+                ("work/repo/.pi/skills/flat.md", Included),
+                ("work/repo/.pi/skills/review", Included),
+            ])
+        );
+        let nested = enabled
+            .skills
+            .iter()
+            .find(|row| row.name == "nested")
+            .unwrap();
+        assert!(
+            nested
+                .aliases
+                .iter()
+                .all(|alias| alias.adapter_id == AgentAdapterKind::Pi)
+        );
+    }
+
+    #[test]
+    fn qwen_code_finds_skills_only_in_the_target_with_its_own_folder_first() {
+        use SourceResolution::{Included, Superseded};
+        let fixture = AgentsFixture::new();
+        fixture.skill(".qwen/skills/review", "review");
+        fixture.skill("work/repo/.agents/skills/root-skill", "root-skill");
+        fixture.skill("work/repo/docs/.qwen/skills/review", "review");
+        fixture.skill("work/repo/docs/.agents/skills/review", "review");
+        fixture.skill("work/repo/docs/.agents/skills/docs-skill", "docs-skill");
+
+        let enabled = fixture.discover("docs", &[AgentAdapterKind::QwenCode]);
+        assert_eq!(
+            fixture.found_by(&enabled, AgentAdapterKind::QwenCode),
+            found(&[
+                (".qwen/skills/review", Superseded),
+                ("work/repo/docs/.agents/skills/docs-skill", Included),
+                ("work/repo/docs/.agents/skills/review", Superseded),
+                ("work/repo/docs/.qwen/skills/review", Included),
+            ])
+        );
+    }
+
+    #[test]
+    fn kimi_code_finds_skills_of_the_git_root_with_folders_flat_files_and_names_ignoring_case() {
+        use SourceResolution::{Included, Superseded};
+        let fixture = AgentsFixture::new();
+        fixture.skill(".kimi-code/skills/personal", "personal");
+        fixture.skill("work/repo/.kimi-code/skills/Review", "Review");
+        fixture.flat("work/repo/.kimi-code/skills/quick.md", "quick");
+        fixture.skill("work/repo/.kimi-code/skills/category/sub/deep", "deep");
+        fixture.skill("work/repo/.agents/skills/review", "review");
+        fixture.skill("work/repo/docs/.agents/skills/docs-skill", "docs-skill");
+
+        let disabled = fixture.discover("docs", &[]);
+        assert_eq!(
+            fixture.found_by(&disabled, AgentAdapterKind::KimiCode),
+            found(&[
+                ("work/repo/.agents/skills/review", Superseded),
+                ("work/repo/.kimi-code/skills/Review", Included),
+                ("work/repo/.kimi-code/skills/category/sub/deep", Included),
+                ("work/repo/.kimi-code/skills/quick.md", Included),
+            ])
+        );
+        let enabled = fixture.discover("docs", &[AgentAdapterKind::KimiCode]);
+        assert!(
+            fixture
+                .found_by(&enabled, AgentAdapterKind::KimiCode)
+                .contains(&(".kimi-code/skills/personal".to_string(), Included))
+        );
+    }
+
+    #[test]
+    fn a_flat_file_without_frontmatter_is_a_diagnostic_only_where_an_agent_takes_it() {
+        let fixture = AgentsFixture::new();
+        let root = fixture.home().join("work/repo/.agents/skills");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("README.md"), "# Not a skill\n").unwrap();
+
+        let discovery = fixture.discover("", &[]);
+        assert!(discovery.skills.is_empty());
+        let readme = discovery
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| path.ends_with("README.md"))
+            })
+            .map(|diagnostic| (diagnostic.adapter_id, diagnostic.code.as_str()))
+            .collect::<Vec<_>>();
+        assert!(readme.contains(&(
+            Some(AgentAdapterKind::Opencode),
+            "skill_frontmatter_missing"
+        )));
+        assert!(readme.contains(&(
+            Some(AgentAdapterKind::KimiCode),
+            "skill_frontmatter_missing"
+        )));
+        // Agents that take only skill folders ignore it.
+        assert!(readme.iter().all(|(agent, _)| matches!(
+            agent,
+            Some(AgentAdapterKind::Opencode | AgentAdapterKind::KimiCode)
+        )));
+    }
+
+    #[test]
+    fn the_opencode_compatibility_plugin_switches_its_claude_and_agents_skills() {
+        use SourceResolution::Included;
+        let fixture = AgentsFixture::new();
+        fixture.skill(".claude/skills/claude-home", "claude-home");
+        fixture.skill("work/repo/.agents/skills/shared", "shared");
+        fixture.skill("work/repo/.opencode/skills/own", "own");
+        let write = |relative: &str, text: &str| {
+            let path = fixture.home().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        write(
+            ".config/opencode/opencode.jsonc",
+            "{\n  // off\n  \"plugins\": [\"-opencode.config.compatibility\"],\n  \"provider\": { \"x\": { \"options\": { \"apiKey\": \"secret-value\" } } },\n}",
+        );
+        let opencode = AgentAdapterKind::Opencode;
+
+        let switched_off = fixture.discover("", &[opencode]);
+        assert_eq!(
+            fixture.found_by(&switched_off, opencode),
+            found(&[("work/repo/.opencode/skills/own", Included)])
+        );
+        assert!(!format!("{switched_off:?}").contains("secret-value"));
+        // The global config of a disabled agent is not read.
+        assert_eq!(
+            fixture.found_by(&fixture.discover("", &[]), opencode),
+            found(&[
+                ("work/repo/.agents/skills/shared", Included),
+                ("work/repo/.opencode/skills/own", Included),
+            ])
+        );
+
+        // A later config turns it on again.
+        write(
+            "work/repo/opencode.json",
+            "{ \"plugin\": [\"opencode.config.*\"] }",
+        );
+        assert_eq!(
+            fixture.found_by(&fixture.discover("", &[opencode]), opencode),
+            found(&[
+                (".claude/skills/claude-home", Included),
+                ("work/repo/.agents/skills/shared", Included),
+                ("work/repo/.opencode/skills/own", Included),
+            ])
+        );
+
+        // A `.opencode` config of the project weighs more than any direct one.
+        write(
+            "work/repo/.opencode/opencode.json",
+            "{ \"plugins\": [\"-*\"] }",
+        );
+        assert_eq!(
+            fixture.found_by(&fixture.discover("", &[]), opencode),
+            found(&[("work/repo/.opencode/skills/own", Included)])
+        );
+        // Codex reads `.agents/skills` whatever opencode does.
+        assert!(
+            fixture
+                .found_by(&fixture.discover("", &[]), AgentAdapterKind::Codex)
+                .contains(&("work/repo/.agents/skills/shared".to_string(), Included))
+        );
+
+        write("work/repo/.opencode/opencode.json", "{ \"plugins\": [ ");
+        let broken = fixture.discover("", &[]);
+        assert!(broken.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "opencode_config_parse" && diagnostic.adapter_id == Some(opencode)
+        }));
     }
 }
