@@ -3,7 +3,6 @@ import {
   type ExternalOpenTarget,
 } from "@/features/external-open";
 import {
-  createLocalMediaSource,
   createMediaSource,
   listMediaExternalApps,
   listenMediaSourceInvalidated,
@@ -11,6 +10,7 @@ import {
   revealMediaExternal,
   revokeMediaSource,
   validateMediaSource,
+  withMediaSourceUrl,
 } from "@/platform/media/media-api";
 
 import type {
@@ -26,7 +26,7 @@ export async function loadMediaSource(
 ): Promise<MediaSourceDescriptor> {
   try {
     return target.kind === "local"
-      ? await createLocalMediaSource(target.path)
+      ? withMediaSourceUrl(await target.createSource())
       : await createMediaSource(toSourceInput(target));
   } catch (error) {
     throw mediaFailureFromNative(error);

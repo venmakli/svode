@@ -4,12 +4,10 @@ import {
 } from "@/features/external-open";
 import {
   inspectDocumentSource,
-  inspectLocalDocumentSource,
   listDocumentExternalApps,
   listenDocumentSourceInvalidated,
   openDocumentExternal,
   readDocumentSource,
-  readLocalDocumentSource,
   revealDocumentExternal,
 } from "@/platform/document/document-api";
 
@@ -26,7 +24,7 @@ export async function loadDocumentDescriptor(
 ): Promise<DocumentSourceDescriptor> {
   try {
     return target.kind === "local"
-      ? await inspectLocalDocumentSource(target.path)
+      ? await target.inspect()
       : await inspectDocumentSource(toSourceInput(target));
   } catch (error) {
     throw documentFailureFromNative(error);
@@ -39,7 +37,7 @@ export async function loadDocumentBytes(
 ): Promise<Uint8Array> {
   try {
     return target.kind === "local"
-      ? await readLocalDocumentSource(target.path, expectedGeneration)
+      ? await target.read(expectedGeneration)
       : await readDocumentSource({
           ...toSourceInput(target),
           expectedGeneration,

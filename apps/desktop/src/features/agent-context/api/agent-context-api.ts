@@ -1,7 +1,10 @@
 import {
+  createAgentContextSkillMediaSource,
   getAgentContext,
+  inspectAgentContextSkillDocument,
   listAgentContextSkillFiles,
   listenAgentContextChanged,
+  readAgentContextSkillDocument,
   readAgentContextSkillFile,
   refreshAgentContext,
   type AgentContextItemDto,
@@ -76,6 +79,19 @@ export async function loadAgentContextSkillMarkdown(
 ): Promise<{ markdown: string; truncated: boolean }> {
   const preview = await readAgentContextSkillFile(itemId, path);
   return { markdown: preview.markdown, truncated: preview.truncated };
+}
+
+/**
+ * How the viewers read a document or media file of a skill: Desktop
+ * resolves it inside the published skill's folder, never by a free path.
+ */
+export function agentContextSkillFileSource(itemId: string, path: string) {
+  return {
+    createMediaSource: () => createAgentContextSkillMediaSource(itemId, path),
+    inspectDocument: () => inspectAgentContextSkillDocument(itemId, path),
+    readDocument: (expectedGeneration: string) =>
+      readAgentContextSkillDocument(itemId, path, expectedGeneration),
+  };
 }
 
 /** External open of an instruction or skill file, re-validated inside its owner root. */

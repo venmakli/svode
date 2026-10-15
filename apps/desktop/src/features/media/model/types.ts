@@ -1,5 +1,8 @@
 import type { ExternalOpenTarget } from "@/features/external-open";
-import type { MediaFormatDto } from "@/platform/media/media-api";
+import type {
+  MediaFormatDto,
+  MediaSourceSessionDto,
+} from "@/platform/media/media-api";
 
 export type MediaFormat = MediaFormatDto;
 
@@ -13,11 +16,14 @@ export interface SpaceMediaTarget {
 }
 
 /**
- * A file by its absolute path, in or outside the project, only to view it:
- * no Changes and no full page; its owner validates the external open.
+ * A file outside the Space, only to view it: no Changes and no full page.
+ * Its owner resolves it inside its own boundary: it issues the capability
+ * and validates the external open.
  */
 export interface LocalMediaFile {
+  /** The file's path, for its name and format. */
   path: string;
+  createSource(): Promise<MediaSourceSessionDto>;
   externalOpen: ExternalOpenTarget;
 }
 

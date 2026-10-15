@@ -3,6 +3,8 @@ import {
   type EventCallback,
   type UnlistenFn,
 } from "@/platform/native/events";
+import type { DocumentSourceDescriptorDto } from "@/platform/document/document-api";
+import type { MediaSourceSessionDto } from "@/platform/media/media-api";
 import { invokeCommand } from "@/platform/native/invoke";
 
 /** The id of a built-in agent of the registry. */
@@ -161,6 +163,37 @@ export function listAgentContextSkillFiles(itemId: string, path: string) {
 export function readAgentContextSkillFile(itemId: string, path: string) {
   return invokeCommand<AgentContextMarkdownPreviewDto>(
     "agent_context_read_skill_file",
+    { itemId, path },
+  );
+}
+
+/** A document of a skill folder, resolved inside it by Desktop. */
+export function inspectAgentContextSkillDocument(itemId: string, path: string) {
+  return invokeCommand<DocumentSourceDescriptorDto>(
+    "agent_context_inspect_skill_document",
+    { itemId, path },
+  );
+}
+
+export async function readAgentContextSkillDocument(
+  itemId: string,
+  path: string,
+  expectedGeneration: string,
+): Promise<Uint8Array> {
+  const response = await invokeCommand<ArrayBuffer | Uint8Array>(
+    "agent_context_read_skill_document",
+    { expectedGeneration, itemId, path },
+  );
+  return response instanceof Uint8Array ? response : new Uint8Array(response);
+}
+
+/** A media capability for a file of a skill folder, resolved inside it. */
+export function createAgentContextSkillMediaSource(
+  itemId: string,
+  path: string,
+) {
+  return invokeCommand<MediaSourceSessionDto>(
+    "agent_context_create_skill_media_source",
     { itemId, path },
   );
 }

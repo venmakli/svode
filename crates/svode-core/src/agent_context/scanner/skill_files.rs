@@ -156,6 +156,37 @@ pub fn read_skill_markdown(
     }
 }
 
+/// The canonical file of a document or media file of the skill, for a viewer
+/// to read: the same boundary as the listing, refused outside the folder.
+pub fn resolve_skill_file(
+    skill_directory: &Path,
+    path: &str,
+    kind: SkillFileKind,
+) -> Result<PathBuf, AgentContextError> {
+    let root = canonical_skill_directory(skill_directory)?;
+    let relative = relative_path(path)?;
+    let candidate = root.join(&relative);
+    let parent = candidate.parent().unwrap_or(&root);
+    let name = relative
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let canonical = candidate.canonicalize().ok();
+    let resolved = canonical.filter(|canonical| {
+        parent.canonicalize().ok().as_deref() == Some(parent)
+            && canonical.starts_with(&root)
+            && canonical.is_file()
+            && file_kind(&name).is_some_and(|(found, _, _)| found == kind)
+    });
+    match (kind, resolved) {
+        (SkillFileKind::Document | SkillFileKind::Media, Some(resolved)) => Ok(resolved),
+        _ => Err(AgentContextError::PathNotAccessible(format!(
+            "{path} is not a {kind:?} file of the skill {}",
+            root.display()
+        ))),
+    }
+}
+
 fn canonical_skill_directory(skill_directory: &Path) -> Result<PathBuf, AgentContextError> {
     let root = skill_directory.canonicalize().map_err(|error| {
         AgentContextError::PathNotAccessible(format!(
@@ -419,6 +450,32 @@ mod tests {
         assert_eq!(long.markdown.len(), DEFAULT_PREVIEW_BYTES);
     }
 
+    #[test]
+    fn documents_and_media_resolve_only_inside_the_skill_folder_by_their_kind() {
+        let (temp, root) = skill();
+        fs::write(temp.path().join("outside.pdf"), "pdf").unwrap();
+
+        assert_eq!(
+            resolve_skill_file(&root, "assets/logo.png", SkillFileKind::Media).unwrap(),
+            root.join("assets/logo.png")
+        );
+        assert_eq!(
+            resolve_skill_file(&root, "assets/template.docx", SkillFileKind::Document).unwrap(),
+            root.join("assets/template.docx")
+        );
+        for (path, kind) in [
+            ("assets/logo.png", SkillFileKind::Document),
+            ("references/guide.md", SkillFileKind::Markdown),
+            ("scripts/run.py", SkillFileKind::Document),
+            ("../outside.pdf", SkillFileKind::Document),
+            ("/etc/hosts", SkillFileKind::Document),
+            ("assets/missing.png", SkillFileKind::Media),
+            ("assets", SkillFileKind::Media),
+        ] {
+            assert!(resolve_skill_file(&root, path, kind).is_err(), "{path}");
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn links_out_of_the_skill_folder_and_linked_folders_are_not_followed() {
@@ -446,6 +503,10 @@ mod tests {
         assert!(!names(&references).contains(&("references/secret.md", SkillFileKind::Markdown)));
         assert!(read_skill_markdown(&root, "references/secret.md").is_err());
         assert!(read_skill_markdown(&root, "linked/secret.md").is_err());
+        fs::write(outside.join("secret.pdf"), "pdf").unwrap();
+        symlink(outside.join("secret.pdf"), root.join("assets/escape.pdf")).unwrap();
+        assert!(resolve_skill_file(&root, "assets/escape.pdf", SkillFileKind::Document).is_err());
+        assert!(resolve_skill_file(&root, "linked/secret.pdf", SkillFileKind::Document).is_err());
         let alias = references
             .files
             .iter()

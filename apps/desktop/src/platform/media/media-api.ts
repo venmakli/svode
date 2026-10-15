@@ -59,10 +59,17 @@ export interface MediaSourceInvalidatedDto {
 export async function createMediaSource(
   input: MediaSourceInputDto,
 ): Promise<MediaSourceSessionDto & { sourceUrl: string }> {
-  const source = await invokeCommand<MediaSourceSessionDto>(
-    "media_create_source",
-    { ...input },
+  return withMediaSourceUrl(
+    await invokeCommand<MediaSourceSessionDto>("media_create_source", {
+      ...input,
+    }),
   );
+}
+
+/** The address the window streams a media capability from. */
+export function withMediaSourceUrl(
+  source: MediaSourceSessionDto,
+): MediaSourceSessionDto & { sourceUrl: string } {
   return {
     ...source,
     sourceUrl: convertFileSrc(source.capabilityToken, "svode-media"),

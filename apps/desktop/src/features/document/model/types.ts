@@ -29,11 +29,15 @@ export interface SpaceDocumentTarget {
 }
 
 /**
- * A file by its absolute path, in or outside the project, only to view it:
- * no Changes and no full page; its owner validates the external open.
+ * A file outside the Space, only to view it: no Changes and no full page.
+ * Its owner resolves it inside its own boundary: it inspects and reads the
+ * file and validates the external open.
  */
 export interface LocalDocumentFile {
+  /** The file's path, for its name and format. */
   path: string;
+  inspect(): Promise<DocumentSourceDescriptor>;
+  read(expectedGeneration: string): Promise<Uint8Array>;
   externalOpen: ExternalOpenTarget;
 }
 

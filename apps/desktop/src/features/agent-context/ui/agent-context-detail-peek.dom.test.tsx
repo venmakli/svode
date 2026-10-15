@@ -202,7 +202,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
           truncated: false,
         };
       }
-      if (command === "media_create_local_source") {
+      if (command === "agent_context_create_skill_media_source") {
         throw { kind: "unsupported_format", message: "Not previewable" };
       }
       if (command.startsWith("plugin:event|")) return 1;
@@ -729,13 +729,17 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
     await settleUntil(() =>
-      calls.some((call) => call.command === "media_create_local_source"),
+      calls.some(
+        (call) => call.command === "agent_context_create_skill_media_source",
+      ),
     );
     expect(
-      calls.find((call) => call.command === "media_create_local_source"),
+      calls.find(
+        (call) => call.command === "agent_context_create_skill_media_source",
+      ),
     ).toEqual({
-      command: "media_create_local_source",
-      args: { path: "/workspace/.agents/skills/review/assets/logo.png" },
+      command: "agent_context_create_skill_media_source",
+      args: { itemId: skill.id, path: "assets/logo.png" },
     });
     expect(topBar().querySelector("[data-peek-identity]")?.textContent).toBe(
       "logo.png",

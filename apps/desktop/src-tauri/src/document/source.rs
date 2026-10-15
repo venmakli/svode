@@ -212,8 +212,9 @@ pub(crate) fn read_document_source(
 }
 
 /// A local file by its absolute path, read only to show it: a file of a
-/// skill outside the project (Stage 10 `05`). Like local media, only
-/// Documents by their format and within the preview limit.
+/// skill outside the project (Stage 10 `05`), which its owner has resolved
+/// inside the skill folder. Only Documents by their format and within the
+/// preview limit.
 pub(crate) fn inspect_local_document_source(
     path: &Path,
 ) -> Result<ResolvedDocumentSource, DocumentSourceError> {

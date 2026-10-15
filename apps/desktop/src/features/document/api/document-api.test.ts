@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 
+import { invokeCommand } from "@/platform/native/invoke";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
+
+import type { DocumentSourceDescriptor } from "../model/types";
 
 import {
   documentExternalOpenTarget,
@@ -10,7 +13,7 @@ import {
   subscribeDocumentInvalidated,
 } from "./document-api";
 
-test("a local document reads by its absolute path and opens through its owner's target", async () => {
+test("a document outside the Space reads and opens through its owner", async () => {
   const previousWindow = globalThis.window;
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -19,7 +22,7 @@ test("a local document reads by its absolute path and opens through its owner's 
   const steps: string[] = [];
   mockNativeIpc((command, args) => {
     steps.push(`${command}:${JSON.stringify(args)}`);
-    if (command === "document_inspect_local_source") {
+    if (command === "agent_context_inspect_skill_document") {
       return {
         format: "pdf",
         generation: "g1",
@@ -27,13 +30,26 @@ test("a local document reads by its absolute path and opens through its owner's 
         sizeBytes: 4,
       };
     }
-    if (command === "document_read_local_source") {
+    if (command === "agent_context_read_skill_document") {
       return new Uint8Array([37, 80, 68, 70]);
     }
     return null;
   });
   const path = "/home/user/.claude/skills/review/assets/guide.pdf";
+  const input = { itemId: "skill:review", path: "assets/guide.pdf" };
   const target = {
+    inspect: () =>
+      invokeCommand<DocumentSourceDescriptor>(
+        "agent_context_inspect_skill_document",
+        input,
+      ),
+    read: async (expectedGeneration: string) =>
+      new Uint8Array(
+        await invokeCommand<Uint8Array>("agent_context_read_skill_document", {
+          ...input,
+          expectedGeneration,
+        }),
+      ),
     externalOpen: {
       listApps: async () => [],
       open: async (appId: string | null) => {
@@ -56,8 +72,8 @@ test("a local document reads by its absolute path and opens through its owner's 
   expect([...bytes]).toEqual([37, 80, 68, 70]);
   expect(open.reveal).toBe(undefined);
   expect(steps).toEqual([
-    `document_inspect_local_source:{"path":"${path}"}`,
-    `document_read_local_source:{"expectedGeneration":"g1","path":"${path}"}`,
+    `agent_context_inspect_skill_document:{"itemId":"skill:review","path":"assets/guide.pdf"}`,
+    `agent_context_read_skill_document:{"itemId":"skill:review","path":"assets/guide.pdf","expectedGeneration":"g1"}`,
     "attempt",
     "owner-open:null",
   ]);

@@ -41,7 +41,16 @@ pub(crate) fn media_create_local_source(
     state: State<'_, MediaSourceState>,
     path: String,
 ) -> Result<MediaSourceSessionDescriptor, MediaSourceError> {
-    let source = inspect_local_media_source(Path::new(&path))?;
+    issue_local_media_source(&state, Path::new(&path))
+}
+
+/// A capability for a local file by its absolute path; a caller that owns a
+/// narrower boundary resolves the path inside it first.
+pub(crate) fn issue_local_media_source(
+    state: &MediaSourceState,
+    path: &Path,
+) -> Result<MediaSourceSessionDescriptor, MediaSourceError> {
+    let source = inspect_local_media_source(path)?;
     let capability_token = state.issue(&source);
     Ok(MediaSourceSessionDescriptor {
         source: source.descriptor,

@@ -54,27 +54,6 @@ export async function readDocumentSource(
   return response instanceof Uint8Array ? response : new Uint8Array(response);
 }
 
-/** A local file by its absolute path, in or outside the project. */
-export function inspectLocalDocumentSource(
-  path: string,
-): Promise<DocumentSourceDescriptorDto> {
-  return invokeCommand<DocumentSourceDescriptorDto>(
-    "document_inspect_local_source",
-    { path },
-  );
-}
-
-export async function readLocalDocumentSource(
-  path: string,
-  expectedGeneration: string,
-): Promise<Uint8Array> {
-  const response = await invokeCommand<ArrayBuffer | Uint8Array>(
-    "document_read_local_source",
-    { expectedGeneration, path },
-  );
-  return response instanceof Uint8Array ? response : new Uint8Array(response);
-}
-
 export function listDocumentExternalApps(
   input: DocumentSourceInputDto,
 ): Promise<ExternalAppDto[]> {

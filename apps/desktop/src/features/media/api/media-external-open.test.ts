@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { JSDOM } from "jsdom";
 
+import type { MediaSourceSessionDto } from "@/platform/media/media-api";
+import { invokeCommand } from "@/platform/native/invoke";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { mediaExternalOpenTarget } from "./media-api";
@@ -55,7 +57,7 @@ test("media pauses before opening in any application, not before reveal", async 
   });
 });
 
-test("a local file loads by its absolute path and opens through its owner's target", async () => {
+test("a file outside the Space loads and opens through its owner", async () => {
   const previousWindow = globalThis.window;
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -64,7 +66,7 @@ test("a local file loads by its absolute path and opens through its owner's targ
   const steps: string[] = [];
   mockNativeIpc((command, args) => {
     steps.push(`${command}:${JSON.stringify(args)}`);
-    if (command === "media_create_local_source") {
+    if (command === "agent_context_create_skill_media_source") {
       return {
         animated: false,
         capabilityToken: "token",
@@ -93,6 +95,11 @@ test("a local file loads by its absolute path and opens through its owner's targ
   const { checkMediaSource, loadMediaSource, subscribeMediaInvalidated } =
     await import("./media-api");
   const target = {
+    createSource: () =>
+      invokeCommand<MediaSourceSessionDto>(
+        "agent_context_create_skill_media_source",
+        { itemId: "skill:review", path: "assets/logo.png" },
+      ),
     externalOpen: {
       listApps: async () => [],
       open: async (appId: string | null) => {
@@ -122,7 +129,7 @@ test("a local file loads by its absolute path and opens through its owner's targ
 
   expect(source.capabilityToken).toBe("token");
   expect(steps).toEqual([
-    'media_create_local_source:{"path":"/home/user/.claude/skills/review/assets/logo.png"}',
+    'agent_context_create_skill_media_source:{"itemId":"skill:review","path":"assets/logo.png"}',
     "attempt",
     "pause",
     "owner-open:preview",

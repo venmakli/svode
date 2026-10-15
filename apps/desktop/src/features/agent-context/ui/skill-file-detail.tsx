@@ -16,7 +16,10 @@ import {
   type MarkdownReaderPolicy,
 } from "@/shared/ui/markdown-reader";
 
-import { agentContextArtifactExternalOpenTarget } from "../api/agent-context-api";
+import {
+  agentContextArtifactExternalOpenTarget,
+  agentContextSkillFileSource,
+} from "../api/agent-context-api";
 import { useSkillMarkdownFile } from "../hooks/use-skill-files";
 import type { AgentContextItem, AgentContextSkillFile } from "../model/types";
 import { AgentContextArtifactOpenWith } from "./artifact-open-with";
@@ -61,17 +64,30 @@ export function createSkillFileDetailContent({
       title: file.name,
     };
   }
-  const viewed = {
-    externalOpen: agentContextArtifactExternalOpenTarget(openTarget),
-    path: file.canonicalPath,
-  };
+  const externalOpen = agentContextArtifactExternalOpenTarget(openTarget);
+  const source = agentContextSkillFileSource(item.id, file.path);
   return {
     content: (
       <Suspense fallback={<Skeleton className="m-6 h-48" />}>
         {file.kind === "document" ? (
-          <DocumentSurface file={viewed} onClose={onClose} />
+          <DocumentSurface
+            file={{
+              externalOpen,
+              inspect: source.inspectDocument,
+              path: file.canonicalPath,
+              read: source.readDocument,
+            }}
+            onClose={onClose}
+          />
         ) : (
-          <MediaSurface file={viewed} onClose={onClose} />
+          <MediaSurface
+            file={{
+              createSource: source.createMediaSource,
+              externalOpen,
+              path: file.canonicalPath,
+            }}
+            onClose={onClose}
+          />
         )}
       </Suspense>
     ),
