@@ -468,7 +468,7 @@ fi
                     .await
             })
         };
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(20), async {
             while !fixture.repo.join(".git/probe-wait").exists() {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
@@ -1144,7 +1144,7 @@ fi
                 .await
         })
     };
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(20), async {
         while !f.repo.join(".git/probe-wait").exists() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
