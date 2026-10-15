@@ -1,10 +1,12 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::AppError;
 
-use svode_core::agent_context::model::{AgentContextSnapshot, AgentContextSnapshotContent};
+use svode_core::agent_context::model::{
+    AgentContextSnapshot, AgentContextSnapshotContent, ContextItemKind,
+};
 
 #[derive(Debug, Clone)]
 struct PublishedSnapshot {
@@ -47,6 +49,18 @@ impl AgentContextState {
             generation,
             content,
         })
+    }
+
+    /// The folder of a skill some published snapshot holds: the only
+    /// folders whose files the Context reads.
+    pub fn skill_directory(&self, item_id: &str) -> Option<PathBuf> {
+        let snapshots = self.snapshots.lock().ok()?;
+        snapshots
+            .values()
+            .flat_map(|snapshot| &snapshot.content.items)
+            .find(|item| item.id == item_id && item.kind == ContextItemKind::Skill)
+            .and_then(|item| item.skill.as_ref())
+            .map(|skill| PathBuf::from(&skill.directory))
     }
 
     pub fn targets_observing_project_path(&self, path: &Path) -> Vec<String> {
@@ -102,6 +116,66 @@ mod tests {
         assert_eq!(first.generation, 1);
         assert_eq!(same.generation, 1);
         assert_eq!(changed.generation, 2);
+    }
+
+    #[test]
+    fn only_skills_of_published_snapshots_name_a_folder() {
+        use svode_core::agent_context::model::{
+            ContextItem, ContextLocation, ContextLocationKind, ContextSkillFacts, MarkdownPreview,
+            SourceHealth,
+        };
+
+        let item = |id: &str, kind, skill| ContextItem {
+            id: id.to_string(),
+            kind,
+            name: "review".to_string(),
+            description: None,
+            path: "/skills/review/SKILL.md".to_string(),
+            owner_root: "/skills".to_string(),
+            location: ContextLocation {
+                kind: ContextLocationKind::Absolute,
+                path: "/skills".to_string(),
+            },
+            modified_at: None,
+            health: SourceHealth::Normal,
+            health_reasons: Vec::new(),
+            providers: Vec::new(),
+            unapplied: None,
+            sources: Vec::new(),
+            preview: MarkdownPreview {
+                markdown: String::new(),
+                truncated: false,
+                bytes_read: 0,
+                total_bytes: 0,
+            },
+            references: Vec::new(),
+            skill,
+        };
+        let state = AgentContextState::new();
+        let mut snapshot = content("/project");
+        snapshot.items = vec![
+            item(
+                "skill:/skills/review",
+                ContextItemKind::Skill,
+                Some(ContextSkillFacts {
+                    directory: "/skills/review".to_string(),
+                    has_files: true,
+                    license: None,
+                    compatibility: None,
+                    metadata: None,
+                    allowed_tools: None,
+                }),
+            ),
+            item("instruction:/AGENTS.md", ContextItemKind::Instruction, None),
+        ];
+        state.publish("key".into(), snapshot).unwrap();
+
+        assert_eq!(
+            state.skill_directory("skill:/skills/review"),
+            Some(PathBuf::from("/skills/review"))
+        );
+        assert_eq!(state.skill_directory("instruction:/AGENTS.md"), None);
+        assert_eq!(state.skill_directory("skill:/elsewhere"), None);
     }
 
     #[test]

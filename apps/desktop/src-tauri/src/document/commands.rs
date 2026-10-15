@@ -3,7 +3,8 @@ use std::path::Path;
 use tauri::{AppHandle, ipc::Response};
 
 use super::source::{
-    DocumentSourceDescriptor, DocumentSourceError, inspect_document_source, read_document_source,
+    DocumentSourceDescriptor, DocumentSourceError, inspect_document_source,
+    inspect_local_document_source, read_document_source, read_local_document_source,
     resolve_document_source_for_external,
 };
 use crate::external_apps::{self, ExternalAppDto};
@@ -33,6 +34,23 @@ pub(crate) fn document_read_source(
         &expected_generation,
     )
     .map(Response::new)
+}
+
+/// A local file by its absolute path, in or outside the project: a Document
+/// of a skill folder (Stage 10 `05`).
+#[tauri::command]
+pub(crate) fn document_inspect_local_source(
+    path: String,
+) -> Result<DocumentSourceDescriptor, DocumentSourceError> {
+    inspect_local_document_source(Path::new(&path)).map(|resolved| resolved.descriptor)
+}
+
+#[tauri::command]
+pub(crate) fn document_read_local_source(
+    path: String,
+    expected_generation: String,
+) -> Result<Response, DocumentSourceError> {
+    read_local_document_source(Path::new(&path), &expected_generation).map(Response::new)
 }
 
 #[tauri::command]

@@ -298,10 +298,14 @@ pub enum UnappliedReason {
     Superseded { by: Vec<String> },
 }
 
-/// Optional frontmatter of `SKILL.md`.
+/// Facts of a skill: its folder and the optional frontmatter of `SKILL.md`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextSkillFacts {
+    /// The canonical skill folder, the boundary its files are read within.
+    pub directory: String,
+    /// Whether the folder holds files Svode supports besides `SKILL.md`.
+    pub has_files: bool,
     pub license: Option<String>,
     pub compatibility: Option<String>,
     pub metadata: Option<BTreeMap<String, SkillMetadataValue>>,

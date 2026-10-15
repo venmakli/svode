@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod io;
+pub mod skill_files;
 mod skills;
 
 use std::path::{Path, PathBuf};

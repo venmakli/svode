@@ -112,6 +112,8 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     providers: ["codex"],
     references: [],
     skill: {
+      directory: "/workspace/.agents/skills/review",
+      hasFiles: false,
       allowedTools: null,
       compatibility: null,
       license: "MIT",
@@ -136,6 +138,15 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     await new Promise((resolve) => setTimeout(resolve, 30));
   }
 
+  /** Settles until `ready` holds: lazy chunks load at their own pace. */
+  async function settleUntil(ready: () => boolean) {
+    for (let attempt = 0; attempt < 100 && !ready(); attempt += 1) {
+      await act(async () => {
+        await settle();
+      });
+    }
+  }
+
   async function setup() {
     const { mockNativeIpc } = await import("@/platform/native/testing");
     mockNativeIpc(async (command, args) => {
@@ -157,6 +168,44 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       ) {
         return null;
       }
+      if (command === "agent_context_list_skill_files") {
+        const { path } = args as { path: string };
+        const file = (
+          kind: string,
+          relative: string,
+          sizeBytes: number | null = null,
+        ) => ({
+          availability: "available",
+          canonicalPath: `/workspace/.agents/skills/review/${relative}`,
+          format: kind === "directory" ? "" : relative.split(".").at(-1),
+          kind,
+          modifiedAt: "2026-10-15T08:00:00Z",
+          name: relative.split("/").at(-1),
+          path: relative,
+          sizeBytes,
+        });
+        return path === ""
+          ? {
+              files: [
+                file("directory", "assets"),
+                file("markdown", "guide.md"),
+              ],
+              path,
+            }
+          : { files: [file("media", "assets/logo.png", 2048)], path };
+      }
+      if (command === "agent_context_read_skill_file") {
+        return {
+          bytesRead: 7,
+          markdown: "# Guide",
+          totalBytes: 7,
+          truncated: false,
+        };
+      }
+      if (command === "media_create_local_source") {
+        throw { kind: "unsupported_format", message: "Not previewable" };
+      }
+      if (command.startsWith("plugin:event|")) return 1;
       if (command === "agent_adapters_list_identities") {
         return [
           { displayName: "Codex", id: "codex" },
@@ -517,6 +566,183 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     expect(
       info.querySelector('[data-collection-detail-info-group="imports"]'),
     ).toBe(null);
+
+    await act(async () => {
+      root?.unmount();
+      await settle();
+    });
+  });
+
+  test("a skill shows Skill and Attachments tabs; its files open read-only in the same peek", async () => {
+    const env = await setup();
+    let controller: CollectionDetailController | null = null;
+    function CaptureController() {
+      controller = env.useCollectionDetailController();
+      return null;
+    }
+    let root: Root | null = null;
+    await act(async () => {
+      root = createRoot(doc.getElementById("app")!);
+      root.render(
+        <env.TooltipProvider>
+          <CaptureController />
+          <env.CollectionDetailPeekHost />
+        </env.TooltipProvider>,
+      );
+      await settle();
+    });
+    async function open(item: AgentContextItem) {
+      await act(async () => {
+        await controller!.open({
+          ...env.detail(item),
+          selection: {
+            instanceKey: "agent-context:space:root",
+            presentationId: "all",
+            rowId: item.id,
+          },
+        });
+        await settle();
+      });
+    }
+    const tabs = () =>
+      doc.querySelector<HTMLElement>("[data-agent-context-item-tabs]");
+    const rows = () =>
+      [...doc.querySelectorAll<HTMLElement>("[data-collection-row]")].map(
+        (row) => row.dataset.collectionRow,
+      );
+    const row = (id: string) =>
+      doc.querySelector<HTMLElement>(`[data-collection-row="${id}"]`)!;
+
+    // Without supported files: the body alone, without a tab strip.
+    await open(skill);
+    expect(tabs()?.dataset.agentContextItemTabs).toBe("skill");
+    expect(tabs()?.querySelector('[role="tablist"]')).toBe(null);
+    expect(tabs()?.querySelector("[data-markdown-reader]")?.textContent).toBe(
+      "Review",
+    );
+
+    // An instruction: its text, no tabs.
+    await open(instruction);
+    expect(tabs()).toBe(null);
+
+    // With supported files: Skill first, then Attachments.
+    await open({ ...skill, skill: { ...skill.skill!, hasFiles: true } });
+    expect(
+      [...tabs()!.querySelectorAll('[role="tab"]')].map(
+        (tab) => tab.textContent,
+      ),
+    ).toEqual(["Skill", "Attachments"]);
+    expect(tabs()!.dataset.agentContextItemTabs).toBe("skill");
+    await act(async () => {
+      tabs()!
+        .querySelectorAll<HTMLElement>('[role="tab"]')[1]!
+        .dispatchEvent(
+          new dom.window.MouseEvent("mousedown", { bubbles: true, button: 0 }),
+        );
+      await settle();
+    });
+    await settleUntil(() => rows().length > 0);
+    expect(tabs()!.dataset.agentContextItemTabs).toBe("files");
+    expect(
+      calls.find((call) => call.command === "agent_context_list_skill_files"),
+    ).toEqual({
+      command: "agent_context_list_skill_files",
+      args: { itemId: skill.id, path: "" },
+    });
+    expect(rows()).toEqual(["directory:assets", "markdown:guide.md"]);
+    // Folders expand in place, as in Attachments.
+    await act(async () => {
+      row("directory:assets")
+        .querySelector<HTMLElement>("[aria-expanded]")!
+        .click();
+      await settle();
+    });
+    expect(rows()).toEqual([
+      "directory:assets",
+      "media:assets/logo.png",
+      "markdown:guide.md",
+    ]);
+    expect(row("media:assets/logo.png").textContent?.includes("Media")).toBe(
+      true,
+    );
+
+    // Markdown opens in the same peek, read-only.
+    await act(async () => {
+      row("markdown:guide.md")
+        .querySelector<HTMLElement>("[data-collection-primary]")!
+        .click();
+      await settle();
+    });
+    expect(topBar().querySelector("[data-peek-identity]")?.textContent).toBe(
+      "guide.md",
+    );
+    expect(calls.at(-1)).toEqual({
+      command: "agent_context_read_skill_file",
+      args: { itemId: skill.id, path: "guide.md" },
+    });
+    const file = doc.querySelector<HTMLElement>(
+      '[data-agent-context-skill-file="ready"]',
+    )!;
+    expect(file.querySelector("[data-markdown-reader]")?.textContent).toBe(
+      "Guide",
+    );
+    expect(doc.querySelector('[contenteditable="true"]')).toBe(null);
+    await act(async () => {
+      topBar()
+        .querySelector<HTMLButtonElement>("[data-external-open-primary]")!
+        .click();
+      await settle();
+    });
+    expect(calls.at(-1)).toEqual({
+      command: "open_artifact_in_app",
+      args: {
+        target: {
+          canonicalArtifactPath: "/workspace/.agents/skills/review/guide.md",
+          ownerRoot: "/workspace",
+        },
+        appId: "textedit",
+      },
+    });
+
+    // Media opens in its own viewer by the absolute path, without Changes or
+    // a full page.
+    await open({ ...skill, skill: { ...skill.skill!, hasFiles: true } });
+    await act(async () => {
+      tabs()!
+        .querySelectorAll<HTMLElement>('[role="tab"]')[1]!
+        .dispatchEvent(
+          new dom.window.MouseEvent("mousedown", { bubbles: true, button: 0 }),
+        );
+      await settle();
+    });
+    await settleUntil(() => rows().length > 0);
+    await act(async () => {
+      row("directory:assets")
+        .querySelector<HTMLElement>("[aria-expanded]")!
+        .click();
+      await settle();
+    });
+    await act(async () => {
+      row("media:assets/logo.png")
+        .querySelector<HTMLElement>("[data-collection-primary]")!
+        .click();
+      await settle();
+    });
+    await settleUntil(() =>
+      calls.some((call) => call.command === "media_create_local_source"),
+    );
+    expect(
+      calls.find((call) => call.command === "media_create_local_source"),
+    ).toEqual({
+      command: "media_create_local_source",
+      args: { path: "/workspace/.agents/skills/review/assets/logo.png" },
+    });
+    expect(topBar().querySelector("[data-peek-identity]")?.textContent).toBe(
+      "logo.png",
+    );
+    expect(doc.querySelectorAll("[data-peek-top-bar]").length).toBe(1);
+    expect(topBar().querySelector('[aria-label="Expand"]')).toBe(null);
+    expect(topBar().querySelector('[aria-label="Close"]') === null).toBe(false);
 
     await act(async () => {
       root?.unmount();

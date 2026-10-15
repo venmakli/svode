@@ -4,10 +4,12 @@ import {
 } from "@/features/external-open";
 import {
   inspectDocumentSource,
+  inspectLocalDocumentSource,
   listDocumentExternalApps,
   listenDocumentSourceInvalidated,
   openDocumentExternal,
   readDocumentSource,
+  readLocalDocumentSource,
   revealDocumentExternal,
 } from "@/platform/document/document-api";
 
@@ -15,6 +17,7 @@ import type {
   DocumentFailure,
   DocumentSourceDescriptor,
   DocumentTarget,
+  SpaceDocumentTarget,
 } from "../model/types";
 import { normalizeRuntimePath } from "../model/types";
 
@@ -22,7 +25,9 @@ export async function loadDocumentDescriptor(
   target: DocumentTarget,
 ): Promise<DocumentSourceDescriptor> {
   try {
-    return await inspectDocumentSource(toSourceInput(target));
+    return target.kind === "local"
+      ? await inspectLocalDocumentSource(target.path)
+      : await inspectDocumentSource(toSourceInput(target));
   } catch (error) {
     throw documentFailureFromNative(error);
   }
@@ -33,10 +38,12 @@ export async function loadDocumentBytes(
   expectedGeneration: string,
 ): Promise<Uint8Array> {
   try {
-    return await readDocumentSource({
-      ...toSourceInput(target),
-      expectedGeneration,
-    });
+    return target.kind === "local"
+      ? await readLocalDocumentSource(target.path, expectedGeneration)
+      : await readDocumentSource({
+          ...toSourceInput(target),
+          expectedGeneration,
+        });
   } catch (error) {
     throw documentFailureFromNative(error);
   }
@@ -47,6 +54,24 @@ export function documentExternalOpenTarget(
   target: DocumentTarget,
   onAttempt: () => void,
 ): ExternalOpenTarget {
+  if (target.kind === "local") {
+    const { externalOpen } = target;
+    return {
+      ...externalOpen,
+      open: (appId) => {
+        onAttempt();
+        return externalOpen.open(appId);
+      },
+      ...(externalOpen.reveal
+        ? {
+            reveal: async () => {
+              onAttempt();
+              await externalOpen.reveal?.();
+            },
+          }
+        : {}),
+    };
+  }
   const input = toSourceInput(target);
   return {
     preferenceKey: filePreferenceKey(target.path),
@@ -65,7 +90,9 @@ export function documentExternalOpenTarget(
 export function subscribeDocumentInvalidated(
   target: DocumentTarget,
   handler: () => void,
-) {
+): Promise<() => void> {
+  // Space events do not name files outside the Space.
+  if (target.kind === "local") return Promise.resolve(() => undefined);
   return listenDocumentSourceInvalidated((event) => {
     if (
       normalizeRuntimePath(event.spacePath) !==
@@ -113,7 +140,7 @@ export function documentFailureFromNative(error: unknown): DocumentFailure {
   };
 }
 
-function toSourceInput(target: DocumentTarget) {
+function toSourceInput(target: SpaceDocumentTarget) {
   return {
     projectPath: target.projectPath,
     spaceId: target.spaceId,

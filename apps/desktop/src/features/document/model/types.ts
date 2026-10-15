@@ -1,4 +1,5 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { ExternalOpenTarget } from "@/features/external-open";
 import type { DocxDocument } from "@silurus/ooxml/docx";
 import type { PptxPresentation } from "@silurus/ooxml/pptx";
 import type { XlsxSelectionState, XlsxWorkbook } from "@silurus/ooxml/xlsx";
@@ -18,12 +19,27 @@ export type DocumentFormat =
   | "ods"
   | "odp";
 
-export interface DocumentTarget {
+/** A file of a Space, by its path inside it. */
+export interface SpaceDocumentTarget {
+  kind?: undefined;
   projectPath: string;
   spaceId: string | null;
   spacePath: string;
   path: string;
 }
+
+/**
+ * A file by its absolute path, in or outside the project, only to view it:
+ * no Changes and no full page; its owner validates the external open.
+ */
+export interface LocalDocumentFile {
+  path: string;
+  externalOpen: ExternalOpenTarget;
+}
+
+export type DocumentTarget =
+  | SpaceDocumentTarget
+  | ({ kind: "local" } & LocalDocumentFile);
 
 export interface DocumentSourceDescriptor {
   format: DocumentFormat;
@@ -187,7 +203,9 @@ export function documentPartCount(
 }
 
 export function documentTargetKey(target: DocumentTarget) {
-  return `${normalizeRuntimePath(target.spacePath)}\0${target.path}`;
+  return target.kind === "local"
+    ? `local\0${normalizeRuntimePath(target.path)}`
+    : `${normalizeRuntimePath(target.spacePath)}\0${target.path}`;
 }
 
 export function documentFormatFromPath(path: string): DocumentFormat | null {

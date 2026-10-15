@@ -22,8 +22,12 @@ export interface CollectionDetailRequest {
   /** The "Open with" control of the object in the top bar. */
   openWith?: ReactNode;
   footerActions?: ReactNode;
-  /** An editing form keeps the narrow form width; readers get reading width. */
-  layout?: "form" | "reader";
+  /**
+   * An editing form keeps the narrow form width; readers get reading width.
+   * A surface fills the peek and draws its own top bar, as a document or
+   * media file does; identity, info and actions of the request stay unused.
+   */
+  layout?: "form" | "reader" | "surface";
   canClose?: () => boolean | Promise<boolean>;
 }
 

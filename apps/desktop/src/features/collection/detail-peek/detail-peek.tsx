@@ -101,6 +101,22 @@ export function CollectionDetailPeekFrame({
   onClose(): void;
 }) {
   const { request } = active;
+  if (request.layout === "surface") {
+    return (
+      <>
+        <SheetHeader className="sr-only">
+          <SheetTitle>{request.title}</SheetTitle>
+          <SheetDescription>{request.description}</SheetDescription>
+        </SheetHeader>
+        {diagnostic ? (
+          <div className="shrink-0 px-6 pb-3">
+            <CollectionDetailGuardAlert diagnostic={diagnostic} />
+          </div>
+        ) : null}
+        <div className="flex min-h-0 flex-1 flex-col">{request.content}</div>
+      </>
+    );
+  }
   // Forms keep the width of their fields; readers keep a readable line.
   const column = cn(
     "w-full min-w-0",
@@ -144,13 +160,7 @@ export function CollectionDetailPeekFrame({
         <div className="px-6 pb-4">
           <div className={cn("flex flex-col gap-4", column)}>
             {diagnostic ? (
-              <Alert variant="destructive">
-                <AlertCircle />
-                <AlertTitle>
-                  {m.collection_detail_guard_error_title()}
-                </AlertTitle>
-                <AlertDescription>{diagnostic}</AlertDescription>
-              </Alert>
+              <CollectionDetailGuardAlert diagnostic={diagnostic} />
             ) : null}
             {request.content}
           </div>
@@ -162,5 +172,15 @@ export function CollectionDetailPeekFrame({
         </div>
       ) : null}
     </>
+  );
+}
+
+function CollectionDetailGuardAlert({ diagnostic }: { diagnostic: string }) {
+  return (
+    <Alert variant="destructive">
+      <AlertCircle />
+      <AlertTitle>{m.collection_detail_guard_error_title()}</AlertTitle>
+      <AlertDescription>{diagnostic}</AlertDescription>
+    </Alert>
   );
 }

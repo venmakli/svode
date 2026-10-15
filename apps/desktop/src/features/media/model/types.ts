@@ -1,13 +1,29 @@
+import type { ExternalOpenTarget } from "@/features/external-open";
 import type { MediaFormatDto } from "@/platform/media/media-api";
 
 export type MediaFormat = MediaFormatDto;
 
-export interface MediaTarget {
+/** A file of a Space, by its path inside it. */
+export interface SpaceMediaTarget {
+  kind?: undefined;
   projectPath: string;
   spaceId: string | null;
   spacePath: string;
   path: string;
 }
+
+/**
+ * A file by its absolute path, in or outside the project, only to view it:
+ * no Changes and no full page; its owner validates the external open.
+ */
+export interface LocalMediaFile {
+  path: string;
+  externalOpen: ExternalOpenTarget;
+}
+
+export type MediaTarget =
+  | SpaceMediaTarget
+  | ({ kind: "local" } & LocalMediaFile);
 
 export interface MediaSourceDescriptor {
   format: MediaFormat;
@@ -88,7 +104,9 @@ export type MediaSessionState =
   | { phase: "failed"; failure: MediaFailure };
 
 export function mediaTargetKey(target: MediaTarget) {
-  return `${normalizeRuntimePath(target.spacePath)}\0${target.path}`;
+  return target.kind === "local"
+    ? `local\0${normalizeRuntimePath(target.path)}`
+    : `${normalizeRuntimePath(target.spacePath)}\0${target.path}`;
 }
 
 export function normalizeRuntimePath(value: string) {

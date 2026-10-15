@@ -30,6 +30,7 @@ import {
   normalizeRuntimePath,
   type DocumentFailure,
   type DocumentTarget,
+  type LocalDocumentFile,
 } from "../model/types";
 import { DocumentDetailsPopover } from "./document-details-popover";
 import { DocxViewer } from "../docx/docx-viewer";
@@ -41,42 +42,55 @@ export function DocumentSurface({
   changes,
   onClose,
   onOpenFullPage,
-  path,
-  projectPath,
-  spaceId,
-  spacePath,
   renderMainHeader,
+  ...source
 }: {
   /** The "Changes" of the file in the peek top bar. */
   changes?: ReactNode;
   /** Shows the document in a peek, with the peek top bar ending in ×. */
   onClose?: () => void;
   onOpenFullPage?: () => void;
-  path: string;
-  projectPath: string;
-  spaceId: string | null;
-  spacePath: string;
   /** Outside a peek, hands the top bar elements to the main header. */
   renderMainHeader?: (header: {
     objectActions?: ReactNode;
     viewTools?: ReactNode;
     openWith: OpenWithGroup;
   }) => ReactNode;
-}) {
+} & (
+  | {
+      path: string;
+      projectPath: string;
+      spaceId: string | null;
+      spacePath: string;
+    }
+  | {
+      /** A file outside the Space, only to view it; keep the same object. */
+      file: LocalDocumentFile;
+    }
+)) {
+  const file = "file" in source ? source.file : null;
+  const { path, projectPath, spaceId, spacePath } =
+    "file" in source
+      ? { path: "", projectPath: "", spaceId: null, spacePath: "" }
+      : source;
   const target = useMemo<DocumentTarget>(
-    () => ({
-      path,
-      projectPath,
-      spaceId:
-        normalizeRuntimePath(projectPath) === normalizeRuntimePath(spacePath)
-          ? null
-          : spaceId,
-      spacePath,
-    }),
-    [path, projectPath, spaceId, spacePath],
+    () =>
+      file
+        ? { kind: "local", ...file }
+        : {
+            path,
+            projectPath,
+            spaceId:
+              normalizeRuntimePath(projectPath) ===
+              normalizeRuntimePath(spacePath)
+                ? null
+                : spaceId,
+            spacePath,
+          },
+    [file, path, projectPath, spaceId, spacePath],
   );
   const session = useDocumentSession(target);
-  const title = documentDisplayName(path);
+  const title = documentDisplayName(target.path);
   const openFullPage = onOpenFullPage
     ? async () => {
         await session.prepareFullPageHandoff();

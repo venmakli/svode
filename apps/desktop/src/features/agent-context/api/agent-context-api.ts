@@ -1,6 +1,8 @@
 import {
   getAgentContext,
+  listAgentContextSkillFiles,
   listenAgentContextChanged,
+  readAgentContextSkillFile,
   refreshAgentContext,
   type AgentContextItemDto,
   type AgentContextReferenceDto,
@@ -26,6 +28,7 @@ import type {
   AgentContextItem,
   AgentContextReference,
   AgentContextSkillMetadataLeaf,
+  AgentContextSkillFile,
   AgentContextSkillMetadataValue,
   AgentContextSnapshot,
 } from "../model/types";
@@ -55,6 +58,24 @@ export function listenAgentContextInvalidation(
 /** Enabling or disabling an agent changes which sources every target reads. */
 export function listenAgentContextEnabledAgentsChanged(handler: () => void) {
   return listenAgentsEnabledChanged(handler);
+}
+
+/** The files directly inside `branch` of a skill folder; `""` is the folder. */
+export async function loadAgentContextSkillFiles(
+  itemId: string,
+  branch: string,
+): Promise<readonly AgentContextSkillFile[]> {
+  const listed = await listAgentContextSkillFiles(itemId, branch);
+  return listed.files.map((file) => Object.freeze({ ...file }));
+}
+
+/** The text of a Markdown file of a skill, bounded like a skill's body. */
+export async function loadAgentContextSkillMarkdown(
+  itemId: string,
+  path: string,
+): Promise<{ markdown: string; truncated: boolean }> {
+  const preview = await readAgentContextSkillFile(itemId, path);
+  return { markdown: preview.markdown, truncated: preview.truncated };
 }
 
 /** External open of an instruction or skill file, re-validated inside its owner root. */
@@ -116,6 +137,8 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
     ),
     skill: item.skill
       ? Object.freeze({
+          directory: item.skill.directory,
+          hasFiles: item.skill.hasFiles,
           allowedTools: item.skill.allowedTools,
           compatibility: item.skill.compatibility,
           license: item.skill.license,

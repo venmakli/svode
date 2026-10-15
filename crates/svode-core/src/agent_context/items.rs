@@ -16,6 +16,7 @@ use super::model::{
     InstructionReference, InstructionRow, SkillRow, SourceHealth, SourceLinkKind, SourceResolution,
     SourceSupport, UnappliedReason,
 };
+use super::scanner::skill_files;
 
 /// How one agent finds an item by one path.
 struct Finding {
@@ -185,6 +186,8 @@ fn skill_item(
             preview: row.preview.clone(),
             references: Vec::new(),
             skill: Some(ContextSkillFacts {
+                directory: row.canonical_path.clone(),
+                has_files: skill_files::has_skill_files(canonical),
                 license: row.license.clone(),
                 compatibility: row.compatibility.clone(),
                 metadata: row.metadata.clone(),
@@ -636,6 +639,42 @@ mod tests {
         assert_eq!(personal.providers, vec![CLAUDE]);
         assert_eq!(personal.description.as_deref(), Some("review skill"));
         assert!(personal.skill.is_some());
+    }
+
+    #[test]
+    fn a_skill_names_its_folder_and_whether_it_holds_supported_files() {
+        let fixture = Fixture::new();
+        let review = fixture.write(
+            fixture.project.path(),
+            ".agents/skills/review/SKILL.md",
+            &skill("review"),
+        );
+        fixture.write(
+            fixture.project.path(),
+            ".agents/skills/review/references/guide.md",
+            "# Guide",
+        );
+        let lint = fixture.write(
+            fixture.project.path(),
+            ".agents/skills/lint/SKILL.md",
+            &skill("lint"),
+        );
+        fixture.write(
+            fixture.project.path(),
+            ".agents/skills/lint/scripts/run.sh",
+            "echo",
+        );
+
+        let items = fixture.items(&[]);
+        let review_facts = by_path(&items, &review).skill.as_ref().unwrap();
+        let lint_facts = by_path(&items, &lint).skill.as_ref().unwrap();
+
+        assert_eq!(
+            review_facts.directory,
+            path_string(review.parent().unwrap())
+        );
+        assert!(review_facts.has_files);
+        assert!(!lint_facts.has_files);
     }
 
     #[test]

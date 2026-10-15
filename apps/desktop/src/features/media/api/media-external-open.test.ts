@@ -54,3 +54,84 @@ test("media pauses before opening in any application, not before reveal", async 
     value: previousWindow,
   });
 });
+
+test("a local file loads by its absolute path and opens through its owner's target", async () => {
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: new JSDOM("", { url: "http://localhost/" }).window,
+  });
+  const steps: string[] = [];
+  mockNativeIpc((command, args) => {
+    steps.push(`${command}:${JSON.stringify(args)}`);
+    if (command === "media_create_local_source") {
+      return {
+        animated: false,
+        capabilityToken: "token",
+        family: "image",
+        format: "png",
+        generation: "g1",
+        height: 1,
+        inlinePreview: true,
+        intrinsicOversized: false,
+        mimeType: "image/png",
+        requiresRangeRequests: false,
+        sizeBytes: 4,
+        width: 1,
+      };
+    }
+    return null;
+  });
+  (
+    window as unknown as {
+      __TAURI_INTERNALS__: {
+        convertFileSrc(path: string, protocol: string): string;
+      };
+    }
+  ).__TAURI_INTERNALS__.convertFileSrc = (path, protocol) =>
+    `${protocol}://localhost/${path}`;
+  const { checkMediaSource, loadMediaSource, subscribeMediaInvalidated } =
+    await import("./media-api");
+  const target = {
+    externalOpen: {
+      listApps: async () => [],
+      open: async (appId: string | null) => {
+        steps.push(`owner-open:${appId}`);
+      },
+      preferenceKey: "file:png",
+      reveal: async () => {
+        steps.push("owner-reveal");
+      },
+    },
+    kind: "local" as const,
+    path: "/home/user/.claude/skills/review/assets/logo.png",
+  };
+
+  const source = await loadMediaSource(target);
+  await checkMediaSource(target, "other");
+  const unlisten = await subscribeMediaInvalidated(target, () => undefined);
+  unlisten();
+  const open = mediaExternalOpenTarget(target, {
+    beforeOpen: async () => {
+      steps.push("pause");
+    },
+    onAttempt: () => steps.push("attempt"),
+  });
+  await open.open("preview");
+  await open.reveal?.();
+
+  expect(source.capabilityToken).toBe("token");
+  expect(steps).toEqual([
+    'media_create_local_source:{"path":"/home/user/.claude/skills/review/assets/logo.png"}',
+    "attempt",
+    "pause",
+    "owner-open:preview",
+    "attempt",
+    "owner-reveal",
+  ]);
+  clearNativeMocks();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: previousWindow,
+  });
+});

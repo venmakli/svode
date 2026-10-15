@@ -3,13 +3,7 @@ import { attachmentHierarchy } from "./attachment-hierarchy";
 import { useMemo } from "react";
 import { AlertTriangle, Paperclip } from "lucide-react";
 
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Empty,
   EmptyDescription,
@@ -37,6 +31,10 @@ import type {
   AttachmentOwnerPeekRenderer,
 } from "../model/types";
 import { AttachmentsPeek } from "./attachments-peek";
+import {
+  SourceError,
+  SourceRefreshDiagnostic,
+} from "./attachments-source-states";
 
 function AttachmentsOwnerSurface({
   owner,
@@ -142,48 +140,6 @@ function AttachmentsEmpty() {
         <EmptyDescription>{m.attachments_empty_description()}</EmptyDescription>
       </EmptyHeader>
     </Empty>
-  );
-}
-
-function SourceError({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry(): void | Promise<void>;
-}) {
-  return (
-    <Alert variant="destructive">
-      <AlertTriangle />
-      <AlertTitle>{m.attachments_load_error_title()}</AlertTitle>
-      <AlertDescription>{message}</AlertDescription>
-      <AlertAction>
-        <Button size="sm" variant="outline" onClick={() => void onRetry()}>
-          {m.attachments_retry()}
-        </Button>
-      </AlertAction>
-    </Alert>
-  );
-}
-
-function SourceRefreshDiagnostic({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry(): void | Promise<void>;
-}) {
-  return (
-    <Alert>
-      <AlertTriangle />
-      <AlertTitle>{m.attachments_refresh_error_title()}</AlertTitle>
-      <AlertDescription>{message}</AlertDescription>
-      <AlertAction>
-        <Button size="sm" variant="outline" onClick={() => void onRetry()}>
-          {m.attachments_retry()}
-        </Button>
-      </AlertAction>
-    </Alert>
   );
 }
 

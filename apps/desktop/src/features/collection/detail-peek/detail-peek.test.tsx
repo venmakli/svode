@@ -77,6 +77,29 @@ test("forms keep the former detail width and readers a reading width", () => {
   expect(form.includes("max-w-3xl")).toBe(false);
 });
 
+test("a surface fills the peek with its own top bar and keeps the title for screen readers", () => {
+  const markup = renderFrame(
+    {
+      ...active,
+      request: {
+        ...active.request,
+        content: <div data-own-top-bar>Media viewer</div>,
+        layout: "surface",
+      },
+    },
+    { diagnostic: "Save the actor before leaving" },
+  );
+
+  expect(markup.includes("Media viewer")).toBe(true);
+  expect(markup.includes("data-own-top-bar")).toBe(true);
+  expect(markup.includes("data-collection-detail-scroll")).toBe(false);
+  expect(markup.includes('aria-label="Close"')).toBe(false);
+  expect(markup.includes("Actor actions")).toBe(false);
+  expect(markup.includes("Save the actor before leaving")).toBe(true);
+  expect(markup.includes("sr-only")).toBe(true);
+  expect(markup.includes("Ada Lovelace")).toBe(true);
+});
+
 test("pending guard disables explicit close without removing detail content", () => {
   const markup = renderFrame(active, { pending: true });
 

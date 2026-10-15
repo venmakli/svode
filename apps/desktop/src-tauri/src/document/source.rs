@@ -11,6 +11,7 @@ use crate::AppError;
 use crate::attachments::source::resolve_registered_owner;
 use crate::files::tree::child_folder_names;
 use crate::repo_path::{RootMode, normalize_repo_relative};
+use svode_core::system_path;
 
 const PDF_SOURCE_LIMIT: u64 = 64 * 1024 * 1024;
 const DOCX_SOURCE_LIMIT: u64 = 32 * 1024 * 1024;
@@ -207,6 +208,53 @@ pub(crate) fn read_document_source(
     expected_generation: &str,
 ) -> Result<Vec<u8>, DocumentSourceError> {
     let resolved = inspect_document_source(project_path, space_id, target_path)?;
+    read_resolved_source(resolved, expected_generation)
+}
+
+/// A local file by its absolute path, read only to show it: a file of a
+/// skill outside the project (Stage 10 `05`). Like local media, only
+/// Documents by their format and within the preview limit.
+pub(crate) fn inspect_local_document_source(
+    path: &Path,
+) -> Result<ResolvedDocumentSource, DocumentSourceError> {
+    // A network share is not a local file: not even resolved, since that
+    // reaches the server.
+    if !path.is_absolute() || system_path::is_network_path(&path.to_string_lossy()) {
+        return Err(DocumentSourceError::SourceInaccessible);
+    }
+    let canonical = fs::canonicalize(path).map_err(map_io_error)?;
+    let metadata = fs::metadata(&canonical).map_err(map_io_error)?;
+    if !metadata.is_file() {
+        return Err(DocumentSourceError::SourceInaccessible);
+    }
+    let format =
+        DocumentFormat::from_path(&canonical).ok_or(DocumentSourceError::UnsupportedFormat)?;
+    if let Some(limit_bytes) = format.source_limit()
+        && metadata.len() > limit_bytes
+    {
+        return Err(DocumentSourceError::ResourceLimit {
+            limit_bytes,
+            actual_bytes: metadata.len(),
+        });
+    }
+    let descriptor = descriptor_from_metadata(format, &metadata)?;
+    Ok(ResolvedDocumentSource {
+        path: canonical,
+        descriptor,
+    })
+}
+
+pub(crate) fn read_local_document_source(
+    path: &Path,
+    expected_generation: &str,
+) -> Result<Vec<u8>, DocumentSourceError> {
+    read_resolved_source(inspect_local_document_source(path)?, expected_generation)
+}
+
+fn read_resolved_source(
+    resolved: ResolvedDocumentSource,
+    expected_generation: &str,
+) -> Result<Vec<u8>, DocumentSourceError> {
     if resolved.descriptor.generation != expected_generation {
         return Err(DocumentSourceError::SourceChanged);
     }
@@ -378,6 +426,32 @@ mod tests {
         assert!(matches!(
             inspect_document_source(temp.path(), None, "unknown.bin"),
             Err(DocumentSourceError::UnsupportedFormat)
+        ));
+    }
+
+    #[test]
+    fn local_source_reads_a_document_outside_any_project_by_its_absolute_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("template.pdf");
+        fs::write(&path, b"%PDF local").unwrap();
+        let descriptor = inspect_local_document_source(&path).unwrap().descriptor;
+        assert_eq!(descriptor.format, DocumentFormat::Pdf);
+        assert_eq!(
+            read_local_document_source(&path, &descriptor.generation).unwrap(),
+            b"%PDF local"
+        );
+        fs::write(temp.path().join("notes.txt"), b"text").unwrap();
+        assert!(matches!(
+            inspect_local_document_source(&temp.path().join("notes.txt")),
+            Err(DocumentSourceError::UnsupportedFormat)
+        ));
+        assert!(matches!(
+            inspect_local_document_source(Path::new("template.pdf")),
+            Err(DocumentSourceError::SourceInaccessible)
+        ));
+        assert!(matches!(
+            inspect_local_document_source(&temp.path().join("missing.pdf")),
+            Err(DocumentSourceError::SourceMissing)
         ));
     }
 

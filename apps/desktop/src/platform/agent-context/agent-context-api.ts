@@ -26,7 +26,7 @@ export interface AgentContextReferenceDto {
   preview: AgentContextMarkdownPreviewDto | null;
 }
 
-interface AgentContextMarkdownPreviewDto {
+export interface AgentContextMarkdownPreviewDto {
   markdown: string;
   truncated: boolean;
   bytesRead: number;
@@ -83,6 +83,10 @@ export interface AgentContextItemDto {
   preview: AgentContextMarkdownPreviewDto;
   references: AgentContextReferenceDto[];
   skill: {
+    /** The canonical skill folder. */
+    directory: string;
+    /** Whether the folder holds files Svode supports besides `SKILL.md`. */
+    hasFiles: boolean;
     license: string | null;
     compatibility: string | null;
     metadata: Record<string, AgentContextSkillMetadataValueDto> | null;
@@ -102,6 +106,25 @@ export interface AgentContextSnapshotDto {
   observedPersonalPaths: string[];
 }
 
+/** A supported file of a skill folder, or a folder holding one. */
+export interface AgentContextSkillFileDto {
+  /** The path inside the skill folder, `/`-separated. */
+  path: string;
+  canonicalPath: string;
+  name: string;
+  kind: "directory" | "markdown" | "document" | "media";
+  /** The lowercased extension; empty for a folder. */
+  format: string;
+  availability: "available" | "limited" | "external_only";
+  modifiedAt: string | null;
+  sizeBytes: number | null;
+}
+
+export interface AgentContextSkillFilesDto {
+  path: string;
+  files: AgentContextSkillFileDto[];
+}
+
 export interface AgentContextChangedEventDto {
   spacePath: string;
   paths: string[];
@@ -113,16 +136,32 @@ interface AgentContextTargetInput extends Record<string, unknown> {
 }
 
 export function getAgentContext(projectPath: string, spacePath: string) {
-  return invokeCommand<AgentContextSnapshotDto>(
-    "agent_context_get_items",
-    { projectPath, spacePath } satisfies AgentContextTargetInput,
-  );
+  return invokeCommand<AgentContextSnapshotDto>("agent_context_get_items", {
+    projectPath,
+    spacePath,
+  } satisfies AgentContextTargetInput);
 }
 
 export function refreshAgentContext(projectPath: string, spacePath: string) {
-  return invokeCommand<AgentContextSnapshotDto>(
-    "agent_context_refresh_items",
-    { projectPath, spacePath } satisfies AgentContextTargetInput,
+  return invokeCommand<AgentContextSnapshotDto>("agent_context_refresh_items", {
+    projectPath,
+    spacePath,
+  } satisfies AgentContextTargetInput);
+}
+
+/** The files directly inside `path` of a skill folder; `""` is the folder. */
+export function listAgentContextSkillFiles(itemId: string, path: string) {
+  return invokeCommand<AgentContextSkillFilesDto>(
+    "agent_context_list_skill_files",
+    { itemId, path },
+  );
+}
+
+/** The text of a Markdown file of a skill. */
+export function readAgentContextSkillFile(itemId: string, path: string) {
+  return invokeCommand<AgentContextMarkdownPreviewDto>(
+    "agent_context_read_skill_file",
+    { itemId, path },
   );
 }
 

@@ -28,6 +28,7 @@ import {
   mediaDisplayName,
   mediaFormatFromPath,
   normalizeRuntimePath,
+  type LocalMediaFile,
   type MediaFailure,
   type MediaTarget,
 } from "../model/types";
@@ -39,42 +40,55 @@ export function MediaSurface({
   changes,
   onClose,
   onOpenFullPage,
-  path,
-  projectPath,
   renderMainHeader,
-  spaceId,
-  spacePath,
+  ...source
 }: {
   /** The "Changes" of the file in the peek top bar. */
   changes?: ReactNode;
   /** Shows the media file in a peek, with the peek top bar ending in ×. */
   onClose?: () => void;
   onOpenFullPage?: () => void;
-  path: string;
-  projectPath: string;
   /** Outside a peek, hands the top bar elements to the main header. */
   renderMainHeader?: (header: {
     objectActions?: ReactNode;
     viewTools?: ReactNode;
     openWith: OpenWithGroup;
   }) => ReactNode;
-  spaceId: string | null;
-  spacePath: string;
-}) {
+} & (
+  | {
+      path: string;
+      projectPath: string;
+      spaceId: string | null;
+      spacePath: string;
+    }
+  | {
+      /** A file outside the Space, only to view it; keep the same object. */
+      file: LocalMediaFile;
+    }
+)) {
+  const file = "file" in source ? source.file : null;
+  const { path, projectPath, spaceId, spacePath } =
+    "file" in source
+      ? { path: "", projectPath: "", spaceId: null, spacePath: "" }
+      : source;
   const target = useMemo<MediaTarget>(
-    () => ({
-      path,
-      projectPath,
-      spaceId:
-        normalizeRuntimePath(projectPath) === normalizeRuntimePath(spacePath)
-          ? null
-          : spaceId,
-      spacePath,
-    }),
-    [path, projectPath, spaceId, spacePath],
+    () =>
+      file
+        ? { kind: "local", ...file }
+        : {
+            path,
+            projectPath,
+            spaceId:
+              normalizeRuntimePath(projectPath) ===
+              normalizeRuntimePath(spacePath)
+                ? null
+                : spaceId,
+            spacePath,
+          },
+    [file, path, projectPath, spaceId, spacePath],
   );
   const session = useMediaSession(target);
-  const title = mediaDisplayName(path);
+  const title = mediaDisplayName(target.path);
   const openFullPage = onOpenFullPage
     ? async () => {
         await session.prepareFullPageHandoff();
@@ -96,7 +110,9 @@ export function MediaSurface({
           <PeekIdentity
             icon={
               <MediaFamilyIcon
-                family={loadedSource?.family ?? mediaFamilyFromPath(path)}
+                family={
+                  loadedSource?.family ?? mediaFamilyFromPath(target.path)
+                }
               />
             }
             name={title}

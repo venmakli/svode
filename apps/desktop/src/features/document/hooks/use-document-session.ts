@@ -54,12 +54,8 @@ import { extractPdfText } from "../pdf/pdf-text-index";
 
 let nextSessionId = 1;
 
-export function useDocumentSession(target: DocumentTarget) {
-  const { path, projectPath, spaceId, spacePath } = target;
-  const stableTarget = useMemo(
-    () => ({ path, projectPath, spaceId, spacePath }),
-    [path, projectPath, spaceId, spacePath],
-  );
+/** The surface keeps the target the same object while it names one file. */
+export function useDocumentSession(stableTarget: DocumentTarget) {
   const [retryKey, setRetryKey] = useState(0);
   const [state, setState] = useState<DocumentSessionState>({
     phase: "loading",

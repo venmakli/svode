@@ -24,12 +24,8 @@ import {
 const MEDIA_LOAD_TIMEOUT_MS = 15_000;
 let nextSessionId = 1;
 
-export function useMediaSession(target: MediaTarget) {
-  const { path, projectPath, spaceId, spacePath } = target;
-  const stableTarget = useMemo(
-    () => ({ path, projectPath, spaceId, spacePath }),
-    [path, projectPath, spaceId, spacePath],
-  );
+/** The surface keeps the target the same object while it names one file. */
+export function useMediaSession(stableTarget: MediaTarget) {
   const targetKey = mediaTargetKey(stableTarget);
   const [retryKey, setRetryKey] = useState(0);
   const [state, setState] = useState<MediaSessionState>({

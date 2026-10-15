@@ -1,4 +1,7 @@
+import { lazy, Suspense } from "react";
 import { Braces } from "lucide-react";
+
+import { Skeleton } from "@/components/ui/skeleton";
 
 import {
   CollectionDetailHeader,
@@ -29,9 +32,15 @@ import type {
 import { AgentContextArtifactOpenWith } from "./artifact-open-with";
 import { AgentContextContentTruncatedNotice } from "./content-truncated-notice";
 import { AgentContextItemInfo } from "./detail-info";
+import { AgentContextItemTabs } from "./item-content-tabs";
 import { AgentContextItemIcon } from "./item-properties";
 
 const itemReaderPolicy: MarkdownReaderPolicy = {};
+
+// The Attachments mechanics load with the first open of a skill's files.
+const AgentContextSkillFilesTab = lazy(async () => ({
+  default: (await import("./skill-files-tab")).AgentContextSkillFilesTab,
+}));
 
 /**
  * The peek of an item: identity, ⓘ and "Open with" in the top bar; the
@@ -67,7 +76,10 @@ export function createAgentContextItemDetailContent(
   };
 }
 
-/** A skill has a page-like header; an instruction starts with its panel. */
+/**
+ * A skill has a page-like header and its content in tabs; an instruction
+ * starts with its panel, and its text follows without tabs.
+ */
 function AgentContextItemDetail({
   item,
   properties,
@@ -92,9 +104,43 @@ function AgentContextItemDetail({
         properties={properties}
         row={item}
       />
+      {item.kind === "skill" ? (
+        <AgentContextItemTabs
+          key={item.id}
+          tabs={[
+            {
+              content: item.body.trim() ? (
+                <div className="flex min-w-0 flex-col gap-4 px-6 pt-2">
+                  <ItemBody item={item} />
+                </div>
+              ) : null,
+              id: "skill",
+              label: m.agent_context_tab_skill(),
+            },
+            {
+              content: item.skill?.hasFiles ? (
+                <Suspense fallback={<Skeleton className="mx-6 mt-2 h-24" />}>
+                  <AgentContextSkillFilesTab item={item} />
+                </Suspense>
+              ) : null,
+              id: "files",
+              label: m.agent_context_tab_files(),
+            },
+          ]}
+        />
+      ) : (
+        <ItemBody item={item} />
+      )}
+    </div>
+  );
+}
+
+function ItemBody({ item }: { item: AgentContextItem }) {
+  return (
+    <>
       <AgentContextContentTruncatedNotice truncated={item.truncated} />
       <MarkdownReader content={item.body} policy={itemReaderPolicy} />
-    </div>
+    </>
   );
 }
 

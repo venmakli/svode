@@ -3,6 +3,7 @@ import {
   type ExternalOpenTarget,
 } from "@/features/external-open";
 import {
+  createLocalMediaSource,
   createMediaSource,
   listMediaExternalApps,
   listenMediaSourceInvalidated,
@@ -16,6 +17,7 @@ import type {
   MediaFailure,
   MediaSourceDescriptor,
   MediaTarget,
+  SpaceMediaTarget,
 } from "../model/types";
 import { normalizeRuntimePath } from "../model/types";
 
@@ -23,7 +25,9 @@ export async function loadMediaSource(
   target: MediaTarget,
 ): Promise<MediaSourceDescriptor> {
   try {
-    return await createMediaSource(toSourceInput(target));
+    return target.kind === "local"
+      ? await createLocalMediaSource(target.path)
+      : await createMediaSource(toSourceInput(target));
   } catch (error) {
     throw mediaFailureFromNative(error);
   }
@@ -33,6 +37,8 @@ export async function checkMediaSource(
   target: MediaTarget,
   expectedGeneration: string,
 ) {
+  // A local file has no Space to validate it in: its failure stays as seen.
+  if (target.kind === "local") return;
   try {
     await validateMediaSource({
       ...toSourceInput(target),
@@ -55,6 +61,25 @@ export function mediaExternalOpenTarget(
   target: MediaTarget,
   { beforeOpen, onAttempt }: { beforeOpen(): Promise<void>; onAttempt(): void },
 ): ExternalOpenTarget {
+  if (target.kind === "local") {
+    const { externalOpen } = target;
+    return {
+      ...externalOpen,
+      open: async (appId) => {
+        onAttempt();
+        await beforeOpen();
+        await externalOpen.open(appId);
+      },
+      ...(externalOpen.reveal
+        ? {
+            reveal: async () => {
+              onAttempt();
+              await externalOpen.reveal?.();
+            },
+          }
+        : {}),
+    };
+  }
   const input = toSourceInput(target);
   return {
     preferenceKey: filePreferenceKey(target.path),
@@ -74,7 +99,9 @@ export function mediaExternalOpenTarget(
 export function subscribeMediaInvalidated(
   target: MediaTarget,
   handler: () => void,
-) {
+): Promise<() => void> {
+  // Space events do not name files outside the Space.
+  if (target.kind === "local") return Promise.resolve(() => undefined);
   return listenMediaSourceInvalidated((event) => {
     if (
       normalizeRuntimePath(event.spacePath) !==
@@ -125,7 +152,7 @@ export function mediaFailureFromNative(error: unknown): MediaFailure {
   };
 }
 
-function toSourceInput(target: MediaTarget) {
+function toSourceInput(target: SpaceMediaTarget) {
   return {
     projectPath: target.projectPath,
     spaceId: target.spaceId,

@@ -1,4 +1,6 @@
 export { AttachmentsSurface } from "./ui/attachments-surface";
+export { AttachmentsFolderTable } from "./ui/attachments-folder-table";
+export type { AttachmentsFolder } from "./hooks/use-attachments-folder-source";
 export { attachmentOwnerFromScopeOwner } from "./model/types";
 export {
   ATTACHMENTS_PRESENTATION_ID,

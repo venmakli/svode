@@ -65,6 +65,10 @@ export type AgentContextSkillMetadataValue =
     };
 
 export interface AgentContextSkillFacts {
+  /** The canonical skill folder. */
+  directory: string;
+  /** Whether the folder holds files Svode supports besides `SKILL.md`. */
+  hasFiles: boolean;
   allowedTools: string | null;
   compatibility: string | null;
   license: string | null;
@@ -103,4 +107,17 @@ export interface AgentContextSnapshot {
   /** Agents enabled in Providers; without any, only project items show. */
   enabledAgents: readonly AgentId[];
   hasPersonalSources: boolean;
+}
+
+/** A supported file of a skill folder, or a folder holding one. */
+export interface AgentContextSkillFile {
+  /** The path inside the skill folder, `/`-separated. */
+  path: string;
+  canonicalPath: string;
+  name: string;
+  kind: "directory" | "markdown" | "document" | "media";
+  format: string;
+  availability: "available" | "limited" | "external_only";
+  modifiedAt: string | null;
+  sizeBytes: number | null;
 }

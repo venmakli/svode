@@ -83,6 +83,8 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
       providers: [],
       references: [],
       skill: {
+        directory: "/workspace/.claude/skills/review",
+        hasFiles: true,
         allowedTools: "Read Bash(git:*)",
         compatibility: null,
         license: "MIT",
