@@ -103,9 +103,19 @@ export interface AgentContextPluginDto {
   hasReadme: boolean;
 }
 
+/** How a client starts an MCP server, as declared, with secrets dropped. */
+export interface AgentContextMcpDto {
+  /** The command and its arguments, secret ones hidden; empty for a remote server. */
+  command: string[];
+  /** The URL without userinfo, query and fragment. */
+  url: string | null;
+  /** Declared in the local scope of Claude Code. */
+  projectOnly: boolean;
+}
+
 export interface AgentContextItemDto {
   id: string;
-  kind: "instruction" | "skill" | "plugin";
+  kind: "instruction" | "skill" | "plugin" | "mcp_server";
   name: string;
   description: string | null;
   path: string;
@@ -130,7 +140,8 @@ export interface AgentContextItemDto {
     allowedTools: string | null;
   } | null;
   plugin: AgentContextPluginDto | null;
-  /** A plugin's skills and instructions, with its providers and sources. */
+  mcp: AgentContextMcpDto | null;
+  /** A plugin's skills, instructions and MCP servers, with its providers and sources. */
   components: AgentContextItemDto[];
   /** The image the source declares, as a data URI. */
   icon: string | null;

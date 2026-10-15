@@ -12,10 +12,10 @@ use crate::agent_adapters::{AgentAdapterKind, SourceRegistryEnvironment};
 
 use super::model::{
     AgentContextDiscovery, AgentContextSnapshotContent, ContextItem, ContextItemKind,
-    ContextItemReader, ContextItemSource, ContextLocation, ContextLocationKind, ContextPluginFacts,
-    ContextSkillFacts, InstructionReference, InstructionRow, MarkdownPreview, PluginRow,
-    PluginSwitch, SkillRow, SourceHealth, SourceLinkKind, SourceResolution, SourceSupport,
-    UnappliedReason,
+    ContextItemReader, ContextItemSource, ContextLocation, ContextLocationKind, ContextMcpFacts,
+    ContextPluginFacts, ContextSkillFacts, InstructionReference, InstructionRow, MarkdownPreview,
+    McpServerRow, PluginRow, PluginSwitch, SkillRow, SourceHealth, SourceLinkKind,
+    SourceResolution, SourceSupport, UnappliedReason,
 };
 use super::scanner::skill_files;
 
@@ -60,6 +60,12 @@ pub(super) fn snapshot(
             .plugins
             .iter()
             .map(|row| plugin_item(row, &places, &enabled)),
+    );
+    items.extend(
+        discovery
+            .mcp_servers
+            .iter()
+            .map(|row| mcp_item(row, &places, &enabled)),
     );
     items.sort_by(|left, right| {
         left.name
@@ -169,6 +175,7 @@ fn instruction_items(
                     references,
                     skill: None,
                     plugin: None,
+                    mcp: None,
                     icon: None,
                     managed_by_svode: false,
                 },
@@ -224,6 +231,7 @@ fn skill_facts(row: &SkillRow, id: String, places: &Places) -> ItemFacts {
             allowed_tools: row.allowed_tools.clone(),
         }),
         plugin: None,
+        mcp: None,
         icon: None,
         managed_by_svode: places.managed_by_svode(canonical),
     }
@@ -264,12 +272,7 @@ fn plugin_item(
             owner_root: row.owner_root.clone(),
             health: row.health,
             health_reasons: row.health_reasons.clone(),
-            preview: row.readme.clone().unwrap_or(MarkdownPreview {
-                markdown: String::new(),
-                truncated: false,
-                bytes_read: 0,
-                total_bytes: 0,
-            }),
+            preview: row.readme.clone().unwrap_or_else(empty_preview),
             references: Vec::new(),
             skill: None,
             plugin: Some(ContextPluginFacts {
@@ -279,6 +282,7 @@ fn plugin_item(
                 counts: row.counts.clone(),
                 has_readme: row.readme.is_some(),
             }),
+            mcp: None,
             icon: row.icon.clone(),
             managed_by_svode,
         },
@@ -322,6 +326,7 @@ fn plugin_item(
                 references: Vec::new(),
                 skill: None,
                 plugin: None,
+                mcp: None,
                 icon: None,
                 managed_by_svode,
             },
@@ -329,8 +334,98 @@ fn plugin_item(
             enabled,
         ))
     }));
+    // A server the plugin's file declares off applies nowhere.
+    components.extend(row.mcp_servers.iter().map(|server| {
+        let mut component = nested(item(
+            ItemFacts {
+                id: format!("{}#mcp:{}:{}", row.id, server.path, server.name),
+                kind: ContextItemKind::McpServer,
+                name: server.name.clone(),
+                description: row.description.clone(),
+                location: location.clone(),
+                modified_at: modified_at(Path::new(&server.path)),
+                path: server.path.clone(),
+                owner_root: row.owner_root.clone(),
+                health: if server.problems.is_empty() {
+                    SourceHealth::Normal
+                } else {
+                    SourceHealth::Degraded
+                },
+                health_reasons: server.problems.clone(),
+                preview: empty_preview(),
+                references: Vec::new(),
+                skill: None,
+                plugin: None,
+                mcp: Some(server.facts.clone()),
+                icon: None,
+                managed_by_svode,
+            },
+            Vec::new(),
+            enabled,
+        ));
+        if server.declared_off && !component.providers.is_empty() {
+            component.providers.clear();
+            component.unapplied = Some(UnappliedReason::Disabled);
+        }
+        component
+    }));
     plugin.components = components;
     plugin
+}
+
+/// One declaration of an MCP server: it lies in its config file, which it
+/// opens; nothing but its facts is shown.
+fn mcp_item(
+    row: &McpServerRow,
+    places: &Places,
+    enabled: &BTreeSet<AgentAdapterKind>,
+) -> ContextItem {
+    let findings = row
+        .findings
+        .iter()
+        .map(|finding| Finding {
+            agent: finding.adapter_id,
+            path: finding.path.clone(),
+            target: (finding.link_kind != SourceLinkKind::Direct).then(|| row.path.clone()),
+            link_kind: finding.link_kind,
+            superseded_by: finding.superseded_by.clone(),
+            disabled: finding.disabled,
+            unverified: false,
+        })
+        .collect();
+    let path = Path::new(&row.path);
+    item(
+        ItemFacts {
+            id: row.id.clone(),
+            kind: ContextItemKind::McpServer,
+            name: row.name.clone(),
+            description: None,
+            location: places.location(path),
+            modified_at: modified_at(path),
+            path: row.path.clone(),
+            owner_root: path_string(path.parent().unwrap_or(path)),
+            health: row.health,
+            health_reasons: row.health_reasons.clone(),
+            preview: empty_preview(),
+            references: Vec::new(),
+            skill: None,
+            plugin: None,
+            mcp: Some(row.facts.clone()),
+            icon: None,
+            managed_by_svode: places.managed_by_svode(path) || places.svode_command(&row.facts),
+        },
+        findings,
+        enabled,
+    )
+}
+
+fn empty_preview() -> MarkdownPreview {
+    MarkdownPreview {
+        markdown: String::new(),
+        truncated: false,
+        bytes_read: 0,
+        total_bytes: 0,
+    }
 }
 
 struct ItemFacts {
@@ -348,6 +443,7 @@ struct ItemFacts {
     references: Vec<InstructionReference>,
     skill: Option<ContextSkillFacts>,
     plugin: Option<ContextPluginFacts>,
+    mcp: Option<ContextMcpFacts>,
     icon: Option<String>,
     managed_by_svode: bool,
 }
@@ -437,6 +533,7 @@ fn item(
         references: facts.references,
         skill: facts.skill,
         plugin: facts.plugin,
+        mcp: facts.mcp,
         components: Vec::new(),
         icon: facts.icon,
         managed_by_svode: facts.managed_by_svode,
@@ -480,6 +577,21 @@ impl Places {
         self.svode_home
             .as_ref()
             .is_some_and(|svode| canonical.starts_with(svode))
+    }
+
+    /// An MCP server the connection manager declares starts the launcher in
+    /// the stable Svode folder.
+    fn svode_command(&self, facts: &ContextMcpFacts) -> bool {
+        let Some(command) = facts.command.first() else {
+            return false;
+        };
+        let command = Path::new(command);
+        command.is_absolute()
+            && self.managed_by_svode(
+                &command
+                    .canonicalize()
+                    .unwrap_or_else(|_| command.to_path_buf()),
+            )
     }
 
     /// A short path: inside the repository boundary from the target root, in

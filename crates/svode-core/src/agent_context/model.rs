@@ -251,6 +251,7 @@ pub struct AgentContextDiscovery {
     pub instructions: Vec<InstructionRow>,
     pub skills: Vec<SkillRow>,
     pub plugins: Vec<PluginRow>,
+    pub mcp_servers: Vec<McpServerRow>,
     pub diagnostics: Vec<AgentContextDiagnostic>,
     pub observed_project_paths: Vec<String>,
     pub observed_personal_paths: Vec<String>,
@@ -359,10 +360,67 @@ pub struct PluginRow {
     pub readme: Option<MarkdownPreview>,
     pub skills: Vec<SkillRow>,
     pub instructions: Vec<PluginInstruction>,
+    pub mcp_servers: Vec<PluginMcpServer>,
     pub counts: Vec<PluginComponentCount>,
     pub health: SourceHealth,
     pub health_reasons: Vec<String>,
     pub findings: Vec<PluginFinding>,
+}
+
+/// How a client starts an MCP server, as its declaration says, with secrets
+/// dropped while parsing: no `env`, headers or references to variables.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextMcpFacts {
+    /// The command and its arguments; an argument of a flag or key that
+    /// names a token, key, secret, password or auth is hidden. Empty for a
+    /// remote server.
+    pub command: Vec<String>,
+    /// The URL of a remote server without userinfo, query and fragment.
+    pub url: Option<String>,
+    /// Declared in the local scope of Claude Code: only for this project.
+    pub project_only: bool,
+}
+
+/// An MCP server a plugin declares in its manifest or MCP file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginMcpServer {
+    pub name: String,
+    /// The file that declares it.
+    pub path: String,
+    pub facts: ContextMcpFacts,
+    /// `enabled: false` or `disabled: true` of the declaration.
+    pub declared_off: bool,
+    pub problems: Vec<String>,
+}
+
+/// How one agent finds an MCP server declaration by one path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpFinding {
+    pub adapter_id: AgentAdapterKind,
+    pub path: String,
+    pub link_kind: SourceLinkKind,
+    /// The agent has the server off.
+    pub disabled: bool,
+    /// The file whose server of the same name the agent takes instead.
+    pub superseded_by: Option<String>,
+}
+
+/// One declaration of an MCP server in one config file, whichever agents
+/// read the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerRow {
+    pub id: String,
+    pub name: String,
+    /// The canonical config file that declares it.
+    pub path: String,
+    pub facts: ContextMcpFacts,
+    pub health: SourceHealth,
+    pub health_reasons: Vec<String>,
+    pub findings: Vec<McpFinding>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,6 +429,7 @@ pub enum ContextItemKind {
     Instruction,
     Skill,
     Plugin,
+    McpServer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -384,8 +443,9 @@ pub enum ContextLocationKind {
     Absolute,
 }
 
-/// Where an item lies: the folder of its canonical file, or the folder that
-/// holds its skill directory.
+/// Where an item lies: the folder of its canonical file, the folder that
+/// holds its skill directory, or the config file that declares an MCP
+/// server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextLocation {
@@ -465,8 +525,9 @@ pub struct ContextItem {
     pub kind: ContextItemKind,
     pub name: String,
     pub description: Option<String>,
-    /// The file the item opens: the instruction, `SKILL.md`, or a
-    /// plugin's manifest, module or declaring config.
+    /// The file the item opens: the instruction, `SKILL.md`, a plugin's
+    /// manifest, module or declaring config, or the config that declares an
+    /// MCP server.
     pub path: String,
     /// The root an external open re-validates the file against.
     pub owner_root: String,
@@ -483,8 +544,9 @@ pub struct ContextItem {
     pub references: Vec<InstructionReference>,
     pub skill: Option<ContextSkillFacts>,
     pub plugin: Option<ContextPluginFacts>,
-    /// The nested rows of a plugin: its skills and instructions, with the
-    /// plugin's providers and sources.
+    pub mcp: Option<ContextMcpFacts>,
+    /// The nested rows of a plugin: its skills, instructions and MCP
+    /// servers, with the plugin's providers and sources.
     pub components: Vec<ContextItem>,
     /// The image the source declares, as a data URI.
     pub icon: Option<String>,

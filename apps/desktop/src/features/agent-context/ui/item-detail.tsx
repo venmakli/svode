@@ -19,6 +19,7 @@ import {
   type MarkdownReaderPolicy,
 } from "@/shared/ui/markdown-reader";
 
+import { agentContextMcpCommandText } from "../model/mcp-server";
 import {
   skillMetadataObjectLines,
   sortedSkillMetadata,
@@ -26,6 +27,7 @@ import {
 } from "../model/skill-frontmatter";
 import type {
   AgentContextItem,
+  AgentContextMcpFacts,
   AgentContextPluginManifest,
   AgentContextSkillFacts,
   AgentContextSkillMetadataValue,
@@ -34,7 +36,10 @@ import { AgentContextArtifactOpenWith } from "./artifact-open-with";
 import { AgentContextContentTruncatedNotice } from "./content-truncated-notice";
 import { AgentContextItemInfo } from "./detail-info";
 import { AgentContextItemTabs } from "./item-content-tabs";
-import { AgentContextItemIcon } from "./item-properties";
+import {
+  AgentContextItemIcon,
+  agentContextItemDescription,
+} from "./item-properties";
 import {
   AgentContextPluginCodeComponents,
   AgentContextPluginComponentsTab,
@@ -78,7 +83,7 @@ export function createAgentContextItemDetailContent(
     description:
       item.kind === "instruction"
         ? m.agent_context_detail_description()
-        : (item.description ?? ""),
+        : (agentContextItemDescription(item) ?? ""),
     identity: {
       icon: <AgentContextItemIcon item={item} />,
       name: item.name,
@@ -96,7 +101,8 @@ export function createAgentContextItemDetailContent(
 
 /**
  * A skill and a plugin have a page-like header and their content in tabs;
- * an instruction starts with its panel, and its text follows without tabs.
+ * an instruction starts with its panel, and its text follows without tabs;
+ * an MCP server ends with its panel.
  */
 function AgentContextItemDetail({
   createContent,
@@ -116,6 +122,7 @@ function AgentContextItemDetail({
   if (item.plugin?.manifest) {
     factGroups.push(pluginManifestFacts(item.plugin.manifest));
   }
+  if (item.mcp) factGroups.push(mcpServerFacts(item.mcp));
   if (item.managedBySvode && onOpenProviders) {
     factGroups.push(svodeIntegrationFacts(onOpenProviders));
   }
@@ -126,7 +133,7 @@ function AgentContextItemDetail({
     >
       {item.kind !== "instruction" ? (
         <CollectionDetailHeader
-          description={item.description}
+          description={agentContextItemDescription(item)}
           icon={<AgentContextItemIcon item={item} />}
           title={item.name}
         />
@@ -184,9 +191,9 @@ function AgentContextItemDetail({
             },
           ]}
         />
-      ) : (
+      ) : item.kind === "instruction" ? (
         <ItemBody item={item} />
-      )}
+      ) : null}
     </div>
   );
 }
@@ -264,6 +271,43 @@ export function pluginManifestFacts(
     ],
     key: "plugin-manifest",
     label: m.agent_context_plugin_facts_group({ file: manifest.file }),
+  };
+}
+
+/**
+ * The command with its arguments or the URL, in full; the local scope of
+ * Claude Code says the server is only for this project.
+ */
+export function mcpServerFacts(
+  mcp: AgentContextMcpFacts,
+): CollectionPropertyFactGroup {
+  return {
+    facts: [
+      mcp.command.length > 0
+        ? {
+            key: "command",
+            label: m.agent_context_mcp_command(),
+            value: {
+              code: agentContextMcpCommandText(mcp.command),
+              kind: "code",
+            },
+          }
+        : {
+            key: "url",
+            label: m.agent_context_mcp_url(),
+            value: { code: mcp.url, kind: "code" },
+          },
+      {
+        key: "scope",
+        label: m.agent_context_mcp_scope(),
+        value: {
+          kind: "text",
+          text: mcp.projectOnly ? m.agent_context_mcp_project_only() : null,
+        },
+      },
+    ],
+    key: "mcp-server",
+    label: m.agent_context_mcp_facts_group(),
   };
 }
 

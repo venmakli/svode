@@ -112,3 +112,27 @@ test("plugin manifests and the plugin registries of the agents form their own gr
     ["plugins", ["claude_plugin_registry_parse", "plugin_manifest_parse"]],
   ]);
 });
+
+test("MCP config diagnostics form their own group after plugins", () => {
+  const groups = buildAgentContextDiagnosticReadModel({
+    diagnostics: [
+      {
+        adapterId: "claude-code",
+        code: "mcp_config_parse",
+        message: "Could not parse the MCP servers of /workspace/.mcp.json",
+        path: "/workspace/.mcp.json",
+        severity: "warning",
+      },
+      {
+        adapterId: "claude-code",
+        code: "plugin_manifest_parse",
+        message: "Could not parse plugin manifest /kit/plugin.json",
+        path: "/kit/plugin.json",
+        severity: "warning",
+      },
+    ],
+    refreshError: null,
+  });
+
+  expect(groups.map((group) => group.id)).toEqual(["plugins", "mcp_servers"]);
+});

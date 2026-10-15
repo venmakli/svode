@@ -1,7 +1,7 @@
 //! The Grok Build config, TOML (E02, Grok Build 1.0.46): its compatibility
-//! cells, `[skills] paths` and `ignore`, and `[plugins] enabled`,
-//! `disabled` and `paths`. Only those keys are kept: the config also holds
-//! API keys.
+//! cells, `[skills] paths` and `ignore`, `[plugins] enabled`, `disabled`
+//! and `paths`, and `disabled_mcp_servers`. Only those keys are kept: the
+//! config also holds API keys.
 
 use std::collections::BTreeSet;
 use std::io::Read;
@@ -35,6 +35,8 @@ pub(super) struct Config {
     pub plugins_disabled: Vec<String>,
     /// `[plugins] paths`: more plugin folders, on unless disabled.
     pub plugin_paths: Vec<PathBuf>,
+    /// `disabled_mcp_servers`: MCP servers Grok skips, of every source.
+    pub mcp_disabled: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -45,6 +47,8 @@ struct ConfigFile {
     skills: SkillsFile,
     #[serde(default)]
     plugins: PluginsFile,
+    #[serde(default)]
+    disabled_mcp_servers: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -69,6 +73,7 @@ struct CompatFile {
 struct CellsFile {
     agents: Option<bool>,
     skills: Option<bool>,
+    mcps: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -112,6 +117,16 @@ pub(super) fn config(
             GrokSurface::Skills,
             file.compat.cursor.skills,
         ),
+        (
+            GrokVendor::Claude,
+            GrokSurface::Mcps,
+            file.compat.claude.mcps,
+        ),
+        (
+            GrokVendor::Cursor,
+            GrokSurface::Mcps,
+            file.compat.cursor.mcps,
+        ),
     ];
     let switched_off = cells
         .into_iter()
@@ -144,6 +159,7 @@ pub(super) fn config(
             plugins_enabled: file.plugins.enabled,
             plugins_disabled: file.plugins.disabled,
             plugin_paths: file.plugins.paths.iter().filter_map(expand).collect(),
+            mcp_disabled: file.disabled_mcp_servers,
         },
         result,
     )

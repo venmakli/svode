@@ -18,6 +18,7 @@ import {
   createAgentContextPresentation,
 } from "./context-presentations";
 import {
+  agentContextItemDescription,
   agentContextLocationLabel,
   createAgentContextItemProperties,
 } from "./item-properties";
@@ -43,6 +44,7 @@ function item(overrides: Partial<AgentContextItem>): AgentContextItem {
     name: "AGENTS.md",
     ownerPath: "/workspace",
     path: "/workspace/AGENTS.md",
+    mcp: null,
     plugin: null,
     providers: ["codex"],
     references: [],
@@ -190,12 +192,13 @@ test("one set of properties in the column order of the contract", () => {
   }
 });
 
-test("presets are layouts over the one set: All, Instructions, Skills and Plugins", () => {
+test("presets are layouts over the one set: All, Instructions, Skills, Plugins and MCP servers", () => {
   expect(AGENT_CONTEXT_PRESETS).toEqual([
     "all",
     "instructions",
     "skills",
     "plugins",
+    "mcp_servers",
   ]);
   const rowsOf = (id: (typeof AGENT_CONTEXT_PRESETS)[number]) =>
     applyCollectionQuery({
@@ -343,4 +346,83 @@ test("Providers show agent icons, an empty value names its reason", () => {
 
   expect(value("health", spaceAgents)).toBe("");
   expect(value("health", shadowed).includes("Has problems")).toBe(true);
+});
+
+test("MCP servers are a List of top-level declarations described by their transport", () => {
+  const local = item({
+    id: "mcp:/workspace/.mcp.json#github",
+    kind: "mcp_server",
+    location: { kind: "target", path: ".mcp.json" },
+    mcp: {
+      command: ["npx", "-y", "@modelcontextprotocol/server-github"],
+      projectOnly: false,
+      url: null,
+    },
+    name: "github",
+    path: "/workspace/.mcp.json",
+  });
+  const remote = item({
+    id: "mcp:/home/user/.claude.json#docs",
+    kind: "mcp_server",
+    location: { kind: "home", path: ".claude.json" },
+    mcp: {
+      command: [],
+      projectOnly: false,
+      url: "https://docs.example.com/mcp",
+    },
+    name: "docs",
+    path: "/home/user/.claude.json",
+  });
+  const nested = item({
+    description: "Team kit",
+    id: "plugin:/kit#mcp:/kit/.mcp.json:db",
+    kind: "mcp_server",
+    mcp: { command: ["db-mcp"], projectOnly: false, url: null },
+    name: "db",
+  });
+  const withPlugin = item({
+    components: [nested],
+    id: "plugin:/kit",
+    kind: "plugin",
+    name: "kit",
+  });
+  const rows = [spaceAgents, local, remote, withPlugin];
+  const runtime = createAgentContextPresentation({
+    id: "mcp_servers",
+    properties,
+    state: { phase: "ready", rows },
+  }) as unknown as {
+    instance: {
+      descriptor: CollectionPresentationDescriptor<AgentContextItem>;
+    };
+  };
+  const descriptor = runtime.instance.descriptor;
+  const layout = descriptor.layout;
+  if (layout.kind !== "list") throw new Error("list");
+  expect(layout.visibleProperties).toEqual(["location", "providers", "health"]);
+  // A server of a plugin is its component, not a row of the preset.
+  expect(
+    applyCollectionQuery({
+      descriptor,
+      query: EMPTY_COLLECTION_QUERY,
+      rows,
+    }).rows.map((row) => row.id),
+  ).toEqual([remote.id, local.id]);
+  expect(agentContextItemDescription(local)).toBe(
+    "Local server · @modelcontextprotocol/server-github",
+  );
+  expect(agentContextItemDescription(remote)).toBe(
+    "Remote server · docs.example.com",
+  );
+  expect(agentContextItemDescription(nested)).toBe("Team kit");
+  expect(value("type", local).includes(">MCP server<")).toBe(true);
+  expect(value("type", local).includes("--property-green")).toBe(true);
+  // The command is searchable.
+  expect(
+    applyCollectionQuery({
+      descriptor,
+      query: { ...EMPTY_COLLECTION_QUERY, search: "server-github" },
+      rows,
+    }).rows.map((row) => row.id),
+  ).toEqual([local.id]);
 });

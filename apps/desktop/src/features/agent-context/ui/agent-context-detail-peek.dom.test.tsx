@@ -106,6 +106,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     components: [],
     icon: null,
     managedBySvode: false,
+    mcp: null,
     plugin: null,
   };
   const skill: AgentContextItem = {
@@ -149,6 +150,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     components: [],
     icon: null,
     managedBySvode: false,
+    mcp: null,
     plugin: null,
   };
 
@@ -1004,6 +1006,169 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
     expect(openedProviders).toBe(before + 1);
+
+    await act(async () => {
+      root?.unmount();
+      await settle();
+    });
+  });
+
+  test("an MCP server peek ends with its panel: transport, full command, details", async () => {
+    const env = await setup();
+    let controller: CollectionDetailController | null = null;
+    function CaptureController() {
+      controller = env.useCollectionDetailController();
+      return null;
+    }
+    let root: Root | null = null;
+    await act(async () => {
+      root = createRoot(doc.getElementById("app")!);
+      root.render(
+        <env.TooltipProvider>
+          <CaptureController />
+          <env.CollectionDetailPeekHost />
+        </env.TooltipProvider>,
+      );
+      await settle();
+    });
+    async function open(item: AgentContextItem) {
+      await act(async () => {
+        await controller!.open({
+          ...env.detail(item),
+          selection: {
+            instanceKey: "agent-context:space:root",
+            presentationId: "mcp_servers",
+            rowId: item.id,
+          },
+        });
+        await settle();
+      });
+    }
+    const longCommand = [
+      "npx",
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      ...Array.from(
+        { length: 12 },
+        (_, index) => `/workspace/very/long/folder-${index}`,
+      ),
+      "--api-key",
+      "••••",
+    ];
+    const server: AgentContextItem = {
+      ...instruction,
+      body: "",
+      id: "mcp:/home/user/.claude.json#projects:/workspace#files",
+      kind: "mcp_server",
+      location: { kind: "home", path: ".claude.json" },
+      mcp: { command: longCommand, projectOnly: true, url: null },
+      name: "files",
+      ownerPath: "/home/user",
+      path: "/home/user/.claude.json",
+      providers: [],
+      sources: [
+        {
+          path: "/home/user/.claude.json",
+          readers: [
+            {
+              agent: "claude-code",
+              disabled: true,
+              supersededBy: null,
+              unverified: false,
+            },
+          ],
+          target: null,
+        },
+      ],
+      unapplied: { kind: "disabled" },
+    };
+
+    await open(server);
+    const detail = doc.querySelector<HTMLElement>(
+      '[data-agent-context-item-detail="mcp_server"]',
+    )!;
+    expect(
+      detail.textContent?.includes(
+        "Local server · @modelcontextprotocol/server-filesystem",
+      ),
+    ).toBe(true);
+    expect(
+      doc.querySelector('[data-collection-panel-fact-group="mcp-server"]')
+        ?.textContent,
+    ).toBe("Configuration");
+    const command = doc.querySelector<HTMLElement>(
+      '[data-collection-panel-fact="command"]',
+    )!;
+    // The whole command, in monospace, wrapping.
+    expect(command.textContent?.includes(longCommand.join(" "))).toBe(true);
+    const code = command.querySelector("code")!;
+    expect(code.className.includes("font-mono")).toBe(true);
+    expect(code.className.includes("truncate")).toBe(false);
+    expect(
+      doc
+        .querySelector('[data-collection-panel-fact="scope"]')
+        ?.textContent?.includes("Only for this project"),
+    ).toBe(true);
+    // Nothing below the panel: no tabs, no body.
+    expect(doc.querySelector("[data-agent-context-item-tabs]")).toBe(null);
+    expect(detail.querySelector("[data-markdown-reader]")).toBe(null);
+    expect(
+      detail.textContent?.includes(
+        "Turned off in the config of the enabled agents that find it",
+      ),
+    ).toBe(true);
+    expect(
+      topBar().querySelector("[data-external-open-primary]") !== null,
+    ).toBe(true);
+    await act(async () => {
+      topBar()
+        .querySelector<HTMLButtonElement>(
+          "[data-collection-detail-info-trigger]",
+        )!
+        .click();
+      await settle();
+    });
+    const info = doc.querySelector<HTMLElement>(
+      "[data-collection-detail-info]",
+    )!;
+    expect(info.textContent?.includes("MCP server details")).toBe(true);
+    expect(
+      [...info.querySelectorAll("[data-agent-context-readers]")].map(
+        (readers) => readers.textContent,
+      ),
+    ).toEqual(["Claude Code · turned off"]);
+
+    // A remote server: its domain and URL.
+    await act(async () => {
+      dom.window.document.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "Escape",
+        }),
+      );
+      await settle();
+    });
+    await open({
+      ...server,
+      id: "mcp:/workspace/.mcp.json#docs",
+      mcp: {
+        command: [],
+        projectOnly: false,
+        url: "https://docs.example.com/mcp",
+      },
+      name: "docs",
+    });
+    expect(
+      doc
+        .querySelector('[data-agent-context-item-detail="mcp_server"]')
+        ?.textContent?.includes("Remote server · docs.example.com"),
+    ).toBe(true);
+    expect(
+      doc.querySelector('[data-collection-panel-fact="url"]')?.textContent,
+    ).toBe("URLhttps://docs.example.com/mcp");
+    expect(doc.querySelector('[data-collection-panel-fact="scope"]')).toBe(
+      null,
+    );
 
     await act(async () => {
       root?.unmount();

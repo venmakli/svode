@@ -6,6 +6,8 @@ mod grok;
 mod hermes;
 mod io;
 mod kimi;
+mod mcp;
+mod mcp_config;
 mod opencode;
 mod pi;
 mod plugin_folder;
@@ -25,8 +27,8 @@ use crate::agent_adapters::{
 use super::model::{
     AgentContextDiagnostic, AgentContextDiscovery, AgentContextSnapshotContent,
     InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
-    InstructionRow, InstructionSourceKind, PluginRow, SkillRow, SourceHealth, SourceResolution,
-    SourceSupport,
+    InstructionRow, InstructionSourceKind, McpServerRow, PluginRow, SkillRow, SourceHealth,
+    SourceResolution, SourceSupport,
 };
 use io::{inspect, path_string};
 
@@ -38,6 +40,7 @@ pub(super) struct DiscoveryResult {
     rows: Vec<InstructionRow>,
     skills: Vec<SkillRow>,
     plugins: Vec<PluginRow>,
+    mcp_servers: Vec<McpServerRow>,
     diagnostics: Vec<AgentContextDiagnostic>,
     observed_project_paths: Vec<String>,
     observed_personal_paths: Vec<String>,
@@ -48,6 +51,7 @@ impl DiscoveryResult {
         self.rows.append(&mut other.rows);
         self.skills.append(&mut other.skills);
         self.plugins.append(&mut other.plugins);
+        self.mcp_servers.append(&mut other.mcp_servers);
         self.diagnostics.append(&mut other.diagnostics);
         self.observed_project_paths
             .append(&mut other.observed_project_paths);
@@ -147,6 +151,13 @@ pub fn discover(
         environment,
         &grok,
     ));
+    result.append(mcp::discover(
+        &places,
+        &adapters,
+        global_agents,
+        environment,
+        &grok,
+    ));
 
     result.rows.sort_by(|left, right| {
         row_sort_key(left)
@@ -180,6 +191,7 @@ pub fn discover(
         instructions: result.rows,
         skills: result.skills,
         plugins: result.plugins,
+        mcp_servers: result.mcp_servers,
         diagnostics: result.diagnostics,
         observed_project_paths: result.observed_project_paths,
         observed_personal_paths: result.observed_personal_paths,

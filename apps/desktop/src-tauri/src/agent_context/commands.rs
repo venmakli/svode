@@ -202,6 +202,7 @@ mod tests {
                 allowed_tools: None,
             }),
             plugin: None,
+            mcp: None,
             components: Vec::new(),
             icon: None,
             managed_by_svode: false,

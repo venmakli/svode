@@ -196,6 +196,19 @@ pub(super) fn read_config_text(
     label: &str,
     diagnostics: &mut Vec<AgentContextDiagnostic>,
 ) -> Option<String> {
+    read_config_text_within(path, CONFIG_BYTES, adapter_id, code, label, diagnostics)
+}
+
+/// [`read_config_text`] for a file that may grow larger, such as the global
+/// config of Claude Code, which also keeps the history of its projects.
+pub(super) fn read_config_text_within(
+    path: &Path,
+    limit: u64,
+    adapter_id: Option<AgentAdapterKind>,
+    code: &str,
+    label: &str,
+    diagnostics: &mut Vec<AgentContextDiagnostic>,
+) -> Option<String> {
     let mut failed = |suffix: &str, message: String| {
         diagnostics.push(diagnostic(
             path,
@@ -211,13 +224,16 @@ pub(super) fn read_config_text(
         Err(error) => return failed("read", format!("Could not read {label}: {}", error.kind())),
     };
     let mut bytes = Vec::new();
-    if let Err(error) = file.take(CONFIG_BYTES + 1).read_to_end(&mut bytes) {
+    if let Err(error) = file.take(limit + 1).read_to_end(&mut bytes) {
         return failed("read", format!("Could not read {label}: {}", error.kind()));
     }
-    if bytes.len() as u64 > CONFIG_BYTES {
+    if bytes.len() as u64 > limit {
         return failed(
             "limit",
-            format!("{label} exceeds the supported 256 KiB scan limit"),
+            format!(
+                "{label} exceeds the supported {} KiB scan limit",
+                limit / 1024
+            ),
         );
     }
     match String::from_utf8(bytes) {

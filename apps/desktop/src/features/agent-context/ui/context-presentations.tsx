@@ -2,6 +2,7 @@ import {
   FileText,
   Layers,
   Puzzle,
+  Server,
   Sparkles,
   TriangleAlert,
 } from "lucide-react";
@@ -28,10 +29,12 @@ import {
 import type { CollectionPropertyDefinition } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
+import { agentContextMcpCommandText } from "../model/mcp-server";
 import type { AgentContextItem, AgentContextItemKind } from "../model/types";
 import { agentContextHealthWarnings } from "./health-property";
 import {
   AgentContextItemIcon,
+  agentContextItemDescription,
   agentContextItemKindLabel,
   agentContextLocationLabel,
 } from "./item-properties";
@@ -42,12 +45,18 @@ export const AGENT_CONTEXT_PRESETS = [
   "instructions",
   "skills",
   "plugins",
+  "mcp_servers",
 ] as const;
 export type AgentContextPresetId = (typeof AGENT_CONTEXT_PRESETS)[number];
 
 const presetKinds: Readonly<
   Record<Exclude<AgentContextPresetId, "all">, AgentContextItemKind>
-> = { instructions: "instruction", plugins: "plugin", skills: "skill" };
+> = {
+  instructions: "instruction",
+  mcp_servers: "mcp_server",
+  plugins: "plugin",
+  skills: "skill",
+};
 
 /** Which plugins of "All" show their components. */
 export interface AgentContextExpansion {
@@ -73,53 +82,7 @@ export function createAgentContextPresentation({
       getRowId: (item) => item.id,
       id,
       label: presetLabel(id),
-      layout:
-        id === "all"
-          ? {
-              density: "compact",
-              ...(expansion
-                ? { hierarchy: agentContextPluginHierarchy(expansion) }
-                : {}),
-              kind: "table",
-              primaryProperty: "name",
-              renderLeading: (item) => (
-                <AgentContextItemIcon
-                  className="size-4 text-muted-foreground"
-                  item={item}
-                />
-              ),
-              visibleProperties: [
-                "name",
-                "type",
-                "providers",
-                "health",
-                "location",
-                "modified",
-              ],
-            }
-          : {
-              cardSize: "medium",
-              density: "compact",
-              ...(id === "skills" || id === "plugins"
-                ? {
-                    getDescription: (item: AgentContextItem) => (
-                      <span className="line-clamp-3 leading-relaxed">
-                        {item.description}
-                      </span>
-                    ),
-                  }
-                : {}),
-              getTitle: (item) => item.name,
-              kind: "gallery",
-              renderLeading: (item) => (
-                <AgentContextItemIcon
-                  className="size-4 text-muted-foreground"
-                  item={item}
-                />
-              ),
-              renderOverlays: (item) => <ItemProblemsMarker item={item} />,
-              visibleProperties: ["location", "providers"],
-            },
+      layout: presetLayout(id, expansion),
       onActivate,
       properties,
       query: {
@@ -134,9 +97,11 @@ export function createAgentContextPresentation({
         getSearchText: (item) =>
           [
             item.name,
-            item.description ?? "",
+            agentContextItemDescription(item) ?? "",
             agentContextItemKindLabel(item.kind),
             agentContextLocationLabel(item.location),
+            agentContextMcpCommandText(item.mcp?.command ?? []),
+            item.mcp?.url ?? "",
             ...item.components.map((component) => component.name),
           ].join(" "),
         getSortTieBreakId: (item) => item.id,
@@ -144,6 +109,73 @@ export function createAgentContextPresentation({
     },
     state,
   });
+}
+
+/**
+ * "All" is a Table whose plugins expand; Instructions, Skills and Plugins
+ * are Galleries; MCP servers a List described by their transport.
+ */
+function presetLayout(
+  id: AgentContextPresetId,
+  expansion: AgentContextExpansion | undefined,
+): CollectionPresentationLayout<AgentContextItem> {
+  const renderLeading = (item: AgentContextItem) => (
+    <AgentContextItemIcon
+      className="size-4 text-muted-foreground"
+      item={item}
+    />
+  );
+  if (id === "all") {
+    return {
+      density: "compact",
+      ...(expansion
+        ? { hierarchy: agentContextPluginHierarchy(expansion) }
+        : {}),
+      kind: "table",
+      primaryProperty: "name",
+      renderLeading,
+      visibleProperties: [
+        "name",
+        "type",
+        "providers",
+        "health",
+        "location",
+        "modified",
+      ],
+    };
+  }
+  if (id === "mcp_servers") {
+    return {
+      density: "compact",
+      getDescription: (item) => (
+        <span className="block min-w-0 truncate">
+          {agentContextItemDescription(item)}
+        </span>
+      ),
+      getTitle: (item) => item.name,
+      kind: "list",
+      renderLeading,
+      visibleProperties: ["location", "providers", "health"],
+    };
+  }
+  return {
+    cardSize: "medium",
+    density: "compact",
+    ...(id === "skills" || id === "plugins"
+      ? {
+          getDescription: (item: AgentContextItem) => (
+            <span className="line-clamp-3 leading-relaxed">
+              {item.description}
+            </span>
+          ),
+        }
+      : {}),
+    getTitle: (item) => item.name,
+    kind: "gallery",
+    renderLeading,
+    renderOverlays: (item) => <ItemProblemsMarker item={item} />,
+    visibleProperties: ["location", "providers"],
+  };
 }
 
 /**
@@ -182,6 +214,11 @@ const presetEmpty: Readonly<
     description: m.agent_context_empty_description,
     icon: FileText,
     title: m.agent_context_empty_title,
+  },
+  mcp_servers: {
+    description: m.agent_context_mcp_servers_empty_description,
+    icon: Server,
+    title: m.agent_context_mcp_servers_empty_title,
   },
   plugins: {
     description: m.agent_context_plugins_empty_description,
@@ -228,6 +265,7 @@ function presetLabel(id: AgentContextPresetId) {
   if (id === "instructions") return m.agent_context_instructions();
   if (id === "skills") return m.agent_context_skills();
   if (id === "plugins") return m.agent_context_plugins();
+  if (id === "mcp_servers") return m.agent_context_mcp_servers();
   return m.agent_context_preset_all();
 }
 

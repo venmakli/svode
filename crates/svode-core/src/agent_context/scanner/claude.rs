@@ -741,6 +741,30 @@ pub(super) fn enabled_plugins(
     enabled
 }
 
+/// The `projects` key of the global config of Claude Code for a target: the
+/// root of its main repository, which its worktrees share, else the target.
+pub(super) fn project_key(places: &TargetPlaces) -> PathBuf {
+    let git = places.repository_root.join(".git");
+    if git.is_dir() {
+        return places.repository_root.clone();
+    }
+    // A worktree's `.git` file names `<main>/.git/worktrees/<name>`.
+    let main = std::fs::read_to_string(&git).ok().and_then(|text| {
+        let gitdir = text.lines().find_map(|line| line.strip_prefix("gitdir:"))?;
+        let gitdir = places.repository_root.join(gitdir.trim());
+        let worktrees = gitdir.parent()?;
+        if worktrees.file_name()? != "worktrees" {
+            return None;
+        }
+        Some(worktrees.parent()?.parent()?.to_path_buf())
+    });
+    match main {
+        Some(main) => main.canonicalize().unwrap_or(main),
+        None if git.exists() => places.repository_root.clone(),
+        None => places.target_root.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

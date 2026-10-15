@@ -152,6 +152,7 @@ mod tests {
             references: Vec::new(),
             skill,
             plugin: None,
+            mcp: None,
             components: Vec::new(),
             icon: None,
             managed_by_svode: false,

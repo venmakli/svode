@@ -11,7 +11,11 @@ export interface AgentContextDiagnostic {
 
 export type AgentContextSourceHealth = "degraded" | "normal";
 
-export type AgentContextItemKind = "instruction" | "skill" | "plugin";
+export type AgentContextItemKind =
+  | "instruction"
+  | "skill"
+  | "plugin"
+  | "mcp_server";
 
 export interface AgentContextReference {
   path: string;
@@ -115,13 +119,23 @@ export interface AgentContextPluginFacts {
   hasReadme: boolean;
 }
 
+/** How a client starts an MCP server, as its declaration says. */
+export interface AgentContextMcpFacts {
+  /** The command and its arguments, secret ones hidden; empty for a remote server. */
+  command: readonly string[];
+  /** The URL without userinfo, query and fragment. */
+  url: string | null;
+  /** Declared in the local scope of Claude Code: only for this project. */
+  projectOnly: boolean;
+}
+
 /** One canonical source of the target's context: one row of "Context". */
 export interface AgentContextItem {
   id: string;
   kind: AgentContextItemKind;
   name: string;
   description: string | null;
-  /** The file the item opens: the instruction, `SKILL.md` or the plugin's manifest. */
+  /** The file the item opens: the instruction, `SKILL.md`, the plugin's manifest or the server's config. */
   path: string;
   ownerPath: string;
   location: AgentContextLocation;
@@ -138,7 +152,8 @@ export interface AgentContextItem {
   references: readonly AgentContextReference[];
   skill: AgentContextSkillFacts | null;
   plugin: AgentContextPluginFacts | null;
-  /** A plugin's skills and instructions, with its providers and sources. */
+  mcp: AgentContextMcpFacts | null;
+  /** A plugin's skills, instructions and MCP servers, with its providers and sources. */
   components: readonly AgentContextItem[];
   /** The image the source declares, as a data URI. */
   icon: string | null;

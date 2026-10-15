@@ -1,8 +1,9 @@
 //! A plugin as its folder and manifest declare it (Stage 10 `05`,
 //! «Плагины»): the manifest fields the "Context" shows, its icon and
-//! `README.md`, and its components — skills and instructions as rows, the
-//! other kinds as counts. Only allowlisted manifest fields are kept: a
-//! manifest may declare MCP servers with secrets.
+//! `README.md`, and its components — skills, instructions and MCP servers as
+//! rows, the other kinds as counts. Only allowlisted manifest fields are
+//! kept: a manifest may declare MCP servers with secrets, whose fields are
+//! allowlisted too.
 
 use std::fs;
 use std::io::Read;
@@ -14,9 +15,11 @@ use crate::agent_adapters::{AgentAdapterKind, PluginManifestRule, PluginScheme};
 
 use super::super::model::{
     AgentContextDiagnostic, InstructionOwner, MarkdownPreview, PluginComponentCount,
-    PluginComponentKind, PluginComposition, PluginInstruction, PluginManifestFacts, SkillRow,
+    PluginComponentKind, PluginComposition, PluginInstruction, PluginManifestFacts,
+    PluginMcpServer, SkillRow,
 };
 use super::io::{diagnostic, inspect, path_string, read_config_text};
+use super::mcp_config::{self, McpDeclaration};
 
 const README: &str = "README.md";
 const PREVIEW_BYTES: usize = 64 * 1024;
@@ -51,6 +54,7 @@ pub(super) struct PluginFolder {
     pub readme: Option<MarkdownPreview>,
     pub skills: Vec<SkillRow>,
     pub instructions: Vec<PluginInstruction>,
+    pub mcp_servers: Vec<PluginMcpServer>,
     pub counts: Vec<PluginComponentCount>,
     /// Why a part of the plugin was not read.
     pub problems: Vec<String>,
@@ -120,6 +124,7 @@ pub(super) fn read(
         readme: None,
         skills: Vec::new(),
         instructions: Vec::new(),
+        mcp_servers: Vec::new(),
         counts: Vec::new(),
         problems: Vec::new(),
     };
@@ -165,9 +170,13 @@ pub(super) fn read(
         diagnostics,
     };
     match scheme {
-        PluginScheme::AgentPlugins => reader.skills(&["skills".to_string()]),
+        PluginScheme::AgentPlugins => {
+            reader.skills(&["skills".to_string()]);
+            reader.mcp_file("mcp.json");
+        }
         PluginScheme::ClientFolders | PluginScheme::QwenExtension => {
             reader.skills(&paths(&manifest, "skills", "skills"));
+            reader.mcp_manifest(&manifest, scheme == PluginScheme::ClientFolders);
             reader.count_files(
                 PluginComponentKind::Commands,
                 &paths(&manifest, "commands", "commands"),
@@ -223,6 +232,7 @@ pub(super) fn read(
                 &["md", "yaml", "yml"],
             );
             reader.count_hooks(&manifest);
+            reader.mcp_manifest(&manifest, false);
             if let Some(prompt) = text(manifest.get("systemPrompt")) {
                 let path = path_string(&reader.folder.path);
                 reader.folder.instructions.push(PluginInstruction {
@@ -264,6 +274,7 @@ fn code_module(file: &Path) -> PluginFolder {
         readme: None,
         skills: Vec::new(),
         instructions: Vec::new(),
+        mcp_servers: Vec::new(),
         counts: Vec::new(),
         problems: Vec::new(),
     }
@@ -549,6 +560,94 @@ impl Components<'_> {
             path: path_string(source.canonical_path.as_deref().unwrap_or(&path)),
             preview,
         });
+    }
+
+    /// The MCP servers of the manifest: an inline `mcpServers` object, or
+    /// with `files` the MCP files it names, `.mcp.json` by default.
+    fn mcp_manifest(&mut self, manifest: &serde_json::Value, files: bool) {
+        let declared = manifest.get("mcpServers");
+        if let Some(servers) = declared.filter(|servers| servers.is_object()) {
+            let path = self.folder.path.clone();
+            self.mcp_servers(&path, mcp_config::inline_servers(servers));
+        }
+        if !files {
+            return;
+        }
+        let named = match declared {
+            Some(serde_json::Value::String(path)) => vec![path.clone()],
+            Some(serde_json::Value::Array(paths)) => paths
+                .iter()
+                .filter_map(|path| path.as_str().map(str::to_string))
+                .collect(),
+            _ => vec![".mcp.json".to_string()],
+        };
+        for relative in named {
+            self.mcp_file(&relative);
+        }
+    }
+
+    /// The MCP servers of a file inside the plugin.
+    fn mcp_file(&mut self, relative: &str) {
+        let Some(path) = inside(self.canonical, relative.trim_start_matches("./")) else {
+            return;
+        };
+        if !path.is_file() {
+            return;
+        }
+        let before = self.diagnostics.len();
+        let text = read_config_text(
+            &path,
+            Some(self.adapter_id),
+            "plugin_component",
+            "Plugin component file",
+            self.diagnostics,
+        );
+        let failed = self.diagnostics[before..]
+            .iter()
+            .map(|found| found.message.clone())
+            .collect::<Vec<_>>();
+        self.folder.problems.extend(failed);
+        let Some(text) = text else {
+            return;
+        };
+        match mcp_config::plugin_file_servers(&text) {
+            Some(servers) => self.mcp_servers(&path, servers),
+            None => self.problem(
+                &path,
+                "plugin_component_parse",
+                format!("Could not parse plugin component file {}", path.display()),
+            ),
+        }
+    }
+
+    fn mcp_servers(&mut self, path: &Path, servers: Vec<McpDeclaration>) {
+        for server in servers {
+            if self
+                .folder
+                .mcp_servers
+                .iter()
+                .any(|known| known.name == server.name && Path::new(&known.path) == path)
+            {
+                continue;
+            }
+            let problems = server.problem.iter().cloned().collect::<Vec<_>>();
+            for problem in &problems {
+                self.diagnostics.push(diagnostic(
+                    path,
+                    Some(self.adapter_id),
+                    "plugin_component_invalid",
+                    format!("{problem} in {}", path.display()),
+                ));
+            }
+            let declared_off = server.declared_off();
+            self.folder.mcp_servers.push(PluginMcpServer {
+                name: server.name,
+                path: path_string(path),
+                facts: server.facts,
+                declared_off,
+                problems,
+            });
+        }
     }
 
     /// Files with one of `extensions` (any when empty) under the declared

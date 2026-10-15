@@ -585,6 +585,7 @@ fn read_plugin(
         readme,
         skills,
         instructions,
+        mcp_servers,
         counts,
         problems,
     } = folder;
@@ -603,6 +604,7 @@ fn read_plugin(
             readme,
             skills,
             instructions,
+            mcp_servers,
             counts,
             health: if problems.is_empty() {
                 SourceHealth::Normal
@@ -854,8 +856,13 @@ mod tests {
         assert_eq!(kit.description.as_deref(), Some("Team kit"));
         assert_eq!(
             component_names(kit),
-            vec![(ContextItemKind::Skill, "review")]
+            vec![
+                (ContextItemKind::Skill, "review"),
+                (ContextItemKind::McpServer, "db")
+            ]
         );
+        assert_eq!(kit.components[1].mcp.as_ref().unwrap().command, vec!["db"]);
+        assert_eq!(kit.components[1].description.as_deref(), Some("Team kit"));
         assert_eq!(kit.components[0].providers, vec![ClaudeCode]);
         assert_eq!(kit.components[0].location, kit.location);
         let facts = kit.plugin.as_ref().unwrap();
@@ -952,11 +959,18 @@ mod tests {
         let svode = plugin(&items, "svode");
         assert!(svode.managed_by_svode);
         assert_eq!(svode.providers, vec![ClaudeCode]);
+        // Claude Code reads the plugin's `.mcp.json`, not the `mcp.json` of
+        // Agent Plugins.
         assert_eq!(
             component_names(svode),
-            vec![(ContextItemKind::Skill, "svode")]
+            vec![
+                (ContextItemKind::Skill, "svode"),
+                (ContextItemKind::McpServer, "svode")
+            ]
         );
         assert!(svode.components[0].managed_by_svode);
+        assert!(svode.components[1].managed_by_svode);
+        assert_eq!(svode.components[1].providers, vec![ClaudeCode]);
         assert_eq!(
             svode.plugin.as_ref().unwrap().counts[0].kind,
             PluginComponentKind::Executables
@@ -1156,7 +1170,8 @@ mod tests {
             component_names(helper),
             vec![
                 (ContextItemKind::Skill, "helper-skill"),
-                (ContextItemKind::Instruction, "GUIDE.md")
+                (ContextItemKind::Instruction, "GUIDE.md"),
+                (ContextItemKind::McpServer, "x")
             ]
         );
         assert!(!format!("{items:?}").contains("secret-env"));

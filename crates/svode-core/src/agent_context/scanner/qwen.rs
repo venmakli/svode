@@ -1,6 +1,6 @@
-//! `context.fileName` of the Qwen Code settings, JSON with comments, and the
-//! activation of its extensions. Only those keys are kept: the settings
-//! also hold keys and other secrets.
+//! `context.fileName` and `mcp.allowed` and `mcp.excluded` of the Qwen Code
+//! settings, JSON with comments, and the activation of its extensions. Only
+//! those keys are kept: the settings also hold keys and other secrets.
 
 use std::fs::File;
 use std::io::Read;
@@ -15,10 +15,82 @@ use super::{DiscoveryResult, TargetPlaces};
 
 const SETTINGS_BYTES: u64 = 256 * 1024;
 
-/// The one settings key the reader keeps.
+/// The settings keys the reader keeps.
 #[derive(Deserialize)]
 struct Settings {
     context: Option<serde_json::Value>,
+    mcp: Option<serde_json::Value>,
+}
+
+/// `mcp.allowed` and `mcp.excluded`: name patterns with `*`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct McpFilters {
+    pub allowed: Option<Vec<String>>,
+    pub excluded: Vec<String>,
+}
+
+impl McpFilters {
+    /// An excluded server is off; with `allowed`, so is every server it does
+    /// not name.
+    pub fn turns_off(&self, name: &str) -> bool {
+        self.excluded.iter().any(|pattern| glob(pattern, name))
+            || self
+                .allowed
+                .as_ref()
+                .is_some_and(|allowed| !allowed.iter().any(|pattern| glob(pattern, name)))
+    }
+}
+
+fn glob(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == name,
+        Some((prefix, rest)) => {
+            name.len() >= prefix.len()
+                && name.starts_with(prefix)
+                && (0..=name.len() - prefix.len())
+                    .filter(|offset| name.is_char_boundary(prefix.len() + offset))
+                    .any(|offset| glob(rest, &name[prefix.len() + offset..]))
+        }
+    }
+}
+
+/// The MCP filters of the user settings when `global`, then of the
+/// workspace settings of the target, which replace a list they set.
+pub(super) fn mcp_filters(
+    environment: &SourceRegistryEnvironment,
+    places: &TargetPlaces,
+    global: bool,
+    result: &mut DiscoveryResult,
+) -> McpFilters {
+    let mut files = Vec::new();
+    if global {
+        files.push(environment.qwen_home.join("settings.json"));
+    }
+    files.push(places.target_root.join(".qwen/settings.json"));
+    let mut filters = McpFilters::default();
+    for file in files {
+        let Some(settings) = read_parsed(&file, result) else {
+            continue;
+        };
+        let Some(mcp) = settings.mcp else {
+            continue;
+        };
+        let names = |key: &str| {
+            mcp.get(key)?.as_array().map(|names| {
+                names
+                    .iter()
+                    .filter_map(|name| name.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+        };
+        if let Some(allowed) = names("allowed") {
+            filters.allowed = Some(allowed);
+        }
+        if let Some(excluded) = names("excluded") {
+            filters.excluded = excluded;
+        }
+    }
+    filters
 }
 
 /// The instruction names that replace the defaults: the workspace settings
@@ -42,7 +114,7 @@ pub(super) fn context_file_names(
     read_names(&user, result)
 }
 
-fn read_names(settings: &Path, result: &mut DiscoveryResult) -> Option<Vec<String>> {
+fn read_parsed(settings: &Path, result: &mut DiscoveryResult) -> Option<Settings> {
     let text = read_settings(settings, result)?;
     let Ok(parsed) = jsonc_parser::parse_to_serde_value::<Option<Settings>>(
         text.trim_start_matches('\u{feff}'),
@@ -57,7 +129,14 @@ fn read_names(settings: &Path, result: &mut DiscoveryResult) -> Option<Vec<Strin
         ));
         return None;
     };
-    let configured = parsed?.context?.get("fileName")?.clone();
+    parsed
+}
+
+fn read_names(settings: &Path, result: &mut DiscoveryResult) -> Option<Vec<String>> {
+    let configured = read_parsed(settings, result)?
+        .context?
+        .get("fileName")?
+        .clone();
     let values = match &configured {
         serde_json::Value::String(name) => vec![name.as_str()],
         serde_json::Value::Array(names) => {

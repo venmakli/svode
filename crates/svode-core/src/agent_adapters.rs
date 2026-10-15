@@ -305,6 +305,7 @@ pub enum GrokVendor {
 pub enum GrokSurface {
     Agents,
     Skills,
+    Mcps,
 }
 
 /// A setting of the agent that replaces the names of a rule.
@@ -624,12 +625,104 @@ pub struct PluginDiscoveryCapability {
     pub sources: Vec<PluginSourceRule>,
 }
 
+/// How the servers of an MCP config are declared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpConfigFormat {
+    /// `mcpServers` of a JSON file; `comments` allows JSON with comments.
+    JsonServers { comments: bool },
+    /// The top-level `mcpServers` of the global config of Claude Code: the
+    /// user scope.
+    ClaudeUser,
+    /// `projects[<key>].mcpServers` of the global config of Claude Code: the
+    /// local scope of one project.
+    ClaudeLocal(McpProjectKey),
+    /// `[mcp_servers.<name>]` tables of TOML.
+    TomlServers,
+    /// `mcp.servers.<name>`, or `mcp.<name>` of opencode 1.
+    Opencode,
+    /// `mcp_servers.<name>` of YAML.
+    YamlServers,
+}
+
+/// Which `projects` entry of the global config of Claude Code a client
+/// takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpProjectKey {
+    /// The root of the main repository, shared by its worktrees, else the
+    /// target: Claude Code.
+    MainRepository,
+    /// The target itself: Grok Build.
+    Target,
+}
+
+/// A config file of an agent that declares MCP servers, in the agent's
+/// order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpSourceRule {
+    pub place: SkillPlace,
+    pub format: McpConfigFormat,
+    /// The agent honours `enabled: false` and `disabled: true` of a server.
+    pub entry_switch: bool,
+    /// The agent ignores every server of the file when one server is
+    /// invalid, as Cursor does.
+    pub whole_file: bool,
+    /// The source counts only while this setting is on.
+    pub switch: Option<SourceSwitch>,
+}
+
+/// How an agent chooses between servers of one name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpPrecedence {
+    /// Servers of one name coexist.
+    Coexist,
+    /// The agent merges the declarations of one name by fields: a later
+    /// file overrides the fields it sets, such as only `enabled`.
+    MergeByFields,
+    /// The server of the first file in the agent's order wins.
+    FirstWinsByName,
+    /// The server of the last file in the agent's order wins.
+    LastWinsByName,
+}
+
+/// Where an agent turns servers off besides their own declarations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpEnablement {
+    /// Only the declarations themselves.
+    Declarations,
+    /// `projects[<key>].disabledMcpServers` of the global config of Claude
+    /// Code.
+    ClaudeProjectDisabled(McpProjectKey),
+    /// `projects/<slug>/mcp-disabled.json` of Cursor for the repository
+    /// root.
+    CursorDisabledFile,
+    /// `disabled_mcp_servers` of the user config of Grok Build.
+    GrokDisabledList,
+    /// `mcp.allowed` and `mcp.excluded` of the Qwen Code settings.
+    QwenFilters,
+    /// `-builtin:mcp` in `extensions` of the pi settings turns its MCP off.
+    PiBuiltin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDiscoveryCapability {
+    pub precedence: McpPrecedence,
+    pub enablement: McpEnablement,
+    pub sources: Vec<McpSourceRule>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterSourceCapabilities {
     pub instructions: InstructionDiscoveryCapability,
     pub skills: SkillDiscoveryCapability,
     pub plugins: PluginDiscoveryCapability,
+    pub mcp: McpDiscoveryCapability,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -719,7 +812,7 @@ impl SourceRegistryEnvironment {
     }
 }
 
-const GROK_SWITCH_VARIABLES: [(&str, SourceSwitch); 4] = [
+const GROK_SWITCH_VARIABLES: [(&str, SourceSwitch); 6] = [
     (
         "GROK_CLAUDE_AGENTS_ENABLED",
         SourceSwitch::GrokCompat(GrokVendor::Claude, GrokSurface::Agents),
@@ -735,6 +828,14 @@ const GROK_SWITCH_VARIABLES: [(&str, SourceSwitch); 4] = [
     (
         "GROK_CURSOR_SKILLS_ENABLED",
         SourceSwitch::GrokCompat(GrokVendor::Cursor, GrokSurface::Skills),
+    ),
+    (
+        "GROK_CLAUDE_MCPS_ENABLED",
+        SourceSwitch::GrokCompat(GrokVendor::Claude, GrokSurface::Mcps),
+    ),
+    (
+        "GROK_CURSOR_MCPS_ENABLED",
+        SourceSwitch::GrokCompat(GrokVendor::Cursor, GrokSurface::Mcps),
     ),
 ];
 
@@ -1458,8 +1559,249 @@ impl AgentAdapterRegistry {
                 },
                 skills,
                 plugins: plugin_capability(id, environment),
+                mcp: mcp_capability(id, environment),
             },
         })
+    }
+}
+
+/// MCP servers of an agent by E02 «MCP»: the configs that declare them in
+/// the agent's order, how one name wins and where the agent turns servers
+/// off. Servers of plugins are components of their plugin.
+fn mcp_capability(
+    id: AgentAdapterKind,
+    environment: &SourceRegistryEnvironment,
+) -> McpDiscoveryCapability {
+    let home = &environment.home_dir;
+    let rule = |place, format, entry_switch| McpSourceRule {
+        place,
+        format,
+        entry_switch,
+        whole_file: false,
+        switch: None,
+    };
+    let personal = |path: &Path| SkillPlace::Personal(path_string(path));
+    let walk = |walk, relative: &str| SkillPlace::Walk {
+        walk,
+        relative: relative.to_string(),
+    };
+    let json = McpConfigFormat::JsonServers { comments: false };
+    let jsonc = McpConfigFormat::JsonServers { comments: true };
+    // `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`.
+    let claude_global = if environment.claude_config_dir == home.join(".claude") {
+        home.join(".claude.json")
+    } else {
+        environment.claude_config_dir.join(".claude.json")
+    };
+    let (precedence, enablement, sources) = match id {
+        // Claude Code 2.1.289: local > project > user; a deeper `.mcp.json`
+        // wins; `mcpServers` of `settings.json` is no source.
+        AgentAdapterKind::ClaudeCode => (
+            McpPrecedence::LastWinsByName,
+            McpEnablement::ClaudeProjectDisabled(McpProjectKey::MainRepository),
+            vec![
+                rule(personal(&claude_global), McpConfigFormat::ClaudeUser, false),
+                rule(
+                    walk(DirectoryWalk::FilesystemToTarget, ".mcp.json"),
+                    json,
+                    false,
+                ),
+                rule(
+                    personal(&claude_global),
+                    McpConfigFormat::ClaudeLocal(McpProjectKey::MainRepository),
+                    false,
+                ),
+            ],
+        ),
+        // Codex 0.159: the user config and the `.codex/config.toml` of the
+        // project folders, merged by fields.
+        AgentAdapterKind::Codex => (
+            McpPrecedence::MergeByFields,
+            McpEnablement::Declarations,
+            vec![
+                rule(
+                    personal(&environment.codex_home.join("config.toml")),
+                    McpConfigFormat::TomlServers,
+                    true,
+                ),
+                rule(
+                    walk(DirectoryWalk::RepositoryToTarget, ".codex/config.toml"),
+                    McpConfigFormat::TomlServers,
+                    true,
+                ),
+            ],
+        ),
+        // opencode 2.0.22: the global config, then the configs of every
+        // folder down to the target; a later server replaces one of its name.
+        AgentAdapterKind::Opencode => {
+            let config = &environment.opencode_config_dir;
+            let mut sources = ["opencode.json", "opencode.jsonc"]
+                .iter()
+                .map(|name| {
+                    rule(
+                        personal(&config.join(name)),
+                        McpConfigFormat::Opencode,
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            sources.extend(
+                [
+                    "opencode.json",
+                    "opencode.jsonc",
+                    ".opencode/opencode.json",
+                    ".opencode/opencode.jsonc",
+                ]
+                .iter()
+                .map(|name| {
+                    rule(
+                        walk(DirectoryWalk::FilesystemToTarget, name),
+                        McpConfigFormat::Opencode,
+                        true,
+                    )
+                }),
+            );
+            (
+                McpPrecedence::LastWinsByName,
+                McpEnablement::Declarations,
+                sources,
+            )
+        }
+        // Cursor CLI 2026.10.01: the user and repository `mcp.json`, JSON
+        // with comments; the project wins; a file with an invalid server
+        // declares none.
+        AgentAdapterKind::Cursor => {
+            let cursor = |place| McpSourceRule {
+                whole_file: true,
+                ..rule(place, jsonc, false)
+            };
+            (
+                McpPrecedence::LastWinsByName,
+                McpEnablement::CursorDisabledFile,
+                vec![
+                    cursor(personal(&home.join(".cursor/mcp.json"))),
+                    cursor(walk(DirectoryWalk::RepositoryRoot, ".cursor/mcp.json")),
+                ],
+            )
+        }
+        // Grok Build 1.0.46: its TOML from the target up to the repository
+        // root, then the user's, then Claude, Cursor and `.mcp.json` by
+        // compatibility; the first of a name wins.
+        AgentAdapterKind::GrokBuild => {
+            let compat = |place, format, vendor| McpSourceRule {
+                switch: Some(SourceSwitch::GrokCompat(vendor, GrokSurface::Mcps)),
+                ..rule(place, format, false)
+            };
+            let claude_json = home.join(".claude.json");
+            (
+                McpPrecedence::FirstWinsByName,
+                McpEnablement::GrokDisabledList,
+                vec![
+                    rule(
+                        walk(DirectoryWalk::TargetToRepository, ".grok/config.toml"),
+                        McpConfigFormat::TomlServers,
+                        true,
+                    ),
+                    rule(
+                        personal(&environment.grok_home.join("config.toml")),
+                        McpConfigFormat::TomlServers,
+                        true,
+                    ),
+                    compat(
+                        personal(&claude_json),
+                        McpConfigFormat::ClaudeLocal(McpProjectKey::Target),
+                        GrokVendor::Claude,
+                    ),
+                    compat(
+                        personal(&claude_json),
+                        McpConfigFormat::ClaudeUser,
+                        GrokVendor::Claude,
+                    ),
+                    compat(
+                        walk(DirectoryWalk::Target, ".cursor/mcp.json"),
+                        jsonc,
+                        GrokVendor::Cursor,
+                    ),
+                    compat(
+                        personal(&home.join(".cursor/mcp.json")),
+                        jsonc,
+                        GrokVendor::Cursor,
+                    ),
+                    rule(
+                        walk(DirectoryWalk::TargetToRepository, ".mcp.json"),
+                        json,
+                        false,
+                    ),
+                ],
+            )
+        }
+        // Qwen Code 0.24.7: user settings < `.mcp.json` < workspace
+        // settings of the target.
+        AgentAdapterKind::QwenCode => (
+            McpPrecedence::LastWinsByName,
+            McpEnablement::QwenFilters,
+            vec![
+                rule(
+                    personal(&environment.qwen_home.join("settings.json")),
+                    jsonc,
+                    false,
+                ),
+                rule(walk(DirectoryWalk::Target, ".mcp.json"), jsonc, false),
+                rule(
+                    walk(DirectoryWalk::Target, ".qwen/settings.json"),
+                    jsonc,
+                    false,
+                ),
+            ],
+        ),
+        // Kimi Code 2.1.1: user < repository `.mcp.json` < the target's
+        // `.kimi-code/mcp.json`, strict JSON.
+        AgentAdapterKind::KimiCode => (
+            McpPrecedence::LastWinsByName,
+            McpEnablement::Declarations,
+            vec![
+                rule(
+                    personal(&environment.kimi_code_home.join("mcp.json")),
+                    json,
+                    true,
+                ),
+                rule(walk(DirectoryWalk::RepositoryRoot, ".mcp.json"), json, true),
+                rule(
+                    walk(DirectoryWalk::Target, ".kimi-code/mcp.json"),
+                    json,
+                    true,
+                ),
+            ],
+        ),
+        // Hermes 2026.9.24: only the profile's config; no project MCP.
+        AgentAdapterKind::Hermes => (
+            McpPrecedence::Coexist,
+            McpEnablement::Declarations,
+            vec![rule(
+                personal(&environment.hermes_home.join("config.yaml")),
+                McpConfigFormat::YamlServers,
+                true,
+            )],
+        ),
+        // pi 1.0.0: its agent folder, then `.pi/mcp.json` of the target,
+        // which replaces a server of its name.
+        AgentAdapterKind::Pi => (
+            McpPrecedence::LastWinsByName,
+            McpEnablement::PiBuiltin,
+            vec![
+                rule(
+                    personal(&environment.pi_agent_dir.join("mcp.json")),
+                    json,
+                    true,
+                ),
+                rule(walk(DirectoryWalk::Target, ".pi/mcp.json"), json, true),
+            ],
+        ),
+    };
+    McpDiscoveryCapability {
+        precedence,
+        enablement,
+        sources,
     }
 }
 

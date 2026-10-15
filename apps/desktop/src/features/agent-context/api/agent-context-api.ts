@@ -141,6 +141,13 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
     kind: item.kind,
     location: Object.freeze({ ...item.location }),
     managedBySvode: item.managedBySvode,
+    mcp: item.mcp
+      ? Object.freeze({
+          command: Object.freeze([...item.mcp.command]),
+          projectOnly: item.mcp.projectOnly,
+          url: item.mcp.url,
+        })
+      : null,
     modifiedAt: item.modifiedAt,
     name: item.name,
     ownerPath: item.ownerRoot,

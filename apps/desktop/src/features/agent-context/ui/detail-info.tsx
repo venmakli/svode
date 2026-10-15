@@ -53,7 +53,9 @@ export function AgentContextItemInfo({ item }: { item: AgentContextItem }) {
           ? m.agent_context_info_skill()
           : item.kind === "plugin"
             ? m.agent_context_info_plugin()
-            : m.agent_context_info_instruction()
+            : item.kind === "mcp_server"
+              ? m.agent_context_info_mcp_server()
+              : m.agent_context_info_instruction()
       }
     />
   );

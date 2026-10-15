@@ -154,6 +154,8 @@ function diagnosticGroupLabel(group: AgentContextDiagnosticGroupId): string {
       return m.agent_context_diagnostics_group_skills();
     case "plugins":
       return m.agent_context_diagnostics_group_plugins();
+    case "mcp_servers":
+      return m.agent_context_diagnostics_group_mcp_servers();
     case "runtime":
       return m.agent_context_diagnostics_group_runtime();
     case "other":

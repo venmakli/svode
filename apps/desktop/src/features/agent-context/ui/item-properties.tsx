@@ -1,4 +1,4 @@
-import { FileText, Puzzle, Sparkles } from "lucide-react";
+import { FileText, Puzzle, Server, Sparkles } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
 
@@ -18,6 +18,7 @@ import {
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
+import { agentContextMcpSummary } from "../model/mcp-server";
 import type {
   AgentContextItem,
   AgentContextItemKind,
@@ -52,14 +53,35 @@ export function AgentContextItemIcon({
       ? Sparkles
       : item.kind === "plugin"
         ? Puzzle
-        : FileText;
+        : item.kind === "mcp_server"
+          ? Server
+          : FileText;
   return <Icon className={className} aria-hidden />;
 }
 
 export function agentContextItemKindLabel(kind: AgentContextItemKind) {
   if (kind === "skill") return m.agent_context_type_skill();
   if (kind === "plugin") return m.agent_context_type_plugin();
+  if (kind === "mcp_server") return m.agent_context_type_mcp_server();
   return m.agent_context_type_instruction();
+}
+
+/**
+ * The description of an item: its source's, or for an MCP server outside a
+ * plugin what its declaration starts — "Local server · package or command"
+ * or "Remote server · domain".
+ */
+export function agentContextItemDescription(
+  item: Pick<AgentContextItem, "description" | "kind" | "mcp">,
+): string | null {
+  if (item.description || item.kind !== "mcp_server" || !item.mcp) {
+    return item.description;
+  }
+  const summary = agentContextMcpSummary(item.mcp);
+  if (!summary) return null;
+  return summary.kind === "local"
+    ? m.agent_context_mcp_local({ target: summary.target })
+    : m.agent_context_mcp_remote({ domain: summary.domain });
 }
 
 /** A short path: the Space root by name, home paths from `~`. */
@@ -125,6 +147,7 @@ export function createAgentContextItemProperties({
           { color: "blue", name: m.agent_context_type_instruction() },
           { color: "purple", name: m.agent_context_type_skill() },
           { color: "orange", name: m.agent_context_type_plugin() },
+          { color: "green", name: m.agent_context_type_mcp_server() },
         ],
         type: "select",
       },
