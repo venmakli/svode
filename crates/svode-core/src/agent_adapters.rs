@@ -556,24 +556,50 @@ impl AgentAdapterRegistry {
     ) -> Option<AgentSourcePolicy> {
         let home = &environment.home_dir;
         let (personal_root, instructions, skills) = match id {
-            AgentAdapterKind::Codex => (
-                &environment.codex_home,
-                InstructionDiscoveryPolicy::CodexAgents,
-                SkillDiscoveryCapability {
-                    precedence: SkillPrecedence::Coexist,
-                    roots: vec![
-                        walk_skills(
-                            SkillDiscoveryKind::CodexProject,
-                            DirectoryWalk::RepositoryToTarget,
-                            ".agents/skills",
-                        ),
-                        personal_skills(
-                            SkillDiscoveryKind::CodexStandardPersonal,
-                            &environment.codex_standard_skills_dir,
-                        ),
-                    ],
-                },
-            ),
+            // Codex 0.159: `.agents/skills` and `.codex/skills` from the
+            // project root, `~/.agents/skills` and `$CODEX_HOME/skills`, each
+            // walked six folders deep; skills of one name coexist. Its bundled
+            // `$CODEX_HOME/skills/.system` stays out, like other built-ins.
+            AgentAdapterKind::Codex => {
+                let layout = SkillLayout {
+                    max_depth: CODEX_SKILL_DEPTH,
+                    flat: FlatSkills::None,
+                };
+                let walk = |kind, relative: &str| SkillRootRule {
+                    kind,
+                    place: SkillPlace::Walk {
+                        walk: DirectoryWalk::RepositoryToTarget,
+                        relative: relative.to_string(),
+                    },
+                    layout,
+                    switch: None,
+                };
+                let personal = |kind, path: &Path| SkillRootRule {
+                    kind,
+                    place: SkillPlace::Personal(path_string(path)),
+                    layout,
+                    switch: None,
+                };
+                (
+                    &environment.codex_home,
+                    InstructionDiscoveryPolicy::CodexAgents,
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::Coexist,
+                        roots: vec![
+                            walk(SkillDiscoveryKind::CodexProject, ".agents/skills"),
+                            walk(SkillDiscoveryKind::CodexProjectConfig, ".codex/skills"),
+                            personal(
+                                SkillDiscoveryKind::CodexStandardPersonal,
+                                &environment.codex_standard_skills_dir,
+                            ),
+                            personal(
+                                SkillDiscoveryKind::CodexHome,
+                                &environment.codex_home.join("skills"),
+                            ),
+                        ],
+                    },
+                )
+            }
             AgentAdapterKind::ClaudeCode => (
                 &environment.claude_config_dir,
                 InstructionDiscoveryPolicy::ClaudeMemory,
@@ -905,6 +931,8 @@ impl AgentAdapterRegistry {
 
 /// How deep the agents that walk folders of skills are followed.
 const MAX_SKILL_DEPTH: usize = 8;
+/// Codex finds a skill directory at most six levels below its root.
+const CODEX_SKILL_DEPTH: usize = 6;
 
 fn rule(
     directories: InstructionDirectories,

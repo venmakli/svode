@@ -116,8 +116,16 @@ fn instruction_items(
                     references.push(reference.clone());
                 }
             }
+            // A path shadowed by another path to the same file does not keep
+            // its agent from reading the item, e.g. `AGENTS.md` behind a
+            // `CLAUDE.md` link to it.
             let findings = rows
                 .iter()
+                .filter(|row| {
+                    row.superseded_by.as_ref().is_none_or(|by| {
+                        fs::canonicalize(by).map_or(true, |by| by != canonical_path)
+                    })
+                })
                 .map(|row| Finding {
                     agent: row.adapter_id.expect("filtered to agent rows"),
                     path: row.path.clone(),
@@ -462,6 +470,7 @@ mod tests {
             Some(UnappliedReason::NotFound {
                 readers: vec![
                     CODEX,
+                    CLAUDE,
                     AgentAdapterKind::Opencode,
                     AgentAdapterKind::Pi,
                     AgentAdapterKind::QwenCode,
@@ -786,5 +795,52 @@ mod tests {
             }
         );
         assert!(item.modified_at.is_some());
+    }
+
+    #[test]
+    fn agents_md_shadowed_for_claude_by_a_claude_file_keeps_codex_as_its_provider() {
+        let fixture = Fixture::new();
+        let agents = fixture.write(fixture.project.path(), "AGENTS.md", "agents");
+        let claude = fixture.write(fixture.project.path(), "CLAUDE.md", "claude");
+
+        let both = fixture.items(&[CODEX, CLAUDE]);
+        let item = by_path(&both, &agents);
+        assert_eq!(item.providers, vec![CODEX]);
+        assert_eq!(
+            item.sources[0].readers,
+            vec![
+                ContextItemReader {
+                    agent: CODEX,
+                    superseded_by: None
+                },
+                ContextItemReader {
+                    agent: CLAUDE,
+                    superseded_by: Some(path_string(&claude))
+                },
+            ]
+        );
+        assert_eq!(by_path(&both, &claude).providers, vec![CLAUDE]);
+
+        let claude_only = fixture.items(&[CLAUDE]);
+        assert_eq!(
+            by_path(&claude_only, &agents).unapplied,
+            Some(UnappliedReason::Superseded {
+                by: vec![path_string(&claude)]
+            })
+        );
+    }
+
+    #[test]
+    fn agents_md_without_claude_files_is_one_item_applied_by_both_agents() {
+        let fixture = Fixture::new();
+        let agents = fixture.write(fixture.project.path(), "AGENTS.md", "agents");
+
+        let items = fixture.items(&[CODEX, CLAUDE]);
+
+        assert_eq!(items.len(), 1);
+        let item = by_path(&items, &agents);
+        assert_eq!(item.providers, vec![CODEX, CLAUDE]);
+        assert_eq!(item.sources.len(), 1);
+        assert_eq!(item.sources[0].readers.len(), 2);
     }
 }

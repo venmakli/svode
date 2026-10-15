@@ -97,13 +97,7 @@ pub fn discover(
                 environment,
                 global,
             ),
-            InstructionPolicy::ClaudeMemory => claude::discover(
-                &repository_root,
-                &target_root,
-                &directory_chain,
-                environment,
-                global,
-            ),
+            InstructionPolicy::ClaudeMemory => claude::discover(&places, environment, global),
             InstructionPolicy::Declared(declared) => {
                 declared::discover(adapter.id, declared, &places, environment, global)
             }

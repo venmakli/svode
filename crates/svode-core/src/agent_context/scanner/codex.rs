@@ -67,6 +67,7 @@ pub(super) fn discover(
             InstructionDiscoveryPolicy::CodexUserPrecedence,
             0,
             max_bytes,
+            true,
             &mut result,
         );
     }
@@ -93,6 +94,7 @@ pub(super) fn discover(
             InstructionDiscoveryPolicy::CodexDirectoryPrecedence,
             directory_depth,
             max_bytes,
+            false,
             &mut result,
         );
         for row in &mut result.rows[before..] {
@@ -113,13 +115,24 @@ fn discover_group(
     policy: InstructionDiscoveryPolicy,
     directory_depth: usize,
     max_bytes: usize,
+    skip_blank: bool,
     result: &mut DiscoveryResult,
 ) {
     let adapter_id = AgentAdapterKind::Codex;
+    // In the Codex home a blank file counts as missing: an empty
+    // `AGENTS.override.md` there falls through to `AGENTS.md`. In a project
+    // directory any existing file is the directory's one file.
     let mut inspected = candidates
         .iter()
         .filter_map(|path| {
             inspect(path, allowed_root, max_bytes, Some(adapter_id)).map(|source| (path, source))
+        })
+        .filter(|(_, source)| {
+            !skip_blank
+                || source
+                    .preview
+                    .as_ref()
+                    .is_none_or(|preview| !preview.markdown.trim().is_empty())
         })
         .collect::<Vec<_>>();
     let selected = inspected
@@ -283,14 +296,26 @@ fn read_config(
         ));
         return (CodexConfig::default(), result);
     }
-    match toml::from_str(&String::from_utf8_lossy(&bytes)) {
+    let text = String::from_utf8_lossy(&bytes);
+    match toml::from_str(&text) {
         Ok(config) => (config, result),
         Err(error) => {
+            // The parser's own message may quote the file, which can hold
+            // secrets; the diagnostic names only the line.
+            let line = error
+                .span()
+                .and_then(|span| text.get(..span.start))
+                .map(|prefix| prefix.matches('\n').count() + 1);
             result.diagnostics.push(diagnostic(
                 &config_path,
                 Some(adapter_id),
                 "codex_config_parse",
-                format!("Could not parse supported Codex config fields: {error}"),
+                match line {
+                    Some(line) => {
+                        format!("Could not parse supported Codex config fields at line {line}")
+                    }
+                    None => "Could not parse supported Codex config fields".to_string(),
+                },
             ));
             (CodexConfig::default(), result)
         }
@@ -393,5 +418,81 @@ mod tests {
         assert_eq!(project_rows[0].preview.as_ref().unwrap().markdown, "");
         assert_eq!(project_rows[0].health, SourceHealth::Normal);
         assert_eq!(project_rows[1].resolution, SourceResolution::Superseded);
+    }
+
+    fn personal_rows(home: &Path) -> DiscoveryResult {
+        let project = TempDir::new().unwrap();
+        std::fs::create_dir(project.path().join(".git")).unwrap();
+        let environment = SourceRegistryEnvironment::for_tests(home.to_path_buf());
+        discover(
+            project.path(),
+            project.path(),
+            &[project.path().to_path_buf()],
+            &environment,
+            true,
+        )
+    }
+
+    #[test]
+    fn a_blank_home_override_falls_through_to_home_agents_md() {
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir(home.path().join(".codex")).unwrap();
+        std::fs::write(home.path().join(".codex/AGENTS.override.md"), " \n").unwrap();
+        std::fs::write(home.path().join(".codex/AGENTS.md"), "home").unwrap();
+
+        let result = personal_rows(home.path());
+
+        assert_eq!(result.rows.len(), 1);
+        assert!(result.rows[0].path.ends_with("/.codex/AGENTS.md"));
+        assert_eq!(result.rows[0].resolution, SourceResolution::Selected);
+    }
+
+    #[test]
+    fn a_home_override_with_text_shadows_home_agents_md() {
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir(home.path().join(".codex")).unwrap();
+        std::fs::write(home.path().join(".codex/AGENTS.override.md"), "override").unwrap();
+        std::fs::write(home.path().join(".codex/AGENTS.md"), "home").unwrap();
+
+        let result = personal_rows(home.path());
+
+        let agents = result
+            .rows
+            .iter()
+            .find(|row| row.path.ends_with("/.codex/AGENTS.md"))
+            .unwrap();
+        assert_eq!(agents.resolution, SourceResolution::Superseded);
+        assert!(
+            agents
+                .superseded_by
+                .as_deref()
+                .unwrap()
+                .ends_with("/AGENTS.override.md")
+        );
+    }
+
+    #[test]
+    fn an_unparseable_config_is_a_diagnostic_that_does_not_quote_the_file() {
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir(home.path().join(".codex")).unwrap();
+        std::fs::write(
+            home.path().join(".codex/config.toml"),
+            "model = \"m\"\n[mcp_servers.x.env]\nTOKEN = \"sk-do-not-show\n",
+        )
+        .unwrap();
+
+        let result = personal_rows(home.path());
+
+        let diagnostic = result
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "codex_config_parse")
+            .unwrap();
+        assert!(
+            diagnostic.message.ends_with("at line 3"),
+            "{}",
+            diagnostic.message
+        );
+        assert!(!format!("{:?}", result.diagnostics).contains("sk-do-not-show"));
     }
 }

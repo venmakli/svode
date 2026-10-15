@@ -568,8 +568,10 @@ impl Scan<'_> {
             return;
         }
         let has_manifest = canonical_entry.join("SKILL.md").exists();
-        if root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
-            && !has_manifest
+        if matches!(
+            root.discovery_kind,
+            SkillDiscoveryKind::ClaudePersonal | SkillDiscoveryKind::ClaudeProject
+        ) && !has_manifest
             && canonical_entry.join(CLAUDE_PLUGIN_MANIFEST).is_file()
         {
             self.scan_claude_plugin(
@@ -721,7 +723,10 @@ impl Scan<'_> {
         let plugin_root = RootSpec {
             adapter: root.adapter,
             scope: root.scope,
-            discovery_kind: SkillDiscoveryKind::ClaudePersonalPlugin,
+            discovery_kind: match root.discovery_kind {
+                SkillDiscoveryKind::ClaudeProject => SkillDiscoveryKind::ClaudeProjectPlugin,
+                _ => SkillDiscoveryKind::ClaudePersonalPlugin,
+            },
             layout: SkillLayout::DIRECT_CHILDREN,
             root: plugin.join("skills"),
             owner: root.owner.clone(),
@@ -1240,7 +1245,9 @@ fn apply_personal_shadowing(
     }
     for row in rows.values_mut() {
         for alias in &mut row.aliases {
-            if alias.scope != SkillScope::Project {
+            if alias.scope != SkillScope::Project
+                || alias.discovery_kind == SkillDiscoveryKind::ClaudeProjectPlugin
+            {
                 continue;
             }
             if let Some(personal) = personal_names.get(&(alias.adapter_id, row.name.clone())) {
@@ -1344,12 +1351,15 @@ fn skill_scope_order(scope: SkillScope) -> u8 {
 fn discovery_kind_order(kind: SkillDiscoveryKind) -> u8 {
     match kind {
         SkillDiscoveryKind::CodexStandardPersonal => 0,
-        SkillDiscoveryKind::CodexProject => 1,
-        SkillDiscoveryKind::ClaudePersonal => 2,
-        SkillDiscoveryKind::ClaudePersonalPlugin => 3,
-        SkillDiscoveryKind::ClaudeProject => 4,
-        SkillDiscoveryKind::PersonalRoot => 5,
-        SkillDiscoveryKind::ProjectRoot => 6,
+        SkillDiscoveryKind::CodexHome => 1,
+        SkillDiscoveryKind::CodexProject => 2,
+        SkillDiscoveryKind::CodexProjectConfig => 3,
+        SkillDiscoveryKind::ClaudePersonal => 4,
+        SkillDiscoveryKind::ClaudePersonalPlugin => 5,
+        SkillDiscoveryKind::ClaudeProject => 6,
+        SkillDiscoveryKind::ClaudeProjectPlugin => 7,
+        SkillDiscoveryKind::PersonalRoot => 8,
+        SkillDiscoveryKind::ProjectRoot => 9,
     }
 }
 
@@ -1617,9 +1627,9 @@ mod tests {
         let personal_source = write_skill(&standard, "personal", "personal", Some("Personal"));
         write_skill(
             &home.path().join(".codex/skills"),
-            "excluded",
-            "excluded",
-            Some("Excluded compatibility root"),
+            "codex-home",
+            "codex-home",
+            Some("Codex home root"),
         );
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
@@ -1654,7 +1664,10 @@ mod tests {
             personal.canonical_path,
             path_string(&personal_source.canonicalize().unwrap())
         );
-        assert!(snapshot.skills.iter().all(|row| row.name != "excluded"));
+        assert_eq!(
+            kinds_of(&snapshot, "codex-home"),
+            vec![SkillDiscoveryKind::CodexHome]
+        );
     }
 
     #[cfg(unix)]
@@ -2306,5 +2319,157 @@ mod tests {
         assert!(broken.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "opencode_config_parse" && diagnostic.adapter_id == Some(opencode)
         }));
+    }
+
+    fn kinds_of(snapshot: &AgentContextDiscovery, name: &str) -> Vec<SkillDiscoveryKind> {
+        snapshot
+            .skills
+            .iter()
+            .filter(|row| row.name == name)
+            .flat_map(codex_and_claude)
+            .map(|alias| alias.discovery_kind)
+            .collect()
+    }
+
+    #[test]
+    fn codex_reads_codex_project_and_home_roots_and_skills_below_group_folders() {
+        let (project, home, environment) = setup();
+        let child = project.path().join("child");
+        write_skill(
+            &project.path().join(".codex/skills"),
+            "config",
+            "config",
+            Some("Config"),
+        );
+        write_skill(
+            &child.join(".codex/skills"),
+            "nested-config",
+            "nested-config",
+            Some("Nested"),
+        );
+        write_skill(
+            &home.path().join(".codex/skills"),
+            "home",
+            "home",
+            Some("Home"),
+        );
+        write_skill(
+            &home.path().join(".codex/skills/.system"),
+            "bundled",
+            "bundled",
+            Some("Bundled"),
+        );
+        let agents = project.path().join(".agents/skills");
+        write_skill(&agents.join("group"), "grouped", "grouped", Some("Grouped"));
+        let mut deep = agents.clone();
+        for level in 1..6 {
+            deep.push(format!("d{level}"));
+        }
+        write_skill(&deep, "sixth", "sixth", Some("Sixth level"));
+        write_skill(
+            &deep.join("d6"),
+            "seventh",
+            "seventh",
+            Some("Seventh level"),
+        );
+        write_skill(&agents.join(".hidden"), "hidden", "hidden", Some("Hidden"));
+        fs::write(
+            agents.join("flat.md"),
+            "---\nname: flat\ndescription: Flat\n---\n",
+        )
+        .unwrap();
+
+        let snapshot = scan(project.path(), &child, &environment).unwrap();
+
+        assert_eq!(
+            kinds_of(&snapshot, "config"),
+            vec![SkillDiscoveryKind::CodexProjectConfig]
+        );
+        assert_eq!(
+            kinds_of(&snapshot, "nested-config"),
+            vec![SkillDiscoveryKind::CodexProjectConfig]
+        );
+        assert_eq!(
+            kinds_of(&snapshot, "home"),
+            vec![SkillDiscoveryKind::CodexHome]
+        );
+        for name in ["grouped", "sixth"] {
+            assert_eq!(
+                kinds_of(&snapshot, name),
+                vec![SkillDiscoveryKind::CodexProject],
+                "{name}"
+            );
+        }
+        for name in ["seventh", "hidden", "flat", "bundled"] {
+            assert!(kinds_of(&snapshot, name).is_empty(), "{name}");
+        }
+        assert!(
+            snapshot
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.adapter_id == Some(AgentAdapterKind::Codex))
+                .all(|diagnostic| diagnostic.code != "skill_manifest_missing"),
+            "{:#?}",
+            snapshot.diagnostics
+        );
+    }
+
+    #[test]
+    fn claude_reads_only_direct_children_of_its_roots() {
+        let (project, _home, environment) = setup();
+        let claude = project.path().join(".claude/skills");
+        write_skill(&claude, "direct", "direct", Some("Direct"));
+        write_skill(&claude.join("group"), "grouped", "grouped", Some("Grouped"));
+
+        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+
+        assert_eq!(
+            kinds_of(&snapshot, "direct"),
+            vec![SkillDiscoveryKind::ClaudeProject]
+        );
+        assert!(kinds_of(&snapshot, "grouped").is_empty());
+    }
+
+    #[test]
+    fn claude_project_skills_dir_plugin_brings_namespaced_skills_that_personal_ones_do_not_shadow()
+    {
+        let (project, home, environment) = setup();
+        let plugin = project.path().join(".claude/skills/kit");
+        fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        fs::write(
+            plugin.join(".claude-plugin/plugin.json"),
+            "{\"name\":\"kit\"}",
+        )
+        .unwrap();
+        write_skill(
+            &plugin.join("skills"),
+            "review",
+            "review",
+            Some("Plugin review"),
+        );
+        write_skill(
+            &home.path().join(".claude/skills"),
+            "review",
+            "review",
+            Some("Personal"),
+        );
+
+        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+        let plugin_alias = snapshot
+            .skills
+            .iter()
+            .filter(|row| row.name == "review")
+            .flat_map(codex_and_claude)
+            .find(|alias| alias.discovery_kind == SkillDiscoveryKind::ClaudeProjectPlugin)
+            .unwrap();
+
+        assert_eq!(plugin_alias.resolution, SourceResolution::Included);
+        assert!(
+            snapshot
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.adapter_id == Some(AgentAdapterKind::ClaudeCode))
+                .all(|diagnostic| diagnostic.code != "skill_manifest_missing")
+        );
     }
 }

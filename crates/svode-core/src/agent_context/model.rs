@@ -54,6 +54,8 @@ pub enum InstructionDiscoveryPolicy {
     CodexUserPrecedence,
     CodexDirectoryPrecedence,
     ClaudeHierarchy,
+    /// `AGENTS.md` read by Claude Code's built-in `agents-md` plugin.
+    ClaudeAgentsMd,
     ClaudeImport,
     TargetRootRecognition,
     /// A file of a declared rule in a directory of its walk or of the
@@ -134,8 +136,14 @@ pub enum SkillScope {
 #[serde(rename_all = "snake_case")]
 pub enum SkillDiscoveryKind {
     CodexProject,
+    /// `.codex/skills` of a project directory.
+    CodexProjectConfig,
     CodexStandardPersonal,
+    /// `$CODEX_HOME/skills`.
+    CodexHome,
     ClaudeProject,
+    /// Skill inside a skills-dir plugin in a project `.claude/skills`.
+    ClaudeProjectPlugin,
     ClaudePersonal,
     /// Skill inside a skills-dir plugin in the Claude personal skills root.
     ClaudePersonalPlugin,
