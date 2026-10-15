@@ -1,6 +1,8 @@
 mod claude;
 mod codex;
+mod declared;
 mod io;
+mod qwen;
 pub mod skill_files;
 mod skills;
 
@@ -8,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use super::AgentContextError;
 use crate::agent_adapters::{
-    AgentAdapterKind, AgentAdapterRegistry, InstructionDiscoveryPolicy as InstructionPolicy,
-    SourceRegistryEnvironment,
+    AgentAdapterKind, AgentAdapterRegistry, DirectoryWalk,
+    InstructionDiscoveryPolicy as InstructionPolicy, SourceRegistryEnvironment,
 };
 
 use super::model::{
@@ -73,25 +75,42 @@ pub fn discover(
     let target_root = canonical_directory(space_path, "target space")?;
     let repository_root = nearest_repository_root(&target_root, &project_root);
     let directory_chain = root_to_target_chain(&repository_root, &target_root);
+    let places = TargetPlaces {
+        home: environment
+            .home_dir
+            .canonicalize()
+            .unwrap_or_else(|_| environment.home_dir.clone()),
+        repository_root: repository_root.clone(),
+        target_root: target_root.clone(),
+        directory_chain: directory_chain.clone(),
+    };
     let adapters = AgentAdapterRegistry.source_policies(environment);
     let mut result = DiscoveryResult::default();
     for adapter in &adapters {
-        let discover = match adapter.capabilities.instructions.policy {
-            InstructionPolicy::CodexAgents => codex::discover,
-            InstructionPolicy::ClaudeMemory => claude::discover,
-        };
-        result.append(discover(
-            &repository_root,
-            &target_root,
-            &directory_chain,
-            environment,
-            global_agents.contains(&adapter.id),
-        ));
+        let global = global_agents.contains(&adapter.id);
+        result.append(match &adapter.capabilities.instructions.policy {
+            InstructionPolicy::CodexAgents => codex::discover(
+                &repository_root,
+                &target_root,
+                &directory_chain,
+                environment,
+                global,
+            ),
+            InstructionPolicy::ClaudeMemory => claude::discover(
+                &repository_root,
+                &target_root,
+                &directory_chain,
+                environment,
+                global,
+            ),
+            InstructionPolicy::Declared(declared) => {
+                declared::discover(adapter.id, declared, &places, environment, global)
+            }
+        });
     }
     result.append(discover_recognized(&target_root));
     result.append(skills::discover(
-        &repository_root,
-        &directory_chain,
+        &places,
         &adapters,
         global_agents,
         &environment.svode_home,
@@ -128,6 +147,70 @@ pub fn discover(
         observed_project_paths: result.observed_project_paths,
         observed_personal_paths: result.observed_personal_paths,
     })
+}
+
+/// The directories of a target that source policies walk.
+pub(super) struct TargetPlaces {
+    pub home: PathBuf,
+    pub repository_root: PathBuf,
+    pub target_root: PathBuf,
+    /// From the repository root down to the target.
+    pub directory_chain: Vec<PathBuf>,
+}
+
+/// A directory of a walk. One outside the repository boundary is read only
+/// for enabled agents.
+pub(super) struct WalkDirectory {
+    pub path: PathBuf,
+    pub inside: bool,
+}
+
+impl TargetPlaces {
+    pub(super) fn walk(&self, walk: DirectoryWalk) -> Vec<WalkDirectory> {
+        let down_to_target = |stop: &dyn Fn(&Path) -> bool| {
+            let mut directories = self
+                .target_root
+                .ancestors()
+                .take_while(|path| stop(path))
+                .map(Path::to_path_buf)
+                .collect::<Vec<_>>();
+            directories.reverse();
+            directories
+        };
+        let paths = match walk {
+            DirectoryWalk::Target => vec![self.target_root.clone()],
+            DirectoryWalk::RepositoryRoot => self.directory_chain[..1].to_vec(),
+            DirectoryWalk::RepositoryToTarget => self.directory_chain.clone(),
+            DirectoryWalk::TargetToRepository => {
+                self.directory_chain.iter().rev().cloned().collect()
+            }
+            DirectoryWalk::FilesystemToTarget => down_to_target(&|_| true),
+            DirectoryWalk::HomeOrRepositoryToTarget => {
+                if self.target_root.starts_with(&self.home) {
+                    down_to_target(&|path| path.starts_with(&self.home))
+                } else {
+                    self.directory_chain.clone()
+                }
+            }
+        };
+        paths
+            .into_iter()
+            .map(|path| WalkDirectory {
+                inside: path.starts_with(&self.repository_root),
+                path,
+            })
+            .collect()
+    }
+
+    /// The root that a source in `directory` outside the repository boundary
+    /// may resolve within: the home directory, or the directory itself.
+    pub(super) fn outside_root(&self, directory: &Path) -> PathBuf {
+        if directory.starts_with(&self.home) {
+            self.home.clone()
+        } else {
+            directory.to_path_buf()
+        }
+    }
 }
 
 fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, AgentContextError> {

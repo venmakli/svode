@@ -1,7 +1,9 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::agent_context::model::SkillDiscoveryKind;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SourceRegistryError {
@@ -246,39 +248,180 @@ pub struct AgentAdapterIdentity {
     pub install_hint: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstructionDiscoveryPolicy {
     CodexAgents,
     ClaudeMemory,
+    /// Declared rules that Agent Context applies the same way for every
+    /// agent that has them.
+    Declared(DeclaredInstructions),
 }
 
+/// A walk over the directories of a target (E02 boundaries), in the order the
+/// agent registers them. Directories above the repository boundary lie
+/// outside it: Agent Context reads them only for enabled agents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SkillDiscoveryPolicy {
-    CodexDirectoryChain,
-    ClaudePersonalShadowsProject,
+pub enum DirectoryWalk {
+    Target,
+    RepositoryRoot,
+    /// From the repository root down to the target.
+    RepositoryToTarget,
+    /// From the target up to the repository root.
+    TargetToRepository,
+    /// From the filesystem root down to the target.
+    FilesystemToTarget,
+    /// From `~` down to the target when the target lies in it, else from the
+    /// repository root.
+    HomeOrRepositoryToTarget,
 }
 
+/// Which of the files an instruction group finds the agent reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SkillRootKind {
-    StandardPersonal,
+pub enum InstructionSelection {
+    /// Every readable file.
+    All,
+    /// The first readable file; the others are shadowed by it.
+    First,
+}
+
+/// A setting of the agent that replaces the names of a rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstructionNamesSetting {
+    /// `context.fileName` of the Qwen Code settings.
+    QwenContextFileName,
+}
+
+/// Where the files of an instruction rule are looked up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstructionDirectories {
+    Walk(DirectoryWalk),
+    /// One directory of the agent's configuration.
+    Personal(String),
+}
+
+/// Instruction files the agent reads in each directory of `directories`,
+/// as one group per directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstructionRule {
+    pub directories: InstructionDirectories,
+    /// Paths relative to each directory, in the agent's order.
+    pub names: Vec<String>,
+    pub names_setting: Option<InstructionNamesSetting>,
+    pub selection: InstructionSelection,
+    /// The agent skips a file that is empty after trimming.
+    pub skip_empty: bool,
+}
+
+/// One file of an instruction slot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstructionSlotFile {
+    /// Relative to the single directory of a walk such as `Target`.
+    Project {
+        walk: DirectoryWalk,
+        path: String,
+    },
+    Personal(String),
+}
+
+/// One instruction the agent takes from the first readable of its files,
+/// such as a project file that replaces a personal one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstructionSlot {
+    pub files: Vec<InstructionSlotFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentSkillRoot {
-    pub kind: SkillRootKind,
-    pub path: String,
+pub struct DeclaredInstructions {
+    pub rules: Vec<InstructionRule>,
+    pub slots: Vec<InstructionSlot>,
+}
+
+/// How an agent chooses between skills that share a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillPrecedence {
+    /// Skills with the same name coexist.
+    Coexist,
+    /// A personal skill shadows a project skill of the same name.
+    ClaudePersonalShadowsProject,
+    /// The first registered skill wins.
+    FirstWins(SkillKey),
+    /// The last registered skill wins.
+    LastWins(SkillKey),
+}
+
+/// What makes two skills the same for an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillKey {
+    Name,
+    NameIgnoringCase,
+    /// The skill directory name, or the file name of a flat skill without
+    /// `.md`.
+    PathId,
+}
+
+/// Plain `*.md` files the agent itself takes as skills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlatSkills {
+    None,
+    /// Directly in the skills root.
+    Root,
+    /// In folders below the skills root.
+    Nested,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillLayout {
+    /// How deep skill directories lie: 1 is direct children of the root;
+    /// deeper levels are folders of skills.
+    pub max_depth: usize,
+    pub flat: FlatSkills,
+}
+
+impl SkillLayout {
+    pub const DIRECT_CHILDREN: Self = Self {
+        max_depth: 1,
+        flat: FlatSkills::None,
+    };
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillPlace {
+    /// `relative` in each directory of the walk.
+    Walk {
+        walk: DirectoryWalk,
+        relative: String,
+    },
+    Personal(String),
+}
+
+/// A skills root of an agent, in the agent's registration order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRootRule {
+    pub kind: SkillDiscoveryKind,
+    pub place: SkillPlace,
+    pub layout: SkillLayout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDiscoveryCapability {
-    pub policy: SkillDiscoveryPolicy,
-    pub project_relative_root: String,
-    pub personal_roots: Vec<AgentSkillRoot>,
+    pub precedence: SkillPrecedence,
+    pub roots: Vec<SkillRootRule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,6 +446,9 @@ pub struct AgentSourcePolicy {
     pub capabilities: AdapterSourceCapabilities,
 }
 
+/// Where the agents keep their configuration on this device: the home
+/// directories of the clients as the environment the agents run in sets
+/// them (Stage 10 `03` A1).
 #[derive(Debug, Clone)]
 pub struct SourceRegistryEnvironment {
     /// Agent Context shows locations in it relative to `~`.
@@ -310,20 +456,54 @@ pub struct SourceRegistryEnvironment {
     pub codex_home: PathBuf,
     pub codex_standard_skills_dir: PathBuf,
     pub claude_config_dir: PathBuf,
+    /// `OPENCODE_CONFIG_DIR`, else `opencode` in `XDG_CONFIG_HOME` or
+    /// `~/.config`.
+    pub opencode_config_dir: PathBuf,
+    /// `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
+    pub pi_agent_dir: PathBuf,
+    /// `QWEN_HOME`, else `~/.qwen`.
+    pub qwen_home: PathBuf,
+    /// `KIMI_CODE_HOME`, else `~/.kimi-code`.
+    pub kimi_code_home: PathBuf,
     /// Stable Svode install root. Client skill links point into its payload,
     /// so discovery reads it like a personal root.
     pub svode_home: PathBuf,
 }
 
 impl SourceRegistryEnvironment {
-    pub fn for_tests(home_dir: PathBuf) -> Self {
+    /// The client homes from `variable`, a lookup in the environment the
+    /// agents run in. An empty variable is unset; a leading `~` is the home
+    /// directory.
+    pub fn from_variables(home_dir: PathBuf, variable: impl Fn(&str) -> Option<OsString>) -> Self {
+        let set = |name: &str| {
+            variable(name)
+                .filter(|value| !value.is_empty())
+                .map(|value| expand_home(&home_dir, PathBuf::from(value)))
+        };
+        let config_home = set("XDG_CONFIG_HOME").unwrap_or_else(|| home_dir.join(".config"));
         Self {
-            codex_home: home_dir.join(".codex"),
+            codex_home: set("CODEX_HOME").unwrap_or_else(|| home_dir.join(".codex")),
             codex_standard_skills_dir: home_dir.join(".agents/skills"),
-            claude_config_dir: home_dir.join(".claude"),
+            claude_config_dir: set("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home_dir.join(".claude")),
+            opencode_config_dir: set("OPENCODE_CONFIG_DIR")
+                .unwrap_or_else(|| config_home.join("opencode")),
+            pi_agent_dir: set("PI_CODING_AGENT_DIR").unwrap_or_else(|| home_dir.join(".pi/agent")),
+            qwen_home: set("QWEN_HOME").unwrap_or_else(|| home_dir.join(".qwen")),
+            kimi_code_home: set("KIMI_CODE_HOME").unwrap_or_else(|| home_dir.join(".kimi-code")),
             svode_home: home_dir.join(".svode"),
             home_dir,
         }
+    }
+
+    pub fn for_tests(home_dir: PathBuf) -> Self {
+        Self::from_variables(home_dir, |_| None)
+    }
+}
+
+fn expand_home(home_dir: &Path, path: PathBuf) -> PathBuf {
+    match path.strip_prefix("~") {
+        Ok(rest) => home_dir.join(rest),
+        Err(_) => path,
     }
 }
 
@@ -360,69 +540,415 @@ impl AgentAdapterRegistry {
         id: AgentAdapterKind,
         environment: &SourceRegistryEnvironment,
     ) -> Option<AgentSourcePolicy> {
-        let (policy, personal_root, skill_policy, project_skills, skill_roots) = match id {
+        let home = &environment.home_dir;
+        let (personal_root, instructions, skills) = match id {
             AgentAdapterKind::Codex => (
-                InstructionDiscoveryPolicy::CodexAgents,
                 &environment.codex_home,
-                SkillDiscoveryPolicy::CodexDirectoryChain,
-                ".agents/skills",
-                vec![AgentSkillRoot {
-                    kind: SkillRootKind::StandardPersonal,
-                    path: path_string(&environment.codex_standard_skills_dir),
-                }],
+                InstructionDiscoveryPolicy::CodexAgents,
+                SkillDiscoveryCapability {
+                    precedence: SkillPrecedence::Coexist,
+                    roots: vec![
+                        walk_skills(
+                            SkillDiscoveryKind::CodexProject,
+                            DirectoryWalk::RepositoryToTarget,
+                            ".agents/skills",
+                        ),
+                        personal_skills(
+                            SkillDiscoveryKind::CodexStandardPersonal,
+                            &environment.codex_standard_skills_dir,
+                        ),
+                    ],
+                },
             ),
             AgentAdapterKind::ClaudeCode => (
-                InstructionDiscoveryPolicy::ClaudeMemory,
                 &environment.claude_config_dir,
-                SkillDiscoveryPolicy::ClaudePersonalShadowsProject,
-                ".claude/skills",
-                vec![AgentSkillRoot {
-                    kind: SkillRootKind::StandardPersonal,
-                    path: path_string(&environment.claude_config_dir.join("skills")),
-                }],
+                InstructionDiscoveryPolicy::ClaudeMemory,
+                SkillDiscoveryCapability {
+                    precedence: SkillPrecedence::ClaudePersonalShadowsProject,
+                    roots: vec![
+                        walk_skills(
+                            SkillDiscoveryKind::ClaudeProject,
+                            DirectoryWalk::RepositoryToTarget,
+                            ".claude/skills",
+                        ),
+                        personal_skills(
+                            SkillDiscoveryKind::ClaudePersonal,
+                            &environment.claude_config_dir.join("skills"),
+                        ),
+                    ],
+                },
             ),
-            AgentAdapterKind::Cursor
-            | AgentAdapterKind::Opencode
-            | AgentAdapterKind::Hermes
-            | AgentAdapterKind::Pi
-            | AgentAdapterKind::QwenCode
-            | AgentAdapterKind::KimiCode
-            | AgentAdapterKind::GrokBuild => return None,
+            // opencode 2.0.22: only `AGENTS.md`; skills of Claude Code and
+            // `.agents` in every ancestor, flat `*.md` too, the last wins.
+            AgentAdapterKind::Opencode => {
+                let config = &environment.opencode_config_dir;
+                let layout = SkillLayout {
+                    max_depth: MAX_SKILL_DEPTH,
+                    flat: FlatSkills::Root,
+                };
+                let mut roots = Vec::new();
+                for (personal, relative) in [
+                    (home.join(".claude/skills"), ".claude/skills"),
+                    (home.join(".agents/skills"), ".agents/skills"),
+                ] {
+                    roots.push(skill_root(
+                        SkillPlace::Personal(path_string(&personal)),
+                        layout,
+                    ));
+                    roots.push(skill_root(
+                        SkillPlace::Walk {
+                            walk: DirectoryWalk::FilesystemToTarget,
+                            relative: relative.to_string(),
+                        },
+                        layout,
+                    ));
+                }
+                for name in ["skill", "skills"] {
+                    roots.push(skill_root(
+                        SkillPlace::Personal(path_string(&config.join(name))),
+                        layout,
+                    ));
+                }
+                for relative in [".opencode/skill", ".opencode/skills"] {
+                    roots.push(skill_root(
+                        SkillPlace::Walk {
+                            walk: DirectoryWalk::FilesystemToTarget,
+                            relative: relative.to_string(),
+                        },
+                        layout,
+                    ));
+                }
+                (
+                    config,
+                    InstructionDiscoveryPolicy::Declared(DeclaredInstructions {
+                        rules: vec![
+                            rule(
+                                InstructionDirectories::Personal(path_string(config)),
+                                &["AGENTS.md"],
+                                InstructionSelection::All,
+                            ),
+                            rule(
+                                InstructionDirectories::Walk(
+                                    DirectoryWalk::HomeOrRepositoryToTarget,
+                                ),
+                                &["AGENTS.md"],
+                                InstructionSelection::All,
+                            ),
+                        ],
+                        slots: Vec::new(),
+                    }),
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::LastWins(SkillKey::PathId),
+                        roots,
+                    },
+                )
+            }
+            // pi 1.0.0: one context file per directory from the filesystem
+            // root; `SYSTEM.md` and `APPEND_SYSTEM.md` of the project replace
+            // the personal ones; the first skill of a name wins.
+            AgentAdapterKind::Pi => {
+                let agent_dir = &environment.pi_agent_dir;
+                let names = [
+                    "AGENTS.override.md",
+                    "AGENTS.md",
+                    "AGENTS.MD",
+                    "CLAUDE.md",
+                    "CLAUDE.MD",
+                ];
+                let pi_layout = SkillLayout {
+                    max_depth: MAX_SKILL_DEPTH,
+                    flat: FlatSkills::Root,
+                };
+                let agents_layout = SkillLayout {
+                    max_depth: MAX_SKILL_DEPTH,
+                    flat: FlatSkills::Nested,
+                };
+                (
+                    agent_dir,
+                    InstructionDiscoveryPolicy::Declared(DeclaredInstructions {
+                        rules: vec![
+                            rule(
+                                InstructionDirectories::Personal(path_string(agent_dir)),
+                                &names,
+                                InstructionSelection::First,
+                            ),
+                            rule(
+                                InstructionDirectories::Walk(DirectoryWalk::FilesystemToTarget),
+                                &names,
+                                InstructionSelection::First,
+                            ),
+                        ],
+                        slots: ["SYSTEM.md", "APPEND_SYSTEM.md"]
+                            .into_iter()
+                            .map(|name| InstructionSlot {
+                                files: vec![
+                                    InstructionSlotFile::Project {
+                                        walk: DirectoryWalk::Target,
+                                        path: format!(".pi/{name}"),
+                                    },
+                                    InstructionSlotFile::Personal(path_string(
+                                        &agent_dir.join(name),
+                                    )),
+                                ],
+                            })
+                            .collect(),
+                    }),
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::FirstWins(SkillKey::Name),
+                        roots: vec![
+                            skill_root(
+                                SkillPlace::Walk {
+                                    walk: DirectoryWalk::Target,
+                                    relative: ".pi/skills".to_string(),
+                                },
+                                pi_layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Walk {
+                                    walk: DirectoryWalk::TargetToRepository,
+                                    relative: ".agents/skills".to_string(),
+                                },
+                                agents_layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Personal(path_string(&agent_dir.join("skills"))),
+                                pi_layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Personal(path_string(&home.join(".agents/skills"))),
+                                agents_layout,
+                            ),
+                        ],
+                    },
+                )
+            }
+            // Qwen Code 0.24.7: `QWEN.md` and `AGENTS.md` (or
+            // `context.fileName`) from the git root, `QWEN.local.md` there,
+            // `output-language.md`; skills only in the target, project first.
+            AgentAdapterKind::QwenCode => {
+                let qwen_home = &environment.qwen_home;
+                let names = ["QWEN.md", "AGENTS.md"];
+                let mut personal = rule(
+                    InstructionDirectories::Personal(path_string(qwen_home)),
+                    &names,
+                    InstructionSelection::All,
+                );
+                personal.names_setting = Some(InstructionNamesSetting::QwenContextFileName);
+                let mut chain = rule(
+                    InstructionDirectories::Walk(DirectoryWalk::RepositoryToTarget),
+                    &names,
+                    InstructionSelection::All,
+                );
+                chain.names_setting = Some(InstructionNamesSetting::QwenContextFileName);
+                (
+                    qwen_home,
+                    InstructionDiscoveryPolicy::Declared(DeclaredInstructions {
+                        rules: vec![
+                            personal,
+                            chain,
+                            rule(
+                                InstructionDirectories::Walk(DirectoryWalk::RepositoryRoot),
+                                &[".qwen/QWEN.local.md"],
+                                InstructionSelection::All,
+                            ),
+                        ],
+                        slots: vec![InstructionSlot {
+                            files: vec![
+                                InstructionSlotFile::Project {
+                                    walk: DirectoryWalk::Target,
+                                    path: ".qwen/output-language.md".to_string(),
+                                },
+                                InstructionSlotFile::Personal(path_string(
+                                    &qwen_home.join("output-language.md"),
+                                )),
+                            ],
+                        }],
+                    }),
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::FirstWins(SkillKey::Name),
+                        roots: vec![
+                            walk_skills(
+                                SkillDiscoveryKind::ProjectRoot,
+                                DirectoryWalk::Target,
+                                ".qwen/skills",
+                            ),
+                            walk_skills(
+                                SkillDiscoveryKind::ProjectRoot,
+                                DirectoryWalk::Target,
+                                ".agents/skills",
+                            ),
+                            personal_skills(
+                                SkillDiscoveryKind::PersonalRoot,
+                                &qwen_home.join("skills"),
+                            ),
+                            personal_skills(
+                                SkillDiscoveryKind::PersonalRoot,
+                                &home.join(".agents/skills"),
+                            ),
+                        ],
+                    },
+                )
+            }
+            // Kimi Code 2.1.1: `AGENTS.md` of its home and `~/.agents`, from
+            // the git root `.kimi-code/AGENTS.md` and `AGENTS.md`, `SYSTEM.md`
+            // of its home; skills of the git root before personal ones,
+            // flat `*.md` too, the first of a name wins.
+            AgentAdapterKind::KimiCode => {
+                let kimi_home = &environment.kimi_code_home;
+                let layout = SkillLayout {
+                    max_depth: MAX_SKILL_DEPTH,
+                    flat: FlatSkills::Root,
+                };
+                let nonempty = |mut rule: InstructionRule| {
+                    rule.skip_empty = true;
+                    rule
+                };
+                (
+                    kimi_home,
+                    InstructionDiscoveryPolicy::Declared(DeclaredInstructions {
+                        rules: vec![
+                            nonempty(rule(
+                                InstructionDirectories::Personal(path_string(kimi_home)),
+                                &["AGENTS.md"],
+                                InstructionSelection::All,
+                            )),
+                            nonempty(rule(
+                                InstructionDirectories::Personal(path_string(
+                                    &home.join(".agents"),
+                                )),
+                                &["AGENTS.md", "agents.md"],
+                                InstructionSelection::First,
+                            )),
+                            nonempty(rule(
+                                InstructionDirectories::Walk(DirectoryWalk::RepositoryToTarget),
+                                &[".kimi-code/AGENTS.md"],
+                                InstructionSelection::All,
+                            )),
+                            nonempty(rule(
+                                InstructionDirectories::Walk(DirectoryWalk::RepositoryToTarget),
+                                &["AGENTS.md", "agents.md"],
+                                InstructionSelection::First,
+                            )),
+                            nonempty(rule(
+                                InstructionDirectories::Personal(path_string(kimi_home)),
+                                &["SYSTEM.md"],
+                                InstructionSelection::All,
+                            )),
+                        ],
+                        slots: Vec::new(),
+                    }),
+                    SkillDiscoveryCapability {
+                        precedence: SkillPrecedence::FirstWins(SkillKey::NameIgnoringCase),
+                        roots: vec![
+                            skill_root(
+                                SkillPlace::Walk {
+                                    walk: DirectoryWalk::RepositoryRoot,
+                                    relative: ".kimi-code/skills".to_string(),
+                                },
+                                layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Walk {
+                                    walk: DirectoryWalk::RepositoryRoot,
+                                    relative: ".agents/skills".to_string(),
+                                },
+                                layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Personal(path_string(&kimi_home.join("skills"))),
+                                layout,
+                            ),
+                            skill_root(
+                                SkillPlace::Personal(path_string(&home.join(".agents/skills"))),
+                                layout,
+                            ),
+                        ],
+                    },
+                )
+            }
+            AgentAdapterKind::Cursor | AgentAdapterKind::Hermes | AgentAdapterKind::GrokBuild => {
+                return None;
+            }
         };
         Some(AgentSourcePolicy {
             id,
             display_name: id.display_name().to_string(),
             personal_root: path_string(personal_root),
             capabilities: AdapterSourceCapabilities {
-                instructions: InstructionDiscoveryCapability { policy },
-                skills: SkillDiscoveryCapability {
-                    policy: skill_policy,
-                    project_relative_root: project_skills.to_string(),
-                    personal_roots: skill_roots,
+                instructions: InstructionDiscoveryCapability {
+                    policy: instructions,
                 },
+                skills,
             },
         })
     }
 }
 
+/// How deep the agents that walk folders of skills are followed.
+const MAX_SKILL_DEPTH: usize = 8;
+
+fn rule(
+    directories: InstructionDirectories,
+    names: &[&str],
+    selection: InstructionSelection,
+) -> InstructionRule {
+    InstructionRule {
+        directories,
+        names: names.iter().map(|name| (*name).to_string()).collect(),
+        names_setting: None,
+        selection,
+        skip_empty: false,
+    }
+}
+
+/// A root of an agent without a discovery kind of its own.
+fn skill_root(place: SkillPlace, layout: SkillLayout) -> SkillRootRule {
+    let kind = match place {
+        SkillPlace::Walk { .. } => SkillDiscoveryKind::ProjectRoot,
+        SkillPlace::Personal(_) => SkillDiscoveryKind::PersonalRoot,
+    };
+    SkillRootRule {
+        kind,
+        place,
+        layout,
+    }
+}
+
+fn walk_skills(kind: SkillDiscoveryKind, walk: DirectoryWalk, relative: &str) -> SkillRootRule {
+    SkillRootRule {
+        kind,
+        place: SkillPlace::Walk {
+            walk,
+            relative: relative.to_string(),
+        },
+        layout: SkillLayout::DIRECT_CHILDREN,
+    }
+}
+
+fn personal_skills(kind: SkillDiscoveryKind, path: &Path) -> SkillRootRule {
+    SkillRootRule {
+        kind,
+        place: SkillPlace::Personal(path_string(path)),
+        layout: SkillLayout::DIRECT_CHILDREN,
+    }
+}
+
 pub fn system_source_registry_environment() -> Result<SourceRegistryEnvironment, SourceRegistryError>
 {
+    source_registry_environment(|name| std::env::var_os(name))
+}
+
+/// The client homes of this device from `variable`, a lookup in the
+/// environment the agents run in.
+pub fn source_registry_environment(
+    variable: impl Fn(&str) -> Option<OsString>,
+) -> Result<SourceRegistryEnvironment, SourceRegistryError> {
     let home_dir = system_home_dir().ok_or_else(|| {
         SourceRegistryError::PathNotAccessible("home directory is unavailable".to_string())
     })?;
-    let codex_home = std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir.join(".codex"));
-    let claude_config_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir.join(".claude"));
-    Ok(SourceRegistryEnvironment {
-        codex_home,
-        codex_standard_skills_dir: home_dir.join(".agents/skills"),
-        claude_config_dir,
-        svode_home: home_dir.join(".svode"),
-        home_dir,
-    })
+    Ok(SourceRegistryEnvironment::from_variables(
+        home_dir, variable,
+    ))
 }
 
 pub fn system_home_dir() -> Option<PathBuf> {
@@ -577,21 +1103,58 @@ mod tests {
         assert_eq!(snapshots[0].id.as_str(), "codex");
         assert_eq!(snapshots[1].id.as_str(), "claude-code");
         assert_eq!(
-            snapshots[0].capabilities.skills.project_relative_root,
-            ".agents/skills"
+            snapshots[0].capabilities.skills.roots[0].place,
+            SkillPlace::Walk {
+                walk: DirectoryWalk::RepositoryToTarget,
+                relative: ".agents/skills".to_string(),
+            }
         );
-        assert_eq!(snapshots[0].capabilities.skills.personal_roots.len(), 1);
         assert_eq!(
-            snapshots[1].capabilities.skills.policy,
-            SkillDiscoveryPolicy::ClaudePersonalShadowsProject
+            snapshots[1].capabilities.skills.precedence,
+            SkillPrecedence::ClaudePersonalShadowsProject
         );
         assert_eq!(
             serde_json::to_value(snapshots[1].id).unwrap(),
             serde_json::json!("claude-code")
         );
         for snapshot in snapshots {
-            assert!(!snapshot.capabilities.skills.personal_roots.is_empty());
+            assert!(
+                snapshot
+                    .capabilities
+                    .skills
+                    .roots
+                    .iter()
+                    .any(|root| matches!(root.place, SkillPlace::Personal(_)))
+            );
         }
+    }
+
+    #[test]
+    fn client_homes_come_from_the_agents_environment() {
+        let home = PathBuf::from("/home/test");
+        let environment =
+            SourceRegistryEnvironment::from_variables(home.clone(), |name| match name {
+                "QWEN_HOME" => Some("~/qwen".into()),
+                "PI_CODING_AGENT_DIR" => Some("/srv/pi".into()),
+                "KIMI_CODE_HOME" => Some("".into()),
+                "XDG_CONFIG_HOME" => Some("/srv/config".into()),
+                _ => None,
+            });
+
+        assert_eq!(environment.qwen_home, home.join("qwen"));
+        assert_eq!(environment.pi_agent_dir, PathBuf::from("/srv/pi"));
+        assert_eq!(environment.kimi_code_home, home.join(".kimi-code"));
+        assert_eq!(
+            environment.opencode_config_dir,
+            PathBuf::from("/srv/config/opencode")
+        );
+        let defaults = SourceRegistryEnvironment::for_tests(home.clone());
+        assert_eq!(defaults.opencode_config_dir, home.join(".config/opencode"));
+        assert_eq!(defaults.pi_agent_dir, home.join(".pi/agent"));
+        let opencode = SourceRegistryEnvironment::from_variables(home.clone(), |name| {
+            (name == "OPENCODE_CONFIG_DIR").then(|| "/srv/opencode".into())
+        });
+        assert_eq!(opencode.opencode_config_dir, PathBuf::from("/srv/opencode"));
     }
 
     #[test]
@@ -626,19 +1189,26 @@ mod tests {
     }
 
     #[test]
-    fn a_new_built_in_agent_needs_no_source_policy() {
+    fn agents_without_decided_sources_have_no_source_policy() {
         let environment = SourceRegistryEnvironment::for_tests(PathBuf::from("/home/test"));
         let policies = AgentAdapterRegistry.source_policies(&environment);
 
         assert_eq!(
             policies.iter().map(|policy| policy.id).collect::<Vec<_>>(),
-            [AgentAdapterKind::Codex, AgentAdapterKind::ClaudeCode]
+            [
+                AgentAdapterKind::Codex,
+                AgentAdapterKind::ClaudeCode,
+                AgentAdapterKind::Opencode,
+                AgentAdapterKind::Pi,
+                AgentAdapterKind::QwenCode,
+                AgentAdapterKind::KimiCode,
+            ]
         );
         assert!(
             AgentAdapterRegistry
                 .identities()
                 .iter()
-                .any(|identity| identity.id == AgentAdapterKind::QwenCode)
+                .any(|identity| identity.id == AgentAdapterKind::GrokBuild)
         );
     }
 

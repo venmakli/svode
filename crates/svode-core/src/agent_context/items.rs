@@ -460,7 +460,13 @@ mod tests {
         assert_eq!(
             item.unapplied,
             Some(UnappliedReason::NotFound {
-                readers: vec![CODEX]
+                readers: vec![
+                    CODEX,
+                    AgentAdapterKind::Opencode,
+                    AgentAdapterKind::Pi,
+                    AgentAdapterKind::QwenCode,
+                    AgentAdapterKind::KimiCode,
+                ]
             })
         );
         assert!(item.sources.is_empty());
@@ -608,7 +614,7 @@ mod tests {
         assert_eq!(
             without_claude[0].unapplied,
             Some(UnappliedReason::NotFound {
-                readers: vec![CLAUDE]
+                readers: vec![CLAUDE, AgentAdapterKind::Opencode]
             })
         );
         assert_eq!(

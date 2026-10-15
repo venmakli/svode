@@ -182,7 +182,16 @@ fn normalize_project_snapshot(
         if skill.owner.kind != InstructionOwnerKind::TargetSpace {
             continue;
         }
-        let canonical_manifest = Path::new(&skill.canonical_path).join("SKILL.md");
+        // A flat skill is its own manifest; a skill directory holds `SKILL.md`.
+        let flat = skill.path == skill.canonical_path;
+        let manifest = |path: &str| {
+            if flat {
+                Path::new(path).to_path_buf()
+            } else {
+                Path::new(path).join("SKILL.md")
+            }
+        };
+        let canonical_manifest = manifest(&skill.canonical_path);
         let Some((owner_scope, owner_root, source_path)) =
             projection_location(&canonical_project, &canonical_target, &canonical_manifest)
         else {
@@ -192,9 +201,7 @@ fn normalize_project_snapshot(
             .aliases
             .iter()
             .filter(|alias| alias.scope == SkillScope::Project)
-            .filter_map(|alias| {
-                safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
-            })
+            .filter_map(|alias| safe_alias_path(owner_root, &manifest(&alias.path)))
             .collect::<Vec<_>>();
         if project_aliases.is_empty() {
             continue;
@@ -227,9 +234,7 @@ fn normalize_project_snapshot(
             .iter()
             .filter(|alias| alias.scope == SkillScope::Project)
         {
-            if let Some(path) =
-                safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
-            {
+            if let Some(path) = safe_alias_path(owner_root, &manifest(&alias.path)) {
                 row.aliases.insert(path);
             }
             row.support.insert(enum_value(&alias.support));

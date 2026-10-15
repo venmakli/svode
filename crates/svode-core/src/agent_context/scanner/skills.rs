@@ -4,7 +4,8 @@ use std::io::{Read, Take};
 use std::path::{Path, PathBuf};
 
 use crate::agent_adapters::{
-    AgentAdapterKind, AgentSourcePolicy, SkillDiscoveryPolicy, SkillRootKind,
+    AgentAdapterKind, AgentSourcePolicy, FlatSkills, SkillKey, SkillLayout, SkillPlace,
+    SkillPrecedence,
 };
 
 use super::super::model::{
@@ -12,10 +13,12 @@ use super::super::model::{
     SkillDiscoveryAlias, SkillDiscoveryKind, SkillLinkKind, SkillMetadataLeaf, SkillMetadataValue,
     SkillRow, SkillScope, SkillValidationStatus, SourceHealth, SourceResolution, SourceSupport,
 };
-use super::DiscoveryResult;
 use super::io::{diagnostic, path_string};
+use super::{DiscoveryResult, TargetPlaces};
 
 const MAX_ROOT_ENTRIES: usize = 512;
+/// Folders of skills followed below one root.
+const MAX_SKILL_FOLDERS: usize = 256;
 const MAX_SKILL_BYTES: usize = 256 * 1024;
 /// Claude Code keeps claude.ai synced skills here and never reads it as a
 /// skills-dir entry.
@@ -46,6 +49,7 @@ struct RootSpec<'a> {
     adapter: &'a AgentSourcePolicy,
     scope: SkillScope,
     discovery_kind: SkillDiscoveryKind,
+    layout: SkillLayout,
     root: PathBuf,
     owner: InstructionOwner,
 }
@@ -56,17 +60,34 @@ struct CanonicalOwnerBoundary {
     owner: InstructionOwner,
 }
 
-/// Project roots of every adapter; personal roots only of `global_agents`.
+/// A path by which an agent registers a skill, in the agent's order.
+struct Registration {
+    agent: AgentAdapterKind,
+    canonical: PathBuf,
+    path: String,
+}
+
+/// What the scans of all roots share.
+struct Scan<'a> {
+    places: &'a TargetPlaces,
+    allowed_boundaries: Vec<PathBuf>,
+    personal_owner_boundaries: Vec<CanonicalOwnerBoundary>,
+    parsed_cache: BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
+    rows: BTreeMap<PathBuf, SkillRow>,
+    registrations: Vec<Registration>,
+    result: DiscoveryResult,
+}
+
+/// Project roots of every adapter; personal roots and roots outside the
+/// repository boundary only of `global_agents`.
 pub(super) fn discover(
-    repository_root: &Path,
-    directory_chain: &[PathBuf],
+    places: &TargetPlaces,
     adapters: &[AgentSourcePolicy],
     global_agents: &[AgentAdapterKind],
     svode_home: &Path,
 ) -> DiscoveryResult {
-    let mut result = DiscoveryResult::default();
-    let roots = roots(directory_chain, adapters, global_agents);
-    let mut allowed_boundaries = vec![repository_root.to_path_buf()];
+    let roots = roots(places, adapters, global_agents);
+    let mut allowed_boundaries = vec![places.repository_root.clone()];
     let mut personal_owner_boundaries = Vec::new();
     for root in roots
         .iter()
@@ -102,30 +123,35 @@ pub(super) fn discover(
     });
     personal_owner_boundaries.dedup_by(|left, right| left.root == right.root);
 
-    let mut parsed_cache: BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>> = BTreeMap::new();
-    let mut rows: BTreeMap<PathBuf, SkillRow> = BTreeMap::new();
-    for root in roots {
-        observe_root(&root, &mut result);
-        scan_root(
-            &root,
-            &allowed_boundaries,
-            repository_root,
-            directory_chain,
-            &personal_owner_boundaries,
-            &mut parsed_cache,
-            &mut rows,
-            &mut result,
-        );
+    let mut scan = Scan {
+        places,
+        allowed_boundaries,
+        personal_owner_boundaries,
+        parsed_cache: BTreeMap::new(),
+        rows: BTreeMap::new(),
+        registrations: Vec::new(),
+        result: DiscoveryResult::default(),
+    };
+    for root in &roots {
+        scan.observe_root(root);
+        scan.scan_root(root);
     }
+    let Scan {
+        mut rows,
+        registrations,
+        mut result,
+        ..
+    } = scan;
 
     let personal_shadows_project = adapters
         .iter()
         .filter(|adapter| {
-            adapter.capabilities.skills.policy == SkillDiscoveryPolicy::ClaudePersonalShadowsProject
+            adapter.capabilities.skills.precedence == SkillPrecedence::ClaudePersonalShadowsProject
         })
         .map(|adapter| adapter.id)
         .collect::<BTreeSet<_>>();
     apply_personal_shadowing(&mut rows, &personal_shadows_project);
+    apply_registration_precedence(&mut rows, adapters, &registrations);
     for row in rows.values_mut() {
         row.aliases.sort_by(|left, right| {
             left.adapter_id
@@ -154,98 +180,161 @@ pub(super) fn discover(
     result
 }
 
+/// The skills roots of every agent in its registration order. A walk that
+/// passes a personal root of the agent leaves it to its own place.
 fn roots<'a>(
-    directory_chain: &[PathBuf],
+    places: &TargetPlaces,
     adapters: &'a [AgentSourcePolicy],
     global_agents: &[AgentAdapterKind],
 ) -> Vec<RootSpec<'a>> {
     let mut roots = Vec::new();
     for adapter in adapters {
-        let project_relative_root = Path::new(&adapter.capabilities.skills.project_relative_root);
-        for directory in directory_chain {
-            roots.push(RootSpec {
-                adapter,
-                scope: SkillScope::Project,
-                discovery_kind: match adapter.capabilities.skills.policy {
-                    SkillDiscoveryPolicy::CodexDirectoryChain => SkillDiscoveryKind::CodexProject,
-                    SkillDiscoveryPolicy::ClaudePersonalShadowsProject => {
-                        SkillDiscoveryKind::ClaudeProject
-                    }
-                },
-                root: directory.join(project_relative_root),
-                owner: InstructionOwner {
-                    kind: InstructionOwnerKind::TargetSpace,
-                    root: path_string(directory),
-                },
-            });
-        }
-        if !global_agents.contains(&adapter.id) {
-            continue;
-        }
-        for personal_root in &adapter.capabilities.skills.personal_roots {
-            roots.push(RootSpec {
-                adapter,
-                scope: SkillScope::Personal,
-                discovery_kind: match (adapter.capabilities.skills.policy, personal_root.kind) {
-                    (
-                        SkillDiscoveryPolicy::CodexDirectoryChain,
-                        SkillRootKind::StandardPersonal,
-                    ) => SkillDiscoveryKind::CodexStandardPersonal,
-                    (SkillDiscoveryPolicy::ClaudePersonalShadowsProject, _) => {
-                        SkillDiscoveryKind::ClaudePersonal
-                    }
-                },
-                root: PathBuf::from(&personal_root.path),
-                owner: InstructionOwner {
-                    kind: InstructionOwnerKind::ClientConfiguration,
-                    root: personal_root.path.clone(),
-                },
-            });
+        let global = global_agents.contains(&adapter.id);
+        let personal = adapter
+            .capabilities
+            .skills
+            .roots
+            .iter()
+            .filter_map(|rule| match &rule.place {
+                SkillPlace::Personal(path) => Some(canonical_or_self(Path::new(path))),
+                SkillPlace::Walk { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let mut seen = Vec::<PathBuf>::new();
+        for rule in &adapter.capabilities.skills.roots {
+            let places_of_rule = match &rule.place {
+                SkillPlace::Walk { walk, relative } => places
+                    .walk(*walk)
+                    .into_iter()
+                    .filter_map(|directory| {
+                        let root = directory.path.join(relative);
+                        if personal.contains(&canonical_or_self(&root)) {
+                            return None;
+                        }
+                        Some(if directory.inside {
+                            (
+                                root,
+                                SkillScope::Project,
+                                InstructionOwner {
+                                    kind: InstructionOwnerKind::TargetSpace,
+                                    root: path_string(&directory.path),
+                                },
+                            )
+                        } else {
+                            let owner = InstructionOwner {
+                                kind: InstructionOwnerKind::ClientConfiguration,
+                                root: path_string(&root),
+                            };
+                            (root, SkillScope::Personal, owner)
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                SkillPlace::Personal(path) => vec![(
+                    PathBuf::from(path),
+                    SkillScope::Personal,
+                    InstructionOwner {
+                        kind: InstructionOwnerKind::ClientConfiguration,
+                        root: path.clone(),
+                    },
+                )],
+            };
+            for (root, scope, owner) in places_of_rule {
+                if (scope == SkillScope::Personal && !global) || seen.contains(&root) {
+                    continue;
+                }
+                seen.push(root.clone());
+                roots.push(RootSpec {
+                    adapter,
+                    scope,
+                    discovery_kind: rule.kind,
+                    layout: rule.layout,
+                    root,
+                    owner,
+                });
+            }
         }
     }
     roots
 }
 
-fn observe_root(root: &RootSpec<'_>, result: &mut DiscoveryResult) {
-    let observed = path_string(&root.root);
-    match root.scope {
-        SkillScope::Project => result.observed_project_paths.push(observed),
-        SkillScope::Personal => result.observed_personal_paths.push(observed),
-    }
+fn canonical_or_self(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn scan_root(
-    root: &RootSpec<'_>,
-    allowed_boundaries: &[PathBuf],
-    repository_root: &Path,
-    directory_chain: &[PathBuf],
-    personal_owner_boundaries: &[CanonicalOwnerBoundary],
-    parsed_cache: &mut BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
-    rows: &mut BTreeMap<PathBuf, SkillRow>,
-    result: &mut DiscoveryResult,
-) {
-    let root_metadata = match fs::symlink_metadata(&root.root) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-        Err(error) => {
-            push_failure(
-                result,
+impl Scan<'_> {
+    fn observe_root(&mut self, root: &RootSpec<'_>) {
+        let observed = path_string(&root.root);
+        match root.scope {
+            SkillScope::Project => self.result.observed_project_paths.push(observed),
+            SkillScope::Personal => self.result.observed_personal_paths.push(observed),
+        }
+    }
+
+    fn failure(&mut self, adapter_id: AgentAdapterKind, path: &Path, code: &str, message: String) {
+        push_failure(&mut self.result, adapter_id, path, code, message);
+    }
+
+    fn inside_allowed_boundary(&self, canonical: &Path) -> bool {
+        self.allowed_boundaries
+            .iter()
+            .any(|boundary| canonical.starts_with(boundary))
+    }
+
+    fn scan_root(&mut self, root: &RootSpec<'_>) {
+        let root_metadata = match fs::symlink_metadata(&root.root) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                self.failure(
+                    root.adapter.id,
+                    &root.root,
+                    "skill_root_metadata",
+                    format!(
+                        "Could not inspect skill root {}: {error}",
+                        root.root.display()
+                    ),
+                );
+                return;
+            }
+        };
+        let canonical_root = match root.root.canonicalize() {
+            Ok(path) if path.is_dir() => path,
+            Ok(_) => {
+                self.failure(
+                    root.adapter.id,
+                    &root.root,
+                    "skill_root_not_directory",
+                    format!("Skill root is not a directory: {}", root.root.display()),
+                );
+                return;
+            }
+            Err(error) => {
+                self.failure(
+                    root.adapter.id,
+                    &root.root,
+                    "skill_root_alias_unresolved",
+                    format!(
+                        "Could not resolve skill root {}: {error}",
+                        root.root.display()
+                    ),
+                );
+                return;
+            }
+        };
+        if !self.inside_allowed_boundary(&canonical_root) {
+            self.failure(
                 root.adapter.id,
                 &root.root,
-                "skill_root_metadata",
+                "skill_root_outside_boundary",
                 format!(
-                    "Could not inspect skill root {}: {error}",
+                    "Skill root {} resolves outside the project and supported personal roots and was not scanned",
                     root.root.display()
                 ),
             );
             return;
         }
-    };
-    let canonical_root = match root.root.canonicalize() {
-        Ok(path) if path.is_dir() => path,
-        Ok(_) => {
-            push_failure(
-                result,
+        if !root_metadata.is_dir() && !root_metadata.file_type().is_symlink() {
+            self.failure(
                 root.adapter.id,
                 &root.root,
                 "skill_root_not_directory",
@@ -253,91 +342,387 @@ fn scan_root(
             );
             return;
         }
-        Err(error) => {
-            push_failure(
-                result,
+        let root_is_alias = root_metadata.file_type().is_symlink()
+            || root
+                .root
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                .zip(root.root.file_name())
+                .is_some_and(|(parent, name)| canonical_root != parent.join(name));
+        let mut folders = BTreeSet::from([canonical_root.clone()]);
+        self.scan_directory(
+            root,
+            &root.root,
+            &canonical_root,
+            1,
+            root_is_alias,
+            &mut folders,
+        );
+    }
+
+    /// The entries of `directory` at `depth` below the root: skills, flat
+    /// skills and, where the layout reaches deeper, folders of skills.
+    fn scan_directory(
+        &mut self,
+        root: &RootSpec<'_>,
+        directory: &Path,
+        canonical_directory: &Path,
+        depth: usize,
+        directory_is_alias: bool,
+        folders: &mut BTreeSet<PathBuf>,
+    ) {
+        let entries = match bounded_entries(directory) {
+            Ok(entries) => entries,
+            Err(failure) => {
+                self.failure(root.adapter.id, directory, failure.code, failure.message);
+                return;
+            }
+        };
+        if entries.truncated {
+            self.failure(
                 root.adapter.id,
-                &root.root,
-                "skill_root_alias_unresolved",
+                directory,
+                "skill_root_entry_limit",
                 format!(
-                    "Could not resolve skill root {}: {error}",
-                    root.root.display()
+                    "Skill root {} exceeded the {MAX_ROOT_ENTRIES} direct-entry scan limit",
+                    directory.display()
+                ),
+            );
+        }
+        for entry in entries.paths {
+            self.scan_entry(
+                root,
+                &entry,
+                canonical_directory,
+                depth,
+                directory_is_alias,
+                folders,
+            );
+        }
+    }
+
+    fn scan_entry(
+        &mut self,
+        root: &RootSpec<'_>,
+        entry: &Path,
+        canonical_directory: &Path,
+        depth: usize,
+        directory_is_alias: bool,
+        folders: &mut BTreeSet<PathBuf>,
+    ) {
+        let Some(entry_name) = entry.file_name().and_then(|name| name.to_str()) else {
+            self.failure(
+                root.adapter.id,
+                entry,
+                "skill_entry_name",
+                format!("Skill entry name is not valid UTF-8: {}", entry.display()),
+            );
+            return;
+        };
+        if entry_name.starts_with('.')
+            || (depth > 1 && entry_name == "node_modules")
+            || (root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
+                && entry_name == CLAUDE_SYNCED_SKILLS_DIR)
+        {
+            return;
+        }
+        let direct_children = root.layout == SkillLayout::DIRECT_CHILDREN;
+        let flat = entry_name.ends_with(".md")
+            && match root.layout.flat {
+                FlatSkills::None => false,
+                FlatSkills::Root => depth == 1,
+                FlatSkills::Nested => depth > 1,
+            };
+        let metadata = match fs::symlink_metadata(entry) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                self.failure(
+                    root.adapter.id,
+                    entry,
+                    "skill_entry_metadata",
+                    format!("Could not inspect skill entry {}: {error}", entry.display()),
+                );
+                return;
+            }
+        };
+        if metadata.is_file() && !flat {
+            if direct_children {
+                self.failure(
+                    root.adapter.id,
+                    entry,
+                    "skill_materialized_symlink",
+                    format!(
+                        "Skill entry {} is a plain file, possibly a materialized Git symlink, and was not followed",
+                        entry.display()
+                    ),
+                );
+            }
+            return;
+        }
+        let canonical_entry = match entry.canonicalize() {
+            Ok(path) if path.is_dir() || (flat && path.is_file()) => path,
+            Ok(_) => {
+                if direct_children {
+                    self.failure(
+                        root.adapter.id,
+                        entry,
+                        "skill_entry_not_directory",
+                        format!("Skill entry is not a directory: {}", entry.display()),
+                    );
+                }
+                return;
+            }
+            Err(error) => {
+                self.failure(
+                    root.adapter.id,
+                    entry,
+                    "skill_alias_unresolved",
+                    format!(
+                        "Could not resolve skill alias {} (broken link or cycle): {error}",
+                        entry.display()
+                    ),
+                );
+                return;
+            }
+        };
+        if !self.inside_allowed_boundary(&canonical_entry) {
+            self.failure(
+                root.adapter.id,
+                entry,
+                "skill_outside_boundary",
+                format!(
+                    "Skill alias {} resolves outside the project and supported personal roots and was not read",
+                    entry.display()
                 ),
             );
             return;
         }
-    };
-    if !allowed_boundaries
-        .iter()
-        .any(|boundary| canonical_root.starts_with(boundary))
-    {
-        push_failure(
-            result,
-            root.adapter.id,
-            &root.root,
-            "skill_root_outside_boundary",
-            format!(
-                "Skill root {} resolves outside the project and supported personal roots and was not scanned",
-                root.root.display()
-            ),
-        );
-        return;
-    }
-    if !root_metadata.is_dir() && !root_metadata.file_type().is_symlink() {
-        push_failure(
-            result,
-            root.adapter.id,
-            &root.root,
-            "skill_root_not_directory",
-            format!("Skill root is not a directory: {}", root.root.display()),
-        );
-        return;
-    }
-
-    let entries = match bounded_entries(&root.root) {
-        Ok(entries) => entries,
-        Err(failure) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                &root.root,
-                failure.code,
-                failure.message,
+        let entry_is_alias =
+            directory_is_alias || canonical_entry != canonical_directory.join(entry_name);
+        let link_kind = if metadata.file_type().is_symlink() {
+            SkillLinkKind::SymbolicLink
+        } else if entry_is_alias {
+            SkillLinkKind::DirectoryAlias
+        } else {
+            SkillLinkKind::Direct
+        };
+        if canonical_entry.is_file() {
+            let parsed = self
+                .parsed_cache
+                .entry(canonical_entry.clone())
+                .or_insert_with(|| parse_flat_skill(&canonical_entry))
+                .clone();
+            self.register(root, entry, canonical_entry, link_kind, parsed);
+            return;
+        }
+        let has_manifest = canonical_entry.join("SKILL.md").exists();
+        if root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
+            && !has_manifest
+            && canonical_entry.join(CLAUDE_PLUGIN_MANIFEST).is_file()
+        {
+            self.scan_claude_plugin(
+                root,
+                entry,
+                &canonical_entry,
+                entry_is_alias || metadata.file_type().is_symlink(),
+                folders,
             );
             return;
         }
-    };
-    if entries.truncated {
-        push_failure(
-            result,
-            root.adapter.id,
-            &root.root,
-            "skill_root_entry_limit",
-            format!(
-                "Skill root {} exceeded the {MAX_ROOT_ENTRIES} direct-entry scan limit",
-                root.root.display()
-            ),
+        if !has_manifest && !direct_children {
+            // A folder of skills, followed as deep as the agent does.
+            if depth < root.layout.max_depth && folders.insert(canonical_entry.clone()) {
+                if folders.len() > MAX_SKILL_FOLDERS {
+                    self.failure(
+                        root.adapter.id,
+                        entry,
+                        "skill_root_folder_limit",
+                        format!(
+                            "Skill root {} exceeded the {MAX_SKILL_FOLDERS}-folder scan limit",
+                            root.root.display()
+                        ),
+                    );
+                    return;
+                }
+                self.scan_directory(
+                    root,
+                    entry,
+                    &canonical_entry,
+                    depth + 1,
+                    entry_is_alias,
+                    folders,
+                );
+            }
+            return;
+        }
+
+        let parsed = self
+            .parsed_cache
+            .entry(canonical_entry.clone())
+            .or_insert_with(|| parse_skill(&canonical_entry))
+            .clone();
+        self.register(root, entry, canonical_entry, link_kind, parsed);
+    }
+
+    /// A skill the root's agent finds by `entry`: a new row for its canonical
+    /// source or one more path of an existing row.
+    fn register(
+        &mut self,
+        root: &RootSpec<'_>,
+        entry: &Path,
+        canonical_entry: PathBuf,
+        link_kind: SkillLinkKind,
+        parsed: Result<ParsedSkill, SkillFailure>,
+    ) {
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(failure) => {
+                let manifest = if canonical_entry.is_file() {
+                    entry.to_path_buf()
+                } else {
+                    entry.join("SKILL.md")
+                };
+                self.failure(root.adapter.id, &manifest, failure.code, failure.message);
+                return;
+            }
+        };
+        let Some(owner) = canonical_skill_owner(
+            &canonical_entry,
+            &self.places.repository_root,
+            &self.places.directory_chain,
+            &self.personal_owner_boundaries,
+        ) else {
+            self.failure(
+                root.adapter.id,
+                entry,
+                "skill_owner_unresolved",
+                format!(
+                    "Could not resolve the canonical owner for skill {}",
+                    canonical_entry.display()
+                ),
+            );
+            return;
+        };
+        let alias = SkillDiscoveryAlias {
+            adapter_id: root.adapter.id,
+            scope: root.scope,
+            discovery_kind: root.discovery_kind,
+            path: path_string(entry),
+            root: path_string(&root.root),
+            owner: root.owner.clone(),
+            support: SourceSupport::ClientNative,
+            resolution: SourceResolution::Included,
+            superseded_by: None,
+            link_kind,
+        };
+        self.registrations.push(Registration {
+            agent: root.adapter.id,
+            canonical: canonical_entry.clone(),
+            path: alias.path.clone(),
+        });
+        if let Some(row) = self.rows.get_mut(&canonical_entry) {
+            row.aliases.push(alias);
+            return;
+        }
+        let validation = if parsed.warnings.is_empty() {
+            SkillValidationStatus::Valid
+        } else {
+            SkillValidationStatus::Warning
+        };
+        self.rows.insert(
+            canonical_entry.clone(),
+            SkillRow {
+                id: format!("skill:{}", path_string(&canonical_entry)),
+                name: parsed.name,
+                description: parsed.description,
+                path: path_string(&parsed.manifest_path),
+                canonical_path: path_string(&canonical_entry),
+                owner,
+                license: parsed.license,
+                compatibility: parsed.compatibility,
+                metadata: parsed.metadata,
+                allowed_tools: parsed.allowed_tools,
+                validation,
+                health: if parsed.warnings.is_empty() {
+                    SourceHealth::Normal
+                } else {
+                    SourceHealth::Degraded
+                },
+                health_reasons: parsed.warnings.clone(),
+                warnings: parsed.warnings,
+                preview: parsed.preview,
+                aliases: vec![alias],
+            },
         );
     }
-    for entry in entries.paths {
-        scan_entry(
-            root,
-            &entry,
-            &canonical_root,
-            root_metadata.file_type().is_symlink()
-                || root
-                    .root
-                    .parent()
-                    .and_then(|parent| parent.canonicalize().ok())
-                    .zip(root.root.file_name())
-                    .is_some_and(|(parent, name)| canonical_root != parent.join(name)),
-            allowed_boundaries,
-            repository_root,
-            directory_chain,
-            personal_owner_boundaries,
-            parsed_cache,
-            rows,
-            result,
+
+    /// Scans `skills/*` of a Claude Code skills-dir plugin. The plugin's
+    /// skills resolve through the plugin address, and plugins do not nest.
+    fn scan_claude_plugin(
+        &mut self,
+        root: &RootSpec<'_>,
+        plugin: &Path,
+        canonical_plugin: &Path,
+        plugin_is_alias: bool,
+        folders: &mut BTreeSet<PathBuf>,
+    ) {
+        let plugin_root = RootSpec {
+            adapter: root.adapter,
+            scope: root.scope,
+            discovery_kind: SkillDiscoveryKind::ClaudePersonalPlugin,
+            layout: SkillLayout::DIRECT_CHILDREN,
+            root: plugin.join("skills"),
+            owner: root.owner.clone(),
+        };
+        let canonical_skills = match plugin_root.root.canonicalize() {
+            Ok(path) if path.is_dir() => path,
+            Ok(_) => {
+                self.failure(
+                    root.adapter.id,
+                    &plugin_root.root,
+                    "skill_root_not_directory",
+                    format!(
+                        "Skill root is not a directory: {}",
+                        plugin_root.root.display()
+                    ),
+                );
+                return;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                self.failure(
+                    root.adapter.id,
+                    &plugin_root.root,
+                    "skill_root_alias_unresolved",
+                    format!(
+                        "Could not resolve skill root {}: {error}",
+                        plugin_root.root.display()
+                    ),
+                );
+                return;
+            }
+        };
+        if !canonical_skills.starts_with(canonical_plugin) {
+            self.failure(
+                root.adapter.id,
+                &plugin_root.root,
+                "skill_root_outside_boundary",
+                format!(
+                    "Skill root {} resolves outside its plugin and was not scanned",
+                    plugin_root.root.display()
+                ),
+            );
+            return;
+        }
+        let skills_is_alias =
+            plugin_is_alias || canonical_skills != canonical_plugin.join("skills");
+        self.scan_directory(
+            &plugin_root,
+            &plugin_root.root,
+            &canonical_skills,
+            1,
+            skills_is_alias,
+            folders,
         );
     }
 }
@@ -376,324 +761,6 @@ fn bounded_entries(root: &Path) -> Result<BoundedEntries, SkillFailure> {
         paths: selected.into_iter().collect(),
         truncated: seen > MAX_ROOT_ENTRIES,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn scan_entry(
-    root: &RootSpec<'_>,
-    entry: &Path,
-    canonical_root: &Path,
-    root_is_alias: bool,
-    allowed_boundaries: &[PathBuf],
-    repository_root: &Path,
-    directory_chain: &[PathBuf],
-    personal_owner_boundaries: &[CanonicalOwnerBoundary],
-    parsed_cache: &mut BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
-    rows: &mut BTreeMap<PathBuf, SkillRow>,
-    result: &mut DiscoveryResult,
-) {
-    let Some(entry_name) = entry.file_name().and_then(|name| name.to_str()) else {
-        push_failure(
-            result,
-            root.adapter.id,
-            entry,
-            "skill_entry_name",
-            format!("Skill entry name is not valid UTF-8: {}", entry.display()),
-        );
-        return;
-    };
-    if entry_name.starts_with('.')
-        || (root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
-            && entry_name == CLAUDE_SYNCED_SKILLS_DIR)
-    {
-        return;
-    }
-    let metadata = match fs::symlink_metadata(entry) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                entry,
-                "skill_entry_metadata",
-                format!("Could not inspect skill entry {}: {error}", entry.display()),
-            );
-            return;
-        }
-    };
-    if metadata.is_file() {
-        push_failure(
-            result,
-            root.adapter.id,
-            entry,
-            "skill_materialized_symlink",
-            format!(
-                "Skill entry {} is a plain file, possibly a materialized Git symlink, and was not followed",
-                entry.display()
-            ),
-        );
-        return;
-    }
-    let canonical_entry = match entry.canonicalize() {
-        Ok(path) if path.is_dir() => path,
-        Ok(_) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                entry,
-                "skill_entry_not_directory",
-                format!("Skill entry is not a directory: {}", entry.display()),
-            );
-            return;
-        }
-        Err(error) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                entry,
-                "skill_alias_unresolved",
-                format!(
-                    "Could not resolve skill alias {} (broken link or cycle): {error}",
-                    entry.display()
-                ),
-            );
-            return;
-        }
-    };
-    if !allowed_boundaries
-        .iter()
-        .any(|boundary| canonical_entry.starts_with(boundary))
-    {
-        push_failure(
-            result,
-            root.adapter.id,
-            entry,
-            "skill_outside_boundary",
-            format!(
-                "Skill alias {} resolves outside the project and supported personal roots and was not read",
-                entry.display()
-            ),
-        );
-        return;
-    }
-    let entry_is_alias = root_is_alias || canonical_entry != canonical_root.join(entry_name);
-    let link_kind = if metadata.file_type().is_symlink() {
-        SkillLinkKind::SymbolicLink
-    } else if entry_is_alias {
-        SkillLinkKind::DirectoryAlias
-    } else {
-        SkillLinkKind::Direct
-    };
-    if root.discovery_kind == SkillDiscoveryKind::ClaudePersonal
-        && !canonical_entry.join("SKILL.md").exists()
-        && canonical_entry.join(CLAUDE_PLUGIN_MANIFEST).is_file()
-    {
-        scan_claude_plugin(
-            root,
-            entry,
-            &canonical_entry,
-            entry_is_alias || metadata.file_type().is_symlink(),
-            allowed_boundaries,
-            repository_root,
-            directory_chain,
-            personal_owner_boundaries,
-            parsed_cache,
-            rows,
-            result,
-        );
-        return;
-    }
-
-    let parsed = parsed_cache
-        .entry(canonical_entry.clone())
-        .or_insert_with(|| parse_skill(&canonical_entry))
-        .clone();
-    let parsed = match parsed {
-        Ok(parsed) => parsed,
-        Err(failure) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                &entry.join("SKILL.md"),
-                failure.code,
-                failure.message,
-            );
-            return;
-        }
-    };
-    let Some(owner) = canonical_skill_owner(
-        &canonical_entry,
-        repository_root,
-        directory_chain,
-        personal_owner_boundaries,
-    ) else {
-        push_failure(
-            result,
-            root.adapter.id,
-            entry,
-            "skill_owner_unresolved",
-            format!(
-                "Could not resolve the canonical owner for skill {}",
-                canonical_entry.display()
-            ),
-        );
-        return;
-    };
-    let alias = SkillDiscoveryAlias {
-        adapter_id: root.adapter.id,
-        scope: root.scope,
-        discovery_kind: root.discovery_kind,
-        path: path_string(entry),
-        root: path_string(&root.root),
-        owner: root.owner.clone(),
-        support: SourceSupport::ClientNative,
-        resolution: SourceResolution::Included,
-        superseded_by: None,
-        link_kind,
-    };
-    if let Some(row) = rows.get_mut(&canonical_entry) {
-        row.aliases.push(alias);
-        return;
-    }
-    let validation = if parsed.warnings.is_empty() {
-        SkillValidationStatus::Valid
-    } else {
-        SkillValidationStatus::Warning
-    };
-    rows.insert(
-        canonical_entry.clone(),
-        SkillRow {
-            id: format!("skill:{}", path_string(&canonical_entry)),
-            name: parsed.name,
-            description: parsed.description,
-            path: path_string(&parsed.manifest_path),
-            canonical_path: path_string(&canonical_entry),
-            owner,
-            license: parsed.license,
-            compatibility: parsed.compatibility,
-            metadata: parsed.metadata,
-            allowed_tools: parsed.allowed_tools,
-            validation,
-            health: if parsed.warnings.is_empty() {
-                SourceHealth::Normal
-            } else {
-                SourceHealth::Degraded
-            },
-            health_reasons: parsed.warnings.clone(),
-            warnings: parsed.warnings,
-            preview: parsed.preview,
-            aliases: vec![alias],
-        },
-    );
-}
-
-/// Scans `skills/*` of a Claude Code skills-dir plugin. The plugin's skills
-/// resolve through the plugin address, and plugins do not nest.
-#[allow(clippy::too_many_arguments)]
-fn scan_claude_plugin(
-    root: &RootSpec<'_>,
-    plugin: &Path,
-    canonical_plugin: &Path,
-    plugin_is_alias: bool,
-    allowed_boundaries: &[PathBuf],
-    repository_root: &Path,
-    directory_chain: &[PathBuf],
-    personal_owner_boundaries: &[CanonicalOwnerBoundary],
-    parsed_cache: &mut BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
-    rows: &mut BTreeMap<PathBuf, SkillRow>,
-    result: &mut DiscoveryResult,
-) {
-    let plugin_root = RootSpec {
-        adapter: root.adapter,
-        scope: root.scope,
-        discovery_kind: SkillDiscoveryKind::ClaudePersonalPlugin,
-        root: plugin.join("skills"),
-        owner: root.owner.clone(),
-    };
-    let canonical_skills = match plugin_root.root.canonicalize() {
-        Ok(path) if path.is_dir() => path,
-        Ok(_) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                &plugin_root.root,
-                "skill_root_not_directory",
-                format!(
-                    "Skill root is not a directory: {}",
-                    plugin_root.root.display()
-                ),
-            );
-            return;
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-        Err(error) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                &plugin_root.root,
-                "skill_root_alias_unresolved",
-                format!(
-                    "Could not resolve skill root {}: {error}",
-                    plugin_root.root.display()
-                ),
-            );
-            return;
-        }
-    };
-    if !canonical_skills.starts_with(canonical_plugin) {
-        push_failure(
-            result,
-            root.adapter.id,
-            &plugin_root.root,
-            "skill_root_outside_boundary",
-            format!(
-                "Skill root {} resolves outside its plugin and was not scanned",
-                plugin_root.root.display()
-            ),
-        );
-        return;
-    }
-    let entries = match bounded_entries(&plugin_root.root) {
-        Ok(entries) => entries,
-        Err(failure) => {
-            push_failure(
-                result,
-                root.adapter.id,
-                &plugin_root.root,
-                failure.code,
-                failure.message,
-            );
-            return;
-        }
-    };
-    if entries.truncated {
-        push_failure(
-            result,
-            root.adapter.id,
-            &plugin_root.root,
-            "skill_root_entry_limit",
-            format!(
-                "Skill root {} exceeded the {MAX_ROOT_ENTRIES} direct-entry scan limit",
-                plugin_root.root.display()
-            ),
-        );
-    }
-    let skills_is_alias = plugin_is_alias || canonical_skills != canonical_plugin.join("skills");
-    for entry in entries.paths {
-        scan_entry(
-            &plugin_root,
-            &entry,
-            &canonical_skills,
-            skills_is_alias,
-            allowed_boundaries,
-            repository_root,
-            directory_chain,
-            personal_owner_boundaries,
-            parsed_cache,
-            rows,
-            result,
-        );
-    }
 }
 
 fn canonical_skill_owner(
@@ -758,7 +825,38 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
             ),
         });
     }
-    let raw = read_bounded_stable(&canonical_manifest)?;
+    let directory_name = canonical_entry.file_name().and_then(|value| value.to_str());
+    parse_manifest(
+        &canonical_manifest,
+        &manifest_path,
+        directory_name.map(|name| {
+            (
+                name,
+                "Skill name does not match its canonical directory name",
+            )
+        }),
+    )
+}
+
+/// A plain `*.md` file that an agent takes as a skill: its frontmatter is
+/// read like `SKILL.md`, and its name should match the file name.
+fn parse_flat_skill(canonical_file: &Path) -> Result<ParsedSkill, SkillFailure> {
+    let file_name = canonical_file.file_stem().and_then(|value| value.to_str());
+    parse_manifest(
+        canonical_file,
+        canonical_file,
+        file_name.map(|name| (name, "Skill name does not match its file name")),
+    )
+}
+
+/// `expected_name` is the name the skill's place gives it, with the warning
+/// when the frontmatter differs.
+fn parse_manifest(
+    canonical_manifest: &Path,
+    manifest_path: &Path,
+    expected_name: Option<(&str, &str)>,
+) -> Result<ParsedSkill, SkillFailure> {
+    let raw = read_bounded_stable(canonical_manifest)?;
     let (frontmatter, body) = split_frontmatter(&raw)?;
     let document: serde_norway::Value =
         serde_norway::from_str(frontmatter).map_err(|error| SkillFailure {
@@ -775,8 +873,8 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
             manifest_path.display()
         ),
     })?;
-    let name = required_string(mapping, "name", &manifest_path)?;
-    let description = required_string(mapping, "description", &manifest_path)?;
+    let name = required_string(mapping, "name", manifest_path)?;
+    let description = required_string(mapping, "description", manifest_path)?;
     let mut warnings = Vec::new();
     let trimmed_name = name.trim().to_string();
     let trimmed_description = description.trim().to_string();
@@ -789,12 +887,10 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
                 .to_string(),
         );
     }
-    if canonical_entry
-        .file_name()
-        .and_then(|value| value.to_str())
-        .is_some_and(|directory_name| directory_name != trimmed_name)
+    if let Some((expected, warning)) = expected_name
+        && expected != trimmed_name
     {
-        warnings.push("Skill name does not match its canonical directory name".to_string());
+        warnings.push(warning.to_string());
     }
     if trimmed_description != description {
         warnings.push("Skill description contains surrounding whitespace".to_string());
@@ -828,7 +924,7 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
             bytes_read: body.len(),
             total_bytes: body.len() as u64,
         },
-        manifest_path: canonical_manifest,
+        manifest_path: canonical_manifest.to_path_buf(),
     })
 }
 
@@ -1103,6 +1199,77 @@ fn apply_personal_shadowing(
     }
 }
 
+/// For agents where one skill of a key wins, every other path the agent
+/// registers with that key is shadowed by the winner's path.
+fn apply_registration_precedence(
+    rows: &mut BTreeMap<PathBuf, SkillRow>,
+    adapters: &[AgentSourcePolicy],
+    registrations: &[Registration],
+) {
+    for adapter in adapters {
+        let (key, last_wins) = match adapter.capabilities.skills.precedence {
+            SkillPrecedence::FirstWins(key) => (key, false),
+            SkillPrecedence::LastWins(key) => (key, true),
+            SkillPrecedence::Coexist | SkillPrecedence::ClaudePersonalShadowsProject => continue,
+        };
+        let keyed = registrations
+            .iter()
+            .filter(|registration| registration.agent == adapter.id)
+            .filter_map(|registration| {
+                let row = rows.get(&registration.canonical)?;
+                Some((skill_key(key, row, &registration.path), registration))
+            })
+            .collect::<Vec<_>>();
+        let mut winners = BTreeMap::<&str, &Registration>::new();
+        for (key, registration) in &keyed {
+            if last_wins || !winners.contains_key(key.as_str()) {
+                winners.insert(key, registration);
+            }
+        }
+        let shadowed = keyed
+            .iter()
+            .filter_map(|(key, registration)| {
+                let winner = winners.get(key.as_str())?;
+                (!std::ptr::eq(*winner, *registration)).then(|| {
+                    (
+                        registration.canonical.clone(),
+                        registration.path.clone(),
+                        winner.path.clone(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        for (canonical, path, winner) in shadowed {
+            let Some(row) = rows.get_mut(&canonical) else {
+                continue;
+            };
+            for alias in &mut row.aliases {
+                if alias.adapter_id == adapter.id && alias.path == path {
+                    alias.resolution = SourceResolution::Superseded;
+                    alias.superseded_by = Some(winner.clone());
+                }
+            }
+        }
+    }
+}
+
+fn skill_key(key: SkillKey, row: &SkillRow, path: &str) -> String {
+    match key {
+        SkillKey::Name => row.name.clone(),
+        SkillKey::NameIgnoringCase => row.name.to_lowercase(),
+        SkillKey::PathId => {
+            let path = Path::new(path);
+            let id = if row.path == row.canonical_path {
+                path.file_stem()
+            } else {
+                path.file_name()
+            };
+            id.map(|id| id.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        }
+    }
+}
+
 fn push_failure(
     result: &mut DiscoveryResult,
     adapter_id: AgentAdapterKind,
@@ -1129,6 +1296,8 @@ fn discovery_kind_order(kind: SkillDiscoveryKind) -> u8 {
         SkillDiscoveryKind::ClaudePersonal => 2,
         SkillDiscoveryKind::ClaudePersonalPlugin => 3,
         SkillDiscoveryKind::ClaudeProject => 4,
+        SkillDiscoveryKind::PersonalRoot => 5,
+        SkillDiscoveryKind::ProjectRoot => 6,
     }
 }
 
@@ -1160,6 +1329,20 @@ mod tests {
         environment: &SourceRegistryEnvironment,
     ) -> Result<AgentContextDiscovery, crate::agent_context::AgentContextError> {
         crate::agent_context::scanner::discover(project, space, environment, &AgentAdapterKind::ALL)
+    }
+
+    /// Paths of Codex and Claude Code: the agents of later policies read
+    /// the same roots and add their own.
+    fn codex_and_claude(row: &SkillRow) -> Vec<&SkillDiscoveryAlias> {
+        row.aliases
+            .iter()
+            .filter(|alias| {
+                matches!(
+                    alias.adapter_id,
+                    AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode
+                )
+            })
+            .collect()
     }
 
     fn setup() -> (TempDir, TempDir, SourceRegistryEnvironment) {
@@ -1409,10 +1592,9 @@ mod tests {
             .iter()
             .find(|row| row.name == "personal")
             .unwrap();
-        assert_eq!(personal.aliases.len(), 1);
+        assert_eq!(codex_and_claude(personal).len(), 1);
         assert!(
-            personal
-                .aliases
+            codex_and_claude(personal)
                 .iter()
                 .any(|alias| { alias.discovery_kind == SkillDiscoveryKind::CodexStandardPersonal })
         );
@@ -1447,8 +1629,8 @@ mod tests {
             .find(|row| row.name == "personal-only")
             .unwrap();
 
-        assert_eq!(row.aliases.len(), 1);
-        assert_eq!(row.aliases[0].scope, SkillScope::Project);
+        assert_eq!(codex_and_claude(row).len(), 1);
+        assert_eq!(codex_and_claude(row)[0].scope, SkillScope::Project);
         assert_eq!(row.owner.kind, InstructionOwnerKind::ClientConfiguration);
         assert_eq!(row.owner.root, path_string(&personal_root));
         assert!(
@@ -1479,8 +1661,8 @@ mod tests {
             .find(|row| row.name == "project-only")
             .unwrap();
 
-        assert_eq!(row.aliases.len(), 1);
-        assert_eq!(row.aliases[0].scope, SkillScope::Personal);
+        assert_eq!(codex_and_claude(row).len(), 1);
+        assert_eq!(codex_and_claude(row)[0].scope, SkillScope::Personal);
         assert_eq!(row.owner.kind, InstructionOwnerKind::TargetSpace);
         assert_eq!(
             row.owner.root,
@@ -1507,8 +1689,8 @@ mod tests {
             .find(|row| row.name == "review")
             .unwrap();
 
-        assert_eq!(row.aliases.len(), 1);
-        assert!(row.aliases.iter().any(|alias| {
+        assert_eq!(codex_and_claude(row).len(), 1);
+        assert!(codex_and_claude(row).iter().any(|alias| {
             alias.scope == SkillScope::Project
                 && alias.link_kind == SkillLinkKind::DirectoryAlias
                 && alias.resolution == SourceResolution::Included
@@ -1582,6 +1764,7 @@ mod tests {
             snapshot
                 .skills
                 .iter()
+                .filter(|skill| !codex_and_claude(skill).is_empty())
                 .map(|skill| skill.name.clone())
                 .collect::<Vec<_>>()
         };
@@ -1595,6 +1778,16 @@ mod tests {
             names(&independent_snapshot),
             vec!["independent-skill".to_string()]
         );
+        // opencode walks `.agents/skills` up to the filesystem root, past
+        // the independent repository, as a source outside its boundary.
+        let root_skill = independent_snapshot
+            .skills
+            .iter()
+            .find(|skill| skill.name == "root-skill")
+            .unwrap();
+        assert!(root_skill.aliases.iter().all(|alias| {
+            alias.adapter_id == AgentAdapterKind::Opencode && alias.scope == SkillScope::Personal
+        }));
     }
 
     #[cfg(unix)]
@@ -1658,7 +1851,7 @@ mod tests {
             InstructionOwnerKind::ClientConfiguration
         );
         assert_eq!(payload.owner.root, path_string(&home.path().join(".svode")));
-        assert_eq!(payload.aliases.len(), 2);
+        assert_eq!(codex_and_claude(payload).len(), 2);
         assert!(payload.aliases.iter().any(|alias| {
             alias.adapter_id == AgentAdapterKind::Codex
                 && alias.discovery_kind == SkillDiscoveryKind::CodexStandardPersonal
@@ -1678,12 +1871,17 @@ mod tests {
             .find(|row| row.description == "Project")
             .expect("project skill row");
         assert!(
-            project_svode
-                .aliases
+            codex_and_claude(project_svode)
                 .iter()
                 .all(|alias| alias.resolution == SourceResolution::Included)
         );
-        assert!(snapshot.skills.iter().all(|row| row.name != "synced-skill"));
+        assert!(
+            snapshot
+                .skills
+                .iter()
+                .filter(|row| row.name == "synced-skill")
+                .all(|row| codex_and_claude(row).is_empty())
+        );
     }
 
     #[cfg(unix)]

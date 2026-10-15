@@ -56,6 +56,11 @@ pub enum InstructionDiscoveryPolicy {
     ClaudeHierarchy,
     ClaudeImport,
     TargetRootRecognition,
+    /// A file of a declared rule in a directory of its walk or of the
+    /// agent's configuration.
+    DirectoryChain,
+    /// A file of a declared slot, where the first readable file counts.
+    FileSlot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +139,10 @@ pub enum SkillDiscoveryKind {
     ClaudePersonal,
     /// Skill inside a skills-dir plugin in the Claude personal skills root.
     ClaudePersonalPlugin,
+    /// A declared project skills root of an agent.
+    ProjectRoot,
+    /// A declared personal skills root of an agent.
+    PersonalRoot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

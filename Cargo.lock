@@ -5548,6 +5548,7 @@ dependencies = [
  "dirs",
  "iana-time-zone",
  "indexmap 2.13.0",
+ "jsonc-parser",
  "keyring",
  "regex",
  "saphyr-parser",

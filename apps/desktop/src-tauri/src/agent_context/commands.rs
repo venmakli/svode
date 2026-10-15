@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::PathBuf;
 
 use tauri::State;
@@ -14,6 +15,7 @@ use crate::document::source::{
 use crate::media::MediaSourceState;
 use crate::media::commands::{MediaSourceSessionDescriptor, issue_local_media_source};
 use crate::media::source::MediaSourceError;
+use crate::process::login_env::LoginEnvironment;
 use svode_core::agent_context::model::{AgentContextSnapshot, MarkdownPreview};
 use svode_core::agent_context::scanner;
 use svode_core::agent_context::scanner::skill_files::{self, SkillFileKind, SkillFilesBranch};
@@ -129,14 +131,21 @@ fn skill_directory(state: &AgentContextState, item_id: &str) -> Result<PathBuf, 
 }
 
 /// The agents enabled in Providers are the scan's input: sources outside the
-/// target's repository boundary are read only for them.
+/// target's repository boundary are read only for them. The client homes
+/// come from the login shell environment the agents run in (Stage 10 `03`
+/// A1), else from the app's.
 async fn discover_and_publish(
     state: &AgentContextState,
     agents: &AgentSetupState,
     project_path: String,
     space_path: String,
 ) -> Result<AgentContextSnapshot, AppError> {
-    let environment = svode_core::agent_adapters::system_source_registry_environment()?;
+    let login = LoginEnvironment::session().get().await;
+    let environment =
+        svode_core::agent_adapters::source_registry_environment(|name| match &login {
+            Some(login) => login.get(name).map(OsStr::to_os_string),
+            None => std::env::var_os(name),
+        })?;
     let enabled_agents = agents.enabled_agents().await;
     let project_path = PathBuf::from(project_path);
     let space_path = PathBuf::from(space_path);
