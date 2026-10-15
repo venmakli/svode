@@ -1,3 +1,5 @@
+import type { AgentContextSkillMetadataValue } from "./types";
+
 /**
  * The tools of a raw `allowed-tools` value: separated by spaces or commas,
  * while a parenthesized argument such as `Bash(git log:*)` stays one tool.
@@ -21,10 +23,22 @@ export function splitAllowedTools(value: string): readonly string[] {
 }
 
 /** Metadata entries of a skill in a stable order by key. */
-export function sortedSkillMetadata(
-  metadata: Readonly<Record<string, string>> | null,
-): readonly (readonly [string, string])[] {
+export function sortedSkillMetadata<Value>(
+  metadata: Readonly<Record<string, Value>> | null,
+): readonly (readonly [string, Value])[] {
   return Object.entries(metadata ?? {}).sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0,
   );
+}
+
+/** A metadata object as "key: value" lines; a list value joins its items. */
+export function skillMetadataObjectLines(
+  value: Extract<AgentContextSkillMetadataValue, { kind: "object" }>,
+): string {
+  return value.entries
+    .map(
+      ([key, leaf]) =>
+        `${key}: ${leaf.kind === "text" ? leaf.text : leaf.items.join(", ")}`,
+    )
+    .join("\n");
 }

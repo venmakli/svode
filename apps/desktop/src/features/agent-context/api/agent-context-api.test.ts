@@ -123,7 +123,17 @@ const dto: Parameters<typeof toAgentContextInstructionsSnapshot>[0] = {
       healthReasons: ["Skill name does not match its canonical directory name"],
       id: "skill:/workspace/shared/review",
       license: "MIT",
-      metadata: { author: "Svode" },
+      metadata: {
+        author: { kind: "text", value: "Svode" },
+        tags: { kind: "list", value: ["review", "git"] },
+        owner: {
+          kind: "object",
+          value: {
+            channels: { kind: "list", value: ["desk", "mail"] },
+            team: { kind: "text", value: "core" },
+          },
+        },
+      },
       name: "review",
       owner: { kind: "target_space", root: "/workspace" },
       path: "/workspace/shared/review/SKILL.md",
@@ -158,7 +168,17 @@ test("transport keeps source semantics independent without message parsing", () 
   expect(row?.references[0]?.status).toBe("requires_client_approval");
   expect(snapshot.skills[0]?.ownerPath).toBe("/workspace");
   expect(snapshot.skills[0]?.allowedTools).toBe("Read Bash(git:*)");
-  expect(snapshot.skills[0]?.metadata).toEqual({ author: "Svode" });
+  expect(snapshot.skills[0]?.metadata).toEqual({
+    author: { kind: "text", text: "Svode" },
+    tags: { items: ["review", "git"], kind: "list" },
+    owner: {
+      entries: [
+        ["channels", { items: ["desk", "mail"], kind: "list" }],
+        ["team", { kind: "text", text: "core" }],
+      ],
+      kind: "object",
+    },
+  });
   expect(Object.isFrozen(snapshot.skills[0]?.metadata)).toBe(true);
   expect(snapshot.skills[0]?.aliases[0]?.sourceFamily).toBe("agents");
   expect(snapshot.skills[0]?.aliases[1]?.sourceFamily).toBe("claude");

@@ -9,8 +9,8 @@ use crate::agent_adapters::{
 
 use super::super::model::{
     DiagnosticSeverity, InstructionOwner, InstructionOwnerKind, MarkdownPreview,
-    SkillDiscoveryAlias, SkillDiscoveryKind, SkillLinkKind, SkillRow, SkillScope,
-    SkillValidationStatus, SourceHealth, SourceResolution, SourceSupport,
+    SkillDiscoveryAlias, SkillDiscoveryKind, SkillLinkKind, SkillMetadataLeaf, SkillMetadataValue,
+    SkillRow, SkillScope, SkillValidationStatus, SourceHealth, SourceResolution, SourceSupport,
 };
 use super::DiscoveryResult;
 use super::io::{diagnostic, path_string};
@@ -28,7 +28,7 @@ struct ParsedSkill {
     description: String,
     license: Option<String>,
     compatibility: Option<String>,
-    metadata: Option<BTreeMap<String, String>>,
+    metadata: Option<BTreeMap<String, SkillMetadataValue>>,
     allowed_tools: Option<String>,
     warnings: Vec<String>,
     preview: MarkdownPreview,
@@ -802,7 +802,7 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
         warnings
             .push("Skill compatibility exceeds the 500-character compatibility limit".to_string());
     }
-    let metadata = optional_string_map(mapping, "metadata", &mut warnings);
+    let metadata = optional_metadata(mapping, &mut warnings);
     let allowed_tools = optional_string(mapping, "allowed-tools", &mut warnings);
     Ok(ParsedSkill {
         name: trimmed_name,
@@ -980,29 +980,68 @@ fn optional_string(
     }
 }
 
-fn optional_string_map(
+/// Keeps `metadata` values a reader can show: scalars as text, lists of
+/// scalars and objects of them. Anything else is a warning and is dropped.
+fn optional_metadata(
     mapping: &serde_norway::Mapping,
-    key: &str,
     warnings: &mut Vec<String>,
-) -> Option<BTreeMap<String, String>> {
-    let value = mapping.get(key)?;
+) -> Option<BTreeMap<String, SkillMetadataValue>> {
+    let value = mapping.get("metadata")?;
     let Some(entries) = value.as_mapping() else {
-        warnings.push(format!("Skill {key} is not a mapping"));
+        warnings.push("Skill metadata is not a mapping".to_string());
         return None;
     };
     let mut normalized = BTreeMap::new();
     for (entry_key, entry_value) in entries {
         let Some(entry_key) = entry_key.as_str() else {
-            warnings.push(format!("Skill {key} contains a non-string key"));
+            warnings.push("Skill metadata contains a non-string key".to_string());
             continue;
         };
-        let Some(entry_value) = entry_value.as_str() else {
-            warnings.push(format!("Skill {key} value for {entry_key} is not a string"));
+        let Some(entry_value) = metadata_value(entry_value) else {
+            warnings.push(format!(
+                "Skill metadata value for {entry_key} is not a scalar, a list of scalars or an object of them"
+            ));
             continue;
         };
-        normalized.insert(entry_key.to_string(), entry_value.to_string());
+        normalized.insert(entry_key.to_string(), entry_value);
     }
     Some(normalized)
+}
+
+fn metadata_value(value: &serde_norway::Value) -> Option<SkillMetadataValue> {
+    if let Some(leaf) = metadata_leaf(value) {
+        return Some(match leaf {
+            SkillMetadataLeaf::Text(text) => SkillMetadataValue::Text(text),
+            SkillMetadataLeaf::List(items) => SkillMetadataValue::List(items),
+        });
+    }
+    let entries = value.as_mapping()?;
+    let mut object = BTreeMap::new();
+    for (key, value) in entries {
+        object.insert(key.as_str()?.to_string(), metadata_leaf(value)?);
+    }
+    Some(SkillMetadataValue::Object(object))
+}
+
+fn metadata_leaf(value: &serde_norway::Value) -> Option<SkillMetadataLeaf> {
+    if let Some(text) = metadata_scalar(value) {
+        return Some(SkillMetadataLeaf::Text(text));
+    }
+    value
+        .as_sequence()?
+        .iter()
+        .map(metadata_scalar)
+        .collect::<Option<Vec<_>>>()
+        .map(SkillMetadataLeaf::List)
+}
+
+fn metadata_scalar(value: &serde_norway::Value) -> Option<String> {
+    match value {
+        serde_norway::Value::String(text) => Some(text.clone()),
+        serde_norway::Value::Bool(flag) => Some(flag.to_string()),
+        serde_norway::Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 fn valid_skill_name(name: &str) -> bool {
@@ -1143,13 +1182,8 @@ mod tests {
         assert_eq!(valid.license.as_deref(), Some("MIT"));
         assert_eq!(valid.compatibility.as_deref(), Some("Cross-client"));
         assert_eq!(
-            valid
-                .metadata
-                .as_ref()
-                .unwrap()
-                .get("author")
-                .map(String::as_str),
-            Some("Svode")
+            valid.metadata.as_ref().unwrap().get("author"),
+            Some(&SkillMetadataValue::Text("Svode".to_string()))
         );
         assert_eq!(valid.allowed_tools.as_deref(), Some("Read"));
         assert_eq!(valid.preview.markdown, "# Valid\nbody\n");
@@ -1178,6 +1212,75 @@ mod tests {
     }
 
     #[test]
+    fn metadata_keeps_scalars_lists_and_objects_and_warns_only_on_deeper_values() {
+        let (project, _home, environment) = setup();
+        let root = project.path().join(".agents/skills");
+        let shaped = write_skill(&root, "shaped", "shaped", Some("Shaped skill"));
+        fs::write(
+            shaped.join("SKILL.md"),
+            "---\nname: shaped\ndescription: Shaped skill\nmetadata:\n  author: Svode\n  stable: true\n  tags:\n    - review\n    - git\n  owner:\n    team: core\n    channels: [desk, mail]\n---\n# Shaped\n",
+        )
+        .unwrap();
+        let deep = write_skill(&root, "deep", "deep", Some("Deep skill"));
+        fs::write(
+            deep.join("SKILL.md"),
+            "---\nname: deep\ndescription: Deep skill\nmetadata:\n  author: Svode\n  nested:\n    inner:\n      level: 3\n  mixed:\n    - plain\n    - key: value\n  empty: ~\n---\n# Deep\n",
+        )
+        .unwrap();
+
+        let snapshot = scan(project.path(), project.path(), &environment).unwrap();
+        let shaped = snapshot
+            .skills
+            .iter()
+            .find(|row| row.name == "shaped")
+            .unwrap();
+        assert_eq!(shaped.validation, SkillValidationStatus::Valid);
+        assert_eq!(shaped.health, SourceHealth::Normal);
+        assert!(shaped.warnings.is_empty());
+        let metadata = shaped.metadata.as_ref().unwrap();
+        assert_eq!(
+            metadata.get("stable"),
+            Some(&SkillMetadataValue::Text("true".to_string()))
+        );
+        assert_eq!(
+            metadata.get("tags"),
+            Some(&SkillMetadataValue::List(vec![
+                "review".to_string(),
+                "git".to_string()
+            ]))
+        );
+        assert_eq!(
+            metadata.get("owner"),
+            Some(&SkillMetadataValue::Object(BTreeMap::from([
+                (
+                    "channels".to_string(),
+                    SkillMetadataLeaf::List(vec!["desk".to_string(), "mail".to_string()])
+                ),
+                (
+                    "team".to_string(),
+                    SkillMetadataLeaf::Text("core".to_string())
+                ),
+            ])))
+        );
+
+        let deep = snapshot
+            .skills
+            .iter()
+            .find(|row| row.name == "deep")
+            .unwrap();
+        assert_eq!(deep.health, SourceHealth::Degraded);
+        let metadata = deep.metadata.as_ref().unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert!(metadata.contains_key("author"));
+        for key in ["nested", "mixed", "empty"] {
+            assert!(deep.warnings.iter().any(|warning| warning
+                == &format!(
+                    "Skill metadata value for {key} is not a scalar, a list of scalars or an object of them"
+                )));
+        }
+    }
+
+    #[test]
     fn invalid_optional_frontmatter_isolated_without_losing_safe_values_or_body() {
         let (project, _home, environment) = setup();
         let root = project.path().join(".agents/skills");
@@ -1198,16 +1301,17 @@ mod tests {
         assert_eq!(mixed.license.as_deref(), Some("MIT"));
         assert_eq!(mixed.compatibility, None);
         assert_eq!(mixed.allowed_tools, None);
+        let metadata = mixed.metadata.as_ref().unwrap();
         assert_eq!(
-            mixed
-                .metadata
-                .as_ref()
-                .unwrap()
-                .get("author")
-                .map(String::as_str),
-            Some("Svode")
+            metadata.get("author"),
+            Some(&SkillMetadataValue::Text("Svode".to_string()))
         );
-        assert_eq!(mixed.metadata.as_ref().unwrap().len(), 1);
+        // A number is a scalar and reads as text.
+        assert_eq!(
+            metadata.get("retries"),
+            Some(&SkillMetadataValue::Text("3".to_string()))
+        );
+        assert_eq!(metadata.len(), 2);
         assert_eq!(mixed.preview.markdown, "# Mixed\nbody remains readable\n");
         assert_eq!(mixed.validation, SkillValidationStatus::Warning);
         assert_eq!(mixed.health, SourceHealth::Degraded);
@@ -1218,10 +1322,10 @@ mod tests {
                 .any(|warning| warning == "Skill compatibility is not a string")
         );
         assert!(
-            mixed
+            !mixed
                 .warnings
                 .iter()
-                .any(|warning| warning == "Skill metadata value for retries is not a string")
+                .any(|warning| warning.contains("value for retries"))
         );
         assert!(
             mixed

@@ -3,6 +3,8 @@ import {
   refreshAgentContextInstructions,
   type AgentContextInstructionsSnapshotDto,
   type AgentContextReferenceDto,
+  type AgentContextSkillMetadataLeafDto,
+  type AgentContextSkillMetadataValueDto,
   listenAgentContextChanged,
 } from "@/platform/agent-context/agent-context-api";
 import {
@@ -21,6 +23,8 @@ export type { ArtifactOpenTarget };
 import type {
   AgentContextInstructionsSnapshot,
   AgentContextReference,
+  AgentContextSkillMetadataLeaf,
+  AgentContextSkillMetadataValue,
   AgentContextSkillRow,
 } from "../model/types";
 import {
@@ -149,11 +153,42 @@ function normalizeSkillRow(
     id: row.id,
     license: row.license,
     manifestPath: row.path,
-    metadata: row.metadata ? Object.freeze({ ...row.metadata }) : null,
+    metadata: row.metadata
+      ? Object.freeze(
+          Object.fromEntries(
+            Object.entries(row.metadata).map(([key, value]) => [
+              key,
+              skillMetadataValue(value),
+            ]),
+          ),
+        )
+      : null,
     name: row.name,
     ownerPath: row.owner.root,
     truncated: row.preview.truncated,
   });
+}
+
+function skillMetadataValue(
+  value: AgentContextSkillMetadataValueDto,
+): AgentContextSkillMetadataValue {
+  if (value.kind !== "object") return skillMetadataLeaf(value);
+  return Object.freeze({
+    entries: Object.freeze(
+      Object.entries(value.value).map(([key, leaf]) =>
+        Object.freeze([key, skillMetadataLeaf(leaf)] as const),
+      ),
+    ),
+    kind: "object",
+  });
+}
+
+function skillMetadataLeaf(
+  leaf: AgentContextSkillMetadataLeafDto,
+): AgentContextSkillMetadataLeaf {
+  return leaf.kind === "text"
+    ? Object.freeze({ kind: "text", text: leaf.value })
+    : Object.freeze({ items: Object.freeze([...leaf.value]), kind: "list" });
 }
 
 function referenceStatus(

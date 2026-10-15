@@ -1,9 +1,10 @@
-import { Sparkles } from "lucide-react";
+import { Braces, Sparkles } from "lucide-react";
 
 import { CollectionDetailHeader } from "@/features/collection/app-shell";
 import {
   CollectionPropertyPanel,
   type CollectionPropertyFactGroup,
+  type CollectionPropertyFactValue,
 } from "@/features/properties/panel";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
@@ -13,10 +14,14 @@ import {
 } from "@/shared/ui/markdown-reader";
 
 import {
+  skillMetadataObjectLines,
   sortedSkillMetadata,
   splitAllowedTools,
 } from "../model/skill-frontmatter";
-import type { AgentContextSkillRow } from "../model/types";
+import type {
+  AgentContextSkillMetadataValue,
+  AgentContextSkillRow,
+} from "../model/types";
 import { AgentContextContentTruncatedNotice } from "./content-truncated-notice";
 
 const skillReaderPolicy: MarkdownReaderPolicy = {};
@@ -75,11 +80,21 @@ export function skillFrontmatterFacts(
       },
       ...sortedSkillMetadata(row.metadata).map(([key, value]) => ({
         key: `metadata:${key}`,
+        ...(value.kind === "object" ? { icon: Braces } : {}),
         label: key,
-        value: { kind: "text" as const, text: value },
+        value: metadataFactValue(value),
       })),
     ],
     key: "skill-md",
     label: m.agent_context_skill_facts_group(),
   };
+}
+
+/** Scalar — text, list of scalars — chips, object — monospace lines. */
+function metadataFactValue(
+  value: AgentContextSkillMetadataValue,
+): CollectionPropertyFactValue {
+  if (value.kind === "text") return { kind: "text", text: value.text };
+  if (value.kind === "list") return { items: value.items, kind: "list" };
+  return { code: skillMetadataObjectLines(value), kind: "code" };
 }

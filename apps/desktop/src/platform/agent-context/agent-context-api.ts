@@ -111,6 +111,14 @@ export interface AgentContextSkillAliasDto {
   linkKind: "direct" | "symbolic_link" | "directory_alias";
 }
 
+export type AgentContextSkillMetadataLeafDto =
+  | { kind: "text"; value: string }
+  | { kind: "list"; value: string[] };
+
+export type AgentContextSkillMetadataValueDto =
+  | AgentContextSkillMetadataLeafDto
+  | { kind: "object"; value: Record<string, AgentContextSkillMetadataLeafDto> };
+
 export interface AgentContextSkillRowDto {
   allowedTools: string | null;
   id: string;
@@ -124,7 +132,7 @@ export interface AgentContextSkillRowDto {
   };
   license: string | null;
   compatibility: string | null;
-  metadata: Record<string, string> | null;
+  metadata: Record<string, AgentContextSkillMetadataValueDto> | null;
   validation: "valid" | "warning";
   health: AgentContextSourceHealthDto;
   healthReasons: string[];

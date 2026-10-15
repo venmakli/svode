@@ -178,7 +178,7 @@ pub struct SkillRow {
     pub owner: InstructionOwner,
     pub license: Option<String>,
     pub compatibility: Option<String>,
-    pub metadata: Option<BTreeMap<String, String>>,
+    pub metadata: Option<BTreeMap<String, SkillMetadataValue>>,
     pub allowed_tools: Option<String>,
     pub validation: SkillValidationStatus,
     pub health: SourceHealth,
@@ -186,6 +186,24 @@ pub struct SkillRow {
     pub warnings: Vec<String>,
     pub preview: MarkdownPreview,
     pub aliases: Vec<SkillDiscoveryAlias>,
+}
+
+/// A `metadata` value of `SKILL.md`: a scalar as text, a list of scalars, or
+/// an object whose values are scalars or lists of scalars.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum SkillMetadataValue {
+    Text(String),
+    List(Vec<String>),
+    Object(BTreeMap<String, SkillMetadataLeaf>),
+}
+
+/// A value inside a `metadata` object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum SkillMetadataLeaf {
+    Text(String),
+    List(Vec<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -147,7 +147,17 @@ test("skill Detail shows SKILL.md frontmatter as facts after the properties", ()
     allowedTools: "Read Bash(git log:*)",
     compatibility: "Requires git",
     license: null,
-    metadata: { zeta: "last", alpha: "first" },
+    metadata: {
+      zeta: { kind: "text", text: "last" },
+      alpha: { items: ["first", "second"], kind: "list" },
+      owner: {
+        entries: [
+          ["channels", { items: ["desk", "mail"], kind: "list" }],
+          ["team", { kind: "text", text: "core" }],
+        ],
+        kind: "object",
+      },
+    },
   };
   const detailHtml = renderToStaticMarkup(
     createSkillDetailContent(withFrontmatter).content,
@@ -170,6 +180,12 @@ test("skill Detail shows SKILL.md frontmatter as facts after the properties", ()
     detailHtml.indexOf('data-collection-panel-fact="metadata:alpha"') <
       detailHtml.indexOf('data-collection-panel-fact="metadata:zeta"'),
   ).toBe(true);
+  // A list of scalars reads as chips, an object as monospace lines.
+  expect(detailHtml.includes(">second</span>")).toBe(true);
+  expect(detailHtml.includes("channels: desk, mail\nteam: core</code>")).toBe(
+    true,
+  );
+  expect(detailHtml.includes("lucide-braces")).toBe(true);
   expect(detailHtml.indexOf("data-markdown-reader") > groupIndex).toBe(true);
 });
 

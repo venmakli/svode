@@ -80,6 +80,18 @@ export interface AgentContextSkillAlias {
   linkKind: AgentContextLinkKind;
 }
 
+/** A `metadata` value of `SKILL.md` as the scanner keeps it. */
+export type AgentContextSkillMetadataLeaf =
+  | { kind: "text"; text: string }
+  | { kind: "list"; items: readonly string[] };
+
+export type AgentContextSkillMetadataValue =
+  | AgentContextSkillMetadataLeaf
+  | {
+      kind: "object";
+      entries: readonly (readonly [string, AgentContextSkillMetadataLeaf])[];
+    };
+
 export interface AgentContextSkillRow {
   allowedTools: string | null;
   aliases: readonly AgentContextSkillAlias[];
@@ -92,7 +104,7 @@ export interface AgentContextSkillRow {
   id: string;
   license: string | null;
   manifestPath: string;
-  metadata: Readonly<Record<string, string>> | null;
+  metadata: Readonly<Record<string, AgentContextSkillMetadataValue>> | null;
   name: string;
   ownerPath: string;
   truncated: boolean;
