@@ -148,6 +148,12 @@ pub struct AcpLaunch {
     /// created, opened or read a session serves only that one and is no
     /// longer the plan's shared or catalogue connection.
     pub session_per_connection: bool,
+    /// Recorded evidence that the agent keeps a session it created, opened
+    /// or read in the memory of its process and serves or writes that copy
+    /// on the next load of the session there (DF-177 R3). Its connection
+    /// serves only that one session, so once Svode no longer drives the
+    /// session it is loaded again only by another process.
+    pub keeps_loaded_sessions: bool,
     /// Recorded evidence that `session/new` without a prompt leaves no
     /// session in the agent's native store or list, so a new session draft
     /// may create its session before the first prompt and show the settings
@@ -460,7 +466,9 @@ impl AgentRuntime {
             read_only_open: launch.read_only_open,
             reads_during_external_turn: launch.reads_during_external_turn,
             writer_refusal: launch.writer_refusal.clone(),
-            session_per_connection: launch.session_per_connection,
+            // A process that keeps its loaded sessions never loads one of
+            // them again (DF-177 R3).
+            session_per_connection: launch.session_per_connection || launch.keeps_loaded_sessions,
             taken: AtomicBool::new(false),
             rpc,
             state: Mutex::new(ConnectionState::Starting),
@@ -585,10 +593,11 @@ impl AgentRuntime {
         }
     }
 
-    /// Gives the connection of an agent with one session per connection to
-    /// the session about to start on it: once taken, its plan's next
-    /// acquire starts another connection and its list no longer stands for
-    /// the catalogue.
+    /// Gives the connection of an agent with one session per connection,
+    /// or of one that keeps its loaded sessions in memory, to the session
+    /// about to start on it: once taken, its plan's next acquire starts
+    /// another connection, its list no longer stands for the catalogue and
+    /// it loads no session again.
     async fn take_for_session(
         &self,
         id: ConnectionId,

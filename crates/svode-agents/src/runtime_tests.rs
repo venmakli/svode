@@ -108,6 +108,7 @@ fn launch() -> AcpLaunch {
         reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
+        keeps_loaded_sessions: false,
         draft_session: false,
     }
 }
@@ -3135,6 +3136,121 @@ async fn an_agent_without_close_keeps_the_read_session_attached_and_idle() {
     let snapshot = runtime.subscribe(&key).unwrap().snapshot;
     assert_eq!(messages(&snapshot), vec!["Hello"]);
     assert_eq!(runtime.writers().writer(&key), None);
+}
+
+/// Reads `key` as the first call of a connection whose agent declares
+/// `session/load` without `close`.
+async fn first_read_without_close(
+    runtime: &AgentRuntime,
+    id: ConnectionId,
+    agent: &mut ScriptedAgent,
+    key: &SessionKey,
+) {
+    let (read, ()) = tokio::join!(
+        runtime.read_session(
+            id,
+            key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            false
+        ),
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            agent.update(&key.session_id, user_chunk("Hello")).await;
+            agent.reply(&load, json!({})).await;
+        }
+    );
+    read.unwrap();
+}
+
+#[tokio::test]
+async fn a_process_that_keeps_its_loaded_sessions_never_loads_one_again() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let keeping = AcpLaunch {
+        keeps_loaded_sessions: true,
+        ..reading(None)
+    };
+    let (id, mut agent) = attached_with(&runtime, &keeping);
+    first_read_without_close(&runtime, id, &mut agent, &key).await;
+
+    // DF-177 R3: the process still holds the session it read, so neither
+    // a refresh nor attaching it loads that copy there again.
+    assert_eq!(
+        runtime
+            .read_session(
+                id,
+                &key,
+                Path::new("/project"),
+                ExternalLiveness::Unknown,
+                false
+            )
+            .await
+            .unwrap_err(),
+        AgentRuntimeError::ConnectionTaken
+    );
+    assert_eq!(
+        runtime
+            .open_session(
+                id,
+                &key,
+                Path::new("/project"),
+                ExternalLiveness::Free,
+                UnknownLiveness::NotConfirmed,
+            )
+            .await
+            .unwrap_err(),
+        AgentRuntimeError::ConnectionTaken
+    );
+    agent.silent().await;
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(
+        messages(&runtime.subscribe(&key).unwrap().snapshot),
+        vec!["Hello"]
+    );
+
+    // Another process reads it, attaches it and its turns go on there.
+    let (other, mut agent) = attached_with(&runtime, &keeping);
+    first_read_without_close(&runtime, other, &mut agent, &key).await;
+    let (attached, mut agent) = attached_with(&runtime, &keeping);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            attached,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        ),
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            agent.reply(&load, json!({})).await;
+        }
+    );
+    opened.unwrap();
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+    // A session the runtime drives is followed without a load.
+    runtime
+        .read_session(
+            other,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            false,
+        )
+        .await
+        .unwrap();
+    agent.silent().await;
+
+    // Without the evidence one process reads the session again.
+    let shared = SessionKey::from_acp("scripted", "s8", false);
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    first_read_without_close(&runtime, id, &mut agent, &shared).await;
+    read(&runtime, id, &mut agent, &shared, vec![], false)
+        .await
+        .unwrap();
+    agent.silent().await;
 }
 
 #[tokio::test]

@@ -54,6 +54,7 @@ done"#;
         reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
+        keeps_loaded_sessions: false,
         draft_session: false,
     }
 }

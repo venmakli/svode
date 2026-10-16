@@ -48,6 +48,7 @@ done"#;
         reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
+        keeps_loaded_sessions: false,
         draft_session: false,
     }
 }
@@ -556,6 +557,7 @@ done"#;
         reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
+        keeps_loaded_sessions: false,
         draft_session: false,
     }
 }
@@ -799,6 +801,7 @@ done"#;
         reads_during_external_turn: read_only_open,
         writer_refusal: None,
         session_per_connection: false,
+        keeps_loaded_sessions: false,
         draft_session: false,
     }
 }
@@ -1129,6 +1132,125 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
         calls(&qwen_log),
         ["initialize", "session/load", "session/close"]
     );
+    runtime.shutdown().await;
+}
+
+/// A `/bin/sh` ACP agent with session `h1` that replays one message on
+/// `session/load`, declares no `close` and writes the process id and each
+/// method it receives to `calls`.
+fn memory_agent(agent: &str, keeps_loaded_sessions: bool, calls: &Path) -> AcpLaunch {
+    const SCRIPT: &str = r#"while IFS= read -r line; do
+  id=${line#'{"id":'}; id=${id%%,*}
+  method=${line#*'"method":"'}; method=${method%%'"'*}
+  printf '%s %s\n' "$$" "$method" >> "$SVODE_CALLS"
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true},"agentInfo":{"name":"scripted","version":"1.0.0"}}}\n' "$id";;
+    *'"method":"session/load"'*) printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"h1","update":{"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Earlier"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id";;
+  esac
+done"#;
+    AcpLaunch {
+        keeps_loaded_sessions,
+        session_per_connection: false,
+        reads_during_external_turn: false,
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), SCRIPT.into()],
+        ..history_agent(agent, true, calls)
+    }
+}
+
+/// The process ids of the agent's `session/load` calls, in order.
+fn loading_processes(path: &Path) -> Vec<String> {
+    calls(path)
+        .iter()
+        .filter_map(|call| call.strip_suffix(" session/load"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[tokio::test]
+async fn an_agent_that_keeps_its_loaded_sessions_loads_one_again_only_in_another_process() {
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        connection_idle: Duration::from_secs(30),
+        ..RuntimeConfig::default()
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let shared_log = dir.path().join("shared-calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![
+            ("hermes", Ok(memory_agent("hermes", true, &log))),
+            ("opencode", Ok(memory_agent("opencode", false, &shared_log))),
+        ],
+    );
+    let key = SessionKey::from_acp("hermes", "h1", true);
+    let open = |attach| {
+        connections.open_session(
+            "hermes",
+            &key,
+            dir.path(),
+            ExternalLiveness::Unknown,
+            false,
+            attach,
+        )
+    };
+
+    // Reading, refreshing and attaching the session each load it in a
+    // process that has not loaded it yet (DF-177 R3).
+    assert_eq!(open(false).await.unwrap(), opened(&key));
+    assert_eq!(open(false).await.unwrap(), opened(&key));
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(open(true).await.unwrap(), opened(&key));
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+    assert_eq!(loading_processes(&log).len(), 3);
+
+    // The chat follows the session the runtime drives without a load.
+    assert_eq!(open(false).await.unwrap(), opened(&key));
+    assert_eq!(open(true).await.unwrap(), opened(&key));
+    assert_eq!(loading_processes(&log).len(), 3);
+
+    // Released for the terminal, it is attached again in another process.
+    connections.release_session(&key).await.unwrap();
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(open(true).await.unwrap(), opened(&key));
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.writer, WriterState::Acp);
+    assert_eq!(snapshot.items[0].summary, "Earlier");
+    let loads = loading_processes(&log);
+    assert_eq!(loads.len(), 4);
+    assert_eq!(
+        loads.iter().collect::<std::collections::HashSet<_>>().len(),
+        4,
+        "a process loaded the session twice: {loads:?}"
+    );
+    assert!(
+        !calls(&log)
+            .iter()
+            .any(|call| call.ends_with("session/prompt"))
+    );
+
+    // An agent without that evidence reads it again in the same process.
+    let shared = SessionKey::from_acp("opencode", "h1", true);
+    for _ in 0..2 {
+        assert_eq!(
+            connections
+                .open_session(
+                    "opencode",
+                    &shared,
+                    dir.path(),
+                    ExternalLiveness::Unknown,
+                    false,
+                    false,
+                )
+                .await
+                .unwrap(),
+            opened(&shared)
+        );
+    }
+    let loads = loading_processes(&shared_log);
+    assert_eq!(loads.len(), 2);
+    assert_eq!(loads[0], loads[1]);
     runtime.shutdown().await;
 }
 

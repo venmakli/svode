@@ -824,6 +824,17 @@ impl AdapterRuntimeRegistry {
         )
     }
 
+    /// Whether the agent keeps a session it created, opened or read in the
+    /// memory of its process and serves or writes that copy on the next
+    /// load there (DF-177 R3). Design 2026-10-16, probe on Hermes source
+    /// `c8301ea`: Hermes declares no `close`, and a second `session/load`
+    /// in one process replaces the active messages of the conversation
+    /// with the one it loaded first, dropping what another process wrote in
+    /// between; a new process reads the conversation from its store.
+    pub fn keeps_loaded_sessions(&self, adapter: AgentAdapterKind) -> bool {
+        adapter == AgentAdapterKind::Hermes
+    }
+
     /// Launch plan of the agent's ACP entrypoint for the user's executable:
     /// its own command, or the installed adapter run by the user's Node.js
     /// (`adapter_run`). `None` for an agent without an entrypoint, or for an
@@ -876,6 +887,7 @@ impl AdapterRuntimeRegistry {
             // the other sessions when one is loaded, and lists only the
             // last session's directory once a session ran.
             session_per_connection: adapter == AgentAdapterKind::Pi,
+            keeps_loaded_sessions: self.keeps_loaded_sessions(adapter),
             // E01: `session/new` without a prompt leaves no session in the
             // native store or list of Claude Code and Codex; Claude creates
             // only an empty project directory.
@@ -2715,6 +2727,31 @@ mod tests {
             assert_eq!(
                 launch.reads_during_external_turn,
                 agent == AgentAdapterKind::QwenCode,
+                "{agent:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_hermes_keeps_a_loaded_session_in_its_process() {
+        for agent in AgentAdapterKind::ALL {
+            assert_eq!(
+                AdapterRuntimeRegistry.keeps_loaded_sessions(agent),
+                agent == AgentAdapterKind::Hermes,
+                "{agent:?}"
+            );
+        }
+        for (agent, executable) in [
+            (AgentAdapterKind::Hermes, "/bin/hermes"),
+            (AgentAdapterKind::Opencode, "/bin/opencode"),
+            (AgentAdapterKind::GrokBuild, "/bin/grok"),
+        ] {
+            let launch = AdapterRuntimeRegistry
+                .acp_launch(agent, Path::new(executable), None, Path::new("/home"))
+                .unwrap();
+            assert_eq!(
+                launch.keeps_loaded_sessions,
+                agent == AgentAdapterKind::Hermes,
                 "{agent:?}"
             );
         }

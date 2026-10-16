@@ -219,6 +219,7 @@ pub fn custom_launch_plan(
         reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
+        keeps_loaded_sessions: false,
         draft_session: false,
     })
 }
@@ -360,6 +361,7 @@ mod tests {
         assert!(launch.lists_catalog);
         assert!(!launch.read_only_open);
         assert!(!launch.reads_during_external_turn);
+        assert!(!launch.keeps_loaded_sessions);
 
         assert_eq!(
             custom_launch_plan(&agent, Some(false), &context).unwrap_err(),
