@@ -7,8 +7,13 @@ import {
   escapeUnclosedCommentOpeners,
 } from "./markdown-comments";
 import {
+  escapedOpenerEdits,
+  restoreMarkdownLiteral,
+} from "./markdown-literals";
+import {
   applyTextEdits,
   composeMappedText,
+  type MappedText,
   markdownSourcePlugin,
   type TextEdit,
 } from "./markdown-source";
@@ -102,22 +107,48 @@ export function normalizeMarkdownForPlate(markdown: string): string {
   return applyTextEdits(markdown, bareBreakNormalizationEdits(markdown)).text;
 }
 
+function plateInputFor(
+  editor: PlateEditor,
+  markdown: string,
+  literalEdits: TextEdit[],
+): MappedText {
+  const literal = applyTextEdits(markdown, literalEdits);
+  const escaped = escapeUnclosedCommentOpeners(editor, literal.text);
+  return composeMappedText(
+    literal,
+    escaped,
+    applyTextEdits(escaped.text, bareBreakNormalizationEdits(escaped.text)),
+  );
+}
+
 export function deserializeEditorMarkdownSegment(
   editor: PlateEditor,
   markdown: string,
 ): Descendant[] {
-  const escaped = escapeUnclosedCommentOpeners(editor, markdown);
-  const plateInput = composeMappedText(
-    escaped,
-    applyTextEdits(escaped.text, bareBreakNormalizationEdits(escaped.text)),
-  );
   const markdownApi = editor.getApi(MarkdownPlugin).markdown;
-  const nodes = markdownApi.deserialize(plateInput.text, {
-    remarkPlugins: [
-      ...(editor.getOptions(MarkdownPlugin).remarkPlugins ?? []),
-      markdownSourcePlugin(markdown, plateInput, [annotateMarkdownComment]),
-    ],
+  const remarkPlugins = editor.getOptions(MarkdownPlugin).remarkPlugins ?? [];
+  const deserialize = (plateInput: MappedText, onError?: () => void) =>
+    markdownApi.deserialize(plateInput.text, {
+      onError,
+      remarkPlugins: [
+        ...remarkPlugins,
+        markdownSourcePlugin(markdown, plateInput, [
+          annotateMarkdownComment,
+          restoreMarkdownLiteral,
+        ]),
+      ],
+    });
+
+  const literalEdits = escapedOpenerEdits(markdown);
+  let fellBack = false;
+  let nodes = deserialize(plateInputFor(editor, markdown, literalEdits), () => {
+    fellBack = true;
   });
+  // Plate's fallback parse runs no annotators, so it would keep the
+  // replacements of `escapedOpenerEdits` inside code.
+  if (fellBack && literalEdits.length > 0) {
+    nodes = deserialize(plateInputFor(editor, markdown, []));
+  }
 
   return Array.isArray(nodes) ? (nodes as Descendant[]) : [];
 }

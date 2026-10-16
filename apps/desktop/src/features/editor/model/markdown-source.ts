@@ -144,10 +144,17 @@ export interface MarkdownSourceView {
   source: string;
   range(node: MdastNode): MarkdownSourceRange | null;
   /**
+   * Source text of `range` with the prefixes of the block containers in
+   * `ancestors` removed from every line that starts inside it.
+   */
+  text(range: MarkdownSourceRange, ancestors: MdastNode[]): string;
+  /**
    * Source text of the node with the prefixes of its block containers removed
    * from continuation lines: the text a container serializer indents again.
    */
   innerText(node: MdastNode, ancestors: MdastNode[]): string | null;
+  /** The same view of the text Plate parsed, which node values come from. */
+  parsed: MarkdownSourceView;
 }
 
 const BLOCKQUOTE_PREFIX_RE = /^ {0,3}>[ \t]?/;
@@ -169,16 +176,16 @@ function stripIndent(line: string, width: number): number {
   return index;
 }
 
-export function createMarkdownSourceView(
+function textView(
   source: string,
-  parsed: MappedText,
-): MarkdownSourceView {
-  const toSource = (point: MdastPoint | undefined) =>
-    point?.offset === undefined ? null : parsed.toInput(point.offset);
+  toSource: (offset: number) => number,
+): Omit<MarkdownSourceView, "parsed"> {
+  const sourceOf = (point: MdastPoint | undefined) =>
+    point?.offset === undefined ? null : toSource(point.offset);
 
   const range = (node: MdastNode): MarkdownSourceRange | null => {
-    const start = toSource(node.position?.start);
-    const end = toSource(node.position?.end);
+    const start = sourceOf(node.position?.start);
+    const end = sourceOf(node.position?.end);
     return start === null || end === null ? null : { start, end };
   };
 
@@ -220,30 +227,50 @@ export function createMarkdownSourceView(
     return (marker?.[0].length ?? 0) + 1;
   };
 
+  const text = (
+    { start, end }: MarkdownSourceRange,
+    ancestors: MdastNode[],
+  ): string => {
+    const chain = ancestors.filter(
+      (ancestor) =>
+        ancestor.type === "blockquote" || ancestor.type === "listItem",
+    );
+    const lines = source.slice(start, end).split("\n");
+    let lineStart = start;
+    return lines
+      .map((line, index) => {
+        const current = lineStart;
+        lineStart += line.length + 1;
+        if (chain.length === 0) return line;
+        if (index === 0 && lineStartOf(source, current) !== current) {
+          return line;
+        }
+        return line.slice(Math.min(prefixLength(current, chain), line.length));
+      })
+      .join("\n");
+  };
+
   return {
     source,
     range,
+    text,
     innerText(node, ancestors) {
       const nodeRange = range(node);
-      if (!nodeRange) return null;
-      const chain = ancestors.filter(
-        (ancestor) =>
-          ancestor.type === "blockquote" || ancestor.type === "listItem",
-      );
-      const lines = source.slice(nodeRange.start, nodeRange.end).split("\n");
-      let lineStart = nodeRange.start;
-      return lines
-        .map((line, index) => {
-          const current = lineStart;
-          lineStart += line.length + 1;
-          if (index === 0 || chain.length === 0) return line;
-          return line.slice(
-            Math.min(prefixLength(current, chain), line.length),
-          );
-        })
-        .join("\n");
+      return nodeRange ? text(nodeRange, ancestors) : null;
     },
   };
+}
+
+export function createMarkdownSourceView(
+  source: string,
+  parsed: MappedText,
+): MarkdownSourceView {
+  const parsedView = textView(
+    parsed.text,
+    (offset) => offset,
+  ) as MarkdownSourceView;
+  parsedView.parsed = parsedView;
+  return { ...textView(source, parsed.toInput), parsed: parsedView };
 }
 
 type RemarkPlugin = NonNullable<DeserializeMdOptions["remarkPlugins"]>[number];
