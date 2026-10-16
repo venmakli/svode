@@ -57,6 +57,7 @@ import {
   needsFilterValue,
   queryField,
 } from "../model/query-utils";
+import { useActorCandidatesRequest } from "../hooks/use-actor-candidates-request";
 import { useSaveViewQuery } from "../hooks/use-save-view-query";
 import type {
   FilterOp,
@@ -382,20 +383,28 @@ function ActorChecklist({
   onChange: (values: string[]) => void;
 }) {
   const [search, setSearch] = useState("");
+  const request = useActorCandidatesRequest(onRequestActors);
   const selected = new Set(
     values.map((value) =>
       actorCandidateKey(resolveActorCandidate(value, actors)),
     ),
   );
   const needle = search.trim().toLowerCase();
-  const visible = actors.filter(
+  const selectable = actors.filter(isSelectableActorCandidate);
+  const visible = selectable.filter(
     (actor) =>
-      isSelectableActorCandidate(actor) &&
-      (!needle ||
-        (actor.kind !== "agent" &&
-          actor.email.toLowerCase().includes(needle)) ||
-        actorDisplayName(actor).toLowerCase().includes(needle)),
+      !needle ||
+      (actor.kind !== "agent" && actor.email.toLowerCase().includes(needle)) ||
+      actorDisplayName(actor).toLowerCase().includes(needle),
   );
+  let listState: string | null = null;
+  if (selectable.length > 0) {
+    if (visible.length === 0) listState = m.view_query_actors_no_matches();
+  } else if (request.status === "pending") {
+    listState = m.view_query_actors_loading();
+  } else if (request.status !== "rejected") {
+    listState = m.view_query_actors_empty();
+  }
   return (
     <div className="flex flex-col gap-2">
       <div className="relative">
@@ -404,10 +413,33 @@ function ActorChecklist({
           className="pl-7"
           value={search}
           placeholder={m.view_query_search_actors()}
-          onFocus={() => void onRequestActors?.()}
           onChange={(event) => setSearch(event.target.value)}
         />
       </div>
+      {selectable.length === 0 && request.status === "rejected" ? (
+        <div
+          role="alert"
+          className="flex flex-col items-center gap-2 px-2 py-3 text-center text-sm text-muted-foreground"
+        >
+          <span>{m.view_query_actors_load_failed()}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={request.retry}
+          >
+            {m.view_query_actors_retry()}
+          </Button>
+        </div>
+      ) : null}
+      {listState ? (
+        <div
+          role="status"
+          className="px-2 py-3 text-center text-sm text-muted-foreground"
+        >
+          {listState}
+        </div>
+      ) : null}
       <div className="flex max-h-44 flex-col overflow-auto">
         {visible.map((actor) => {
           const key = actorCandidateKey(actor);
