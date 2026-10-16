@@ -13,6 +13,7 @@ import {
   useCollectionDetailController,
 } from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
+import { useAppLocale } from "@/features/settings";
 
 import { useAgentContext } from "../hooks/use-agent-context";
 import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
@@ -45,6 +46,9 @@ export function AgentContextSurface({
     spacePath: owner.spacePath,
   });
   const agents = useAgentAdapterDictionary();
+  // Properties and the presets built on them carry their labels: a
+  // language change rebuilds them.
+  const { locale } = useAppLocale();
   const detailController = useCollectionDetailController();
   const [openedItem, setOpenedItem] = useState<OpenedAgentContextItem | null>(
     null,
@@ -73,7 +77,8 @@ export function AgentContextSurface({
   );
   const properties = useMemo(
     () => createAgentContextItemProperties({ agents, onOpenProviders }),
-    [agents, onOpenProviders],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- labels follow the locale
+    [agents, locale, onOpenProviders],
   );
   const presentations = useMemo(
     () =>
