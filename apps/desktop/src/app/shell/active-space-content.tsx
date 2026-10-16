@@ -88,10 +88,6 @@ export function ActiveSpaceContent() {
           (space) => space.id === scopeOwnerRequest.owner.spaceId,
         )
       : null;
-  const hasChildren = spaces.length > 0;
-  const rootTree = activeRootId ? (fileTrees[activeRootId] ?? []) : [];
-  const hasContentItems = rootTree.length > 0;
-  const isEmpty = !hasChildren && !hasContentItems;
   const ownerTargetPath =
     scopeOwnerRequest?.owner.kind === "collection" ||
     scopeOwnerRequest?.owner.kind === "app-directory"
@@ -210,7 +206,7 @@ export function ActiveSpaceContent() {
       <div className="h-full" />
     );
 
-  if (scopeOwnerRequest?.owner.kind === "space" || !selection || isEmpty) {
+  if (scopeOwnerRequest?.owner.kind === "space" || !selection) {
     if (selectedScopeHome?.status === "ready" && activeRootPath) {
       const spaceOwner = createRegisteredSpaceOwner({
         spaceId: selectedScopeHome.id,

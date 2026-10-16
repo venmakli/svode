@@ -27,6 +27,8 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
   };
   const spacePath = "/space";
   let tree: unknown[] = [];
+  // An unloaded root tree has no entry in the store yet.
+  let treeLoaded = true;
   const renders: string[] = [];
   const describe = (owner: ScopeOwnerRef) =>
     `${owner.identityKind}:${owner.readmePath}:${owner.capabilities.join(",")}`;
@@ -34,7 +36,7 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
   mock.module("@/features/space", () => ({
     ...realSpace,
     useSpace: () => ({
-      fileTrees: { root: tree },
+      fileTrees: treeLoaded ? { root: tree } : {},
       rootSpaces: [
         {
           id: "root",
@@ -79,16 +81,19 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       renderPageSurface,
       renderMainHeader,
     }: {
-      request: { intent: { target: { semanticHint?: unknown } } };
+      request: { intent: { target: { path: string; semanticHint?: unknown } } };
       renderPageSurface: (layout: {
         header: () => ReactNode;
         children: ReactNode;
       }) => ReactNode;
       renderMainHeader: (header: object) => ReactNode;
-    }) =>
-      request.intent.target.semanticHint
-        ? renderPageSurface({ header: () => null, children: null })
-        : renderMainHeader({}),
+    }) => (
+      <div data-artifact={request.intent.target.path}>
+        {request.intent.target.semanticHint
+          ? renderPageSurface({ header: () => null, children: null })
+          : renderMainHeader({})}
+      </div>
+    ),
   }));
   const { ActiveSpaceContent } = await import("./active-space-content");
   const { useMainHeaderContribution } =
@@ -110,6 +115,7 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     });
     const restore = installDomGlobals(dom);
     renders.length = 0;
+    treeLoaded = true;
     // A non-empty project whose loaded tree does not hold the target.
     tree = [
       {
@@ -320,6 +326,124 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       expect(f.reads()).toBe(0);
     } finally {
       await f.cleanup();
+    }
+  });
+
+  // A project without child Spaces whose root tree is empty or not loaded yet.
+  const emptyRootTrees = [
+    ["empty", () => (tree = [])],
+    ["not loaded", () => (treeLoaded = false)],
+  ] as const;
+
+  test("a selected root document or media file shows its surface while the root tree is empty or not loaded", async () => {
+    for (const [state, emptyTree] of emptyRootTrees) {
+      for (const path of ["notes.docx", "report.pdf", "photo.png"]) {
+        const f = await fixture(() => {
+          throw new Error("a document has no owner facts");
+        });
+        try {
+          emptyTree();
+          openArtifact({ spaceId: "root", path, sourceShape: "file" });
+          await f.render();
+          await f.settle();
+          expect([state, Boolean(f.query("[data-empty]"))]).toEqual([
+            state,
+            false,
+          ]);
+          expect(
+            f.query("[data-artifact]")?.getAttribute("data-artifact"),
+          ).toBe(path);
+        } finally {
+          await f.cleanup();
+        }
+      }
+    }
+  });
+
+  test("a selected Page, Collection and App show their surfaces while the root tree is empty or not loaded", async () => {
+    const facts = (path: string) =>
+      path === "tasks"
+        ? {
+            identity: "collectionDirectory",
+            ownerPath: "tasks",
+            contentPath: "tasks/README.md",
+            hasApp: false,
+          }
+        : path === "tool"
+          ? {
+              identity: "appDirectory",
+              ownerPath: "tool",
+              contentPath: "tool/README.md",
+              hasApp: true,
+            }
+          : {
+              identity: "pageFile",
+              ownerPath: "Note.md",
+              contentPath: "Note.md",
+              hasApp: false,
+            };
+    for (const [state, emptyTree] of emptyRootTrees) {
+      const f = await fixture(facts);
+      try {
+        emptyTree();
+        openPage("Note.md");
+        await f.render();
+        await f.settle();
+        expect([state, Boolean(f.query("[data-empty]"))]).toEqual([
+          state,
+          false,
+        ]);
+        expect(
+          f.query("[data-page-owner]")?.getAttribute("data-page-owner"),
+        ).toBe("page-file:Note.md:");
+        openScopeOwner({ kind: "collection", path: "tasks", spaceId: "root" });
+        await f.render();
+        await f.settle();
+        expect(
+          f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+        ).toBe("collection-directory:tasks/README.md:collection");
+        openScopeOwner({
+          kind: "app-directory",
+          path: "tool",
+          spaceId: "root",
+        });
+        await f.render();
+        await f.settle();
+        expect(
+          f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+        ).toBe("app-directory:tool/README.md:app");
+        expect(f.query("[data-empty]")).toBeNull();
+      } finally {
+        await f.cleanup();
+      }
+    }
+  });
+
+  test("only an empty selection shows the empty project state; a Space owner shows its home", async () => {
+    for (const [state, emptyTree] of emptyRootTrees) {
+      const f = await fixture(() => {
+        throw new Error("no owner facts are read");
+      });
+      try {
+        emptyTree();
+        await f.render();
+        expect([state, Boolean(f.query("[data-empty]"))]).toEqual([
+          state,
+          true,
+        ]);
+        openScopeOwner({ kind: "space", spaceId: "root" });
+        await f.render();
+        await f.settle();
+        expect(f.query("[data-empty]")).toBeNull();
+        expect(
+          f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+        ).toBe("registered-space:README.md:space");
+        closeActiveContent();
+        await f.render();
+        expect(Boolean(f.query("[data-empty]"))).toBe(true);
+      } finally {
+        await f.cleanup();
+      }
     }
   });
 
