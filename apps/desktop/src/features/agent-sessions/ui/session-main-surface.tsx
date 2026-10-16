@@ -12,6 +12,7 @@ import type {
   NewSessionDraftTarget,
 } from "../model";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
+import type { ComposerFocusRequest } from "../chat/hooks/use-composer-focus";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
 import { AgentSessionContent, type AgentSessionChrome } from "./session-view";
@@ -34,15 +35,21 @@ export function AgentSessionMainSurface({
   target,
   focus,
   focusTerminal = false,
+  composerFocus = null,
   onOpenRoutine,
   onOpenAgentSettings,
   renderHeader,
 }: {
   target: AgentSessionTarget;
-  /** Move focus into the main area, as after "Expand"; the sidebar keeps it. */
+  /** Move focus into the main area, as after "Expand"; otherwise the opener keeps it. */
   focus: boolean;
   /** The session was started for work in its terminal, e.g. a new session. */
   focusTerminal?: boolean;
+  /**
+   * A row of the sidebar opened it: focus goes to the chat's composer once
+   * it takes input; a session shown otherwise leaves focus in the sidebar.
+   */
+  composerFocus?: ComposerFocusRequest | null;
   onOpenRoutine(routine: RoutineLaunchLink): void;
   onOpenAgentSettings?: () => void;
   /** Publishes the session's part of the main area top bar. */
@@ -61,6 +68,7 @@ export function AgentSessionMainSurface({
         key={`${target.sessionId}\n${target.launchId ?? ""}`}
         target={target}
         focusTerminal={focusTerminal}
+        composerFocus={composerFocus}
         onOpenRoutine={onOpenRoutine}
         onOpenAgentSettings={onOpenAgentSettings}
         renderChrome={(chrome) => (

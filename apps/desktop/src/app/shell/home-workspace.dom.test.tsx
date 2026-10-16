@@ -135,10 +135,13 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
         target: { sessionId: string },
         _: unknown,
         options: {
+          focus?: string;
           guarded?: boolean;
         },
       ) => {
-        opened.push(`session:${target.sessionId}:${options.guarded}`);
+        opened.push(
+          `session:${target.sessionId}:${options.guarded}:${options.focus}`,
+        );
         return true;
       },
   }));
@@ -334,6 +337,6 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
     await open({ key: { kind: "page", path: "plan.md" }, title: "Plan" });
     await open({ key: { kind: "page", path: "gone.md" }, title: "Gone" });
     await open({ key: { kind: "session", sessionId: "codex:a" }, title: "A" });
-    expect(opened).toEqual(["/projects/d:Plan", "session:codex:a:true"]);
+    expect(opened).toEqual(["/projects/d:Plan", "session:codex:a:true:composer"]);
   });
 }

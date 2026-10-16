@@ -192,7 +192,10 @@ function useOpenRequestedItem(onActivateContent: () => void) {
           ? { sessionId: item.key.sessionId, launchId: null }
           : null;
       if (target) {
-        await openSession(target, session, { focus: false, guarded: true });
+        await openSession(target, session, {
+          focus: "composer",
+          guarded: true,
+        });
       }
     },
     [openArtifact, openSession],

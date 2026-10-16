@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   AgentSessionOpenOptions,
   AgentSessionTarget,
+  ComposerFocusRequest,
   NewSessionDraftTarget,
 } from "@/features/agent-sessions";
 import type {
@@ -35,6 +36,8 @@ interface ShellState {
   mainSessionFocus: boolean;
   /** The main area session was started for work in its terminal. */
   mainSessionFocusTerminal: boolean;
+  /** A row of the sidebar opened the main area session for its composer. */
+  mainSessionComposerFocus: ComposerFocusRequest | null;
   sessionPeekTarget: AgentSessionTarget | null;
   /** A new session draft in the session peek instead of a session. */
   sessionPeekDraft: NewSessionDraftTarget | null;
@@ -54,7 +57,7 @@ interface ShellState {
   openContentSurface: () => void;
   openSessionMainSurface: (
     target: AgentSessionTarget,
-    options?: { focus?: boolean; focusTerminal?: boolean },
+    options?: MainSessionOpenOptions,
   ) => void;
   /** A new session draft as the main area object; its first send makes it the session. */
   openSessionDraftMainSurface: (draft: NewSessionDraftTarget) => void;
@@ -68,6 +71,12 @@ interface ShellState {
   /** A new session draft in the session peek over the current context. */
   openSessionDraftPeek: (draft: NewSessionDraftTarget) => void;
   closeSessionPeek: () => void;
+}
+
+export interface MainSessionOpenOptions {
+  focus?: boolean;
+  focusTerminal?: boolean;
+  composerFocus?: ComposerFocusRequest | null;
 }
 
 function clampSidebarWidth(width: number) {
@@ -111,6 +120,7 @@ export const useShellStore = create<ShellState>((set) => ({
   mainSessionDraft: null,
   mainSessionFocus: false,
   mainSessionFocusTerminal: false,
+  mainSessionComposerFocus: null,
   sessionPeekTarget: null,
   sessionPeekDraft: null,
   sessionPeekFocusTerminal: false,
@@ -148,6 +158,7 @@ export const useShellStore = create<ShellState>((set) => ({
       mainSessionDraft: null,
       mainSessionFocus: options?.focus ?? true,
       mainSessionFocusTerminal: options?.focusTerminal ?? false,
+      mainSessionComposerFocus: options?.composerFocus ?? null,
       sessionPeekTarget: null,
       sessionPeekDraft: null,
     }),
@@ -158,6 +169,7 @@ export const useShellStore = create<ShellState>((set) => ({
       mainSessionDraft: draft,
       mainSessionFocus: true,
       mainSessionFocusTerminal: false,
+      mainSessionComposerFocus: null,
       sessionPeekTarget: null,
       sessionPeekDraft: null,
     }),
@@ -172,6 +184,7 @@ export const useShellStore = create<ShellState>((set) => ({
       mainSurface: "graph",
       mainSessionFocus: false,
       mainSessionFocusTerminal: false,
+      mainSessionComposerFocus: null,
       sessionPeekTarget: null,
       sessionPeekDraft: null,
     })),

@@ -57,6 +57,7 @@ if (process.env.SVODE_NEW_SESSION_ROW_DOM !== "1") {
 
   mock.module("@/features/agent-sessions", () => ({
     AgentSessionPeek: () => null,
+    requestComposerFocus: () => ({ opener: null }),
     NewSessionSidebarItem: (props: {
       space: unknown;
       onStart: (scope: Scope) => void;

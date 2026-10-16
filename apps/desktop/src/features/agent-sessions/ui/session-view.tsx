@@ -62,6 +62,7 @@ import {
   SessionMissingState,
   SessionResumingState,
 } from "./session-states";
+import type { ComposerFocusRequest } from "../chat/hooks/use-composer-focus";
 import { SessionCwdContext } from "../chat/hooks/use-path-base";
 import { SessionChat } from "../chat/ui/session-chat";
 import { OpenedSessionChat } from "../chat/ui/opened-session-chat";
@@ -96,6 +97,8 @@ interface AgentSessionContentProps {
   target: AgentSessionTarget;
   /** Focus the terminal once it is shown, as after starting a new session. */
   focusTerminal?: boolean;
+  /** The opener asks for focus in the chat's composer, as a row of the sidebar. */
+  composerFocus?: ComposerFocusRequest | null;
   /** The top bar of the host, which shows the session identity and menu. */
   renderChrome: (chrome: AgentSessionChrome) => ReactNode;
   onOpenRoutine(routine: RoutineLaunchLink): void;
@@ -112,6 +115,7 @@ interface AgentSessionContentProps {
 export function AgentSessionContent({
   target,
   focusTerminal,
+  composerFocus = null,
   renderChrome,
   onOpenRoutine,
   onOpenAgentSettings,
@@ -267,6 +271,7 @@ export function AgentSessionContent({
               view={view}
               scopeLabel={identityLabel}
               surface={surface}
+              composerFocus={composerFocus}
               routineLaunch={routine?.launch ?? null}
               onCopyCommand={copyResumeCommand}
               onOpenExternalTerminal={openExternalTerminal}
@@ -305,6 +310,7 @@ function SessionBody({
   view,
   scopeLabel: sessionScopeLabel,
   surface,
+  composerFocus,
   routineLaunch,
   onCopyCommand,
   onOpenExternalTerminal,
@@ -317,6 +323,7 @@ function SessionBody({
   view: AgentSessionView;
   scopeLabel: string | null;
   surface: SessionInterface | null;
+  composerFocus: ComposerFocusRequest | null;
   /** How the Routine that launched the session started its agent. */
   routineLaunch: RoutineRunLaunch | null;
   onCopyCommand: () => void;
@@ -362,6 +369,7 @@ function SessionBody({
         sessionId={session.id}
         session={acpSession}
         scopeLabel={sessionScopeLabel}
+        focusRequest={composerFocus}
         onOpenInTerminal={canResume ? () => onOpenInTerminal(acpSession) : null}
         onStateChange={onChatStateChange}
       />
@@ -374,6 +382,7 @@ function SessionBody({
         agent={session.source}
         scopeLabel={sessionScopeLabel}
         canOpenInTerminal={canResume}
+        focusRequest={composerFocus}
         onOpenInTerminal={onOpenInTerminal}
         onShowTerminal={onShowTerminal}
         onChatUnavailable={onChatUnavailable}

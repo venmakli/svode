@@ -164,7 +164,7 @@ export function Composer({
   const dictating = dictation.state.phase !== "idle";
 
   useEffect(() => {
-    if (autoFocus) editor.tf.focus({ edge: "end" });
+    if (autoFocus) editor.tf.focus({ edge: "endEditor" });
   }, [autoFocus, editor]);
 
   useEffect(() => {

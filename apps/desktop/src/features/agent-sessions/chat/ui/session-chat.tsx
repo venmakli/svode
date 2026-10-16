@@ -8,6 +8,10 @@ import type {
   AgentSessionKeyDto,
   AgentSessionSnapshotDto,
 } from "../api/chat";
+import {
+  useRequestedComposerFocus,
+  type ComposerFocusRequest,
+} from "../hooks/use-composer-focus";
 import { useSessionActivity } from "../hooks/use-session-activity";
 import { useSessionSettings } from "../hooks/use-session-settings";
 import {
@@ -55,6 +59,7 @@ export function SessionChat({
   scopeLabel,
   epoch = 0,
   continuation,
+  focusRequest = null,
   onOpenInTerminal,
   onStateChange,
 }: {
@@ -67,17 +72,13 @@ export function SessionChat({
   epoch?: number;
   /** Present for a session opened in the chat rather than created there. */
   continuation?: ChatContinuation;
+  /** The opener asks for focus in the composer, as a row of the sidebar. */
+  focusRequest?: ComposerFocusRequest | null;
   /** The full history in the agent's terminal; between turns only. */
   onOpenInTerminal?: (() => void) | null;
   /** Receives the session and its turn while the chat shows it, then null. */
   onStateChange?: (state: ChatSessionState | null) => void;
 }) {
-  // The composer takes focus when the chat opens with focus nowhere; it
-  // never takes focus from elsewhere. Focus held for a send that replaced
-  // the surface comes back by the composer's own focus return.
-  const [autoFocus] = useState(
-    () => typeof document !== "undefined" && document.activeElement === document.body,
-  );
   const { snapshot, error } = useSessionActivity(session, epoch);
   const composer = useSessionComposer(
     sessionId,
@@ -101,6 +102,19 @@ export function SessionChat({
   const moveFocus = focusMove.inside;
 
   const shown = snapshot !== null;
+  // A read session is continued by attaching it first (`04`, opening and
+  // continuing): at unknown liveness after an inline confirmation, never
+  // while another process writes to it.
+  const read = shown && snapshot.writer !== "acp" && continuation !== undefined;
+  const externalWriter = read && continuation.liveness === "external_active";
+  // Only the opener's request moves focus into the field as the chat
+  // opens; focus held for a send that replaced the surface comes back by
+  // the composer's own focus return.
+  const requestedFocus = useRequestedComposerFocus(
+    focusRequest,
+    shown,
+    shown && !snapshot.pending && !externalWriter,
+  );
   const turnActive = composer.running || pendingId !== null;
   const { agent, namespace, sessionId: keyId } = session;
   useEffect(() => {
@@ -128,11 +142,6 @@ export function SessionChat({
   }
 
   const pending = snapshot.pending;
-  // A read session is continued by attaching it first (`04`, opening and
-  // continuing): at unknown liveness after an inline confirmation, never
-  // while another process writes to it.
-  const read = snapshot.writer !== "acp" && continuation !== undefined;
-  const externalWriter = read && continuation.liveness === "external_active";
   const canSend =
     !composer.running &&
     (read
@@ -237,7 +246,7 @@ export function SessionChat({
               sending={composer.sending || Boolean(continuation?.attaching)}
               canSend={canSend}
               placeholder={m.sessions_chat_placeholder_continue()}
-              autoFocus={autoFocus || moveFocus}
+              autoFocus={requestedFocus || moveFocus}
               commands={snapshot.commands}
               controls={
                 <AgentModelButton

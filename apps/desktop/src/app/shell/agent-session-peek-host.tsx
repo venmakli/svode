@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import {
   AgentSessionPeek,
+  requestComposerFocus,
   useOpenNewSession,
   type AgentSession,
   type AgentSessionScopeGroup,
@@ -8,15 +9,16 @@ import {
   type NewSessionStarted,
 } from "@/features/agent-sessions";
 import { useSpace } from "@/features/space";
-import { useShellStore } from "./model";
+import { useShellStore, type MainSessionOpenOptions } from "./model";
 import { passNavigationGuards } from "./navigation-guards";
 import { useOpenSessionRoutine } from "./open-session-routine";
 
 /**
  * Makes a session the main area object after the guards of the open peek
  * stack and the main area pass, unless the caller passed them (`guarded`).
- * Returns whether it opened. Focus moves into the main area unless the
- * sidebar opened it.
+ * Returns whether it opened. Focus moves into the main area; a row of the
+ * sidebar asks for it in the chat's composer instead (`01`, Focus), and a
+ * session shown otherwise leaves it in the sidebar.
  */
 export function useOpenSessionInMainArea() {
   const showSession = useShowSessionInMainArea();
@@ -25,11 +27,17 @@ export function useOpenSessionInMainArea() {
     async (
       sessionTarget: AgentSessionTarget,
       session: AgentSession | null,
-      options?: { focus?: boolean; guarded?: boolean },
+      options?: { focus?: "main" | "composer"; guarded?: boolean },
     ) => {
-      const { guarded = false, ...show } = options ?? {};
+      const { guarded = false, focus = "main" } = options ?? {};
       if (!guarded && !(await passNavigationGuards())) return false;
-      showSession(sessionTarget, sessionSpaceOf(session), show);
+      showSession(
+        sessionTarget,
+        sessionSpaceOf(session),
+        focus === "composer"
+          ? { focus: false, composerFocus: requestComposerFocus() }
+          : undefined,
+      );
       return true;
     },
     [showSession],
@@ -140,7 +148,7 @@ function useShowSessionInMainArea() {
     (
       sessionTarget: AgentSessionTarget,
       space: SessionSpace,
-      options?: { focus?: boolean; focusTerminal?: boolean },
+      options?: MainSessionOpenOptions,
     ) => {
       // Git sync and changes of the window header follow the session's Space.
       if (space?.spaceId) {

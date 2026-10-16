@@ -219,9 +219,12 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
       async (
         target: { sessionId: string },
         _session: unknown,
-        options: { guarded?: boolean },
+        options: { focus?: string; guarded?: boolean },
       ) => {
-        if (options.guarded) calls.sessions.push(target.sessionId);
+        // A row of the sidebar asks for focus in the chat's composer.
+        if (options.guarded && options.focus === "composer") {
+          calls.sessions.push(target.sessionId);
+        }
         return true;
       },
   }));

@@ -50,6 +50,10 @@ export {
   type OpenAttachment as OpenChatAttachment,
 } from "./chat/hooks/use-attachment-opener";
 export {
+  requestComposerFocus,
+  type ComposerFocusRequest,
+} from "./chat/hooks/use-composer-focus";
+export {
   ChangesOpenerContext as ChatChangesOpenerContext,
   type FileChangesTarget as ChatFileChangesTarget,
 } from "./chat/hooks/use-changes-opener";

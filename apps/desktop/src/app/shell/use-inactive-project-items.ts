@@ -179,7 +179,7 @@ export function useOpenInactiveProjectItem(
         await openArtifact(item);
       } else if (session) {
         await openSession(agentSessionTargetFor(session), session, {
-          focus: false,
+          focus: "composer",
           guarded: true,
         });
       }

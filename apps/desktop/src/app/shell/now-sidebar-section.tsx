@@ -106,7 +106,7 @@ export function NowSidebarSection({
 
   const openSessionHere = (session: AgentSession) =>
     void openSession(agentSessionTargetFor(session), session, {
-      focus: false,
+      focus: "composer",
     });
 
   return (

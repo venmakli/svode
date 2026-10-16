@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { useEditorReadOnly, useEditorRef } from "platejs/react";
 
 /** The draft whose composer takes focus back once its send is over. */
@@ -58,4 +58,56 @@ export function useComposerFocusReturn(
       editor.tf.focus();
     });
   }, [draftKey, editor, readOnly, root]);
+}
+
+/**
+ * The opener's request that the composer of the session it opens take
+ * focus, as a row of the sidebar does on a click or Enter (Stage 10 `01`,
+ * Focus): a new one for every opening, carried out at most once.
+ */
+export interface ComposerFocusRequest {
+  /** What had focus at the opening: the row, or nothing after a click. */
+  readonly opener: Element | null;
+}
+
+/** A request of the opening happening now. */
+export function requestComposerFocus(): ComposerFocusRequest {
+  const active = document.activeElement;
+  return { opener: active === document.body ? null : active };
+}
+
+/** Requests the chat already carried out or let lapse. */
+const settled = new WeakSet<ComposerFocusRequest>();
+
+/**
+ * Whether the composer takes focus for `request` now: once, as the chat
+ * first shows its bottom, if that is the field and focus is still where the
+ * opening left it — on the opener or nowhere. Where focus is decides
+ * nothing without a request.
+ */
+export function useRequestedComposerFocus(
+  request: ComposerFocusRequest | null,
+  shown: boolean,
+  field: boolean,
+): boolean {
+  const [carried, setCarried] = useState<{
+    request: ComposerFocusRequest;
+    focus: boolean;
+  } | null>(null);
+  if (request && shown && carried?.request !== request && !settled.has(request)) {
+    const active = document.activeElement;
+    setCarried({
+      request,
+      focus:
+        field &&
+        (!active || active === document.body || active === request.opener),
+    });
+  }
+  // Once the field took it, a field shown again does not take it anew.
+  useEffect(() => {
+    if (carried) settled.add(carried.request);
+  }, [carried]);
+  return (
+    carried?.request === request && carried.focus && !settled.has(request)
+  );
 }

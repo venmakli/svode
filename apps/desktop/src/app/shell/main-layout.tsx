@@ -442,6 +442,9 @@ function ShellMainInset({
   const mainSessionFocusTerminal = useShellStore(
     (state) => state.mainSessionFocusTerminal,
   );
+  const mainSessionComposerFocus = useShellStore(
+    (state) => state.mainSessionComposerFocus,
+  );
   const knowledgeGraphOpenRequest = useShellStore(
     (state) => state.knowledgeGraphOpenRequest,
   );
@@ -468,6 +471,7 @@ function ShellMainInset({
               target={mainSessionTarget}
               focus={mainSessionFocus}
               focusTerminal={mainSessionFocusTerminal}
+              composerFocus={mainSessionComposerFocus}
               onOpenRoutine={openSessionRoutine}
               onOpenAgentSettings={() => openAppSettings("providers")}
             />

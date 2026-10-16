@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useAgentSessionCatalog } from "../../hooks/use-agent-session-catalog";
 import { signInAgent, type AgentSessionKeyDto } from "../api/chat";
+import type { ComposerFocusRequest } from "../hooks/use-composer-focus";
 import { useSessionOpening } from "../hooks/use-session-opening";
 import type { ChatSessionState, ChatUnavailableReason } from "../model/interface";
 import { AgentRecovery } from "./agent-button";
@@ -44,6 +45,7 @@ export function OpenedSessionChat({
   agent,
   scopeLabel,
   canOpenInTerminal,
+  focusRequest = null,
   onOpenInTerminal,
   onShowTerminal,
   onChatUnavailable,
@@ -57,6 +59,8 @@ export function OpenedSessionChat({
   scopeLabel: string | null;
   /** The agent continues the session in its terminal. */
   canOpenInTerminal: boolean;
+  /** The opener asks for focus in the composer, as a row of the sidebar. */
+  focusRequest?: ComposerFocusRequest | null;
   /** Releases the chat's writer of `session`, if any, then resumes in the terminal. */
   onOpenInTerminal: (session: AgentSessionKeyDto | null) => void;
   /** A Svode terminal drives the session. */
@@ -72,6 +76,17 @@ export function OpenedSessionChat({
   const dictionary = useAgentAdapterDictionary();
   const [signIn, setSignIn] = useState<string | null>(null);
   const state = opening.opening;
+  // The request holds while the history loads into the chat; a state that
+  // asks the user first lets it lapse.
+  const [lapsed, setLapsed] = useState<ComposerFocusRequest | null>(null);
+  if (
+    focusRequest &&
+    lapsed !== focusRequest &&
+    state.state !== "opening" &&
+    state.state !== "opened"
+  ) {
+    setLapsed(focusRequest);
+  }
   const openInTerminal = canOpenInTerminal ? () => onOpenInTerminal(null) : null;
   useEffect(() => {
     if (state.state === "unavailable") {
@@ -88,6 +103,7 @@ export function OpenedSessionChat({
         session={state.session}
         scopeLabel={scopeLabel}
         epoch={state.epoch}
+        focusRequest={focusRequest !== lapsed ? focusRequest : null}
         continuation={{
           liveness: state.liveness,
           attaching: opening.attaching,

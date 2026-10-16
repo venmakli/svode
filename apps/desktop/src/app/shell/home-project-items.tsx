@@ -126,7 +126,7 @@ function ActiveProjectItems({
       onOpenArtifact={(item) => void openArtifact(item)}
       onOpenSession={(session) =>
         void openSession(agentSessionTargetFor(session), session, {
-          focus: false,
+          focus: "composer",
         })
       }
       onClose={(key) => void closeItem(key)}

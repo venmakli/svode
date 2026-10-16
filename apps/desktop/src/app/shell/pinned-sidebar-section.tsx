@@ -56,7 +56,7 @@ export function PinnedSidebarSection({
               mainTarget={mainTarget}
               onOpen={(session) =>
                 void openSession(agentSessionTargetFor(session), session, {
-                  focus: false,
+                  focus: "composer",
                 })
               }
               stepItem={item}
