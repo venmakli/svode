@@ -89,6 +89,12 @@ where
             process,
         })
     }
+
+    /// Only turn events give the evidence time; the records a load writes
+    /// (`summary.json`, `updates.jsonl`) are outside the events log.
+    fn tells_conversation(&self) -> bool {
+        true
+    }
 }
 
 /// The registry in the Grok home of `<home>/sessions/<group>/<id>/events.jsonl`.
@@ -795,6 +801,89 @@ mod tests {
 
         assert_eq!(alive_liveness, ExternalLiveness::ExternalActive);
         assert_eq!(unregistered_liveness, ExternalLiveness::Unknown);
+    }
+
+    /// DF-173 acceptance 6: a load moves the listed time of a Grok Build
+    /// session (`last_active_at`), not its last activity; a turn does.
+    #[test]
+    fn a_grok_build_session_keeps_the_time_of_its_last_turn_after_it_is_viewed() {
+        const TURN_AT: &str = "2026-09-30T09:00:00Z";
+        const BETWEEN_AT: &str = "2026-09-30T09:30:00Z";
+        const LATER_TURN_AT: &str = "2026-09-30T11:00:00Z";
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let mut viewed = vec![
+            turn_started("2026-09-30T08:59:00.000Z"),
+            turn_ended(TURN_AT, "completed"),
+            json!({ "ts": "2026-09-30T10:00:00.000Z", "type": "mcp_server_starting", "server_name": "x" }),
+        ];
+        listed_grok(
+            &state,
+            &home,
+            &project,
+            &[
+                ("viewed", viewed.clone()),
+                (
+                    "between",
+                    vec![
+                        turn_started("2026-09-30T09:29:00.000Z"),
+                        turn_ended(BETWEEN_AT, "completed"),
+                    ],
+                ),
+                (
+                    "no-turn",
+                    vec![json!({ "ts": TURN_AT, "type": "mcp_init_completed" })],
+                ),
+            ],
+        );
+        let at = |sessions: &[AgentSession], id: &str| {
+            sessions
+                .iter()
+                .find(|session| session.id == format!("grok-build:{id}"))
+                .unwrap_or_else(|| panic!("{id} listed"))
+                .last_activity_at
+                .clone()
+        };
+        let order = |sessions: &[AgentSession]| {
+            sessions
+                .iter()
+                .map(|session| session.id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let sessions = listed(&state, &project);
+        assert_eq!(at(&sessions, "viewed"), TURN_AT);
+        assert_eq!(
+            at(&sessions, "no-turn"),
+            "2026-09-30T10:00:00Z",
+            "a log without a turn event keeps the listed time"
+        );
+        assert_eq!(
+            order(&sessions),
+            [
+                "grok-build:no-turn",
+                "grok-build:between",
+                "grok-build:viewed"
+            ]
+        );
+        let hot = crate::agent_sessions::read_model::hot_status(
+            &state,
+            project.to_string_lossy().into_owned(),
+            vec!["grok-build:viewed".to_string()],
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("hot status");
+        assert_eq!(hot.sessions[0].last_activity_at, TURN_AT);
+
+        viewed.extend([
+            turn_started("2026-09-30T10:59:00.000Z"),
+            turn_ended(LATER_TURN_AT, "completed"),
+        ]);
+        write_events(&home.join(".grok"), "%2Fproject", "viewed", &viewed);
+        let worked = listed(&state, &project);
+        assert_eq!(at(&worked, "viewed"), LATER_TURN_AT);
+        assert_eq!(order(&worked)[0], "grok-build:viewed");
     }
 
     #[test]
