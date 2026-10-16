@@ -82,7 +82,11 @@ pub struct RuntimeSession {
     pub status: SessionStatus,
     /// When this runtime created or opened the session.
     pub started_at: SystemTime,
-    pub updated_at: SystemTime,
+    /// When a turn of this runtime last changed the session: its accepted
+    /// prompt, the agent's work during it and its end; `None` before the
+    /// first prompt. Opening, replay, settings, connection, writer, title
+    /// and usage outside a turn do not move it.
+    pub last_turn_at: Option<SystemTime>,
 }
 
 /// The bounded first line of a prompt, the title of a runtime session until

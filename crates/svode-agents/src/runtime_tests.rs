@@ -3888,6 +3888,127 @@ async fn a_created_session_is_listed_from_its_first_prompt_while_the_runtime_dri
 }
 
 #[tokio::test]
+async fn a_created_session_is_listed_with_the_time_of_its_first_prompt() {
+    let runtime = AgentRuntime::default();
+    let (_connection, key, _agent) = session(&runtime).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let before = SystemTime::now();
+    runtime.prompt(&key, &[PromptPart::text("Fix")]).unwrap();
+    let listed = runtime.sessions();
+    let accepted = listed[0].last_turn_at.expect("the prompt is a turn");
+    assert!(accepted >= before && accepted <= SystemTime::now());
+    assert!(listed[0].started_at < before, "creation is no turn");
+}
+
+#[tokio::test]
+async fn an_opened_session_moves_its_catalogue_time_only_with_its_turns() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let mut agent = reopened(
+        &runtime,
+        &launch(),
+        &key,
+        vec![user_chunk("Read the plan"), agent_chunk("Done")],
+    )
+    .await;
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    let turn_at = |runtime: &AgentRuntime| runtime.sessions()[0].last_turn_at;
+    assert_eq!(turn_at(&runtime), None, "opening and replay are no turn");
+
+    let mut update = mode_settings("read-only");
+    let options = update["configOptions"].take();
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "config_option_update", "configOptions": options }),
+        )
+        .await;
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "current_mode_update", "currentModeId": "agent" }),
+        )
+        .await;
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "usage_update", "used": 100, "size": 1000 }),
+        )
+        .await;
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "session_info_update", "title": "Plan" }),
+        )
+        .await;
+    follow(&mut subscription, |snapshot| {
+        snapshot.title.as_deref() == Some("Plan")
+    })
+    .await;
+    let mut confirmed = mode_settings("agent");
+    confirmed.as_object_mut().unwrap().remove("sessionId");
+    confirmed.as_object_mut().unwrap().remove("modes");
+    let auto = approval("agent");
+    let (changed, ()) = tokio::join!(runtime.set_setting(&key, &auto), async {
+        let set = agent.expect("session/set_config_option").await;
+        agent.reply(&set, confirmed).await;
+    });
+    assert_eq!(changed, Ok(()));
+    assert_eq!(
+        turn_at(&runtime),
+        None,
+        "settings, mode, usage and title outside a turn are no turn"
+    );
+
+    let before = SystemTime::now();
+    let turn = runtime.prompt(&key, &[PromptPart::text("Go on")]).unwrap();
+    let accepted = turn_at(&runtime).expect("the accepted prompt moves the time");
+    assert!(accepted >= before);
+    let prompt = agent.expect("session/prompt").await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    agent.update("s1", agent_chunk("Working")).await;
+    follow(&mut subscription, |snapshot| {
+        snapshot.items.iter().any(|item| {
+            item.turn_id.as_deref() == Some(turn.as_str())
+                && matches!(item.kind, ItemKind::AgentMessage { .. })
+        })
+    })
+    .await;
+    let working = turn_at(&runtime).unwrap();
+    assert!(working > accepted, "the agent's work in the turn moves it");
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    follow(&mut subscription, |snapshot| {
+        idle(snapshot) && snapshot.turn.turn_id.as_deref() == Some(turn.as_str())
+    })
+    .await;
+    let ended = turn_at(&runtime).unwrap();
+    assert!(ended > working, "the end of the turn moves it");
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "usage_update", "used": 200, "size": 1000 }),
+        )
+        .await;
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "session_info_update", "title": "Plan done" }),
+        )
+        .await;
+    follow(&mut subscription, |snapshot| {
+        snapshot.title.as_deref() == Some("Plan done")
+    })
+    .await;
+    assert_eq!(turn_at(&runtime), Some(ended), "after the turn it stays");
+}
+
+#[tokio::test]
 async fn updates_sent_before_the_answer_land_in_the_turn_before_it_ends() {
     let runtime = AgentRuntime::default();
     let (key, mut agent, mut subscription, prompt) = start_turn(&runtime).await;

@@ -122,8 +122,11 @@ pub(crate) struct Projection {
     legacy_modes: bool,
     /// When the runtime accepted the prompt of the live turn.
     turn_started: Option<Instant>,
-    /// When the session last changed.
-    updated_at: SystemTime,
+    /// When a live turn last changed the session: its accepted prompt, the
+    /// agent's work during it and its end; `None` before the first turn
+    /// (Stage 10 `02` C3). Opening, replay and changes outside a turn leave
+    /// it as it is.
+    turn_at: Option<SystemTime>,
 }
 
 impl Projection {
@@ -175,7 +178,7 @@ impl Projection {
             replay: replay.then(Replay::default),
             legacy_modes: false,
             turn_started: None,
-            updated_at: SystemTime::now(),
+            turn_at: None,
         }
     }
 
@@ -366,8 +369,8 @@ impl Projection {
         self.snapshot.turn.status
     }
 
-    pub(crate) fn updated_at(&self) -> SystemTime {
-        self.updated_at
+    pub(crate) fn turn_at(&self) -> Option<SystemTime> {
+        self.turn_at
     }
 
     pub(crate) fn set_connection(&mut self, connection: ConnectionState) {
@@ -1046,12 +1049,21 @@ impl Projection {
     }
 
     fn emit(&mut self, change: Change) {
-        self.updated_at = SystemTime::now();
+        // Only items, the turn and its request are work of a turn; settings,
+        // usage, title, connection and writer are not, even while one runs.
+        let work = matches!(
+            change,
+            Change::Item(_) | Change::Turn(_) | Change::Pending(_)
+        );
+        let in_turn = self.turn_active();
         let delta = SessionDelta {
             seq: self.snapshot.seq + 1,
             change,
         };
         self.snapshot.apply(&delta);
+        if work && (in_turn || self.turn_active()) {
+            self.turn_at = Some(SystemTime::now());
+        }
         let _ = self.sender.send(delta);
     }
 

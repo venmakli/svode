@@ -2098,8 +2098,14 @@ mod tests {
             title: Some("Fix the login bug".into()),
             status: SessionStatus::runtime(SessionState::Running),
             started_at: std::time::SystemTime::now(),
-            updated_at: std::time::SystemTime::now(),
+            last_turn_at: None,
         }
+    }
+
+    fn system_time(at: &str) -> std::time::SystemTime {
+        chrono::DateTime::parse_from_rfc3339(at)
+            .expect("rfc3339")
+            .into()
     }
 
     fn list_with_runtime(
@@ -2230,6 +2236,80 @@ mod tests {
         .expect("hot status");
         assert_eq!(hot.sessions.len(), 1);
         assert_eq!(hot.sessions[0].status.state, SessionState::Running);
+    }
+
+    #[test]
+    fn a_listed_session_the_runtime_drives_moves_its_time_only_with_its_turns() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        let id = codex_id(23);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![(id.as_str(), &project, LISTED_AT)],
+        );
+        let key = format!("codex:{id}");
+        let times = |last_turn_at: Option<&str>| {
+            let runtime = RuntimeSession {
+                last_turn_at: last_turn_at.map(system_time),
+                ..runtime_session("codex", &id, true, &project)
+            };
+            let listed = list_with_runtime(&state, &project, vec![runtime.clone()]);
+            let hot = hot_status(
+                &state,
+                project.to_string_lossy().into_owned(),
+                vec![key.clone()],
+                Vec::new(),
+                vec![runtime],
+            )
+            .expect("hot status");
+            (
+                by_id(&listed, &key).last_activity_at.clone(),
+                hot.sessions[0].last_activity_at.clone(),
+            )
+        };
+        let both = |at: &str| (at.to_string(), at.to_string());
+
+        assert_eq!(
+            times(None),
+            both(LISTED_AT.unwrap()),
+            "opening without a turn keeps the listed time"
+        );
+        assert_eq!(
+            times(Some("2026-10-16T09:00:00Z")),
+            both("2026-10-16T09:00:00Z"),
+            "a turn of the runtime moves it"
+        );
+        assert_eq!(
+            times(Some("2026-09-29T10:00:00Z")),
+            both(LISTED_AT.unwrap()),
+            "an older turn does not move it back"
+        );
+    }
+
+    #[test]
+    fn a_runtime_record_without_its_listed_one_takes_the_time_of_its_turns() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        let time = |last_turn_at: Option<&str>| {
+            let runtime = RuntimeSession {
+                started_at: system_time("2026-10-16T08:00:00Z"),
+                last_turn_at: last_turn_at.map(system_time),
+                ..runtime_session("custom-local", "c1", false, &project)
+            };
+            let result = list_with_runtime(&state, &project, vec![runtime]);
+            by_id(&result, "custom-local:acp:c1")
+                .last_activity_at
+                .clone()
+        };
+
+        assert_eq!(time(Some("2026-10-16T09:00:00Z")), "2026-10-16T09:00:00Z");
+        assert_eq!(
+            time(None),
+            "2026-10-16T08:00:00Z",
+            "one opened without a turn yet has its opening"
+        );
     }
 
     #[test]

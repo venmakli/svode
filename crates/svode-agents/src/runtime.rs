@@ -1393,7 +1393,7 @@ impl AgentRuntime {
                     title,
                     status: projection.status(),
                     started_at: session.started_at,
-                    updated_at: projection.updated_at(),
+                    last_turn_at: projection.turn_at(),
                 }
             })
             .collect();

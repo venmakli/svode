@@ -413,7 +413,7 @@ const RUNTIME_STATUS_REASON: &str = "a Svode ACP connection drives the session";
 
 /// Lays a session the runtime drives over its listed record (Stage 10 `02`
 /// C3): one record per key, identity and resume target kept, exact runtime
-/// status and the key the chat follows.
+/// status, the time of its last turn and the key the chat follows.
 pub(super) fn overlay_runtime(session: &mut AgentSession, runtime: &RuntimeSession) {
     session.status = runtime.status;
     session.status_reason = Some(RUNTIME_STATUS_REASON.to_string());
@@ -424,9 +424,10 @@ pub(super) fn overlay_runtime(session: &mut AgentSession, runtime: &RuntimeSessi
         session.title = title.clone();
         session.title_source = AgentSessionTitleSource::CliTitle;
     }
-    let updated_at = rfc3339(runtime.updated_at);
-    if updated_at > session.last_activity_at {
-        session.last_activity_at = updated_at;
+    if let Some(turn_at) = runtime.last_turn_at.map(rfc3339)
+        && turn_at > session.last_activity_at
+    {
+        session.last_activity_at = turn_at;
     }
     session
         .runtime
@@ -435,7 +436,8 @@ pub(super) fn overlay_runtime(session: &mut AgentSession, runtime: &RuntimeSessi
 }
 
 /// The record of a session only the runtime knows so far, such as one just
-/// created in the chat before its agent lists it.
+/// created in the chat before its agent lists it. Its last activity is the
+/// time of its last turn; one opened without a turn yet has its opening.
 pub(super) fn map_runtime_session(
     source: AgentId,
     runtime: &RuntimeSession,
@@ -477,7 +479,7 @@ pub(super) fn map_runtime_session(
         scope_confidence: scope.confidence,
         cwd: scope.cwd,
         started_at: Some(rfc3339(runtime.started_at)),
-        last_activity_at: rfc3339(runtime.updated_at),
+        last_activity_at: rfc3339(runtime.last_turn_at.unwrap_or(runtime.started_at)),
         waiting_since: None,
         resume_command,
         capabilities: AgentSessionCapabilities {
