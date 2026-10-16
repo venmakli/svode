@@ -111,7 +111,7 @@ pub fn run() {
                 {
                     connections.release_webview(webview.label());
                 }
-                speech::commands::release_webview(webview.app_handle(), webview.label());
+                speech::commands::reload_webview(webview.app_handle(), webview.label());
             }
         })
         .on_window_event(|window, event| {
@@ -479,6 +479,7 @@ pub fn run() {
             speech::commands::speech_language_set,
             speech::commands::speech_model_licenses,
             speech::commands::speech_dictation_owner,
+            speech::commands::speech_dictated_texts,
             speech::commands::speech_dictation_start,
             speech::commands::speech_dictation_finish,
             speech::commands::speech_dictation_cancel,

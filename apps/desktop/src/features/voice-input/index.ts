@@ -1,4 +1,5 @@
 export { useDictation, type Dictation } from "./hooks/use-dictation";
+export { useDictatedTexts } from "./hooks/use-dictated-texts";
 export { dictatedText, showsRecordingRow } from "./model/dictation";
 export { DICTATION_KEY_CODE, dictationShortcut } from "./model/shortcut";
 export { RecordingRow } from "./ui/recording-row";

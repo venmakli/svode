@@ -100,6 +100,9 @@ struct Speech {
     jobs: Mutex<HashMap<String, Job>>,
     dictation: Mutex<dictation::Slot>,
     dictation_ids: AtomicU64,
+    /// Text recognized after a reload, by webview, until its new document
+    /// takes it; memory only (V6).
+    dictated: Mutex<HashMap<String, Vec<dictation::DictatedText>>>,
 }
 
 impl SpeechState {
@@ -120,6 +123,7 @@ impl SpeechState {
             jobs: Mutex::default(),
             dictation: Mutex::default(),
             dictation_ids: AtomicU64::new(0),
+            dictated: Mutex::default(),
         }))
     }
 
@@ -362,6 +366,10 @@ impl SpeechState {
 
     fn slot(&self) -> std::sync::MutexGuard<'_, dictation::Slot> {
         self.0.dictation.lock().expect("dictation lock")
+    }
+
+    fn dictated(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<dictation::DictatedText>>> {
+        self.0.dictated.lock().expect("dictated text lock")
     }
 
     fn next_dictation_id(&self) -> u64 {

@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
+import { useDictatedDrafts } from "@/features/agent-sessions";
 import { RootProjectMenuBridge } from "@/features/home";
 import {
   AppPreferencesProvider,
@@ -19,6 +20,7 @@ export function AppProviders() {
 
 function LocalizedAppProviders() {
   useAppLocale();
+  useDictatedDrafts();
   const version = useAppVersion();
   const buildCommit = getBuildCommit();
 

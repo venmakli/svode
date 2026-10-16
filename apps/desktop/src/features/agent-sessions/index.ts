@@ -26,6 +26,7 @@ export {
 } from "./ui";
 export { isInsideAgentSessionContent } from "./lib";
 export type { StartedSession as NewSessionStarted } from "./chat/hooks/use-new-session-draft";
+export { useDictatedDrafts } from "./chat/hooks/use-dictated-drafts";
 export {
   agentSessionForNavigationKey,
   agentSessionHasId,

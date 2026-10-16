@@ -185,6 +185,25 @@ export function finishDictation(key: string): Promise<DictationResultDto> {
   return invokeCommand<DictationResultDto>("speech_dictation_finish", { key });
 }
 
+/** Text recognized after this webview reloaded, for the draft of `key`. */
+export interface DictatedTextDto {
+  key: string;
+  text: string;
+}
+
+/** Takes the text recognized after this webview reloaded; each text once. */
+export function takeDictatedTexts(): Promise<DictatedTextDto[]> {
+  return invokeCommand<DictatedTextDto[]>("speech_dictated_texts");
+}
+
+/** Text recognized after a reload of this webview waits for it. */
+export function listenDictatedTexts(listener: () => void): Promise<UnlistenFn> {
+  const webview = currentDictationWebview();
+  return listen<string>("speech-dictated-text", (event) => {
+    if (event.payload === webview) listener();
+  });
+}
+
 export function cancelDictation(key: string): Promise<void> {
   return invokeCommand<void>("speech_dictation_cancel", { key });
 }

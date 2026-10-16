@@ -12,7 +12,8 @@ use tauri::{AppHandle, Emitter, Manager, State, Webview};
 use tauri_plugin_opener::OpenerExt;
 
 use super::dictation::{
-    DICTATION_CHANGED_EVENT, DictationFailure, DictationOwner, SettingsTarget, settings_url,
+    DICTATED_TEXT_EVENT, DICTATION_CHANGED_EVENT, DictatedText, DictationFailure, DictationOwner,
+    SettingsTarget, settings_url,
 };
 use super::{
     JobEvents, JobStage, MODEL_PROGRESS_EVENT, MODELS_CHANGED_EVENT, ModelProgress, SpeechState,
@@ -229,8 +230,16 @@ fn notify_dictation(app: &AppHandle, state: &SpeechState) {
     let _ = app.emit(DICTATION_CHANGED_EVENT, state.dictation_owner());
 }
 
-/// Cancels the dictation of a webview that reloads or closes.
-pub fn release_webview(app: &AppHandle, webview: &str) {
+/// Tells `webview` that text recognized after its reload waits for it.
+fn notify_dictated(app: &AppHandle, state: &SpeechState, webview: &str) {
+    if state.has_dictated(webview) {
+        let _ = app.emit(DICTATED_TEXT_EVENT, webview);
+    }
+}
+
+/// The document of `webview` reloads: its recording stops as ■ and the
+/// text waits for the new document (DF-175).
+pub fn reload_webview(app: &AppHandle, webview: &str) {
     let Some(state) = app.try_state::<SpeechState>() else {
         return;
     };
@@ -244,9 +253,39 @@ pub fn release_webview(app: &AppHandle, webview: &str) {
     let app = app.clone();
     let webview = webview.to_string();
     tauri::async_runtime::spawn(async move {
-        state.release_dictation(&webview).await;
+        state
+            .reload_dictation(&webview, &app.config().identifier)
+            .await;
         notify_dictation(&app, &state);
+        notify_dictated(&app, &state, &webview);
     });
+}
+
+/// Cancels the dictation of a webview that closes, with its text not taken
+/// yet.
+pub fn release_webview(app: &AppHandle, webview: &str) {
+    let Some(state) = app.try_state::<SpeechState>() else {
+        return;
+    };
+    let state = state.inner().clone();
+    let app = app.clone();
+    let webview = webview.to_string();
+    tauri::async_runtime::spawn(async move {
+        let owned = state
+            .dictation_owner()
+            .is_some_and(|owner| owner.webview == webview);
+        state.release_dictation(&webview).await;
+        if owned {
+            notify_dictation(&app, &state);
+        }
+    });
+}
+
+/// Takes the text recognized after this webview reloaded, for the drafts
+/// of its composers.
+#[tauri::command]
+pub fn speech_dictated_texts(webview: Webview, state: State<'_, SpeechState>) -> Vec<DictatedText> {
+    state.take_dictated(webview.label())
 }
 
 #[tauri::command]
@@ -305,6 +344,8 @@ pub async fn speech_dictation_finish(
         Err(failure) => DictationResult::Failed { failure },
     };
     notify_dictation(&app, &state);
+    // A reload meanwhile left the text for the new document.
+    notify_dictated(&app, &state, &owner.webview);
     Ok(result)
 }
 

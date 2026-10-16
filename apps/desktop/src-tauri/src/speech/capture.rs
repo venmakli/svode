@@ -113,6 +113,15 @@ impl Capture {
         }
     }
 
+    /// A capture that has recorded `recording`, without a device.
+    #[cfg(test)]
+    pub fn recorded(recording: Recording) -> Self {
+        Self {
+            stop: Arc::new(AtomicBool::new(false)),
+            thread: Some(std::thread::spawn(move || recording)),
+        }
+    }
+
     /// Stops recording and returns what was recorded.
     pub fn finish(mut self) -> Recording {
         self.stop.store(true, Ordering::SeqCst);
