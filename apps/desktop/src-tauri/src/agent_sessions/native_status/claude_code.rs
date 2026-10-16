@@ -33,6 +33,10 @@ impl SessionLogLayout for Projects {
     fn turn_evidence(&self) -> TurnEvidence {
         TurnEvidence::LogAlone
     }
+
+    fn tells_conversation(&self) -> bool {
+        true
+    }
 }
 
 /// Session transcripts `projects/<project>/<session id>.jsonl` under the

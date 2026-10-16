@@ -1011,7 +1011,10 @@ mod tests {
 
         let session = by_id(&result, &format!("codex:{id}"));
         assert_eq!(session.title, format!("ACP {id}"));
-        assert_eq!(session.last_activity_at, "2026-09-30T10:00:00Z");
+        assert_eq!(
+            session.last_activity_at, "2026-07-04T10:01:00Z",
+            "the last turn of the log stands for the later listed time"
+        );
         assert_eq!(session.status.state, idle(Some(StopReason::EndTurn)));
         assert_eq!(session.status.source, StatusSource::NativeStatusReader);
         assert_eq!(session.status.confidence, StatusConfidence::Approximate);
@@ -1306,6 +1309,219 @@ mod tests {
         let missing = hot(&state, &project, "codex:not-listed");
         assert_eq!(missing.checked_sessions, 0);
         assert_eq!(missing.skipped_sessions, 1);
+    }
+
+    /// A turn before the agent moves its listed time with service records,
+    /// as on a load to read the session, and one session worked on between.
+    const TURN_AT: &str = "2026-09-30T09:00:00Z";
+    const BETWEEN_AT: &str = "2026-09-30T09:30:00Z";
+    const VIEWED_AT: &str = "2026-09-30T10:00:00Z";
+    const LATER_TURN_AT: &str = "2026-09-30T11:00:00Z";
+
+    fn rows(rows: &[serde_json::Value]) -> String {
+        rows.iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>()
+    }
+
+    fn claude_transcript(home: &Path, id: &str) -> PathBuf {
+        home.join(".claude/projects/-tmp-project")
+            .join(format!("{id}.jsonl"))
+    }
+
+    fn claude_turn(prompt_at: &str, done_at: &str) -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": "hi"}, "timestamp": prompt_at}),
+            serde_json::json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"}, "timestamp": done_at}),
+        ]
+    }
+
+    fn order(result: &AgentSessionsListResult) -> Vec<&str> {
+        result
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect()
+    }
+
+    /// DF-173 acceptance 1: the service records Claude Code writes when the
+    /// session is read (`cost-state`, `mode`) move its listed time, not its
+    /// last activity; a turn outside Svode does.
+    #[test]
+    fn a_claude_code_session_keeps_the_time_of_its_last_turn_after_it_is_viewed() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let mut viewed = claude_turn("2026-09-30T08:59:00Z", TURN_AT);
+        viewed.extend([
+            serde_json::json!({"type": "system", "subtype": "turn_duration", "timestamp": TURN_AT}),
+            serde_json::json!({"type": "cost-state", "sessionId": "c-viewed", "totalCostUSD": 0.1, "timestamp": VIEWED_AT}),
+            serde_json::json!({"type": "mode", "mode": "default", "sessionId": "c-viewed", "timestamp": VIEWED_AT}),
+        ]);
+        write(&claude_transcript(&home, "c-viewed"), &rows(&viewed));
+        write(
+            &claude_transcript(&home, "c-between"),
+            &rows(&claude_turn("2026-09-30T09:29:00Z", BETWEEN_AT)),
+        );
+        acp_list(
+            &state,
+            "claude-code",
+            true,
+            vec![
+                ("c-viewed", &project, Some(VIEWED_AT)),
+                ("c-between", &project, Some(BETWEEN_AT)),
+            ],
+        );
+
+        let result = list(&state, &project);
+        assert_eq!(
+            by_id(&result, "claude-code:c-viewed").last_activity_at,
+            TURN_AT
+        );
+        assert_eq!(
+            order(&result),
+            ["claude-code:c-between", "claude-code:c-viewed"]
+        );
+        assert_eq!(
+            hot(&state, &project, "claude-code:c-viewed").sessions[0].last_activity_at,
+            TURN_AT,
+            "hot status gives the time of the list"
+        );
+        let restarted = AgentSessionsState::with_home(home.clone());
+        let saved = list(&restarted, &project);
+        assert_eq!(saved.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+        assert_eq!(
+            by_id(&saved, "claude-code:c-viewed").last_activity_at,
+            TURN_AT,
+            "the saved list keeps the time after a restart"
+        );
+
+        viewed.extend(claude_turn("2026-09-30T10:59:00Z", LATER_TURN_AT));
+        write(&claude_transcript(&home, "c-viewed"), &rows(&viewed));
+        let worked = list(&state, &project);
+        assert_eq!(
+            by_id(&worked, "claude-code:c-viewed").last_activity_at,
+            LATER_TURN_AT
+        );
+        assert_eq!(
+            order(&worked),
+            ["claude-code:c-viewed", "claude-code:c-between"]
+        );
+    }
+
+    /// DF-173 acceptance 2: Codex applies its thread settings and writes a
+    /// turn context when the session is read; neither is its last activity.
+    #[test]
+    fn a_codex_session_keeps_the_time_of_its_last_turn_after_it_is_viewed() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let (viewed, between) = (codex_id(40), codex_id(41));
+        let settings = |timestamp: &str| {
+            [
+                serde_json::json!({"type": "event_msg", "payload": {"type": "thread_settings_applied"}, "timestamp": timestamp}),
+                serde_json::json!({"type": "turn_context", "payload": {"cwd": "/tmp/project", "approval_policy": "on-request"}, "timestamp": timestamp}),
+            ]
+        };
+        let mut rows = vec![task_started("2026-09-30T08:59:00Z"), task_complete(TURN_AT)];
+        rows.extend(settings(VIEWED_AT));
+        write_rollout(&home, &viewed, rows);
+        write_rollout(
+            &home,
+            &between,
+            vec![
+                task_started("2026-09-30T09:29:00Z"),
+                task_complete(BETWEEN_AT),
+            ],
+        );
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![
+                (&viewed, &project, Some(VIEWED_AT)),
+                (&between, &project, Some(BETWEEN_AT)),
+            ],
+        );
+        let (viewed_id, between_id) = (format!("codex:{viewed}"), format!("codex:{between}"));
+
+        let result = list(&state, &project);
+        assert_eq!(by_id(&result, &viewed_id).last_activity_at, TURN_AT);
+        assert_eq!(order(&result), [between_id.as_str(), viewed_id.as_str()]);
+        assert_eq!(
+            hot(&state, &project, &viewed_id).sessions[0].last_activity_at,
+            TURN_AT
+        );
+
+        append_rollout_row(&home, &viewed, task_started("2026-09-30T10:59:00Z"));
+        for row in settings("2026-09-30T10:59:30Z") {
+            append_rollout_row(&home, &viewed, row);
+        }
+        append_rollout_row(&home, &viewed, task_complete(LATER_TURN_AT));
+        let worked = list(&state, &project);
+        assert_eq!(by_id(&worked, &viewed_id).last_activity_at, LATER_TURN_AT);
+        assert_eq!(order(&worked), [viewed_id.as_str(), between_id.as_str()]);
+    }
+
+    /// DF-173 acceptance 3: without a conversation record of the log the
+    /// listed time stands; a list older than the log takes the log's time.
+    #[test]
+    fn the_listed_time_stands_without_a_conversation_record_of_the_log() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let (service_only, older_list) = (codex_id(42), codex_id(43));
+        write_rollout(
+            &home,
+            &service_only,
+            vec![
+                serde_json::json!({"type": "session_meta", "payload": {"id": service_only, "cwd": project.to_string_lossy()}, "timestamp": TURN_AT}),
+                serde_json::json!({"type": "event_msg", "payload": {"type": "thread_settings_applied"}, "timestamp": TURN_AT}),
+            ],
+        );
+        write_rollout(
+            &home,
+            &older_list,
+            vec![
+                task_started("2026-09-30T10:59:00Z"),
+                task_complete(LATER_TURN_AT),
+            ],
+        );
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![
+                (&service_only, &project, Some(VIEWED_AT)),
+                ("no-log", &project, Some(VIEWED_AT)),
+                (&older_list, &project, Some(VIEWED_AT)),
+            ],
+        );
+
+        let result = list(&state, &project);
+        assert_eq!(
+            by_id(&result, &format!("codex:{service_only}")).last_activity_at,
+            VIEWED_AT,
+            "a log tail without a conversation record"
+        );
+        assert_eq!(
+            by_id(&result, "codex:no-log").last_activity_at,
+            VIEWED_AT,
+            "a session without a log"
+        );
+        assert_eq!(
+            by_id(&result, &format!("codex:{older_list}")).last_activity_at,
+            LATER_TURN_AT,
+            "a list older than the log"
+        );
+
+        state.native_status.set_source(
+            AgentAdapterKind::Codex.id(),
+            Arc::new(StoreSource(Err("rollouts cannot be read".to_string()))),
+        );
+        let unavailable = list(&state, &project);
+        assert_eq!(
+            by_id(&unavailable, &format!("codex:{older_list}")).last_activity_at,
+            VIEWED_AT,
+            "a reader that cannot be read"
+        );
     }
 
     #[test]

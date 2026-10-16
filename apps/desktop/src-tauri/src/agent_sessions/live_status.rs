@@ -216,14 +216,26 @@ pub(super) fn map_listed(
         })
         .unwrap_or_default();
     let can_open_in_chat = listing.as_ref().is_none_or(|listing| listing.opens_in_chat);
-    let (launch_id, evidence, native_external_writer) = native_read
-        .map(|native| (native.read.launch_id, native.status, native.external_writer))
+    let (launch_id, evidence, native_external_writer, conversation_at) = native_read
+        .map(|native| {
+            (
+                native.read.launch_id,
+                native.status,
+                native.external_writer,
+                native.conversation_at,
+            )
+        })
         .unwrap_or_default();
-    // The list is read at lifecycle boundaries; the log tells of later work.
-    let last_activity_at = evidence
-        .as_ref()
-        .and_then(|evidence| evidence.observed_at)
-        .map_or(last_activity_at, |observed| observed.max(last_activity_at));
+    // The last conversation record stands for the last activity: the agent
+    // moves the listed time with its service records, such as those of a
+    // load to read the session (DF-173 R2). Otherwise the list is read at
+    // lifecycle boundaries and the log tells of later work.
+    let last_activity_at = conversation_at.unwrap_or_else(|| {
+        evidence
+            .as_ref()
+            .and_then(|evidence| evidence.observed_at)
+            .map_or(last_activity_at, |observed| observed.max(last_activity_at))
+    });
     let mut observations = evidence
         .map(|evidence| native_observation(evidence, last_activity_at, Utc::now()))
         .into_iter()

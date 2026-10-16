@@ -32,6 +32,11 @@ pub(crate) trait SessionLogLayout: Send + Sync {
     fn turn_evidence(&self) -> TurnEvidence {
         TurnEvidence::ProcessSignal
     }
+
+    /// See [`NativeStatusSource::tells_conversation`].
+    fn tells_conversation(&self) -> bool {
+        false
+    }
 }
 
 /// Reads of the agent's session logs, kept per session and repeated only
@@ -173,5 +178,9 @@ impl<L: SessionLogLayout> NativeStatusSource for SessionLogs<L> {
 
     fn turn_evidence(&self) -> TurnEvidence {
         self.layout.turn_evidence()
+    }
+
+    fn tells_conversation(&self) -> bool {
+        self.layout.tells_conversation()
     }
 }

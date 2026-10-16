@@ -35,6 +35,10 @@ impl SessionLogLayout for Rollouts {
     fn turn_evidence(&self) -> TurnEvidence {
         TurnEvidence::LogAlone
     }
+
+    fn tells_conversation(&self) -> bool {
+        true
+    }
 }
 
 static ROLLOUT_ID: LazyLock<Regex> = LazyLock::new(|| {
@@ -182,6 +186,9 @@ impl CodexTailState {
                         &reason,
                     );
                 }
+                // Settings the agent applies, such as on a load to read the
+                // session, are no work of the turn (DF-173 R1).
+                "thread_settings_applied" => {}
                 _ => {
                     if self.turn_open {
                         self.refresh_active(observed_at);
@@ -482,6 +489,23 @@ mod tests {
                 Some("2026-10-01T21:40:05+00:00")
             );
         }
+    }
+
+    #[test]
+    fn thread_settings_applied_in_an_open_turn_are_no_work_of_it() {
+        let status = tail_status(&[
+            task_started(),
+            serde_json::json!({
+                "type": "event_msg",
+                "timestamp": "2026-10-01T22:00:00Z",
+                "payload": { "type": "thread_settings_applied" }
+            }),
+        ]);
+        assert_eq!(status.state, SessionState::Running);
+        assert_eq!(
+            status.observed_at.map(|ts| ts.to_rfc3339()).as_deref(),
+            Some("2026-10-01T21:40:01+00:00")
+        );
     }
 
     #[test]

@@ -139,6 +139,13 @@ pub(crate) trait NativeStatusSource: Send + Sync {
     fn turn_evidence(&self) -> TurnEvidence {
         TurnEvidence::ProcessSignal
     }
+
+    /// The time of the source's status evidence is that of the session's
+    /// last conversation record, the agent's service records left out
+    /// (DF-173 R1, R2).
+    fn tells_conversation(&self) -> bool {
+        false
+    }
 }
 
 /// A source's reads of one call.
@@ -177,6 +184,9 @@ pub(crate) struct NativeSessionRead {
     /// The status is a turn another process drives (C7): its evidence alone
     /// for Claude Code and Codex, a live process for the agents of `07`.
     pub external_writer: bool,
+    /// The time of the session's last conversation record from a source
+    /// that tells it from the agent's service records (DF-173 R2).
+    pub conversation_at: Option<DateTime<Utc>>,
 }
 
 impl NativeStatusReader {
@@ -221,6 +231,7 @@ impl NativeStatusReader {
             }
         };
         let rule = source.turn_evidence();
+        let tells_conversation = source.tells_conversation();
         let sessions = reads.sessions.into_iter().collect::<Vec<_>>();
         // Only an open turn of the agents of `07` asks for its process.
         let records = sessions
@@ -241,6 +252,11 @@ impl NativeStatusReader {
                 .into_iter()
                 .zip(signals)
                 .map(|((id, read), signal)| {
+                    let conversation_at = read
+                        .status
+                        .as_ref()
+                        .and_then(|status| status.observed_at)
+                        .filter(|_| tells_conversation);
                     let (status, external_writer) = match read.status.clone() {
                         Some(evidence) => {
                             let (status, external) = turn_status(evidence, rule, signal);
@@ -254,6 +270,7 @@ impl NativeStatusReader {
                             read,
                             status,
                             external_writer,
+                            conversation_at,
                         },
                     )
                 })
