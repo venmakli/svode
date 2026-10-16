@@ -17,8 +17,8 @@ use svode_agents::registry::{
     AdapterTarget, ApprovalMapping, BindingValidation, SystemRuntimeCommandRunner,
 };
 use svode_core::agent_actors::{
-    AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError, catalog_path, read_catalog,
-    resolve_catalogs,
+    AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError, catalog_path, inherited_root,
+    read_catalog, resolve_space_catalogs,
 };
 use svode_core::agent_adapters::{
     AgentAdapterIdentity, AgentAdapterKind, AgentAdapterRegistry, AgentId,
@@ -191,25 +191,21 @@ pub async fn agent_actors_get(
     standalone: Option<bool>,
 ) -> Result<AgentActorsReadResult, AppError> {
     let own = canonical_space_path(Path::new(&space_path))?;
-    let inherited_root = if standalone.unwrap_or(false) {
-        crate::space::config::read_space_config(&own)?;
-        None
-    } else if let Some(project_path) = project_path {
-        let (project, own) = validate_registered_owner(Path::new(&project_path), &own)?;
-        (project != own).then_some(project)
-    } else {
-        crate::space::config::read_space_config(&own)?;
-        None
+    // A standalone Space, or one read without its project, is its own
+    // project.
+    let project = match project_path {
+        Some(project_path) if !standalone.unwrap_or(false) => {
+            validate_registered_owner(Path::new(&project_path), &own)?.0
+        }
+        _ => {
+            crate::space::config::read_space_config(&own)?;
+            own.clone()
+        }
     };
     let registry = AdapterRuntimeRegistry;
-    let resolution = resolve_catalogs(&own, inherited_root.as_deref());
+    let resolution = resolve_space_catalogs(&project, &own);
     let owner_fingerprints = std::iter::once(own.as_path())
-        .chain(
-            inherited_root
-                .as_deref()
-                .into_iter()
-                .filter(|root| *root != own),
-        )
+        .chain(inherited_root(&project, &own))
         .filter_map(|owner| {
             read_catalog(owner)
                 .ok()

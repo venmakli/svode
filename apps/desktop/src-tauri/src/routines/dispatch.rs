@@ -27,6 +27,7 @@ use svode_agents::registry::{
     ManualRoutineLaunchInput, SystemRuntimeCommandRunner, TerminalChoice, TerminalReason,
 };
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer};
+use svode_core::agent_actors::inherited_root;
 use svode_core::agent_adapters::AgentAdapterKind;
 use svode_core::collections::engine::EntryFieldBatchIntent;
 use svode_core::page::fields::PageFieldUpdate;
@@ -198,8 +199,7 @@ pub(crate) async fn scheduled_dispatch_ready(
         return false;
     };
     let diagnostics = collect_adapter_diagnostics(&owner.space_path).await;
-    let inherited_root =
-        (owner.space_path != owner.project_path).then_some(owner.project_path.as_path());
+    let inherited_root = inherited_root(&owner.project_path, &owner.space_path);
     let AgentLaunchResolution::Ready {
         request,
         selected_binding_index,
@@ -423,8 +423,7 @@ pub(super) async fn dispatch_routine(
     }
 
     let diagnostics = collect_adapter_diagnostics(&owner.space_path).await;
-    let inherited_root =
-        (owner.space_path != owner.project_path).then_some(owner.project_path.as_path());
+    let inherited_root = inherited_root(&owner.project_path, &owner.space_path);
     let resolution = agent_actors::launch::resolve_agent_launch_request(
         &owner.space_path,
         inherited_root,

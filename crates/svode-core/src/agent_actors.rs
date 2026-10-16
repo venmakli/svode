@@ -186,13 +186,18 @@ pub fn resolve_catalogs(own: &Path, inherited_root: Option<&Path>) -> AgentActor
     }
 }
 
+/// Catalog a Space inherits in its project context: the project root for a
+/// registered child Space; the root, and a standalone Space that is its own
+/// project, inherit nothing.
+pub fn inherited_root<'a>(project: &'a Path, space: &Path) -> Option<&'a Path> {
+    (space != project).then_some(project)
+}
+
 /// Effective Agent Actors of a Space in its project context: the one
 /// executor domain of the Routine owners of that Space and of its
-/// Collections. A registered child Space inherits the project root catalog;
-/// the root, and a standalone Space that is its own project, inherit
-/// nothing.
+/// Collections.
 pub fn resolve_space_catalogs(project: &Path, space: &Path) -> AgentActorResolution {
-    resolve_catalogs(space, (space != project).then_some(project))
+    resolve_catalogs(space, inherited_root(project, space))
 }
 
 /// Resolve only canonical `agent:<lowercase-ulid>` references. Invalid values
@@ -483,7 +488,10 @@ mod tests {
             ids(resolve_space_catalogs(project.path(), project.path())),
             ["01arz3ndektsv4rrffq69g5fav"]
         );
+        assert_eq!(inherited_root(project.path(), &child), Some(project.path()));
+        assert_eq!(inherited_root(project.path(), project.path()), None);
         // A standalone child is its own project.
+        assert_eq!(inherited_root(&child, &child), None);
         assert_eq!(
             ids(resolve_space_catalogs(&child, &child)),
             ["01arz3ndektsv4rrffq69g5faw"]
