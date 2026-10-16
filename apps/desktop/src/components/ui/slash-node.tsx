@@ -21,7 +21,6 @@ import {
   LightbulbIcon,
   ListIcon,
   ListOrdered,
-  PenToolIcon,
   PilcrowIcon,
   Quote,
   RadicalIcon,
@@ -191,12 +190,6 @@ const groups: Group[] = [
               icon: <RadicalIcon />,
               label: "Equation",
               value: KEYS.equation,
-            },
-            {
-              icon: <PenToolIcon />,
-              keywords: ["excalidraw"],
-              label: "Excalidraw",
-              value: KEYS.excalidraw,
             },
             {
               icon: <Code2 />,

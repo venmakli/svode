@@ -6,7 +6,6 @@ import { insertCallout } from "@platejs/callout";
 import { insertCodeBlock, toggleCodeBlock } from "@platejs/code-block";
 import { insertCodeDrawing } from "@platejs/code-drawing";
 import { insertDate } from "@platejs/date";
-import { insertExcalidraw } from "@platejs/excalidraw";
 import { insertColumnGroup, toggleColumnGroup } from "@platejs/layout";
 import { triggerFloatingLink } from "@platejs/link/react";
 import { insertEquation, insertInlineEquation } from "@platejs/math";
@@ -56,7 +55,6 @@ const insertBlockMap: Record<
   [KEYS.codeDrawing]: (editor) =>
     insertCodeDrawing(editor, {}, { select: true }),
   [KEYS.equation]: (editor) => insertEquation(editor, { select: true }),
-  [KEYS.excalidraw]: (editor) => insertExcalidraw(editor, {}, { select: true }),
   [KEYS.file]: (editor, _type, mediaAdapter) =>
     void pickAndInsertMedia(editor, "file", mediaAdapter),
   [KEYS.img]: (editor, _type, mediaAdapter) =>
