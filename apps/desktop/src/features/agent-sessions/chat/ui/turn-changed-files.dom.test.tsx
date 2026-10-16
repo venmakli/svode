@@ -237,7 +237,7 @@ if (process.env.SVODE_TURN_CHANGED_FILES_DOM !== "1") {
                 value={(target) =>
                   opened.push({
                     kind: "changes",
-                    path: `${target.spacePath}|${target.path}|${target.name}`,
+                    path: `${target.spaceId}|${target.spacePath}|${target.path}|${target.name}`,
                   })
                 }
               >
@@ -335,7 +335,7 @@ if (process.env.SVODE_TURN_CHANGED_FILES_DOM !== "1") {
       expect(removed?.getAttribute("aria-disabled")).toBe("true");
       await click(removed);
       expect(opened).toEqual([
-        { kind: "changes", path: "/project|a.md|a.md" },
+        { kind: "changes", path: "root|/project|a.md|a.md" },
         { kind: "document", path: "/project/notes/B.md" },
       ]);
     } finally {

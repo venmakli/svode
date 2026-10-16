@@ -101,6 +101,7 @@ function ChangedFileRow({
     if (!state || removed) return;
     if (state.dirty && state.location && openChanges) {
       openChanges({
+        spaceId: state.location.spaceId,
         spacePath: state.location.spacePath,
         path: state.location.path,
         name: file.name,

@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 
 /** A file of a project Space whose unsaved changes to show. */
 export interface FileChangesTarget {
+  spaceId: string;
   spacePath: string;
   /** Relative to the Space. */
   path: string;
