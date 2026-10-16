@@ -157,6 +157,8 @@
   "page_name_conflict": "A Page with this name already exists ({path}).",
   "editor_name_existing_conflict": "Duplicate name · {path}",
   "editor_placeholder_body": "Start writing or type / for commands",
+  "editor_markdown_comment": "Comment",
+  "editor_markdown_comment_name": "Comment: {text}",
   "editor_add_cover": "Add cover",
   "editor_change_cover": "Change cover",
   "editor_reposition_cover": "Reposition",

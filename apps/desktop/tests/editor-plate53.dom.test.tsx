@@ -105,9 +105,12 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
           </TooltipProvider>,
         );
       });
-      const text = document.querySelector("[data-slate-editor]")?.textContent;
-      expect(text).toContain("<!-- block -->");
-      expect(text).toContain("<!-- inline -->");
+      const names = [
+        ...document.querySelectorAll("[data-slate-editor] [role=note]"),
+      ].map((el) => el.getAttribute("aria-label"));
+      expect(names.join("|")).toBe(
+        "Comment: inline|Comment: block|Comment: in list",
+      );
       expect(changes).toEqual([]);
       await act(async () => {
         mountedEditor!.tf.insertText("edited ", {
