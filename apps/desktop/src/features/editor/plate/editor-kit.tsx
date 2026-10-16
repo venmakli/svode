@@ -2,7 +2,7 @@
 
 import { LinkPlugin } from "@platejs/link/react";
 import { MentionInputPlugin, MentionPlugin } from "@platejs/mention/react";
-import { type Value, TrailingBlockPlugin } from "platejs";
+import { type Value, KEYS, TrailingBlockPlugin } from "platejs";
 import { type TPlateEditor, useEditorRef } from "platejs/react";
 
 import {
@@ -43,6 +43,14 @@ import { TocKit } from "@/components/editor/plugins/toc-kit";
 import { ToggleKit } from "@/components/editor/plugins/toggle-kit";
 import { MentionElement } from "@/components/ui/mention-node";
 import { ConflictPlugin } from "../conflict/conflict-plugin";
+import {
+  MARKDOWN_COMMENT_KEY,
+  markdownCommentRules,
+  remarkMarkdownComments,
+  serializeMarkdownWithComments,
+} from "../model/markdown-comments";
+import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
+import { MarkdownCommentKit } from "./markdown-comment-kit";
 import { PageLinkElement } from "../ui/page-link-element";
 import { PageLinkInputElement } from "../ui/page-link-input-element";
 import { FloatingToolbar } from "@/components/ui/floating-toolbar";
@@ -67,6 +75,41 @@ const ProductMentionKit = [
   MentionInputPlugin.withComponent(PageLinkInputElement),
 ];
 
+// Every Markdown → editor value path goes through the editor Markdown
+// boundary, pasted plain text included.
+const ProductMarkdownKit = MarkdownKit.map((plugin) =>
+  plugin
+    .extendApi(({ editor }) => ({
+      serialize: (
+        options?: Parameters<typeof serializeMarkdownWithComments>[1],
+      ) => serializeMarkdownWithComments(editor, options),
+    }))
+    .extend(({ getOptions }) => ({
+      options: {
+        remarkPlugins: [...getOptions().remarkPlugins, remarkMarkdownComments],
+        rules: { ...getOptions().rules, ...markdownCommentRules },
+      },
+      parser: {
+        deserialize: ({ data, editor }) =>
+          deserializeEditorMarkdownSegment(editor, data),
+      },
+    })),
+);
+
+// A block comment inside a list item keeps the item's indent.
+const ProductListKit = ListKit.map((plugin) =>
+  plugin.key === KEYS.indent
+    ? plugin.extend(({ plugin: { inject } }) => ({
+        inject: {
+          targetPlugins: [
+            ...(inject.targetPlugins ?? []),
+            MARKDOWN_COMMENT_KEY,
+          ],
+        },
+      }))
+    : plugin,
+);
+
 export const EditorKit = [
   ...(ENABLE_PLATE_AI ? [...CopilotKit, ...AIKit] : []),
 
@@ -86,7 +129,7 @@ export const EditorKit = [
   ...BasicMarksKit,
   ...FontKit,
 
-  ...ListKit,
+  ...ProductListKit,
   ...AlignKit,
   ...LineHeightKit,
 
@@ -104,9 +147,10 @@ export const EditorKit = [
   TrailingBlockPlugin,
 
   ConflictPlugin,
+  ...MarkdownCommentKit,
 
   ...DocxKit,
-  ...MarkdownKit,
+  ...ProductMarkdownKit,
 
   ...BlockPlaceholderKit,
   ...FloatingToolbarKit.map((plugin) =>

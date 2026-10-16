@@ -89,6 +89,37 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
   const { useArtifactSelectionStore } =
     await import("../src/features/artifact/model/selection-store");
 
+  test("Routine editor keeps Markdown comments when neighbouring text changes", async () => {
+    const root = createRoot(document.getElementById("app")!);
+    const changes: string[] = [];
+    const source =
+      "Intro <!-- inline -->\n\n<!-- block -->\n\n- item\n  <!-- in list -->\n\nEnd\n";
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ControlledMarkdownEditor
+              value={source}
+              onChange={(value) => changes.push(value)}
+            />
+          </TooltipProvider>,
+        );
+      });
+      const text = document.querySelector("[data-slate-editor]")?.textContent;
+      expect(text).toContain("<!-- block -->");
+      expect(text).toContain("<!-- inline -->");
+      expect(changes).toEqual([]);
+      await act(async () => {
+        mountedEditor!.tf.insertText("edited ", {
+          at: { path: [0, 0], offset: 0 },
+        });
+      });
+      expect(changes.at(-1)).toBe(source.replace("Intro", "edited Intro"));
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   test("Routine editor renders table Page pills, preserves read-only and opens portable Page target", async () => {
     const root = createRoot(document.getElementById("app")!);
     const changes: string[] = [];
