@@ -54,6 +54,12 @@ export async function readDocumentSource(
   return response instanceof Uint8Array ? response : new Uint8Array(response);
 }
 
+export function validateDocumentSource(
+  input: DocumentSourceInputDto & { expectedGeneration: string },
+): Promise<void> {
+  return invokeCommand("document_validate_source", { ...input });
+}
+
 export function listDocumentExternalApps(
   input: DocumentSourceInputDto,
 ): Promise<ExternalAppDto[]> {

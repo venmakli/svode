@@ -7,6 +7,7 @@ export class DocumentRuntimeSession {
   private disposers: SessionDisposer[] = [];
   private destroyPromise: Promise<void> | null = null;
   private passwordHandler: ((password: string) => void) | null = null;
+  private sourceCheck: (() => void) | null = null;
   private viewState: DocumentViewState;
 
   constructor(
@@ -41,6 +42,16 @@ export class DocumentRuntimeSession {
     this.passwordHandler?.(password);
   }
 
+  /** Set once the session knows the generation it opened. */
+  setSourceCheck(check: () => void) {
+    this.sourceCheck = check;
+  }
+
+  /** Before a generation is known loading reads the current file anyway. */
+  checkSource() {
+    this.sourceCheck?.();
+  }
+
   getViewState() {
     return { ...this.viewState };
   }
@@ -53,6 +64,7 @@ export class DocumentRuntimeSession {
     if (this.destroyPromise) return this.destroyPromise;
     this.controller.abort();
     this.passwordHandler = null;
+    this.sourceCheck = null;
     const disposers = this.disposers.splice(0).reverse();
     this.destroyPromise = (async () => {
       for (const disposer of disposers) await disposer();

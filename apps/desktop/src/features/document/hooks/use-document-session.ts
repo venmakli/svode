@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ExternalOpenBinding } from "@/features/external-open";
+import { SingleFlightRefreshCoordinator } from "@/shared/lib/single-flight-refresh-coordinator";
 
 import {
+  checkDocumentSource,
   documentExternalOpenTarget,
   loadDocumentBytes,
   loadDocumentDescriptor,
@@ -88,6 +90,23 @@ export function useDocumentSession(stableTarget: DocumentTarget) {
       try {
         const descriptor = await loadDocumentDescriptor(stableTarget);
         if (session.signal.aborted) return;
+        // An invalidation is only a hint: the file changed when its
+        // generation did. Events during a check are checked after it.
+        const sourceCheck = new SingleFlightRefreshCoordinator<void>({
+          debounceMs: 0,
+          load: () => checkDocumentSource(stableTarget, descriptor.generation),
+          onFailure: (error) => {
+            if (sessionRef.current !== session || session.signal.aborted) {
+              return;
+            }
+            sessionRef.current = null;
+            void documentSessionCoordinator.release(session);
+            setState({ failure: failureFromError(error), phase: "failed" });
+          },
+          onSuccess: () => undefined,
+        });
+        session.addDisposer(() => sourceCheck.dispose());
+        session.setSourceCheck(() => void sourceCheck.invalidate());
         setSource(descriptor);
         if (!documentHasInlinePreview(descriptor.format)) {
           setState({
@@ -305,11 +324,7 @@ export function useDocumentSession(stableTarget: DocumentTarget) {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void subscribeDocumentInvalidated(stableTarget, () => {
-      const session = sessionRef.current;
-      if (!session) return;
-      sessionRef.current = null;
-      void documentSessionCoordinator.release(session);
-      setState({ failure: { kind: "source_changed" }, phase: "failed" });
+      sessionRef.current?.checkSource();
     }).then((dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;

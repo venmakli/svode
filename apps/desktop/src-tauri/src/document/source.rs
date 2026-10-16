@@ -211,6 +211,21 @@ pub(crate) fn read_document_source(
     read_resolved_source(resolved, expected_generation)
 }
 
+/// Whether the Document still has the generation it was opened at. The
+/// preview limit is not checked: a file past it has another generation.
+pub(crate) fn validate_document_source_generation(
+    project_path: &Path,
+    space_id: Option<&str>,
+    target_path: &str,
+    expected_generation: &str,
+) -> Result<(), DocumentSourceError> {
+    let resolved = resolve_document_source(project_path, space_id, target_path, false)?;
+    if resolved.descriptor.generation != expected_generation {
+        return Err(DocumentSourceError::SourceChanged);
+    }
+    Ok(())
+}
+
 /// A local file by its absolute path, read only to show it: a file of a
 /// skill outside the project (Stage 10 `05`), which its owner has resolved
 /// inside the skill folder. Only Documents by their format and within the
@@ -468,6 +483,50 @@ mod tests {
         assert!(matches!(
             read_document_source(temp.path(), None, "guide.pdf", &descriptor.generation),
             Err(DocumentSourceError::SourceChanged)
+        ));
+    }
+
+    #[test]
+    fn validation_reports_whether_the_opened_generation_still_holds() {
+        let temp = tempfile::tempdir().unwrap();
+        write_project(temp.path());
+        let path = temp.path().join("guide.pdf");
+        fs::write(&path, b"first").unwrap();
+        let generation = inspect_document_source(temp.path(), None, "guide.pdf")
+            .unwrap()
+            .descriptor
+            .generation;
+        assert!(
+            validate_document_source_generation(temp.path(), None, "guide.pdf", &generation)
+                .is_ok()
+        );
+
+        // A new modification time alone is a new generation.
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(1_767_323_045))
+            .unwrap();
+        assert!(matches!(
+            validate_document_source_generation(temp.path(), None, "guide.pdf", &generation),
+            Err(DocumentSourceError::SourceChanged)
+        ));
+
+        // A file grown past the preview limit is changed, not over the limit.
+        File::create(&path)
+            .unwrap()
+            .set_len(PDF_SOURCE_LIMIT + 1)
+            .unwrap();
+        assert!(matches!(
+            validate_document_source_generation(temp.path(), None, "guide.pdf", &generation),
+            Err(DocumentSourceError::SourceChanged)
+        ));
+
+        fs::remove_file(&path).unwrap();
+        assert!(matches!(
+            validate_document_source_generation(temp.path(), None, "guide.pdf", &generation),
+            Err(DocumentSourceError::SourceMissing)
         ));
     }
 

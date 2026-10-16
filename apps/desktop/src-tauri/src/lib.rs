@@ -196,6 +196,7 @@ pub fn run() {
             commands::app_variables::set_app_variable_binding,
             document::commands::document_inspect_source,
             document::commands::document_read_source,
+            document::commands::document_validate_source,
             document::commands::document_list_external_apps,
             document::commands::document_open_external,
             document::commands::document_reveal_external,

@@ -9,6 +9,7 @@ import {
   openDocumentExternal,
   readDocumentSource,
   revealDocumentExternal,
+  validateDocumentSource,
 } from "@/platform/document/document-api";
 
 import type {
@@ -42,6 +43,22 @@ export async function loadDocumentBytes(
           ...toSourceInput(target),
           expectedGeneration,
         });
+  } catch (error) {
+    throw documentFailureFromNative(error);
+  }
+}
+
+export async function checkDocumentSource(
+  target: DocumentTarget,
+  expectedGeneration: string,
+) {
+  // Space events do not name files outside the Space: nothing asks to check them.
+  if (target.kind === "local") return;
+  try {
+    await validateDocumentSource({
+      ...toSourceInput(target),
+      expectedGeneration,
+    });
   } catch (error) {
     throw documentFailureFromNative(error);
   }

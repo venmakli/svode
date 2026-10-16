@@ -9,6 +9,7 @@ export class MediaRuntimeSession {
   private suspenders: SessionSuspender[] = [];
   private destroyPromise: Promise<void> | null = null;
   private loadTimeout: ReturnType<typeof setTimeout> | null = null;
+  private sourceCheck: (() => void) | null = null;
   private viewState: MediaViewState;
 
   constructor(
@@ -58,6 +59,16 @@ export class MediaRuntimeSession {
     this.loadTimeout = null;
   }
 
+  /** Set once the session knows the generation it opened. */
+  setSourceCheck(check: () => void) {
+    this.sourceCheck = check;
+  }
+
+  /** Before a generation is known loading opens the current file anyway. */
+  checkSource() {
+    this.sourceCheck?.();
+  }
+
   getViewState() {
     return cloneViewState(this.viewState);
   }
@@ -70,6 +81,7 @@ export class MediaRuntimeSession {
     if (this.destroyPromise) return this.destroyPromise;
     this.controller.abort();
     this.clearLoadTimeout();
+    this.sourceCheck = null;
     this.suspenders = [];
     const disposers = this.disposers.splice(0).reverse();
     this.destroyPromise = (async () => {

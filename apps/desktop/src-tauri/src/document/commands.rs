@@ -4,7 +4,7 @@ use tauri::{AppHandle, ipc::Response};
 
 use super::source::{
     DocumentSourceDescriptor, DocumentSourceError, inspect_document_source, read_document_source,
-    resolve_document_source_for_external,
+    resolve_document_source_for_external, validate_document_source_generation,
 };
 use crate::external_apps::{self, ExternalAppDto};
 use svode_core::system_path;
@@ -33,6 +33,21 @@ pub(crate) fn document_read_source(
         &expected_generation,
     )
     .map(Response::new)
+}
+
+#[tauri::command]
+pub(crate) fn document_validate_source(
+    project_path: String,
+    space_id: Option<String>,
+    target_path: String,
+    expected_generation: String,
+) -> Result<(), DocumentSourceError> {
+    validate_document_source_generation(
+        Path::new(&project_path),
+        space_id.as_deref(),
+        &target_path,
+        &expected_generation,
+    )
 }
 
 #[tauri::command]

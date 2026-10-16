@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ExternalOpenBinding } from "@/features/external-open";
+import { SingleFlightRefreshCoordinator } from "@/shared/lib/single-flight-refresh-coordinator";
 
 import {
   checkMediaSource,
@@ -72,6 +73,24 @@ export function useMediaSession(stableTarget: MediaTarget) {
           return;
         }
         sourceRef.current = source;
+        // An invalidation is only a hint: the file changed when its
+        // generation did. Events during a check are checked after it.
+        const sourceCheck = new SingleFlightRefreshCoordinator<void>({
+          debounceMs: 0,
+          load: () => checkMediaSource(stableTarget, source.generation),
+          onFailure: (error) => {
+            if (sessionRef.current !== session || session.signal.aborted) {
+              return;
+            }
+            sessionRef.current = null;
+            sourceRef.current = null;
+            setState({ failure: asMediaFailure(error), phase: "failed" });
+            void mediaSessionCoordinator.release(session);
+          },
+          onSuccess: () => undefined,
+        });
+        session.addDisposer(() => sourceCheck.dispose());
+        session.setSourceCheck(() => void sourceCheck.invalidate());
         setState({ phase: "loading", source });
         session.setLoadTimeout(() => {
           if (sessionRef.current !== session) return;
@@ -109,12 +128,7 @@ export function useMediaSession(stableTarget: MediaTarget) {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void subscribeMediaInvalidated(stableTarget, () => {
-      const session = sessionRef.current;
-      if (!session) return;
-      sessionRef.current = null;
-      sourceRef.current = null;
-      setState({ failure: { kind: "source_changed" }, phase: "failed" });
-      void mediaSessionCoordinator.release(session);
+      sessionRef.current?.checkSource();
     }).then((dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;
