@@ -57,7 +57,6 @@ import {
 import { turnChanges } from "../model/changed-files";
 import { chatMediaOf, turnCreatedMediaCount } from "../model/media";
 import {
-  lastWhere,
   projectTimeline,
   type InteractionRecord,
   type NoticeItem,
@@ -172,10 +171,9 @@ function TurnView({
         />
       </MessageScrollerItem>
     ) : null;
-  // The gallery of created media, then the changed files: under the
-  // agent's last message, which stays visible in a folded turn (`08` R2).
-  const tailAfterId =
-    lastWhere(turn.entries, (entry) => entry.kind === "message")?.id ?? null;
+  // The gallery of created media, then the changed files end the turn,
+  // folded or open: after the agent's last message and whatever followed
+  // it (`08` R2, DF-180 R4).
   const galleryRow =
     !turn.live && turnCreatedMediaCount(turn) > 0 ? (
       <TurnGallery key={`gallery:${turn.id}`} session={session} turn={turn} />
@@ -210,9 +208,8 @@ function TurnView({
       </MessageScrollerItem>,
     );
     if (summary && summary.afterId === entry.id) rows.push(summaryRow);
-    if (entry.id === tailAfterId) rows.push(galleryRow, changesRow);
   }
-  if (tailAfterId === null) rows.push(galleryRow, changesRow);
+  rows.push(galleryRow, changesRow);
   return <>{rows}</>;
 }
 

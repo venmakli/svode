@@ -173,7 +173,9 @@ if (process.env.SVODE_TURN_GALLERY_DOM !== "1") {
    * t1 makes images, views one, edits a file and a page through Svode MCP;
    * t3 and t4 answer with media of their own; t5 has no answer; t2 runs.
    */
-  function snapshot(): AgentSessionSnapshotDto {
+  function snapshot(
+    extra: AgentActivityItemDto[] = [],
+  ): AgentSessionSnapshotDto {
     return {
       seq: 1,
       session: key,
@@ -231,6 +233,8 @@ if (process.env.SVODE_TURN_GALLERY_DOM !== "1") {
         edit("edit5", "t5", "/project/quiet.md"),
         done("t5"),
 
+        ...extra,
+
         user("t2", "More"),
         tool("live", "t2", "other", [segment("live")], {
           status: "in_progress",
@@ -247,7 +251,7 @@ if (process.env.SVODE_TURN_GALLERY_DOM !== "1") {
   }
 
   const mounted: Root[] = [];
-  async function mount() {
+  async function mount(extra: AgentActivityItemDto[] = []) {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -256,7 +260,7 @@ if (process.env.SVODE_TURN_GALLERY_DOM !== "1") {
       root.render(
         <ThemeProvider theme="light" setTheme={() => {}}>
           <TooltipProvider>
-            <ChatTimeline session={key} snapshot={snapshot()} />
+            <ChatTimeline session={key} snapshot={snapshot(extra)} />
           </TooltipProvider>
         </ThemeProvider>,
       );
@@ -381,6 +385,77 @@ if (process.env.SVODE_TURN_GALLERY_DOM !== "1") {
           m.sessions_chat_changed_files({ count: 1 }),
         ),
       ).toBe(true);
+    } finally {
+      await unmountAll();
+    }
+  });
+
+  test("what follows the answer stands before the gallery, which ends the turn folded and open", async () => {
+    try {
+      await mount([
+        user("t6", "Draw and check"),
+        tool("gen6", "t6", "other", [segment("sun")]),
+        answer("done6", "t6", "Done: the sun"),
+        tool("after6", "t6", "execute"),
+        edit("edit6", "t6", "/project/sun.md"),
+        done("t6"),
+      ]);
+      const turn = () =>
+        turnItems("Draw and check", "More").map((element) =>
+          isGallery(element)
+            ? `gallery:${tiles(element)}`
+            : (element.textContent ?? "").includes(
+                  m.sessions_chat_changed_files({ count: 1 }),
+                )
+              ? "files"
+              : (element.textContent ?? "").slice(0, 13),
+        );
+      const folded = turn();
+      expect(folded.slice(-3)).toEqual([
+        "Done: the sun",
+        "gallery:sun.png",
+        "files",
+      ]);
+
+      await click(summaryOf(3));
+      await settle();
+      const open = turn();
+      const answerAt = open.indexOf("Done: the sun");
+      const after = turnItems("Draw and check", "More").findIndex((element) =>
+        element.textContent?.includes(m.sessions_chat_tools({ count: 2 })),
+      );
+      expect(answerAt < after).toBe(true);
+      expect(open.slice(-2)).toEqual(["gallery:sun.png", "files"]);
+      expect(after < open.length - 2).toBe(true);
+    } finally {
+      await unmountAll();
+    }
+  });
+
+  test("a failed turn keeps its error and marker before the gallery", async () => {
+    try {
+      await mount([
+        user("t7", "Draw then fail"),
+        tool("gen7", "t7", "other", [segment("moon")]),
+        answer("done7", "t7", "Drew the moon"),
+        item("error7", "t7", { kind: "error" }, "connection reset by peer"),
+        item("outcome:t7", "t7", {
+          kind: "turn_outcome",
+          reason: "error",
+          durationMs: 3000,
+        }),
+      ]);
+      const t7 = turnItems("Draw then fail", "More");
+      const gallery = t7.findIndex(isGallery);
+      expect(tiles(t7[gallery])).toBe("moon.png");
+      expect(gallery).toBe(t7.length - 1);
+      const answerAt = t7.findIndex((element) =>
+        element.textContent?.includes("Drew the moon"),
+      );
+      const errorAt = t7.findIndex((element) =>
+        element.textContent?.includes("connection reset by peer"),
+      );
+      expect(answerAt < errorAt && errorAt < gallery).toBe(true);
     } finally {
       await unmountAll();
     }
