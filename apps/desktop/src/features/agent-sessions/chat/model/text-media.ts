@@ -98,6 +98,62 @@ export function textImageParts(
   return parts;
 }
 
+const FENCE = /^ {0,3}(?:```|~~~)/;
+const HEADING = /^ {0,3}#{1,6}(?:\s|$)/;
+const INLINE_CODE = /(`+)[^`]*?\1/g;
+const MARKDOWN_IMAGE =
+  /!\[((?:\\.|[^\]\\])*)\]\(\s*(<[^>\n]*>|(?:\\.|[^\s()\\]|\((?:\\.|[^\s()\\])*\))+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
+const ESCAPED = /\\([!-/:-@[-`{-~])/g;
+
+/**
+ * The inline images of a markdown text as the reader shows them as images:
+ * outside code, headings and links. Reference images are not read.
+ */
+export function markdownImages(text: string): TextImage[] {
+  const images: TextImage[] = [];
+  let fenced = false;
+  for (const line of text.split("\n")) {
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || HEADING.test(line)) continue;
+    const code = line.replace(INLINE_CODE, (span) => " ".repeat(span.length));
+    for (const match of code.matchAll(MARKDOWN_IMAGE)) {
+      if (code[match.index - 1] === "[") continue;
+      const written = match[2].startsWith("<")
+        ? match[2].slice(1, -1)
+        : match[2];
+      images.push({
+        source: written.replace(ESCAPED, "$1"),
+        alt: match[1].replace(ESCAPED, "$1"),
+      });
+    }
+  }
+  return images;
+}
+
+/**
+ * Paths of the local media an agent message shows as tiles (`08` R3): its
+ * segments, and its markdown images and `MEDIA:` lines with a local path.
+ */
+export function messageMediaPaths(
+  text: string,
+  segments: readonly { path: string | null }[],
+  base: PathBase,
+): string[] {
+  const paths = segments.flatMap((segment) =>
+    segment.path ? [segment.path] : [],
+  );
+  for (const { source } of markdownImages(
+    withMediaImages(text, { complete: true }),
+  )) {
+    const target = /^data:/i.test(source) ? null : linkTarget(source, base);
+    if (target?.kind === "local") paths.push(target.reference.path);
+  }
+  return paths;
+}
+
 /** A `data:` image URL: its type, the decoded size and the payload. */
 export function dataImage(source: string): {
   mimeType: string;

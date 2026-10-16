@@ -56,6 +56,21 @@ export function DetailView({
   );
 }
 
+/** The text of a read detail, or `null` when it has none to show. */
+export function detailText(
+  detail: AgentDetailOutcomeDto | null,
+): string | null {
+  if (detail?.outcome !== "available") return null;
+  const block = detail.blocks[0];
+  if (block?.type === "text") return block.text;
+  if (block?.type === "excerpt") {
+    return `${block.head}\n\n${m.sessions_chat_detail_omitted({
+      count: block.omittedChars.toLocaleString(),
+    })}\n\n${block.tail}`;
+  }
+  return null;
+}
+
 /** Why a read detail shows no blocks, or `null` when it has them. */
 export function detailNotice(detail: AgentDetailOutcomeDto): string | null {
   if (detail.outcome === "error") {

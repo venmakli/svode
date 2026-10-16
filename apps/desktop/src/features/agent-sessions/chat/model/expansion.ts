@@ -56,25 +56,13 @@ export function isSummaryExpanded(
 
 /**
  * The entries a turn shows: all of them, or only the visible ones while
- * folded, where each row of created media stands on its own (`08` R2).
+ * folded; tool calls that created media fold too (`08` R2).
  */
 export function shownEntries(
   manual: ManualExpansion,
   turn: TimelineTurn,
 ): TimelineEntry[] {
   if (!turn.summary || isSummaryExpanded(manual, turn)) return turn.entries;
-  const { visibleIds, mediaRowIds } = turn.summary;
-  const shown: TimelineEntry[] = [];
-  for (const entry of turn.entries) {
-    if (visibleIds.has(entry.id)) {
-      shown.push(entry);
-    } else if (entry.kind === "tools") {
-      for (const row of entry.rows) {
-        if (mediaRowIds.has(row.item.id)) {
-          shown.push({ kind: "tools", id: row.item.id, rows: [row] });
-        }
-      }
-    }
-  }
-  return shown;
+  const { visibleIds } = turn.summary;
+  return turn.entries.filter((entry) => visibleIds.has(entry.id));
 }

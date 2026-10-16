@@ -12,6 +12,7 @@ import {
   mediaFileName,
   tileLayout,
   turnCreatedMediaCount,
+  turnGallery,
   chatMediaOf,
 } from "./media";
 import { projectTimeline } from "./timeline";
@@ -109,7 +110,7 @@ test("a tool call creates media unless it only read or searched", () => {
   expect(createsMedia(tool("run", "execute") as never)).toBe(false);
 });
 
-test("a folded turn keeps the rows of created media outside, each on its own, and counts only folded items", () => {
+test("a folded turn folds the rows of created media too and counts them", () => {
   const [turn] = projectTimeline({
     turn: idle,
     items: [
@@ -123,17 +124,12 @@ test("a folded turn keeps the rows of created media outside, each on its own, an
       outcome,
     ],
   });
-  expect(turn.summary?.count).toBe(3);
-  expect([...(turn.summary?.mediaRowIds ?? [])]).toEqual(["gen1", "gen2"]);
-  const shown = shownEntries({}, turn);
-  expect(
-    shown.map((entry) =>
-      entry.kind === "tools"
-        ? `tools:${entry.rows.map((row) => row.item.id).join(",")}`
-        : entry.id,
-    ),
-  ).toEqual(["user:t1", "tools:gen1", "tools:gen2", "m1"]);
-  // Unfolded, created media stay on their own rows; the rest group as before.
+  expect(turn.summary?.count).toBe(5);
+  expect(shownEntries({}, turn).map((entry) => entry.id)).toEqual([
+    "user:t1",
+    "m1",
+  ]);
+  // Open, created media stay on their own rows; the rest group as before.
   const unfolded = shownEntries({ "summary:t1": true }, turn);
   expect(
     unfolded
@@ -141,27 +137,8 @@ test("a folded turn keeps the rows of created media outside, each on its own, an
       .map((entry) => entry.rows.map((row) => row.item.id).join(",")),
   ).toEqual(["run", "gen1", "view,find", "gen2"]);
   expect(turnCreatedMediaCount(turn)).toBe(3);
-});
 
-test("a turn whose only tool calls created media has no summary row and shows each on its own", () => {
-  const [turn] = projectTimeline({
-    turn: idle,
-    items: [
-      user,
-      tool("gen1", "other", [segment("a")]),
-      tool("gen2", "other", [segment("b")]),
-      message("m1", "Two"),
-      outcome,
-    ],
-  });
-  expect(turn.summary).toBe(null);
-  expect(
-    shownEntries({}, turn).map((entry) =>
-      entry.kind === "tools" ? entry.rows.length : 0,
-    ),
-  ).toEqual([0, 1, 1, 0]);
-
-  const [single] = projectTimeline({
+  const [only] = projectTimeline({
     turn: idle,
     items: [
       user,
@@ -170,7 +147,53 @@ test("a turn whose only tool calls created media has no summary row and shows ea
       outcome,
     ],
   });
-  expect(single.summary).toBe(null);
+  expect(only.summary?.count).toBe(1);
+  expect(shownEntries({}, only).map((entry) => entry.id)).toEqual([
+    "user:t1",
+    "m1",
+  ]);
+});
+
+test("the gallery of a finished turn holds its created media in order, without what the answer shows", () => {
+  const items = [
+    user,
+    tool("gen1", "other", [segment("a")]),
+    tool("view", "read", [segment("c")]),
+    tool("find", "search", [segment("d")]),
+    tool("gen2", "execute", [
+      segment("b"),
+      segment("shot", { path: null, hasData: true }),
+    ]),
+    message("m1", "Here"),
+    outcome,
+  ];
+  const [turn] = projectTimeline({ turn: idle, items });
+  const keys = (answer: string[]) =>
+    turnGallery(turn, answer).map((media) => media.key);
+  expect(keys([])).toEqual(["gen1:a", "gen2:b", "gen2:shot"]);
+  // A path the answer shows is left out; media without a path stay.
+  expect(keys(["/tmp/b.png"])).toEqual(["gen1:a", "gen2:shot"]);
+  expect(keys(["/tmp/a.png", "/tmp/b.png"])).toEqual(["gen2:shot"]);
+  // A Windows drive path matches in another case and separator.
+  const [windows] = projectTimeline({
+    turn: idle,
+    items: [
+      user,
+      tool("gen", "other", [segment("w", { path: "C:\\Out\\w.png" })]),
+      message("m1", "Here"),
+      outcome,
+    ],
+  });
+  expect(turnGallery(windows, ["c:/out/w.png"])).toEqual([]);
+  // The count of the turn rail keeps every created media.
+  expect(turnCreatedMediaCount(turn)).toBe(3);
+
+  const [live] = projectTimeline({
+    turn: { ...idle, phase: "running" },
+    items: items.slice(0, 5),
+  });
+  expect(live.live).toBe(true);
+  expect(turnGallery(live, [])).toEqual([]);
 });
 
 test("tiles lay out by their count, five and more as 2×2 with +N opening the rest", () => {

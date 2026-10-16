@@ -49,15 +49,7 @@ export type TimelineEntry =
 export interface TurnSummary {
   /** Entries shown while the turn is folded. */
   visibleIds: ReadonlySet<string>;
-  /**
-   * Tool calls that created media (`08` R2): their rows stay outside the
-   * fold, each on its own, in the order of the timeline.
-   */
-  mediaRowIds: ReadonlySet<string>;
-  /**
-   * Folded items; each tool call counts. Zero when nothing folds and the
-   * turn only lifts created media out of their group: no summary row then.
-   */
+  /** Folded items; each tool call counts, those that created media too. */
   count: number;
   durationMs: number | null;
   /** The entry the summary row follows: the user's message, if any. */
@@ -157,8 +149,8 @@ function projectTurn(items: AgentActivityItemDto[]): TimelineEntry[] {
       case "tool_call": {
         const row = { item, permission: permissions.get(item.id) ?? null };
         const last = entries.at(-1);
-        // A call that created media stands on its own, so neither a group
-        // nor a folded turn hides what it made (`08` R2).
+        // A call that created media stands on its own, so a group does not
+        // hide what it made in an open turn or at the live edge (`08` R2).
         if (
           last?.kind === "tools" &&
           !createsMedia(item) &&
@@ -233,34 +225,18 @@ function summarize(
     );
     if (error) visible.add(error.id);
   }
-  const mediaRows = new Set<string>();
-  let lifted = false;
-  for (const entry of entries) {
-    if (entry.kind !== "tools" || visible.has(entry.id)) continue;
-    const created = entry.rows.filter((row) => createsMedia(row.item));
-    for (const row of created) mediaRows.add(row.item.id);
-    if (created.length > 0 && entry.rows.length > 1) lifted = true;
-    if (created.length === entry.rows.length && entry.rows.length === 1) {
-      visible.add(entry.id);
-    }
-  }
   const folded = entries.filter((entry) => !visible.has(entry.id));
   const count = folded.reduce(
-    (sum, entry) =>
-      sum +
-      (entry.kind === "tools"
-        ? entry.rows.filter((row) => !mediaRows.has(row.item.id)).length
-        : 1),
+    (sum, entry) => sum + (entry.kind === "tools" ? entry.rows.length : 1),
     0,
   );
-  if (count === 0 && !lifted) return null;
+  if (count === 0) return null;
   const outcome = lastWhere(
     items,
     (item) => item.kind === "turn_outcome" || item.kind === "interrupted",
   );
   return {
     visibleIds: visible,
-    mediaRowIds: mediaRows,
     count,
     durationMs:
       outcome?.kind === "turn_outcome" || outcome?.kind === "interrupted"

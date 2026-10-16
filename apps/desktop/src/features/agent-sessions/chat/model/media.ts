@@ -4,6 +4,7 @@ import type {
   AgentMediaSegmentDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 import { mediaFamilyFromFormat, mediaFormatFromPath } from "@/features/media";
+import { pathKey } from "@/shared/lib/local-paths";
 import { fileExtension, fileName } from "./attachments";
 import type { TimelineTurn } from "./timeline";
 
@@ -56,9 +57,9 @@ export function mediaKindOfPath(path: string): AgentMediaKindDto {
 }
 
 /**
- * A tool call that created media: its row stays outside a folded turn
- * (`08` R2). What the agent only looked at — kinds `read` and `search` —
- * folds as before.
+ * A tool call that created media (`08` R2): its row stands on its own and
+ * its media make the gallery of its finished turn. What the agent only
+ * looked at — kinds `read` and `search` — is not part of either.
  */
 export function createsMedia(item: ToolCallItem): boolean {
   return (
@@ -66,7 +67,32 @@ export function createsMedia(item: ToolCallItem): boolean {
   );
 }
 
-/** The media a turn created, by the rule of rows kept outside its fold. */
+/**
+ * The gallery of a finished turn under its answer (`08` R2): the media its
+ * tool calls created, in order of appearance, without those whose path the
+ * answer already shows as a tile. Empty for a live turn.
+ */
+export function turnGallery(
+  turn: TimelineTurn,
+  answerPaths: readonly string[],
+): ChatMedia[] {
+  if (turn.live) return [];
+  const shown = new Set(answerPaths.map(pathKey));
+  const media: ChatMedia[] = [];
+  for (const entry of turn.entries) {
+    if (entry.kind !== "tools") continue;
+    for (const { item } of entry.rows) {
+      if (!createsMedia(item)) continue;
+      for (const segment of item.media) {
+        if (segment.path && shown.has(pathKey(segment.path))) continue;
+        media.push(chatMediaOf(item.id, segment));
+      }
+    }
+  }
+  return media;
+}
+
+/** The media a turn created, with those its answer also shows. */
 export function turnCreatedMediaCount(turn: TimelineTurn): number {
   let count = 0;
   for (const entry of turn.entries) {

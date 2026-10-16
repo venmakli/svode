@@ -36,7 +36,6 @@ import {
 import { cn } from "@/shared/lib/utils";
 import type {
   AgentActivityItemDto,
-  AgentDetailOutcomeDto,
   AgentSessionKeyDto,
   AgentSessionSnapshotDto,
 } from "../api/chat";
@@ -56,7 +55,7 @@ import {
   type ManualExpansion,
 } from "../model/expansion";
 import { turnChanges } from "../model/changed-files";
-import { chatMediaOf } from "../model/media";
+import { chatMediaOf, turnCreatedMediaCount } from "../model/media";
 import {
   lastWhere,
   projectTimeline,
@@ -68,9 +67,10 @@ import {
   type ToolRow,
 } from "../model/timeline";
 import { formatDuration } from "../model/format";
-import { detailNotice, ItemDetail } from "./item-detail";
+import { detailNotice, detailText, ItemDetail } from "./item-detail";
 import { LiveTurnEnd, LiveTurnMarker } from "./live-turn-marker";
 import { TurnChangedFiles } from "./turn-changed-files";
+import { TurnGallery } from "./turn-gallery";
 import { TurnRail } from "./turn-rail";
 import * as m from "@/paraglide/messages.js";
 
@@ -172,10 +172,15 @@ function TurnView({
         />
       </MessageScrollerItem>
     ) : null;
-  const changes = turnChanges(turn);
-  // Under the agent's last message, which stays visible in a folded turn.
-  const changesAfterId =
+  // The gallery of created media, then the changed files: under the
+  // agent's last message, which stays visible in a folded turn (`08` R2).
+  const tailAfterId =
     lastWhere(turn.entries, (entry) => entry.kind === "message")?.id ?? null;
+  const galleryRow =
+    !turn.live && turnCreatedMediaCount(turn) > 0 ? (
+      <TurnGallery key={`gallery:${turn.id}`} session={session} turn={turn} />
+    ) : null;
+  const changes = turnChanges(turn);
   const changesRow = changes ? (
     <MessageScrollerItem key={changedFilesKey(turn)}>
       <TurnChangedFiles
@@ -205,9 +210,9 @@ function TurnView({
       </MessageScrollerItem>,
     );
     if (summary && summary.afterId === entry.id) rows.push(summaryRow);
-    if (entry.id === changesAfterId) rows.push(changesRow);
+    if (entry.id === tailAfterId) rows.push(galleryRow, changesRow);
   }
-  if (changesAfterId === null) rows.push(changesRow);
+  if (tailAfterId === null) rows.push(galleryRow, changesRow);
   return <>{rows}</>;
 }
 
@@ -405,18 +410,6 @@ function UserMessageText({
         return <ImageMark key={index} name={part.name} />;
     }
   });
-}
-
-function detailText(detail: AgentDetailOutcomeDto | null): string | null {
-  if (detail?.outcome !== "available") return null;
-  const block = detail.blocks[0];
-  if (block?.type === "text") return block.text;
-  if (block?.type === "excerpt") {
-    return `${block.head}\n\n${m.sessions_chat_detail_omitted({
-      count: block.omittedChars.toLocaleString(),
-    })}\n\n${block.tail}`;
-  }
-  return null;
 }
 
 function Disclosure({

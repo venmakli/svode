@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import {
   dataImage,
+  markdownImages,
+  messageMediaPaths,
   textImageParts,
   withMediaImages,
   type TextImagePart,
@@ -178,4 +180,46 @@ test("a data image is read by its type and decoded size", () => {
   );
   expect(dataImage("data:application/pdf;base64,AAAA")).toBe(null);
   expect(dataImage("/abs/a.png")).toBe(null);
+});
+
+test("markdown images are read as the reader shows them: outside code, headings and links", () => {
+  expect(
+    markdownImages(
+      [
+        'Look ![Bunny](/a/bunny.png) and ![](<./two words.png> "title")',
+        "![paren](/a/one\\(1\\).png) `![code](/a/code.png)`",
+        "# ![heading](/a/heading.png)",
+        "[![linked](/a/linked.png)](https://example.com)",
+        "```",
+        "![fenced](/a/fenced.png)",
+        "```",
+        "![last](/a/last.png)",
+      ].join("\n"),
+    ),
+  ).toEqual([
+    { source: "/a/bunny.png", alt: "Bunny" },
+    { source: "./two words.png", alt: "" },
+    { source: "/a/one(1).png", alt: "paren" },
+    { source: "/a/last.png", alt: "last" },
+  ]);
+});
+
+test("an agent message shows as tiles its segments, local markdown images and MEDIA lines", () => {
+  expect(
+    messageMediaPaths(
+      [
+        "Done ![Bunny](/a/bunny.png) ![](out/pear.png)",
+        "![web](https://example.com/x.png) ![](data:image/png;base64,AAAA)",
+        "MEDIA:/a/apple.png",
+        "",
+      ].join("\n"),
+      [{ path: "/a/segment.png" }, { path: null }],
+      base,
+    ),
+  ).toEqual([
+    "/a/segment.png",
+    "/a/bunny.png",
+    "/work/project/out/pear.png",
+    "/a/apple.png",
+  ]);
 });

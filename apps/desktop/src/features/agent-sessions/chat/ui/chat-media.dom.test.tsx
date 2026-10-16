@@ -301,44 +301,67 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
   const tileOf = (id: string) =>
     rowOf(id)?.parentElement?.querySelector("[data-chat-media]");
 
-  test("a folded turn shows the rows of created media with their tiles and counts only what it folds", async () => {
+  const summaryOf = (count: number) =>
+    Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes(m.sessions_chat_turn_items({ count })),
+    );
+  const galleries = () =>
+    Array.from(
+      document.querySelectorAll(
+        `[role=group][aria-label="${m.sessions_chat_turn_gallery()}"]`,
+      ),
+    );
+  const follows = (first: Node, second: Node) =>
+    Boolean(
+      first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+
+  test("a folded turn shows what it created in a gallery under the answer and folds the rows", async () => {
     try {
       await mount();
-      // Created media stay outside the fold, what the agent read folds.
-      expect(Boolean(rowOf("gen1"))).toBe(true);
-      expect(Boolean(rowOf("gen2"))).toBe(true);
+      // The rows of created media fold with the rest and count.
+      expect(rowOf("gen1")).toBe(undefined);
+      expect(rowOf("gen2")).toBe(undefined);
       expect(rowOf("run")).toBe(undefined);
-      expect(rowOf("view")).toBe(undefined);
-      expect(text().includes(m.sessions_chat_turn_items({ count: 2 }))).toBe(
-        true,
-      );
-      // The rows stand between the summary row and the last message.
-      const summary = Array.from(document.querySelectorAll("button")).find(
-        (button) =>
-          button.textContent?.includes(
-            m.sessions_chat_turn_items({ count: 2 }),
-          ),
-      )!;
+      expect(Boolean(summaryOf(4))).toBe(true);
       const answer = Array.from(document.querySelectorAll("p")).find(
-        (element) => element.textContent === "Before",
+        (element) => element.textContent === "After",
       )!;
-      expect(
-        Boolean(
-          summary.compareDocumentPosition(rowOf("gen1")!) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-        ),
-      ).toBe(true);
-      expect(
-        Boolean(
-          rowOf("gen2")!.compareDocumentPosition(answer) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-        ),
-      ).toBe(true);
+      const [gallery] = galleries();
+      expect(follows(answer, gallery)).toBe(true);
       expect(sources.includes("/project/seen.png")).toBe(false);
 
+      // Six images: 2×2 whose last tile opens the rest.
+      const layout = gallery.querySelector("[data-media-layout]")!;
+      expect(layout.getAttribute("data-media-layout")).toBe("grid");
+      expect(layout.querySelectorAll("img").length).toBe(3);
+      const more = Array.from(gallery.querySelectorAll("button")).find(
+        (button) =>
+          button.getAttribute("aria-label") ===
+          m.sessions_chat_media_more_label({ count: 3 }),
+      );
+      await click(more);
+      await settle();
+      expect(
+        gallery
+          .querySelector("[data-media-layout]")!
+          .getAttribute("data-media-layout"),
+      ).toBe("expanded");
+      expect(gallery.querySelectorAll("img").length).toBe(6);
+
+      // Open, the rows show their tiles at their place; the tail stays.
+      await click(summaryOf(4));
+      await settle();
+      expect(Boolean(rowOf("gen1"))).toBe(true);
+      expect(Boolean(rowOf("run"))).toBe(true);
+      expect(follows(rowOf("gen2")!, answer)).toBe(true);
+      expect(galleries()[0]).toBe(gallery);
+      expect(follows(answer, gallery)).toBe(true);
+
       // One image: uncropped, its place reserved by its known size.
-      const single = buttonByLabel("a.png")!;
-      expect(single.tagName).toBe("BUTTON");
+      const single = tileOf("gen1")!.querySelector(
+        "button[aria-label='a.png']",
+      )!;
       expect(
         (single.getAttribute("style") ?? "").includes(
           "aspect-ratio: 400 / 200",
@@ -351,11 +374,15 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       expect(opened).toEqual(["/project/a.png"]);
 
       // Five images: 2×2 whose last tile opens the rest.
-      const layout = tileOf("gen2")!.querySelector("[data-media-layout]")!;
-      expect(layout.getAttribute("data-media-layout")).toBe("grid");
-      expect(layout.querySelectorAll("img").length).toBe(3);
+      const rowLayout = tileOf("gen2")!.querySelector("[data-media-layout]")!;
+      expect(rowLayout.getAttribute("data-media-layout")).toBe("grid");
+      expect(rowLayout.querySelectorAll("img").length).toBe(3);
       await click(
-        buttonByLabel(m.sessions_chat_media_more_label({ count: 2 })),
+        Array.from(tileOf("gen2")!.querySelectorAll("button")).find(
+          (button) =>
+            button.getAttribute("aria-label") ===
+            m.sessions_chat_media_more_label({ count: 2 }),
+        ),
       );
       await settle();
       const expanded = tileOf("gen2")!.querySelector("[data-media-layout]")!;
@@ -363,6 +390,7 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       expect(expanded.querySelectorAll("img").length).toBe(5);
     } finally {
       await unmountAll();
+      opened.length = 0;
     }
   });
 
@@ -414,6 +442,9 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
   test("tiles show loading, a missing file, too large, released, an unreadable format and a video frame", async () => {
     try {
       await mount();
+      // The rows of the finished turn, open.
+      await click(summaryOf(7));
+      await settle();
       const state = (id: string) =>
         tileOf(id)?.querySelector("[data-media-state]");
 
@@ -617,8 +648,11 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       ]);
       // Every move follows the end; none goes to a message above it.
       expect(moves.every((value) => value === 4900)).toBe(true);
-      expect(Boolean(rowOf("g9"))).toBe(true);
+      expect(rowOf("g9")).toBe(undefined);
       expect(rowOf("r9")).toBe(undefined);
+      expect(
+        Boolean(galleries()[0]?.querySelector("[aria-label='g.png']")),
+      ).toBe(true);
     } finally {
       await unmountAll();
     }
