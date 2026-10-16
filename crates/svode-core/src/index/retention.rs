@@ -186,13 +186,13 @@ impl Snapshot {
 }
 
 // Fingerprints of complete sqlite_master definitions from the shipped schemas:
-// 14: 68edf6b; 15: d7653f1; 16: 5d7c1f4; 17: 65c0607.
+// 14: 68edf6b; 15: d7653f1; 16: 5d7c1f4; 17: 65c0607; 18 keeps the DDL of 17.
 // Include tables, columns, constraints, FTS shadows, indexes, views and triggers.
 fn known_schema(version: i64) -> Option<&'static str> {
     match version {
         14 => Some("a6ae1f41bce86ebdbbb6c617fa23aa4733d0d49470913f90e6712dcbe712eedc"),
         15 | 16 => Some("f4d6d0171937d6834a6dd827294e53ac15f9f321a9fc9d9edbabf60d0731f723"),
-        17 => Some("ff16232afdc78ca4e0728fdee24e1b312e08550d694344d45d5403db8f974a34"),
+        17 | 18 => Some("ff16232afdc78ca4e0728fdee24e1b312e08550d694344d45d5403db8f974a34"),
         _ => None,
     }
 }
@@ -375,7 +375,7 @@ mod tests {
     async fn all_known_schemas_and_current_ddl_match_frozen_provenance() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().canonicalize().unwrap();
-        for version in 14..=17 {
+        for version in 14..=18 {
             fixture(&directory, &version.to_string(), version, "").await;
             let snapshot = Snapshot::capture(&directory, &version.to_string()).unwrap();
             assert!(derived(&snapshot).await.unwrap(), "version {version}");
@@ -409,7 +409,7 @@ mod tests {
             "CREATE TABLE routine_runs (id TEXT); INSERT INTO routine_runs VALUES ('keep');",
         )
         .await;
-        fixture(&directory, "2", 18, "").await;
+        fixture(&directory, "2", 19, "").await;
         fixture(
             &directory,
             "3",

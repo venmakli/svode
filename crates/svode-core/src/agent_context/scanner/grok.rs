@@ -239,6 +239,7 @@ pub(super) fn apply_skill_paths(policy: &mut AgentSourcePolicy, config: &Config)
                 place,
                 layout,
                 excluded_names: Vec::new(),
+                excluded_folders: Vec::new(),
                 switch: None,
             });
         }

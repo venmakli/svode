@@ -15,7 +15,8 @@ use crate::repo_path::{RootMode, normalize_repo_relative};
 use crate::space::read::resolve_space_target;
 use svode_core::content_tree::children::{DirectoryFacts, DirectoryKind, is_regular_source};
 use svode_core::page::identity::{
-    ArtifactKind, MarkdownIdentityFacts, SourceShape, resolve_markdown_identity,
+    ArtifactKind, MarkdownIdentityFacts, SourceShape, is_agent_context_source,
+    resolve_markdown_identity,
 };
 use svode_core::system_path;
 
@@ -631,20 +632,6 @@ fn is_system_source(name: &str) -> bool {
                 .and_then(|value| value.to_str()),
             Some("tmp" | "temp" | "lock" | "swp" | "swo")
         )
-}
-
-fn is_agent_context_source(name: &str) -> bool {
-    matches!(
-        name,
-        "AGENTS.md"
-            | "AGENTS.override.md"
-            | "CLAUDE.md"
-            | "CLAUDE.local.md"
-            | "GEMINI.md"
-            | "SOUL.md"
-            | "USER.md"
-            | "MEMORY.md"
-    )
 }
 
 fn snapshot_generation(

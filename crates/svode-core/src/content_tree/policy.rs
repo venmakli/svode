@@ -1,14 +1,9 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::read_tree_config;
+use crate::agent_adapters::PROJECT_INSTRUCTION_FILE_NAMES;
 
 const SYSTEM_EXCLUDED_DIRS: &[&str] = &[".git", ".svode", ".assets", ".templates"];
-const SYSTEM_EXCLUDED_FILE_NAMES: &[&str] = &[
-    "AGENTS.md",
-    "AGENTS.override.md",
-    "CLAUDE.md",
-    "CLAUDE.local.md",
-];
 const ROOT_AGENT_CONTEXT_FILES: &[&str] = &["GEMINI.md", "SOUL.md", "USER.md", "MEMORY.md"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,7 +246,7 @@ fn normalize_path(path: &Path) -> String {
 fn is_system_ignored_normalized(rel: &str, kind: TreePathKind) -> bool {
     let components = rel.split('/').collect::<Vec<_>>();
     let filename = components.last().copied().unwrap_or_default();
-    if SYSTEM_EXCLUDED_FILE_NAMES.contains(&filename)
+    if PROJECT_INSTRUCTION_FILE_NAMES.contains(&filename)
         || (components.len() == 1 && ROOT_AGENT_CONTEXT_FILES.contains(&filename))
     {
         return true;
@@ -361,6 +356,10 @@ mod tests {
             "docs/AGENTS.override.md",
             "CLAUDE.md",
             "docs/CLAUDE.local.md",
+            "QWEN.md",
+            "docs/HERMES.md",
+            "app/AGENT.md",
+            "Claude.md",
             "GEMINI.md",
             "SOUL.md",
             "USER.md",

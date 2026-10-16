@@ -64,6 +64,7 @@ struct RootSpec<'a> {
     root: PathBuf,
     owner: InstructionOwner,
     excluded_names: &'a [String],
+    excluded_folders: &'a [String],
     /// The root's place in the agent's precedence by nearness: project roots
     /// by their directory's distance from the target, then rule order.
     nearness: (u8, usize, usize),
@@ -308,6 +309,7 @@ fn roots<'a>(
                     root,
                     owner,
                     excluded_names: &rule.excluded_names,
+                    excluded_folders: &rule.excluded_folders,
                     nearness: (
                         u8::from(scope == SkillScope::Personal),
                         distance,
@@ -684,7 +686,10 @@ impl Scan<'_> {
                 return;
             }
         };
-        if root.excluded_names.contains(&parsed.name) {
+        let folder = entry.file_name().and_then(|name| name.to_str());
+        if root.excluded_names.contains(&parsed.name)
+            || folder.is_some_and(|folder| root.excluded_folders.iter().any(|name| name == folder))
+        {
             return;
         }
         let Some(owner) = canonical_skill_owner(

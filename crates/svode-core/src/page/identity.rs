@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::source::PageSourceError;
+use crate::agent_adapters::PROJECT_INSTRUCTION_FILE_NAMES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -184,19 +185,10 @@ fn is_routine_source(path: &str) -> bool {
 pub fn is_agent_context_source(source_path: &str) -> bool {
     let path = Path::new(source_path);
     let filename = path.file_name().and_then(|name| name.to_str());
-    if matches!(
-        filename,
-        Some(
-            "AGENTS.md"
-                | "AGENTS.override.md"
-                | "CLAUDE.md"
-                | "CLAUDE.local.md"
-                | "GEMINI.md"
-                | "SOUL.md"
-                | "USER.md"
-                | "MEMORY.md"
-        )
-    ) {
+    if filename.is_some_and(|name| {
+        PROJECT_INSTRUCTION_FILE_NAMES.contains(&name)
+            || matches!(name, "GEMINI.md" | "SOUL.md" | "USER.md" | "MEMORY.md")
+    }) {
         return true;
     }
     let components = path
@@ -252,6 +244,7 @@ mod tests {
             Some(PageRole::Standalone)
         );
         assert!(is_agent_context_source("AGENTS.md"));
+        assert!(is_agent_context_source("docs/QWEN.md"));
         assert!(is_agent_context_source(".agents/skills/test/SKILL.md"));
     }
 

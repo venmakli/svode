@@ -17,6 +17,26 @@ pub enum SourceRegistryError {
 pub const CUSTOM_AGENT_ID_PREFIX: &str = "custom-";
 const MAX_AGENT_ID_LEN: usize = 64;
 
+/// Every file name an agent of the list reads as an instruction in the
+/// folders of a project. These files belong to Agent Context, not to the
+/// content of a Space.
+pub const PROJECT_INSTRUCTION_FILE_NAMES: &[&str] = &[
+    "AGENTS.md",
+    "AGENTS.MD",
+    "AGENTS.override.md",
+    "Agents.md",
+    "agents.md",
+    "AGENT.md",
+    "CLAUDE.md",
+    "CLAUDE.MD",
+    "CLAUDE.local.md",
+    "Claude.md",
+    "claude.md",
+    "QWEN.md",
+    "HERMES.md",
+    ".hermes.md",
+];
+
 /// A built-in agent of this Svode release (Stage 10 `03` A2): the closed
 /// portable set whose ids alone may appear in portable data. Matches over it
 /// belong to the agent descriptions; every other consumer derives its list
@@ -470,6 +490,9 @@ pub struct SkillRootRule {
     pub layout: SkillLayout,
     /// Skill names the agent never takes from this root.
     pub excluded_names: Vec<String>,
+    /// Skill folders the agent never takes from this root, by the folder's
+    /// own name whatever the skill's `name` says.
+    pub excluded_folders: Vec<String>,
     /// The root counts only while this setting is on.
     pub switch: Option<SourceSwitch>,
 }
@@ -945,6 +968,7 @@ impl AgentAdapterRegistry {
                     },
                     layout,
                     excluded_names: Vec::new(),
+                    excluded_folders: Vec::new(),
                     switch: None,
                 };
                 let personal = |kind, path: &Path| SkillRootRule {
@@ -952,6 +976,7 @@ impl AgentAdapterRegistry {
                     place: SkillPlace::Personal(path_string(path)),
                     layout,
                     excluded_names: Vec::new(),
+                    excluded_folders: Vec::new(),
                     switch: None,
                 };
                 (
@@ -1309,7 +1334,7 @@ impl AgentAdapterRegistry {
                 let mut roots = families
                     .iter()
                     .map(|(family, excluded)| {
-                        excluding(
+                        excluding_folders(
                             skill_root(
                                 SkillPlace::Walk {
                                     walk: DirectoryWalk::Target,
@@ -1322,7 +1347,7 @@ impl AgentAdapterRegistry {
                     })
                     .collect::<Vec<_>>();
                 roots.extend(families.iter().map(|(family, excluded)| {
-                    excluding(
+                    excluding_folders(
                         skill_root(
                             SkillPlace::Personal(path_string(&home.join(family).join("skills"))),
                             layout,
@@ -2090,10 +2115,12 @@ const MAX_SKILL_DEPTH: usize = 8;
 /// Codex finds a skill directory at most six levels below its root.
 const CODEX_SKILL_DEPTH: usize = 6;
 
-/// Cursor CLI never reads these skills of a `.codex/skills` root.
+/// Cursor CLI never reads these skill folders of a `.codex/skills` root,
+/// its own misspelt `opneai-docs` included.
 const CURSOR_CODEX_SYSTEM_SKILLS: &[&str] = &[
     "imagegen",
     "openai-docs",
+    "opneai-docs",
     "plugin-creator",
     "skill-creator",
     "skill-installer",
@@ -2131,6 +2158,11 @@ fn excluding(mut root: SkillRootRule, names: &[&str]) -> SkillRootRule {
     root
 }
 
+fn excluding_folders(mut root: SkillRootRule, folders: &[&str]) -> SkillRootRule {
+    root.excluded_folders = folders.iter().map(|folder| (*folder).to_string()).collect();
+    root
+}
+
 fn rule(
     directories: InstructionDirectories,
     names: &[&str],
@@ -2159,6 +2191,7 @@ fn skill_root(place: SkillPlace, layout: SkillLayout) -> SkillRootRule {
         place,
         layout,
         excluded_names: Vec::new(),
+        excluded_folders: Vec::new(),
         switch: None,
     }
 }
@@ -2172,6 +2205,7 @@ fn walk_skills(kind: SkillDiscoveryKind, walk: DirectoryWalk, relative: &str) ->
         },
         layout: SkillLayout::DIRECT_CHILDREN,
         excluded_names: Vec::new(),
+        excluded_folders: Vec::new(),
         switch: None,
     }
 }
@@ -2182,6 +2216,7 @@ fn personal_skills(kind: SkillDiscoveryKind, path: &Path) -> SkillRootRule {
         place: SkillPlace::Personal(path_string(path)),
         layout: SkillLayout::DIRECT_CHILDREN,
         excluded_names: Vec::new(),
+        excluded_folders: Vec::new(),
         switch: None,
     }
 }
@@ -2346,6 +2381,30 @@ mod tests {
         let mut permissions = path.metadata().unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[test]
+    fn project_instruction_file_names_cover_every_declared_walk() {
+        let environment = SourceRegistryEnvironment::for_tests(PathBuf::from("/home/test"));
+        for policy in AgentAdapterRegistry.source_policies(&environment) {
+            let InstructionDiscoveryPolicy::Declared(declared) =
+                policy.capabilities.instructions.policy
+            else {
+                continue;
+            };
+            for rule in declared.rules {
+                if !matches!(rule.directories, InstructionDirectories::Walk(_)) {
+                    continue;
+                }
+                for name in rule.names.iter().filter(|name| !name.contains('/')) {
+                    assert!(
+                        PROJECT_INSTRUCTION_FILE_NAMES.contains(&name.as_str()),
+                        "{} reads {name} in project folders",
+                        policy.display_name
+                    );
+                }
+            }
+        }
     }
 
     #[test]

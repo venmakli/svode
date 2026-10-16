@@ -1287,6 +1287,31 @@ mod tests {
         assert!(items.iter().all(|item| item.path != path_string(&system)));
     }
 
+    #[test]
+    fn cursor_drops_the_codex_system_skills_by_their_folder() {
+        let fixture = Fixture::new();
+        let home = fixture.home();
+        // Live Cursor 2026.10.01: the folder decides, not the `name`.
+        let renamed = fixture.write(
+            home,
+            ".codex/skills/img-renamed/SKILL.md",
+            &skill("imagegen"),
+        );
+        let installer = fixture.write(
+            home,
+            ".codex/skills/skill-installer/SKILL.md",
+            &skill("custom-installer"),
+        );
+        let misspelt = fixture.write(home, ".codex/skills/opneai-docs/SKILL.md", &skill("docs"));
+
+        let items = fixture.items(&[CURSOR]);
+
+        assert_eq!(providers(&items, &renamed), vec![CURSOR]);
+        for dropped in [&installer, &misspelt] {
+            assert!(items.iter().all(|item| item.path != path_string(dropped)));
+        }
+    }
+
     fn hermes_project(files: &[(&str, &str)]) -> (Fixture, Vec<ContextItem>) {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.project.path().join("app")).unwrap();

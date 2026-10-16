@@ -60,7 +60,11 @@ use super::IndexError;
 /// Bumped to 17 in Stage 8 DF-088: stores Collection membership independently
 /// from global discoverability and rebuilds FTS/Knowledge projections without
 /// user- or Git-hidden Page content.
-pub const SCHEMA_VERSION: i64 = 17;
+///
+/// Bumped to 18 in Stage 10 `05`: rebuilds projections without the
+/// instruction files every agent of the list reads, such as `QWEN.md`, which
+/// left the content of a Space.
+pub const SCHEMA_VERSION: i64 = 18;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaStatus {

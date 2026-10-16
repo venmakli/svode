@@ -16,6 +16,7 @@ use crate::repo_path::{RootMode, repo_relative_from_base, repo_relative_from_pat
 use crate::routines::{
     CollectionEventOrigin, CollectionEventSourceKind, RoutineInvalidationPayload, RoutineOwnerKind,
 };
+use svode_core::agent_adapters::PROJECT_INSTRUCTION_FILE_NAMES;
 use svode_core::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::routines::parser as routine_parser;
@@ -311,8 +312,8 @@ fn process_published_events(
                 {
                     agent_context_targets.insert(space.to_string());
                 }
-                // Another observed source, such as `QWEN.md` or
-                // `opencode.json`, may also be content of the Space.
+                // Another observed source, such as `opencode.json`, may
+                // also be content of the Space.
                 if standard_agent_context_path.is_some() {
                     continue;
                 }
@@ -856,10 +857,7 @@ fn agent_context_observed_path(space_root: &Path, path: &Path) -> Option<String>
     let basename = Path::new(&normalized)
         .file_name()
         .and_then(|name| name.to_str())?;
-    let standard = matches!(
-        basename,
-        "AGENTS.md" | "AGENTS.override.md" | "CLAUDE.md" | "CLAUDE.local.md"
-    );
+    let standard = PROJECT_INSTRUCTION_FILE_NAMES.contains(&basename);
     let recognized_root = !normalized.contains('/')
         && matches!(basename, "GEMINI.md" | "SOUL.md" | "USER.md" | "MEMORY.md");
     let exact_config = matches!(
@@ -1464,6 +1462,8 @@ mod tests {
         for relative in [
             "AGENTS.md",
             "docs/CLAUDE.local.md",
+            "docs/QWEN.md",
+            "HERMES.md",
             "GEMINI.md",
             ".claude/CLAUDE.md",
             ".codex/config.toml",
