@@ -2554,6 +2554,7 @@
   "sessions_chat_load_history": "Load history",
   "sessions_chat_load_history_title": "History is not loaded",
   "sessions_chat_load_history_description": "Loading the history connects the agent to this session. While the chat drives it, do not continue it in another terminal.",
+  "sessions_chat_load_history_turn_open_description": "A turn is open in this session, but no process is seen running it. Loading the history connects the agent to the session and may interrupt that turn if another process still runs it.",
   "sessions_chat_attach_title": "Connect the agent to the session",
   "sessions_chat_attach_description": "Sending connects the agent to this session. While the chat drives it, do not continue it in another terminal.",
   "sessions_chat_attach_confirm": "Connect and send",

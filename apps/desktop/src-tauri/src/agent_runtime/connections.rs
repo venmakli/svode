@@ -122,8 +122,12 @@ pub enum SessionOpening {
         liveness: ExternalLiveness,
     },
     /// Attaching the session needs the user's confirmation of this attempt:
-    /// nothing tells whether another process writes to it.
-    ConfirmationRequired,
+    /// nothing tells whether another process writes to it. `turn_open`:
+    /// the agent's native status tells a turn open, which attaching may
+    /// interrupt if another process still runs it (DF-177 R2).
+    ConfirmationRequired {
+        turn_open: bool,
+    },
     /// Another process writes to the session; manual fallback only.
     ExternalActive,
     /// A managed terminal of Svode drives the session.
@@ -356,16 +360,18 @@ impl AgentConnections {
     /// Opens an existing session of `agent` in the chat, a C1 boundary: a
     /// session the runtime drives is followed as it is; otherwise its
     /// history is read without a writer where the agent has evidence for
-    /// it, else the session is attached with the writer. `attach` attaches
-    /// it right away and is the user's confirmation of this one attempt.
-    /// Opening never sends a prompt, and a session a managed terminal
-    /// drives is left to it.
+    /// it, also while another process may run a turn of it (`turn_open` by
+    /// the native status, DF-177 R1), else the session is attached with the
+    /// writer. `attach` attaches it right away and is the user's
+    /// confirmation of this one attempt. Opening never sends a prompt, and
+    /// a session a managed terminal drives is left to it.
     pub async fn open_session(
         &self,
         agent: &str,
         session: &SessionKey,
         cwd: &Path,
         liveness: ExternalLiveness,
+        turn_open: bool,
         attach: bool,
     ) -> Result<SessionOpening, AgentRuntimeError> {
         if self.runtime.writers().writer(session) == Some(Writer::Pty) {
@@ -376,16 +382,18 @@ impl AgentConnections {
             Err(ConnectRefusal::Unavailable(reason)) => {
                 return Ok(SessionOpening::Unavailable { reason });
             }
-            Err(ConnectRefusal::Failed(error)) => return opening(Err(error), session, liveness),
+            Err(ConnectRefusal::Failed(error)) => {
+                return opening(Err(error), session, liveness, turn_open);
+            }
         };
         if !attach {
             match self
                 .runtime
-                .read_session(lease.connection(), session, cwd)
+                .read_session(lease.connection(), session, cwd, liveness, turn_open)
                 .await
             {
                 Err(AgentRuntimeError::ReadOnlyUnsupported) => {}
-                read => return opening(read, session, liveness),
+                read => return opening(read, session, liveness, turn_open),
             }
         }
         let unknown = if attach {
@@ -397,7 +405,7 @@ impl AgentConnections {
             .runtime
             .open_session(lease.connection(), session, cwd, liveness, unknown)
             .await;
-        opening(attached, session, liveness)
+        opening(attached, session, liveness, turn_open)
     }
 
     /// The chat no longer drives the session, e.g. to continue it in the
@@ -525,6 +533,7 @@ fn opening(
     result: Result<(), AgentRuntimeError>,
     session: &SessionKey,
     liveness: ExternalLiveness,
+    turn_open: bool,
 ) -> Result<SessionOpening, AgentRuntimeError> {
     match result {
         Ok(()) => Ok(SessionOpening::Opened {
@@ -532,7 +541,9 @@ fn opening(
             liveness,
         }),
         Err(AgentRuntimeError::WriterRefused { refusal }) => Ok(match refusal {
-            WriterRefusal::ConfirmationRequired => SessionOpening::ConfirmationRequired,
+            WriterRefusal::ConfirmationRequired => {
+                SessionOpening::ConfirmationRequired { turn_open }
+            }
             WriterRefusal::ExternalActive => SessionOpening::ExternalActive,
             WriterRefusal::WriterActive {
                 writer: Writer::Pty,

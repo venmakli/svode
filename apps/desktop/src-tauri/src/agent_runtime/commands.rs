@@ -228,6 +228,7 @@ pub async fn agent_runtime_open_session(
             &target.key,
             &target.cwd,
             target.liveness,
+            target.turn_open,
             attach,
         )
         .await?)

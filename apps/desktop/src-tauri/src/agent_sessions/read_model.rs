@@ -2425,6 +2425,14 @@ mod tests {
     }
 
     fn chat_liveness(state: &AgentSessionsState, project: &Path, id: &str) -> ExternalLiveness {
+        chat_target_of(state, project, id).liveness
+    }
+
+    fn chat_target_of(
+        state: &AgentSessionsState,
+        project: &Path,
+        id: &str,
+    ) -> crate::agent_sessions::chat::ChatTarget {
         crate::agent_sessions::chat::chat_target(
             state,
             project.to_string_lossy().into_owned(),
@@ -2434,7 +2442,6 @@ mod tests {
         )
         .expect("chat target")
         .expect("listed session")
-        .liveness
     }
 
     fn live_child() -> std::process::Child {
@@ -2529,11 +2536,10 @@ mod tests {
             "hermes:unsignalled-stale",
             "hermes:closed",
         ] {
-            assert_eq!(
-                chat_liveness(&state, &project, id),
-                ExternalLiveness::Unknown,
-                "{id}"
-            );
+            let target = chat_target_of(&state, &project, id);
+            assert_eq!(target.liveness, ExternalLiveness::Unknown, "{id}");
+            // Only a turn still open may be run by another process (DF-177).
+            assert_eq!(target.turn_open, id == "hermes:unsignalled", "{id}");
         }
     }
 

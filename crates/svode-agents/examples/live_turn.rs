@@ -140,6 +140,7 @@ async fn main() {
         acp_id_is_native: false,
         lists_catalog: list,
         read_only_open: read.is_some(),
+        reads_during_external_turn: read.is_some(),
         writer_refusal,
         session_per_connection: false,
         draft_session: false,
@@ -149,7 +150,10 @@ async fn main() {
     if let Some(session_id) = read {
         let key = SessionKey::from_acp(&agent, &session_id, false);
         let started = Instant::now();
-        match runtime.read_session(connection, &key, &cwd).await {
+        match runtime
+            .read_session(connection, &key, &cwd, ExternalLiveness::Free, false)
+            .await
+        {
             Ok(()) => {
                 let snapshot = runtime.subscribe(&key).unwrap().snapshot;
                 println!(

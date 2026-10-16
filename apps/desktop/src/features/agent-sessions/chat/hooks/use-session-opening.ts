@@ -18,7 +18,7 @@ export type SessionOpening =
       /** Grows when the session is attached again; the chat subscribes anew. */
       epoch: number;
     }
-  | { state: "confirmation_required" }
+  | { state: "confirmation_required"; turnOpen: boolean }
   | { state: "external_active" }
   | { state: "terminal_active" }
   | { state: "unsupported" }
@@ -149,6 +149,8 @@ function opened(current: SessionOpening, outcome: AgentSessionOpeningDto): Sessi
       return current.state === "opened"
         ? { ...current, liveness: "external_active" }
         : { state: "external_active" };
+    case "confirmation_required":
+      return { state: "confirmation_required", turnOpen: outcome.turnOpen };
     case "unavailable":
       return { state: "unavailable", reason: outcome.reason };
     case "auth_required":

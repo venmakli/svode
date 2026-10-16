@@ -216,6 +216,7 @@ pub fn custom_launch_plan(
         acp_id_is_native: false,
         lists_catalog: true,
         read_only_open: false,
+        reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
         draft_session: false,
@@ -358,6 +359,7 @@ mod tests {
         assert!(!launch.acp_id_is_native);
         assert!(launch.lists_catalog);
         assert!(!launch.read_only_open);
+        assert!(!launch.reads_during_external_turn);
 
         assert_eq!(
             custom_launch_plan(&agent, Some(false), &context).unwrap_err(),

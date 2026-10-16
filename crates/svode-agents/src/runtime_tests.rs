@@ -105,6 +105,7 @@ fn launch() -> AcpLaunch {
         acp_id_is_native: false,
         lists_catalog: false,
         read_only_open: false,
+        reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
         draft_session: false,
@@ -2971,6 +2972,7 @@ async fn an_opened_session_reports_its_settings_and_keeps_replayed_ones() {
 fn reading(writer_refusal: Option<&str>) -> AcpLaunch {
     AcpLaunch {
         read_only_open: true,
+        reads_during_external_turn: true,
         writer_refusal: writer_refusal.map(str::to_string),
         session_per_connection: false,
         draft_session: false,
@@ -2988,8 +2990,30 @@ async fn read(
     replay: Vec<Value>,
     close: bool,
 ) -> Result<(), AgentRuntimeError> {
+    read_with(
+        runtime,
+        id,
+        agent,
+        key,
+        replay,
+        close,
+        (ExternalLiveness::Unknown, false),
+    )
+    .await
+}
+
+/// [`read`] with the host's liveness and open turn of the session.
+async fn read_with(
+    runtime: &AgentRuntime,
+    id: ConnectionId,
+    agent: &mut ScriptedAgent,
+    key: &SessionKey,
+    replay: Vec<Value>,
+    close: bool,
+    (liveness, turn_open): (ExternalLiveness, bool),
+) -> Result<(), AgentRuntimeError> {
     let (read, ()) = tokio::join!(
-        runtime.read_session(id, key, Path::new("/project")),
+        runtime.read_session(id, key, Path::new("/project"), liveness, turn_open),
         async {
             let load = agent.expect("session/load").await;
             assert_eq!(load["params"]["sessionId"], key.session_id.as_str());
@@ -3021,7 +3045,13 @@ async fn reading_replays_the_history_then_closes_the_session_without_a_writer() 
     let key = SessionKey::from_acp("scripted", "s7", false);
     let (id, mut agent) = attached_with(&runtime, &reading(None));
     let (initialized, ()) = tokio::join!(
-        runtime.read_session(id, &key, Path::new("/project")),
+        runtime.read_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            false
+        ),
         async {
             agent
                 .initialize(json!({ "loadSession": true, "sessionCapabilities": { "close": {} } }))
@@ -3086,7 +3116,13 @@ async fn an_agent_without_close_keeps_the_read_session_attached_and_idle() {
     let key = SessionKey::from_acp("scripted", "s7", false);
     let (id, mut agent) = attached_with(&runtime, &reading(None));
     let (initialized, ()) = tokio::join!(
-        runtime.read_session(id, &key, Path::new("/project")),
+        runtime.read_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            false
+        ),
         async {
             agent.initialize(json!({ "loadSession": true })).await;
             let load = agent.expect("session/load").await;
@@ -3137,7 +3173,13 @@ async fn reading_goes_on_while_another_process_writes_unless_the_agent_refuses()
     let (id, mut agent) = attached_with(&runtime, &reading(Some("thread_active_writer")));
     agent_initialized(&runtime, id, &mut agent).await;
     let (refused, ()) = tokio::join!(
-        runtime.read_session(id, &other, Path::new("/project")),
+        runtime.read_session(
+            id,
+            &other,
+            Path::new("/project"),
+            ExternalLiveness::ExternalActive,
+            false,
+        ),
         async {
             let load = agent.expect("session/load").await;
             agent
@@ -3195,12 +3237,93 @@ async fn reading_goes_on_while_another_process_writes_unless_the_agent_refuses()
     assert_eq!(runtime.writers().writer(&other), None);
 }
 
+#[tokio::test]
+async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_reads_the_session() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s7", false);
+    let (id, mut agent) = attached_with(
+        &runtime,
+        &AcpLaunch {
+            reads_during_external_turn: false,
+            ..reading(None)
+        },
+    );
+    agent_initialized(&runtime, id, &mut agent).await;
+    // An external writer, or a turn open with nothing known of who runs
+    // it: the agent hears nothing of the session.
+    for (liveness, turn_open) in [
+        (ExternalLiveness::ExternalActive, false),
+        (ExternalLiveness::ExternalActive, true),
+        (ExternalLiveness::Unknown, true),
+    ] {
+        assert_eq!(
+            runtime
+                .read_session(id, &key, Path::new("/project"), liveness, turn_open)
+                .await,
+            Err(AgentRuntimeError::ReadOnlyUnsupported),
+            "{liveness:?} {turn_open}"
+        );
+    }
+    agent.silent().await;
+    assert!(runtime.subscribe(&key).is_err());
+    // Without a turn another process may run, it is read as before.
+    for evidence in [
+        (ExternalLiveness::Unknown, false),
+        (ExternalLiveness::Free, true),
+    ] {
+        read_with(
+            &runtime,
+            id,
+            &mut agent,
+            &key,
+            vec![user_chunk("Hello")],
+            true,
+            evidence,
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        messages(&runtime.subscribe(&key).unwrap().snapshot),
+        vec!["Hello"]
+    );
+
+    // An agent with the evidence reads it during such a turn too.
+    let other = SessionKey::from_acp("scripted", "s8", false);
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    agent_initialized(&runtime, id, &mut agent).await;
+    for evidence in [
+        (ExternalLiveness::ExternalActive, false),
+        (ExternalLiveness::Unknown, true),
+    ] {
+        read_with(
+            &runtime,
+            id,
+            &mut agent,
+            &other,
+            vec![user_chunk("Hello")],
+            true,
+            evidence,
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(runtime.writers().writer(&other), None);
+    agent.silent().await;
+}
+
 /// Initializes the connection through a read of a session the agent does
 /// not have; nothing is registered.
 async fn agent_initialized(runtime: &AgentRuntime, id: ConnectionId, agent: &mut ScriptedAgent) {
     let missing = SessionKey::from_acp("scripted", "missing", false);
     let (read, ()) = tokio::join!(
-        runtime.read_session(id, &missing, Path::new("/project")),
+        runtime.read_session(
+            id,
+            &missing,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            false
+        ),
         async {
             agent
                 .initialize(json!({ "loadSession": true, "sessionCapabilities": { "close": {} } }))
@@ -3226,7 +3349,15 @@ async fn without_read_only_evidence_the_history_is_not_read_and_an_external_writ
     let key = SessionKey::from_acp("scripted", "s7", false);
     let (id, mut agent) = attached(&runtime);
     assert_eq!(
-        runtime.read_session(id, &key, Path::new("/project")).await,
+        runtime
+            .read_session(
+                id,
+                &key,
+                Path::new("/project"),
+                ExternalLiveness::Unknown,
+                false
+            )
+            .await,
         Err(AgentRuntimeError::ReadOnlyUnsupported)
     );
     let (opened, ()) = tokio::join!(
@@ -3251,7 +3382,13 @@ async fn without_read_only_evidence_the_history_is_not_read_and_an_external_writ
     // An agent that does not replay history is not read either.
     let (id, mut agent) = attached_with(&runtime, &reading(None));
     let (read, ()) = tokio::join!(
-        runtime.read_session(id, &key, Path::new("/project")),
+        runtime.read_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            false
+        ),
         agent.initialize(json!({ "sessionCapabilities": { "resume": {} } }))
     );
     assert_eq!(read, Err(AgentRuntimeError::ReadOnlyUnsupported));
@@ -3272,7 +3409,13 @@ async fn a_session_the_runtime_drives_is_not_read_again() {
         agent.open_session()
     );
     runtime
-        .read_session(id, &key, Path::new("/project"))
+        .read_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Unknown,
+            false,
+        )
         .await
         .unwrap();
     agent.silent().await;

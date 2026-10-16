@@ -9,7 +9,7 @@ use svode_agents::identity::SessionKey;
 use svode_agents::writer::ExternalLiveness;
 
 use super::AgentSessionsState;
-use super::live_status::external_liveness;
+use super::live_status::{external_liveness, native_turn_open};
 use super::read_model;
 use super::reentry::resolve_safe_cwd;
 use super::types::catalog_session_key;
@@ -22,6 +22,8 @@ pub struct ChatTarget {
     pub key: SessionKey,
     pub cwd: PathBuf,
     pub liveness: ExternalLiveness,
+    /// The agent's native status tells a turn open, whoever runs it.
+    pub turn_open: bool,
 }
 
 /// The chat target of a listed session, under the native id the agent
@@ -56,5 +58,6 @@ pub fn chat_target(
         key,
         cwd: PathBuf::from(cwd),
         liveness: external_liveness(session),
+        turn_open: native_turn_open(session),
     }))
 }

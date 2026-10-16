@@ -140,7 +140,11 @@ export function OpenedSessionChat({
         <OpeningState
           icon={<History />}
           title={m.sessions_chat_load_history_title()}
-          description={m.sessions_chat_load_history_description()}
+          description={
+            state.turnOpen
+              ? m.sessions_chat_load_history_turn_open_description()
+              : m.sessions_chat_load_history_description()
+          }
         >
           <Button size="sm" disabled={opening.attaching} onClick={opening.loadHistory}>
             <History data-icon="inline-start" />

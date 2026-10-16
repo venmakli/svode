@@ -643,13 +643,61 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       openingOutcome = (attach) =>
         attach
           ? { outcome: "opened", session: key, liveness: "unknown" }
-          : { outcome: "confirmation_required" };
+          : { outcome: "confirmation_required", turnOpen: false };
       await mountPeek("/p-own", { sessionId: "hermes:own", launchId: null });
 
       expect(openings).toEqual([false]);
       expect(document.body.textContent?.includes("Earlier")).toBe(false);
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_load_history_description()),
+      ).toBe(true);
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_chat_load_history_turn_open_description(),
+        ),
+      ).toBe(false);
       expect(Boolean(buttonByText(m.sessions_action_open_in_terminal()))).toBe(true);
 
+      await click(buttonByText(m.sessions_chat_load_history()));
+      expect(openings).toEqual([false, true]);
+      expect(document.body.textContent?.includes("Earlier")).toBe(true);
+    },
+  );
+
+  peekTest(
+    "loading the history of a session with an open turn warns that it may interrupt the turn",
+    async () => {
+      const key = { agent: "grok-build", namespace: "native", sessionId: "turn" };
+      listed = [
+        session({
+          id: "grok-build:turn",
+          source: "grok-build",
+          title: "Turn",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      snapshotWriter = "acp";
+      openingOutcome = (attach) =>
+        attach
+          ? { outcome: "opened", session: key, liveness: "unknown" }
+          : { outcome: "confirmation_required", turnOpen: true };
+      await mountPeek("/p-turn", { sessionId: "grok-build:turn", launchId: null });
+
+      expect(openings).toEqual([false]);
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_load_history_title()),
+      ).toBe(true);
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_chat_load_history_turn_open_description(),
+        ),
+      ).toBe(true);
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_load_history_description()),
+      ).toBe(false);
+
+      // The confirmation is of this one attempt: the session is attached.
       await click(buttonByText(m.sessions_chat_load_history()));
       expect(openings).toEqual([false, true]);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);

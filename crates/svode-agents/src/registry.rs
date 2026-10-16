@@ -809,6 +809,21 @@ impl AdapterRuntimeRegistry {
         )
     }
 
+    /// Whether loading and closing a session while another process may run
+    /// a turn in it leave that turn and the agent's store alone (DF-177
+    /// R1). E01: Claude Code loads such a session and its jsonl stays
+    /// whole after `close`; Codex refuses it with `thread_active_writer`
+    /// and keeps its store. Acceptance 8.7: Qwen Code writes nothing to its
+    /// chat log. Grok Build ends the open turn with `turn_ended`
+    /// `interrupted`, and Hermes replaces the active messages of the
+    /// conversation; the other agents were not measured.
+    pub fn reads_during_external_turn(&self, adapter: AgentAdapterKind) -> bool {
+        matches!(
+            adapter,
+            AgentAdapterKind::ClaudeCode | AgentAdapterKind::Codex | AgentAdapterKind::QwenCode
+        )
+    }
+
     /// Launch plan of the agent's ACP entrypoint for the user's executable:
     /// its own command, or the installed adapter run by the user's Node.js
     /// (`adapter_run`). `None` for an agent without an entrypoint, or for an
@@ -851,6 +866,7 @@ impl AdapterRuntimeRegistry {
             // change their store at most in service records, which Svode
             // accepts; Qwen Code leaves it unchanged.
             read_only_open: true,
+            reads_during_external_turn: self.reads_during_external_turn(adapter),
             writer_refusal: match adapter {
                 AgentAdapterKind::Codex => Some("thread_active_writer".into()),
                 // Claude loads a session another process writes to.
@@ -2516,6 +2532,7 @@ mod tests {
         assert!(launch.acp_id_is_native);
         assert!(launch.lists_catalog);
         assert!(launch.read_only_open);
+        assert!(launch.reads_during_external_turn);
         assert_eq!(launch.writer_refusal, None);
         assert!(launch.draft_session);
 
@@ -2530,6 +2547,7 @@ mod tests {
         assert!(codex.acp_id_is_native);
         assert!(codex.lists_catalog);
         assert!(codex.read_only_open);
+        assert!(codex.reads_during_external_turn);
         assert!(codex.draft_session);
         assert_eq!(
             codex.writer_refusal.as_deref(),
@@ -2670,6 +2688,36 @@ mod tests {
         );
         assert!(AdapterRuntimeRegistry.lists_catalog(agent));
         assert!(AdapterRuntimeRegistry.acp_id_is_native(agent));
+    }
+
+    #[test]
+    fn only_claude_code_codex_and_qwen_code_read_a_session_during_an_external_turn() {
+        for agent in AgentAdapterKind::ALL {
+            assert_eq!(
+                AdapterRuntimeRegistry.reads_during_external_turn(agent),
+                matches!(
+                    agent,
+                    AgentAdapterKind::ClaudeCode
+                        | AgentAdapterKind::Codex
+                        | AgentAdapterKind::QwenCode
+                ),
+                "{agent:?}"
+            );
+        }
+        for (agent, executable) in [
+            (AgentAdapterKind::Hermes, "/bin/hermes"),
+            (AgentAdapterKind::GrokBuild, "/bin/grok"),
+            (AgentAdapterKind::QwenCode, "/bin/qwen"),
+        ] {
+            let launch = AdapterRuntimeRegistry
+                .acp_launch(agent, Path::new(executable), None, Path::new("/home"))
+                .unwrap();
+            assert_eq!(
+                launch.reads_during_external_turn,
+                agent == AgentAdapterKind::QwenCode,
+                "{agent:?}"
+            );
+        }
     }
 
     #[test]

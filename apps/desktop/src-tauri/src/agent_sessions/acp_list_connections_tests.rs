@@ -45,6 +45,7 @@ done"#;
         acp_id_is_native: false,
         lists_catalog: true,
         read_only_open: false,
+        reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
         draft_session: false,
@@ -552,6 +553,7 @@ done"#;
         acp_id_is_native: true,
         lists_catalog: false,
         read_only_open: false,
+        reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
         draft_session: false,
@@ -794,6 +796,7 @@ done"#;
         acp_id_is_native: true,
         lists_catalog: false,
         read_only_open,
+        reads_during_external_turn: read_only_open,
         writer_refusal: None,
         session_per_connection: false,
         draft_session: false,
@@ -827,7 +830,14 @@ async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence
     let key = SessionKey::from_acp("codex", "h1", true);
 
     let opening = connections
-        .open_session("codex", &key, dir.path(), ExternalLiveness::Unknown, false)
+        .open_session(
+            "codex",
+            &key,
+            dir.path(),
+            ExternalLiveness::Unknown,
+            false,
+            false,
+        )
         .await
         .unwrap();
     assert_eq!(opening, opened(&key));
@@ -868,6 +878,7 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 &key,
                 dir.path(),
                 ExternalLiveness::ExternalActive,
+                false,
                 false
             )
             .await
@@ -887,6 +898,7 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 &key,
                 dir.path(),
                 ExternalLiveness::ExternalActive,
+                false,
                 true
             )
             .await
@@ -903,6 +915,7 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 &key,
                 dir.path(),
                 ExternalLiveness::ExternalActive,
+                false,
                 false
             )
             .await
@@ -940,10 +953,17 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
 
     assert_eq!(
         connections
-            .open_session("hermes", &key, dir.path(), ExternalLiveness::Unknown, false)
+            .open_session(
+                "hermes",
+                &key,
+                dir.path(),
+                ExternalLiveness::Unknown,
+                false,
+                false
+            )
             .await
             .unwrap(),
-        SessionOpening::ConfirmationRequired
+        SessionOpening::ConfirmationRequired { turn_open: false }
     );
     assert_eq!(
         connections
@@ -952,6 +972,7 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 &key,
                 dir.path(),
                 ExternalLiveness::ExternalActive,
+                false,
                 true
             )
             .await
@@ -964,7 +985,14 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
     // "Load history" confirms this attempt: the session is attached.
     assert_eq!(
         connections
-            .open_session("hermes", &key, dir.path(), ExternalLiveness::Unknown, true)
+            .open_session(
+                "hermes",
+                &key,
+                dir.path(),
+                ExternalLiveness::Unknown,
+                false,
+                true
+            )
             .await
             .unwrap(),
         opened(&key)
@@ -979,12 +1007,128 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
     assert_eq!(runtime.writers().writer(&key), None);
     assert_eq!(
         connections
-            .open_session("hermes", &key, dir.path(), ExternalLiveness::Unknown, false)
+            .open_session(
+                "hermes",
+                &key,
+                dir.path(),
+                ExternalLiveness::Unknown,
+                false,
+                false
+            )
             .await
             .unwrap(),
-        SessionOpening::ConfirmationRequired
+        SessionOpening::ConfirmationRequired { turn_open: false }
     );
     assert!(!calls(&log).iter().any(|method| method == "session/prompt"));
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_the_session() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let qwen_log = dir.path().join("qwen-calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![
+            (
+                "grok-build",
+                Ok(AcpLaunch {
+                    reads_during_external_turn: false,
+                    ..history_agent("grok-build", true, &log)
+                }),
+            ),
+            ("qwen-code", Ok(history_agent("qwen-code", true, &qwen_log))),
+        ],
+    );
+    let key = SessionKey::from_acp("grok-build", "h1", true);
+    let open = |liveness, turn_open, attach| {
+        connections.open_session("grok-build", &key, dir.path(), liveness, turn_open, attach)
+    };
+
+    // Another process runs it: refused without a snapshot.
+    let busy = SessionKey::from_acp("grok-build", "h2", true);
+    assert_eq!(
+        connections
+            .open_session(
+                "grok-build",
+                &busy,
+                dir.path(),
+                ExternalLiveness::ExternalActive,
+                true,
+                false,
+            )
+            .await
+            .unwrap(),
+        SessionOpening::ExternalActive
+    );
+    assert!(runtime.subscribe(&busy).is_err());
+    assert_eq!(calls(&log), ["initialize"], "nothing reached the session");
+
+    // Without an open turn the history is read as before.
+    assert_eq!(
+        open(ExternalLiveness::Unknown, false, false).await.unwrap(),
+        opened(&key)
+    );
+    assert_eq!(calls(&log), ["initialize", "session/load", "session/close"]);
+
+    // Refresh while another process runs it loads nothing; the snapshot
+    // read before stays.
+    assert_eq!(
+        open(ExternalLiveness::ExternalActive, true, false)
+            .await
+            .unwrap(),
+        SessionOpening::ExternalActive
+    );
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.writer, WriterState::None);
+    assert_eq!(snapshot.items[0].summary, "Earlier");
+
+    // A turn open with nothing known of who runs it: "Load history".
+    assert_eq!(
+        open(ExternalLiveness::Unknown, true, false).await.unwrap(),
+        SessionOpening::ConfirmationRequired { turn_open: true }
+    );
+    assert_eq!(calls(&log), ["initialize", "session/load", "session/close"]);
+
+    // The confirmed attempt attaches the session with the writer.
+    assert_eq!(
+        open(ExternalLiveness::Unknown, true, true).await.unwrap(),
+        opened(&key)
+    );
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+    assert_eq!(
+        calls(&log),
+        [
+            "initialize",
+            "session/load",
+            "session/close",
+            "session/load"
+        ]
+    );
+
+    // An agent with the evidence reads such a session right away.
+    let qwen = SessionKey::from_acp("qwen-code", "h1", true);
+    assert_eq!(
+        connections
+            .open_session(
+                "qwen-code",
+                &qwen,
+                dir.path(),
+                ExternalLiveness::Unknown,
+                true,
+                false,
+            )
+            .await
+            .unwrap(),
+        opened(&qwen)
+    );
+    assert_eq!(runtime.writers().writer(&qwen), None);
+    assert_eq!(
+        calls(&qwen_log),
+        ["initialize", "session/load", "session/close"]
+    );
     runtime.shutdown().await;
 }
 
@@ -1013,7 +1157,14 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
 
     assert_eq!(
         connections
-            .open_session("codex", &key, dir.path(), ExternalLiveness::Unknown, true)
+            .open_session(
+                "codex",
+                &key,
+                dir.path(),
+                ExternalLiveness::Unknown,
+                false,
+                true
+            )
             .await
             .unwrap(),
         SessionOpening::TerminalActive
@@ -1026,6 +1177,7 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
                 &SessionKey::from_acp("pi", "p1", true),
                 dir.path(),
                 ExternalLiveness::Unknown,
+                false,
                 false,
             )
             .await

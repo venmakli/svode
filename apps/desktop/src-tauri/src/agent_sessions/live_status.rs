@@ -20,14 +20,17 @@ pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
 /// writer counts (`07` N6); there is no process scan, so everything else is
 /// unknown, never free.
 pub(super) fn external_liveness(session: &AgentSession) -> ExternalLiveness {
-    if session.status.source == StatusSource::NativeStatusReader
-        && session.status.state.in_turn()
-        && session.native_external_writer
-    {
+    if native_turn_open(session) && session.native_external_writer {
         ExternalLiveness::ExternalActive
     } else {
         ExternalLiveness::Unknown
     }
+}
+
+/// A turn the agent's native store tells open, whoever runs it: with
+/// unknown liveness another process may still run it (DF-177 R1).
+pub(super) fn native_turn_open(session: &AgentSession) -> bool {
+    session.status.source == StatusSource::NativeStatusReader && session.status.state.in_turn()
 }
 
 /// One piece of status evidence with the moment it was observed.

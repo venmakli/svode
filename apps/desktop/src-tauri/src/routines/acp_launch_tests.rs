@@ -51,6 +51,7 @@ done"#;
         acp_id_is_native: true,
         lists_catalog: false,
         read_only_open: false,
+        reads_during_external_turn: false,
         writer_refusal: None,
         session_per_connection: false,
         draft_session: false,

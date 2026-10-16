@@ -543,8 +543,12 @@ export type AgentSessionOpeningDto =
       session: AgentSessionKeyDto;
       liveness: AgentExternalLivenessDto;
     }
-  /** Attaching needs the user's confirmation of this attempt. */
-  | { outcome: "confirmation_required" }
+  /**
+   * Attaching needs the user's confirmation of this attempt; `turnOpen`:
+   * the agent's native status tells a turn open, which attaching may
+   * interrupt if another process still runs it.
+   */
+  | { outcome: "confirmation_required"; turnOpen: boolean }
   | { outcome: "external_active" }
   /** A managed terminal of Svode drives the session. */
   | { outcome: "terminal_active" }

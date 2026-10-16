@@ -135,6 +135,11 @@ pub struct AcpLaunch {
     /// turns or messages to the agent's conversation, so its history is
     /// read without becoming the session's writer.
     pub read_only_open: bool,
+    /// Recorded evidence that loading and closing a session while another
+    /// process may run a turn in it write nothing to the agent's store and
+    /// leave that turn as it is, or that the agent refuses without writing
+    /// (DF-177 R1). Without it such a session is not read.
+    pub reads_during_external_turn: bool,
     /// The error `data.reason` with which the agent refuses to attach a
     /// session another of its clients writes to.
     pub writer_refusal: Option<String>,
@@ -311,6 +316,7 @@ struct Connection {
     acp_id_is_native: bool,
     lists_catalog: bool,
     read_only_open: bool,
+    reads_during_external_turn: bool,
     writer_refusal: Option<String>,
     session_per_connection: bool,
     /// A connection of an agent with one session per connection that has
@@ -452,6 +458,7 @@ impl AgentRuntime {
             acp_id_is_native: launch.acp_id_is_native,
             lists_catalog: launch.lists_catalog,
             read_only_open: launch.read_only_open,
+            reads_during_external_turn: launch.reads_during_external_turn,
             writer_refusal: launch.writer_refusal.clone(),
             session_per_connection: launch.session_per_connection,
             taken: AtomicBool::new(false),
@@ -1074,8 +1081,11 @@ impl AgentRuntime {
     /// writer: `session/load` replays it through the one normalizer, then
     /// `session/close` detaches it where the agent declares `close`. No
     /// prompt is sent. Only for an agent with recorded evidence that load
-    /// and close add no turns or messages; another process writing to the
-    /// session does not prevent it unless the agent itself refuses. The
+    /// and close add no turns or messages. While another process may run a
+    /// turn of the session — `liveness` tells of an external writer, or is
+    /// unknown with a `turn_open` by the agent's native status — it is read
+    /// only by an agent with evidence that loading then leaves that turn
+    /// and its store alone or that it refuses such a load (DF-177 R1). The
     /// snapshot does not follow the session afterwards: reading it again
     /// replays it anew. A session this runtime drives is left as it is.
     pub async fn read_session(
@@ -1083,6 +1093,8 @@ impl AgentRuntime {
         id: ConnectionId,
         key: &SessionKey,
         cwd: &Path,
+        liveness: ExternalLiveness,
+        turn_open: bool,
     ) -> Result<(), AgentRuntimeError> {
         let connection = self.connection(id)?;
         connection.require_open()?;
@@ -1101,7 +1113,12 @@ impl AgentRuntime {
             open.opened.store(self.next_open(), Ordering::Relaxed);
             return Ok(());
         }
-        if !connection.read_only_open {
+        let external_turn = match liveness {
+            ExternalLiveness::ExternalActive => true,
+            ExternalLiveness::Unknown => turn_open,
+            ExternalLiveness::Free => false,
+        };
+        if !connection.read_only_open || (external_turn && !connection.reads_during_external_turn) {
             return Err(AgentRuntimeError::ReadOnlyUnsupported);
         }
         if connection.info.lock().unwrap().is_none() {
