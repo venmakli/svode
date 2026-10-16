@@ -482,8 +482,8 @@ pub struct ContextItemSource {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UnappliedReason {
-    /// No enabled agent finds it; `readers` read it by their policy.
-    NotFound { readers: Vec<AgentAdapterKind> },
+    /// No enabled agent finds it.
+    NotFound,
     /// Every enabled agent that finds it takes another file instead.
     Superseded { by: Vec<String> },
     /// Enabled agents that find it have it off in their config.
@@ -539,6 +539,8 @@ pub struct ContextItem {
     pub providers: Vec<AgentAdapterKind>,
     /// Set when `providers` is empty.
     pub unapplied: Option<UnappliedReason>,
+    /// Agents off in Svode that read the item by their policy.
+    pub idle_readers: Vec<AgentAdapterKind>,
     pub sources: Vec<ContextItemSource>,
     pub preview: MarkdownPreview,
     pub references: Vec<InstructionReference>,

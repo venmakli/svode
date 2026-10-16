@@ -18,6 +18,10 @@ import {
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
+import {
+  agentContextIdleAgents,
+  type AgentContextIdleAgent,
+} from "../model/idle-agents";
 import { agentContextMcpSummary } from "../model/mcp-server";
 import type {
   AgentContextItem,
@@ -221,7 +225,11 @@ function LocationCell({ location }: { location: string }) {
   );
 }
 
-/** Agent icons with their names on hover; empty with the reason on hover. */
+/**
+ * The applying agents' icons, then the muted icons of the agents that find
+ * the item but do not apply it; names and reasons on hover. Without any
+ * agent the cell is empty and says why on hover.
+ */
 function ProvidersCell({
   agents,
   item,
@@ -229,7 +237,8 @@ function ProvidersCell({
   agents: AgentAdapterDictionary;
   item: AgentContextItem;
 }) {
-  if (item.providers.length === 0) {
+  const idle = agentContextIdleAgents(item);
+  if (item.providers.length === 0 && idle.length === 0) {
     const reason = agentContextUnappliedText(item);
     return (
       <Tooltip>
@@ -247,30 +256,40 @@ function ProvidersCell({
       </Tooltip>
     );
   }
-  const names = agentNames(agents, item.providers);
+  const lines = [
+    ...(item.providers.length > 0 ? [agentNames(agents, item.providers)] : []),
+    ...idle.map((entry) => idleAgentText(agents, entry)),
+  ];
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
           className="inline-flex items-center gap-1"
           role="img"
-          aria-label={names}
+          aria-label={lines.join("; ")}
           data-agent-context-providers
         >
           {item.providers.map((agent) => (
             <AgentIcon key={agent} agent={agent} />
           ))}
+          {idle.map(({ agent }) => (
+            <AgentIcon key={agent} agent={agent} muted />
+          ))}
         </span>
       </TooltipTrigger>
-      <TooltipContent>{names}</TooltipContent>
+      <TooltipContent className="flex max-w-sm flex-col gap-0.5 break-words">
+        {lines.map((line) => (
+          <span key={line}>{line}</span>
+        ))}
+      </TooltipContent>
     </Tooltip>
   );
 }
 
 /**
- * The agents with their names; an empty value explains itself below, and
- * when no enabled agent finds the item, names the agents that read it by
- * their policy with the way to Providers.
+ * The applying agents with their names, then the agents that find the item
+ * but do not apply it, muted, with the reason on hover; the button to
+ * Providers when an agent off in Svode reads the item.
  */
 function ProvidersDetail({
   agents,
@@ -281,77 +300,98 @@ function ProvidersDetail({
   item: AgentContextItem;
   onOpenProviders?: () => void;
 }) {
-  const readers = agentNames(
-    agents,
-    item.unapplied?.kind === "not_found" ? item.unapplied.readers : [],
-  );
-  if (item.providers.length > 0) {
-    const unverified = agentNames(agents, unverifiedProviders(item));
+  const idle = agentContextIdleAgents(item);
+  const unverified = agentNames(agents, unverifiedProviders(item));
+  const openProviders =
+    onOpenProviders &&
+    idle.some((entry) => entry.reason.kind === "off_in_svode") ? (
+      <Button
+        size="xs"
+        type="button"
+        variant="outline"
+        onClick={onOpenProviders}
+      >
+        {m.agent_context_open_providers()}
+      </Button>
+    ) : null;
+  if (item.providers.length === 0 && idle.length === 0) {
+    const reason = agentContextUnappliedText(item);
     return (
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
-          {item.providers.map((agent) => (
-            <span key={agent} className="inline-flex items-center gap-1.5">
-              <AgentIcon agent={agent} />
-              {agents.label(agent)}
+      <div
+        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
+        data-agent-context-providers-reason
+      >
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="text-muted-foreground">
+              -<span className="sr-only">{reason}</span>
             </span>
-          ))}
-        </div>
-        {unverified ? (
-          <span
-            className="text-xs text-muted-foreground"
-            data-agent-context-providers-unverified
-          >
-            {m.agent_context_unverified_note({ agents: unverified })}
-          </span>
-        ) : null}
+          </TooltipTrigger>
+          <TooltipContent className="max-w-sm break-words">
+            {reason}
+          </TooltipContent>
+        </Tooltip>
+        {openProviders}
       </div>
     );
   }
   return (
-    <div
-      className="flex min-w-0 flex-col gap-1"
-      data-agent-context-providers-reason
-    >
-      <span className="text-muted-foreground">-</span>
-      {item.unapplied?.kind === "disabled" ? (
-        <span className="text-xs text-muted-foreground">
-          {m.agent_context_unapplied_disabled()}
+    <div className="flex min-w-0 flex-col gap-1">
+      <div
+        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
+        data-agent-context-providers-detail
+      >
+        {item.providers.map((agent) => (
+          <span key={agent} className="inline-flex items-center gap-1.5">
+            <AgentIcon agent={agent} />
+            {agents.label(agent)}
+          </span>
+        ))}
+        {idle.map((entry) => (
+          <Tooltip key={entry.agent}>
+            <TooltipTrigger asChild>
+              <span
+                className="inline-flex items-center gap-1.5 text-muted-foreground"
+                data-agent-context-idle-agent={entry.agent}
+              >
+                <AgentIcon agent={entry.agent} muted />
+                {agents.label(entry.agent)}
+                <span className="sr-only">{idleAgentText(agents, entry)}</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-sm break-words">
+              {idleAgentText(agents, entry)}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+        {openProviders}
+      </div>
+      {unverified ? (
+        <span
+          className="text-xs text-muted-foreground"
+          data-agent-context-providers-unverified
+        >
+          {m.agent_context_unverified_note({ agents: unverified })}
         </span>
-      ) : item.unapplied?.kind === "superseded" ? (
-        <div className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground">
-          <span>{m.agent_context_unapplied_superseded()}</span>
-          {item.unapplied.by.map((path) => (
-            <code
-              key={path}
-              className="block min-w-0 whitespace-pre-wrap break-all font-mono leading-5 select-text"
-            >
-              {path}
-            </code>
-          ))}
-        </div>
-      ) : (
-        <div className="flex min-w-0 flex-col items-start gap-0.5 text-xs text-muted-foreground">
-          <span>{m.agent_context_unapplied_not_found()}</span>
-          {readers ? (
-            <span>
-              {m.agent_context_unapplied_readers({ agents: readers })}
-            </span>
-          ) : null}
-          {onOpenProviders ? (
-            <Button
-              className="h-auto p-0 text-xs"
-              type="button"
-              variant="link"
-              onClick={onOpenProviders}
-            >
-              {m.agent_context_open_providers()}
-            </Button>
-          ) : null}
-        </div>
-      )}
+      ) : null}
     </div>
   );
+}
+
+function idleAgentText(
+  agents: AgentAdapterDictionary,
+  { agent, reason }: AgentContextIdleAgent,
+): string {
+  const name = agents.label(agent);
+  if (reason.kind === "off_in_svode") {
+    return m.agent_context_idle_off({ agent: name });
+  }
+  if (reason.kind === "disabled") {
+    return m.agent_context_idle_disabled({ agent: name });
+  }
+  return reason.by
+    ? m.agent_context_idle_superseded({ agent: name, path: reason.by })
+    : m.agent_context_idle_superseded_unknown({ agent: name });
 }
 
 /** Providers that apply a plugin whose switch they keep outside files. */

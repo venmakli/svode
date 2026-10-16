@@ -211,9 +211,7 @@ test("an update queued while a close guard asks does not reopen the closed detai
 
   // Opening the row again later is a new request and opens it.
   expect(await store.controller.open(request(firstSelection))).toBe(true);
-  expect(store.getSnapshot().active?.request.selection).toEqual(
-    firstSelection,
-  );
+  expect(store.getSnapshot().active?.request.selection).toEqual(firstSelection);
 });
 
 test("an open detail joins the navigation guards; a passed guard closes it", async () => {
@@ -229,7 +227,9 @@ test("an open detail joins the navigation guards; a passed guard closes it", asy
   await store.controller.open(
     request(firstSelection, { canClose: () => allowClose }),
   );
-  await store.controller.open(request(secondSelection, { canClose: () => allowClose }));
+  await store.controller.open(
+    request(secondSelection, { canClose: () => allowClose }),
+  );
   expect(guards.length).toBe(1);
 
   expect(await guards[0]!()).toBe(false);

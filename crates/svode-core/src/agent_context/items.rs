@@ -293,6 +293,7 @@ fn plugin_item(
         component.location = location.clone();
         component.providers = plugin.providers.clone();
         component.unapplied = plugin.unapplied.clone();
+        component.idle_readers = plugin.idle_readers.clone();
         component.sources = plugin.sources.clone();
         component.managed_by_svode = managed_by_svode;
         component
@@ -468,12 +469,14 @@ fn item(
         .filter(|finding| finding.superseded_by.is_none() && !finding.disabled)
         .map(|finding| finding.agent)
         .collect::<BTreeSet<_>>();
+    let idle_readers = readers
+        .into_iter()
+        .filter(|agent| !enabled.contains(agent))
+        .collect();
     let unapplied = if !providers.is_empty() {
         None
     } else if enabled_findings.is_empty() {
-        Some(UnappliedReason::NotFound {
-            readers: readers.into_iter().collect(),
-        })
+        Some(UnappliedReason::NotFound)
     } else if enabled_findings.iter().any(|finding| finding.disabled) {
         Some(UnappliedReason::Disabled)
     } else {
@@ -528,6 +531,7 @@ fn item(
         health_reasons: facts.health_reasons,
         providers: providers.into_iter().collect(),
         unapplied,
+        idle_readers,
         sources: sources.into_values().collect(),
         preview: facts.preview,
         references: facts.references,
@@ -714,6 +718,30 @@ mod tests {
     }
 
     #[test]
+    fn an_applied_item_names_the_agents_off_in_svode_that_read_it() {
+        let fixture = Fixture::new();
+        let agents = fixture.write(fixture.project.path(), "AGENTS.md", "project");
+
+        let items = fixture.items(&[CODEX, CURSOR]);
+
+        let item = by_path(&items, &agents);
+        assert_eq!(item.providers, vec![CODEX, CURSOR]);
+        assert_eq!(item.unapplied, None);
+        assert_eq!(
+            item.idle_readers,
+            vec![
+                CLAUDE,
+                AgentAdapterKind::Opencode,
+                HERMES,
+                AgentAdapterKind::Pi,
+                AgentAdapterKind::QwenCode,
+                AgentAdapterKind::KimiCode,
+                GROK,
+            ]
+        );
+    }
+
+    #[test]
     fn project_items_stay_without_enabled_agents_and_name_their_readers() {
         let fixture = Fixture::new();
         let agents = fixture.write(fixture.project.path(), "AGENTS.md", "project");
@@ -726,21 +754,20 @@ mod tests {
         let item = by_path(&items, &agents);
         assert_eq!(item.kind, ContextItemKind::Instruction);
         assert!(item.providers.is_empty());
+        assert_eq!(item.unapplied, Some(UnappliedReason::NotFound));
         assert_eq!(
-            item.unapplied,
-            Some(UnappliedReason::NotFound {
-                readers: vec![
-                    CODEX,
-                    CLAUDE,
-                    CURSOR,
-                    AgentAdapterKind::Opencode,
-                    HERMES,
-                    AgentAdapterKind::Pi,
-                    AgentAdapterKind::QwenCode,
-                    AgentAdapterKind::KimiCode,
-                    GROK,
-                ]
-            })
+            item.idle_readers,
+            vec![
+                CODEX,
+                CLAUDE,
+                CURSOR,
+                AgentAdapterKind::Opencode,
+                HERMES,
+                AgentAdapterKind::Pi,
+                AgentAdapterKind::QwenCode,
+                AgentAdapterKind::KimiCode,
+                GROK,
+            ]
         );
         assert!(item.sources.is_empty());
         assert_eq!(
@@ -886,11 +913,10 @@ mod tests {
 
         let without_claude = fixture.items(&[CODEX]);
         assert_eq!(without_claude.len(), 1);
+        assert_eq!(without_claude[0].unapplied, Some(UnappliedReason::NotFound));
         assert_eq!(
-            without_claude[0].unapplied,
-            Some(UnappliedReason::NotFound {
-                readers: vec![CLAUDE, CURSOR, AgentAdapterKind::Opencode, GROK]
-            })
+            without_claude[0].idle_readers,
+            vec![CLAUDE, CURSOR, AgentAdapterKind::Opencode, GROK]
         );
         assert_eq!(
             without_claude[0].location,

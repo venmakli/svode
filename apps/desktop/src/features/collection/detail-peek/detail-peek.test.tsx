@@ -64,17 +64,16 @@ test("detail frame keeps accessible semantics, diagnostic, actions, and its own 
   expect(markup.includes("Close details")).toBe(false);
 });
 
-test("forms keep the former detail width and readers a reading width", () => {
+test("forms keep the former detail width and readers fill the peek as a page does", () => {
   const reader = renderFrame(active);
   const form = renderFrame({
     ...active,
     request: { ...active.request, layout: "form" },
   });
 
-  expect(reader.includes("max-w-3xl")).toBe(true);
   expect(reader.includes("max-w-[30rem]")).toBe(false);
+  expect(reader.includes("max-w-3xl")).toBe(false);
   expect(form.includes("max-w-[30rem]")).toBe(true);
-  expect(form.includes("max-w-3xl")).toBe(false);
 });
 
 test("a surface fills the peek with its own top bar and keeps the title for screen readers", () => {

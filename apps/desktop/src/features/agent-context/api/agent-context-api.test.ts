@@ -86,6 +86,7 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
         },
       ],
       unapplied: null,
+      idleReaders: [],
     },
     {
       description: "Review project changes.",
@@ -143,6 +144,7 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
         by: ["/home/user/.claude/skills/review"],
         kind: "superseded",
       },
+      idleReaders: ["hermes"],
     },
   ],
   observedPersonalPaths: ["/home/user/.claude/CLAUDE.md"],
@@ -184,6 +186,7 @@ test("transport becomes one frozen set of items with their application", () => {
     by: ["/home/user/.claude/skills/review"],
     kind: "superseded",
   });
+  expect(skill?.idleReaders).toEqual(["hermes"]);
   expect(skill?.truncated).toBe(true);
   expect(skill?.skill?.allowedTools).toBe("Read Bash(git:*)");
   expect(skill?.skill?.metadata).toEqual({
@@ -233,6 +236,7 @@ test("a plugin keeps its facts and its components as items of their own", () => 
         },
         skill: null,
         unapplied: { kind: "disabled" },
+        idleReaders: [],
       },
     ],
   });

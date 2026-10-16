@@ -72,7 +72,7 @@ export interface AgentContextItemSourceDto {
 }
 
 export type AgentContextUnappliedDto =
-  | { kind: "not_found"; readers: AgentIdDto[] }
+  | { kind: "not_found" }
   | { kind: "superseded"; by: string[] }
   | { kind: "disabled" };
 
@@ -126,6 +126,7 @@ export interface AgentContextItemDto {
   healthReasons: string[];
   providers: AgentIdDto[];
   unapplied: AgentContextUnappliedDto | null;
+  idleReaders: AgentIdDto[];
   sources: AgentContextItemSourceDto[];
   preview: AgentContextMarkdownPreviewDto;
   references: AgentContextReferenceDto[];

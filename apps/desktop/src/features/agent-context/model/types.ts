@@ -55,8 +55,8 @@ export interface AgentContextItemSource {
 
 /** Why no enabled agent applies an item. */
 export type AgentContextUnapplied =
-  /** No enabled agent finds it; `readers` read it by their policy. */
-  | { kind: "not_found"; readers: readonly AgentId[] }
+  /** No enabled agent finds it. */
+  | { kind: "not_found" }
   /** Every enabled agent that finds it takes another file. */
   | { kind: "superseded"; by: readonly string[] }
   /** The enabled agents that find the plugin have it off. */
@@ -146,6 +146,8 @@ export interface AgentContextItem {
   providers: readonly AgentId[];
   /** Set when `providers` is empty. */
   unapplied: AgentContextUnapplied | null;
+  /** Agents off in Svode that read the item by their policy. */
+  idleReaders: readonly AgentId[];
   sources: readonly AgentContextItemSource[];
   body: string;
   truncated: boolean;

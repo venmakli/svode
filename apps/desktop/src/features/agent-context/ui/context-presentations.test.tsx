@@ -52,6 +52,7 @@ function item(overrides: Partial<AgentContextItem>): AgentContextItem {
     sources: [],
     truncated: false,
     unapplied: null,
+    idleReaders: [],
     ...overrides,
   };
 }
@@ -79,7 +80,8 @@ const projectSkill = item({
   name: "review",
   path: "/workspace/.claude/skills/review/SKILL.md",
   providers: [],
-  unapplied: { kind: "not_found", readers: ["claude-code"] },
+  idleReaders: ["claude-code"],
+  unapplied: { kind: "not_found" },
 });
 const pluginSkill = item({
   description: "Lint the change.",
@@ -311,13 +313,24 @@ test("Providers show agent icons, an empty value names its reason", () => {
       "Shadowed by /workspace/docs/AGENTS.override.md",
     ),
   ).toBe(true);
+  // Agents that find it without applying it are muted icons after the
+  // providers, the reason on hover.
   expect(
-    value("providers", projectSkill).includes("No enabled agent finds it"),
+    value("providers", projectSkill).includes("Claude Code · off in Svode"),
+  ).toBe(true);
+  expect(
+    value("providers", projectSkill).includes("data-agent-icon-muted"),
+  ).toBe(true);
+  expect(
+    value(
+      "providers",
+      item({ providers: [], unapplied: { kind: "not_found" } }),
+    ).includes("No enabled agent finds it"),
   ).toBe(true);
 
   const detail = value("providers", projectSkill, "detail");
-  expect(detail.includes("No enabled agent finds it")).toBe(true);
-  expect(detail.includes("Read by their own rules: Claude Code")).toBe(true);
+  expect(detail.includes("Claude Code · off in Svode")).toBe(true);
+  expect(detail.includes("No enabled agent finds it")).toBe(false);
   // Without an opener there is no link to follow.
   expect(detail.includes("Open Providers")).toBe(false);
   const linked = createAgentContextItemProperties({

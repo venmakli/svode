@@ -138,6 +138,7 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
     healthReasons: Object.freeze([...item.healthReasons]),
     icon: item.icon,
     id: item.id,
+    idleReaders: Object.freeze([...item.idleReaders]),
     kind: item.kind,
     location: Object.freeze({ ...item.location }),
     managedBySvode: item.managedBySvode,
@@ -222,12 +223,7 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
 function unapplied(
   value: NonNullable<AgentContextItemDto["unapplied"]>,
 ): NonNullable<AgentContextItem["unapplied"]> {
-  if (value.kind === "not_found") {
-    return Object.freeze({
-      kind: "not_found",
-      readers: Object.freeze([...value.readers]),
-    });
-  }
+  if (value.kind === "not_found") return Object.freeze({ kind: "not_found" });
   if (value.kind === "superseded") {
     return Object.freeze({
       by: Object.freeze([...value.by]),

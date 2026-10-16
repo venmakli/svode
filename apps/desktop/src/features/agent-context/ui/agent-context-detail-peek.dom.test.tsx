@@ -103,6 +103,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     ],
     truncated: false,
     unapplied: null,
+    idleReaders: [],
     components: [],
     icon: null,
     managedBySvode: false,
@@ -147,6 +148,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     ],
     truncated: false,
     unapplied: null,
+    idleReaders: [],
     components: [],
     icon: null,
     managedBySvode: false,
@@ -820,7 +822,8 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       ...skill,
       providers: [],
       sources: [],
-      unapplied: { kind: "not_found", readers: ["claude-code"] },
+      idleReaders: ["claude-code"],
+      unapplied: { kind: "not_found" },
     };
     await act(async () => {
       await controller!.open({
@@ -834,18 +837,23 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
 
-    const reason = doc.querySelector<HTMLElement>(
-      "[data-agent-context-providers-reason]",
+    const providers = doc.querySelector<HTMLElement>(
+      "[data-agent-context-providers-detail]",
     )!;
-    expect(reason.textContent).toBe(
-      "-No enabled agent finds itRead by their own rules: Claude CodeOpen Providers",
+    // The agent off in Svode that reads it is muted, the reason on hover.
+    expect(
+      providers.querySelector('[data-agent-context-idle-agent="claude-code"]')
+        ?.textContent,
+    ).toBe("Claude CodeClaude Code · off in Svode");
+    expect(Boolean(providers.querySelector("[data-agent-icon-muted]"))).toBe(
+      true,
     );
     // No agent finds it by an enabled path: no "Sources" and no ⓘ.
     expect(
       topBar().querySelector("[data-collection-detail-info-trigger]"),
     ).toBe(null);
     await act(async () => {
-      reason.querySelector("button")!.click();
+      providers.querySelector("button")!.click();
       await settle();
     });
     expect(openedProviders).toBe(1);
@@ -1114,7 +1122,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     expect(detail.querySelector("[data-markdown-reader]")).toBe(null);
     expect(
       detail.textContent?.includes(
-        "Turned off in the config of the enabled agents that find it",
+        "Claude Code · turned off in its config",
       ),
     ).toBe(true);
     expect(

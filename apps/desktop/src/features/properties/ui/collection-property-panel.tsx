@@ -52,7 +52,7 @@ export function CollectionPropertyPanel<Row>({
 
   return (
     <div
-      className="grid min-w-0 grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)] gap-x-6 gap-y-0.5"
+      className="grid max-w-5xl min-w-0 grid-cols-[minmax(7rem,12rem)_minmax(0,1fr)] gap-x-6 gap-y-0.5"
       data-collection-property-panel
     >
       {visibleProperties.map((property) => {

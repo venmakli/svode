@@ -675,11 +675,10 @@ mod tests {
         let db = named(&servers, "db", ".mcp.json");
         assert_eq!(db.location.kind, ContextLocationKind::Target);
         assert_eq!(db.location.path, ".mcp.json");
+        assert_eq!(db.unapplied, Some(UnappliedReason::NotFound));
         assert_eq!(
-            db.unapplied,
-            Some(UnappliedReason::NotFound {
-                readers: vec![ClaudeCode, QwenCode, KimiCode, GrokBuild]
-            })
+            db.idle_readers,
+            vec![ClaudeCode, QwenCode, KimiCode, GrokBuild]
         );
         assert!(db.modified_at.is_some());
         assert_eq!(db.owner_root, fixture.root().to_string_lossy());

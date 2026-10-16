@@ -117,10 +117,11 @@ export function CollectionDetailPeekFrame({
       </>
     );
   }
-  // Forms keep the width of their fields; readers keep a readable line.
+  // Forms keep the width of their fields; readers fill the peek as a page
+  // does.
   const column = cn(
     "w-full min-w-0",
-    request.layout === "form" ? "max-w-[30rem]" : "max-w-3xl",
+    request.layout === "form" && "max-w-[30rem]",
   );
 
   return (

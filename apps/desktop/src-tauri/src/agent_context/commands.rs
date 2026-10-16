@@ -185,6 +185,7 @@ mod tests {
             health_reasons: Vec::new(),
             providers: Vec::new(),
             unapplied: None,
+            idle_readers: Vec::new(),
             sources: Vec::new(),
             preview: MarkdownPreview {
                 markdown: String::new(),

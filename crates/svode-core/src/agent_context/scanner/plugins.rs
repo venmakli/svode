@@ -895,10 +895,9 @@ mod tests {
         let none = fixture.items(&[]);
         assert_eq!(
             plugin(&none, "kit").unapplied,
-            Some(UnappliedReason::NotFound {
-                readers: vec![ClaudeCode]
-            })
+            Some(UnappliedReason::NotFound)
         );
+        assert_eq!(plugin(&none, "kit").idle_readers, vec![ClaudeCode]);
 
         fixture.write(
             &fixture.project.path().join(".claude/settings.local.json"),

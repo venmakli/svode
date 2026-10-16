@@ -3,14 +3,18 @@ import { useAgentAdapterDictionary } from "../hooks/use-agent-adapter-dictionary
 
 /**
  * An agent's icon from the one agent dictionary: its brand icon, or the
- * first letter of its name. Decorative; the agent's name is said nearby.
+ * first letter of its name. Decorative; the agent's name is said nearby. A
+ * muted icon is monochrome in the muted text color: the agent is there but
+ * does not act.
  */
 export function AgentIcon({
   agent,
   className,
+  muted = false,
 }: {
   agent: string;
   className?: string;
+  muted?: boolean;
 }) {
   const icon = useAgentAdapterDictionary().icon(agent);
   if (icon.kind === "letter") {
@@ -19,6 +23,7 @@ export function AgentIcon({
         aria-hidden
         className={cn(
           "inline-flex size-4 shrink-0 items-center justify-center rounded-sm bg-muted text-[0.625rem] leading-none font-semibold text-muted-foreground",
+          muted && "opacity-60",
           className,
         )}
       >
@@ -26,7 +31,7 @@ export function AgentIcon({
       </span>
     );
   }
-  if (icon.colored) {
+  if (icon.colored && !muted) {
     return (
       <img
         aria-hidden
@@ -41,9 +46,14 @@ export function AgentIcon({
   return (
     <span
       aria-hidden
-      className={cn("inline-block size-4 shrink-0 bg-current", className)}
+      className={cn(
+        "inline-block size-4 shrink-0 bg-current",
+        muted && "text-muted-foreground/70",
+        className,
+      )}
+      data-agent-icon-muted={muted || undefined}
       style={{
-        maskImage: `url("${icon.src}")`,
+        maskImage: `url("${muted ? icon.mono : icon.src}")`,
         maskRepeat: "no-repeat",
         maskSize: "contain",
         maskPosition: "center",
