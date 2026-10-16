@@ -8,7 +8,7 @@ use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
 use crate::result::ToolCallResult;
 use crate::tools::{
-    apps, collections, content, import, pages, project, routines, search, structure,
+    agent_actors, apps, collections, content, import, pages, project, routines, search, structure,
 };
 
 /// Whether the host serves a catalog tool: it declares the tool and has the
@@ -142,6 +142,10 @@ async fn call(
         "list_actors" => {
             let args = decode(args)?;
             collections::list_actors(host, require(target)?, args).await
+        }
+        "list_agent_actors" => {
+            let args = decode(args)?;
+            agent_actors::list_agent_actors(require(target)?, args)
         }
         "validate_collection_integrity" => {
             let args = decode(args)?;

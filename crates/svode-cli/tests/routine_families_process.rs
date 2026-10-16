@@ -457,3 +457,71 @@ fn routine_help_works_without_a_project_and_hides_run() {
         );
     }
 }
+
+#[test]
+fn agent_list_names_the_executors_routine_create_accepts() {
+    let (_temp, root, elsewhere) = fixture();
+    if commit(&root).is_none() {
+        return;
+    }
+    let child = root.join("child");
+
+    // The Space of the current directory is passed explicitly; a child
+    // Space inherits the agents of root.
+    let listed = ok(&child, &["agent", "list"]);
+    assert_eq!(listed["target"]["spaceId"], "child", "{listed}");
+    assert_eq!(listed["spaceId"], "child", "{listed}");
+    assert_eq!(
+        listed["agents"],
+        json!([{
+            "reference": format!("agent:{ACTOR}"),
+            "name": "Reviewer",
+            "description": null,
+            "ownerSpaceId": "root",
+            "bindings": [{ "adapter": "codex", "model": null, "effort": null }]
+        }]),
+        "{listed}"
+    );
+    assert_eq!(listed["diagnostics"], json!([]));
+    assert!(!root.join(".svode/routines.db").exists());
+    assert!(!child.join(".svode/routines.db").exists());
+
+    let human = svode(&root, &["agent", "list", "--space", "child"]);
+    assert_eq!(human.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        format!("agent:{ACTOR}\tReviewer\troot\n")
+    );
+
+    let definition = elsewhere.join("routine.json");
+    let created = ok(
+        &root,
+        &[
+            "routine",
+            "create",
+            "--space",
+            "child",
+            "--definition-file",
+            definition.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(created["detail"]["valid"], true, "{created}");
+
+    // An unreadable catalog keeps the readable agents and says so.
+    write(&child.join(".svode/agent-actors.json"), "{ not json");
+    let human = svode(&root, &["agent", "list", "--space", "child"]);
+    assert_eq!(human.status.code(), Some(0));
+    let human = String::from_utf8(human.stdout).unwrap();
+    let mut lines = human.lines();
+    assert_eq!(
+        lines.next(),
+        Some(format!("agent:{ACTOR}\tReviewer\troot").as_str())
+    );
+    assert!(
+        lines
+            .next()
+            .is_some_and(|line| line.starts_with("diagnostic catalog_unavailable child: ")),
+        "{human}"
+    );
+    assert!(!human.contains(root.to_str().unwrap()), "{human}");
+}

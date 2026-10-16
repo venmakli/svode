@@ -108,6 +108,10 @@ pub struct AgentActorCatalogDiagnostic {
     pub owner_path: String,
     pub code: String,
     pub message: String,
+    /// Id an `ambiguous_actor_id` diagnostic is about; the message names it
+    /// for the window, so it is not serialized.
+    #[serde(skip)]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,6 +147,7 @@ pub fn resolve_catalogs(own: &Path, inherited_root: Option<&Path>) -> AgentActor
                 owner_path: owner.to_string_lossy().to_string(),
                 code: "catalog_unavailable".into(),
                 message: error.to_string(),
+                actor_id: None,
             }),
         }
     }
@@ -163,6 +168,7 @@ pub fn resolve_catalogs(own: &Path, inherited_root: Option<&Path>) -> AgentActor
                         "agent:{} is defined by multiple effective catalogs",
                         actor.id
                     ),
+                    actor_id: Some(actor.id.clone()),
                 });
                 continue;
             }
@@ -178,6 +184,15 @@ pub fn resolve_catalogs(own: &Path, inherited_root: Option<&Path>) -> AgentActor
         actors,
         diagnostics,
     }
+}
+
+/// Effective Agent Actors of a Space in its project context: the one
+/// executor domain of the Routine owners of that Space and of its
+/// Collections. A registered child Space inherits the project root catalog;
+/// the root, and a standalone Space that is its own project, inherit
+/// nothing.
+pub fn resolve_space_catalogs(project: &Path, space: &Path) -> AgentActorResolution {
+    resolve_catalogs(space, (space != project).then_some(project))
 }
 
 /// Resolve only canonical `agent:<lowercase-ulid>` references. Invalid values
@@ -442,6 +457,52 @@ mod tests {
                 .diagnostics
                 .iter()
                 .all(|d| d.code == "ambiguous_actor_id")
+        );
+    }
+
+    #[test]
+    fn a_space_inherits_the_root_catalog_only_as_a_child_of_its_project() {
+        let project = tempdir().unwrap();
+        let child = project.path().join("child");
+        fs::create_dir_all(&child).unwrap();
+        write_actor(project.path(), "01arz3ndektsv4rrffq69g5fav");
+        write_actor(&child, "01arz3ndektsv4rrffq69g5faw");
+        let ids = |resolution: AgentActorResolution| {
+            resolution
+                .actors
+                .into_iter()
+                .map(|resolved| resolved.actor.id)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            ids(resolve_space_catalogs(project.path(), &child)),
+            ["01arz3ndektsv4rrffq69g5faw", "01arz3ndektsv4rrffq69g5fav"]
+        );
+        assert_eq!(
+            ids(resolve_space_catalogs(project.path(), project.path())),
+            ["01arz3ndektsv4rrffq69g5fav"]
+        );
+        // A standalone child is its own project.
+        assert_eq!(
+            ids(resolve_space_catalogs(&child, &child)),
+            ["01arz3ndektsv4rrffq69g5faw"]
+        );
+
+        write_actor(&child, "01arz3ndektsv4rrffq69g5fav");
+        let collision = resolve_space_catalogs(project.path(), &child);
+        assert_eq!(ids(collision.clone()), ["01arz3ndektsv4rrffq69g5faw"]);
+        assert_eq!(collision.diagnostics.len(), 2);
+        assert!(collision.diagnostics.iter().all(|diagnostic| {
+            diagnostic.code == "ambiguous_actor_id"
+                && diagnostic.actor_id.as_deref() == Some("01arz3ndektsv4rrffq69g5fav")
+        }));
+        // The window reads the id from the message, not from a new field.
+        assert!(
+            serde_json::to_value(&collision.diagnostics[0])
+                .unwrap()
+                .get("actorId")
+                .is_none()
         );
     }
 

@@ -21,7 +21,7 @@ const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 const ROUTINE_CALLER_TOKEN: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 53] = [
+const SERVED: [&str; 54] = [
     "add_collection_column",
     "add_collection_view",
     "convert_page_to_leaf",
@@ -46,6 +46,7 @@ const SERVED: [&str; 53] = [
     "get_svode_guide",
     "import_asset",
     "list_actors",
+    "list_agent_actors",
     "list_collections",
     "list_pages",
     "list_routines",
@@ -1203,9 +1204,20 @@ fn routine_definitions_are_served_from_the_owner_store_of_two_sessions_without_e
     };
 
     let mut first = Live::start(fixture.temp.path(), &args);
-    // Reads of Pages open no Routine store; the first Routine operation does.
+    // Reads of Pages and Agent Actors open no Routine store; the first
+    // Routine operation does.
     first.ok("read_page", json!({ "path": "notes.md" }));
+    let agents = first.ok("list_agent_actors", json!({ "spaceId": "root" }));
+    assert_eq!(
+        agents["agents"][0]["reference"],
+        format!("agent:{ACTOR}"),
+        "{agents}"
+    );
+    let inherited = first.ok("list_agent_actors", json!({ "spaceId": "child" }));
+    assert_eq!(inherited["agents"], agents["agents"], "{inherited}");
+    assert_eq!(inherited["agents"][0]["ownerSpaceId"], "root");
     assert!(!project.join(".svode/routines.db").exists());
+    assert!(!project.join(".svode/index.db").exists());
     let empty = first.ok("list_routines", tasks.clone());
     assert_eq!(empty["total"], 0, "{empty}");
     assert_eq!(empty["owner"]["ownerPath"], "tasks", "{empty}");
@@ -1589,6 +1601,7 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
     );
     ok(&mut live, "get_git_status", json!({}));
     ok(&mut live, "list_actors", json!({}));
+    ok(&mut live, "list_agent_actors", json!({ "spaceId": "root" }));
     let integrity = ok(
         &mut live,
         "validate_collection_integrity",

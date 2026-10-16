@@ -142,6 +142,41 @@ pub fn actors(value: &Value) -> String {
     )
 }
 
+/// `reference<TAB>name<TAB>ownerSpaceId` per agent, then
+/// `diagnostic code ownerSpaceId [reference]: message` per catalog
+/// diagnostic.
+pub fn agent_actors(value: &Value) -> String {
+    let agents = value["agents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|agent| {
+            format!(
+                "{}\t{}\t{}",
+                text(&agent["reference"]),
+                text(&agent["name"]),
+                text(&agent["ownerSpaceId"])
+            )
+        });
+    let diagnostics = value["diagnostics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|diagnostic| {
+            let reference = diagnostic["reference"]
+                .as_str()
+                .map(|reference| format!(" {reference}"))
+                .unwrap_or_default();
+            format!(
+                "diagnostic {} {}{reference}: {}",
+                text(&diagnostic["code"]),
+                text(&diagnostic["ownerSpaceId"]),
+                text(&diagnostic["message"])
+            )
+        });
+    lines(agents.chain(diagnostics))
+}
+
 /// Issue counts of an integrity check, then `severity code path: message`
 /// per issue.
 pub fn integrity(value: &Value) -> String {

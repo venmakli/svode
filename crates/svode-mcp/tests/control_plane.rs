@@ -126,9 +126,10 @@ fn control_plane_reports_host_version_and_filtered_catalog() {
             && value.contains("Routine-launched")
             && value.contains("canonical contentPath")
             && value.contains("validate_app_manifest")
+            && value.contains("list_agent_actors for the same spaceId")
     }));
 
-    assert_eq!(tool_names(&host).len(), 54);
+    assert_eq!(tool_names(&host).len(), 55);
     let limited = CatalogHost {
         served: Some(&LIMITED_CATALOG),
         ..CatalogHost::full()
@@ -185,7 +186,7 @@ fn run_routine_is_neither_published_nor_routed_without_a_host_runner() {
         ..CatalogHost::full()
     };
     let names = tool_names(&host);
-    assert_eq!(names.len(), 53);
+    assert_eq!(names.len(), 54);
     assert!(!names.contains(&"run_routine".to_string()));
     assert_eq!(
         respond(&host, "tools/call", json!({ "name": "run_routine" }))

@@ -39,6 +39,7 @@ Device-local settings, such as that evidence store, are found in the OS config d
 | `collection readme read --collection` | `read_collection_readme` | yes |
 | `item read --path` | `read_collection_item` | yes |
 | `actor list [--all-time]` | `list_actors` | yes |
+| `agent list` | `list_agent_actors` (Agent Actors of the Space and, for a child Space, of root: the executors a Routine accepts) | yes |
 | `search <query> [--limit --offset]` | `search_pages` | yes |
 | `knowledge search <query> [--scope] [--kind …] [--limit]` | `search_knowledge` | yes |
 | `knowledge node --id [--scope]` | `get_knowledge_node` | yes |
@@ -134,6 +135,7 @@ Routine commands read and change Routine definitions through the shared Routine 
 
 - `routine list` returns bounded summaries of the owner, including invalid definitions and their diagnostics, with `total`/`limit`/`offset`, `catalogFingerprint` and the exact-owner device authority evidence (`automaticAuthorityEnabled`, `authorityDiagnostics`); it never returns the Markdown body. `routine get --id` returns the normalized `definition`, `diagnostics`, `valid` and the `fingerprint` of the definition.
 - `routine create` and `routine update` take a complete definition as a JSON object (`name`, `description`, `enabled`, `trigger`, `action`, `body`) from `--definition-file <path|->`. Unknown fields are rejected by the shared decode (`SERIALIZATION_ERROR`) and an invalid definition by the service (`ROUTINE_INVALID` with `diagnostics`), before any write. The file name follows the Routine name; a taken name is `ROUTINE_NAME_CONFLICT`.
+- A `run_agent` action names its executor as `agent:<id>`: take it from `svode agent list` for the same Space (a Collection owner uses the Space of its Collection), which lists exactly the executors the service accepts — the Agent Actors of the Space and, for a child Space, of root. Its result is `spaceId`, `agents` (`reference`, `name`, `description`, `ownerSpaceId`, `bindings` with `adapter`, `model`, `effort`) and `diagnostics` (`code` `catalog_unavailable` or `ambiguous_actor_id`, `ownerSpaceId`, `reference`, `message`); an empty or short list with diagnostics does not mean the Space has no agents. Human output prints `reference name ownerSpaceId` per agent, then one `diagnostic` line each. `actor list` returns people for actor fields, never executors.
 - An enabled schedule or event Routine needs `--confirm-automatic-execution`, otherwise `ROUTINE_AUTOMATIC_CONFIRMATION_REQUIRED`. Saving never starts the Routine and never changes the automatic authority of this device.
 - `routine update` and `routine delete` are compare-and-set: pass `--id` and the `--fingerprint` of your last read. A changed definition fails with `ROUTINE_FINGERPRINT_CONFLICT` and `currentFingerprint`; a missing one with `ROUTINE_NOT_FOUND`. Read it again and reapply the intent. Delete keeps run history and does not cancel an active run.
 - The owner repository is authorized before the first write, and nothing is committed to Git.

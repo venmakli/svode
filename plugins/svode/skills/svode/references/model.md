@@ -7,6 +7,6 @@
 - **Fields**: text, number, select, status, actor (canonical emails), date, boolean, relation, unique id and others. A relation value is the path of an item inside the target Collection; two-way relations write both sides, which is why fields change only through Svode.
 - **Views**: table, board, calendar, list and gallery definitions in `schema.yaml`.
 - **Attachments**: files copied next to the Page or item that owns them by an import; use the returned link as is.
-- **Routines**: agent tasks defined per Space or Collection owner under `.routines/`, edited only through the Routine commands with the fingerprint of the last read. Starting one is `run_routine` of the desktop app.
+- **Routines**: agent tasks defined per Space or Collection owner under `.routines/`, edited only through the Routine commands with the fingerprint of the last read. The executor of an agent Routine is an `agent:<id>` reference from `svode agent list` (MCP: `list_agent_actors`) for the same Space; `svode actor list` is for people in actor fields. Starting one is `run_routine` of the desktop app.
 - **Apps**: a directory with `app.yaml`; validate a candidate with `svode app validate` before writing it.
 - **Index**: search, Collection queries and Knowledge come from an index that Svode brings up to date before answering; `INDEX_UNAVAILABLE` is an error, not an empty result.

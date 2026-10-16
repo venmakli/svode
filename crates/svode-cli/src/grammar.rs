@@ -32,7 +32,7 @@ fn structural_help(example: &str) -> String {
 
 const ROUTINE_OWNER: &str = "Owner: the selected Space (--space, or the Space containing the current directory), or one of its Collections with --collection.";
 
-const ROUTINE_WRITE: &str = "The definition is a complete JSON object (name, description, enabled, trigger, action, body) from --definition-file <path> or - for stdin; unknown fields are rejected and nothing is written. Saving a definition never starts the Routine and never enables automatic execution on this device; an enabled schedule or event Routine additionally needs --confirm-automatic-execution. The change does not commit to Git.";
+const ROUTINE_WRITE: &str = "The definition is a complete JSON object (name, description, enabled, trigger, action, body) from --definition-file <path> or - for stdin; unknown fields are rejected and nothing is written. The executor of a run_agent action is an `agent:<id>` reference from `svode agent list` for the same Space. Saving a definition never starts the Routine and never enables automatic execution on this device; an enabled schedule or event Routine additionally needs --confirm-automatic-execution. The change does not commit to Git.";
 
 const ROUTINE_CAS: &str = "Pass the routineId and the fingerprint of your last read. If the definition changed since, the command fails with ROUTINE_FINGERPRINT_CONFLICT and currentFingerprint: run `svode routine get` again and reapply the intent.";
 
@@ -123,6 +123,14 @@ pub enum Noun {
     Actor {
         #[command(subcommand)]
         verb: ActorVerb,
+    },
+    /// Agent Actors a Routine of the selected Space may name as executor.
+    #[command(
+        after_help = "Example:\n  svode --project ~/Notes agent list --space research --json"
+    )]
+    Agent {
+        #[command(subcommand)]
+        verb: AgentVerb,
     },
     /// Full-text search of Pages in the selected Space.
     #[command(after_help = format!("{INDEXED}\n\nExample:\n  svode search \"release notes\" --limit 10 --json"))]
@@ -824,6 +832,16 @@ pub struct ActorListArgs {
     /// Scan all Git history instead of the recent catalog window.
     #[arg(long)]
     pub all_time: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentVerb {
+    /// Agents of the selected Space and, for a child Space, of root: the
+    /// `agent:<id>` references a `run_agent` Routine action accepts.
+    #[command(
+        after_help = "The Space is the selected one (--space, or the Space containing the current directory); a Routine of a Collection uses the Space of that Collection. Catalog diagnostics follow the agents: an empty list with diagnostics does not mean the Space has no agents. Actors for actor fields are `actor list`.\n\nExample:\n  svode --project ~/Notes agent list --space research --json"
+    )]
+    List,
 }
 
 #[derive(Debug, Args)]

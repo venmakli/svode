@@ -11,10 +11,10 @@ use svode_tools::host::ToolHost;
 
 use crate::error::CliError;
 use crate::grammar::{
-    ActorVerb, AppVerb, AssetVerb, CollectionReadmeVerb, CollectionVerb, ColumnVerb, ContentVerb,
-    ConvertTarget, GitVerb, ItemFieldsVerb, ItemVerb, KnowledgeScope, KnowledgeVerb, MetaVerb,
-    MetadataPatch, NamedSelector, Noun, Pagination, ProjectVerb, RoutineOwner, RoutineVerb,
-    SpaceReadmeVerb, SpaceVerb, ViewVerb,
+    ActorVerb, AgentVerb, AppVerb, AssetVerb, CollectionReadmeVerb, CollectionVerb, ColumnVerb,
+    ContentVerb, ConvertTarget, GitVerb, ItemFieldsVerb, ItemVerb, KnowledgeScope, KnowledgeVerb,
+    MetaVerb, MetadataPatch, NamedSelector, Noun, Pagination, ProjectVerb, RoutineOwner,
+    RoutineVerb, SpaceReadmeVerb, SpaceVerb, ViewVerb,
 };
 use crate::input;
 use crate::output::Outcome;
@@ -52,12 +52,18 @@ impl ToolCommand {
         }
     }
 
-    /// Routine owner: the resolved Space, or one of its Collections.
-    fn routine_owner(mut self, owner: RoutineOwner) -> Self {
+    /// The resolved Space is always passed as `spaceId`.
+    fn explicit_space(mut self) -> Self {
         self.explicit_space = true;
+        self
+    }
+
+    /// Routine owner: the resolved Space, or one of its Collections.
+    fn routine_owner(self, owner: RoutineOwner) -> Self {
+        let command = self.explicit_space();
         match owner.collection {
-            Some(collection) => self.selector("collectionPath", "collection", collection),
-            None => self,
+            Some(collection) => command.selector("collectionPath", "collection", collection),
+            None => command,
         }
     }
 
@@ -443,6 +449,9 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
             verb: ActorVerb::List(args),
         } => ToolCommand::new("list_actors", render::actors)
             .optional("allTime", args.all_time.then_some(true)),
+        Noun::Agent {
+            verb: AgentVerb::List,
+        } => ToolCommand::new("list_agent_actors", render::agent_actors).explicit_space(),
         Noun::Search(args) => {
             ToolCommand::new("search_pages", |value| render::rows(&value["items"]))
                 .arg("query", args.query)

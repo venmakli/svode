@@ -249,7 +249,7 @@ fn without_desktop_the_session_serves_the_project_of_the_launch_directory() {
             env!("CARGO_PKG_VERSION")
         );
         let tools = tool_names(&responses[&2]);
-        assert_eq!(tools.len(), 53);
+        assert_eq!(tools.len(), 54);
         assert!(!tools.contains(&"run_routine"));
         let info = structured(&responses[&3]);
         assert_eq!(info["projectPath"], project.to_str().unwrap(), "{cwd:?}");
@@ -275,7 +275,7 @@ fn outside_a_project_the_session_starts_and_tool_calls_answer_project_unavailabl
         ],
     );
     assert_eq!(responses[&1]["result"]["serverInfo"]["name"], "svode");
-    assert_eq!(tool_names(&responses[&2]).len(), 53);
+    assert_eq!(tool_names(&responses[&2]).len(), 54);
     let refused = &responses[&3]["result"];
     assert_eq!(refused["isError"], true, "{refused}");
     let error = &refused["structuredContent"]["error"];

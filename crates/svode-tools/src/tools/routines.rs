@@ -638,7 +638,9 @@ fn validate_mutation_identity(
     Ok(())
 }
 
-fn resolve_routine_owner(
+/// Routine owner of an explicit `spaceId`, optionally one of its
+/// Collections; the same Space resolution addresses its Agent Actors.
+pub(crate) fn resolve_routine_owner(
     target: &RequestTarget,
     space_id: &str,
     collection_path: Option<&str>,

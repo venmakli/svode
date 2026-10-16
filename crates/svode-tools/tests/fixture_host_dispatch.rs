@@ -405,8 +405,8 @@ fn error_code(result: &ToolCallResult) -> String {
 #[test]
 fn served_catalog_is_filtered_by_host_declaration_and_capabilities() {
     let host = FixtureHost::new(None);
-    assert_eq!(served_definitions(&host).len(), 54);
-    assert_eq!(catalog::definitions().len(), 54);
+    assert_eq!(served_definitions(&host).len(), 55);
+    assert_eq!(catalog::definitions().len(), 55);
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     let names = served_names(&limited);
@@ -2728,7 +2728,7 @@ async fn run_routine_goes_through_the_host_runner_and_is_blocked_for_routine_cal
 
     let without_runner = FixtureHost::without_runner();
     let names = served_names(&without_runner);
-    assert_eq!(names.len(), 53);
+    assert_eq!(names.len(), 54);
     assert!(!names.contains(&"run_routine".to_string()));
     assert_eq!(
         error_code(&call_tool(&without_runner, Some(&target), "run_routine", run_args).await),
@@ -2754,7 +2754,7 @@ async fn every_catalog_tool_is_dispatched_by_the_library() {
         .into_iter()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 54);
+    assert_eq!(names.len(), 55);
     for name in names {
         let result = call_tool(&host, Some(&target), name, json!({})).await;
         if result.is_error {
@@ -2834,4 +2834,371 @@ async fn index_backed_reads_report_the_open_index_of_the_host() {
         assert!(index["verifiedAt"].is_string(), "{name}");
     }
     host.routines.close_key(&root).await;
+}
+
+const ROOT_REVIEWER: &str = "01arz3ndektsv4rrffq69g5fav";
+const ROOT_WRITER: &str = "01arz3ndektsv4rrffq69g5faw";
+const CHILD_RESEARCHER: &str = "01arz3ndektsv4rrffq69g5fax";
+const SIBLING_EDITOR: &str = "01arz3ndektsv4rrffq69g5fay";
+
+fn write_agent_catalog(owner: &Path, actors: &[(&str, &str)]) {
+    let actors = actors
+        .iter()
+        .map(|(id, name)| {
+            json!({
+                "id": id,
+                "name": name,
+                "description": format!("{name} agent"),
+                "adapters": [
+                    { "adapter": "codex", "model": "gpt-5.5", "effort": "high" },
+                    { "adapter": "claude-code" }
+                ]
+            })
+        })
+        .collect::<Vec<_>>();
+    write(
+        &owner.join(".svode/agent-actors.json"),
+        &json!({ "schemaVersion": 1, "actors": actors }).to_string(),
+    );
+}
+
+/// Root with two agents, a child with its own agent and a Collection, and a
+/// sibling child with its own agent.
+fn agent_actors_fixture() -> Fixture {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project").canonicalize_or_create();
+    write(
+        &project.join(".svode/config.json"),
+        &json!({
+            "name": "Project",
+            "spaces": [
+                { "id": "child", "path": "child", "repo": null },
+                { "id": "sibling", "path": "sibling", "repo": null }
+            ]
+        })
+        .to_string(),
+    );
+    for (path, source) in [
+        ("README.md", "---\ntitle: Project\n---\n"),
+        ("child/README.md", "---\ntitle: Child\n---\n"),
+        ("child/tasks/README.md", "---\ntitle: Tasks\n---\n"),
+        ("child/tasks/schema.yaml", "columns: []\nviews: []\n"),
+        ("sibling/README.md", "---\ntitle: Sibling\n---\n"),
+    ] {
+        write(&project.join(path), source);
+    }
+    for space in ["child", "sibling"] {
+        write(
+            &project.join(space).join(".svode/config.json"),
+            &json!({ "name": space }).to_string(),
+        );
+    }
+    write_agent_catalog(
+        &project,
+        &[(ROOT_REVIEWER, "Reviewer"), (ROOT_WRITER, "Writer")],
+    );
+    write_agent_catalog(&project.join("child"), &[(CHILD_RESEARCHER, "Researcher")]);
+    write_agent_catalog(&project.join("sibling"), &[(SIBLING_EDITOR, "Editor")]);
+    git(&project, &["init", "-q"]);
+    git(&project, &["config", "user.email", "agent@example.com"]);
+    git(&project, &["config", "user.name", "Agent"]);
+    git(&project, &["config", "maintenance.auto", "false"]);
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "fixture"]);
+    Fixture {
+        _temp: temp,
+        project,
+    }
+}
+
+fn agent_routine(name: &str, reference: &str) -> Value {
+    json!({
+        "name": name,
+        "trigger": { "type": "manual" },
+        "action": { "type": "run_agent", "executor": reference },
+        "body": "Do it."
+    })
+}
+
+fn references(result: &Value) -> Vec<(String, String)> {
+    result["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|agent| {
+            (
+                agent["reference"].as_str().unwrap().to_string(),
+                agent["ownerSpaceId"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn agent_ref(id: &str) -> String {
+    format!("agent:{id}")
+}
+
+/// Asserts that `value` has exactly the shape `schema` publishes: every
+/// required field, no field outside a closed object, and the declared
+/// JSON types down to array items.
+fn assert_matches_schema(value: &Value, schema: &Value, at: &str) {
+    if let Some(types) = schema.get("type") {
+        let types = match types {
+            Value::String(name) => vec![name.as_str()],
+            Value::Array(names) => names.iter().map(|name| name.as_str().unwrap()).collect(),
+            _ => panic!("{at}: type"),
+        };
+        let actual = match value {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        };
+        assert!(types.contains(&actual), "{at}: {actual} is not {types:?}");
+    }
+    if let (Some(object), Some(properties)) = (value.as_object(), schema.get("properties")) {
+        for required in schema["required"].as_array().unwrap() {
+            assert!(
+                object.contains_key(required.as_str().unwrap()),
+                "{at}: {required}"
+            );
+        }
+        for (key, field) in object {
+            let property = properties
+                .get(key)
+                .unwrap_or_else(|| panic!("{at}: unpublished field {key}"));
+            assert_matches_schema(field, property, &format!("{at}.{key}"));
+        }
+    }
+    if let (Some(items), Some(schema)) = (value.as_array(), schema.get("items")) {
+        for (index, item) in items.iter().enumerate() {
+            assert_matches_schema(item, schema, &format!("{at}[{index}]"));
+        }
+    }
+}
+
+fn agent_actors_output_schema() -> Value {
+    catalog::definitions()
+        .into_iter()
+        .find(|definition| definition.name == "list_agent_actors")
+        .unwrap()
+        .output_schema
+        .unwrap()
+}
+
+#[tokio::test]
+async fn agent_actors_are_the_executor_domain_of_a_space_and_its_collections() {
+    let fixture = agent_actors_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+
+    let child = call("list_agent_actors", json!({ "spaceId": "child" })).await;
+    let child = structured(&child).clone();
+    assert_matches_schema(&child, &agent_actors_output_schema(), "child");
+    assert_eq!(child["spaceId"], "child");
+    assert_eq!(
+        references(&child),
+        [
+            (agent_ref(CHILD_RESEARCHER), "child".to_string()),
+            (agent_ref(ROOT_REVIEWER), "root".to_string()),
+            (agent_ref(ROOT_WRITER), "root".to_string()),
+        ]
+    );
+    assert_eq!(child["diagnostics"], json!([]));
+    assert_eq!(
+        child["agents"][0],
+        json!({
+            "reference": agent_ref(CHILD_RESEARCHER),
+            "name": "Researcher",
+            "description": "Researcher agent",
+            "ownerSpaceId": "child",
+            "bindings": [
+                { "adapter": "codex", "model": "gpt-5.5", "effort": "high" },
+                { "adapter": "claude-code", "model": null, "effort": null }
+            ]
+        })
+    );
+    let root = call("list_agent_actors", json!({ "spaceId": "root" })).await;
+    assert_eq!(
+        references(structured(&root)),
+        [
+            (agent_ref(ROOT_REVIEWER), "root".to_string()),
+            (agent_ref(ROOT_WRITER), "root".to_string()),
+        ]
+    );
+
+    // Every listed reference is accepted by the Space owner and by its
+    // Collection; the agent of a sibling is refused without a write.
+    for (index, (reference, _)) in references(&child).into_iter().enumerate() {
+        for collection in [None, Some("tasks")] {
+            let created = call(
+                "create_routine",
+                json!({
+                    "spaceId": "child",
+                    "collectionPath": collection,
+                    "definition": agent_routine(&format!("Run {index}"), &reference)
+                }),
+            )
+            .await;
+            assert_eq!(structured(&created)["detail"]["valid"], true, "{reference}");
+        }
+    }
+    for collection in [None, Some("tasks")] {
+        let refused = call(
+            "create_routine",
+            json!({
+                "spaceId": "child",
+                "collectionPath": collection,
+                "definition": agent_routine("Sibling", &agent_ref(SIBLING_EDITOR))
+            }),
+        )
+        .await;
+        assert_eq!(error_code(&refused), "ROUTINE_INVALID");
+        assert!(
+            refused.structured_content.as_ref().unwrap()["error"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == "routine_executor_unavailable")
+        );
+    }
+    let child_space = fixture.project.join("child");
+    assert!(!child_space.join(".routines/Sibling.md").exists());
+    assert!(!child_space.join("tasks/.routines/Sibling.md").exists());
+
+    // A child opened as its own project inherits no root catalog.
+    let standalone = RequestTarget {
+        project_path: child_space.to_string_lossy().to_string(),
+        default_space_id: None,
+        default_space_path: child_space.to_string_lossy().to_string(),
+        routine_caller: None,
+    };
+    let own = call_tool(
+        &host,
+        Some(&standalone),
+        "list_agent_actors",
+        json!({ "spaceId": "root" }),
+    )
+    .await;
+    assert_eq!(
+        references(structured(&own)),
+        [(agent_ref(CHILD_RESEARCHER), "root".to_string())]
+    );
+    let inherited = call_tool(
+        &host,
+        Some(&standalone),
+        "create_routine",
+        json!({
+            "spaceId": "root",
+            "definition": agent_routine("Inherited", &agent_ref(ROOT_REVIEWER))
+        }),
+    )
+    .await;
+    assert_eq!(error_code(&inherited), "ROUTINE_INVALID");
+    host.routines.close_project(&fixture.project).await;
+    host.routines.close_project(&child_space).await;
+}
+
+#[tokio::test]
+async fn agent_actor_diagnostics_keep_readable_agents_and_name_no_device_path() {
+    let fixture = agent_actors_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+    let child_space = fixture.project.join("child");
+    let project_path = fixture.project.to_string_lossy().to_string();
+
+    // An unreadable own catalog keeps the agents of root.
+    write(&child_space.join(".svode/agent-actors.json"), "{ not json");
+    let unreadable = call("list_agent_actors", json!({ "spaceId": "child" })).await;
+    let unreadable = structured(&unreadable).clone();
+    assert_matches_schema(&unreadable, &agent_actors_output_schema(), "unreadable");
+    assert_eq!(
+        references(&unreadable),
+        [
+            (agent_ref(ROOT_REVIEWER), "root".to_string()),
+            (agent_ref(ROOT_WRITER), "root".to_string()),
+        ]
+    );
+    let [diagnostic] = unreadable["diagnostics"].as_array().unwrap().as_slice() else {
+        panic!("one diagnostic: {unreadable}");
+    };
+    assert_eq!(diagnostic["code"], "catalog_unavailable");
+    assert_eq!(diagnostic["ownerSpaceId"], "child");
+    assert_eq!(diagnostic["reference"], Value::Null);
+    assert!(!unreadable.to_string().contains(&project_path));
+
+    // An id of both the own and the root catalog is left out and refused.
+    write_agent_catalog(
+        &child_space,
+        &[(CHILD_RESEARCHER, "Researcher"), (ROOT_REVIEWER, "Shadow")],
+    );
+    let ambiguous = call("list_agent_actors", json!({ "spaceId": "child" })).await;
+    let ambiguous = structured(&ambiguous).clone();
+    assert_matches_schema(&ambiguous, &agent_actors_output_schema(), "ambiguous");
+    assert_eq!(
+        references(&ambiguous),
+        [
+            (agent_ref(CHILD_RESEARCHER), "child".to_string()),
+            (agent_ref(ROOT_WRITER), "root".to_string()),
+        ]
+    );
+    let diagnostics = ambiguous["diagnostics"].as_array().unwrap();
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic["code"].as_str().unwrap(),
+                diagnostic["ownerSpaceId"].as_str().unwrap(),
+                diagnostic["reference"].as_str().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "ambiguous_actor_id",
+                "child",
+                agent_ref(ROOT_REVIEWER).as_str()
+            ),
+            (
+                "ambiguous_actor_id",
+                "root",
+                agent_ref(ROOT_REVIEWER).as_str()
+            ),
+        ]
+    );
+    assert!(!ambiguous.to_string().contains(&project_path));
+    let refused = call(
+        "create_routine",
+        json!({
+            "spaceId": "child",
+            "definition": agent_routine("Shadowed", &agent_ref(ROOT_REVIEWER))
+        }),
+    )
+    .await;
+    assert_eq!(error_code(&refused), "ROUTINE_INVALID");
+    assert!(!child_space.join(".routines/Shadowed.md").exists());
+
+    // Missing catalogs are empty contributions without diagnostics.
+    for owner in [&fixture.project, &child_space] {
+        fs::remove_file(owner.join(".svode/agent-actors.json")).unwrap();
+    }
+    let empty = call("list_agent_actors", json!({ "spaceId": "child" })).await;
+    assert_eq!(
+        structured(&empty),
+        &json!({ "spaceId": "child", "agents": [], "diagnostics": [] })
+    );
+
+    // The Space is addressed exactly like a Routine owner.
+    for space_id in ["", " child", "child "] {
+        let invalid = call("list_agent_actors", json!({ "spaceId": space_id })).await;
+        assert_eq!(error_code(&invalid), "INVALID_SPACE_ID", "{space_id:?}");
+    }
+    let missing = call("list_agent_actors", json!({})).await;
+    assert_eq!(error_code(&missing), "SERIALIZATION_ERROR");
+    let unknown = call("list_agent_actors", json!({ "spaceId": "nowhere" })).await;
+    let routines = call("list_routines", json!({ "spaceId": "nowhere" })).await;
+    assert_eq!(error_code(&unknown), error_code(&routines));
 }

@@ -1506,13 +1506,12 @@ fn executor_availability_diagnostic(
     if executor.is_empty() {
         return None;
     }
-    let inherited =
-        (owner.space_path != owner.project_path).then_some(owner.project_path.as_path());
-    let actors = crate::agent_actors::resolve_catalogs(&owner.space_path, inherited)
-        .actors
-        .into_iter()
-        .map(|resolved| format!("agent:{}", resolved.actor.id))
-        .collect::<HashSet<_>>();
+    let actors =
+        crate::agent_actors::resolve_space_catalogs(&owner.project_path, &owner.space_path)
+            .actors
+            .into_iter()
+            .map(|resolved| format!("agent:{}", resolved.actor.id))
+            .collect::<HashSet<_>>();
     (!actors.contains(executor)).then(|| {
         RoutineDiagnostic::new(
             "routine_executor_unavailable",

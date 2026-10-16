@@ -390,6 +390,7 @@ pub const CASES: &[Case] = &[
         &["actor", "list", "--all-time"],
         &["list_actors"],
     ),
+    case("agent list", &["agent", "list"], &["list_agent_actors"]),
     case(
         "search",
         &["search", "notes", "--limit", "5", "--offset", "0"],
