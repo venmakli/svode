@@ -56,8 +56,6 @@ export interface TableViewProps {
   onOpenNestedCollection: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicatePage: (page: Page) => void;
-  onDeletePage: (page: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,

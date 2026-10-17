@@ -38,8 +38,6 @@ export function BoardView(props: BoardViewProps) {
     onOpenNestedCollection,
     onOpenFullPage,
     onOpenPath,
-    onDuplicatePage,
-    onDeletePage,
   } = props;
   const runtime = useBoardViewRuntime(props);
 
@@ -236,8 +234,6 @@ export function BoardView(props: BoardViewProps) {
                     onOpenNestedCollection,
                     onOpenFullPage,
                     onOpenPath,
-                    onDuplicate: onDuplicatePage,
-                    onDelete: onDeletePage,
                   }}
                 />
               );
@@ -270,8 +266,6 @@ export function BoardView(props: BoardViewProps) {
             onOpenNestedCollection={onOpenNestedCollection}
             onOpenFullPage={onOpenFullPage}
             onOpenPath={onOpenPath}
-            onDuplicate={onDuplicatePage}
-            onDelete={onDeletePage}
           />
         ) : null}
       </DragOverlay>

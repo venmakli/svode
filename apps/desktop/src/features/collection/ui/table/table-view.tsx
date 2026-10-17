@@ -38,8 +38,6 @@ export function TableView(props: TableViewProps) {
     onOpenNestedCollection,
     onOpenPath,
     onOpenRelationTarget,
-    onDuplicatePage,
-    onDeletePage,
     onSchemaChange,
   } = props;
   const runtime = useTableViewRuntime(props);
@@ -153,8 +151,6 @@ export function TableView(props: TableViewProps) {
               onFocusRow={runtime.setFocusedPath}
               onOpenPath={onOpenPath}
               onOpenRelationTarget={onOpenRelationTarget}
-              onDuplicatePage={onDuplicatePage}
-              onDeletePage={onDeletePage}
               onDragEnd={(event) => {
                 if (!readOnly) void runtime.handleDragEnd(event);
               }}

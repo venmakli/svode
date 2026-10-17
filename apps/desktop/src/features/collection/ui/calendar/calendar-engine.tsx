@@ -44,8 +44,6 @@ export function CalendarEngine({
   onActivateItem,
   onOpenNestedPeek,
   onOpenNestedCollection,
-  onDuplicatePage,
-  onDeletePage,
 }: {
   readOnly: boolean;
   calendarRef: RefObject<FullCalendar | null>;
@@ -63,8 +61,6 @@ export function CalendarEngine({
   onActivateItem: (page: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
-  onDuplicatePage: (page: Page) => void;
-  onDeletePage: (page: Page) => void;
 }) {
   return (
     <FullCalendar
@@ -105,8 +101,6 @@ export function CalendarEngine({
           onOpen={onActivateItem}
           onOpenNestedPeek={onOpenNestedPeek}
           onOpenNestedCollection={onOpenNestedCollection}
-          onDuplicate={onDuplicatePage}
-          onDelete={onDeletePage}
           propertyContext={propertyContext}
         />
       )}

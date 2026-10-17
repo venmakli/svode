@@ -1,12 +1,11 @@
 import type { CSSProperties, MouseEvent } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Copy, Database, FileText, Folder, Trash2 } from "lucide-react";
+import { Database, Folder } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   ContextMenu,
   ContextMenuContent,
-  ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,7 @@ import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { isFolderEntry, isNestedCollectionEntry } from "./utils";
 import { BoardPropertyFlow } from "./board-property-flow";
 import type { BoardCardProps } from "./types";
+import { CollectionEntryContextMenuItems } from "../entry-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import * as m from "@/paraglide/messages.js";
 
@@ -69,8 +69,6 @@ export function BoardCardContent({
   onOpenNestedCollection,
   onOpenFullPage,
   onOpenPath,
-  onDuplicate,
-  onDelete,
   readOnly,
 }: BoardCardProps) {
   const { entry } = card;
@@ -153,30 +151,14 @@ export function BoardCardContent({
         </Card>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <ContextMenuItem
-          onClick={() => {
+        <CollectionEntryContextMenuItems
+          entry={entry}
+          nestedCollection={nestedCollection}
+          onOpenInPeek={() => {
             if (nestedCollection) onOpenNestedPeek(entry);
             else onOpen(entry);
           }}
-        >
-          <FileText data-icon="inline-start" />
-          {m.collection_open_in_peek()}
-        </ContextMenuItem>
-        {!readOnly ? (
-          <ContextMenuItem onClick={() => onDuplicate(entry)}>
-            <Copy data-icon="inline-start" />
-            {m.collection_duplicate_entry()}
-          </ContextMenuItem>
-        ) : null}
-        {!readOnly ? (
-          <ContextMenuItem
-            variant="destructive"
-            onClick={() => onDelete(entry)}
-          >
-            <Trash2 data-icon="inline-start" />
-            {m.space_delete()}
-          </ContextMenuItem>
-        ) : null}
+        />
       </ContextMenuContent>
     </ContextMenu>
   );

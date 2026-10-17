@@ -4,20 +4,14 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   ChevronDown,
   ChevronRight,
-  Copy,
   Database,
-  FileText,
   GripVertical,
-  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  ContextMenuGroup,
-  ContextMenuItem,
-} from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { CardPropertyFlow } from "../card-property-flow";
+import { CollectionEntryContextMenuItems } from "../entry-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import { CollectionPresentationListRow } from "../presentation-chrome";
 import type { ListRowProps } from "./types";
@@ -78,11 +72,8 @@ export function CollectionListRowContent({
   onOpen,
   onOpenNestedCollection,
   onOpenPath,
-  onDuplicate,
-  onDelete,
   onFocusRow,
   onKeyboardMove,
-  readOnly = false,
   rowRef,
 }: ListRowProps & {
   dragAttributes: ButtonHTMLAttributes<HTMLButtonElement>;
@@ -206,27 +197,11 @@ export function CollectionListRowContent({
         />
       }
       contextMenu={
-        <ContextMenuGroup>
-          <ContextMenuItem onClick={() => onOpen(entry, row.nestedCollection)}>
-            <FileText data-icon="inline-start" />
-            {m.collection_open_in_peek()}
-          </ContextMenuItem>
-          {!readOnly ? (
-            <ContextMenuItem onClick={() => onDuplicate(entry)}>
-              <Copy data-icon="inline-start" />
-              {m.collection_duplicate_entry()}
-            </ContextMenuItem>
-          ) : null}
-          {!readOnly ? (
-            <ContextMenuItem
-              variant="destructive"
-              onClick={() => onDelete(entry)}
-            >
-              <Trash2 data-icon="inline-start" />
-              {m.space_delete()}
-            </ContextMenuItem>
-          ) : null}
-        </ContextMenuGroup>
+        <CollectionEntryContextMenuItems
+          entry={entry}
+          nestedCollection={row.nestedCollection}
+          onOpenInPeek={() => onOpen(entry, row.nestedCollection)}
+        />
       }
     />
   );

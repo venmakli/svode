@@ -40,8 +40,6 @@ export function ListView(props: ListViewProps) {
     onClearSearch,
     onOpenNestedCollection,
     onOpenPath,
-    onDuplicatePage,
-    onDeletePage,
   } = props;
   const {
     actors,
@@ -135,7 +133,6 @@ export function ListView(props: ListViewProps) {
                 projectPath={projectPath}
                 actors={actors}
                 disabledReorder={readOnly || hasSort}
-                readOnly={readOnly}
                 focused={focusedPath === row.entry.path}
                 rowRef={(element) => rowRef(row.entry.path, element)}
                 onRequestActors={loadActors}
@@ -149,8 +146,6 @@ export function ListView(props: ListViewProps) {
                 onOpen={openRow}
                 onOpenNestedCollection={onOpenNestedCollection}
                 onOpenPath={onOpenPath}
-                onDuplicate={onDuplicatePage}
-                onDelete={onDeletePage}
                 onFocusRow={setFocusedPath}
                 onKeyboardMove={moveFocus}
               />

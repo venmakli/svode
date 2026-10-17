@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
@@ -90,15 +91,20 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
                 </Badge>
               ) : null,
               renderHeaderActions: (page, readOnly) => (
-                <PagePeekActions
-                  {...props}
-                  page={page}
-                  readOnly={readOnly}
-                  spacePath={spacePath}
-                  spaceId={spaceId}
-                  projectPath={projectPath}
-                  template={target.template}
-                />
+                <>
+                  <PagePeekActions
+                    {...props}
+                    page={page}
+                    readOnly={readOnly}
+                    spacePath={spacePath}
+                    spaceId={spaceId}
+                    projectPath={projectPath}
+                    template={target.template}
+                  />
+                  {target.focusTitle && page.path === target.page.path ? (
+                    <PeekTitleFocus />
+                  ) : null}
+                </>
               ),
               onExpand: (openFull) =>
                 void leave(async () => {
@@ -193,4 +199,16 @@ function PagePeekActions({
       readOnly={readOnly}
     />
   );
+}
+
+/** Renames the item opened in peek for it: focuses its title once read. */
+function PeekTitleFocus() {
+  const { requestTitleFocus, status } = usePageDetailContext();
+  const requestedRef = useRef(false);
+  useEffect(() => {
+    if (requestedRef.current || status !== "ready") return;
+    requestedRef.current = true;
+    requestTitleFocus();
+  }, [requestTitleFocus, status]);
+  return null;
 }

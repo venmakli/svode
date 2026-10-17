@@ -32,7 +32,5 @@ export interface GalleryViewProps {
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicatePage: (page: Page) => void;
-  onDeletePage: (page: Page) => void;
   onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }

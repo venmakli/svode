@@ -1,23 +1,21 @@
 import type { ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Copy, FileText, GripVertical, Trash2 } from "lucide-react";
+import { GripVertical } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
-  ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { TableCell } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
 import type { CollectionTableRow } from "./types";
 import { CollectionTableRow as CollectionTableRowShell } from "./table-presentation";
-import * as m from "@/paraglide/messages.js";
+import { CollectionEntryContextMenuItems } from "../entry-context-menu";
 
 export function SortableTableRow({
   row,
   disabled,
-  readOnly,
   rowHeightClassName,
   selected,
   tabIndex,
@@ -26,12 +24,9 @@ export function SortableTableRow({
   onFocus,
   onMoveFocus,
   registerRow,
-  onDuplicate,
-  onDelete,
 }: {
   row: CollectionTableRow;
   disabled: boolean;
-  readOnly: boolean;
   rowHeightClassName: string;
   selected: boolean;
   tabIndex: number;
@@ -40,8 +35,6 @@ export function SortableTableRow({
   onFocus: () => void;
   onMoveFocus: (key: string) => void;
   registerRow: (element: HTMLTableRowElement | null) => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
 }) {
   const {
     attributes,
@@ -98,22 +91,11 @@ export function SortableTableRow({
         </CollectionTableRowShell>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <ContextMenuItem onClick={onOpen}>
-          <FileText data-icon="inline-start" />
-          {m.collection_open_in_peek()}
-        </ContextMenuItem>
-        {!readOnly ? (
-          <ContextMenuItem onClick={onDuplicate}>
-            <Copy data-icon="inline-start" />
-            {m.collection_duplicate_entry()}
-          </ContextMenuItem>
-        ) : null}
-        {!readOnly ? (
-          <ContextMenuItem variant="destructive" onClick={onDelete}>
-            <Trash2 data-icon="inline-start" />
-            {m.space_delete()}
-          </ContextMenuItem>
-        ) : null}
+        <CollectionEntryContextMenuItems
+          entry={row.entry}
+          nestedCollection={row.nestedCollection}
+          onOpenInPeek={onOpen}
+        />
       </ContextMenuContent>
     </ContextMenu>
   );

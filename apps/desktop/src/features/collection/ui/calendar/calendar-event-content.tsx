@@ -1,10 +1,9 @@
 import type { EventContentArg } from "@fullcalendar/core";
-import { Copy, Database, FileText, Folder, Trash2 } from "lucide-react";
+import { Database, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
-  ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -24,6 +23,7 @@ import type {
   CalendarPropertyContext,
   CalendarScope,
 } from "../../model/calendar-types";
+import { CollectionEntryContextMenuItems } from "../entry-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import * as m from "@/paraglide/messages.js";
 
@@ -34,8 +34,6 @@ export function CalendarEventContent({
   onOpen,
   onOpenNestedPeek,
   onOpenNestedCollection,
-  onDuplicate,
-  onDelete,
   propertyContext,
 }: {
   readOnly: boolean;
@@ -44,8 +42,6 @@ export function CalendarEventContent({
   onOpen: (entry: Page) => void;
   onOpenNestedPeek: (entry: Page) => void;
   onOpenNestedCollection: (entry: Page) => void;
-  onDuplicate: (entry: Page) => void;
-  onDelete: (entry: Page) => void;
   propertyContext: CalendarPropertyContext;
 }) {
   const model = arg.event.extendedProps.model as CalendarEventModel | undefined;
@@ -149,25 +145,11 @@ export function CalendarEventContent({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <ContextMenuItem onClick={openEntry}>
-          <FileText data-icon="inline-start" />
-          {m.collection_open_in_peek()}
-        </ContextMenuItem>
-        {!readOnly ? (
-          <ContextMenuItem onClick={() => onDuplicate(entry)}>
-            <Copy data-icon="inline-start" />
-            {m.collection_duplicate_entry()}
-          </ContextMenuItem>
-        ) : null}
-        {!readOnly ? (
-          <ContextMenuItem
-            variant="destructive"
-            onClick={() => onDelete(entry)}
-          >
-            <Trash2 data-icon="inline-start" />
-            {m.space_delete()}
-          </ContextMenuItem>
-        ) : null}
+        <CollectionEntryContextMenuItems
+          entry={entry}
+          nestedCollection={model.nestedCollection}
+          onOpenInPeek={openEntry}
+        />
       </ContextMenuContent>
     </ContextMenu>
   );

@@ -1,9 +1,8 @@
-import { Copy, FileText, Trash2 } from "lucide-react";
+import { FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
-  ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -20,6 +19,7 @@ import type { CollectionSchema } from "@/features/properties";
 import type { Page } from "@/features/page";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { useViewPlaceholderEntries } from "../hooks";
+import { CollectionEntryContextMenuItems } from "./entry-context-menu";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -35,8 +35,6 @@ export function ViewPlaceholder({
   searchQuery,
   refreshToken,
   onActivateItem,
-  onDuplicatePage,
-  onDeletePage,
 }: {
   readOnly: boolean;
   type: ViewType;
@@ -48,8 +46,6 @@ export function ViewPlaceholder({
   searchQuery: string;
   refreshToken: number;
   onActivateItem: (page: Page) => void;
-  onDuplicatePage: (page: Page) => void;
-  onDeletePage: (page: Page) => void;
 }) {
   const entries = useViewPlaceholderEntries({
     spacePath,
@@ -129,25 +125,10 @@ export function ViewPlaceholder({
                   </Button>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="w-48">
-                  <ContextMenuItem onClick={() => onActivateItem(entry)}>
-                    <FileText data-icon="inline-start" />
-                    {m.collection_open_in_peek()}
-                  </ContextMenuItem>
-                  {!readOnly ? (
-                    <ContextMenuItem onClick={() => onDuplicatePage(entry)}>
-                      <Copy data-icon="inline-start" />
-                      {m.collection_duplicate_entry()}
-                    </ContextMenuItem>
-                  ) : null}
-                  {!readOnly ? (
-                    <ContextMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => onDeletePage(entry)}
-                    >
-                      <Trash2 data-icon="inline-start" />
-                      {m.space_delete()}
-                    </ContextMenuItem>
-                  ) : null}
+                  <CollectionEntryContextMenuItems
+                    entry={entry}
+                    onOpenInPeek={() => onActivateItem(entry)}
+                  />
                 </ContextMenuContent>
               </ContextMenu>
             );

@@ -40,8 +40,6 @@ export function TableRowsBody({
   onFocusRow,
   onOpenPath,
   onOpenRelationTarget,
-  onDuplicatePage,
-  onDeletePage,
   onDragEnd,
   density = "default",
   wrapText = false,
@@ -60,8 +58,6 @@ export function TableRowsBody({
   onFocusRow: (path: string) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicatePage: (page: Page) => void;
-  onDeletePage: (page: Page) => void;
   onDragEnd: (event: DragEndEvent) => void;
   density?: "compact" | "default" | "spacious";
   wrapText?: boolean;
@@ -124,7 +120,6 @@ export function TableRowsBody({
                 key={path}
                 row={original}
                 disabled={readOnly || hasSort || original.child}
-                readOnly={readOnly}
                 rowHeightClassName={rowHeight}
                 selected={selected}
                 tabIndex={selected || (!focusedPath && index === 0) ? 0 : -1}
@@ -139,8 +134,6 @@ export function TableRowsBody({
                   if (element) rowRefs.current.set(path, element);
                   else rowRefs.current.delete(path);
                 }}
-                onDuplicate={() => onDuplicatePage(original.entry)}
-                onDelete={() => onDeletePage(original.entry)}
               >
                 {original.nestedSchema ? (
                   <TableCell

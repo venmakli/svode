@@ -79,7 +79,6 @@ test("collection Table rows select visibly and open the same peek from double-cl
           <TableBody>
             <SortableTableRow
               disabled
-              readOnly
               registerRow={() => undefined}
               row={{
                 child: false,
@@ -100,8 +99,6 @@ test("collection Table rows select visibly and open the same peek from double-cl
               rowHeightClassName="h-9"
               selected={selected}
               tabIndex={0}
-              onDelete={() => undefined}
-              onDuplicate={() => undefined}
               onFocus={() => setSelected(true)}
               onMoveFocus={() => undefined}
               onOpen={() => {

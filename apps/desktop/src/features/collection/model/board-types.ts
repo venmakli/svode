@@ -58,8 +58,6 @@ export interface BoardViewProps {
   onOpenNestedCollection: (entry: Page) => void;
   onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicatePage: (page: Page) => void;
-  onDeletePage: (page: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
@@ -92,6 +90,4 @@ export interface BoardCardProps {
   onOpenNestedCollection: (entry: Page) => void;
   onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
-  onDuplicate: (entry: Page) => void;
-  onDelete: (entry: Page) => void;
 }

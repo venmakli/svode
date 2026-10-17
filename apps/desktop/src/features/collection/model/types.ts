@@ -1,3 +1,5 @@
+import type { ContentActionHandlers } from "@/features/content-actions";
+import type { NavigationItem } from "@/features/navigation";
 import type { Page } from "@/features/page";
 import type { ScopeSurfaceId } from "@/features/scope-surfaces";
 import type { CalendarScope } from "./calendar-types";
@@ -30,9 +32,20 @@ export type SettingsPane =
   | "sortEditor"
   | "group";
 
+/** What the context menu of every row of one Collection acts with. */
+export interface CollectionEntryMenu {
+  readOnly: boolean;
+  spacePath: string;
+  pinItem: (entry: Page) => NavigationItem | null;
+  /** The item's own actions; the row adds how it opens in peek. */
+  handlers: (entry: Page) => Omit<ContentActionHandlers, "open-in-peek">;
+}
+
 export interface PagePeekTarget {
   page: Page;
   nested: boolean;
+  /** The peek opens on its title selected, to rename the item. */
+  focusTitle?: boolean;
   spaceId?: string | null;
   spacePath?: string | null;
   projectPath?: string | null;

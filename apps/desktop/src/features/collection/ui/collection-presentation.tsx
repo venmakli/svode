@@ -59,8 +59,6 @@ export interface SchemaBackedCollectionPresentationProps {
   onOpenFullPage: (entry: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
-  onDuplicatePage: (page: Page) => void;
-  onDeletePage: (page: Page) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
     viewName: string,
@@ -113,8 +111,6 @@ function SchemaBackedCollectionPresentation({
   onOpenFullPage,
   onOpenPath,
   onOpenRelationTarget,
-  onDuplicatePage,
-  onDeletePage,
   onSchemaChange,
   onUpdateView,
   onCalendarScopeChange,
@@ -143,8 +139,6 @@ function SchemaBackedCollectionPresentation({
     onOpenNestedPeek,
     onOpenNestedCollection,
     onOpenPath,
-    onDuplicatePage,
-    onDeletePage,
   };
 
   const renderers: Record<ViewType, () => ReactNode> = {

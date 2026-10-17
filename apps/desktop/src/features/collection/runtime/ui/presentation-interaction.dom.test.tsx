@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 
 import { ContextMenuItem } from "@/components/ui/context-menu";
 
+import { CollectionEntryMenuProvider } from "../../ui/entry-context-menu";
 import { CollectionListRowContent } from "../../ui/list/list-row";
 import { CollectionPresentationGalleryCard } from "../../ui/presentation-gallery-card";
 import { EMPTY_COLLECTION_QUERY } from "../model/query";
@@ -320,38 +321,45 @@ test("persisted List keeps one activation contract across pointer and keyboard",
   try {
     await act(async () => {
       root.render(
-        <CollectionListRowContent
-          actors={[]}
-          cardFields={[]}
-          density="compact"
-          disabledReorder={false}
-          dragAttributes={{}}
-          focused={false}
-          properties={[]}
-          projectPath="/project"
-          row={{
-            entry,
-            expandable: true,
-            expanded: false,
-            level: 1,
-            nestedCollection: true,
+        <CollectionEntryMenuProvider
+          value={{
+            readOnly: true,
+            spacePath: "/project",
+            pinItem: () => null,
+            handlers: () => ({}),
           }}
-          spacePath="/project"
-          onDelete={() => undefined}
-          onDuplicate={() => undefined}
-          onFocusRow={() => undefined}
-          onKeyboardMove={(path, offset) => moved.push({ offset, path })}
-          onOpen={(rowEntry, nested) =>
-            opened.push({ nested, path: rowEntry.path })
-          }
-          onOpenNestedCollection={() => {
-            nestedOpenCount += 1;
-          }}
-          onOpenPath={() => undefined}
-          onRequestActors={async () => []}
-          onToggle={() => undefined}
-          onUpdateField={() => undefined}
-        />,
+        >
+          <CollectionListRowContent
+            actors={[]}
+            cardFields={[]}
+            density="compact"
+            disabledReorder={false}
+            dragAttributes={{}}
+            focused={false}
+            properties={[]}
+            projectPath="/project"
+            row={{
+              entry,
+              expandable: true,
+              expanded: false,
+              level: 1,
+              nestedCollection: true,
+            }}
+            spacePath="/project"
+            onFocusRow={() => undefined}
+            onKeyboardMove={(path, offset) => moved.push({ offset, path })}
+            onOpen={(rowEntry, nested) =>
+              opened.push({ nested, path: rowEntry.path })
+            }
+            onOpenNestedCollection={() => {
+              nestedOpenCount += 1;
+            }}
+            onOpenPath={() => undefined}
+            onRequestActors={async () => []}
+            onToggle={() => undefined}
+            onUpdateField={() => undefined}
+          />
+        </CollectionEntryMenuProvider>,
       );
     });
 

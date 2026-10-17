@@ -27,11 +27,13 @@ import { handleError } from "../hooks/error-feedback";
 import { CollectionSkeleton } from "./skeleton";
 import { definePageCollection } from "../persisted/page-collection-definition";
 import { CollectionHost } from "./collection-host";
+import { CollectionEntryMenuProvider } from "./entry-context-menu";
 import { CollectionTabStrip } from "./view-tabs";
 import { ViewActionBar } from "./view-action-bar";
 import {
   useCollectionEntryActions,
   useCollectionEntryDelete,
+  useCollectionEntryMenu,
   useCollectionActiveTab,
   useCollectionKeyboardShortcuts,
   useCollectionSaveShortcuts,
@@ -156,6 +158,17 @@ export function CollectionViewsSurface({
   const openPeek = useCallback((page: Page, nested = false) => {
     setPeekTarget({ page, nested });
   }, []);
+  const entryMenu = useCollectionEntryMenu({
+    readOnly,
+    spacePath,
+    projectPath,
+    spaceId,
+    refreshEntries,
+    openPeek: (page, options) =>
+      setPeekTarget({ page, nested: false, focusTitle: options?.focusTitle }),
+    duplicateRow,
+    requestRowDelete: entryDelete.requestRowDelete,
+  });
 
   const views = useMemo(
     () =>
@@ -323,146 +336,143 @@ export function CollectionViewsSurface({
 
   return (
     <div className="flex min-h-full flex-col">
-      <CollectionHost
-        activePresentationId={activeTab}
-        definition={definition}
-        onActivePresentationChange={selectTab}
-        tabs={
-          <CollectionTabStrip
-            activeTab={activeTab}
-            addViewOptions={[
-              { type: "table", label: m.collection_view_type_table() },
-              { type: "board", label: m.collection_view_type_board() },
-              { type: "calendar", label: m.collection_view_type_calendar() },
-              { type: "list", label: m.collection_view_type_list() },
-              { type: "gallery", label: m.collection_view_type_gallery() },
-            ]}
-            addViewLabel={m.collection_add_view()}
-            manageViewsLabel={m.collection_manage_views()}
-            moreViewsLabel={m.collection_more_views()}
-            readOnly={readOnly}
-            views={views}
-            onAddView={(type) => {
-              if (!readOnly) void addView(type).catch(handleError);
-            }}
-            onReorderViews={(order) =>
-              readOnly ? blockReadOnly() : reorder(order)
-            }
-            onTabChange={selectTab}
-          />
-        }
-        actions={
-          activeTab ? (
-            <ViewActionBar
-              searchOpen={searchOpen}
-              searchQuery={searchQuery}
-              settingsOpen={settingsOpen}
-              settingsPane={settingsPane}
-              activeView={activeView}
-              renameValue={renameValue}
-              schema={schema}
-              query={query}
-              collectionPath={collectionPath}
-              spacePath={spacePath}
-              projectPath={projectPath}
+      <CollectionEntryMenuProvider value={entryMenu}>
+        <CollectionHost
+          activePresentationId={activeTab}
+          definition={definition}
+          onActivePresentationChange={selectTab}
+          tabs={
+            <CollectionTabStrip
+              activeTab={activeTab}
+              addViewOptions={[
+                { type: "table", label: m.collection_view_type_table() },
+                { type: "board", label: m.collection_view_type_board() },
+                { type: "calendar", label: m.collection_view_type_calendar() },
+                { type: "list", label: m.collection_view_type_list() },
+                { type: "gallery", label: m.collection_view_type_gallery() },
+              ]}
+              addViewLabel={m.collection_add_view()}
+              manageViewsLabel={m.collection_manage_views()}
+              moreViewsLabel={m.collection_more_views()}
               readOnly={readOnly}
-              onSearchOpenChange={setSearchOpen}
-              onSearchQueryChange={setSearchQuery}
-              onSettingsOpenChange={setSettingsOpen}
-              onSettingsPaneChange={setSettingsPane}
-              onRenameValueChange={setRenameValue}
-              onRename={() => (readOnly ? blockReadOnly() : renameActiveView())}
-              onUpdateView={(name, patch) =>
-                readOnly ? blockReadOnly() : updateView(name, patch)
+              views={views}
+              onAddView={(type) => {
+                if (!readOnly) void addView(type).catch(handleError);
+              }}
+              onReorderViews={(order) =>
+                readOnly ? blockReadOnly() : reorder(order)
               }
-              onDuplicateView={() =>
-                readOnly ? blockReadOnly() : duplicateActiveView()
-              }
-              onDeleteViewRequest={() => {
-                if (!readOnly) setDeleteOpen(true);
-              }}
-              onSchemaChange={(nextSchema) => {
-                if (!readOnly) setSchema(normalizeSchema(nextSchema));
-              }}
-              autoConfigForType={autoConfigForType}
-              onLoadTemplates={loadTemplatesForMenu}
-              onCreateTemplate={createTemplateForMenu}
-              onInstantiateTemplate={instantiateTemplateForMenu}
-              onEditTemplate={editTemplate}
-              onSetDefaultTemplate={setDefaultTemplateForMenu}
-              onDuplicateTemplate={duplicateTemplateForMenu}
-              onDeleteTemplate={deleteTemplateForMenu}
-              onReorderTemplates={reorderTemplatesForMenu}
-              onCreatePage={(asFolder) => {
-                if (focusActiveViewCreate(asFolder)) return;
-                void createEntry(asFolder).catch(handleError);
-              }}
+              onTabChange={selectTab}
             />
-          ) : null
-        }
-        presentation={
-          activeView
-            ? {
-                readOnly,
-                view: activeView,
-                query,
-                schema,
-                collectionPath,
-                previousCollectionPath,
-                projectPath,
-                spacePath,
-                searchQuery,
-                refreshToken: entriesVersion,
-                calendarScope: routeState?.calendarScope,
-                createRequest: createRequests[viewType(activeView)],
-                onClearSearch: () => setSearchQuery(""),
-                onOpenNestedPeek: (entryToOpen) => openPeek(entryToOpen, true),
-                onOpenNestedCollection: (entryToOpen) =>
-                  openScopeOwner({
-                    kind: "collection",
-                    path: entryToOpen.path,
-                    spaceId,
-                  }),
-                onOpenFullPage: (page) => openPage(page.path, spaceId),
-                onOpenPath: openPath,
-                onOpenRelationTarget: openRelationPeek,
-                onDuplicatePage: (pageToDuplicate) => {
-                  if (!readOnly) {
-                    void duplicateRow(pageToDuplicate).catch(handleError);
-                  }
-                },
-                onDeletePage: (pageToDelete) => {
-                  entryDelete.requestRowDelete(pageToDelete);
-                },
-                onSchemaChange: (nextSchema) => {
+          }
+          actions={
+            activeTab ? (
+              <ViewActionBar
+                searchOpen={searchOpen}
+                searchQuery={searchQuery}
+                settingsOpen={settingsOpen}
+                settingsPane={settingsPane}
+                activeView={activeView}
+                renameValue={renameValue}
+                schema={schema}
+                query={query}
+                collectionPath={collectionPath}
+                spacePath={spacePath}
+                projectPath={projectPath}
+                readOnly={readOnly}
+                onSearchOpenChange={setSearchOpen}
+                onSearchQueryChange={setSearchQuery}
+                onSettingsOpenChange={setSettingsOpen}
+                onSettingsPaneChange={setSettingsPane}
+                onRenameValueChange={setRenameValue}
+                onRename={() =>
+                  readOnly ? blockReadOnly() : renameActiveView()
+                }
+                onUpdateView={(name, patch) =>
+                  readOnly ? blockReadOnly() : updateView(name, patch)
+                }
+                onDuplicateView={() =>
+                  readOnly ? blockReadOnly() : duplicateActiveView()
+                }
+                onDeleteViewRequest={() => {
+                  if (!readOnly) setDeleteOpen(true);
+                }}
+                onSchemaChange={(nextSchema) => {
                   if (!readOnly) setSchema(normalizeSchema(nextSchema));
-                },
-                onUpdateView: (name, patch) => {
-                  if (readOnly) {
-                    return Promise.reject(
-                      new Error(m.repository_work_status_read_only()),
+                }}
+                autoConfigForType={autoConfigForType}
+                onLoadTemplates={loadTemplatesForMenu}
+                onCreateTemplate={createTemplateForMenu}
+                onInstantiateTemplate={instantiateTemplateForMenu}
+                onEditTemplate={editTemplate}
+                onSetDefaultTemplate={setDefaultTemplateForMenu}
+                onDuplicateTemplate={duplicateTemplateForMenu}
+                onDeleteTemplate={deleteTemplateForMenu}
+                onReorderTemplates={reorderTemplatesForMenu}
+                onCreatePage={(asFolder) => {
+                  if (focusActiveViewCreate(asFolder)) return;
+                  void createEntry(asFolder).catch(handleError);
+                }}
+              />
+            ) : null
+          }
+          presentation={
+            activeView
+              ? {
+                  readOnly,
+                  view: activeView,
+                  query,
+                  schema,
+                  collectionPath,
+                  previousCollectionPath,
+                  projectPath,
+                  spacePath,
+                  searchQuery,
+                  refreshToken: entriesVersion,
+                  calendarScope: routeState?.calendarScope,
+                  createRequest: createRequests[viewType(activeView)],
+                  onClearSearch: () => setSearchQuery(""),
+                  onOpenNestedPeek: (entryToOpen) =>
+                    openPeek(entryToOpen, true),
+                  onOpenNestedCollection: (entryToOpen) =>
+                    openScopeOwner({
+                      kind: "collection",
+                      path: entryToOpen.path,
+                      spaceId,
+                    }),
+                  onOpenFullPage: (page) => openPage(page.path, spaceId),
+                  onOpenPath: openPath,
+                  onOpenRelationTarget: openRelationPeek,
+                  onSchemaChange: (nextSchema) => {
+                    if (!readOnly) setSchema(normalizeSchema(nextSchema));
+                  },
+                  onUpdateView: (name, patch) => {
+                    if (readOnly) {
+                      return Promise.reject(
+                        new Error(m.repository_work_status_read_only()),
+                      );
+                    }
+                    return updateView(name, patch);
+                  },
+                  onCalendarScopeChange: routeState?.onCalendarScopeChange,
+                  onCreatePage: (title, asFolder, contextualDefaults) => {
+                    if (readOnly) {
+                      return Promise.reject(
+                        new Error(m.repository_work_status_read_only()),
+                      );
+                    }
+                    return createEntry(
+                      asFolder,
+                      title,
+                      false,
+                      contextualDefaults,
                     );
-                  }
-                  return updateView(name, patch);
-                },
-                onCalendarScopeChange: routeState?.onCalendarScopeChange,
-                onCreatePage: (title, asFolder, contextualDefaults) => {
-                  if (readOnly) {
-                    return Promise.reject(
-                      new Error(m.repository_work_status_read_only()),
-                    );
-                  }
-                  return createEntry(
-                    asFolder,
-                    title,
-                    false,
-                    contextualDefaults,
-                  );
-                },
-              }
-            : null
-        }
-      />
+                  },
+                }
+              : null
+          }
+        />
+      </CollectionEntryMenuProvider>
 
       <DeleteViewDialog
         open={!readOnly && deleteOpen}

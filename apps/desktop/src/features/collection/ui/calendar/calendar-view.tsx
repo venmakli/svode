@@ -36,8 +36,6 @@ export function CalendarView({
   onOpenNestedCollection,
   onOpenFullPage,
   onOpenPath,
-  onDuplicatePage,
-  onDeletePage,
   onSchemaChange,
   onUpdateView,
   onCreatePage,
@@ -94,8 +92,6 @@ export function CalendarView({
     onOpenNestedCollection,
     onOpenFullPage,
     onOpenPath,
-    onDuplicatePage,
-    onDeletePage,
     onSchemaChange,
     onUpdateView,
     onCreatePage,
@@ -158,8 +154,6 @@ export function CalendarView({
             onActivateItem={onActivateItem}
             onOpenNestedPeek={onOpenNestedPeek}
             onOpenNestedCollection={onOpenNestedCollection}
-            onDuplicatePage={onDuplicatePage}
-            onDeletePage={onDeletePage}
           />
           {visibleCount === 0 ? <CalendarEmptyOverlay /> : null}
         </div>

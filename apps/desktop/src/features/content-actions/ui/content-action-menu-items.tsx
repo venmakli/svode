@@ -1,5 +1,10 @@
 import { Fragment } from "react";
 import {
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
+import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -7,6 +12,7 @@ import {
 import {
   NavigationMenuItems,
   type NavigationItem,
+  type NavigationMenuKind,
 } from "@/features/navigation";
 import type {
   ContentAction,
@@ -19,19 +25,36 @@ export type ContentActionHandlers = Partial<
   Record<Exclude<ContentActionId, "pin">, () => void>
 >;
 
+const MENU_PRIMITIVES = {
+  dropdown: {
+    Group: DropdownMenuGroup,
+    Item: DropdownMenuItem,
+    Separator: DropdownMenuSeparator,
+  },
+  context: {
+    Group: ContextMenuGroup,
+    Item: ContextMenuItem,
+    Separator: ContextMenuSeparator,
+  },
+} as const;
+
 /**
- * The items of an object's dropdown menu, built from its catalog groups and
- * separated by group. Pin items come from the navigation model of `pinItem`.
+ * The items of an object's dropdown or context menu, built from its catalog
+ * groups and separated by group. Pin items come from the navigation model of
+ * `pinItem`.
  */
 export function ContentActionMenuItems({
   groups,
   pinItem = null,
   handlers,
+  menu = "dropdown",
 }: {
   groups: readonly ContentActionGroup[];
   pinItem?: NavigationItem | null;
   handlers: ContentActionHandlers;
+  menu?: NavigationMenuKind;
 }) {
+  const { Group, Separator } = MENU_PRIMITIVES[menu];
   const shown = groups
     .map((group) => ({
       ...group,
@@ -43,21 +66,22 @@ export function ContentActionMenuItems({
 
   return shown.map((group, index) => (
     <Fragment key={group.id}>
-      {index > 0 ? <DropdownMenuSeparator /> : null}
-      <DropdownMenuGroup data-content-action-group={group.id}>
+      {index > 0 ? <Separator /> : null}
+      <Group data-content-action-group={group.id}>
         {group.actions.map((action) =>
           action.id === "pin" ? (
-            <NavigationMenuItems key="pin" item={pinItem} />
+            <NavigationMenuItems key="pin" item={pinItem} menu={menu} />
           ) : (
             <ContentActionMenuItem
               key={action.id}
               action={action}
               id={action.id}
+              menu={menu}
               onSelect={handlers[action.id]}
             />
           ),
         )}
-      </DropdownMenuGroup>
+      </Group>
     </Fragment>
   ));
 }
@@ -65,17 +89,20 @@ export function ContentActionMenuItems({
 function ContentActionMenuItem({
   action,
   id,
+  menu,
   onSelect,
 }: {
   action: ContentAction;
   id: Exclude<ContentActionId, "pin">;
+  menu: NavigationMenuKind;
   onSelect: (() => void) | undefined;
 }) {
+  const { Item } = MENU_PRIMITIVES[menu];
   const presentation = CONTENT_ACTION_PRESENTATION[id];
   const Icon = presentation.icon;
   const label = presentation.label();
   return (
-    <DropdownMenuItem
+    <Item
       variant={presentation.destructive ? "destructive" : "default"}
       disabled={action.disabled}
       data-content-action={id}
@@ -90,6 +117,6 @@ function ContentActionMenuItem({
       ) : (
         label
       )}
-    </DropdownMenuItem>
+    </Item>
   );
 }

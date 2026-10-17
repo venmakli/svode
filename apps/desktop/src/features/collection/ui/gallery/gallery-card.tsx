@@ -1,15 +1,12 @@
 import type { HTMLAttributes } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Copy, Database, FileText, Folder, Trash2 } from "lucide-react";
+import { Database, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  ContextMenuGroup,
-  ContextMenuItem,
-} from "@/components/ui/context-menu";
 import { cn } from "@/shared/lib/utils";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { CardPropertyFlow } from "../card-property-flow";
+import { CollectionEntryContextMenuItems } from "../entry-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import { CollectionPresentationGalleryCard } from "../presentation-gallery-card";
 import { GalleryCover } from "./gallery-cover";
@@ -73,11 +70,8 @@ function GalleryCardContent({
   onOpen,
   onOpenNestedCollection,
   onOpenPath,
-  onDuplicate,
-  onDelete,
   onFocusCard,
   onKeyboardMove,
-  readOnly,
 }: GalleryCardProps & {
   dragAttributes: HTMLAttributes<HTMLDivElement>;
   dragListeners?: HTMLAttributes<HTMLDivElement>;
@@ -143,27 +137,11 @@ function GalleryCardContent({
         />
       }
       contextMenu={
-        <ContextMenuGroup>
-          <ContextMenuItem onClick={() => onOpen(entry, nestedCollection)}>
-            <FileText data-icon="inline-start" />
-            {m.collection_open_in_peek()}
-          </ContextMenuItem>
-          {!readOnly ? (
-            <ContextMenuItem onClick={() => onDuplicate(entry)}>
-              <Copy data-icon="inline-start" />
-              {m.collection_duplicate_entry()}
-            </ContextMenuItem>
-          ) : null}
-          {!readOnly ? (
-            <ContextMenuItem
-              variant="destructive"
-              onClick={() => onDelete(entry)}
-            >
-              <Trash2 data-icon="inline-start" />
-              {m.space_delete()}
-            </ContextMenuItem>
-          ) : null}
-        </ContextMenuGroup>
+        <CollectionEntryContextMenuItems
+          entry={entry}
+          nestedCollection={nestedCollection}
+          onOpenInPeek={() => onOpen(entry, nestedCollection)}
+        />
       }
       contextMenuClassName="w-48"
       onFocusCard={() => onFocusCard(entry.path)}

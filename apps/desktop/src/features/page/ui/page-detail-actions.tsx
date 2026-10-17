@@ -5,21 +5,12 @@ import {
   type ContentObject,
 } from "@/features/content-actions";
 import type { NavigationItem } from "@/features/navigation";
-import { useSpaceTreeSync } from "@/features/space";
-import {
-  convertPageToFolder,
-  convertPageToLeaf,
-  convertPageToNestedCollection,
-  createPage,
-  createPageFolder,
-  getPageDetailState,
-} from "../page-api";
+import { getPageDetailState } from "../page-api";
 import type { Page, PageDetailState } from "../model";
 import { normalizePagePath } from "../lib/path";
 import { handleError } from "../lib/errors";
-import * as m from "@/paraglide/messages.js";
-import { publishPageFilenameWarnings } from "../lib/filename-warning";
 import { usePageDetailContext } from "../hooks/page-detail-context";
+import { usePageContentOperations } from "../hooks/use-page-content-operations";
 
 /** What the header menu tells the Page apart as. */
 export type PageMenuKind =
@@ -87,10 +78,11 @@ export function PageDetailActions({
   }, [page.path, spacePath]);
 
   const form = currentState?.form ?? inferPageDetailState(page.path).form;
-  const reloadTreeParent = useSpaceTreeSync((state) => state.reloadTreeParent);
-  const reloadTreePathParents = useSpaceTreeSync(
-    (state) => state.reloadTreePathParents,
-  );
+  const operations = usePageContentOperations({
+    spacePath,
+    projectPath: projectPath ?? null,
+    spaceId,
+  });
   // A folder Page with its own schema is a Collection, as in the sidebar.
   const object: ContentObject =
     form === "nestedCollection"
@@ -117,63 +109,31 @@ export function PageDetailActions({
     if (next) setState({ path, detail: next });
   }
 
-  /** The folder children go in; a leaf Page first becomes a folder Page. */
-  async function childFolder(): Promise<{
-    folderPage: Page | null;
-    folderPath: string;
-  }> {
-    if (form !== "leaf") {
-      return { folderPage: null, folderPath: readmeFolderPath(page.path) };
-    }
-    const folderPage = await convertPageToFolder({
-      spacePath,
-      filePath: page.path,
-      projectPath: projectPath ?? null,
-    });
-    await reloadTreePathParents(spaceId, [page.path, folderPage.path]);
+  /** A leaf Page that took children is a folder Page now. */
+  function adoptFolderPage(folderPage: Page | null) {
+    if (!folderPage) return;
     setState({
       path: folderPage.path,
       detail: { form: "folder", subpageCount: 0, otherFileCount: 0 },
     });
-    return { folderPage, folderPath: readmeFolderPath(folderPage.path) };
   }
 
   async function nestPage() {
-    const { folderPath } = await childFolder();
-    const childPage = await createPage({
-      spacePath,
-      parentPath: folderPath,
-      title: String(m.editor_untitled()),
-      allocateUniqueTitle: true,
-      contextualDefaults: null,
-      projectPath: projectPath ?? null,
-    });
-    publishPageFilenameWarnings(childPage.warnings);
-    await reloadTreeParent(spaceId, folderPath);
+    const { childPage, folderPage } = await operations.nestPage(page);
+    adoptFolderPage(folderPage);
     onConverted?.(childPage, false);
   }
 
   async function newFolder() {
-    const { folderPage, folderPath } = await childFolder();
-    await createPageFolder({
-      spacePath,
-      parentPath: folderPath,
-      name: m.space_new_folder(),
-      projectPath: projectPath ?? null,
-    });
-    await reloadTreeParent(spaceId, folderPath);
+    const { folderPage } = await operations.newFolder(page);
+    adoptFolderPage(folderPage);
     if (folderPage) onConverted?.(folderPage, false);
     else await refreshDetailState(page.path);
   }
 
   async function convertToLeaf() {
     if (makeLeafBlocked) return;
-    const next = await convertPageToLeaf({
-      spacePath,
-      filePath: page.path,
-      projectPath: projectPath ?? null,
-    });
-    await reloadTreePathParents(spaceId, [page.path, next.path]);
+    const next = await operations.makeLeaf(page);
     setState({
       path: next.path,
       detail: { form: "leaf", subpageCount: 0, otherFileCount: 0 },
@@ -182,12 +142,7 @@ export function PageDetailActions({
   }
 
   async function convertToCollection() {
-    const next = await convertPageToNestedCollection({
-      spacePath,
-      filePath: page.path,
-      projectPath: projectPath ?? null,
-    });
-    await reloadTreePathParents(spaceId, [page.path, next.path]);
+    const next = await operations.makeCollection(page);
     onConverted?.(next, true);
   }
 
@@ -219,10 +174,6 @@ export function PageDetailActions({
       }}
     />
   );
-}
-
-function readmeFolderPath(path: string): string {
-  return normalizePagePath(path).replace(/\/readme\.md$/i, "");
 }
 
 function inferPageDetailState(path: string): PageDetailState {
