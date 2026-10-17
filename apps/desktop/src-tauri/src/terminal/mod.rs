@@ -788,6 +788,9 @@ impl TerminalManager {
         Ok(())
     }
 
+    /// The surface stays with its exact outcome while the app runs, of a
+    /// Routine launch and of any other session alike (DF-169 R2); the
+    /// writer goes with the process.
     fn finish_surface(
         &self,
         pty_id: &str,
@@ -798,10 +801,6 @@ impl TerminalManager {
         let observed_at = now_rfc3339();
         let should_record = self.agent_surfaces.lock().ok().and_then(|mut surfaces| {
             let surface = surfaces.get_mut(pty_id)?;
-            if surface.routine_run_id.is_none() {
-                surfaces.remove(pty_id);
-                return None;
-            }
             surface.live = false;
             if surface.finished_at.is_some() {
                 return Some(false);
@@ -1048,10 +1047,6 @@ fn finish_reader_surface(
     let observed_at = now_rfc3339();
     let outcome = agent_surfaces.lock().ok().and_then(|mut surfaces| {
         let surface = surfaces.get_mut(pty_id)?;
-        if surface.routine_run_id.is_none() {
-            surfaces.remove(pty_id);
-            return None;
-        }
         surface.live = false;
         if surface.finished_at.is_some() {
             return None;
@@ -2096,6 +2091,67 @@ mod tests {
             .unwrap();
         assert_eq!(evidence.state, INTERRUPTED);
         assert_eq!(evidence.confidence, StatusConfidence::Exact);
+    }
+
+    #[test]
+    fn killing_a_session_terminal_keeps_its_interrupted_outcome_and_frees_its_writer() {
+        for source in [
+            AgentAdapterKind::ClaudeCode.id(),
+            AgentAdapterKind::Codex.id(),
+        ] {
+            let writers = WriterRegistry::default();
+            let manager = TerminalManager::new(writers.clone());
+            let mut surface = test_surface();
+            surface.source = source.clone();
+            manager.insert_agent_surface_for_test(surface);
+            manager
+                .hold_existing_session_writer("pty-agent", &source, "session")
+                .expect("the terminal writes the session");
+
+            manager.kill("pty-agent").unwrap();
+
+            let retained = manager
+                .list_agent_surfaces()
+                .unwrap()
+                .pop()
+                .expect("the surface of a session outside Routines stays");
+            assert!(!retained.live);
+            let evidence = retained.status_evidence.expect("terminal outcome");
+            assert_eq!(evidence.state, INTERRUPTED);
+            assert_eq!(evidence.confidence, StatusConfidence::Exact);
+            assert_eq!(writers.writer(&native_writer_key(&source, "session")), None);
+        }
+    }
+
+    #[test]
+    fn a_session_shell_that_exits_or_stops_with_the_app_keeps_its_outcome() {
+        let manager = TerminalManager::new(WriterRegistry::default());
+        manager.insert_agent_surface_for_test(test_surface());
+        let mut stopped = test_surface();
+        stopped.pty_id = "pty-stopped".to_string();
+        manager.insert_agent_surface_for_test(stopped);
+
+        finish_reader_surface(
+            &manager.agent_surfaces,
+            &manager.lifecycle_sinks,
+            "pty-agent",
+        );
+        manager.kill_all();
+
+        let surfaces = manager.list_agent_surfaces().unwrap();
+        assert_eq!(surfaces.len(), 2);
+        for surface in surfaces {
+            assert!(!surface.live);
+            let evidence = surface.status_evidence.expect("terminal outcome");
+            assert_eq!(evidence.state, INTERRUPTED);
+            assert_eq!(evidence.confidence, StatusConfidence::Exact);
+            let reason = if surface.pty_id == "pty-agent" {
+                "managed terminal shell exited before terminal outcome was observed"
+            } else {
+                "managed terminal stopped during application shutdown"
+            };
+            assert_eq!(evidence.reason, reason);
+        }
     }
 
     #[test]

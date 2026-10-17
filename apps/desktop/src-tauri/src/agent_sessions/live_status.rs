@@ -42,15 +42,37 @@ struct Observation {
     waiting_since: Option<String>,
 }
 
-/// The session status from its evidence (Stage 10 `02` C10): exact evidence
-/// outranks approximate, within one confidence the latest observation wins,
-/// and different states observed at that same moment give `unknown` with a
-/// diagnostic. No evidence is `unknown`.
+/// The session status from its evidence (Stage 10 `02` C10): an exact
+/// outcome outranks approximate evidence of the turn it ended, and only
+/// evidence observed in a later second, of a later turn, supersedes it
+/// (DF-169 R3). Then the latest observation wins, and different states
+/// observed at that same moment give `unknown` with a diagnostic. No
+/// evidence is `unknown`.
 fn resolve_status(observations: Vec<Observation>) -> (SessionStatus, String, Option<String>) {
-    let Some(confidence) = observations
+    let outcome_at = observations
         .iter()
-        .map(|observation| observation.status.confidence)
-        .max_by_key(|confidence| *confidence == StatusConfidence::Exact)
+        .filter(|observation| observation.status.confidence == StatusConfidence::Exact)
+        .map(|observation| observation.observed_at.clone())
+        .max();
+    let ranked = match outcome_at {
+        Some(outcome_at) => {
+            let (later, rest): (Vec<_>, Vec<_>) = observations
+                .into_iter()
+                .partition(|observation| observation.observed_at > outcome_at);
+            if later.is_empty() {
+                rest.into_iter()
+                    .filter(|observation| observation.status.confidence == StatusConfidence::Exact)
+                    .collect()
+            } else {
+                later
+            }
+        }
+        None => observations,
+    };
+    let Some(latest) = ranked
+        .iter()
+        .map(|observation| observation.observed_at.clone())
+        .max()
     else {
         return (
             SessionStatus::unknown(),
@@ -58,16 +80,6 @@ fn resolve_status(observations: Vec<Observation>) -> (SessionStatus, String, Opt
             None,
         );
     };
-    let ranked = observations
-        .into_iter()
-        .filter(|observation| observation.status.confidence == confidence)
-        .collect::<Vec<_>>();
-    let latest = ranked
-        .iter()
-        .map(|observation| observation.observed_at.as_str())
-        .max()
-        .expect("ranked evidence")
-        .to_string();
     let mut current = ranked
         .into_iter()
         .filter(|observation| observation.observed_at == latest)
@@ -286,8 +298,9 @@ pub(super) fn map_listed(
     session
 }
 
-/// Lays the most recent matching terminal surface over the session runtime
-/// and returns the status evidence of every matching surface.
+/// Lays the most recent matching terminal surface, a live one first, over
+/// the session runtime and returns the status evidence of every matching
+/// surface.
 fn apply_terminal_runtime(
     session: &mut AgentSession,
     terminal_surfaces: &[AgentTerminalSurface],
@@ -301,9 +314,11 @@ fn apply_terminal_runtime(
                 || (session.launch_id.is_some() && session.launch_id == surface.launch_id)
         })
         .collect::<Vec<_>>();
+    // A live terminal is the runtime of its session before the closed ones
+    // whose outcomes stay (DF-169 R2).
     let Some(runtime_surface) = matching
         .iter()
-        .max_by(|a, b| surface_activity_key(a).cmp(surface_activity_key(b)))
+        .max_by_key(|surface| (surface.live, surface_activity_key(surface)))
     else {
         return Vec::new();
     };
@@ -594,11 +609,17 @@ mod tests {
     }
 
     #[test]
-    fn exact_evidence_outranks_newer_approximate_evidence() {
+    fn exact_evidence_outranks_approximate_evidence_up_to_its_second() {
         let exited = SessionState::Idle {
             stop_reason: Some(StopReason::Error),
         };
         let (status, _, _) = resolve_status(vec![
+            observation(
+                SessionState::Running,
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T09:55:00Z",
+            ),
             observation(
                 exited,
                 StatusSource::ManagedPty,
@@ -609,11 +630,97 @@ mod tests {
                 SessionState::Running,
                 StatusSource::NativeStatusReader,
                 StatusConfidence::Approximate,
-                "2026-07-04T10:05:00Z",
+                "2026-07-04T10:00:00Z",
             ),
         ]);
 
         assert_eq!(status.state, exited);
+        assert_eq!(status.confidence, StatusConfidence::Exact);
+    }
+
+    #[test]
+    fn a_turn_observed_after_an_exact_outcome_supersedes_it() {
+        let interrupted = SessionState::Idle {
+            stop_reason: Some(StopReason::Interrupted),
+        };
+        let (status, _, _) = resolve_status(vec![
+            observation(
+                interrupted,
+                StatusSource::ManagedPty,
+                StatusConfidence::Exact,
+                "2026-07-04T10:00:00Z",
+            ),
+            observation(
+                SessionState::Running,
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:00:01Z",
+            ),
+        ]);
+        assert_eq!(status.state, SessionState::Running);
+        assert_eq!(status.source, StatusSource::NativeStatusReader);
+        assert_eq!(status.confidence, StatusConfidence::Approximate);
+
+        // The later turn has ended: its own outcome stands.
+        let (status, _, _) = resolve_status(vec![
+            observation(
+                interrupted,
+                StatusSource::ManagedPty,
+                StatusConfidence::Exact,
+                "2026-07-04T10:00:00Z",
+            ),
+            observation(
+                SessionState::Idle {
+                    stop_reason: Some(StopReason::EndTurn),
+                },
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:05:00Z",
+            ),
+        ]);
+        assert_eq!(
+            status.state,
+            SessionState::Idle {
+                stop_reason: Some(StopReason::EndTurn)
+            }
+        );
+        assert_eq!(status.source, StatusSource::NativeStatusReader);
+    }
+
+    #[test]
+    fn a_later_exact_outcome_ends_a_turn_observed_after_an_earlier_one() {
+        let interrupted = SessionState::Idle {
+            stop_reason: Some(StopReason::Interrupted),
+        };
+        let (status, _, _) = resolve_status(vec![
+            observation(
+                interrupted,
+                StatusSource::ManagedPty,
+                StatusConfidence::Exact,
+                "2026-07-04T10:00:00Z",
+            ),
+            observation(
+                SessionState::Running,
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T10:01:00Z",
+            ),
+            observation(
+                SessionState::Idle {
+                    stop_reason: Some(StopReason::Error),
+                },
+                StatusSource::ManagedPty,
+                StatusConfidence::Exact,
+                "2026-07-04T10:02:00Z",
+            ),
+        ]);
+
+        assert_eq!(
+            status.state,
+            SessionState::Idle {
+                stop_reason: Some(StopReason::Error)
+            }
+        );
         assert_eq!(status.confidence, StatusConfidence::Exact);
     }
 

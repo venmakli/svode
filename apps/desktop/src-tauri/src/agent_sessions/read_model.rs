@@ -1774,7 +1774,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_sessions_terminal_exit_overrides_stale_source_log_active_status() {
+    fn agent_sessions_terminal_exit_overrides_the_source_log_turn_it_ended() {
         let (_temp, home, project) = project_dirs();
         let id = codex_id(10);
         let state = AgentSessionsState::with_home(home.clone());
@@ -1783,8 +1783,12 @@ mod tests {
             &home,
             &project,
             &id,
-            vec![task_started(&recent_source_log_timestamp())],
+            vec![task_started(&timestamp_offset(chrono::Duration::minutes(
+                -2,
+            )))],
         );
+        let mut exited = evidence(idle(None), "initial agent command exited successfully");
+        exited.observed_at = recent_source_log_timestamp();
 
         let result = list_with(
             &state,
@@ -1793,10 +1797,7 @@ mod tests {
                 "pty-exited",
                 AgentAdapterKind::Codex.id(),
                 &id,
-                Some(evidence(
-                    idle(None),
-                    "initial agent command exited successfully",
-                )),
+                Some(exited),
             )],
         );
 
@@ -1941,6 +1942,236 @@ mod tests {
             session.status_reason.as_deref(),
             Some("conflicting status evidence")
         );
+    }
+
+    /// A session terminal of Svode outside Routines, closed by the user
+    /// (DF-169 R2).
+    fn closed_surface(
+        pty_id: &str,
+        source: AgentId,
+        source_session_id: &str,
+        closed_at: &str,
+    ) -> AgentTerminalSurface {
+        let reason = "managed terminal stopped by user";
+        let mut closed = surface(
+            pty_id,
+            source,
+            source_session_id,
+            Some(AgentTerminalStatusEvidence {
+                state: idle(Some(StopReason::Interrupted)),
+                confidence: StatusConfidence::Exact,
+                reason: reason.to_string(),
+                observed_at: closed_at.to_string(),
+            }),
+        );
+        closed.live = false;
+        closed.finished_at = Some(closed_at.to_string());
+        closed.failure_reason = Some(reason.to_string());
+        closed
+    }
+
+    fn claude_prompt(at: &str) -> serde_json::Value {
+        serde_json::json!({"type": "user", "message": {"role": "user", "content": "run sleep 60"}, "timestamp": at})
+    }
+
+    /// DF-169 acceptance 2: the Svode terminal of a session outside Routines
+    /// closed mid-turn interrupts it exactly, alike in the list and hot
+    /// status, and the open turn of its log tells of no other writer.
+    #[test]
+    fn a_session_terminal_closed_mid_turn_interrupts_the_session_exactly() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let prompt_at = timestamp_offset(chrono::Duration::minutes(-2));
+        let closed_at = recent_source_log_timestamp();
+        write(
+            &claude_transcript(&home, "c-closed"),
+            &rows(&[claude_prompt(&prompt_at)]),
+        );
+        acp_list(
+            &state,
+            "claude-code",
+            true,
+            vec![("c-closed", &project, LISTED_AT)],
+        );
+        let id = codex_id(40);
+        listed_codex(&state, &home, &project, &id, vec![task_started(&prompt_at)]);
+        let surfaces = vec![
+            closed_surface(
+                "pty-claude",
+                AgentAdapterKind::ClaudeCode.id(),
+                "c-closed",
+                &closed_at,
+            ),
+            closed_surface("pty-codex", AgentAdapterKind::Codex.id(), &id, &closed_at),
+        ];
+
+        let result = list_with(&state, &project, surfaces.clone());
+        for session_id in ["claude-code:c-closed".to_string(), format!("codex:{id}")] {
+            let session = by_id(&result, &session_id);
+            assert_eq!(
+                session.status,
+                SessionStatus {
+                    state: idle(Some(StopReason::Interrupted)),
+                    source: StatusSource::ManagedPty,
+                    confidence: StatusConfidence::Exact,
+                },
+                "{session_id}"
+            );
+            let runtime = session.runtime.as_ref().expect("runtime");
+            assert!(!runtime.live, "{session_id}");
+            assert_eq!(runtime.pty_id, None, "{session_id}");
+            let hot = hot_status(
+                &state,
+                project.to_string_lossy().into_owned(),
+                vec![session_id.clone()],
+                surfaces.clone(),
+                Vec::new(),
+            )
+            .expect("hot status");
+            assert_eq!(hot.sessions[0].status, session.status, "{session_id}");
+            let target = crate::agent_sessions::chat::chat_target(
+                &state,
+                project.to_string_lossy().into_owned(),
+                &session_id,
+                surfaces.clone(),
+                Vec::new(),
+            )
+            .expect("chat target")
+            .expect("listed session");
+            assert_eq!(target.liveness, ExternalLiveness::Unknown, "{session_id}");
+            assert!(!target.turn_open, "{session_id}");
+        }
+    }
+
+    /// DF-169 acceptance 4: a turn begun after the outcome of a closed Svode
+    /// terminal supersedes it, of a Routine launch alike; a log record of
+    /// the same second does not.
+    #[test]
+    fn a_later_turn_supersedes_the_outcome_of_a_closed_session_terminal() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let closed_at = timestamp_offset(chrono::Duration::minutes(-2));
+        let later_at = recent_source_log_timestamp();
+        let continued = codex_id(41);
+        let same_second = codex_id(42);
+        let routine = codex_id(43);
+        write_rollout(&home, &continued, vec![task_started(&later_at)]);
+        write_rollout(&home, &same_second, vec![task_started(&closed_at)]);
+        write_rollout(&home, &routine, vec![task_started(&later_at)]);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![
+                (&continued, &project, LISTED_AT),
+                (&same_second, &project, LISTED_AT),
+                (&routine, &project, LISTED_AT),
+            ],
+        );
+        write(
+            &claude_transcript(&home, "c-continued"),
+            &rows(&[claude_prompt(&later_at)]),
+        );
+        acp_list(
+            &state,
+            "claude-code",
+            true,
+            vec![("c-continued", &project, LISTED_AT)],
+        );
+        let mut routine_surface = closed_surface(
+            "pty-routine",
+            AgentAdapterKind::Codex.id(),
+            &routine,
+            &closed_at,
+        );
+        routine_surface.routine_run_id = Some("run-one".to_string());
+        let surfaces = vec![
+            closed_surface(
+                "pty-continued",
+                AgentAdapterKind::Codex.id(),
+                &continued,
+                &closed_at,
+            ),
+            closed_surface(
+                "pty-same-second",
+                AgentAdapterKind::Codex.id(),
+                &same_second,
+                &closed_at,
+            ),
+            routine_surface,
+            closed_surface(
+                "pty-claude",
+                AgentAdapterKind::ClaudeCode.id(),
+                "c-continued",
+                &closed_at,
+            ),
+        ];
+
+        let result = list_with(&state, &project, surfaces.clone());
+        for session_id in [
+            format!("codex:{continued}"),
+            format!("codex:{routine}"),
+            "claude-code:c-continued".to_string(),
+        ] {
+            let session = by_id(&result, &session_id);
+            assert_eq!(session.status.state, SessionState::Running, "{session_id}");
+            assert_eq!(
+                session.status.source,
+                StatusSource::NativeStatusReader,
+                "{session_id}"
+            );
+            let target = crate::agent_sessions::chat::chat_target(
+                &state,
+                project.to_string_lossy().into_owned(),
+                &session_id,
+                surfaces.clone(),
+                Vec::new(),
+            )
+            .expect("chat target")
+            .expect("listed session");
+            assert_eq!(
+                target.liveness,
+                ExternalLiveness::ExternalActive,
+                "{session_id}"
+            );
+        }
+        assert_eq!(
+            by_id(&result, &format!("codex:{routine}"))
+                .routine_run_id
+                .as_deref(),
+            Some("run-one")
+        );
+        let held = by_id(&result, &format!("codex:{same_second}"));
+        assert_eq!(held.status.state, idle(Some(StopReason::Interrupted)));
+        assert_eq!(held.status.confidence, StatusConfidence::Exact);
+    }
+
+    #[test]
+    fn a_live_session_terminal_is_its_runtime_before_a_closed_one() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![("reopened", &project, LISTED_AT)],
+        );
+        let mut closed = closed_surface(
+            "pty-closed",
+            AgentAdapterKind::Codex.id(),
+            "reopened",
+            "2026-07-04T10:05:00Z",
+        );
+        closed.last_output_at = Some("2026-07-04T10:05:00Z".to_string());
+        let live = surface("pty-live", AgentAdapterKind::Codex.id(), "reopened", None);
+
+        let result = list_with(&state, &project, vec![closed, live]);
+
+        let session = &result.sessions[0];
+        let runtime = session.runtime.as_ref().expect("runtime");
+        assert!(runtime.live);
+        assert_eq!(runtime.pty_id.as_deref(), Some("pty-live"));
+        assert_eq!(session.status.state, idle(Some(StopReason::Interrupted)));
     }
 
     /// C8: neither the list nor the saved snapshot carries transcript or
