@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { publishPageFilenameWarnings } from "@/features/page";
+import { convertPageToLeaf, duplicatePage } from "@/features/page/page-api";
 import type { TreeNode } from "../model/types";
 import {
   convertTreeBareFolderToCollection,
@@ -27,6 +28,7 @@ interface UseFileTreeItemCreateInput {
     parentPath?: string | null,
   ) => Promise<void>;
   reloadTreePathParent: (spaceId: string, path: string) => Promise<void>;
+  reloadTreePathParents: (spaceId: string, paths: string[]) => Promise<void>;
   removeTreePath: (spaceId: string, path: string) => void;
   toggleExpanded: (spaceId: string, path: string) => void;
   onBeforeNavigation?: () => Promise<boolean>;
@@ -43,6 +45,7 @@ export function useFileTreeItemCreate({
   openCollectionOwner,
   reloadTreeParent,
   reloadTreePathParent,
+  reloadTreePathParents,
   removeTreePath,
   toggleExpanded,
   onBeforeNavigation,
@@ -134,6 +137,42 @@ export function useFileTreeItemCreate({
     }
   }
 
+  async function handleMakeLeaf() {
+    if (!space || bareFolder) return;
+    if (onBeforeNavigation && !(await onBeforeNavigation())) return;
+    try {
+      const leaf = await convertPageToLeaf({
+        spacePath: space.path,
+        filePath: node.path,
+        projectPath: activeRootPath,
+      });
+      await reloadTreePathParents(spaceId, [node.path, leaf.path]);
+      openPage(leaf.path, spaceId);
+    } catch (err) {
+      console.error("Failed to make regular page:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
+  async function handleDuplicate() {
+    if (!space || bareFolder) return;
+    if (onBeforeNavigation && !(await onBeforeNavigation())) return;
+    try {
+      const duplicated = await duplicatePage({
+        spacePath: space.path,
+        filePath: node.path,
+        projectPath: activeRootPath,
+      });
+      publishPageFilenameWarnings(duplicated.warnings);
+      await reloadTreePathParent(spaceId, duplicated.path);
+      openPage(duplicated.path, spaceId);
+      signalCreatedArtifact(spaceId, duplicated.path);
+    } catch (err) {
+      console.error("Failed to duplicate page:", err);
+      toast.error(m.toast_error());
+    }
+  }
+
   async function handleNewFolder() {
     if (!space) return;
     try {
@@ -163,7 +202,9 @@ export function useFileTreeItemCreate({
   }
 
   return {
+    handleDuplicate,
     handleMakeCollection,
+    handleMakeLeaf,
     handleMakePage,
     handleNewFolder,
     handleNewPage,

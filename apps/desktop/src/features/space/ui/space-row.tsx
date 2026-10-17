@@ -1,22 +1,13 @@
 import { useCallback, type CSSProperties, type RefObject } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  SquarePen,
-  ChevronRight,
-  Database,
-  Ellipsis,
-  FilePlus,
-  FolderDown,
-  FolderPlus,
-  Loader2,
-  Pencil,
-  SquareTerminal,
-  Trash2,
-  X,
-} from "lucide-react";
+import { ChevronRight, Ellipsis, FolderDown, Loader2, X } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
-import { NavigationMenuItems, spaceNavigationKey } from "@/features/navigation";
+import {
+  ContentActionMenuItems,
+  contentActionGroups,
+} from "@/features/content-actions";
+import { spaceNavigationKey } from "@/features/navigation";
 import {
   Collapsible,
   CollapsibleContent,
@@ -25,8 +16,6 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -274,57 +263,34 @@ export function SpaceRow({
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom">
-            <NavigationMenuItems
-              item={{
+            <ContentActionMenuItems
+              groups={contentActionGroups({
+                object: { kind: "space", unsavedChanges: gitControls.dirty },
+                surfaceActions: {
+                  newSession: Boolean(onNewSession),
+                  newTerminal: Boolean(onNewTerminal),
+                },
+              })}
+              pinItem={{
                 key: spaceNavigationKey(ws.id, null),
                 title: ws.name,
                 ...(ws.icon ? { icon: ws.icon } : {}),
               }}
-            />
-            <DropdownMenuItem onClick={() => handleNewPage(scope)}>
-              <FilePlus />
-              {m.space_new_page()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleNewFolder(scope)}>
-              <FolderPlus />
-              {m.space_new_folder()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleNewCollection(scope)}>
-              <Database />
-              {m.collection_new()}
-            </DropdownMenuItem>
-            {(onNewSession || onNewTerminal) && <DropdownMenuSeparator />}
-            {onNewSession && (
-              <DropdownMenuItem onClick={() => onNewSession(ws.path)}>
-                <SquarePen />
-                {m.sessions_action_new()}
-              </DropdownMenuItem>
-            )}
-            {onNewTerminal && (
-              <DropdownMenuItem onClick={() => onNewTerminal(ws.path)}>
-                <SquareTerminal />
-                {m.terminal_new_terminal()}
-              </DropdownMenuItem>
-            )}
-            {gitControls.dropdownItem}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => {
-                setEditingSpaceId(ws.id);
-                setEditValue(ws.name);
+              handlers={{
+                "new-page": () => handleNewPage(scope),
+                "new-folder": () => handleNewFolder(scope),
+                "new-collection": () => handleNewCollection(scope),
+                "new-session": () => onNewSession?.(ws.path),
+                "new-terminal": () => onNewTerminal?.(ws.path),
+                "save-all": gitControls.commitAll,
+                rename: () => {
+                  setEditingSpaceId(ws.id);
+                  setEditValue(ws.name);
+                },
+                "remove-space": () =>
+                  setDeleteTarget({ id: ws.id, name: ws.name }),
               }}
-            >
-              <Pencil />
-              {m.space_rename()}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={() => setDeleteTarget({ id: ws.id, name: ws.name })}
-            >
-              <Trash2 />
-              {m.space_delete()}
-            </DropdownMenuItem>
+            />
           </DropdownMenuContent>
         </DropdownMenu>
         <CollapsibleContent>

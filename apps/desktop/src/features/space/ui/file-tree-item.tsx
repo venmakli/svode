@@ -17,7 +17,6 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -47,21 +46,16 @@ import {
   Database,
   Ellipsis,
   FileText,
-  FilePlus,
   FolderOpen,
-  FolderPlus,
   GripVertical,
-  FileSymlink,
-  Pencil,
   PanelsTopLeft,
-  Trash2,
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
 import { getArtifactPresentationKind } from "@/features/artifact";
-import { NavigationMenuItems } from "@/features/navigation";
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
+import { FileTreeItemMenuItems } from "./file-tree-item-menu";
 import { TreeDndContext } from "./sortable-file-tree";
 import { TreeDropIndicator } from "./tree-drop-indicator";
 import { isDescendantOf } from "../lib/tree-dnd-utilities";
@@ -102,8 +96,10 @@ export function FileTreeItem({
     expanded,
     handleDeleteConfirm,
     handleDeleteRequest,
+    handleDuplicate,
     handlePageClick,
     handleMakeCollection,
+    handleMakeLeaf,
     handleMakePage,
     pinItem,
     handleNewFolder,
@@ -274,38 +270,22 @@ export function FileTreeItem({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom">
-        <NavigationMenuItems item={pinItem} />
-        {bareFolder && !node.has_schema && (
-          <DropdownMenuItem onClick={handleMakePage}>
-            <FileSymlink className="mr-2 h-4 w-4" />
-            {m.space_make_page()}
-          </DropdownMenuItem>
-        )}
-        {!node.has_schema && (
-          <DropdownMenuItem onClick={handleMakeCollection}>
-            <Database className="mr-2 h-4 w-4" />
-            {m.collection_make()}
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onClick={handleNewPage}>
-          <FilePlus className="mr-2 h-4 w-4" />
-          {m.space_nest_page()}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={handleNewFolder}>
-          <FolderPlus className="mr-2 h-4 w-4" />
-          {m.space_new_folder()}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={handleStartRename}>
-          <Pencil className="mr-2 h-4 w-4" />
-          {m.space_rename()}
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          className="text-destructive focus:text-destructive"
-          onClick={handleDeleteRequest}
-        >
-          <Trash2 className="mr-2 h-4 w-4" />
-          {m.space_delete()}
-        </DropdownMenuItem>
+        <FileTreeItemMenuItems
+          node={node}
+          spacePath={spacePath}
+          pinItem={pinItem}
+          handlers={{
+            "nest-page": () => void handleNewPage(),
+            "new-item": () => void handleNewPage(),
+            "new-folder": () => void handleNewFolder(),
+            "make-page": () => void handleMakePage(),
+            "make-collection": () => void handleMakeCollection(),
+            "make-leaf": () => void handleMakeLeaf(),
+            rename: handleStartRename,
+            duplicate: () => void handleDuplicate(),
+            delete: () => void handleDeleteRequest(),
+          }}
+        />
       </DropdownMenuContent>
     </DropdownMenu>
   );

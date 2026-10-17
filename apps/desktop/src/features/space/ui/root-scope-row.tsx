@@ -1,14 +1,9 @@
+import { ChevronRight, Ellipsis } from "lucide-react";
 import {
-  SquarePen,
-  ChevronRight,
-  Database,
-  Ellipsis,
-  FilePlus,
-  FolderPlus,
-  SquareTerminal,
-} from "lucide-react";
-import * as m from "@/paraglide/messages.js";
-import { NavigationMenuItems, spaceNavigationKey } from "@/features/navigation";
+  ContentActionMenuItems,
+  contentActionGroups,
+} from "@/features/content-actions";
+import { spaceNavigationKey } from "@/features/navigation";
 import {
   Collapsible,
   CollapsibleContent,
@@ -17,8 +12,6 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -109,38 +102,27 @@ export function RootScopeRow({
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom">
-            <NavigationMenuItems
-              item={{
+            <ContentActionMenuItems
+              groups={contentActionGroups({
+                object: { kind: "project-root" },
+                surfaceActions: {
+                  newSession: Boolean(onNewSession),
+                  newTerminal: Boolean(onNewTerminal),
+                },
+              })}
+              pinItem={{
                 key: spaceNavigationKey(null, null),
                 title: name ?? "",
                 ...(icon ? { icon } : {}),
               }}
+              handlers={{
+                "new-page": onNewPage,
+                "new-folder": onNewFolder,
+                "new-collection": onNewCollection,
+                "new-session": onNewSession,
+                "new-terminal": onNewTerminal,
+              }}
             />
-            <DropdownMenuItem onClick={onNewPage}>
-              <FilePlus />
-              {m.space_new_page()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onNewFolder}>
-              <FolderPlus />
-              {m.space_new_folder()}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onNewCollection}>
-              <Database />
-              {m.collection_new()}
-            </DropdownMenuItem>
-            {(onNewSession || onNewTerminal) && <DropdownMenuSeparator />}
-            {onNewSession && (
-              <DropdownMenuItem onClick={onNewSession}>
-                <SquarePen />
-                {m.sessions_action_new()}
-              </DropdownMenuItem>
-            )}
-            {onNewTerminal && (
-              <DropdownMenuItem onClick={onNewTerminal}>
-                <SquareTerminal />
-                {m.terminal_new_terminal()}
-              </DropdownMenuItem>
-            )}
           </DropdownMenuContent>
         </DropdownMenu>
         <CollapsibleContent>

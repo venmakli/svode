@@ -1,9 +1,5 @@
-import { Loader2, Save } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
-import {
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import {
   SpaceGitActivityIndicator,
@@ -47,16 +43,8 @@ export function useSpaceRowGitControls({
 
   return {
     cloning,
+    commitAll,
     dirty,
-    dropdownItem: dirty ? (
-      <>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={commitAll}>
-          <Save />
-          {m.git_save_all()}
-        </DropdownMenuItem>
-      </>
-    ) : null,
     inlineActivity: (
       <span className="ml-auto flex items-center gap-1">
         <LfsIndicatorIcon lfsState={lfsState} />
