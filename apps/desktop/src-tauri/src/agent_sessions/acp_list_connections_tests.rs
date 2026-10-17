@@ -8,7 +8,7 @@ use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::catalog::ListBounds;
 use svode_agents::prompt::PromptPart;
 use svode_agents::registry::AdapterRuntimeRegistry;
-use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, RuntimeConfig};
+use svode_agents::{AcpLaunch, AgentCheck, AgentRuntime, RuntimeConfig, SettingValue};
 use svode_core::agent_adapters::AgentAdapterKind;
 use tauri::async_runtime::JoinHandle;
 
@@ -840,6 +840,7 @@ async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence
             ExternalLiveness::Unknown,
             false,
             false,
+            &[],
         )
         .await
         .unwrap();
@@ -855,6 +856,67 @@ async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence
         Err(svode_agents::AgentRuntimeError::WriterRequired)
     );
     assert_eq!(calls(&log), ["initialize", "session/load", "session/close"]);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn continuing_a_read_session_attaches_it_with_the_chosen_values_before_any_prompt() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![("codex", Ok(history_agent("codex", true, &log)))],
+    );
+    let key = SessionKey::from_acp("codex", "h1", true);
+    let open = |attach, settings: Vec<SettingValue>| {
+        let connections = &connections;
+        let key = &key;
+        let dir = dir.path();
+        async move {
+            connections
+                .open_session(
+                    "codex",
+                    key,
+                    dir,
+                    ExternalLiveness::Unknown,
+                    false,
+                    attach,
+                    &settings,
+                )
+                .await
+        }
+    };
+    assert_eq!(open(false, Vec::new()).await.unwrap(), opened(&key));
+
+    // The session declares no such value: it is closed again, unprompted.
+    let chosen = SettingValue {
+        setting: "model".into(),
+        value: "haiku".into(),
+    };
+    assert_eq!(
+        open(true, vec![chosen]).await,
+        Err(svode_agents::AgentRuntimeError::SettingRefused {
+            setting: "model".into(),
+            value: "haiku".into(),
+            reason: svode_agents::SettingRefusal::NotDeclared,
+        })
+    );
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(
+        calls(&log),
+        [
+            "initialize",
+            "session/load",
+            "session/close",
+            "session/load",
+            "session/close"
+        ]
+    );
+
+    // Without a plan it attaches as before.
+    assert_eq!(open(true, Vec::new()).await.unwrap(), opened(&key));
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
     runtime.shutdown().await;
 }
 
@@ -882,7 +944,8 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                false
+                false,
+                &[]
             )
             .await
             .unwrap(),
@@ -902,7 +965,8 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                true
+                true,
+                &[]
             )
             .await
             .unwrap(),
@@ -919,7 +983,8 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                false
+                false,
+                &[]
             )
             .await
             .unwrap(),
@@ -962,7 +1027,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                false
+                false,
+                &[]
             )
             .await
             .unwrap(),
@@ -976,7 +1042,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                true
+                true,
+                &[]
             )
             .await
             .unwrap(),
@@ -994,7 +1061,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                true
+                true,
+                &[]
             )
             .await
             .unwrap(),
@@ -1016,7 +1084,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                false
+                false,
+                &[]
             )
             .await
             .unwrap(),
@@ -1047,7 +1116,15 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
     );
     let key = SessionKey::from_acp("grok-build", "h1", true);
     let open = |liveness, turn_open, attach| {
-        connections.open_session("grok-build", &key, dir.path(), liveness, turn_open, attach)
+        connections.open_session(
+            "grok-build",
+            &key,
+            dir.path(),
+            liveness,
+            turn_open,
+            attach,
+            &[],
+        )
     };
 
     // Another process runs it: refused without a snapshot.
@@ -1061,6 +1138,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
                 ExternalLiveness::ExternalActive,
                 true,
                 false,
+                &[],
             )
             .await
             .unwrap(),
@@ -1122,6 +1200,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
                 ExternalLiveness::Unknown,
                 true,
                 false,
+                &[],
             )
             .await
             .unwrap(),
@@ -1193,6 +1272,7 @@ async fn an_agent_that_keeps_its_loaded_sessions_loads_one_again_only_in_another
             ExternalLiveness::Unknown,
             false,
             attach,
+            &[],
         )
     };
 
@@ -1242,6 +1322,7 @@ async fn an_agent_that_keeps_its_loaded_sessions_loads_one_again_only_in_another
                     ExternalLiveness::Unknown,
                     false,
                     false,
+                    &[],
                 )
                 .await
                 .unwrap(),
@@ -1285,7 +1366,8 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                true
+                true,
+                &[]
             )
             .await
             .unwrap(),
@@ -1301,6 +1383,7 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
                 ExternalLiveness::Unknown,
                 false,
                 false,
+                &[],
             )
             .await
             .unwrap(),

@@ -9,15 +9,22 @@ import {
   type AgentRuntimeErrorCode,
   type AgentSessionKeyDto,
   type AgentSessionSnapshotDto,
+  type AgentSettingValueDto,
 } from "../api/chat";
 import {
   isDraftBlank,
   promptParts,
   type DraftPart,
 } from "../model/attachments";
-import { reconcileUnknownSend, sessionDraftKey } from "../model/composer";
+import {
+  draftValues,
+  reconcileUnknownSend,
+  sessionDraftKey,
+} from "../model/composer";
+import { withDraftValue } from "../model/session-controls";
 import { recheckAttachments } from "./use-attachment-preview";
 import { useComposerDraft } from "./use-composer-draft";
+import type { AttachOutcome } from "./use-session-opening";
 
 /** How long an unknown send waits for the session to show a new turn. */
 const RECONCILE_MS = 1500;
@@ -31,20 +38,42 @@ export interface SendRefusal {
  * The composer of a session the runtime drives: sending and stopping
  * turns and answering the pending request (Stage 10 `04`, send and stop).
  * The draft stays until the runtime accepts the prompt; a send with an
- * unknown outcome is never repeated.
+ * unknown outcome is never repeated. Before the chat attaches a session it
+ * read, the draft keeps the setting values chosen for it, and the first
+ * send attaches the session with them (DF-171 R1, R3).
  */
 export function useSessionComposer(
   sessionId: string,
   session: AgentSessionKeyDto,
   snapshot: AgentSessionSnapshotDto | null,
   /**
-   * Attaches a session the chat only read before its first send; false
-   * when it did not attach, and the draft stays untouched.
+   * Attaches a session the chat only read before its first send, with the
+   * chosen values; when it did not attach, the draft stays.
    */
-  attach?: () => Promise<boolean>,
+  attach?: (settings: AgentSettingValueDto[]) => Promise<AttachOutcome>,
 ) {
   const draftKey = sessionDraftKey(sessionId);
   const [draft, updateDraft] = useComposerDraft(draftKey);
+  const agent = session.agent;
+  const plan = draftValues(draft, agent);
+  // Once the runtime drives the session its own values show; the chosen
+  // ones were applied or are no longer meant for an attach.
+  const attached = snapshot?.writer === "acp";
+  const planned = plan.length > 0;
+  useEffect(() => {
+    if (attached && planned) updateDraft({ settings: null });
+  }, [attached, planned, updateDraft]);
+  const choose = useCallback(
+    (value: AgentSettingValueDto) =>
+      updateDraft((latest) => ({
+        ...latest,
+        settings: {
+          agent,
+          values: withDraftValue(draftValues(latest, agent), value),
+        },
+      })),
+    [agent, updateDraft],
+  );
   const [refusal, setRefusal] = useState<SendRefusal | null>(null);
   const [answerError, setAnswerError] = useState<string | null>(null);
   const snapshotRef = useRef(snapshot);
@@ -95,8 +124,25 @@ export function useSessionComposer(
   const send = useCallback(async () => {
     if (isDraftBlank(draft.parts) || sending || running) return;
     setRefusal(null);
-    if (snapshotRef.current?.writer !== "acp" && attach && !(await attach())) {
-      return;
+    if (snapshotRef.current?.writer !== "acp" && attach) {
+      const outcome = await attach(plan);
+      if (!outcome.attached) {
+        // A refused value goes back to what the session has; nothing was sent.
+        const refused = outcome.refusedSetting;
+        if (refused) {
+          updateDraft((latest) => ({
+            ...latest,
+            settings: {
+              agent,
+              values: draftValues(latest, agent).filter(
+                (value) =>
+                  value.setting !== refused.setting || value.value !== refused.value,
+              ),
+            },
+          }));
+        }
+        return;
+      }
     }
     updateDraft({
       sending: { previousTurnId: snapshotRef.current?.turn.turnId ?? null },
@@ -117,7 +163,7 @@ export function useSessionComposer(
       // Neither a turn nor a refusal: the effect above settles it by the
       // session's state.
     }
-  }, [accept, attach, draft.parts, running, sending, session, updateDraft]);
+  }, [accept, agent, attach, draft.parts, plan, running, sending, session, updateDraft]);
 
   const stop = useCallback(() => {
     if (!running || cancelling) return;
@@ -144,6 +190,9 @@ export function useSessionComposer(
     draftKey,
     draft,
     setParts: (parts: DraftPart[]) => updateDraft({ parts, notSent: false }),
+    /** Values chosen before the session is attached, applied by attaching it. */
+    plan,
+    choose,
     sending,
     running,
     cancelling,

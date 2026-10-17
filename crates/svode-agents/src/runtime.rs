@@ -980,8 +980,13 @@ impl AgentRuntime {
     /// one normalizer; an agent with `resume` only continues it without
     /// history. Opening never sends a prompt. The ACP writer is claimed
     /// before the agent attaches the session, with the host's evidence
-    /// about external writers. A session this connection already drives is
-    /// left as it is.
+    /// about external writers. `settings` is the plan of values the host
+    /// attaches the session with (C6, DF-171 R1): they apply after the
+    /// session is attached and before it is handed out, as for a new
+    /// session; a value the session does not declare, or one the agent
+    /// refuses, closes the session again and refuses the opening. A
+    /// session this connection already drives is left as it is, with the
+    /// plan applied to it.
     pub async fn open_session(
         &self,
         id: ConnectionId,
@@ -989,6 +994,7 @@ impl AgentRuntime {
         cwd: &Path,
         liveness: ExternalLiveness,
         unknown: UnknownLiveness,
+        settings: &[SettingValue],
     ) -> Result<(), AgentRuntimeError> {
         let connection = self.connection(id)?;
         connection.require_open()?;
@@ -1006,6 +1012,9 @@ impl AgentRuntime {
             && open.writer.lock().unwrap().is_some()
         {
             open.opened.store(self.next_open(), Ordering::Relaxed);
+            for value in settings {
+                self.apply_setting(&open, value).await?;
+            }
             return Ok(());
         }
         if connection.info.lock().unwrap().is_none() {
@@ -1070,12 +1079,19 @@ impl AgentRuntime {
         connection.rpc.barrier().await;
         match result {
             Ok(response) => {
-                let mut projection = session.projection.lock().unwrap();
-                projection.end_replay();
-                if let Some(declared) = acp::opened_session_settings(response) {
-                    projection.set_settings(declared);
+                {
+                    let mut projection = session.projection.lock().unwrap();
+                    projection.end_replay();
+                    if let Some(declared) = acp::opened_session_settings(response) {
+                        projection.set_settings(declared);
+                    }
                 }
-                drop(projection);
+                for value in settings {
+                    if let Err(error) = self.apply_setting(&session, value).await {
+                        self.close_session(&session).await;
+                        return Err(error);
+                    }
+                }
                 self.inner.register(key.clone(), session);
                 Ok(())
             }

@@ -1,6 +1,7 @@
 import {
   openAgentSession,
   type AgentSessionOpeningDto,
+  type AgentSettingValueDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 
 export {
@@ -44,20 +45,25 @@ export { signInAgent } from "@/platform/agent-setup/agent-setup-api";
 const openings = new Map<string, Promise<AgentSessionOpeningDto>>();
 
 /**
- * Opens a listed session in the chat. A surface mounted twice for one
- * session shares the opening in flight, so the agent replays it once.
+ * Opens a listed session in the chat; an attaching opening applies
+ * `settings` first. A surface mounted twice for one session shares the
+ * opening in flight, so the agent replays it once.
  */
 export function openSessionInChat(
   projectPath: string,
   sessionId: string,
   attach: boolean,
+  settings: AgentSettingValueDto[] = [],
 ): Promise<AgentSessionOpeningDto> {
-  const key = `${projectPath}\n${sessionId}\n${attach}`;
+  const key = `${projectPath}\n${sessionId}\n${attach}\n${JSON.stringify(settings)}`;
   const inFlight = openings.get(key);
   if (inFlight) return inFlight;
-  const opening = openAgentSession(projectPath, sessionId, attach).finally(() =>
-    openings.delete(key),
-  );
+  const opening = openAgentSession(
+    projectPath,
+    sessionId,
+    attach,
+    settings,
+  ).finally(() => openings.delete(key));
   openings.set(key, opening);
   return opening;
 }

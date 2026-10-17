@@ -558,17 +558,21 @@ export type AgentSessionOpeningDto =
 
 /**
  * Opens a listed session in the chat without sending a prompt; `attach` is
- * the user's confirmation of one attempt to attach it with the writer.
+ * the user's confirmation of one attempt to attach it with the writer, and
+ * `settings` the values it is attached with before any prompt; a value the
+ * session refuses fails the opening (`setting_refused`).
  */
 export function openAgentSession(
   projectPath: string,
   sessionId: string,
   attach: boolean,
+  settings: AgentSettingValueDto[],
 ): Promise<AgentSessionOpeningDto> {
   return invoke<AgentSessionOpeningDto>("agent_runtime_open_session", {
     projectPath,
     sessionId,
     attach,
+    settings,
   });
 }
 

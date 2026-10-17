@@ -16,8 +16,10 @@ export interface ComposerDraft {
   agent?: string | null;
   spacePath?: string | null;
   /**
-   * New session drafts only: the setting values the agent confirmed in the
+   * New session drafts: the setting values the agent confirmed in the
    * draft, applied again to a draft session created anew after a reload.
+   * Drafts of an existing session the chat has not attached: the values
+   * the user chose, which attaching applies before the prompt (DF-171 R3).
    */
   settings?: { agent: string; values: AgentSettingValueDto[] } | null;
   /**
@@ -27,6 +29,14 @@ export interface ComposerDraft {
   sending?: { previousTurnId: string | null } | null;
   /** The text came back from a send that did not reach the agent. */
   notSent?: boolean;
+}
+
+/** The setting values a draft keeps for `agent`. */
+export function draftValues(
+  draft: ComposerDraft,
+  agent: string | null,
+): AgentSettingValueDto[] {
+  return agent && draft.settings?.agent === agent ? draft.settings.values : [];
 }
 
 const STORAGE_PREFIX = "svode:session-draft:";

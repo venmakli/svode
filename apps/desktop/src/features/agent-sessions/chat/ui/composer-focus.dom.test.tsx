@@ -418,7 +418,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
               writer = "acp";
               setEpoch((value) => value + 1);
               setAttaching(false);
-              return true;
+              return { attached: true };
             },
             refresh: () => undefined,
             refreshing: false,

@@ -4,19 +4,11 @@ import type {
   AgentSessionSnapshotDto,
   AgentSettingValueDto,
 } from "../api/chat";
-import type { ComposerDraft } from "../model/composer";
+import { draftValues, type ComposerDraft } from "../model/composer";
 import { draftValuesToApply, withDraftValue } from "../model/session-controls";
 import { useSessionSettings } from "./use-session-settings";
 
 type UpdateDraft = (change: (draft: ComposerDraft) => ComposerDraft) => void;
-
-/** The values a draft keeps for `agent`. */
-export function draftValues(
-  draft: ComposerDraft,
-  agent: string | null,
-): AgentSettingValueDto[] {
-  return agent && draft.settings?.agent === agent ? draft.settings.values : [];
-}
 
 /**
  * The settings of a new session draft (Stage 10 `04`, selectors): a change

@@ -415,6 +415,7 @@ async fn open_existing(
             cwd,
             ExternalLiveness::Unknown,
             UnknownLiveness::Confirmed,
+            &[],
         )
         .await
     {

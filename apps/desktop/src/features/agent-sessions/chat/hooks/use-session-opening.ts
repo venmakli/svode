@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { requestAgentSessionCatalogFastRefresh } from "../../hooks/use-agent-session-catalog";
 import {
+  agentSettingRefusal,
   openSessionInChat,
   type AgentExternalLivenessDto,
   type AgentLaunchUnavailableDto,
   type AgentSessionKeyDto,
   type AgentSessionOpeningDto,
+  type AgentSettingRefusalDto,
+  type AgentSettingValueDto,
 } from "../api/chat";
 import { errorMessage } from "./use-session-composer";
 
@@ -35,7 +38,14 @@ type OpenMode = "read" | "load_history" | "refresh";
 /** Why continuing a read session did not attach it; the draft stays. */
 export type ContinueRefusal =
   | Extract<AgentSessionOpeningDto, { outcome: "unavailable" | "auth_required" }>
+  /** A value chosen before attaching did not apply (DF-171 R1). */
+  | { outcome: "setting_refused"; refusal: AgentSettingRefusalDto }
   | { outcome: "failed"; message: string };
+
+/** What attaching a read session before its first send did. */
+export type AttachOutcome =
+  | { attached: true }
+  | { attached: false; refusedSetting: AgentSettingRefusalDto | null };
 
 /**
  * Opening an existing session in the chat (Stage 10 `04`, opening and
@@ -88,36 +98,52 @@ export function useSessionOpening(projectPath: string | null, sessionId: string)
   }, [open]);
 
   /**
-   * Attaches a read session before its first send, the user's confirmation
-   * of this attempt; true when the chat may send.
+   * Attaches a read session before its first send with the values chosen
+   * for it, the user's confirmation of this attempt; the chat may send once
+   * it is attached.
    */
-  const attach = useCallback(async (): Promise<boolean> => {
-    if (!projectPath) return false;
-    setContinueRefusal(null);
-    let outcome: AgentSessionOpeningDto;
-    try {
-      outcome = await openSessionInChat(projectPath, sessionId, true);
-    } catch (error) {
-      setContinueRefusal({ outcome: "failed", message: errorMessage(error) });
-      return false;
-    }
-    switch (outcome.outcome) {
-      case "opened":
-      case "external_active":
-      case "terminal_active":
-        setOpening((current) => opened(current, outcome));
-        if (outcome.outcome === "opened") requestAgentSessionCatalogFastRefresh();
-        return outcome.outcome === "opened";
-      case "unavailable":
-      case "auth_required":
-        setContinueRefusal(outcome);
-        return false;
-      case "confirmation_required":
-      case "unsupported":
-        setOpening((current) => opened(current, outcome));
-        return false;
-    }
-  }, [projectPath, sessionId]);
+  const attach = useCallback(
+    async (settings: AgentSettingValueDto[]): Promise<AttachOutcome> => {
+      const notAttached = { attached: false, refusedSetting: null } as const;
+      if (!projectPath) return notAttached;
+      setContinueRefusal(null);
+      setAttaching(true);
+      let outcome: AgentSessionOpeningDto;
+      try {
+        outcome = await openSessionInChat(projectPath, sessionId, true, settings);
+      } catch (error) {
+        const refusal = agentSettingRefusal(error);
+        if (refusal) {
+          setContinueRefusal({ outcome: "setting_refused", refusal });
+          return { attached: false, refusedSetting: refusal };
+        }
+        setContinueRefusal({ outcome: "failed", message: errorMessage(error) });
+        return notAttached;
+      } finally {
+        setAttaching(false);
+      }
+      switch (outcome.outcome) {
+        case "opened":
+        case "external_active":
+        case "terminal_active":
+          setOpening((current) => opened(current, outcome));
+          if (outcome.outcome === "opened") {
+            requestAgentSessionCatalogFastRefresh();
+            return { attached: true };
+          }
+          return notAttached;
+        case "unavailable":
+        case "auth_required":
+          setContinueRefusal(outcome);
+          return notAttached;
+        case "confirmation_required":
+        case "unsupported":
+          setOpening((current) => opened(current, outcome));
+          return notAttached;
+      }
+    },
+    [projectPath, sessionId],
+  );
 
   return {
     opening,

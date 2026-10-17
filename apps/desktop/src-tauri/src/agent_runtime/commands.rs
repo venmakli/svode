@@ -194,7 +194,8 @@ pub async fn agent_runtime_start_session(
 
 /// Opens a listed session of the project in the chat (Stage 10 `04`,
 /// opening and continuing); `attach` is the user's confirmation of one
-/// attempt to attach it with the writer. Never sends a prompt.
+/// attempt to attach it with the writer, and `settings` the values the
+/// user chose before it, applied before any prompt. Never sends a prompt.
 #[tauri::command]
 pub async fn agent_runtime_open_session(
     sessions: State<'_, AgentSessionsState>,
@@ -204,6 +205,7 @@ pub async fn agent_runtime_open_session(
     project_path: String,
     session_id: String,
     attach: bool,
+    settings: Vec<SettingValue>,
 ) -> Result<SessionOpening, AppError> {
     let sessions = sessions.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
@@ -230,6 +232,7 @@ pub async fn agent_runtime_open_session(
             target.liveness,
             target.turn_open,
             attach,
+            &settings,
         )
         .await?)
 }

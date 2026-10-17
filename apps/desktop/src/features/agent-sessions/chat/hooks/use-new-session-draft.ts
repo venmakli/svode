@@ -13,13 +13,17 @@ import {
   promptParts,
   type DraftPart,
 } from "../model/attachments";
-import { newSessionDraftKey, sessionDraftKey } from "../model/composer";
+import {
+  draftValues,
+  newSessionDraftKey,
+  sessionDraftKey,
+} from "../model/composer";
 import { recheckAttachments } from "./use-attachment-preview";
 import { useChatAgents } from "./use-chat-agents";
 import { useComposerDraft } from "./use-composer-draft";
 import { passComposerFocus } from "./use-composer-focus";
 import { useDraftAgent, type DraftAgentState } from "./use-draft-agent";
-import { draftValues, useDraftSettings } from "./use-draft-settings";
+import { useDraftSettings } from "./use-draft-settings";
 import { useSessionActivity } from "./use-session-activity";
 import { errorMessage, type SendRefusal } from "./use-session-composer";
 

@@ -363,8 +363,10 @@ impl AgentConnections {
     /// it, also while another process may run a turn of it (`turn_open` by
     /// the native status, DF-177 R1), else the session is attached with the
     /// writer. `attach` attaches it right away and is the user's
-    /// confirmation of this one attempt. Opening never sends a prompt, and
-    /// a session a managed terminal drives is left to it.
+    /// confirmation of this one attempt. `settings` is the plan the session
+    /// is attached with (DF-171 R1); reading it takes none. Opening never
+    /// sends a prompt, and a session a managed terminal drives is left to
+    /// it.
     pub async fn open_session(
         &self,
         agent: &str,
@@ -373,6 +375,7 @@ impl AgentConnections {
         liveness: ExternalLiveness,
         turn_open: bool,
         attach: bool,
+        settings: &[SettingValue],
     ) -> Result<SessionOpening, AgentRuntimeError> {
         if self.runtime.writers().writer(session) == Some(Writer::Pty) {
             return Ok(SessionOpening::TerminalActive);
@@ -403,7 +406,14 @@ impl AgentConnections {
         };
         let attached = self
             .runtime
-            .open_session(lease.connection(), session, cwd, liveness, unknown)
+            .open_session(
+                lease.connection(),
+                session,
+                cwd,
+                liveness,
+                unknown,
+                settings,
+            )
             .await;
         opening(attached, session, liveness, turn_open)
     }

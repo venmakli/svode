@@ -1224,6 +1224,7 @@ async fn a_refused_opening_leaves_the_connection_to_the_next_session() {
             Path::new("/project"),
             ExternalLiveness::Unknown,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         agent.initialize(json!({ "loadSession": true }))
     );
@@ -1380,6 +1381,7 @@ async fn reopened(
             Path::new("/project"),
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         async {
             agent
@@ -1553,6 +1555,7 @@ async fn a_resume_only_agent_continues_the_session_without_history() {
             Path::new("/project"),
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         async {
             agent
@@ -1591,6 +1594,7 @@ async fn opening_is_refused_without_load_or_resume_and_without_a_free_writer() {
             Path::new("/project"),
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         agent.initialize(json!({}))
     );
@@ -1604,6 +1608,7 @@ async fn opening_is_refused_without_load_or_resume_and_without_a_free_writer() {
             Path::new("/project"),
             ExternalLiveness::Unknown,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         agent.initialize(json!({ "loadSession": true }))
     );
@@ -1626,6 +1631,7 @@ async fn opening_is_refused_without_load_or_resume_and_without_a_free_writer() {
                 Path::new("/project"),
                 ExternalLiveness::Free,
                 UnknownLiveness::NotConfirmed,
+                &[],
             )
             .await,
         Err(AgentRuntimeError::SessionNotFound)
@@ -1644,6 +1650,7 @@ async fn a_failed_load_leaves_no_session_and_frees_the_writer() {
             Path::new("/project"),
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         async {
             agent.initialize(json!({ "loadSession": true })).await;
@@ -1742,6 +1749,7 @@ async fn other_sessions_answer_while_a_replay_streams() {
                     Path::new("/project"),
                     ExternalLiveness::Free,
                     UnknownLiveness::NotConfirmed,
+                    &[],
                 )
                 .await
         }
@@ -2348,6 +2356,7 @@ async fn a_connection_of_an_agent_with_one_session_per_connection_serves_one_ses
                 Path::new("/project"),
                 ExternalLiveness::Free,
                 UnknownLiveness::NotConfirmed,
+                &[],
             )
             .await
             .unwrap_err(),
@@ -2956,6 +2965,7 @@ async fn an_opened_session_reports_its_settings_and_keeps_replayed_ones() {
             Path::new("/project"),
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         async {
             agent.initialize(json!({ "loadSession": true })).await;
@@ -2968,6 +2978,207 @@ async fn an_opened_session_reports_its_settings_and_keeps_replayed_ones() {
     opened.unwrap();
     let snapshot = runtime.subscribe(&key).unwrap().snapshot;
     assert_eq!(snapshot.settings[0].current_value, "agent");
+}
+
+/// The load answer of session `s1` with the mode `current`.
+fn loaded(current: &str) -> Value {
+    let mut declared = mode_settings(current);
+    declared.as_object_mut().unwrap().remove("sessionId");
+    declared
+}
+
+#[tokio::test]
+async fn an_attached_session_applies_the_plan_before_it_is_handed_out() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let (id, mut agent) = attached(&runtime);
+    let plan = [approval("workspace-write")];
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+            &plan,
+        ),
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            agent.reply(&load, loaded("agent")).await;
+            let set = agent.expect("session/set_config_option").await;
+            assert_eq!(
+                set["params"],
+                json!({ "sessionId": "s1", "configId": "mode", "value": "workspace-write" })
+            );
+            let mut confirmed = loaded("workspace-write");
+            confirmed.as_object_mut().unwrap().remove("modes");
+            agent.reply(&set, confirmed).await;
+        }
+    );
+    opened.unwrap();
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.writer, WriterState::Acp);
+    assert_eq!(snapshot.settings[0].current_value, "workspace-write");
+    agent.silent().await;
+
+    // The prompt comes only after the plan.
+    runtime.prompt(&key, &[PromptPart::text("go on")]).unwrap();
+    agent.expect("session/prompt").await;
+}
+
+#[tokio::test]
+async fn a_plan_value_the_session_does_not_declare_closes_it_without_a_prompt() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let (id, mut agent) = attached(&runtime);
+    let plan = [approval("agent-full-access")];
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+            &plan,
+        ),
+        async {
+            agent
+                .initialize(json!({
+                    "loadSession": true,
+                    "sessionCapabilities": { "close": {} }
+                }))
+                .await;
+            let load = agent.expect("session/load").await;
+            agent.reply(&load, loaded("agent")).await;
+            let close = agent.expect("session/close").await;
+            assert_eq!(close["params"], json!({ "sessionId": "s1" }));
+            agent.reply(&close, json!({})).await;
+        }
+    );
+    assert_eq!(
+        opened,
+        Err(AgentRuntimeError::SettingRefused {
+            setting: "mode".into(),
+            value: "agent-full-access".into(),
+            reason: SettingRefusal::NotDeclared,
+        })
+    );
+    assert!(runtime.subscribe(&key).is_err());
+    assert_eq!(runtime.writers().writer(&key), None);
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_plan_value_the_agent_refuses_leaves_the_read_history_and_frees_the_writer() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let (id, mut agent) = attached_with(&runtime, &reading(None));
+    let ((), ()) = tokio::join!(
+        async {
+            runtime
+                .read_session(
+                    id,
+                    &key,
+                    Path::new("/project"),
+                    ExternalLiveness::Free,
+                    false,
+                )
+                .await
+                .unwrap()
+        },
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            agent.reply(&load, loaded("read-only")).await;
+        }
+    );
+    let plan = [approval("workspace-write")];
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+            &plan,
+        ),
+        async {
+            let load = agent.expect("session/load").await;
+            agent.reply(&load, loaded("read-only")).await;
+            let set = agent.expect("session/set_config_option").await;
+            agent
+                .send(json!({
+                    "jsonrpc": "2.0", "id": set["id"],
+                    "error": { "code": -32602, "message": "not allowed" }
+                }))
+                .await;
+        }
+    );
+    assert_eq!(
+        opened,
+        Err(AgentRuntimeError::SettingRefused {
+            setting: "mode".into(),
+            value: "workspace-write".into(),
+            reason: SettingRefusal::Agent {
+                message: "not allowed".into()
+            },
+        })
+    );
+    // The chat keeps showing what it read; nothing drives the session.
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.writer, WriterState::None);
+    assert_eq!(snapshot.settings[0].current_value, "read-only");
+    assert_eq!(runtime.writers().writer(&key), None);
+    assert_eq!(
+        runtime.prompt(&key, &[PromptPart::text("go on")]),
+        Err(AgentRuntimeError::WriterRequired)
+    );
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_session_the_connection_drives_takes_the_plan_of_another_opening() {
+    let runtime = AgentRuntime::default();
+    let key = SessionKey::from_acp("scripted", "s1", false);
+    let (id, mut agent) = attached(&runtime);
+    let (opened, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+            &[],
+        ),
+        async {
+            agent.initialize(json!({ "loadSession": true })).await;
+            let load = agent.expect("session/load").await;
+            agent.reply(&load, loaded("agent")).await;
+        }
+    );
+    opened.unwrap();
+    let plan = [approval("read-only")];
+    let (again, ()) = tokio::join!(
+        runtime.open_session(
+            id,
+            &key,
+            Path::new("/project"),
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+            &plan,
+        ),
+        async {
+            let set = agent.expect("session/set_config_option").await;
+            let mut confirmed = loaded("read-only");
+            confirmed.as_object_mut().unwrap().remove("modes");
+            agent.reply(&set, confirmed).await;
+        }
+    );
+    again.unwrap();
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(snapshot.settings[0].current_value, "read-only");
+    agent.silent().await;
 }
 
 fn reading(writer_refusal: Option<&str>) -> AcpLaunch {
@@ -3198,6 +3409,7 @@ async fn a_process_that_keeps_its_loaded_sessions_never_loads_one_again() {
                 Path::new("/project"),
                 ExternalLiveness::Free,
                 UnknownLiveness::NotConfirmed,
+                &[],
             )
             .await
             .unwrap_err(),
@@ -3221,6 +3433,7 @@ async fn a_process_that_keeps_its_loaded_sessions_never_loads_one_again() {
             Path::new("/project"),
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         async {
             agent.initialize(json!({ "loadSession": true })).await;
@@ -3332,6 +3545,7 @@ async fn reading_goes_on_while_another_process_writes_unless_the_agent_refuses()
             Path::new("/project"),
             ExternalLiveness::Free,
             UnknownLiveness::NotConfirmed,
+            &[],
         ),
         async {
             let load = agent.expect("session/load").await;
@@ -3483,6 +3697,7 @@ async fn without_read_only_evidence_the_history_is_not_read_and_an_external_writ
             Path::new("/project"),
             ExternalLiveness::ExternalActive,
             UnknownLiveness::Confirmed,
+            &[],
         ),
         agent.initialize(json!({ "loadSession": true }))
     );

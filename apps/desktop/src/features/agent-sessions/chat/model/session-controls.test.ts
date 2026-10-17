@@ -7,6 +7,7 @@ import {
   currentOptionName,
   draftValuesToApply,
   filterOptions,
+  plannedSettings,
   sessionControls,
   withDraftValue,
   type SessionSetting,
@@ -125,4 +126,25 @@ test("a draft re-applies its values and never replaces an undeclared one silentl
     ),
   );
   expect(undeclared).toEqual([{ setting: "effort", value: "max" }]);
+});
+
+test("a read session shows the values chosen before attaching it, if it declares them", () => {
+  const model = codex.find((setting) => setting.id === "model")!;
+  const other = model.options.find(
+    (option) => option.value !== model.currentValue,
+  )!;
+  const planned = plannedSettings(codex, [
+    { setting: "model", value: other.value },
+    { setting: "reasoning_effort", value: "beyond" },
+  ]);
+  expect(planned.find((setting) => setting.id === "model")?.currentValue).toBe(
+    other.value,
+  );
+  // A value the session does not offer is not shown as the turn's value.
+  expect(
+    planned.find((setting) => setting.id === "reasoning_effort")?.currentValue,
+  ).toBe(
+    codex.find((setting) => setting.id === "reasoning_effort")?.currentValue,
+  );
+  expect(plannedSettings(codex, [])).toEqual(codex);
 });

@@ -65,6 +65,12 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   let draftSession: typeof key | null = draftKey;
   /** How the next prompt ends. */
   let promptAnswer: () => unknown = () => "turn-2";
+  /** How the next opening in the chat ends. */
+  let openAnswer: (attach: boolean) => unknown = () => ({
+    outcome: "opened",
+    session: key,
+    liveness: "free",
+  });
   /** Messages the chat reported as accepted, by session. */
   const messages: string[] = [];
   /** The detail of each timeline item by id. */
@@ -88,6 +94,9 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     }
     if (command === "agent_runtime_set_setting") return settingAnswer();
     if (command === "agent_runtime_prompt") return promptAnswer();
+    if (command === "agent_runtime_open_session") {
+      return openAnswer(payload.attach as boolean);
+    }
     if (command === "agent_runtime_detail") {
       return details[payload.itemId as string] ?? { outcome: "unavailable", reason: "not_provided" };
     }
@@ -136,6 +145,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   setLocale("en", { reload: false });
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { SessionChat } = await import("./session-chat");
+  const { useSessionOpening } = await import("../hooks/use-session-opening");
   const { Sheet, SheetContent, SheetTitle } = await import("@/components/ui/sheet");
   const { AGENT_SESSION_CONTENT_ATTRIBUTE } = await import(
     "../../lib/session-content"
@@ -145,8 +155,12 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   const { AgentSessionDraftMainSurface } = await import(
     "../../ui/session-main-surface"
   );
-  const { newSessionDraftKey, sessionDraftKey, writeComposerDraft } =
-    await import("../model/composer");
+  const {
+    newSessionDraftKey,
+    readComposerDraft,
+    sessionDraftKey,
+    writeComposerDraft,
+  } = await import("../model/composer");
   const { subscribeUserEdits } = await import("@/features/navigation");
   subscribeUserEdits((edit) => {
     if (edit.kind === "message") messages.push(edit.sessionId);
@@ -162,6 +176,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       draftSession = draftKey;
       details = {};
       promptAnswer = () => "turn-2";
+      openAnswer = () => ({ outcome: "opened", session: key, liveness: "free" });
       messages.length = 0;
       try {
         await fn();
@@ -667,6 +682,192 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         value: { ...running.turn, turnId: "turn-3", phase: "running" },
       });
       expect(messages).toEqual(["codex:s1", "codex:s1"]);
+    },
+  );
+
+  /** A session the chat opened by reading it, as the session peek shows it. */
+  function ReadSession() {
+    const opening = useSessionOpening("/project", "codex:s1");
+    const state = opening.opening;
+    if (state.state !== "opened") return null;
+    return (
+      <SessionChat
+        sessionId="codex:s1"
+        session={state.session}
+        scopeLabel="Project"
+        epoch={state.epoch}
+        continuation={{
+          liveness: state.liveness,
+          attaching: opening.attaching,
+          refusal: opening.continueRefusal,
+          attach: opening.attach,
+          refresh: opening.refresh,
+          refreshing: opening.refreshing,
+          onCopyResumeCommand: null,
+        }}
+      />
+    );
+  }
+
+  /** The chat reads the session; an attaching opening makes it driven. */
+  function readUntilAttached() {
+    let writer = "none";
+    snapshotFor = (session) => ({ ...snapshot(session), writer });
+    openAnswer = (attach) => {
+      if (attach) writer = "acp";
+      return { outcome: "opened", session: key, liveness: "free" };
+    };
+  }
+
+  async function unmountAll() {
+    for (const root of mounted.splice(0)) {
+      await act(async () => root.unmount());
+    }
+  }
+
+  controlsTest(
+    "before a read session is attached its settings are chosen into the draft, which keeps them over a reload, and the first send attaches it with them",
+    async () => {
+      readUntilAttached();
+      writeComposerDraft(sessionDraftKey("codex:s1"), {
+        parts: [{ type: "text", text: "Go on" }],
+      });
+      await mount(<ReadSession />);
+      expect(lastCall("agent_runtime_open_session")).toEqual({
+        projectPath: "/project",
+        sessionId: "codex:s1",
+        attach: false,
+        settings: [],
+      });
+      const button = agentButton();
+      expect(button.disabled).toBe(false);
+      await click(button);
+      expect(optionByText("GPT-6 Sol")?.getAttribute("data-disabled")).toBe("false");
+      await click(optionByText("GPT-6 Sol"));
+      await click(optionByText("High"));
+      await openMenu(
+        buttonByLabel(m.sessions_chat_mode_choose({ mode: "Read Only" })),
+      );
+      await click(
+        Array.from(document.querySelectorAll('[role="menuitemradio"]')).find(
+          (item) => item.textContent?.includes("Auto review"),
+        ),
+      );
+      // Nothing reaches the agent before the send; the choice shows as chosen.
+      expect(lastCall("agent_runtime_set_setting")).toBe(undefined);
+      expect(agentButton().textContent?.includes("GPT-6 Sol")).toBe(true);
+      expect(agentButton().textContent?.includes("High")).toBe(true);
+
+      // A reload of the window keeps the choice in the session's draft.
+      await unmountAll();
+      await mount(<ReadSession />);
+      expect(agentButton().textContent?.includes("GPT-6 Sol")).toBe(true);
+      expect(
+        Boolean(
+          buttonByLabel(m.sessions_chat_mode_choose({ mode: "Auto review" })),
+        ),
+      ).toBe(true);
+
+      await click(buttonByLabel(m.sessions_chat_send()));
+      const sent = calls.map((call) => call.command);
+      expect(lastCall("agent_runtime_open_session")).toEqual({
+        projectPath: "/project",
+        sessionId: "codex:s1",
+        attach: true,
+        settings: [
+          { setting: "model", value: "gpt-6-sol" },
+          { setting: "reasoning_effort", value: "high" },
+          { setting: "mode", value: "agent" },
+        ],
+      });
+      expect(sent.lastIndexOf("agent_runtime_open_session")).toBeLessThan(
+        sent.indexOf("agent_runtime_prompt"),
+      );
+      expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+        { type: "text", text: "Go on" },
+      ]);
+      // Attached, the button shows what the agent confirmed, and a change
+      // goes to the session.
+      expect(agentButton().textContent?.includes("GPT-5.6 Luna")).toBe(true);
+      expect(readComposerDraft(sessionDraftKey("codex:s1"))?.settings ?? null).toBe(
+        null,
+      );
+      await click(agentButton());
+      await click(optionByText("GPT-6 Luna"));
+      expect(lastCall("agent_runtime_set_setting")?.value).toEqual({
+        setting: "model",
+        value: "gpt-6-luna",
+      });
+    },
+  );
+
+  controlsTest(
+    "a chosen value the session refuses sends nothing and keeps the draft with the reason and the session's value",
+    async () => {
+      snapshotFor = (session) => ({ ...snapshot(session), writer: "none" });
+      openAnswer = (attach) => {
+        if (!attach) return { outcome: "opened", session: key, liveness: "free" };
+        throw {
+          kind: "agent_runtime",
+          code: "setting_refused",
+          setting: "model",
+          value: "gpt-6-sol",
+          reason: { kind: "agent", message: "not allowed" },
+          message: "setting model=gpt-6-sol was refused",
+        };
+      };
+      writeComposerDraft(sessionDraftKey("codex:s1"), {
+        parts: [{ type: "text", text: "Go on" }],
+        settings: {
+          agent: "codex",
+          values: [
+            { setting: "model", value: "gpt-6-sol" },
+            { setting: "reasoning_effort", value: "high" },
+          ],
+        },
+      });
+      await mount(<ReadSession />);
+      expect(agentButton().textContent?.includes("GPT-6 Sol")).toBe(true);
+      await click(buttonByLabel(m.sessions_chat_send()));
+
+      expect(lastCall("agent_runtime_prompt")).toBe(undefined);
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_chat_setting_refused({
+            setting: "Model",
+            value: "GPT-6 Sol",
+            reason: "not allowed",
+          }),
+        ),
+      ).toBe(true);
+      // The refused model goes back to the session's own; the rest stays chosen.
+      expect(agentButton().textContent?.includes("GPT-5.6 Luna")).toBe(true);
+      expect(agentButton().textContent?.includes("High")).toBe(true);
+      const draft = readComposerDraft(sessionDraftKey("codex:s1"));
+      expect(draft?.parts).toEqual([{ type: "text", text: "Go on" }]);
+      expect(draft?.settings?.values).toEqual([
+        { setting: "reasoning_effort", value: "high" },
+      ]);
+    },
+  );
+
+  controlsTest(
+    "while another process writes to a read session its settings stay unavailable",
+    async () => {
+      snapshotFor = (session) => ({ ...snapshot(session), writer: "none" });
+      openAnswer = () => ({
+        outcome: "opened",
+        session: key,
+        liveness: "external_active",
+      });
+      await mount(<ReadSession />);
+      expect(
+        buttonByLabel(m.sessions_chat_mode_choose({ mode: "Read Only" }))
+          ?.disabled,
+      ).toBe(true);
+      expect(document.body.textContent?.includes(m.sessions_chat_external_writer())).toBe(
+        true,
+      );
     },
   );
 

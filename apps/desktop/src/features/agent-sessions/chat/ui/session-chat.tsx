@@ -7,6 +7,7 @@ import type {
   AgentExternalLivenessDto,
   AgentSessionKeyDto,
   AgentSessionSnapshotDto,
+  AgentSettingValueDto,
 } from "../api/chat";
 import {
   useRequestedComposerFocus,
@@ -18,12 +19,12 @@ import {
   useSessionComposer,
   type SendRefusal,
 } from "../hooks/use-session-composer";
-import type { ContinueRefusal } from "../hooks/use-session-opening";
+import type { AttachOutcome, ContinueRefusal } from "../hooks/use-session-opening";
 import { takeEscape } from "@/shared/lib/escape-key";
 import { isKeyTaken } from "../../lib/session-content";
 import { isDraftBlank } from "../model/attachments";
 import type { ChatSessionState } from "../model/interface";
-import { sessionControls } from "../model/session-controls";
+import { plannedSettings, sessionControls } from "../model/session-controls";
 import { toolCallOf } from "../model/timeline";
 import { AgentModelButton, unavailableText } from "./agent-button";
 import { ChatDropSurface } from "./chat-drop-surface";
@@ -40,7 +41,8 @@ export interface ChatContinuation {
   liveness: AgentExternalLivenessDto;
   attaching: boolean;
   refusal: ContinueRefusal | null;
-  attach: () => Promise<boolean>;
+  /** Attaches the session with the values chosen before it. */
+  attach: (settings: AgentSettingValueDto[]) => Promise<AttachOutcome>;
   /** Reads the history again while another process writes to the session. */
   refresh: () => void;
   refreshing: boolean;
@@ -160,12 +162,27 @@ export function SessionChat({
     void composer.send();
   };
   const between = !composer.running && !pending;
-  // Settings change on the session the runtime drives, also during a turn:
-  // the agent applies them to the next one.
-  const canChange = snapshot.writer === "acp" && snapshot.connection !== "closed";
-  const mode = sessionControls(snapshot.settings).mode;
-  const changeSetting = (value: Parameters<typeof settings.change>[0]) =>
-    void settings.change(value);
+  // Before the chat attaches a session it read, the values are chosen into
+  // the draft and the first send attaches the session with them (DF-171
+  // R3); then they change on the session the runtime drives, also during a
+  // turn: the agent applies them to the next one.
+  const planning = read && !externalWriter;
+  const shownSettings = planning
+    ? plannedSettings(snapshot.settings, composer.plan)
+    : snapshot.settings;
+  const canChange = planning
+    ? !composer.sending && !continuation.attaching
+    : snapshot.writer === "acp" && snapshot.connection !== "closed";
+  const changing = planning ? null : settings.changing;
+  const mode = sessionControls(shownSettings).mode;
+  const changeSetting = (value: AgentSettingValueDto) => {
+    if (planning) composer.choose(value);
+    else void settings.change(value);
+  };
+  const planRefusal =
+    continuation?.refusal?.outcome === "setting_refused"
+      ? continuation.refusal.refusal
+      : null;
   // A drop goes into the draft only while the field is there to take it.
   const dropRefusal = pending
     ? m.sessions_chat_drop_answer_first()
@@ -209,9 +226,10 @@ export function SessionChat({
         {settings.refusal && (
           <SettingRefusalLine refusal={settings.refusal} settings={snapshot.settings} />
         )}
-        {continuation?.refusal && (
-          <ContinueRefusalLine refusal={continuation.refusal} />
-        )}
+        {continuation?.refusal &&
+          continuation.refusal.outcome !== "setting_refused" && (
+            <ContinueRefusalLine refusal={continuation.refusal} />
+          )}
         {confirming && read && !pending && (
           <AttachConfirmation onConfirm={confirmSend} onCancel={() => setConfirming(false)} />
         )}
@@ -230,10 +248,16 @@ export function SessionChat({
           <ExternalWriter continuation={continuation} />
         ) : (
           <div>
-            {composer.draft.notSent && (
-              <p className="pb-1 text-xs text-destructive">
-                {m.sessions_chat_not_sent()}
-              </p>
+            {planRefusal ? (
+              <div className="pb-1">
+                <SettingRefusalLine refusal={planRefusal} settings={snapshot.settings} />
+              </div>
+            ) : (
+              composer.draft.notSent && (
+                <p className="pb-1 text-xs text-destructive">
+                  {m.sessions_chat_not_sent()}
+                </p>
+              )
             )}
             <Composer
               draftKey={composer.draftKey}
@@ -252,9 +276,9 @@ export function SessionChat({
                 <AgentModelButton
                   agent={session.agent}
                   draft={null}
-                  settings={snapshot.settings}
+                  settings={shownSettings}
                   canChange={canChange}
-                  changing={settings.changing}
+                  changing={changing}
                   onChange={changeSetting}
                 />
               }
@@ -268,7 +292,7 @@ export function SessionChat({
               <ModeSelect
                 mode={mode}
                 canChange={canChange}
-                changing={settings.changing === mode.id}
+                changing={changing === mode.id}
                 onChange={changeSetting}
               />
             )}
@@ -434,7 +458,11 @@ function ExternalWriter({
   );
 }
 
-function ContinueRefusalLine({ refusal }: { refusal: ContinueRefusal }) {
+function ContinueRefusalLine({
+  refusal,
+}: {
+  refusal: Exclude<ContinueRefusal, { outcome: "setting_refused" }>;
+}) {
   const text =
     refusal.outcome === "unavailable"
       ? unavailableText(refusal.reason)

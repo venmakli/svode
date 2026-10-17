@@ -132,3 +132,21 @@ export function withDraftValue(
 ): SettingValue[] {
   return [...values.filter((known) => known.setting !== value.setting), value];
 }
+
+/**
+ * The settings of a session the chat has not attached, as attaching with
+ * the chosen `values` leaves them (DF-171 R4): a chosen value the setting
+ * declares shows as its value; the others keep what the agent reported.
+ */
+export function plannedSettings(
+  settings: SessionSetting[],
+  values: SettingValue[],
+): SessionSetting[] {
+  return settings.map((setting) => {
+    const chosen = values.find((value) => value.setting === setting.id);
+    return chosen &&
+      setting.options.some((option) => option.value === chosen.value)
+      ? { ...setting, currentValue: chosen.value }
+      : setting;
+  });
+}
