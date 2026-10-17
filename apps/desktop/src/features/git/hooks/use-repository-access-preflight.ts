@@ -418,6 +418,7 @@ function blockerTarget(
   return {
     displayName: owner.displayName,
     displayPath: owner.displayPath,
+    namedByPath: !owner.known,
     repositoryPath: blocker.repositoryPath,
     openSettings: repositorySettingsOpener(owner.settingsPath),
   };

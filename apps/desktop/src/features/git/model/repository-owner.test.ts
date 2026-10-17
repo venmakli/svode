@@ -20,11 +20,13 @@ test("a repository is named by the Project or Space that owns its location", () 
   expect(repositoryOwner("/work/bigquest", context)).toEqual({
     displayName: "Bigquest",
     displayPath: "/work/bigquest",
+    known: true,
     settingsPath: "/work/bigquest",
   });
   expect(repositoryOwner("/work/bigquest/compliance/", context)).toEqual({
     displayName: "Compliance",
     displayPath: "/work/bigquest/compliance/",
+    known: true,
     settingsPath: "/work/bigquest/compliance",
   });
   expect(
@@ -41,6 +43,7 @@ test("a repository outside the project is named by its path and opens the projec
   expect(repositoryOwner("/work/bigquest/vendor/lib", context)).toEqual({
     displayName: "lib",
     displayPath: "/work/bigquest/vendor/lib",
+    known: false,
     settingsPath: "/work/bigquest",
   });
   expect(
@@ -52,6 +55,7 @@ test("a repository outside the project is named by its path and opens the projec
   ).toEqual({
     displayName: "repo",
     displayPath: "/elsewhere/repo",
+    known: false,
     settingsPath: null,
   });
 });
@@ -71,6 +75,7 @@ test("a consumer target at a Project or Space location is named by that owner, n
   ).toEqual({
     displayName: "Docs",
     displayPath: "/work/bigquest/docs",
+    namedByPath: false,
     repositoryPath: "/work/bigquest/docs",
     openSettings,
   });

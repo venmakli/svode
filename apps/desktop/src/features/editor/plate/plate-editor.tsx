@@ -42,6 +42,8 @@ interface PlateDocumentEditorProps {
     error: unknown,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
+  /** The host already shows that saving is blocked: an explicit save failure stays silent. */
+  saveFailureShown?: () => boolean;
   onSourceConflict?: (conflict: PageSourceConflict | null) => void;
 }
 
@@ -61,6 +63,7 @@ export function PlateDocumentEditor({
   readOnly = false,
   registerPersistence,
   onWriteAccessError,
+  saveFailureShown,
   onSourceConflict,
 }: PlateDocumentEditorProps) {
   const editor = usePlateEditor({
@@ -93,6 +96,7 @@ export function PlateDocumentEditor({
     spacePath: spacePathProp,
     readOnly,
     onWriteAccessError,
+    saveFailureShown,
     onSourceConflict,
   });
 

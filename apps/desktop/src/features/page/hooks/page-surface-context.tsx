@@ -33,6 +33,8 @@ import {
 } from "./use-page-persistence";
 
 interface PageSurfaceSessionContextValue {
+  /** Drops the unsaved drafts and rereads the saved source; false if it failed. */
+  discard: () => Promise<boolean>;
   persistenceError: string | null;
   readOnly: boolean;
   recovery: ReturnType<typeof useRepositoryAccessPreflight>;
@@ -48,10 +50,9 @@ interface PageSurfaceSessionContextValue {
     kind: PagePersistenceKind,
     participant: PagePersistenceParticipant,
   ) => () => void;
-  /** The inline recovery the user returns to after keeping a blocked draft. */
+  /** The save block indicator the user returns to after keeping a blocked draft. */
   registerRecoveryElement: (element: HTMLElement | null) => void;
   reportSourceConflict: (conflict: PageSourceConflict | null) => void;
-  requestDiscard: () => void;
   retryPersistence: () => Promise<void>;
   runMutation: (operation: () => Promise<void>) => Promise<void>;
   /** Resolves once the saves and mutations queued so far have finished. */
@@ -177,39 +178,32 @@ function PageSurfaceSession({
     // the draft or discards it and continues to the requested target.
     leaveRef.current ??= new Promise<boolean>((resolve) => {
       markActiveContentAwaitingDecision();
-      // A leave supersedes an open discard question from the recovery.
-      confirmationRef.current?.resolve(false);
-      setConfirmation({ kind: "leave", resolve });
+      setConfirmation({ resolve });
     }).finally(() => {
       leaveRef.current = null;
     });
     return leaveRef.current;
   }, [flushPersistence, setConfirmation]);
 
-  const requestDiscard = useCallback(() => {
-    if (confirmationRef.current) return;
-    setConfirmation({ kind: "discard", resolve: () => undefined });
-  }, [setConfirmation]);
+  const discard = useCallback(async () => {
+    try {
+      await discardChanges();
+      return true;
+    } catch (error) {
+      console.error("Failed to discard Page changes:", error);
+      toast.error(m.page_discard_error());
+      return false;
+    }
+  }, [discardChanges]);
 
   const resolveConfirmation = useCallback(
-    async (discard: boolean) => {
+    async (discarded: boolean) => {
       const current = confirmationRef.current;
       if (!current) return;
       setConfirmation(null);
-      if (!discard) {
-        current.resolve(false);
-        return;
-      }
-      try {
-        await discardChanges();
-        current.resolve(true);
-      } catch (error) {
-        console.error("Failed to discard Page changes:", error);
-        toast.error(m.page_discard_error());
-        current.resolve(false);
-      }
+      current.resolve(discarded && (await discard()));
     },
-    [discardChanges, setConfirmation],
+    [discard, setConfirmation],
   );
 
   useEffect(() => {
@@ -221,6 +215,7 @@ function PageSurfaceSession({
 
   const value = useMemo<PageSurfaceSessionContextValue>(
     () => ({
+      discard,
       persistenceError,
       prepareForNavigation,
       prepareToLeave,
@@ -230,13 +225,13 @@ function PageSurfaceSession({
       registerPersistence,
       registerRecoveryElement,
       reportSourceConflict,
-      requestDiscard,
       retryPersistence,
       runMutation,
       settled,
       sourceConflict,
     }),
     [
+      discard,
       persistenceError,
       prepareForNavigation,
       prepareToLeave,
@@ -246,7 +241,6 @@ function PageSurfaceSession({
       registerPersistence,
       registerRecoveryElement,
       reportSourceConflict,
-      requestDiscard,
       retryPersistence,
       runMutation,
       settled,

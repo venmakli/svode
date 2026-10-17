@@ -39,7 +39,7 @@ export function useCoverUpload({
       );
     } catch (err) {
       console.error("Failed to upload cover image:", err);
-      toast.error(m.toast_error());
+      toast.error(m.page_save_error_cover());
     }
   }, [pagePath, onCoverChange, projectPath, spacePath]);
 }

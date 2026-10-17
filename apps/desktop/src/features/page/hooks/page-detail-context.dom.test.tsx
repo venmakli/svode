@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import type { Page } from "../model";
+import { PAGE_FIELD_TEXT_SAVE_DELAY_MS } from "../model/field-save";
 import type { PageDetailContextValue } from "./page-detail-context";
 
 function deferred<T>() {
@@ -441,10 +442,16 @@ test("a property draft whose save failed stays visible with a user-facing error"
         .catch(() => undefined);
       await turn();
     });
-    const text = view.dom.window.document.body.textContent ?? "";
+    const document = view.dom.window.document;
+    const text = document.body.textContent ?? "";
     expect(text.includes("Done")).toBe(true);
     expect(text.includes("[object Object]")).toBe(false);
-    expect(text.includes("Retry saving before leaving this Page")).toBe(true);
+    expect(
+      document
+        .querySelector("[data-page-save-block=write]")
+        ?.getAttribute("aria-label"),
+    ).toBe("Not saved: Couldn't write the changes — the draft stays open.");
+    expect(document.querySelector("[data-slot=alert]")).toBeNull();
   } finally {
     await view.cleanup();
   }
@@ -979,3 +986,103 @@ test("a compact Page detail keeps a title name conflict inline without blocking 
     await view.cleanup();
   }
 });
+
+for (const presentation of ["full", "compact"] as const) {
+  test(`${presentation} header writes refused by access or failing keep their draft behind the indicator only`, async () => {
+    const { toast } = await import("sonner");
+    const showError = toast.error;
+    const errors: unknown[] = [];
+    toast.error = ((message: unknown) => {
+      errors.push(message);
+      return 0;
+    }) as typeof toast.error;
+    for (const fieldError of [
+      {
+        kind: "repository_access_denied",
+        reason: "not_checked",
+        repositoryId: "repo-page",
+        status: "unknown",
+      },
+      new Error("Save failed"),
+    ]) {
+      const view = await readyHarness({ fieldError, presentation });
+      try {
+        const document = view.dom.window.document;
+        expect(
+          document.querySelector("time")?.textContent?.startsWith("upd."),
+        ).toBe(true);
+        view.failField(true);
+        await act(async () => {
+          const description = document.querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="Add description"]',
+          )!;
+          description.focus();
+          setInputValue(description, "Draft");
+        });
+        // A text field is saved after its typing pause.
+        await act(async () => {
+          await new Promise((resolve) =>
+            setTimeout(resolve, PAGE_FIELD_TEXT_SAVE_DELAY_MS + 50),
+          );
+          for (let step = 0; step < 6; step += 1) await turn();
+        });
+        expect(view.calls.includes("update_page_field")).toBe(true);
+        expect(view.context().metadataDrafts.get("description")?.value).toBe(
+          "Draft",
+        );
+        // The indicator takes the place of the update time in the title row.
+        expect(document.querySelector("time")).toBeNull();
+        expect(document.querySelector("[data-page-save-block]") !== null).toBe(
+          true,
+        );
+        expect(document.querySelector("[data-slot=alert]")).toBeNull();
+        expect(errors).toEqual([]);
+      } finally {
+        await view.cleanup();
+      }
+    }
+    toast.error = showError;
+  });
+}
+
+test("a header write failure that keeps no draft is not one the indicator presents", async () => {
+  const view = await readyHarness();
+  try {
+    expect(view.context().writeFailureShown(new Error("Disk full"))).toBe(
+      false,
+    );
+    expect(
+      view.context().writeFailureShown({ kind: "source_busy", path: README }),
+    ).toBe(true);
+    view.failField(true);
+    await act(async () => {
+      await view
+        .context()
+        .updateField("icon", "🚀")
+        .catch(() => undefined);
+    });
+    expect(view.context().writeFailureShown(new Error("Save failed"))).toBe(
+      true,
+    );
+  } finally {
+    await view.cleanup();
+  }
+});
+
+function setInputValue(input: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    input.ownerDocument.defaultView!.HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(
+    new input.ownerDocument.defaultView!.Event("input", { bubbles: true }),
+  );
+  // React detects the change through the legacy event in this DOM.
+  const propertyChange = new input.ownerDocument.defaultView!.Event(
+    "propertychange",
+    { bubbles: true },
+  );
+  Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+  input.dispatchEvent(propertyChange);
+}

@@ -107,7 +107,7 @@ domTest("a positive canonical reread restores editable presentation automaticall
   }
 });
 
-domTest("an owner write error the recovery already presents is not repeated beside it", async () => {
+domTest("a blocked save replaces the update time with an indicator and keeps the layout free of alerts", async () => {
   const page = await renderPage("local", {
     renderRecovery: true,
     recoveryError: "Page could not be saved yet",
@@ -116,34 +116,54 @@ domTest("an owner write error the recovery already presents is not repeated besi
     },
   });
   try {
+    const document = page.dom.window.document;
+    expect(document.querySelector("[data-updated]")).toBeNull();
+    const indicator = indicatorOf(page.dom)!;
+    expect(indicator.dataset.pageSaveBlock).toBe("write");
+    expect(indicator.textContent).toBe("Not saved");
+    expect(indicator.getAttribute("aria-label")).toBe(
+      "Not saved: Page could not be saved yet",
+    );
+    expect(textOf(page.dom, "[role=status]")).toBe(
+      "Not saved: Page could not be saved yet",
+    );
+    expect(document.querySelector("[data-slot=alert]")).toBeNull();
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+
+    await openRecovery(page.dom);
+    expect(textOf(page.dom, "[role=dialog]").includes("Changes not saved")).toBe(
+      true,
+    );
     expect(
-      textOf(page.dom, "[data-slot=alert]").includes(
-        "Page could not be saved yet",
-      ),
+      textOf(page.dom, "[role=dialog]").includes("Page could not be saved yet"),
     ).toBe(true);
 
+    // A refused access leads; the owner's own error is not repeated beside it.
     await act(async () => {
       await page.session().prepareForNavigation();
       await settle();
     });
+    expect(indicatorOf(page.dom)?.dataset.pageSaveBlock).toBe("access");
+    const dialog = document.querySelector<HTMLElement>("[role=dialog]")!;
+    expect(dialog.dataset.pageSaveRecovery).toBe("access");
+    expect(dialog.textContent?.includes("Page could not be saved yet")).toBe(
+      false,
+    );
     expect(
-      page.dom.window.document.querySelector(
-        "[data-repository-access-inline-recovery]",
-      ) !== null,
-    ).toBe(true);
+      dialog.querySelectorAll("[data-repository-access-blocker-item]").length,
+    ).toBe(1);
     expect(
-      textOf(page.dom, "[data-slot=alert]").includes(
-        "Page could not be saved yet",
-      ),
-    ).toBe(false);
+      document.querySelector("[data-repository-access-inline-recovery]"),
+    ).toBeNull();
     expect(buttonsWithText(page.dom, "Retry save").length).toBe(0);
     expect(buttonsWithText(page.dom, "Discard changes").length).toBe(1);
+    expect(document.querySelector("[data-slot=alert]")).toBeNull();
   } finally {
     await page.cleanup();
   }
 });
 
-domTest("a busy source after its retries is a save error with an explicit retry", async () => {
+domTest("a busy source is retried from the Dialog, which closes and returns to the Page content", async () => {
   let busy = true;
   const page = await renderPage("local", {
     renderRecovery: true,
@@ -152,25 +172,34 @@ domTest("a busy source after its retries is a save error with an explicit retry"
     },
   });
   try {
+    const document = page.dom.window.document;
+    const editor = document.querySelector<HTMLElement>("[data-editor]")!;
     let ready = true;
     await act(async () => {
+      editor.focus();
       ready = await page.session().prepareForNavigation();
     });
     expect(ready).toBe(false);
-    expect(
-      textOf(page.dom, "[data-slot=alert]").includes(
-        "Another Svode operation is writing this file",
-      ),
-    ).toBe(true);
+    // The block is announced, but focus stays where the user works.
+    expect(document.activeElement).toBe(editor);
+    expect(indicatorOf(page.dom)?.getAttribute("aria-label")).toBe(
+      "Not saved: Another Svode operation is writing this file — retry saving.",
+    );
 
+    await openRecovery(page.dom);
+    expect(document.activeElement?.textContent).toBe("Retry save");
     busy = false;
     await act(async () => {
       buttonWithText(page.dom, "Retry save").click();
-      await nextTurn();
+      await settle();
     });
-    expect(page.dom.window.document.querySelector("[data-slot=alert]")).toBe(
-      null,
-    );
+    // The closed Dialog returns focus on the turn after it unmounts.
+    await act(settle);
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+    expect(indicatorOf(page.dom)).toBeNull();
+    expect(document.querySelector("[data-updated]") !== null).toBe(true);
+    expect(textOf(page.dom, "[role=status]")).toBe("");
+    expect(document.activeElement).toBe(editor);
     await act(async () => {
       ready = await page.session().prepareForNavigation();
     });
@@ -180,7 +209,74 @@ domTest("a busy source after its retries is a save error with an explicit retry"
   }
 });
 
-domTest("a source conflict holds navigation and offers both explicit choices", async () => {
+domTest("closing the Dialog keeps the block and returns focus to the indicator", async () => {
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      throw { kind: "source_busy", path: "page.md" };
+    },
+  });
+  try {
+    await act(async () => {
+      await page.session().prepareForNavigation();
+    });
+    for (const close of ["button", "escape"] as const) {
+      await openRecovery(page.dom);
+      await act(async () => {
+        if (close === "button") buttonWithText(page.dom, "Close").click();
+        else
+          page.dom.window.document.activeElement!.dispatchEvent(
+            new page.dom.window.KeyboardEvent("keydown", {
+              key: "Escape",
+              bubbles: true,
+            }),
+          );
+        await settle();
+      });
+      expect(page.dom.window.document.querySelector("[role=dialog]")).toBeNull();
+      expect(page.dom.window.document.activeElement).toBe(indicatorOf(page.dom));
+    }
+    expect(page.events.some((event) => event.startsWith("discard:"))).toBe(
+      false,
+    );
+  } finally {
+    await page.cleanup();
+  }
+});
+
+domTest("a new failure of the retry updates the open Dialog", async () => {
+  let failure: unknown = { kind: "source_busy", path: "page.md" };
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      throw failure;
+    },
+  });
+  try {
+    await act(async () => {
+      await page.session().prepareForNavigation();
+    });
+    await openRecovery(page.dom);
+    failure = otherRepositoryDenial;
+    await act(async () => {
+      buttonWithText(page.dom, "Retry save").click();
+      await settle();
+    });
+    const dialog =
+      page.dom.window.document.querySelector<HTMLElement>("[role=dialog]")!;
+    expect(dialog.dataset.pageSaveRecovery).toBe("access");
+    expect(
+      dialog.textContent?.includes(
+        "Saving is blocked: write access is not confirmed.",
+      ),
+    ).toBe(true);
+    expect(indicatorOf(page.dom)?.dataset.pageSaveBlock).toBe("access");
+  } finally {
+    await page.cleanup();
+  }
+});
+
+domTest("a source conflict holds navigation and offers both explicit choices in the Dialog", async () => {
   const page = await renderPage("local", { renderRecovery: true });
   try {
     const choices: string[] = [];
@@ -193,26 +289,27 @@ domTest("a source conflict holds navigation and offers both explicit choices", a
       retryRead: () => choices.push("read"),
     };
     await act(async () => page.session().reportSourceConflict(conflict));
-
-    const region = page.dom.window.document.querySelector(
-      "[data-page-source-conflict]",
-    )!;
-    expect(
-      region.textContent?.includes(
-        "The file changed outside. Your text isn't saved yet",
-      ),
-    ).toBe(true);
-    expect(region.querySelector("[role=alert]") !== null).toBe(true);
-    // The editor keeps Tab for indentation: the recovery takes focus.
-    expect(
-      page.dom.window.document.activeElement?.contains(region) ?? false,
-    ).toBe(true);
+    const document = page.dom.window.document;
+    expect(indicatorOf(page.dom)?.dataset.pageSaveBlock).toBe("conflict");
+    expect(document.querySelector("[data-page-source-conflict]")).toBeNull();
     let ready = true;
     await act(async () => {
       ready = await page.session().prepareForNavigation();
     });
     expect(ready).toBe(false);
     expect(page.events).toEqual(["body", "metadata"]);
+
+    await openRecovery(page.dom);
+    const dialog = document.querySelector<HTMLElement>("[role=dialog]")!;
+    expect(dialog.dataset.pageSaveRecovery).toBe("conflict");
+    expect(
+      dialog.textContent?.includes(
+        "The file changed outside Svode; your text isn't saved yet",
+      ),
+    ).toBe(true);
+    expect(document.activeElement?.textContent).toBe("Save my text");
+    // Loading the file version is the discard of a conflict.
+    expect(buttonsWithText(page.dom, "Discard changes").length).toBe(0);
 
     await act(async () => {
       buttonWithText(page.dom, "Load file version").click();
@@ -226,10 +323,12 @@ domTest("a source conflict holds navigation and offers both explicit choices", a
     expect(buttonWithText(page.dom, "Save my text").disabled).toBe(true);
     expect(buttonWithText(page.dom, "Load file version").disabled).toBe(true);
 
-    await act(async () => page.session().reportSourceConflict(null));
-    expect(
-      page.dom.window.document.querySelector("[data-page-source-conflict]"),
-    ).toBe(null);
+    await act(async () => {
+      page.session().reportSourceConflict(null);
+      await settle();
+    });
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+    expect(indicatorOf(page.dom)).toBeNull();
     await act(async () => {
       ready = await page.session().prepareForNavigation();
     });
@@ -253,6 +352,7 @@ domTest("a failed fresh read offers only reading again", async () => {
         retryRead: () => choices.push("read"),
       }),
     );
+    await openRecovery(page.dom);
     expect(
       textOf(page.dom, "[data-page-source-conflict-note]").includes(
         "Couldn't read the file",
@@ -262,6 +362,9 @@ domTest("a failed fresh read offers only reading again", async () => {
       page.dom.window.document.querySelector(
         "[data-page-source-conflict-write]",
       ),
+    ).toBe(null);
+    expect(
+      page.dom.window.document.querySelector("[data-page-source-conflict-load]"),
     ).toBe(null);
     await act(async () => buttonWithText(page.dom, "Read again").click());
     expect(choices).toEqual(["read"]);
@@ -286,7 +389,7 @@ const otherRepositoryDenial = {
   ],
 };
 
-domTest("a blocked leave names its cause, and staying keeps the draft at the recovery", async () => {
+domTest("a blocked leave names its cause, and staying keeps the draft at the indicator", async () => {
   const page = await renderPage("local", {
     renderRecovery: true,
     bodyFlush: async () => {
@@ -305,15 +408,13 @@ domTest("a blocked leave names its cause, and staying keeps the draft at the rec
     expect(question.textContent?.includes("Page changes are not saved")).toBe(
       true,
     );
+    // A repository no Project or Space owns is named by its path.
     expect(
       question.textContent?.includes(
-        "Saving is blocked: other-repo — read only.",
+        "Saving is blocked: /other-repo — read only.",
       ),
     ).toBe(true);
     expect(page.dom.window.document.activeElement?.textContent).toBe("Stay");
-    // The recovery offers no action that hides it while the block remains.
-    expect(buttonsWithText(page.dom, "Cancel").length).toBe(0);
-    expect(buttonsWithText(page.dom, "Discard changes").length).toBe(1);
 
     await act(async () => {
       buttonWithText(page.dom, "Stay").click();
@@ -323,13 +424,11 @@ domTest("a blocked leave names its cause, and staying keeps the draft at the rec
     expect(page.events.some((event) => event.startsWith("discard:"))).toBe(
       false,
     );
-    const recovery = page.dom.window.document.querySelector(
-      "[data-repository-access-inline-recovery]",
-    )!;
-    expect(recovery !== null).toBe(true);
-    expect(
-      page.dom.window.document.activeElement?.contains(recovery) ?? false,
-    ).toBe(true);
+    const indicator = indicatorOf(page.dom)!;
+    expect(indicator.getAttribute("aria-label")).toBe(
+      "Not saved: Saving is blocked: /other-repo — read only.",
+    );
+    expect(page.dom.window.document.activeElement).toBe(indicator);
   } finally {
     await page.cleanup();
   }
@@ -369,11 +468,7 @@ domTest("discarding on leave drops the drafts without saving and lets the naviga
     expect(await first).toBe(true);
     expect(await second).toBe(true);
     expect(page.events).toEqual(["discard:body", "discard:metadata"]);
-    expect(
-      page.dom.window.document.querySelector(
-        "[data-repository-access-inline-recovery]",
-      ),
-    ).toBeNull();
+    expect(indicatorOf(page.dom)).toBeNull();
     let ready = false;
     await act(async () => {
       ready = await page.session().prepareToLeave();
@@ -384,7 +479,7 @@ domTest("discarding on leave drops the drafts without saving and lets the naviga
   }
 });
 
-domTest("discard from the recovery asks first and keeps the draft when refused", async () => {
+domTest("discard from the Dialog asks in place and keeps the draft when refused", async () => {
   let busy = true;
   const page = await renderPage("local", {
     renderRecovery: true,
@@ -396,51 +491,49 @@ domTest("discard from the recovery asks first and keeps the draft when refused",
     },
   });
   try {
+    const document = page.dom.window.document;
+    const editor = document.querySelector<HTMLElement>("[data-editor]")!;
     await act(async () => {
+      editor.focus();
       await page.session().prepareForNavigation();
     });
     // A non-leaving step stays a plain refusal without a question.
     expect(
-      page.dom.window.document.querySelector(
-        "[data-page-discard-confirmation]",
-      ),
+      document.querySelector("[data-page-discard-confirmation]"),
     ).toBeNull();
     page.events.length = 0;
 
+    await openRecovery(page.dom);
     await act(async () => {
       buttonWithText(page.dom, "Discard changes").click();
       await settle();
     });
-    const question = page.dom.window.document.querySelector(
-      "[data-page-discard-confirmation=discard]",
-    )!;
-    expect(question.textContent?.includes("Discard Page changes?")).toBe(true);
-    expect(page.dom.window.document.activeElement?.textContent).toBe(
-      "Keep changes",
-    );
+    expect(document.querySelectorAll("[role=dialog]").length).toBe(1);
+    const dialog = document.querySelector<HTMLElement>("[role=dialog]")!;
+    expect(dialog.dataset.pageSaveStep).toBe("discard");
+    expect(dialog.textContent?.includes("Discard Page changes?")).toBe(true);
+    expect(document.activeElement?.textContent).toBe("Keep changes");
     await act(async () => {
       buttonWithText(page.dom, "Keep changes").click();
       await settle();
     });
     expect(page.events).toEqual([]);
-    expect(
-      page.dom.window.document.querySelector("[data-slot=alert]") !== null,
-    ).toBe(true);
+    expect(dialog.dataset.pageSaveStep).toBe("recovery");
+    expect(document.activeElement?.textContent).toBe("Retry save");
 
     await act(async () => {
       buttonWithText(page.dom, "Discard changes").click();
       await settle();
     });
     await act(async () => {
-      buttonsWithText(page.dom, "Discard changes")
-        .find((button) => button.closest("[data-page-discard-confirmation]"))!
-        .click();
+      buttonWithText(page.dom, "Discard changes").click();
       await settle();
     });
+    await act(settle);
     expect(page.events).toEqual(["discard:body", "discard:metadata"]);
-    expect(page.dom.window.document.querySelector("[data-slot=alert]")).toBe(
-      null,
-    );
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+    expect(indicatorOf(page.dom)).toBeNull();
+    expect(document.activeElement).toBe(editor);
     let ready = false;
     await act(async () => {
       ready = await page.session().prepareForNavigation();
@@ -473,13 +566,38 @@ domTest("a failed discard keeps the block and the draft", async () => {
     });
     expect(await leave).toBe(false);
     expect(page.events.includes("discard:metadata")).toBe(false);
-    expect(
-      page.dom.window.document.querySelector("[data-slot=alert]") !== null,
-    ).toBe(true);
+    expect(indicatorOf(page.dom) !== null).toBe(true);
+
+    await openRecovery(page.dom);
+    await act(async () => {
+      buttonWithText(page.dom, "Discard changes").click();
+      await settle();
+    });
+    await act(async () => {
+      buttonWithText(page.dom, "Discard changes").click();
+      await settle();
+    });
+    const dialog =
+      page.dom.window.document.querySelector<HTMLElement>("[role=dialog]")!;
+    expect(dialog.dataset.pageSaveStep).toBe("recovery");
+    expect(indicatorOf(page.dom) !== null).toBe(true);
   } finally {
     await page.cleanup();
   }
 });
+
+function indicatorOf(dom: JSDOM) {
+  return dom.window.document.querySelector<HTMLButtonElement>(
+    "[data-page-save-block]",
+  );
+}
+
+async function openRecovery(dom: JSDOM) {
+  await act(async () => {
+    indicatorOf(dom)!.click();
+    await settle();
+  });
+}
 
 async function renderPage(
   initialStatus: AccessStatus,
@@ -521,7 +639,7 @@ async function renderPage(
   const { PageSurfaceSessionProvider, usePageSurfaceSession } =
     await import("./page-surface-context");
   const { TitleZone } = await import("../ui/title-zone");
-  const { PageAccessRecovery } = await import("../ui/page-access-recovery");
+  const { PageSaveStatus } = await import("../ui/page-save-status");
   let currentSession: ReturnType<typeof usePageSurfaceSession> | null = null;
 
   function Probe() {
@@ -562,10 +680,17 @@ async function renderPage(
           {session.readOnly ? "read-only" : "editable"}
         </span>
         {options.renderRecovery ? (
-          <PageAccessRecovery
-            error={options.recoveryError}
-            onRetry={options.recoveryError ? async () => undefined : undefined}
-          />
+          <>
+            <textarea data-editor />
+            <PageSaveStatus
+              error={options.recoveryError}
+              onRetry={
+                options.recoveryError ? async () => undefined : undefined
+              }
+            >
+              <time data-updated>upd.</time>
+            </PageSaveStatus>
+          </>
         ) : null}
         {options.renderTitle ? (
           <>
@@ -628,7 +753,10 @@ async function renderPage(
       accessStatus = status;
     },
     cleanup: async () => {
+      // A closed Dialog returns focus on the turn after it unmounts.
+      await act(settle);
       await act(async () => root.unmount());
+      await settle();
       clearNativeMocks();
       restoreGlobals();
       dom.window.close();

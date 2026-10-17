@@ -67,6 +67,7 @@ export {
   RepositoryAccessPrimaryButton,
   repositoryAccessPrimaryActionLabel,
 } from "./ui/repository-access-preflight";
+export { RepositoryAccessBlockerItems } from "./ui/repository-access-blocker-items";
 export {
   RepositoryAccessBadge,
   RepositoryAccessSummary,

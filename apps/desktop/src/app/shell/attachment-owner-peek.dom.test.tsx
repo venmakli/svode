@@ -35,7 +35,6 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
     usePageDetailContext: () => null,
     useOptionalPageDetailContext: () => null,
     ReadmeSurface: () => null,
-    PageAccessRecovery: () => null,
     usePageSurfaceSession: () => ({
       runMutation: async (operation: () => Promise<void>) => operation(),
     }),

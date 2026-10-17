@@ -9,6 +9,7 @@ import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 let useRepositoryAccessPreflight: typeof import("../hooks/use-repository-access-preflight").useRepositoryAccessPreflight;
 let RepositoryAccessInlineRecovery: typeof import("./repository-access-preflight").RepositoryAccessInlineRecovery;
 let repositoryAccessPrimaryActionLabel: typeof import("./repository-access-preflight").repositoryAccessPrimaryActionLabel;
+let RepositoryAccessBlockerItems: typeof import("./repository-access-blocker-items").RepositoryAccessBlockerItems;
 
 test("automatic local reread stays hidden until a blocker is confirmed", async () => {
   let finishLoad: ((value: ReturnType<typeof snapshot>) => void) | undefined;
@@ -390,6 +391,97 @@ test("every blocker offers its own Git settings unless the primary action alread
   }
 });
 
+test("Dialog rows name each blocker by identity with its status, keeping the path as a hint", async () => {
+  const harness = await renderHarness({
+    paths: new Map([
+      ["/page", snapshot("page", "local")],
+      ["/work/compliance", snapshot("compliance", "unknown", "not_checked")],
+      ["/work/archive", snapshot("archive", "unknown", "not_checked")],
+    ]),
+    verify: () => snapshot("page", "local"),
+  });
+
+  try {
+    const document = harness.dom.window.document;
+    expect(
+      document.querySelector("[data-repository-access-blocker-items]"),
+    ).toBeNull();
+
+    await click(harness.dom, "[data-recover-foreign]");
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>(
+        "[data-repository-access-blocker-item]",
+      ),
+    ];
+    expect(rows.map((row) => row.dataset.repositoryAccessBlockerItem)).toEqual([
+      "compliance",
+      "archive",
+    ]);
+    // No Project or Space owns these locations: the path is the identity.
+    const title = rows[0].querySelector("[data-slot=item-title]")!;
+    expect(title.textContent).toBe("/work/compliance");
+    expect(rows[0].title).toBe("/work/compliance");
+    expect(rows[0].textContent?.split("/work/compliance").length).toBe(2);
+    expect(
+      rows[0].querySelector("[data-slot=item-description]")?.textContent,
+    ).toBe(
+      "Access not confirmed · Write access to the remote has not been checked on this device.",
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("Dialog rows keep a consumer identity and show its path only as a hint", async () => {
+  const harness = await renderHarness({
+    paths: new Map([["/blocked", snapshot("blocked", "read_only")]]),
+    verify: () => snapshot("blocked", "read_only"),
+  });
+
+  try {
+    await click(harness.dom, "[data-request-blocked]");
+    const row = harness.dom.window.document.querySelector<HTMLElement>(
+      "[data-dialog-rows] [data-repository-access-blocker-item]",
+    )!;
+    expect(row.querySelector("[data-slot=item-title]")?.textContent).toBe(
+      "Blocked",
+    );
+    expect(row.title).toBe("/blocked");
+    expect(row.textContent?.includes("/blocked")).toBe(false);
+    expect(row.dataset.repositoryAccessStatus).toBe("read_only");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("a Dialog row lets its host close before opening the exact Git settings", async () => {
+  const harness = await renderHarness({
+    paths: new Map([
+      ["/read-only", snapshot("read-only", "read_only")],
+      ["/unchecked", snapshot("unchecked", "unknown", "not_checked")],
+    ]),
+    verify: (path) => snapshot(path.slice(1), "writable"),
+  });
+
+  try {
+    await click(harness.dom, "[data-request-settings]");
+    const buttons = [
+      ...harness.dom.window.document.querySelectorAll<HTMLButtonElement>(
+        "[data-dialog-rows] [data-repository-access-blocker-item] button",
+      ),
+    ];
+    // The primary action already opens the read-only repository's settings.
+    expect(buttons.length).toBe(1);
+    expect(buttons[0].textContent).toBe("Git settings");
+    await act(async () => buttons[0].click());
+    expect(textOf(harness.dom, "[data-opened-settings]")).toBe(
+      "host-closed,/unchecked",
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 function RecoveryHarness() {
   const recovery = useRepositoryAccessPreflight();
   const [continued, setContinued] = useState(0);
@@ -552,6 +644,14 @@ function RecoveryHarness() {
         {repositoryAccessPrimaryActionLabel(recovery) ?? ""}
       </span>
       <RepositoryAccessInlineRecovery recovery={recovery} />
+      <div data-dialog-rows>
+        <RepositoryAccessBlockerItems
+          recovery={recovery}
+          onOpenSettings={() =>
+            setOpenedSettings((current) => [...current, "host-closed"])
+          }
+        />
+      </div>
     </>
   );
 }
@@ -596,6 +696,8 @@ async function renderHarness({
     await import("../hooks/use-repository-access-preflight"));
   ({ RepositoryAccessInlineRecovery, repositoryAccessPrimaryActionLabel } =
     await import("./repository-access-preflight"));
+  ({ RepositoryAccessBlockerItems } =
+    await import("./repository-access-blocker-items"));
   const root = createRoot(dom.window.document.getElementById("app")!);
   await act(async () => {
     root.render(<RecoveryHarness />);

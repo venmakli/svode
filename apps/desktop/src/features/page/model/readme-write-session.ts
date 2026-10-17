@@ -143,6 +143,8 @@ export class ReadmeWriteSession {
     await Promise.all([...this.writes]);
     if (this.error) throw this.error;
   };
+  /** Whether a failed write is kept to retry, i.e. its draft is not lost. */
+  holdsError = () => this.error !== null;
   /** Forgets unsaved drafts and their error; the saved README stays as is. */
   discard = () => {
     this.drafts.clear();

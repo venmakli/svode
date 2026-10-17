@@ -86,6 +86,8 @@ interface UseEditorDocumentWriterInput {
     error: unknown,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
+  /** The host already shows that saving is blocked. */
+  saveFailureShown?: () => boolean;
 }
 
 interface UseEditorDocumentWriterResult {
@@ -125,6 +127,7 @@ export function useEditorDocumentWriter({
   titleRef,
   readOnly,
   onWriteAccessError,
+  saveFailureShown,
 }: UseEditorDocumentWriterInput): UseEditorDocumentWriterResult {
   const sourceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const autoSavePausedRef = useRef(false);
@@ -492,7 +495,7 @@ export function useEditorDocumentWriter({
         throw error;
       }
       console.error("Failed to save document:", error);
-      toast.error(m.editor_error_save());
+      if (!saveFailureShown?.()) toast.error(m.editor_error_save());
       throw error;
     }
   }, [
@@ -501,6 +504,7 @@ export function useEditorDocumentWriter({
     editor,
     onWriteAccessError,
     saveCurrentSurface,
+    saveFailureShown,
     saveScopeTree,
     spacePath,
   ]);

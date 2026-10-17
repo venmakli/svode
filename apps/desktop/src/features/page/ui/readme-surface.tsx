@@ -12,11 +12,24 @@ import * as m from "@/paraglide/messages.js";
 import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
-import type { ReactNode } from "react";
+import { pageSaveBlock } from "../lib/save-block";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 
 export function ReadmeSurface() {
   const context = usePageDetailContext();
   const pageSurface = usePageSurfaceSession();
+  const saveBlocked =
+    pageSaveBlock({
+      ownerError: context.writeError,
+      persistenceError: pageSurface.persistenceError,
+      recovery: pageSurface.recovery,
+      sourceConflict: pageSurface.sourceConflict,
+    }) !== null;
+  const saveBlockedRef = useRef(saveBlocked);
+  useEffect(() => {
+    saveBlockedRef.current = saveBlocked;
+  }, [saveBlocked]);
+  const saveFailureShown = useCallback(() => saveBlockedRef.current, []);
   let content: ReactNode = null;
   if (context.status === "loading") content = <ReadmeSurfaceSkeleton />;
   if (context.status === "missing") {
@@ -82,6 +95,7 @@ export function ReadmeSurface() {
         readOnly={pageSurface.readOnly}
         registerPersistence={pageSurface.registerPersistence}
         onWriteAccessError={pageSurface.recoverWriteError}
+        saveFailureShown={saveFailureShown}
         onSourceConflict={pageSurface.reportSourceConflict}
         prepareManagedImport={async () => {
           if (!(await pageSurface.prepareForNavigation()))

@@ -9,6 +9,8 @@ export interface RepositoryOwnerContext {
 export interface RepositoryOwner {
   displayName: string;
   displayPath: string;
+  /** False when no Project or Space owns the location and its path names it. */
+  known: boolean;
   /** The Project or Space path whose Git settings show this repository. */
   settingsPath: string | null;
 }
@@ -25,6 +27,7 @@ export function repositoryOwner(
     knownRepositoryOwner(repositoryPath, context) ?? {
       displayName: basename(repositoryPath),
       displayPath: repositoryPath,
+      known: false,
       settingsPath: context.projectPath,
     }
   );
@@ -40,6 +43,7 @@ function knownRepositoryOwner(
     return {
       displayName: context.projectName || basename(repositoryPath),
       displayPath: repositoryPath,
+      known: true,
       settingsPath: context.projectPath,
     };
   }
@@ -48,6 +52,7 @@ function knownRepositoryOwner(
     return {
       displayName: space.name || basename(repositoryPath),
       displayPath: repositoryPath,
+      known: true,
       settingsPath: space.path,
     };
   }
@@ -68,6 +73,7 @@ export function ownedRepositoryAccessTarget(
     ...target,
     displayName: owner.displayName,
     displayPath: owner.displayPath,
+    namedByPath: false,
     openSettings:
       target.openSettings ?? repositorySettingsOpener(owner.settingsPath),
   };

@@ -6,12 +6,16 @@ import { useSignalUserEdit } from "@/features/navigation";
 import { PropertyPanel } from "@/features/properties/panel";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
-import { handleError } from "../lib/errors";
-import { PageAccessRecovery } from "./page-access-recovery";
+import {
+  handleError,
+  showPageHeaderSaveError,
+  type PageHeaderSaveField,
+} from "../lib/errors";
 import {
   PageIdentityHeader,
   PageIdentityHeaderSkeleton,
 } from "./page-identity-header";
+import { PageSaveStatus } from "./page-save-status";
 import { PageSystemFields } from "./page-system-fields";
 
 export function PageDetailHeader({
@@ -38,12 +42,18 @@ export function PageDetailHeader({
   const metadataReadOnly =
     readOnly || (context.status !== "missing" && context.status !== "ready");
   const canCreateReadme = context.status === "missing" && !readOnly;
+  // A failed write the save block presents is not reported again.
+  const saveHeaderField = (field: PageHeaderSaveField) => (error: unknown) => {
+    if (!context.writeFailureShown(error))
+      showPageHeaderSaveError(field, error);
+  };
   const createReadme = () => {
-    if (canCreateReadme) void context.createReadme().catch(handleError);
+    if (canCreateReadme)
+      void context.createReadme().catch(saveHeaderField("readme"));
   };
 
   return (
-    <div className={detailPageHeaderClassName}>
+    <div className={detailPageHeaderClassName} data-page-detail-header>
       <PageIdentityHeader
         title={page?.meta.title ?? context.fallbackTitle}
         icon={
@@ -63,24 +73,31 @@ export function PageDetailHeader({
         spacePath={context.spacePath}
         pagePath={page?.path ?? context.readmePath}
         onTitleChange={(value) =>
-          void context.updateTitle(value).catch(handleError)
+          void context.updateTitle(value).catch(saveHeaderField("title"))
         }
         titleError={context.titleError}
         onIconChange={(value) =>
-          void context.updateField("icon", value).catch(handleError)
+          void context.updateField("icon", value).catch(saveHeaderField("icon"))
         }
         onDescriptionChange={(value) =>
-          void context.updateField("description", value).catch(handleError)
+          void context
+            .updateField("description", value)
+            .catch(saveHeaderField("description"))
         }
         onCoverChange={(value) =>
-          void context.updateCover(value).catch(handleError)
+          void context.updateCover(value).catch(saveHeaderField("cover"))
         }
         onBodyFocus={() => undefined}
         actions={actions}
         metadata={
           <>
             {metadataBefore}
-            {page ? <PageSystemFields meta={page.meta} /> : null}
+            <PageSaveStatus
+              error={context.writeError}
+              onRetry={context.writeError ? context.retryWrites : undefined}
+            >
+              {page ? <PageSystemFields meta={page.meta} /> : null}
+            </PageSaveStatus>
           </>
         }
         hideCover={!page}
@@ -89,10 +106,6 @@ export function PageDetailHeader({
         onActivateIdentity={canCreateReadme ? createReadme : undefined}
         coverSize="compact"
         readOnly={metadataReadOnly}
-      />
-      <PageAccessRecovery
-        error={context.writeError}
-        onRetry={context.writeError ? context.retryWrites : undefined}
       />
       {showReadError && context.status === "error" ? (
         <Alert variant="destructive">

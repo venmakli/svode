@@ -28,5 +28,6 @@ export function useReadmeWrites({
     flush: session.flush,
     retry: session.retry,
     discard: session.discard,
+    holdsError: session.holdsError,
   };
 }

@@ -13,6 +13,7 @@ import { normalizeSchema, type PageSchemaResult } from "@/features/properties";
 import { getPageSchema } from "@/features/properties/api";
 import { useSignalUserEdit } from "@/features/navigation";
 import { useSpaceTreeSync } from "@/features/space";
+import { repositoryAccessDenialFromError } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 import { createPage, readPage } from "../page-api";
 import {
@@ -22,6 +23,7 @@ import {
 } from "../field-save";
 import { humanizeOwnerPath, isReadmeMissingError } from "../lib/readme-state";
 import { applyPageTitleOutcome, type Page, type PageCover } from "../model";
+import { pageSourceErrorKind } from "../model/source-conflict";
 import { pageNameConflictFromError } from "../model/page-name";
 import { propertyFieldSavePolicy } from "../property-field-save";
 import {
@@ -58,6 +60,8 @@ export interface PageDetailContextValue {
   status: ReadmeStatus;
   error: string | null;
   writeError: string | null;
+  /** Whether the Page save block presents this failed write, keeping its draft. */
+  writeFailureShown: (error: unknown) => boolean;
   retryWrites: () => Promise<void>;
   metadataDrafts: ReadonlyMap<string, { value: unknown }>;
   fallbackTitle: string;
@@ -350,6 +354,7 @@ export function PageDetailProvider({
     retry,
     discard: discardWrites,
     drafts,
+    holdsError,
     writeError: failedWrite,
   } = writes;
   const { markLocalWrite } = usePageDetailRefresh({
@@ -377,6 +382,15 @@ export function PageDetailProvider({
   // The failure detail stays in the write session; the surface names it in
   // user terms like the rest of the Page save feedback.
   const writeError = failedWrite ? m.page_surface_save_error() : null;
+  const writeFailureShown = useCallback(
+    (error: unknown) =>
+      // The session recovers refused access and a busy source itself.
+      (Boolean(pageSurface) &&
+        (repositoryAccessDenialFromError(error) !== null ||
+          pageSourceErrorKind(error) === "source_busy")) ||
+      holdsError(),
+    [holdsError, pageSurface],
+  );
   const createReadme = useCallback(async () => {
     try {
       return await ensureReadme();
@@ -456,6 +470,7 @@ export function PageDetailProvider({
       adoptPage,
       adoptPath,
       writeError,
+      writeFailureShown,
       retryWrites,
       metadataDrafts: drafts,
       schemaResult,
@@ -486,6 +501,7 @@ export function PageDetailProvider({
       drafts,
       retryWrites,
       writeError,
+      writeFailureShown,
       error,
       fallbackIcon,
       onOpenPath,

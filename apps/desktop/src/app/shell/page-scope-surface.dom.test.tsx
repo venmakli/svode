@@ -112,6 +112,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       title: string;
       titleError?: string | null;
       actions: ReactNode;
+      metadata?: ReactNode;
       readOnly: boolean;
     }) => {
       headerProps = props as unknown as Props;
@@ -120,6 +121,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
           {props.title}
           {props.titleError ? <p data-title-error>{props.titleError}</p> : null}
           {props.actions}
+          {props.metadata}
         </header>
       );
     },
@@ -148,11 +150,11 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       confirmation,
       onResolve,
     }: {
-      confirmation: { kind: string } | null;
+      confirmation: object | null;
       onResolve: (discard: boolean) => void;
     }) =>
       confirmation ? (
-        <div data-page-discard-confirmation={confirmation.kind}>
+        <div data-page-discard-confirmation="leave">
           <button onClick={() => onResolve(false)}>Stay</button>
           <button onClick={() => onResolve(true)}>
             Discard changes and leave
@@ -587,9 +589,12 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       };
       await clickTab(f.dom, 1);
       expect(tabs(f.dom)[0]?.getAttribute("aria-selected")).toBe("true");
+      // The failed save is the title row indicator, not an alert above the body.
       expect(
-        f.dom.window.document.querySelector('[role="alert"]') !== null,
+        f.dom.window.document.querySelector("[data-page-save-block=write]") !==
+          null,
       ).toBe(true);
+      expect(f.dom.window.document.querySelector('[role="alert"]')).toBeNull();
       expect(
         f.dom.window.document.querySelector('[aria-busy="true"]'),
       ).toBeNull();
@@ -632,7 +637,9 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       });
       expect(doc.querySelector("[data-page-discard-confirmation]")).toBeNull();
       expect(editor()).toBe("Blocked.md");
-      expect(doc.querySelector('[role="alert"]') !== null).toBe(true);
+      expect(doc.querySelector("[data-page-save-block=write]") !== null).toBe(
+        true,
+      );
 
       await act(async () => {
         closeActiveContent();

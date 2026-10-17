@@ -6,6 +6,8 @@ export type RepositoryAccessRecoveryPlacement = "dialog" | "inline";
 export interface RepositoryAccessTarget {
   displayName: string;
   displayPath: string;
+  /** No Project or Space owns the location: its path is the identity. */
+  namedByPath?: boolean;
   repositoryPath: string;
   openSettings?: () => void;
 }

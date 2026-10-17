@@ -40,6 +40,7 @@ interface UsePlateDocumentSessionInput {
     error: unknown,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
+  saveFailureShown?: () => boolean;
   onSourceConflict?: (conflict: PageSourceConflict | null) => void;
 }
 
@@ -71,6 +72,7 @@ export function usePlateDocumentSession({
   spacePath: spacePathProp,
   readOnly,
   onWriteAccessError,
+  saveFailureShown,
   onSourceConflict,
 }: UsePlateDocumentSessionInput): UsePlateDocumentSessionResult {
   const activeDocument = useActiveContentPath();
@@ -234,6 +236,7 @@ export function usePlateDocumentSession({
     titleRef,
     readOnly,
     onWriteAccessError,
+    saveFailureShown,
   });
 
   useEffect(() => {

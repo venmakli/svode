@@ -10,18 +10,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  repositoryAccessPresentation,
-  type RepositoryAccessPreflightController,
-} from "@/features/git";
+import type { RepositoryAccessPreflightController } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
+import { pageSaveBlock, pageSaveBlockReason } from "../lib/save-block";
 import type { PageSourceConflict } from "../model/source-conflict";
 
-/** A question about the unsaved drafts of a Page whose save is blocked. */
+/** The question whether to leave a Page whose save is blocked. */
 export interface PageDiscardConfirmation {
-  /** `leave`: the user navigates away; `discard`: asked from the recovery. */
-  kind: "leave" | "discard";
   resolve: (discarded: boolean) => void;
 }
 
@@ -44,7 +40,7 @@ export function PageDiscardDialog({
   const [shown, setShown] = useState(confirmation);
   if (confirmation && confirmation !== shown) setShown(confirmation);
   const keptRef = useRef(false);
-  const leave = shown?.kind === "leave";
+  const block = pageSaveBlock({ persistenceError, recovery, sourceConflict });
 
   return (
     <AlertDialog
@@ -56,34 +52,24 @@ export function PageDiscardDialog({
       }}
     >
       <AlertDialogContent
-        data-page-discard-confirmation={shown?.kind}
+        data-page-discard-confirmation={shown ? "leave" : undefined}
         onCloseAutoFocus={(event) => {
           const kept = keptRef.current;
           keptRef.current = false;
-          if (!leave || !kept) return;
+          if (!kept) return;
           // Staying keeps the blocked draft: back to where it is recovered.
           event.preventDefault();
           onKeepFocus();
         }}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            {leave ? m.page_leave_title() : m.page_discard_title()}
-          </AlertDialogTitle>
+          <AlertDialogTitle>{m.page_leave_title()}</AlertDialogTitle>
           <AlertDialogDescription>
-            {leave
-              ? pageSaveBlockReason({
-                  persistenceError,
-                  recovery,
-                  sourceConflict,
-                })
-              : m.page_discard_description()}
+            {block ? pageSaveBlockReason(block) : m.page_surface_save_error()}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>
-            {leave ? m.page_leave_stay() : m.page_discard_keep()}
-          </AlertDialogCancel>
+          <AlertDialogCancel>{m.page_leave_stay()}</AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
             onClick={(event) => {
@@ -92,35 +78,10 @@ export function PageDiscardDialog({
               onResolve(true);
             }}
           >
-            {leave ? m.page_leave_discard() : m.page_discard_changes()}
+            {m.page_leave_discard()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   );
-}
-
-function pageSaveBlockReason({
-  persistenceError,
-  recovery,
-  sourceConflict,
-}: {
-  persistenceError: string | null;
-  recovery: RepositoryAccessPreflightController;
-  sourceConflict: PageSourceConflict | null;
-}) {
-  if (sourceConflict) return m.page_source_conflict_title();
-  if (recovery.open) {
-    if (recovery.planChanged) return m.page_leave_reason_plan_changed();
-    if (recovery.readyToRetry) return m.page_leave_reason_ready();
-    const blocker = recovery.primaryBlocker ?? recovery.blockers[0];
-    if (blocker)
-      return m.page_leave_reason_access({
-        repository: blocker.target.displayName,
-        status: repositoryAccessPresentation(
-          blocker.access,
-        ).statusLabel.toLocaleLowerCase(),
-      });
-  }
-  return persistenceError ?? m.page_surface_save_error();
 }
