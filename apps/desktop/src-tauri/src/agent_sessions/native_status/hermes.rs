@@ -45,7 +45,13 @@ const SESSION_COLUMNS: &[&str] = &[
     "last_activity_at",
 ];
 const LEASE_COLUMNS: &[&str] = &["conversation_id", "holder", "acquired_at", "expires_at"];
-const MESSAGE_COLUMNS: &[&str] = &["session_id", "role", "finish_reason", "tool_calls"];
+const MESSAGE_COLUMNS: &[&str] = &[
+    "session_id",
+    "role",
+    "finish_reason",
+    "tool_calls",
+    "timestamp",
+];
 
 /// The Hermes home: `HERMES_HOME`, else `%LOCALAPPDATA%\hermes` on Windows
 /// and `~/.hermes` elsewhere.
@@ -100,7 +106,9 @@ pub(crate) struct Conversation {
     pub cwd: Option<String>,
     /// The tip's title, else the root's.
     pub title: Option<String>,
-    /// The latest activity of the chain.
+    /// The latest conversation work of the chain: a turn heartbeat or a
+    /// message of the user, the agent or a tool; the latest start without
+    /// them. A process boundary (`ended_at`) is no work (DF-173 R1).
     pub updated_at: Option<DateTime<Utc>>,
     /// The conversation started in Hermes' ACP entrypoint, which loads it.
     pub acp: bool,
@@ -232,13 +240,16 @@ type LinkRow = (
     Option<String>,
     Option<String>,
     Option<f64>,
+    Option<f64>,
+    Option<f64>,
 );
 
 /// The chains of the roots `roots` selects as `r`, or of the roots with
 /// these ids; the tip is the first compression child at every link, as
 /// Hermes follows it. From a row only the fields of the catalogue are read;
 /// from `model_config` only the folder of an ACP session whose `cwd`
-/// column is empty, as Hermes' own ACP list reads it (N7).
+/// column is empty, as Hermes' own ACP list reads it (N7); of messages
+/// only the time.
 async fn chains(
     connection: &mut SqliteConnection,
     roots: &str,
@@ -267,7 +278,10 @@ async fn chains(
                     THEN json_extract(s.model_config, '$.cwd') END
                 ELSE s.cwd END AS TEXT),
             CAST(substr(s.title, 1, {TITLE_CHARS}) AS TEXT),
-            CAST(COALESCE(s.last_activity_at, s.ended_at, s.started_at) AS REAL)
+            CAST(s.last_activity_at AS REAL),
+            CAST((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id
+                AND m.role IN ('user', 'assistant', 'tool')) AS REAL),
+            CAST(s.started_at AS REAL)
         FROM chain JOIN sessions s ON s.id = chain.id
         ORDER BY chain.root, chain.depth"
     );
@@ -279,13 +293,17 @@ async fn chains(
     let rows = query.fetch_all(&mut *connection).await?;
 
     let mut conversations: Vec<Conversation> = Vec::new();
+    let mut started: Vec<Option<DateTime<Utc>>> = Vec::new();
     let mut root_link: Option<LinkRow> = None;
     for row in rows {
-        let (root, id, depth, source, has_messages, cwd, title, activity) = row.clone();
+        let (root, id, depth, source, has_messages, cwd, title, heartbeat, message, started_at) =
+            row.clone();
         let cwd = cwd.filter(|cwd| !cwd.trim().is_empty());
         let title = title.filter(|title| !title.trim().is_empty());
-        let updated_at = activity.and_then(epoch);
+        let updated_at = heartbeat.and_then(epoch).max(message.and_then(epoch));
+        let started_at = started_at.and_then(epoch);
         if depth == 0 {
+            started.push(started_at);
             root_link = Some(row);
             conversations.push(Conversation {
                 profile: String::new(),
@@ -311,6 +329,12 @@ async fn chains(
             title.or_else(|| root_row.6.clone().filter(|title| !title.trim().is_empty()));
         conversation.updated_at = conversation.updated_at.max(updated_at);
         conversation.has_messages = has_messages;
+        if let Some(latest) = started.last_mut() {
+            *latest = (*latest).max(started_at);
+        }
+    }
+    for (conversation, started_at) in conversations.iter_mut().zip(started) {
+        conversation.updated_at = conversation.updated_at.or(started_at);
     }
     Ok(conversations)
 }
@@ -816,6 +840,108 @@ pub(crate) mod tests {
         assert!(roots.contains_key("reset"));
     }
 
+    fn said(id: &str, role: &str, at: i64) -> String {
+        format!(
+            "INSERT INTO messages (session_id, role, content, timestamp) \
+             VALUES ('{id}', '{role}', 'not read', {at});"
+        )
+    }
+
+    /// DF-173 acceptance 7: the time of a conversation is its last work —
+    /// a heartbeat or a message of the user, the agent or a tool; a process
+    /// boundary is none, and the start stands without work.
+    #[test]
+    fn the_time_of_a_conversation_is_its_last_work() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join(".hermes");
+        let turn = |id: &str| {
+            [
+                said(id, "user", 1800000400),
+                said(id, "assistant", 1800000500),
+            ]
+            .concat()
+        };
+        let sql = [
+            // Killed after its turn, as Svode ends Hermes, viewed or not.
+            session("killed", "acp", Some("/w"), "last_activity_at = NULL"),
+            turn("killed"),
+            // Disconnected later, as on a regular exit after a view.
+            session(
+                "closed",
+                "acp",
+                Some("/w"),
+                "last_activity_at = NULL, ended_at = 1800000900, end_reason = 'acp_disconnect'",
+            ),
+            turn("closed"),
+            session("turns", "acp", Some("/w"), "last_activity_at = NULL"),
+            turn("turns"),
+            said("turns", "user", 1800000600),
+            said("turns", "tool", 1800000650),
+            said("turns", "assistant", 1800000700),
+            session(
+                "beating",
+                "acp",
+                Some("/w"),
+                "last_activity_at = 1800000650",
+            ),
+            turn("beating"),
+            said("beating", "assistant", 1800000700),
+            // A turn cut off after its last heartbeat.
+            session("cut", "acp", Some("/w"), "last_activity_at = 1800000800"),
+            turn("cut"),
+            session("other", "acp", Some("/w"), "last_activity_at = NULL"),
+            turn("other"),
+            said("other", "system", 1800000900),
+            session(
+                "silent",
+                "acp",
+                Some("/w"),
+                "last_activity_at = NULL, ended_at = 1800000900",
+            ),
+            said("silent", "system", 1800000900),
+            session(
+                "cli",
+                "cli",
+                Some("/w"),
+                "last_activity_at = NULL, ended_at = 1800000900, end_reason = 'cli_close'",
+            ),
+            turn("cli"),
+            session(
+                "chain",
+                "acp",
+                Some("/w"),
+                "last_activity_at = NULL, ended_at = 1800000560, end_reason = 'compression'",
+            ),
+            turn("chain"),
+            session(
+                "tip",
+                "acp",
+                None,
+                "parent_session_id = 'chain', started_at = 1800000550, last_activity_at = NULL",
+            ),
+            said("tip", "assistant", 1800000600),
+        ]
+        .concat();
+        store(&root.join("state.db"), &sql);
+
+        let conversations = conversations(&root).unwrap();
+        let roots = by_root(&conversations);
+        let at = |id: &str| roots[id].updated_at.map(|at| at.timestamp());
+        assert_eq!(at("killed"), Some(1800000500), "not the start");
+        assert_eq!(at("closed"), Some(1800000500), "not the disconnect");
+        assert_eq!(at("turns"), Some(1800000700));
+        assert_eq!(at("beating"), Some(1800000700));
+        assert_eq!(
+            at("cut"),
+            Some(1800000800),
+            "the heartbeat after the last message"
+        );
+        assert_eq!(at("other"), Some(1800000500), "another role gives no time");
+        assert_eq!(at("silent"), Some(1800000000), "the start without work");
+        assert_eq!(at("cli"), Some(1800000500), "not the close of the CLI");
+        assert_eq!(at("chain"), Some(1800000600), "the last link of the chain");
+    }
+
     #[test]
     fn every_profile_is_read_and_the_first_keeps_a_repeated_id() {
         let temp = tempfile::tempdir().unwrap();
@@ -879,6 +1005,14 @@ pub(crate) mod tests {
             problem.contains("session_turn_leases has no holder"),
             "{problem}"
         );
+
+        let root = temp.path().join("untimed");
+        store(
+            &root.join("state.db"),
+            "ALTER TABLE messages DROP COLUMN timestamp;",
+        );
+        let problem = conversations(&root).unwrap_err();
+        assert!(problem.contains("messages has no timestamp"), "{problem}");
     }
 
     fn lease(id: &str, pid: u32, acquired_at: f64, expires_at: f64) -> String {

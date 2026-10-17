@@ -2815,6 +2815,85 @@ mod tests {
         assert_eq!(result.sessions.len(), 2);
     }
 
+    /// DF-173 acceptance 7: a Hermes conversation keeps the time of its last
+    /// turn after Svode killed its process or a view disconnected it; a new
+    /// turn moves it.
+    #[test]
+    fn a_hermes_conversation_keeps_the_time_of_its_last_turn_after_its_process_ends() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let said = |id: &str, role: &str, at: i64| {
+            format!(
+                "INSERT INTO messages (session_id, role, content, timestamp) \
+                 VALUES ('{id}', '{role}', 'not read', {at});"
+            )
+        };
+        let sessions = [
+            hermes_session("killed", "acp", &project, "last_activity_at = NULL"),
+            said("killed", "assistant", 1800000500),
+            hermes_session(
+                "between",
+                "acp",
+                &project,
+                "last_activity_at = NULL, ended_at = 1800000610",
+            ),
+            said("between", "assistant", 1800000600),
+            hermes_session(
+                "viewed",
+                "acp",
+                &project,
+                "last_activity_at = NULL, ended_at = 1800000900",
+            ),
+            said("viewed", "assistant", 1800000400),
+        ]
+        .concat();
+        hermes_store(&state, &home, &sessions);
+        let time = |at: i64| {
+            chrono::TimeZone::timestamp_opt(&Utc, at, 0)
+                .unwrap()
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        };
+
+        let result = list(&state, &project);
+        assert_eq!(
+            by_id(&result, "hermes:killed").last_activity_at,
+            time(1800000500)
+        );
+        assert_eq!(
+            by_id(&result, "hermes:viewed").last_activity_at,
+            time(1800000400)
+        );
+        assert_eq!(
+            order(&result),
+            ["hermes:between", "hermes:killed", "hermes:viewed"]
+        );
+        assert_eq!(
+            hot(&state, &project, "hermes:viewed").sessions[0].last_activity_at,
+            time(1800000400)
+        );
+        let restarted = AgentSessionsState::with_home(home.clone());
+        let saved = list(&restarted, &project);
+        assert_eq!(saved.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+        assert_eq!(
+            by_id(&saved, "hermes:viewed").last_activity_at,
+            time(1800000400),
+            "the saved list keeps the time after a restart"
+        );
+
+        fs::remove_file(home.join(".hermes/state.db")).unwrap();
+        hermes_store(
+            &state,
+            &home,
+            &[sessions, said("viewed", "user", 1800000950)].concat(),
+        );
+        let worked = list(&state, &project);
+        assert_eq!(
+            by_id(&worked, "hermes:viewed").last_activity_at,
+            time(1800000950)
+        );
+        assert_eq!(order(&worked)[0], "hermes:viewed");
+    }
+
     #[test]
     fn a_hermes_turn_lease_of_a_live_process_is_another_writer() {
         let (_temp, home, project) = project_dirs();
