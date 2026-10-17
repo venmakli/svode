@@ -4020,6 +4020,239 @@ async fn resolved_requests_stay_in_the_timeline_with_their_outcome() {
     assert_eq!(reloaded.items, subscription.snapshot.items);
 }
 
+async fn start_turn_of(
+    runtime: &AgentRuntime,
+    agent: &str,
+) -> (SessionKey, ScriptedAgent, SessionSubscription, Value) {
+    let (id, mut agent) = attached_with(runtime, &agent_launch(agent));
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        agent.open_session()
+    );
+    let subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    (key, agent, subscription, prompt)
+}
+
+const CODEX_COMMAND: &str = "touch qa47-probe.txt";
+
+/// A Codex request to run a command in the shape `codex-acp` 2.1.1 sends to
+/// a client that is not AIR (`CommandReporter.permission`,
+/// `applyStandardFields`): a title after the kind of command and the
+/// command, without its shell, only in `rawInput`.
+fn codex_command_permission(id: Value, title: &str, raw_input: Value, content: &[Value]) -> Value {
+    let mut tool_call = json!({
+        "toolCallId": "call_1",
+        "kind": "execute",
+        "status": "pending",
+        "title": title,
+        "rawInput": raw_input
+    });
+    if !content.is_empty() {
+        tool_call["content"] = json!(content);
+    }
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "session/request_permission",
+        "params": {
+            "sessionId": "s1",
+            "toolCall": tool_call,
+            "options": [
+                { "optionId": "allow_once", "name": "Yes, proceed", "kind": "allow_once" },
+                { "optionId": "accept_execpolicy_amendment", "name": format!("Yes, and don't ask again for commands that start with `{CODEX_COMMAND}`"), "kind": "allow_always" },
+                { "optionId": "decline", "name": "No, continue without running it", "kind": "reject_once" },
+                { "optionId": "cancel", "name": "No, and tell Codex what to do differently", "kind": "reject_once" }
+            ]
+        }
+    })
+}
+
+/// The start of a Codex command (`commandActionFacts` of an unknown
+/// action): the command as its title and a terminal.
+fn codex_command_start() -> Value {
+    json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call_1",
+        "kind": "execute",
+        "title": CODEX_COMMAND,
+        "status": "in_progress",
+        "content": [{ "type": "terminal", "terminalId": "call_1" }],
+        "rawInput": { "command": format!("/bin/zsh -lc '{CODEX_COMMAND}'"), "cwd": "/project" },
+        "_meta": { "terminal_info": { "cwd": "/project", "terminal_id": "call_1" } }
+    })
+}
+
+/// The end of a Codex command: a status without a title.
+fn codex_command_end(status: &str) -> Value {
+    json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call_1",
+        "status": status,
+        "_meta": { "terminal_exit": { "exit_code": 0, "signal": null, "terminal_id": "call_1" } }
+    })
+}
+
+fn summary_of(snapshot: &SessionSnapshot, id: &str) -> String {
+    snapshot
+        .items
+        .iter()
+        .find(|item| item.id == id)
+        .unwrap()
+        .summary
+        .clone()
+}
+
+fn has_status(snapshot: &SessionSnapshot, id: &str, status: ItemStatus) -> bool {
+    snapshot
+        .items
+        .iter()
+        .any(|item| item.id == id && item.status == Some(status))
+}
+
+#[tokio::test]
+async fn a_codex_request_for_a_command_not_started_names_the_command_through_its_start() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _prompt) = start_turn_of(&runtime, "codex").await;
+    agent
+        .send(codex_command_permission(
+            json!(0),
+            "Run command",
+            json!({ "command": CODEX_COMMAND, "cwd": "/project" }),
+            &[],
+        ))
+        .await;
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(pending.title, CODEX_COMMAND);
+    assert_eq!(summary_of(&subscription.snapshot, "call_1"), CODEX_COMMAND);
+
+    runtime
+        .answer(&key, &pending.id, option("allow_once"))
+        .unwrap();
+    agent.recv().await;
+    agent.update("s1", codex_command_start()).await;
+    agent.update("s1", codex_command_end("completed")).await;
+    follow(&mut subscription, |snapshot| {
+        has_status(snapshot, "call_1", ItemStatus::Completed)
+            && snapshot.items.iter().any(|item| item.id == pending.id)
+    })
+    .await;
+    assert_eq!(summary_of(&subscription.snapshot, "call_1"), CODEX_COMMAND);
+    assert_eq!(
+        summary_of(&subscription.snapshot, &pending.id),
+        CODEX_COMMAND
+    );
+    assert_eq!(
+        runtime.subscribe(&key).unwrap().snapshot.items,
+        subscription.snapshot.items
+    );
+}
+
+#[tokio::test]
+async fn a_declined_codex_command_keeps_the_command_in_its_row_and_record() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _prompt) = start_turn_of(&runtime, "codex").await;
+    agent
+        .send(codex_command_permission(
+            json!(0),
+            "Run command",
+            json!({ "command": CODEX_COMMAND, "cwd": "/project" }),
+            &[],
+        ))
+        .await;
+    let pending = until_pending(&mut subscription).await;
+    runtime
+        .answer(&key, &pending.id, option("decline"))
+        .unwrap();
+    agent.recv().await;
+    agent.update("s1", codex_command_end("failed")).await;
+    follow(&mut subscription, |snapshot| {
+        has_status(snapshot, "call_1", ItemStatus::Failed)
+            && snapshot.items.iter().any(|item| item.id == pending.id)
+    })
+    .await;
+    assert_eq!(summary_of(&subscription.snapshot, "call_1"), CODEX_COMMAND);
+    assert_eq!(
+        summary_of(&subscription.snapshot, &pending.id),
+        CODEX_COMMAND
+    );
+}
+
+#[tokio::test]
+async fn a_codex_request_for_a_started_command_keeps_its_command_and_terminal() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _prompt) = start_turn_of(&runtime, "codex").await;
+    agent.update("s1", codex_command_start()).await;
+    agent
+        .send(codex_command_permission(
+            json!(0),
+            "Run command",
+            json!({ "command": CODEX_COMMAND, "cwd": "/project" }),
+            &[],
+        ))
+        .await;
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(pending.title, CODEX_COMMAND);
+    assert_eq!(summary_of(&subscription.snapshot, "call_1"), CODEX_COMMAND);
+    let terminal = DetailOutcome::Available {
+        blocks: vec![DetailBlock::Terminal {
+            terminal_id: "call_1".into(),
+        }],
+    };
+    assert_eq!(runtime.detail(&key, "call_1"), terminal);
+
+    runtime
+        .answer(&key, &pending.id, option("allow_once"))
+        .unwrap();
+    agent.recv().await;
+    agent.update("s1", codex_command_end("completed")).await;
+    follow(&mut subscription, |snapshot| {
+        has_status(snapshot, "call_1", ItemStatus::Completed)
+            && snapshot.items.iter().any(|item| item.id == pending.id)
+    })
+    .await;
+    assert_eq!(summary_of(&subscription.snapshot, "call_1"), CODEX_COMMAND);
+    assert_eq!(
+        summary_of(&subscription.snapshot, &pending.id),
+        CODEX_COMMAND
+    );
+    assert_eq!(runtime.detail(&key, "call_1"), terminal);
+}
+
+#[tokio::test]
+async fn a_codex_network_request_names_its_command_and_keeps_the_access_in_detail() {
+    let runtime = AgentRuntime::default();
+    let (key, mut agent, mut subscription, _prompt) = start_turn_of(&runtime, "codex").await;
+    agent
+        .send(codex_command_permission(
+            json!(0),
+            "https network access to example.com",
+            json!({ "command": "curl -sI https://example.com", "cwd": "/project", "url": "https://example.com" }),
+            &[json!({ "type": "content", "content": { "type": "text", "text": "https access to example.com" } })],
+        ))
+        .await;
+    let pending = until_pending(&mut subscription).await;
+    assert_eq!(pending.title, "curl -sI https://example.com");
+    assert_eq!(
+        summary_of(&subscription.snapshot, "call_1"),
+        "curl -sI https://example.com"
+    );
+    assert_eq!(
+        runtime.detail(&key, "call_1"),
+        DetailOutcome::Available {
+            blocks: vec![DetailBlock::Text {
+                text: "https access to example.com".into()
+            }]
+        }
+    );
+}
+
 #[tokio::test]
 async fn a_finished_turn_carries_its_duration_and_each_turn_its_own_plan() {
     let runtime = AgentRuntime::default();

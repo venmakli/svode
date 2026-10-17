@@ -544,7 +544,10 @@ pub(crate) fn permission_request(
 ) -> Result<PermissionRequest, String> {
     let request: wire::RequestPermission =
         serde_json::from_str(params).map_err(|error| error.to_string())?;
-    let tool_call = tool_update(request.tool_call, agent);
+    let mut tool_call = tool_update(request.tool_call, agent);
+    if let Some(command) = codex_command(agent, &tool_call.facts) {
+        tool_call.title = Some(command);
+    }
     Ok(PermissionRequest {
         session_id: request.session_id,
         title: bounded(
@@ -568,6 +571,17 @@ pub(crate) fn permission_request(
             })
             .collect(),
     })
+}
+
+/// The command a Codex request asks to run. `codex-acp` titles such a
+/// request after the kind of command (`Run command`, `Read file`, network
+/// access) and sends the command itself only in `rawInput`.
+fn codex_command(agent: Option<AgentAdapterKind>, facts: &CallFacts) -> Option<String> {
+    if agent != Some(AgentAdapterKind::Codex) {
+        return None;
+    }
+    let command = facts.raw_input.as_ref()?.get("command")?.as_str()?.trim();
+    (!command.is_empty()).then(|| command.to_string())
 }
 
 /// An `elicitation/create` form in Svode terms.
@@ -911,6 +925,64 @@ mod tests {
         };
         assert_eq!(label.len(), LABEL_LIMIT);
         assert!(!label.contains("secret"));
+    }
+
+    #[test]
+    fn only_a_codex_request_with_a_command_is_titled_by_the_command() {
+        let title = |agent: Option<AgentAdapterKind>, tool_call: Value| {
+            let request = permission_request(
+                &json!({ "sessionId": "s1", "toolCall": tool_call }).to_string(),
+                agent,
+            )
+            .unwrap();
+            assert_eq!(
+                request.tool_call.title.as_deref(),
+                Some(request.title.as_str())
+            );
+            request.title
+        };
+        let call = |title: &str, raw_input: Value| json!({ "toolCallId": "call_1", "kind": "execute", "status": "pending", "title": title, "rawInput": raw_input });
+        let codex = Some(AgentAdapterKind::Codex);
+        assert_eq!(
+            title(
+                codex,
+                call(
+                    "Read file",
+                    json!({ "command": " cat README.md\n", "cwd": "/project" })
+                )
+            ),
+            "cat README.md"
+        );
+        assert_eq!(
+            title(
+                codex,
+                call("Run command", json!({ "command": "  ", "cwd": "/project" }))
+            ),
+            "Run command"
+        );
+        assert_eq!(
+            title(
+                codex,
+                call("Implement this plan?", json!({ "plan": "1. Add the test" }))
+            ),
+            "Implement this plan?"
+        );
+        assert_eq!(
+            title(
+                codex,
+                json!({ "toolCallId": "call_1", "kind": "edit", "title": "Edit a.md" })
+            ),
+            "Edit a.md"
+        );
+        for agent in [Some(AgentAdapterKind::ClaudeCode), None] {
+            assert_eq!(
+                title(
+                    agent,
+                    call("Run the tests", json!({ "command": "bun test" }))
+                ),
+                "Run the tests"
+            );
+        }
     }
 
     #[test]
