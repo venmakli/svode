@@ -228,6 +228,141 @@ fn removing_an_agent_takes_off_its_marked_entry_only_and_keeps_the_rest() {
     }
 }
 
+/// The servers object the entry leaves empty goes with it; its parents, the
+/// other keys and the comments stay (DF-167).
+#[test]
+fn removing_the_last_entry_takes_off_the_servers_object_it_leaves_empty() {
+    let opencode_svode = format!(
+        "\"svode\": {{\n        \"type\": \"local\",\n        \"command\": [\"LAUNCHER\"],\n        \"environment\": {{ \"{MARKER_ENV}\": \"{MARKER}\" }}\n      }}"
+    );
+    let svode = format!(
+        "\"svode\": {{\n      \"command\": \"LAUNCHER\",\n      \"args\": [],\n      \"env\": {{ \"{MARKER_ENV}\": \"{MARKER}\" }}\n    }}"
+    );
+    // The config before the install, the one the agent's command leaves with
+    // `LAUNCHER` for the launcher, and the one the removal leaves.
+    let cases = [
+        (
+            &OPENCODE,
+            "{\n  // mine\n  \"theme\": \"dark\",\n  \"mcp\": {}, // trailing\n}\n",
+            format!(
+                "{{\n  // mine\n  \"theme\": \"dark\",\n  \"mcp\": {{\n    \"servers\": {{\n      {opencode_svode}\n    }}\n  }}, // trailing\n}}\n"
+            ),
+            "{\n  // mine\n  \"theme\": \"dark\",\n  \"mcp\": {}, // trailing\n}\n",
+        ),
+        (
+            &QWEN,
+            "{\n  // mine\n  \"model\": { \"name\": \"x\" },\n  \"mcpServers\": {}\n}\n",
+            format!(
+                "{{\n  // mine\n  \"model\": {{ \"name\": \"x\" }},\n  \"mcpServers\": {{\n    {svode}\n  }},\n  \"$version\": 4\n}}\n"
+            ),
+            "{\n  // mine\n  \"model\": { \"name\": \"x\" },\n  \"$version\": 4\n}\n",
+        ),
+        (
+            &PI,
+            "{\n  // mine\n  \"model\": { \"name\": \"x\" }\n}\n",
+            format!(
+                "{{\n  // mine\n  \"model\": {{ \"name\": \"x\" }},\n  \"mcpServers\": {{\n    {svode}\n  }}\n}}\n"
+            ),
+            "{\n  // mine\n  \"model\": { \"name\": \"x\" }\n}\n",
+        ),
+    ];
+    for (agent, before, installed, removed) in cases {
+        let (home, machine) = home_with_agents(&[agent]);
+        home.write(agent.config, before);
+        let launcher = home.launcher().display().to_string();
+        home.write(
+            &format!("{}.next", agent.executable),
+            &installed.replace("LAUNCHER", &launcher),
+        );
+        assert!(connect(&machine, agent.client()).unwrap());
+
+        assert!(
+            disconnect(&machine, agent.client()).unwrap(),
+            "{}",
+            agent.executable
+        );
+        assert_eq!(home.read(agent.config), removed, "{}", agent.executable);
+        assert!(!client(&status(&machine, &[], None), agent.client()).installed);
+    }
+
+    // Kimi Code: Svode writes its entry into the user's own empty object.
+    let (home, machine) = home_with_agents(&[&KIMI]);
+    let before = "{\n  // mine\n  \"mcpServers\": {},\n  \"theme\": \"dark\"\n}\n";
+    home.write(KIMI.config, before);
+    assert!(connect(&machine, KIMI.client()).unwrap());
+    assert!(disconnect(&machine, KIMI.client()).unwrap());
+    assert_eq!(
+        home.read(KIMI.config),
+        "{\n  // mine\n  \"theme\": \"dark\"\n}\n"
+    );
+
+    // A file Svode made for Kimi Code stays, as an empty object.
+    let (home, machine) = home_with_agents(&[&KIMI]);
+    assert!(connect(&machine, KIMI.client()).unwrap());
+    assert!(disconnect(&machine, KIMI.client()).unwrap());
+    let left: serde_json::Value = serde_json::from_str(&home.read(KIMI.config)).unwrap();
+    assert_eq!(left, serde_json::json!({}));
+}
+
+#[test]
+fn an_opencode_jsonc_config_loses_its_emptied_servers_object_too() {
+    let (home, machine) = home_with_agents(&[&OPENCODE]);
+    let jsonc = ".config/opencode/opencode.jsonc";
+    let launcher = home.launcher().display().to_string();
+    home.write(
+        jsonc,
+        &format!(
+            "{{\n  /* mine */\n  \"mcp\": {{\n    \"servers\": {{\n      \"svode\": {{ \"type\": \"local\", \"command\": [\"{launcher}\"], \"environment\": {{ \"{MARKER_ENV}\": \"{MARKER}\" }} }},\n    }},\n  }},\n  \"theme\": \"dark\",\n}}\n"
+        ),
+    );
+    assert!(disconnect(&machine, OPENCODE.client()).unwrap());
+    assert_eq!(
+        home.read(jsonc),
+        "{\n  /* mine */\n  \"mcp\": {},\n  \"theme\": \"dark\",\n}\n"
+    );
+}
+
+#[test]
+fn a_servers_object_with_a_comment_or_without_the_entry_stays() {
+    for agent in &JSON_AGENTS {
+        let (home, machine) = home_with_agents(&[agent]);
+        let launcher = home.launcher().display().to_string();
+        let (open, close) = match agent.kind {
+            AgentAdapterKind::Opencode => ("\"mcp\": { \"servers\": {", "} }"),
+            _ => ("\"mcpServers\": {", "}"),
+        };
+        let env = match agent.kind {
+            AgentAdapterKind::Opencode => "environment",
+            _ => "env",
+        };
+        let command = match agent.kind {
+            AgentAdapterKind::Opencode => {
+                format!("\"type\": \"local\", \"command\": [\"{launcher}\"]")
+            }
+            _ => format!("\"command\": \"{launcher}\", \"args\": []"),
+        };
+        home.write(
+            agent.config,
+            &format!(
+                "{{\n  {open}\n    // my servers go here\n    \"svode\": {{ {command}, \"{env}\": {{ \"{MARKER_ENV}\": \"{MARKER}\" }} }}\n  {close}\n}}\n"
+            ),
+        );
+        assert!(disconnect(&machine, agent.client()).unwrap());
+        assert_eq!(
+            home.read(agent.config),
+            format!("{{\n  {open}\n    // my servers go here\n  {close}\n}}\n"),
+            "{}",
+            agent.executable
+        );
+
+        // Without a Svode entry, an empty object is not Svode's to remove.
+        let empty = format!("{{\n  {open}{close}\n}}\n");
+        home.write(agent.config, &empty);
+        assert!(!disconnect(&machine, agent.client()).unwrap());
+        assert_eq!(home.read(agent.config), empty, "{}", agent.executable);
+    }
+}
+
 #[test]
 fn a_custom_entry_is_a_conflict_that_refuses_before_any_write_or_run() {
     for agent in &JSON_AGENTS {

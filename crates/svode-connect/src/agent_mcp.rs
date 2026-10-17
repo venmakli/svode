@@ -309,8 +309,10 @@ fn write_entry(machine: &Machine, kind: AgentMcp, launcher: &Path) -> Result<(),
     entry::write_if_unchanged(&path, &before, &after)
 }
 
-/// Removes the `svode` entry from the JSONC config, keeping every comment
-/// and every other byte.
+/// Removes the `svode` entry from the JSONC config, and the object of
+/// servers it leaves empty, keeping every comment and every other byte.
+/// Parents of that object stay: Svode cannot tell whether the user or the
+/// agent's command made them.
 pub(crate) fn remove(machine: &Machine, kind: AgentMcp) -> Result<(), ConnectError> {
     let path = kind.config(machine);
     let before = entry::read_text(&path)?;
@@ -320,8 +322,16 @@ pub(crate) fn remove(machine: &Machine, kind: AgentMcp) -> Result<(), ConnectErr
     for key in kind.servers() {
         servers = servers.and_then(|object| object.object_value(key));
     }
-    if let Some(entry) = servers.and_then(|servers| servers.get("svode")) {
+    if let Some(servers) = servers
+        && let Some(entry) = servers.get("svode")
+    {
         entry.remove();
+        // A comment left inside is the user's, so the object stays with it.
+        let empty = servers.properties().is_empty()
+            && !servers.children().iter().any(|child| child.is_comment());
+        if empty && let Some(container) = servers.parent().and_then(|node| node.as_object_prop()) {
+            container.remove();
+        }
     }
     let after = root.to_string();
     let parsed = jsonc_parser::parse_to_serde_value::<Value>(&after, &ParseOptions::default())
