@@ -16,7 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkPayload, productVersion } from "./plugin-payload.mjs";
 
-const HEADLESS_TOOLS = 53;
+const HEADLESS_TOOLS = 54;
 if (!process.argv[2]) {
   console.error("usage: node scripts/smoke-install.mjs <svode archive .tar.gz>");
   process.exit(2);

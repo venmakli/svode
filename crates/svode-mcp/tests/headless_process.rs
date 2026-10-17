@@ -1508,7 +1508,7 @@ fn a_corrupt_store_is_quarantined_and_an_unsupported_one_is_left_untouched() {
     assert_eq!((tables, version), (1, 99));
 }
 
-/// The whole served catalog in one session: every one of the 53 tools
+/// The whole served catalog in one session: every one of the 54 tools
 /// answers from the standalone host with a result, reads first, then each
 /// family of changes on the sources the reads returned.
 #[test]
