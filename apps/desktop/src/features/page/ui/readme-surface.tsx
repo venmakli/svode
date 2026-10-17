@@ -1,4 +1,3 @@
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -13,6 +12,7 @@ import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
 import { usePageSurfaceSession } from "../hooks/page-surface-context";
 import { pageSaveBlock } from "../lib/save-block";
+import { PageReadError } from "./page-read-error";
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 
 export function ReadmeSurface() {
@@ -51,33 +51,7 @@ export function ReadmeSurface() {
       </Empty>
     );
   }
-  if (context.status === "error") {
-    content = (
-      <Alert variant="destructive">
-        <AlertTitle>
-          {context.target === "page"
-            ? m.page_detail_read_error_title()
-            : m.scope_readme_error_title()}
-        </AlertTitle>
-        <AlertDescription className="flex flex-col items-start gap-3">
-          <span>{context.error}</span>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => void context.reload()}>
-              {m.identity_load_retry()}
-            </Button>
-            {context.target === "readme" ? (
-              <Button
-                variant="outline"
-                onClick={() => context.onOpenPath(context.readmePath)}
-              >
-                {m.scope_readme_open_file()}
-              </Button>
-            ) : null}
-          </div>
-        </AlertDescription>
-      </Alert>
-    );
-  }
+  if (context.status === "error") content = <PageReadError openFile />;
   if (context.status === "ready" && context.page) {
     content = (
       <PlateDocumentEditor

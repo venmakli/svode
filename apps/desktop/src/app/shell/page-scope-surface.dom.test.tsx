@@ -233,6 +233,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       missing?: boolean;
       schemaColumns?: number;
       fieldError?: unknown;
+      deleteRemovesFile?: boolean;
     } = {},
   ) {
     const dom = new JSDOM("<!doctype html><div id=app></div>", {
@@ -300,7 +301,16 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
             ? { ...updated, meta: { ...updated.meta, icon: input.value } }
             : updated;
         }
-        if (command === "delete_content") return null;
+        if (command === "delete_content") {
+          if (!options.deleteRemovesFile) return null;
+          missing = true;
+          // The watcher reports the file gone before the command returns.
+          return import("@/platform/native/events")
+            .then(({ emit }) =>
+              emit("file:deleted", { space: spacePath, path: input.path }),
+            )
+            .then(() => null);
+        }
         if (command === "duplicate_page")
           return { ...page("Note copy.md"), warnings: [] };
         if (command === "repository_access_get")
@@ -833,7 +843,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     }
   });
 
-  test("a full Page whose file is gone closes with a toast; a gone root readme.md opens the Space owner", async () => {
+  test("a full Page whose file is gone closes with a warning; a gone root readme.md opens the Space owner", async () => {
     for (const [path, event] of [
       ["Note.md", "file:changed"],
       ["Folder/README.md", "file:deleted"],
@@ -848,10 +858,41 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         expect(
           doc.querySelector("[data-selection]")?.getAttribute("data-selection"),
         ).toBe(path === "readme.md" ? "scope-owner:space" : "");
-        expect(toasts).toEqual([m.editor_file_deleted()]);
+        expect(toasts).toEqual([
+          m.page_deleted_externally_title({ title: path }),
+        ]);
       } finally {
         await f.cleanup();
       }
+    }
+  });
+
+  test("a full Page deleted from its own menu closes without a message", async () => {
+    toasts.length = 0;
+    const f = await fixture("Note.md", false, { deleteRemovesFile: true });
+    const doc = f.dom.window.document;
+    try {
+      await act(async () => {
+        (actionsProps.onDeletePage as (page: Page) => void)(page("Note.md"));
+        await settle();
+      });
+      await act(async () => {
+        (deleteDialogProps.onDeletePage as (page: Page) => void)(
+          page("Note.md"),
+        );
+        await settle();
+      });
+      await act(settle);
+      expect(
+        f.calls.find(({ command }) => command === "delete_content")?.args.path,
+      ).toBe("Note.md");
+      expect(doc.querySelector("textarea")).toBeNull();
+      expect(
+        doc.querySelector("[data-selection]")?.getAttribute("data-selection"),
+      ).toBe("");
+      expect(toasts).toEqual([]);
+    } finally {
+      await f.cleanup();
     }
   });
 

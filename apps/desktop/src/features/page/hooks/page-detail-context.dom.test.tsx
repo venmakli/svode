@@ -3,6 +3,8 @@ import { expect, test } from "bun:test";
 import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
+import { toast } from "sonner";
+import * as m from "@/paraglide/messages.js";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import type { Page } from "../model";
 import { PAGE_FIELD_TEXT_SAVE_DELAY_MS } from "../model/field-save";
@@ -49,6 +51,7 @@ async function harness(
   let fieldDelay: Promise<void> | null = null;
   let readDelay: Promise<void> | null = null;
   let readFailure = false;
+  let deleteContent: (path: string) => Promise<void> = async () => {};
   let schema = options.schema;
   let context!: PageDetailContextValue;
   let session!: {
@@ -130,6 +133,10 @@ async function harness(
         pages.set(page.path, updated);
         return structuredClone(updated);
       }
+      if (command === "delete_content") {
+        await deleteContent(String(input.path));
+        return null;
+      }
       if (command === "get_page_schema")
         return schema ? { schema: { columns: schema, views: [] } } : null;
       if (command === "list_content_tree_children") return [];
@@ -196,6 +203,7 @@ async function harness(
     dom,
     pages,
     calls,
+    spacePath,
     render,
     context: () => context,
     session: () => session,
@@ -222,6 +230,9 @@ async function harness(
     },
     setSchema: (value: SchemaColumn[]) => {
       schema = value;
+    },
+    onDeleteContent: (handler: (path: string) => Promise<void>) => {
+      deleteContent = handler;
     },
     fileEvent: async (
       path: string,
@@ -860,6 +871,141 @@ test("an own title rename is not a disappearance of the Page", async () => {
     expect(gone).toBe(0);
     expect(view.context().page?.path).toBe("Renamed/README.md");
     expect(view.context().page?.meta.title).toBe("Renamed");
+  } finally {
+    await view.cleanup();
+  }
+});
+
+function captureToasts() {
+  const shown: { kind: string; message: string; description?: string }[] = [];
+  const saved = { error: toast.error, warning: toast.warning };
+  const record =
+    (kind: string) => (message: unknown, data?: { description?: unknown }) => {
+      shown.push({
+        kind,
+        message: String(message),
+        ...(data?.description ? { description: String(data.description) } : {}),
+      });
+      return 0;
+    };
+  toast.error = record("error") as typeof toast.error;
+  toast.warning = record("warning") as typeof toast.warning;
+  return {
+    shown,
+    restore: () => Object.assign(toast, saved),
+  };
+}
+
+test("a Page deleted by another writer closes with a warning naming it", async () => {
+  let gone = 0;
+  const toasts = captureToasts();
+  const view = await readyHarness({
+    target: "page",
+    onPageGone: () => (gone += 1),
+  });
+  try {
+    view.pages.delete(README);
+    await view.fileEvent(README, "file:deleted");
+    expect(gone).toBe(1);
+    expect(toasts.shown).toEqual([
+      {
+        kind: "warning",
+        message: m.page_deleted_externally_title({ title: "App only" }),
+        description: m.page_deleted_externally_description(),
+      },
+    ]);
+  } finally {
+    toasts.restore();
+    await view.cleanup();
+  }
+});
+
+for (const when of ["while it runs", "after it finished"] as const) {
+  test(`an own deletion reported ${when} closes the Page without a message`, async () => {
+    let gone = 0;
+    const toasts = captureToasts();
+    const view = await readyHarness({
+      target: "page",
+      onPageGone: () => (gone += 1),
+    });
+    try {
+      view.onDeleteContent(async (path) => {
+        view.pages.delete(README);
+        if (when === "while it runs")
+          await view.fileEvent(path, "file:deleted");
+      });
+      const { deletePage } = await import("../page-api");
+      await act(async () => {
+        await deletePage({ spacePath: view.spacePath, path: README });
+        await turn();
+      });
+      if (when === "after it finished")
+        await view.fileEvent(README, "file:deleted");
+      expect(gone).toBe(1);
+      expect(toasts.shown).toEqual([]);
+    } finally {
+      toasts.restore();
+      await view.cleanup();
+    }
+  });
+}
+
+test("an own deletion of the parent closes the Page silently and leaves a README owner missing", async () => {
+  for (const target of ["page", "readme"] as const) {
+    let gone = 0;
+    const toasts = captureToasts();
+    const view = await readyHarness({
+      target,
+      onPageGone: () => (gone += 1),
+    });
+    try {
+      const { trackOwnContentDeletion } = await import("../page-api");
+      await act(async () => {
+        await trackOwnContentDeletion(
+          { spacePath: view.spacePath, path: "app-only" },
+          async () => {
+            view.pages.delete(README);
+          },
+        );
+      });
+      await view.fileEvent(README, "file:deleted");
+      expect(toasts.shown).toEqual([]);
+      if (target === "page") expect(gone).toBe(1);
+      else {
+        expect(gone).toBe(0);
+        expect(view.context().status).toBe("missing");
+      }
+    } finally {
+      toasts.restore();
+      await view.cleanup();
+    }
+  }
+});
+
+test("a header read error names the failed read, keeps the backend text secondary and retries the read", async () => {
+  const view = await harness({ target: "page", readError: true });
+  try {
+    const document = view.dom.window.document;
+    const alert = document.querySelector('[role="alert"]')!;
+    expect(alert.querySelector('[data-slot="alert-title"]')?.textContent).toBe(
+      m.page_detail_read_error_title(),
+    );
+    expect(
+      alert.querySelector('[data-slot="alert-description"] span')?.textContent,
+    ).toBe("Error: Invalid frontmatter");
+    const buttons = [...alert.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      m.identity_load_retry(),
+    ]);
+    const reads = view.calls.filter((call) => call === "read_page").length;
+    await act(async () => {
+      buttons[0].click();
+      await turn();
+      await turn();
+    });
+    expect(view.calls.filter((call) => call === "read_page").length).toBe(
+      reads + 1,
+    );
   } finally {
     await view.cleanup();
   }

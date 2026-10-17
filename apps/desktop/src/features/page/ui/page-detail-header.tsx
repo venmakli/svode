@@ -1,13 +1,9 @@
 import type { ReactNode } from "react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import * as m from "@/paraglide/messages.js";
 import { useSignalUserEdit } from "@/features/navigation";
 import { PropertyPanel } from "@/features/properties/panel";
 import { detailPageHeaderClassName } from "@/shared/ui/page-layout";
 import { usePageDetailContext } from "../hooks/page-detail-context";
 import {
-  handleError,
   showPageHeaderSaveError,
   type PageHeaderSaveField,
 } from "../lib/errors";
@@ -15,6 +11,7 @@ import {
   PageIdentityHeader,
   PageIdentityHeaderSkeleton,
 } from "./page-identity-header";
+import { PageReadError } from "./page-read-error";
 import { PageSaveStatus } from "./page-save-status";
 import { PageSystemFields } from "./page-system-fields";
 
@@ -107,21 +104,7 @@ export function PageDetailHeader({
         coverSize="compact"
         readOnly={metadataReadOnly}
       />
-      {showReadError && context.status === "error" ? (
-        <Alert variant="destructive">
-          <AlertDescription className="flex flex-col items-start gap-2">
-            <span>{context.error}</span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={readOnly}
-              onClick={() => void context.reload().catch(handleError)}
-            >
-              {m.page_surface_save_retry()}
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : null}
+      {showReadError && context.status === "error" ? <PageReadError /> : null}
       {page && schemaResult?.schema.columns.length ? (
         <div className="max-w-5xl">
           <PropertyPanel

@@ -13,6 +13,7 @@ import {
   renameContentTreeItem,
 } from "@/platform/space/content-tree-api";
 import { convertToCollection } from "@/platform/collections/collections-api";
+import { trackOwnContentDeletion } from "@/features/page/page-api";
 import type { TreeNode } from "../model/types";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 
@@ -202,9 +203,11 @@ export function deleteTreeItem(input: {
   path: string;
   projectPath: ProjectPath;
 }): Promise<void> {
-  return deleteContentTreeItem({
-    space: input.spacePath,
-    path: input.path,
-    projectPath: input.projectPath,
-  });
+  return trackOwnContentDeletion(input, () =>
+    deleteContentTreeItem({
+      space: input.spacePath,
+      path: input.path,
+      projectPath: input.projectPath,
+    }),
+  );
 }

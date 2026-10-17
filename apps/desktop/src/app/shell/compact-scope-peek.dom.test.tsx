@@ -794,7 +794,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       dom.window.close();
     }
   });
-  test("a Peek whose Page is gone closes only its own Sheet with a toast", async () => {
+  test("a Peek whose Page is gone closes only its own Sheet with a warning", async () => {
     for (const family of ["collection", "attachments"] as const) {
       const dom = new JSDOM("<!doctype html><div id=app></div>", {
         pretendToBeVisual: true,
@@ -947,7 +947,9 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         expect(
           Boolean(document.querySelector("[data-parent-collection]")),
         ).toBe(true);
-        expect(toasts).toEqual([m.editor_file_deleted()]);
+        expect(toasts).toEqual([
+          m.page_deleted_externally_title({ title: "Item2" }),
+        ]);
         expect(getActiveContentSelection().selection).toBe(mainSelection);
       } finally {
         await act(async () => root.unmount());

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { PageSchemaResult } from "@/features/properties";
 import { listenPageSourceEvents } from "../api/page-source-events-api";
 import { isReadmeMissingError } from "../lib/readme-state";
+import { watchOwnPageDeletion } from "../model/own-deletion";
 import {
   isPageAncestorEvent,
   isPageSchemaEvent,
@@ -24,8 +25,11 @@ interface PageDetailRefreshOptions {
   ) => void;
   /** Resolves once this session's own saves and path changes have finished. */
   settled: () => Promise<void>;
-  /** The Page file stopped existing outside this session. */
-  onGone: () => void;
+  /**
+   * The Page file stopped existing outside this session; `deletedHere` when
+   * a deletion started in this Desktop removed it.
+   */
+  onGone: (deletedHere: boolean) => void;
 }
 
 /**
@@ -55,6 +59,7 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     let appliedPageRead = 0;
     let lastSchemaRead = 0;
     let appliedSchemaRead = 0;
+    const ownDeletion = watchOwnPageDeletion(spacePath, path);
 
     const refreshPage = async (confirmingGone = false): Promise<void> => {
       const read = ++lastPageRead;
@@ -69,7 +74,7 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
         if (confirmingGone) {
           appliedPageRead = read;
           active = false;
-          optionsRef.current.onGone();
+          optionsRef.current.onGone(ownDeletion.deletedHere());
           return;
         }
         // An own rename, move or conversion leaves this path too; once it
@@ -113,6 +118,7 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     });
     return () => {
       active = false;
+      ownDeletion.stop();
       void unlisten.then((stop) => stop());
     };
   }, [path, spacePath]);

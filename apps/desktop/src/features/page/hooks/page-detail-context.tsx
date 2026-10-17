@@ -366,9 +366,16 @@ export function PageDetailProvider({
     applyPage: applyPageUpdate,
     applySchema: setSchemaResult,
     settled: () => pageSurface?.settled() ?? Promise.resolve(),
-    onGone: () => {
+    onGone: (deletedHere) => {
       if (target === "page") {
-        toast.error(m.editor_file_deleted());
+        // The user confirmed an own deletion; only another writer's is news.
+        if (!deletedHere)
+          toast.warning(
+            m.page_deleted_externally_title({
+              title: page?.meta.title.trim() || resolvedFallbackTitle,
+            }),
+            { description: m.page_deleted_externally_description() },
+          );
         onPageGone?.();
         return;
       }

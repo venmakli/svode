@@ -19,6 +19,7 @@ import {
 } from "@/platform/space/content-tree-api";
 import { convertToCollection as convertToCollectionDto } from "@/platform/collections/collections-api";
 import { normalizePage } from "../model/normalize-page";
+import { trackOwnContentDeletion } from "../model/own-deletion";
 import type {
   Page,
   PageDetailState,
@@ -179,11 +180,13 @@ export async function validatePageLinks(
 }
 
 export function deletePage(input: DeletePageInput): Promise<void> {
-  return deletePageDto({
-    space: input.spacePath,
-    path: input.path,
-    projectPath: input.projectPath ?? null,
-  });
+  return trackOwnContentDeletion(input, () =>
+    deletePageDto({
+      space: input.spacePath,
+      path: input.path,
+      projectPath: input.projectPath ?? null,
+    }),
+  );
 }
 
 export async function duplicatePage(input: DuplicatePageInput): Promise<Page> {
