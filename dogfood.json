@@ -8,14 +8,19 @@
       "commit": "d914b63b8b20117e6ba2fba67b89540a85d394f2",
       "sourceRef": "main",
       "runId": 39004305461,
-      "publishedAt": "2026-10-17T05:21:31.880Z",
-      "expiresAt": "2026-10-20T05:21:31.880Z",
+      "publishedAt": "2026-10-17T05:30:25.353Z",
+      "expiresAt": "2026-10-20T05:30:25.353Z",
       "reason": "Диктовка и время сессий",
       "platforms": {
         "linux": {
           "url": "https://github.com/venmakli/svode/actions/runs/39004305461/artifacts/12090703390",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/39004305461",
           "artifactName": "Svode-linux-deb"
+        },
+        "windows": {
+          "url": "https://github.com/venmakli/svode/actions/runs/39004305461/artifacts/12090933495",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/39004305461",
+          "artifactName": "Svode-windows-nsis"
         }
       }
     },
