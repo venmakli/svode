@@ -780,9 +780,10 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
           { setting: "mode", value: "agent" },
         ],
       });
-      expect(sent.lastIndexOf("agent_runtime_open_session")).toBeLessThan(
-        sent.indexOf("agent_runtime_prompt"),
-      );
+      expect(
+        sent.lastIndexOf("agent_runtime_open_session") <
+          sent.indexOf("agent_runtime_prompt"),
+      ).toBe(true);
       expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
         { type: "text", text: "Go on" },
       ]);
