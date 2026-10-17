@@ -5,6 +5,7 @@ import { ProjectLoadingLogo } from "@/features/branding";
 import { IdentityDialog } from "@/features/identity";
 import { useIdentityCheck } from "@/features/identity";
 import { useIdentityGateState } from "@/features/identity";
+import { PageFilenameWarningDialog } from "@/features/page";
 import { SettingsDialogs } from "./settings-dialogs";
 
 export function IdentityGate() {
@@ -37,6 +38,7 @@ export function IdentityGate() {
     <>
       <Outlet />
       <SettingsDialogs />
+      <PageFilenameWarningDialog />
     </>
   );
 }

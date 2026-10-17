@@ -1,3 +1,4 @@
+import type { RepositoryAccessBlocker } from "./repository-access";
 import type { RepositoryAccessTarget } from "./repository-access-consumer";
 
 export interface RepositoryOwnerContext {
@@ -76,6 +77,21 @@ export function ownedRepositoryAccessTarget(
     namedByPath: false,
     openSettings:
       target.openSettings ?? repositorySettingsOpener(owner.settingsPath),
+  };
+}
+
+/** The refusing repository's own location as a target named by its owner. */
+export function repositoryBlockerTarget(
+  blocker: RepositoryAccessBlocker,
+  context: RepositoryOwnerContext,
+): RepositoryAccessTarget {
+  const owner = repositoryOwner(blocker.repositoryPath, context);
+  return {
+    displayName: owner.displayName,
+    displayPath: owner.displayPath,
+    namedByPath: !owner.known,
+    repositoryPath: blocker.repositoryPath,
+    openSettings: repositorySettingsOpener(owner.settingsPath),
   };
 }
 

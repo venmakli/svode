@@ -52,10 +52,7 @@ export type {
 } from "./model/repository-access-consumer";
 export { repositoryAccessIsEditable } from "./model/repository-access-consumer";
 export { repositoryAccessPresentation } from "./ui/repository-access-copy";
-export {
-  repositoryBlockersNotice,
-  type RepositoryBlockersNotice,
-} from "./ui/repository-blockers-notice";
+export { repositoryBlockerNames } from "./ui/repository-blocker-names";
 export {
   gitAuthChallengeFromRemoteUrl,
   isGitAuthRequiredError,
@@ -67,7 +64,10 @@ export {
   RepositoryAccessPrimaryButton,
   repositoryAccessPrimaryActionLabel,
 } from "./ui/repository-access-preflight";
-export { RepositoryAccessBlockerItems } from "./ui/repository-access-blocker-items";
+export {
+  RepositoryAccessBlockerItems,
+  RepositoryAccessDenialItems,
+} from "./ui/repository-access-blocker-items";
 export {
   RepositoryAccessBadge,
   RepositoryAccessSummary,

@@ -11,22 +11,18 @@ import { useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 import { repositoryAccessDenialFromError } from "../api/repository-access-api";
-import type {
-  RepositoryAccessBlocker,
-  RepositoryAccessDenial,
-} from "../model/repository-access";
+import type { RepositoryAccessDenial } from "../model/repository-access";
 import {
   allowsRepositoryMutation,
   blockingRepositoryAccessTargets,
   dedupeRepositoryAccessTargets,
   type RepositoryAccessRequest,
-  type RepositoryAccessTarget,
   type RepositoryAccessTargetView,
 } from "../model/repository-access-consumer";
 import { repositoryAccessOwner } from "../model/repository-access-owner";
 import {
   ownedRepositoryAccessTarget,
-  repositoryOwner,
+  repositoryBlockerTarget,
   repositorySettingsOpener,
   type RepositoryOwnerContext,
 } from "../model/repository-owner";
@@ -246,7 +242,7 @@ export function useRepositoryAccessPreflight() {
       }
 
       const blockerTargets = denial.blockers.map((blocker) =>
-        blockerTarget(blocker, ownerContextRef.current),
+        repositoryBlockerTarget(blocker, ownerContextRef.current),
       );
       const attemptId = ++attemptIdRef.current;
       const recoveryRequest: PendingRepositoryAccessRequest = {
@@ -409,20 +405,6 @@ export function useRepositoryAccessPreflight() {
 export type RepositoryAccessPreflightController = ReturnType<
   typeof useRepositoryAccessPreflight
 >;
-
-function blockerTarget(
-  blocker: RepositoryAccessBlocker,
-  context: RepositoryOwnerContext,
-): RepositoryAccessTarget {
-  const owner = repositoryOwner(blocker.repositoryPath, context);
-  return {
-    displayName: owner.displayName,
-    displayPath: owner.displayPath,
-    namedByPath: !owner.known,
-    repositoryPath: blocker.repositoryPath,
-    openSettings: repositorySettingsOpener(owner.settingsPath),
-  };
-}
 
 /**
  * A denial without a repository location that no target resolves to stays a

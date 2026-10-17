@@ -26,4 +26,5 @@ export {
   publishPageFilenameWarnings,
   retargetPageFilenameWarnings,
 } from "./lib/filename-warning";
+export { PageFilenameWarningDialog } from "./ui/page-filename-warning-dialog";
 export { pageNavigationItem } from "./lib/navigation-item";

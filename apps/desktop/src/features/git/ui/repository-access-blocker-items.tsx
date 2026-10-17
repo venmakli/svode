@@ -8,10 +8,17 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
+import { useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 import type { RepositoryAccessPreflightController } from "../hooks/use-repository-access-preflight";
+import type { RepositoryAccessBlocker } from "../model/repository-access";
 import type { RepositoryAccessTargetView } from "../model/repository-access-consumer";
+import type { RepositoryAccessView } from "../model/repository-access-owner";
+import {
+  repositoryBlockerTarget,
+  type RepositoryOwnerContext,
+} from "../model/repository-owner";
 import { repositoryAccessPresentation } from "./repository-access-copy";
 import { RepositoryAccessStatusIcon } from "./repository-access-status-icon";
 
@@ -60,6 +67,71 @@ export function RepositoryAccessBlockerItems({
       ) : null}
     </div>
   );
+}
+
+/**
+ * The repositories that refused an already finished write, as its denial
+ * reported them, in the rows of the recovery set: identity, status with a
+ * short reason and the Git settings of each repository's location.
+ */
+export function RepositoryAccessDenialItems({
+  blockers,
+  onOpenSettings,
+}: {
+  blockers: readonly RepositoryAccessBlocker[];
+  /** Runs before a row opens its Git settings, e.g. to close the host Dialog. */
+  onOpenSettings?: () => void;
+}) {
+  const ownerContext = useSpace(
+    (state): RepositoryOwnerContext => ({
+      projectName: state.activeRootName,
+      projectPath: state.activeRootPath,
+      spaces: state.spaces,
+    }),
+  );
+  return (
+    <div
+      className="flex max-h-72 min-w-0 flex-col gap-2 overflow-y-auto"
+      data-repository-access-denial-items
+    >
+      <ItemGroup className="gap-2">
+        {blockers.map((blocker) => (
+          <RepositoryAccessBlockerItem
+            key={blocker.repositoryId}
+            row={{
+              access: deniedAccessView(blocker),
+              target: repositoryBlockerTarget(blocker, ownerContext),
+            }}
+            showSettings
+            onOpenSettings={onOpenSettings}
+          />
+        ))}
+      </ItemGroup>
+    </div>
+  );
+}
+
+function deniedAccessView(
+  blocker: RepositoryAccessBlocker,
+): RepositoryAccessView {
+  return {
+    error: null,
+    loading: false,
+    verifying: false,
+    spacePath: blocker.repositoryPath,
+    snapshot: {
+      repositoryId: blocker.repositoryId,
+      generation: 0,
+      status: blocker.status,
+      reason:
+        blocker.reason === "none" || blocker.reason === "mutation_plan_changed"
+          ? null
+          : blocker.reason,
+      checkedAt: null,
+      expiresAt: null,
+      lastKnownStatus: null,
+    },
+  };
 }
 
 function RepositoryAccessBlockerItem({

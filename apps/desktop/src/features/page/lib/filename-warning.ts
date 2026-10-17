@@ -1,8 +1,12 @@
 import { toast } from "sonner";
 
-import { repositoryBlockersNotice } from "@/features/git";
+import { repositoryBlockerNames } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
+import {
+  usePageFilenameWarningDetails,
+  type PageFilenameWarningDetails,
+} from "../model/filename-warning-details";
 import type { PageWarning } from "../model/types";
 
 const REPOSITORY_ACCESS_DENIED_REASON = "repository_access_denied";
@@ -31,9 +35,13 @@ export function publishPageFilenameWarnings(
   for (const warning of warnings ?? []) {
     const feedback = pageFilenameWarningFeedback(warning);
     if (feedback) {
+      const { details } = feedback;
       toast.warning(feedback.title, {
         description: feedback.description,
-        action: feedback.action,
+        action: details && {
+          label: m.page_filename_details_action(),
+          onClick: () => usePageFilenameWarningDetails.getState().show(details),
+        },
       });
     }
   }
@@ -41,8 +49,10 @@ export function publishPageFilenameWarnings(
 
 export interface PageFilenameWarningFeedback {
   title: string;
+  /** One line: the resulting path, or the cause of a deferred rename. */
   description: string;
-  action?: { label: string; onClick: () => void };
+  /** The explanation of a deferred rename behind "Details". */
+  details?: PageFilenameWarningDetails;
 }
 
 export function pageFilenameWarningFeedback(
@@ -72,24 +82,26 @@ export function pageFilenameWarningFeedback(
   } else if (
     warning.kind === "filename_rename_deferred" &&
     warning.reason === REPOSITORY_ACCESS_DENIED_REASON &&
-    warning.path &&
     warning.blockers?.length
   ) {
-    const notice = repositoryBlockersNotice(warning.blockers);
     return {
       title: m.page_filename_rename_deferred(),
       description: m.page_filename_rename_access_deferred_description({
-        path: warning.path,
-        repositories: notice.repositories,
+        repositories: repositoryBlockerNames(warning.blockers),
       }),
-      action: notice.settingsAction,
+      details: {
+        path: warning.path ?? null,
+        cause: { kind: "access", blockers: warning.blockers },
+      },
     };
   } else if (warning.kind === "filename_rename_deferred") {
     return {
       title: m.page_filename_rename_deferred(),
-      description: warning.path
-        ? `${m.page_filename_rename_deferred_description({ path: warning.path })} ${warning.message}`
-        : warning.message,
+      description: m.page_filename_rename_deferred_description(),
+      details: {
+        path: warning.path ?? null,
+        cause: { kind: "dependencies", message: warning.message },
+      },
     };
   }
   return null;

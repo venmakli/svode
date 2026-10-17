@@ -35,7 +35,7 @@ test("page filename feedback distinguishes allocated and unapplied collisions", 
   expect(allocated?.description === unapplied?.description).toBe(false);
 });
 
-test("page filename feedback keeps schema diagnostics and retry guidance in EN/RU", async () => {
+test("a deferred rename for another cause is one line with the backend text in its details", async () => {
   const originalLocale = getLocale();
   try {
     for (const locale of ["en", "ru"] as const) {
@@ -47,56 +47,67 @@ test("page filename feedback keeps schema diagnostics and retry guidance in EN/R
         path: "legacy.md",
       };
       const feedback = pageFilenameWarningFeedback(warning);
-      expect(feedback?.description.includes("legacy.md")).toBe(true);
-      expect(feedback?.description.includes(warning.message)).toBe(true);
-      expect(feedback?.description.includes("Enter")).toBe(true);
       expect(feedback?.title).toBe(
-        locale === "en" ? "Filename kept" : "Имя файла не изменено",
+        locale === "en" ? "File not renamed" : "Файл не переименован",
       );
+      expect(feedback?.description).toBe(
+        locale === "en"
+          ? "Couldn't verify rename dependencies."
+          : "Не удалось проверить зависимости переименования.",
+      );
+      expect(feedback?.details).toEqual({
+        path: "legacy.md",
+        cause: { kind: "dependencies", message: warning.message },
+      });
       expect(
-        pageFilenameWarningFeedback({ ...warning, path: undefined })
-          ?.description,
-      ).toBe(warning.message);
+        pageFilenameWarningFeedback({ ...warning, path: undefined })?.details
+          ?.path,
+      ).toBe(null);
     }
   } finally {
     await setLocale(originalLocale, { reload: false });
   }
 });
 
-test("page filename feedback names the refusing repositories instead of the technical message", async () => {
+test("a deferred rename for access names the refusing repositories in one line", async () => {
   const originalLocale = getLocale();
   try {
     for (const locale of ["en", "ru"] as const) {
       await setLocale(locale, { reload: false });
-      const feedback = pageFilenameWarningFeedback({
+      const blockers = ["compliance", "design", "archive", "ops"].map(
+        (name) => ({
+          repositoryId: `repo-opaque-${name}`,
+          repositoryPath: `/work/bigquest/${name}`,
+          status: "read_only" as const,
+          reason: "none" as const,
+        }),
+      );
+      const warning = {
         kind: "filename_rename_deferred",
         message: "technical: repo-opaque read_only none",
         path: "protsessy/README.md",
         reason: "repository_access_denied",
-        blockers: [
-          {
-            repositoryId: "repo-opaque",
-            repositoryPath: "/work/bigquest/compliance",
-            status: "read_only",
-            reason: "none",
-          },
-        ],
+      };
+      const one = pageFilenameWarningFeedback({
+        ...warning,
+        blockers: blockers.slice(0, 1),
       });
+      const four = pageFilenameWarningFeedback({ ...warning, blockers });
 
-      expect(feedback?.title).toBe(
-        locale === "en" ? "Filename kept" : "Имя файла не изменено",
+      expect(one?.description).toBe(
+        locale === "en"
+          ? "No write access: compliance."
+          : "Нет доступа на запись: compliance.",
       );
-      expect(feedback?.description.includes("protsessy/README.md")).toBe(true);
-      expect(feedback?.description.includes("compliance")).toBe(true);
-      expect(
-        feedback?.description.includes(
-          locale === "en" ? "Read only" : "Только чтение",
-        ),
-      ).toBe(true);
-      expect(feedback?.description.includes("Enter")).toBe(true);
-      expect(feedback?.description.includes("repo-opaque")).toBe(false);
-      expect(feedback?.description.includes("read_only")).toBe(false);
-      expect(feedback?.description.includes("technical")).toBe(false);
+      expect(four?.description).toBe(
+        locale === "en"
+          ? "No write access: compliance, design, archive and 1 more."
+          : "Нет доступа на запись: compliance, design, archive и ещё 1.",
+      );
+      expect(four?.details).toEqual({
+        path: "protsessy/README.md",
+        cause: { kind: "access", blockers },
+      });
     }
   } finally {
     await setLocale(originalLocale, { reload: false });
