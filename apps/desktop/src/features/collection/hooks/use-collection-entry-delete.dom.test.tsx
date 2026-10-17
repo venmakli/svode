@@ -1,3 +1,4 @@
+import * as bunTest from "bun:test";
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,9 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 60_000);
 } else {
+  const { mock } = bunTest as typeof bunTest & {
+    mock: { module(path: string, factory: () => unknown): void };
+  };
   const dom = new JSDOM("<!doctype html><div id='app'></div>", {
     url: "http://localhost/",
     pretendToBeVisual: true,
@@ -59,6 +63,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
       invoke: async (command: string, args: Record<string, unknown> = {}) => {
         commands.push([command, args]);
         if (command === "get_backlinks") return backlinks;
+        if (command === "list_tree_children") return [];
         if (command === "get_page_detail_state")
           return { form: "folder", subpageCount: 2, otherFileCount: 1 };
         return null;
@@ -66,11 +71,30 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
     },
   });
 
+  // Deletions this Desktop runs must be known to open Pages they remove.
+  const deleted: [string, string][] = [];
+  mock.module("@/features/page/model/own-deletion", () => ({
+    trackOwnContentDeletion: async (
+      target: { spacePath: string; path: string },
+      run: () => Promise<unknown>,
+    ) => {
+      const result = await run();
+      const call = commands.at(-1);
+      if (call?.[0] === "delete_content" && call[1].path === target.path) {
+        deleted.push([target.path, target.spacePath]);
+      }
+      return result;
+    },
+    watchOwnPageDeletion: () => ({ deletedHere: () => false, stop: () => {} }),
+  }));
+
   // React DOM reads the environment when it loads, so after the globals.
   const { createRoot } = await import("react-dom/client");
   const { ContentDeleteDialog } = await import("@/features/content-actions");
   const { useCollectionEntryDelete } =
     await import("./use-collection-entry-delete");
+  const { useCollectionEntryActions } =
+    await import("./use-collection-entry-actions");
   type EntryDelete = ReturnType<typeof useCollectionEntryDelete>;
 
   const root = createRoot(document.getElementById("app")!);
@@ -78,17 +102,23 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
     act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
-  const deleted: [string, string | null][] = [];
   let entryDelete: EntryDelete | null = null;
 
   function Harness({ readOnly }: { readOnly: boolean }) {
+    // The real row deletion of the Collection, as its screen wires it.
+    const { deleteRow } = useCollectionEntryActions({
+      schema: null,
+      spacePath: "/project/docs",
+      projectPath: "/project",
+      collectionPath: "tasks",
+      spaceId: "docs",
+      openPage: () => {},
+    });
     const current = useCollectionEntryDelete({
       readOnly,
       spacePath: "/project/docs",
       projectPath: "/project",
-      deleteRow: async (page, peekTarget) => {
-        deleted.push([page.path, peekTarget?.spacePath ?? null]);
-      },
+      deleteRow,
     });
     useEffect(() => {
       entryDelete = current;
@@ -175,7 +205,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
     });
     await clickDialogButton("Delete");
     expect(deleteDialog()).toBeNull();
-    expect(deleted).toEqual([["tasks/Epic/README.md", null]]);
+    expect(deleted).toEqual([["tasks/Epic/README.md", "/project/docs"]]);
   });
 
   test("a Peek deletes its item or template where it lives, also in a read-only Collection", async () => {
