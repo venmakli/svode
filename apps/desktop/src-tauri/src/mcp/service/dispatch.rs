@@ -7,7 +7,7 @@ use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
 use svode_tools::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
 
-use crate::mcp::project_sessions::{ProjectSessions, RequestSession};
+use crate::project_sessions::{ProjectSessions, RequestSession};
 
 pub async fn call_tool_with_context(
     app: AppHandle,

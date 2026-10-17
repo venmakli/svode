@@ -306,6 +306,16 @@ impl From<svode_core::page::PageSourceError> for AppError {
     }
 }
 
+impl From<svode_core::runtime::session::SessionError> for AppError {
+    fn from(error: svode_core::runtime::session::SessionError) -> Self {
+        use svode_core::runtime::session::SessionError;
+        match error {
+            SessionError::Project(error) => error.into(),
+            SessionError::OtherProject { .. } => Self::General(error.to_string()),
+        }
+    }
+}
+
 impl From<svode_core::page::PageError> for AppError {
     fn from(error: svode_core::page::PageError) -> Self {
         use svode_core::page::PageError;

@@ -8,7 +8,7 @@ use tokio::sync::Semaphore;
 use crate::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
-use crate::mcp::project_sessions::ProjectSessions;
+use crate::project_sessions::ProjectSessions;
 use crate::routines::RoutineStoreState;
 use crate::space::types::SpaceStatus;
 

@@ -6,6 +6,7 @@ use crate::error::AppError;
 use crate::index::service::{self, SearchResponse, SearchScope};
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
+use crate::project_sessions::ProjectSessions;
 use svode_core::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
 
 #[tauri::command]
@@ -28,6 +29,7 @@ pub async fn reindex_project(app: AppHandle, project_path: String) -> Result<(),
     service::repair_project(
         app.state::<IndexState>().inner().clone(),
         app.state::<IndexUpdateState>().inner().clone(),
+        &app.state::<ProjectSessions>(),
         PathBuf::from(project_path),
     )
     .await;
@@ -56,6 +58,7 @@ pub async fn count_broken_links(
 #[tauri::command]
 pub async fn get_knowledge_documents(
     state: State<'_, IndexState>,
+    sessions: State<'_, ProjectSessions>,
     project_path: String,
     scope: Option<KnowledgeScope>,
     query: Option<String>,
@@ -66,8 +69,9 @@ pub async fn get_knowledge_documents(
     search_limit: Option<usize>,
     filters: Option<KnowledgeFilters>,
 ) -> Result<KnowledgeResponse, AppError> {
-    Ok(service::read_project_knowledge(
+    service::read_project_knowledge(
         &state,
+        &sessions,
         &PathBuf::from(project_path),
         scope,
         query.as_deref(),
@@ -78,5 +82,5 @@ pub async fn get_knowledge_documents(
         search_limit,
         filters.unwrap_or_default(),
     )
-    .await)
+    .await
 }

@@ -1,6 +1,7 @@
 //! Bridge requests of a project without a window, on the desktop index
 //! runtime and the session registry, through the shared tool dispatch
-//! against real fixture projects.
+//! against real fixture projects, and the Search reads of the desktop on
+//! the same runtime.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,10 @@ use svode_tools::host::{
 use svode_tools::result::ToolCallResult;
 
 use super::*;
+use crate::index::IndexState;
+use crate::index::service::{read_project_knowledge, repair_project};
+use crate::index::update::test_update_state;
+use svode_core::index::knowledge::{KnowledgeFilters, KnowledgeResponse};
 
 /// Recheck window of the core session, waited out to see a later check.
 const RECHECK: Duration = Duration::from_millis(2100);
@@ -36,6 +41,8 @@ const RECHECK: Duration = Duration::from_millis(2100);
 /// Desktop process state a bridge request reads: the index runtime of the
 /// windows and the registry of on-demand sessions.
 struct Desktop {
+    /// Index state of the windows; `index` is its core runtime.
+    window: IndexState,
     index: IndexRuntimeState,
     updates: IndexUpdateState,
     nonces: WriteNonceRegistry,
@@ -52,8 +59,10 @@ impl Desktop {
 
     fn with_idle(idle: Duration) -> Self {
         let routines = Arc::new(RoutineStoreState::new());
+        let window = IndexState::new();
         Self {
-            index: IndexRuntimeState::default(),
+            index: window.core.clone(),
+            window,
             updates: IndexUpdateState::new(routines.clone()),
             nonces: WriteNonceRegistry::new(),
             actors: ActorCatalogState::new(),
@@ -106,6 +115,41 @@ impl Desktop {
 
     async fn lease(&self, project: &Path) -> SessionLease {
         self.sessions.existing(project, &self.index).await.unwrap()
+    }
+
+    /// Paths the search of the Search modal finds by title and content.
+    async fn search(&self, project: &Path, query: &str) -> Vec<String> {
+        found_paths(&self.knowledge(project, query).await)
+    }
+
+    /// Knowledge read of the Search modal over the whole project: search
+    /// by title and content for a query, recent nodes for an empty one.
+    async fn knowledge(&self, project: &Path, query: &str) -> KnowledgeResponse {
+        self.knowledge_with(project, query, KnowledgeFilters::default())
+            .await
+    }
+
+    async fn knowledge_with(
+        &self,
+        project: &Path,
+        query: &str,
+        filters: KnowledgeFilters,
+    ) -> KnowledgeResponse {
+        read_project_knowledge(
+            &self.window,
+            &self.sessions,
+            project,
+            Some(KnowledgeScope::Project),
+            Some(query),
+            None,
+            None,
+            None,
+            None,
+            None,
+            filters,
+        )
+        .await
+        .unwrap()
     }
 }
 
@@ -785,4 +829,245 @@ async fn an_index_that_cannot_be_prepared_is_unavailable_for_its_space_only() {
     assert_eq!(paths(&built), ["notes.md"]);
     assert!(desktop.sessions.projects().await.is_empty());
     desktop.close_window(project).await;
+}
+
+fn found_paths(response: &KnowledgeResponse) -> Vec<String> {
+    let mut paths = response
+        .search_items
+        .iter()
+        .map(|item| item.source.path.clone())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+#[tokio::test]
+async fn search_of_a_project_without_a_window_is_served_by_its_session() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let desktop = Desktop::new();
+    let head = git(project, &["rev-parse", "HEAD"]);
+    let before = sources(project);
+    assert!(!project.join(".svode/index.db").exists());
+
+    // The first read builds the index of every ready Space before it
+    // answers: Pages and Collection items by title and by content.
+    assert_eq!(desktop.search(project, "Notes").await, ["notes.md"]);
+    assert_eq!(desktop.search(project, "Beta").await, ["tasks/beta.md"]);
+    let brief = desktop.knowledge(project, "Brief").await;
+    assert_eq!(found_paths(&brief), ["brief.md"]);
+    assert_eq!(
+        brief.search_items[0].source.space_id.as_deref(),
+        Some("child")
+    );
+    let content = desktop.knowledge(project, "Needle").await;
+    // The registered Space without a folder is reported, not built.
+    assert_eq!(content.readable_pools, 2, "{:?}", content.diagnostics);
+    assert!(
+        content
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.space_id.as_deref() == Some("ghost")),
+        "{:?}",
+        content.diagnostics
+    );
+    assert_eq!(found_paths(&content), ["brief.md", "notes.md"]);
+    assert_eq!(
+        desktop.search(project, "Alpha body").await,
+        ["tasks/alpha.md"]
+    );
+
+    // Recent nodes and the neighbors of a node come from the same index.
+    let recent = desktop.knowledge(project, "").await;
+    assert!(
+        recent
+            .nodes
+            .iter()
+            .any(|node| node.source.path == "notes.md"),
+        "{:?}",
+        recent.nodes
+    );
+    let neighbors = desktop
+        .knowledge_with(
+            project,
+            "",
+            serde_json::from_value(json!({
+                "neighbor": { "spaceId": null, "path": "notes.md", "kind": "page" }
+            }))
+            .unwrap(),
+        )
+        .await;
+    assert!(
+        neighbors.edges.iter().any(|edge| edge
+            .target
+            .as_ref()
+            .is_some_and(|target| target.path == "tasks/alpha.md")),
+        "{:?}",
+        neighbors.edges
+    );
+
+    // The session is not a window runtime and leaves sources and Git alone;
+    // it writes only the device-local index under `.svode`.
+    assert!(!desktop.index.is_project_open(project).await);
+    assert!(desktop.index.existing_pool(&root(project)).await.is_none());
+    assert_eq!(desktop.sessions.projects().await, [project.clone()]);
+    assert_eq!(sources(project), before);
+    assert_eq!(git(project, &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git(project, &["status", "--porcelain", "--untracked-files=no"]),
+        ""
+    );
+
+    // An edit of the files is seen once the recheck window has passed.
+    write(
+        &project.join("child/brief.md"),
+        "---\ntitle: Briefing\n---\nNeedle child body\n",
+    );
+    write(
+        &project.join("extra.md"),
+        "---\ntitle: Extra\n---\nNeedle extra\n",
+    );
+    tokio::time::sleep(RECHECK).await;
+    assert_eq!(desktop.search(project, "Briefing").await, ["brief.md"]);
+    assert_eq!(
+        desktop.search(project, "Needle").await,
+        ["brief.md", "extra.md", "notes.md"]
+    );
+    assert!(desktop.index.existing_pool(&root(project)).await.is_none());
+
+    desktop.sessions.close_all().await;
+    assert_released(project);
+    assert_released(&project.join("child"));
+}
+
+#[tokio::test]
+async fn search_of_a_project_with_a_window_reads_the_window_runtime() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let desktop = Desktop::new();
+    desktop.open_window(project).await;
+
+    // Search neither builds nor checks the index a window runtime keeps.
+    let unbuilt = desktop.search(project, "Notes").await;
+    assert!(unbuilt.is_empty(), "{unbuilt:?}");
+    assert!(desktop.sessions.projects().await.is_empty());
+
+    let pool = desktop.index.existing_pool(&root(project)).await.unwrap();
+    full_reindex::<GitCli>(None, &pool, project, &["child".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(desktop.search(project, "Notes").await, ["notes.md"]);
+    assert_eq!(desktop.search(project, "Needle root").await, ["notes.md"]);
+    assert!(desktop.sessions.projects().await.is_empty());
+    desktop.close_window(project).await;
+}
+
+#[tokio::test]
+async fn a_window_takes_a_search_session_over_after_its_read() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let desktop = Desktop::new();
+
+    // A Search read that picked the session finishes on it while a window
+    // opens the project; the handover closes the session after it.
+    let request = RequestSession::default();
+    let read_project = request
+        .prepare_search(
+            &desktop.sessions,
+            &desktop.index,
+            project,
+            &KnowledgeScope::Project,
+        )
+        .await
+        .unwrap();
+    let session_pool = request
+        .index(&desktop.index)
+        .existing_pool(&root(project))
+        .await
+        .unwrap();
+    let handover = desktop.open_window(project);
+    let finish = async {
+        tokio::task::yield_now().await;
+        let response = svode_core::index::service::read_project_knowledge(
+            request.index(&desktop.index),
+            &read_project,
+            Some(KnowledgeScope::Project),
+            Some("Notes"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            KnowledgeFilters::default(),
+        )
+        .await;
+        assert_eq!(found_paths(&response), ["notes.md"]);
+        drop(request);
+    };
+    tokio::join!(handover, finish);
+    assert!(session_pool.is_closed());
+    assert!(desktop.sessions.projects().await.is_empty());
+
+    // The next read is served by the window runtime.
+    desktop.search(project, "Notes").await;
+    assert!(desktop.sessions.projects().await.is_empty());
+    desktop.close_window(project).await;
+    assert_released(project);
+}
+
+#[tokio::test]
+async fn an_idle_search_session_is_closed_and_reopened_by_the_next_read() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let desktop = Desktop::with_idle(Duration::from_millis(200));
+    desktop.search(project, "Notes").await;
+    assert_eq!(desktop.sessions.projects().await, [project.clone()]);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !desktop.sessions.projects().await.is_empty()
+        || project.join(".svode/index.db-wal").exists()
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the idle session stays open"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_released(project);
+    assert_eq!(desktop.search(project, "Notes").await, ["notes.md"]);
+    desktop.sessions.close_all().await;
+}
+
+#[tokio::test]
+async fn search_repairs_the_index_of_a_project_without_a_window_in_its_session() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    let desktop = Desktop::new();
+    desktop.search(project, "Notes").await;
+    let pool = desktop
+        .lease(project)
+        .await
+        .index()
+        .existing_pool(&root(project))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE knowledge_documents SET title = 'Damaged' WHERE source_path = 'notes.md'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(desktop.search(project, "Damaged").await, ["notes.md"]);
+
+    repair_project(
+        desktop.window.clone(),
+        test_update_state().clone(),
+        &desktop.sessions,
+        project.clone(),
+    )
+    .await;
+    assert!(desktop.search(project, "Damaged").await.is_empty());
+    assert_eq!(desktop.search(project, "Notes").await, ["notes.md"]);
+    assert!(!desktop.index.is_project_open(project).await);
+    assert!(desktop.index.existing_pool(&root(project)).await.is_none());
+    desktop.sessions.close_all().await;
+    assert_released(project);
 }

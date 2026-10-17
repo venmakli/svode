@@ -7,6 +7,7 @@ use tokio::task::JoinSet;
 use crate::error::AppError;
 use crate::index::update::IndexUpdateState;
 use crate::index::{IndexKey, IndexState};
+use crate::project_sessions::{ProjectSessions, RequestSession};
 use svode_core::index::knowledge::{KnowledgeFilters, KnowledgeResponse, KnowledgeScope};
 pub use svode_core::index::service::{SearchResponse, SearchScope};
 
@@ -25,9 +26,12 @@ pub async fn search_by_title(
     )
 }
 
+/// Knowledge snapshot, search and neighbors of Search. A project no window
+/// has open is read from its session, as an index-backed read of the bridge.
 #[allow(clippy::too_many_arguments)]
 pub async fn read_project_knowledge(
     state: &IndexState,
+    sessions: &ProjectSessions,
     project: &Path,
     scope: Option<KnowledgeScope>,
     query: Option<&str>,
@@ -37,10 +41,19 @@ pub async fn read_project_knowledge(
     edge_limit: Option<usize>,
     search_limit: Option<usize>,
     filters: KnowledgeFilters,
-) -> KnowledgeResponse {
-    svode_core::index::service::read_project_knowledge(
-        &state.core,
-        project,
+) -> Result<KnowledgeResponse, AppError> {
+    let request = RequestSession::default();
+    let project = request
+        .prepare_search(
+            sessions,
+            &state.core,
+            project,
+            scope.as_ref().unwrap_or(&KnowledgeScope::Project),
+        )
+        .await?;
+    Ok(svode_core::index::service::read_project_knowledge(
+        request.index(&state.core),
+        &project,
         scope,
         query,
         node_offset,
@@ -50,7 +63,7 @@ pub async fn read_project_knowledge(
         search_limit,
         filters,
     )
-    .await
+    .await)
 }
 
 pub async fn repair_space(
@@ -61,7 +74,20 @@ pub async fn repair_space(
     updates.run_full_reindex(state, key).await
 }
 
-pub async fn repair_project(state: IndexState, updates: IndexUpdateState, project: PathBuf) {
+/// Rebuilds the index of a project for Search: in the window runtime that
+/// has it open, otherwise in the session of the project.
+pub async fn repair_project(
+    state: IndexState,
+    updates: IndexUpdateState,
+    sessions: &ProjectSessions,
+    project: PathBuf,
+) {
+    if RequestSession::default()
+        .repair_index(sessions, &state.core, &project)
+        .await
+    {
+        return;
+    }
     let keys = state.keys_for_project(&project).await;
     let semaphore = Arc::new(Semaphore::new(REINDEX_PARALLELISM));
     let mut tasks = JoinSet::new();

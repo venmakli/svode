@@ -18,8 +18,8 @@ use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, require_repository_mutation_paths};
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
-use crate::mcp::project_sessions::ProjectSessions;
 use crate::process::path_env::ProcessPath;
+use crate::project_sessions::ProjectSessions;
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
 use svode_agents::adapters::{ChatOffer, LaunchUnavailable};
 use svode_agents::registry::{

@@ -1,13 +1,14 @@
-//! Runtime sessions of the projects the bridge serves without a window.
+//! Runtime sessions of the projects the desktop serves without a window.
 //!
-//! An index-backed read of a project that no window has open is served by a
-//! core `ProjectSession` of that project inside the desktop process, with
-//! the headless freshness rule: the first read builds or reconciles the
-//! pools before it answers, a later one checks them again once the last
-//! check is older than a short window. A session starts no watcher, Routine
-//! scheduler or run and delivers nothing to windows. Only an index-backed
-//! read or a Routine write of the project creates it; while it exists,
-//! source reads get its index dates and managed mutations of the project
+//! An index-backed read of a project that no window has open, by the bridge
+//! or by Search of a window, is served by a core `ProjectSession` of that
+//! project inside the desktop process, with the headless freshness rule: the
+//! first read builds or reconciles the pools before it answers, a later one
+//! checks them again once the last check is older than a short window. A
+//! session starts no watcher, Routine scheduler or run and delivers nothing
+//! to windows. Only an index-backed read, an index repair of Search or a
+//! Routine write of the project creates it; while it exists, source reads of
+//! the bridge get its index dates and managed mutations of the project
 //! publish into it.
 //!
 //! A request picks its runtime once and finishes on it. A session is closed
@@ -25,7 +26,7 @@ use svode_core::index::IndexKey;
 use svode_core::index::freshness::IndexFreshness;
 use svode_core::index::knowledge::KnowledgeScope;
 use svode_core::index::state::IndexRuntimeState;
-use svode_core::runtime::session::ProjectSession;
+use svode_core::runtime::session::{ProjectSession, SessionError};
 use svode_tools::error::ToolError;
 use svode_tools::host::{MutationRuntime, open_index_freshness};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock};
@@ -248,8 +249,8 @@ async fn close_when_idle(registry: Weak<Inner>, project: PathBuf, entry: Entry) 
     }
 }
 
-/// Runtime of one bridge request of a project without a window: the
-/// session it picked, once. A request started before a window opens the
+/// Runtime of one bridge or Search request of a project without a window:
+/// the session it picked, once. A request started before a window opens the
 /// project finishes on it; one without a session uses the desktop runtime.
 #[derive(Default)]
 pub(crate) struct RequestSession(OnceLock<SessionLease>);
@@ -279,16 +280,84 @@ impl RequestSession {
         project: &Path,
         scope: &KnowledgeScope,
     ) -> Result<IndexFreshness, ToolError> {
-        let session = match self.0.get() {
-            Some(session) => session,
-            None => match sessions.get_or_create(project, desktop).await {
-                Some(lease) => self.0.get_or_init(|| lease),
-                None => return open_index_freshness(desktop, project, scope).await,
-            },
+        let Some(session) = self.index_session(sessions, desktop, project).await else {
+            return open_index_freshness(desktop, project, scope).await;
         };
         let project = session.open_project(project).await?;
         let keys = session.index().keys_for_scope(project, scope).await?;
         Ok(session.prepare_index(&keys).await?)
+    }
+
+    /// Prepares an index read of Search and returns the Project path it
+    /// reads. A project a window has open is read from its runtime as it
+    /// is; any other one from its session, picked as for a bridge read,
+    /// once the session checked the pools of `scope`. A Space or pool that
+    /// cannot be prepared is reported by the read itself, as in a window.
+    pub(crate) async fn prepare_search(
+        &self,
+        sessions: &ProjectSessions,
+        desktop: &IndexRuntimeState,
+        project: &Path,
+        scope: &KnowledgeScope,
+    ) -> Result<PathBuf, SessionError> {
+        let Some(session) = self.index_session(sessions, desktop, project).await else {
+            return Ok(project.to_path_buf());
+        };
+        let project = session.open_project(project).await?;
+        if let Ok(keys) = session.index().keys_for_scope(project, scope).await
+            && let Err(error) = session.prepare_index(&keys).await
+        {
+            tracing::warn!("the index of a Search read could not be prepared: {error}");
+        }
+        Ok(project.to_path_buf())
+    }
+
+    /// Rebuilds every pool of a project no window has open in its session,
+    /// as Search repairs the index of a window runtime. `false` when a
+    /// window has the project open: its runtime repairs it.
+    pub(crate) async fn repair_index(
+        &self,
+        sessions: &ProjectSessions,
+        desktop: &IndexRuntimeState,
+        project: &Path,
+    ) -> bool {
+        let Some(session) = self.index_session(sessions, desktop, project).await else {
+            return false;
+        };
+        let project = match session.open_project(project).await {
+            Ok(project) => project,
+            Err(error) => {
+                tracing::warn!("the index session of a project could not open it: {error}");
+                return true;
+            }
+        };
+        let git = session.git().cli().ok();
+        for key in session.index().keys_for_project(project).await {
+            if let Err(error) = session
+                .index_updates()
+                .repair_space(session.index(), &key, git)
+                .await
+            {
+                tracing::warn!("project index repair failed for {key:?}: {error}");
+            }
+        }
+        true
+    }
+
+    /// Session of an index-backed request: the one it already picked, or
+    /// the session of a project no window has open, created on its first
+    /// index-backed read; `None` when a window has the project open.
+    async fn index_session(
+        &self,
+        sessions: &ProjectSessions,
+        desktop: &IndexRuntimeState,
+        project: &Path,
+    ) -> Option<&SessionLease> {
+        if let Some(session) = self.0.get() {
+            return Some(session);
+        }
+        let lease = sessions.get_or_create(project, desktop).await?;
+        Some(self.0.get_or_init(|| lease))
     }
 
     /// Brings the session pools a managed mutation publishes into in line
