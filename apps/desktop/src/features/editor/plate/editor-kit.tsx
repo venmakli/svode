@@ -51,6 +51,7 @@ import {
 } from "../model/markdown-comments";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
 import { MarkdownCommentKit } from "./markdown-comment-kit";
+import { SystemDictationPlugin } from "./system-dictation-plugin";
 import { PageLinkElement } from "../ui/page-link-element";
 import { PageLinkInputElement } from "../ui/page-link-input-element";
 import { FloatingToolbar } from "@/components/ui/floating-toolbar";
@@ -145,6 +146,7 @@ export const EditorKit = [
   ...EmojiKit,
   ...ExitBreakKit,
   TrailingBlockPlugin,
+  SystemDictationPlugin,
 
   ConflictPlugin,
   ...MarkdownCommentKit,

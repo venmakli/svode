@@ -35,6 +35,7 @@ import {
   showsRecordingRow,
   VoiceInputButton,
 } from "@/features/voice-input";
+import { SystemDictationPlugin } from "@/features/editor/system-dictation";
 import { isResourceDrag } from "@/features/space/resource-drag";
 import { matchesPhysicalShortcut } from "@/shared/lib/keyboard-shortcuts";
 import { cn } from "@/shared/lib/utils";
@@ -79,6 +80,7 @@ const COMPOSER_PLUGINS = [
   MentionPlugin,
   MentionInputPlugin.withComponent(MentionSearchElement),
   ...COMMAND_PLUGINS,
+  SystemDictationPlugin,
 ];
 
 export interface ComposerProps {

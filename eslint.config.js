@@ -30,6 +30,7 @@ const allowedFeatureSubpathExceptions = new Set([
   "@/features/changes/text-diff",
   "@/features/document/app-shell",
   "@/features/editor/file-tree-sync",
+  "@/features/editor/system-dictation",
   "@/features/media/app-shell",
   "@/features/page/app-shell",
   "@/features/page/detail",
