@@ -2,7 +2,7 @@
 // Packaging smoke of shipped `svode` and `svode-mcp` binaries with the desktop
 // app closed: the binaries in <dir> report the product version, the CLI
 // creates and finds a Page in a fresh Project, and `svode-mcp --project`
-// serves the headless catalog (53 tools, no run_routine) over one stdio
+// serves the headless catalog (54 tools, no run_routine) over one stdio
 // session that ends on EOF, as does `svode-mcp` without arguments started
 // inside the Project.
 //
@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HEADLESS_TOOLS = 53;
+const HEADLESS_TOOLS = 54;
 const dir = resolve(process.argv[2] ?? "");
 if (!process.argv[2]) {
   console.error("usage: node scripts/smoke-standalone.mjs <dir with svode and svode-mcp>");
