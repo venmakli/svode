@@ -527,6 +527,7 @@
   "settings_agents_menu": "Другие действия: {agent}",
   "settings_agents_state_ready": "Готов",
   "settings_agents_state_disabled": "Выключен",
+  "settings_agents_state_not_checked": "Не проверен",
   "settings_agents_state_deferred": "Пока не поддерживается",
   "settings_agents_state_sign_in": "Нужен вход",
   "settings_agents_state_node_missing": "Нужен Node.js {required} или новее",

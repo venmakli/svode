@@ -75,7 +75,8 @@ export function customAgentDefinition(
 /**
  * One state of a custom agent row: what happened in this window, then a
  * command that is not found, then the restriction of what the agent
- * declared, then ready or off.
+ * declared, then not checked while nothing is known of what it declares,
+ * then ready or off.
  */
 export function customAgentRowView(
   setup: CustomAgentSetupDto,
@@ -102,5 +103,6 @@ function customAgentState(
     return { kind: "command_missing", command: setup.command };
   if (setup.restriction)
     return { kind: "limited", restrictions: [setup.restriction] };
+  if (!setup.declared) return { kind: "not_checked" };
   return { kind: setup.enabled ? "ready" : "disabled" };
 }

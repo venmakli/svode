@@ -175,6 +175,8 @@ export function stateText(state: AgentRowState) {
     }
     case "limited":
       return restrictionText(state.restrictions[0]);
+    case "not_checked":
+      return m.settings_agents_state_not_checked();
     case "disabled":
       return m.settings_agents_state_disabled();
     case "ready":
@@ -196,6 +198,8 @@ function actionText(action: AgentRowAction) {
       return m.settings_agents_action_update();
     case "retry":
       return m.settings_agents_action_retry();
+    case "check":
+      return m.settings_agents_check();
   }
 }
 

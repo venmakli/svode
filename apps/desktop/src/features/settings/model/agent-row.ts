@@ -68,6 +68,8 @@ export type AgentRowState =
     }
   /** The first restriction is the main one the row shows. */
   | { kind: "limited"; restrictions: AgentRestriction[] }
+  /** What a custom agent declares for its current command is unknown. */
+  | { kind: "not_checked" }
   | { kind: "disabled" }
   | { kind: "ready" };
 
@@ -75,7 +77,7 @@ export type AgentCliWarning =
   | { kind: "untested"; testedUpTo: string }
   | { kind: "unknown" };
 
-export type AgentRowAction = "sign_in" | "update" | "retry";
+export type AgentRowAction = "sign_in" | "update" | "retry" | "check";
 
 export interface AgentRowView {
   state: AgentRowState;
@@ -171,6 +173,8 @@ export function actionFor(
     case "failed":
     case "failed_to_start":
       return "retry";
+    case "not_checked":
+      return "check";
     default:
       return null;
   }

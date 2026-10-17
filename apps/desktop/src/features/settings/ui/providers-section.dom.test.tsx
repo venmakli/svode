@@ -1641,7 +1641,7 @@ if (!isolatedProcess) {
       expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
       const row = () => agentRow(harness.dom, "custom-my-acp-agent");
       expect(title(row())).toBe("My ACP agent");
-      expect(stateOf(row())).toBe("Ready");
+      expect(stateOf(row())).toBe("Not checked");
 
       // Turning a custom agent off and on installs and asks nothing.
       await act(async () => {
@@ -1653,12 +1653,12 @@ if (!isolatedProcess) {
         "set_enabled",
         { agent: "custom-my-acp-agent", enabled: false },
       ]);
-      expect(stateOf(row())).toBe("Off");
+      expect(stateOf(row())).toBe("Not checked");
       await act(async () => {
         switchOf(row()).click();
         await settle();
       });
-      expect(stateOf(row())).toBe("Ready");
+      expect(stateOf(row())).toBe("Not checked");
 
       await chooseMenuItem(harness.dom, "custom-my-acp-agent", "Check");
       expect(calls.at(-1)).toEqual([
@@ -1809,6 +1809,130 @@ if (!isolatedProcess) {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
     }
+  });
+
+  test("a custom agent with nothing known of what its command declares is Not checked with Check after a missing command and the restriction, and Check reads Ready after Refresh, in en and ru", async () => {
+    const originalLocale = getLocale();
+    const capabilities = (all: boolean) => ({
+      loadSession: true,
+      listSessions: all,
+      resumeSession: false,
+      closeSession: false,
+    });
+    const texts = {
+      en: {
+        missing: "Command not found: no-such-agent",
+        limited:
+          "New sessions only: the agent declares no session list or session loading",
+        notChecked: "Not checked",
+        check: "Check",
+        checked:
+          "Check passed · scripted 1.0.0 · declares session list, history",
+        refresh: "Refresh",
+        ready: "Ready",
+      },
+      ru: {
+        missing: "Команда не найдена: no-such-agent",
+        limited:
+          "Только новые сессии: агент не объявил список или загрузку сессий",
+        notChecked: "Не проверен",
+        check: "Проверить",
+        checked:
+          "Проверка пройдена · scripted 1.0.0 · объявляет список сессий, историю",
+        refresh: "Обновить",
+        ready: "Готов",
+      },
+    };
+    for (const locale of ["en", "ru"] as const) {
+      const text = texts[locale];
+      await setLocale(locale, { reload: false });
+      const definition = {
+        name: "Scripted",
+        command: "scripted",
+        args: [],
+        env: {},
+      };
+      let customAgents = [
+        customSetup(
+          "custom-missing",
+          { ...definition, name: "Missing", command: "no-such-agent" },
+          { executablePath: null },
+        ),
+        customSetup(
+          "custom-limited",
+          { ...definition, name: "Limited" },
+          {
+            declared: {
+              name: "scripted",
+              version: "1.0.0",
+              capabilities: capabilities(false),
+            },
+            restriction: "new_session_only",
+          },
+        ),
+        customSetup("custom-unknown", definition),
+      ];
+      const checks: Record<string, unknown>[] = [];
+      const harness = await renderSection(
+        () => providersStatus([client("codex", "Codex", false)]),
+        () => {},
+        undefined,
+        {
+          agent_custom_list: () => customAgents,
+          agent_runtime_check: (args) => {
+            checks.push(args);
+            const agent = {
+              name: "scripted",
+              version: "1.0.0",
+              capabilities: capabilities(true),
+            };
+            customAgents = customAgents.map((setup) =>
+              setup.agent === args.agent
+                ? { ...setup, declared: agent }
+                : setup,
+            );
+            return { state: "ready", agent };
+          },
+        },
+      );
+      try {
+        // Reading the rows starts no agent.
+        expect(harness.commands.includes("agent_runtime_check")).toBe(false);
+        const missing = agentRow(harness.dom, "custom-missing");
+        const limited = agentRow(harness.dom, "custom-limited");
+        const unknown = () => agentRow(harness.dom, "custom-unknown");
+        expect(stateOf(missing)).toBe(text.missing);
+        expect(stateOf(limited)).toBe(text.limited);
+        expect(stateOf(unknown())).toBe(text.notChecked);
+        expect(
+          unknown()
+            .querySelector("[data-agent-state]")
+            ?.classList.contains("text-destructive"),
+        ).toBe(false);
+        // Only the agent whose declarations are unknown offers the check.
+        expect(within(missing, text.check) === undefined).toBe(true);
+        expect(within(limited, text.check) === undefined).toBe(true);
+
+        await act(async () => {
+          within(unknown(), text.check).click();
+          await settle();
+        });
+        // The same check the ⋯ menu runs.
+        expect(checks).toEqual([{ agent: "custom-unknown" }]);
+        expect(stateOf(unknown())).toBe(text.checked);
+        expect(within(unknown(), text.check) === undefined).toBe(true);
+
+        await act(async () => {
+          findButton(harness.dom, text.refresh).click();
+          await settle();
+        });
+        expect(stateOf(unknown())).toBe(text.ready);
+        expect(stateOf(limited)).toBe(text.limited);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+    await setLocale(originalLocale, { reload: false });
   });
 }
 

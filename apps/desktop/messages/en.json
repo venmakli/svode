@@ -527,6 +527,7 @@
   "settings_agents_menu": "More actions for {agent}",
   "settings_agents_state_ready": "Ready",
   "settings_agents_state_disabled": "Off",
+  "settings_agents_state_not_checked": "Not checked",
   "settings_agents_state_deferred": "Not supported yet",
   "settings_agents_state_sign_in": "Sign-in required",
   "settings_agents_state_node_missing": "Needs Node.js {required} or newer",

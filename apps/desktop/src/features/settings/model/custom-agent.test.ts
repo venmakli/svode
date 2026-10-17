@@ -61,27 +61,56 @@ test("a draft is one argument and one NAME=value per line, name and command requ
   });
 });
 
-test("a custom row shows activity, then a missing command, then its restriction, then ready or off", () => {
-  expect(customAgentRowView(setup(), null).state).toEqual({ kind: "ready" });
-  expect(customAgentRowView(setup({ enabled: false }), null).state).toEqual({
-    kind: "disabled",
-  });
-  expect(
-    customAgentRowView(setup({ restriction: "new_session_only" }), null).state,
-  ).toEqual({ kind: "limited", restrictions: ["new_session_only"] });
-  expect(
-    customAgentRowView(
-      setup({ executablePath: null, restriction: "new_session_only" }),
-      null,
-    ).state,
-  ).toEqual({ kind: "command_missing", command: "hermes" });
-
+test("a custom row shows activity, then a missing command, then its restriction, then not checked, then ready or off", () => {
   const capabilities = {
     loadSession: true,
     listSessions: true,
     resumeSession: false,
     closeSession: false,
   };
+  const declared = { name: "hermes-agent", version: "unknown", capabilities };
+  expect(customAgentRowView(setup({ declared }), null).state).toEqual({
+    kind: "ready",
+  });
+  expect(
+    customAgentRowView(setup({ declared, enabled: false }), null).state,
+  ).toEqual({ kind: "disabled" });
+  // Nothing is known of what the current command declares: the row offers
+  // the check instead of claiming ready.
+  const unknown = customAgentRowView(setup(), null);
+  expect(unknown.state).toEqual({ kind: "not_checked" });
+  expect(unknown.action).toBe("check");
+  expect(customAgentRowView(setup({ enabled: false }), null).state).toEqual({
+    kind: "not_checked",
+  });
+  const limited = customAgentRowView(
+    setup({
+      declared: {
+        ...declared,
+        capabilities: { ...capabilities, listSessions: false },
+      },
+      restriction: "new_session_only",
+    }),
+    null,
+  );
+  expect(limited.state).toEqual({
+    kind: "limited",
+    restrictions: ["new_session_only"],
+  });
+  expect(limited.action).toBeNull();
+  expect(
+    customAgentRowView(
+      setup({ executablePath: null, restriction: "new_session_only" }),
+      null,
+    ).state,
+  ).toEqual({ kind: "command_missing", command: "hermes" });
+  expect(
+    customAgentRowView(setup({ executablePath: null }), null).state,
+  ).toEqual({ kind: "command_missing", command: "hermes" });
+  expect(
+    customAgentRowView(setup(), { kind: "pending", operation: "check" }).state,
+  ).toEqual({ kind: "pending", operation: "check" });
+
   const checked = customAgentRowView(setup({ executablePath: null }), {
     kind: "checked",
     result: {
