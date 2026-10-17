@@ -137,7 +137,10 @@ export interface CustomAgentSetupDto extends CustomAgentDefinitionDto {
   enabled: boolean;
   /** `null` when the command is not found. */
   executablePath: string | null;
-  /** What the agent declared in its last start in this app process. */
+  /**
+   * What the agent declared in its last start with its current command,
+   * arguments and variables, kept on this device; `null` while unknown.
+   */
   declared: AgentInfoDto | null;
   restriction: "new_session_only" | null;
 }

@@ -2390,8 +2390,11 @@ async fn an_agent_that_declares_no_list_is_no_catalogue_and_its_declaration_is_k
     drop(agent);
     runtime.close_connection(id).await.unwrap();
     assert!(runtime.declared("custom-agent").is_some());
-    runtime.forget_declared("custom-agent");
+    runtime.restore_declared("custom-agent", None);
     assert_eq!(runtime.declared("custom-agent"), None);
+    // What the host kept is what a later process knows before it starts.
+    runtime.restore_declared("custom-agent", Some(declared.clone()));
+    assert_eq!(runtime.declared("custom-agent"), Some(declared));
 }
 
 #[tokio::test]

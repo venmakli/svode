@@ -2,7 +2,8 @@
 //! name, a command with its arguments and variables, and an id in the
 //! custom namespace. Svode knows only what the agent declares in
 //! `initialize`; it has no native readers, no Actor binding and no Svode
-//! tools. The host stores the definitions; nothing here starts a process.
+//! tools. The host stores the definitions with what each declared; nothing
+//! here starts a process.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -86,6 +87,13 @@ impl CustomAgentDefinition {
         }
         Ok(self)
     }
+
+    /// Whether `other` starts the same process: the same command, arguments
+    /// and variables. What the agent declares belongs to this launch
+    /// definition; the name is not part of it.
+    pub fn launches_as(&self, other: &Self) -> bool {
+        self.command == other.command && self.args == other.args && self.env == other.env
+    }
 }
 
 fn is_variable_name(name: &str) -> bool {
@@ -150,8 +158,8 @@ pub struct CustomAgentSetup {
     pub enabled: bool,
     /// `None` when the command is not found.
     pub executable_path: Option<PathBuf>,
-    /// What the agent declared in its last `initialize` in this app
-    /// process; `None` before its first check or session.
+    /// What the agent declared in its last `initialize` with its current
+    /// launch definition, kept on this device; `None` while unknown.
     pub declared: Option<AgentInfo>,
     pub restriction: Option<CustomAgentRestriction>,
 }
@@ -194,22 +202,42 @@ pub fn custom_launch_plan(
     if enabled_choice == Some(false) {
         return Err(LaunchUnavailable::Disabled);
     }
+    launch_plan(agent.id.agent_id().as_str(), &agent.definition, context)
+}
+
+/// The agent id of a check of a definition before it is saved: outside the
+/// agent id grammar, so it is no saved agent's.
+const DRAFT_CHECK_AGENT: &str = "custom draft check";
+
+/// The launch plan of the user's check of a definition before it is saved:
+/// what the agent declares stays with the check instead of a saved agent,
+/// and the check is no catalogue source.
+pub fn custom_draft_launch_plan(
+    definition: &CustomAgentDefinition,
+    context: &LaunchContext,
+) -> Result<AcpLaunch, LaunchUnavailable> {
+    let mut launch = launch_plan(DRAFT_CHECK_AGENT, definition, context)?;
+    launch.lists_catalog = false;
+    Ok(launch)
+}
+
+fn launch_plan(
+    agent: &str,
+    definition: &CustomAgentDefinition,
+    context: &LaunchContext,
+) -> Result<AcpLaunch, LaunchUnavailable> {
     let target = &context.target;
     let home = system_home_dir().unwrap_or_else(|| target.cwd.clone());
-    let program = resolve_custom_command(
-        &agent.definition.command,
-        &home,
-        target.search_path.as_deref(),
-    )
-    .ok_or_else(|| LaunchUnavailable::ExecutableMissing {
-        executable: agent.definition.command.clone(),
-    })?;
+    let program = resolve_custom_command(&definition.command, &home, target.search_path.as_deref())
+        .ok_or_else(|| LaunchUnavailable::ExecutableMissing {
+            executable: definition.command.clone(),
+        })?;
     let mut env = context.env.clone();
-    env.extend(agent.definition.env.clone());
+    env.extend(definition.env.clone());
     Ok(AcpLaunch {
-        agent: agent.id.agent_id().as_str().to_string(),
+        agent: agent.to_string(),
         program,
-        args: agent.definition.args.clone(),
+        args: definition.args.clone(),
         environment: context.environment.clone(),
         env,
         cwd: target.cwd.clone(),
@@ -388,6 +416,35 @@ mod tests {
                 .program,
             program
         );
+
+        // A draft starts the same command under no saved agent's id.
+        let draft = custom_draft_launch_plan(&by_path.definition, &context).unwrap();
+        assert!(svode_core::agent_adapters::AgentId::parse(&draft.agent).is_err());
+        assert_eq!(draft.program, program);
+        assert_eq!(draft.args, ["acp"]);
+        assert_eq!(draft.env.get("MODE").map(String::as_str), Some("acp"));
+        assert!(!draft.lists_catalog, "a check is no catalogue source");
+    }
+
+    #[test]
+    fn the_launch_definition_is_the_command_its_arguments_and_variables() {
+        let saved = definition("Agent", "agent");
+        assert!(saved.launches_as(&CustomAgentDefinition {
+            name: "Renamed".into(),
+            ..saved.clone()
+        }));
+        let mut other_variable = saved.clone();
+        other_variable.env.insert("MODE".into(), "other".into());
+        for changed in [
+            definition("Agent", "other-agent"),
+            CustomAgentDefinition {
+                args: Vec::new(),
+                ..saved.clone()
+            },
+            other_variable,
+        ] {
+            assert!(!saved.launches_as(&changed), "{changed:?}");
+        }
     }
 
     #[test]

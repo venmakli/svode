@@ -1514,6 +1514,11 @@ if (!isolatedProcess) {
       resumeSession: all,
       closeSession: false,
     });
+    const scripted = {
+      name: "scripted",
+      version: "1.0.0",
+      capabilities: declared(false),
+    };
     const status = providersStatus([
       client("claude-code", "Claude Code", true),
       client("codex", "Codex", true),
@@ -1526,21 +1531,16 @@ if (!isolatedProcess) {
         agent_custom_list: () => customAgents,
         agent_custom_check: (args) => {
           calls.push(["check", args]);
-          return {
-            state: "ready",
-            agent: {
-              name: "scripted",
-              version: "1.0.0",
-              capabilities: declared(false),
-            },
-          };
+          return { state: "ready", agent: scripted };
         },
+        // The form's passed check of the added definition goes with it.
         agent_custom_add: (args) => {
           calls.push(["add", args]);
           customAgents = [
             customSetup(
               "custom-my-acp-agent",
               args.definition as CustomAgentDefinitionDto,
+              { declared: scripted, restriction: "new_session_only" },
             ),
           ];
           return customAgents[0];
@@ -1640,8 +1640,10 @@ if (!isolatedProcess) {
       expect(calls[1]).toEqual(["add", { definition }]);
       expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
       const row = () => agentRow(harness.dom, "custom-my-acp-agent");
+      const newSessionsOnly =
+        "New sessions only: the agent declares no session list or session loading";
       expect(title(row())).toBe("My ACP agent");
-      expect(stateOf(row())).toBe("Not checked");
+      expect(stateOf(row())).toBe(newSessionsOnly);
 
       // Turning a custom agent off and on installs and asks nothing.
       await act(async () => {
@@ -1653,12 +1655,13 @@ if (!isolatedProcess) {
         "set_enabled",
         { agent: "custom-my-acp-agent", enabled: false },
       ]);
-      expect(stateOf(row())).toBe("Not checked");
+      expect(switchOf(row()).getAttribute("aria-checked")).toBe("false");
       await act(async () => {
         switchOf(row()).click();
         await settle();
       });
-      expect(stateOf(row())).toBe("Not checked");
+      expect(switchOf(row()).getAttribute("aria-checked")).toBe("true");
+      expect(stateOf(row())).toBe(newSessionsOnly);
 
       await chooseMenuItem(harness.dom, "custom-my-acp-agent", "Check");
       expect(calls.at(-1)).toEqual([
@@ -1725,6 +1728,16 @@ if (!isolatedProcess) {
     };
     let customAgents = [
       customSetup("custom-hermes-acp", definition, {
+        declared: {
+          name: "hermes-agent",
+          version: "0.13.0",
+          capabilities: {
+            loadSession: true,
+            listSessions: false,
+            resumeSession: false,
+            closeSession: false,
+          },
+        },
         restriction: "new_session_only",
       }),
       customSetup(
@@ -1749,10 +1762,14 @@ if (!isolatedProcess) {
               name: "1KEY",
               message: "1KEY is not a valid environment variable name",
             };
+          // Only the name changes, which keeps what the agent declared.
           const next = customSetup(
             String(args.agent),
             args.definition as CustomAgentDefinitionDto,
-            { restriction: "new_session_only" },
+            {
+              declared: customAgents[0].declared,
+              restriction: customAgents[0].restriction,
+            },
           );
           customAgents = [next, customAgents[1]];
           return next;
@@ -1805,6 +1822,9 @@ if (!isolatedProcess) {
       });
       expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
       expect(title(agentRow(harness.dom, "custom-hermes-acp"))).toBe("Hermes");
+      expect(stateOf(agentRow(harness.dom, "custom-hermes-acp"))).toBe(
+        "Только новые сессии: агент не объявил список или загрузку сессий",
+      );
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });

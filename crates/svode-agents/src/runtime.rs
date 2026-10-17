@@ -631,9 +631,14 @@ impl AgentRuntime {
         self.inner.declared.lock().unwrap().get(agent).cloned()
     }
 
-    /// Forgets what the agent declared, once its definition changed.
-    pub fn forget_declared(&self, agent: &str) {
-        self.inner.declared.lock().unwrap().remove(agent);
+    /// Sets what the agent declared to what the host keeps of it: on start,
+    /// and when its definition changed; `None` forgets it.
+    pub fn restore_declared(&self, agent: &str, declared: Option<AgentInfo>) {
+        let mut known = self.inner.declared.lock().unwrap();
+        match declared {
+            Some(info) => known.insert(agent.to_string(), info),
+            None => known.remove(agent),
+        };
     }
 
     /// One open connection per agent whose `session/list` is its declared

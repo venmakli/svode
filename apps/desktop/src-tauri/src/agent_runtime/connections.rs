@@ -23,28 +23,33 @@ use svode_agents::native_settings::{NativeSessionSettings, SessionValues, sessio
 use svode_agents::prompt::PromptPart;
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterRefusal};
 use svode_agents::{
-    AcpLaunch, AgentCheck, AgentRuntime, AgentRuntimeError, ConnectionLease, SettingValue,
+    AcpLaunch, AgentCheck, AgentInfo, AgentRuntime, AgentRuntimeError, ConnectionLease,
+    SettingValue,
 };
 use svode_core::agent_adapters::AgentAdapterKind;
 
 pub(crate) type PlanFuture<'a> =
     Pin<Box<dyn Future<Output = Result<AcpLaunch, LaunchUnavailable>> + Send + 'a>>;
+pub(crate) type KeepFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 /// What the host knows about agents: which ones list their catalogue over
-/// ACP and how an available one launches.
+/// ACP, how an available one launches and what it keeps of what agents
+/// declared.
 pub(crate) trait LaunchPlanner: Send + Sync {
     /// Agents whose `session/list` is their declared catalogue source.
     fn catalog_agents(&self) -> Vec<String>;
     /// The launch plan of an available agent, or why it is not available;
     /// starts nothing.
     fn plan<'a>(&'a self, agent: &'a str) -> PlanFuture<'a>;
-    /// The launch plan of a custom agent the user is adding (`agent: None`)
-    /// or editing, before it is saved.
-    fn plan_draft<'a>(
-        &'a self,
-        agent: Option<&'a str>,
-        definition: CustomAgentDefinition,
-    ) -> PlanFuture<'a>;
+    /// The launch plan of a custom agent's definition before it is saved;
+    /// what it declares is no saved agent's.
+    fn plan_draft(&self, definition: CustomAgentDefinition) -> PlanFuture<'_>;
+    /// What the host keeps of what agents declared: the runtime knows it
+    /// before they start.
+    fn declarations(&self) -> Vec<(String, AgentInfo)>;
+    /// The agent declared `info` in an `initialize` of `launch`; a host that
+    /// keeps it does so while `launch` is still the agent's plan.
+    fn keep_declared<'a>(&'a self, launch: &'a AcpLaunch, info: &'a AgentInfo) -> KeepFuture<'a>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -167,6 +172,9 @@ impl CatalogDemand {
 
 impl AgentConnections {
     pub(crate) fn new(runtime: AgentRuntime, planner: impl LaunchPlanner + 'static) -> Self {
+        for (agent, info) in planner.declarations() {
+            runtime.restore_declared(&agent, Some(info));
+        }
         Self {
             runtime,
             planner: Box::new(planner),
@@ -195,16 +203,28 @@ impl AgentConnections {
             .acquire(launch.clone())
             .await
             .map_err(ConnectRefusal::Failed)?;
+        if let Some(info) = self
+            .runtime
+            .connection_status(lease.connection())
+            .and_then(|status| status.agent)
+        {
+            self.planner.keep_declared(&launch, &info).await;
+        }
         Ok((lease, launch))
     }
 
     /// The user's explicit check: start, `initialize`, close unless the
     /// connection has another reason to live.
     pub async fn check(&self, agent: &str) -> AgentCheck {
-        match self.planner.plan(agent).await {
-            Ok(launch) => self.runtime.check(launch).await,
-            Err(reason) => AgentCheck::Unavailable { reason },
+        let launch = match self.planner.plan(agent).await {
+            Ok(launch) => launch,
+            Err(reason) => return AgentCheck::Unavailable { reason },
+        };
+        let check = self.runtime.check(launch.clone()).await;
+        if let AgentCheck::Ready { agent: info } = &check {
+            self.planner.keep_declared(&launch, info).await;
         }
+        check
     }
 
     /// A new session draft chose `agent` (Stage 10 `04`, a C1 boundary): its
@@ -469,12 +489,8 @@ impl AgentConnections {
     }
 
     /// The user's check of a custom agent's definition before it is saved.
-    pub async fn check_draft(
-        &self,
-        agent: Option<&str>,
-        definition: CustomAgentDefinition,
-    ) -> AgentCheck {
-        match self.planner.plan_draft(agent, definition).await {
+    pub async fn check_draft(&self, definition: CustomAgentDefinition) -> AgentCheck {
+        match self.planner.plan_draft(definition).await {
             Ok(launch) => self.runtime.check(launch).await,
             Err(reason) => AgentCheck::Unavailable { reason },
         }
@@ -530,8 +546,8 @@ impl AgentConnections {
     }
 
     /// Agents whose catalogue connection an open collection needs; none
-    /// while no collection is open. An agent that declared no list in this
-    /// process is not started for it again.
+    /// while no collection is open. An agent that declared no list, in this
+    /// process or as the host keeps it, is not started for it again.
     pub(crate) fn held_catalog_agents(&self) -> Vec<String> {
         if self.catalog.lock().unwrap().holds.is_empty() {
             return Vec::new();

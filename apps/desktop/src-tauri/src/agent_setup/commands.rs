@@ -270,14 +270,18 @@ pub async fn agent_custom_add(
     sessions: State<'_, AgentSessionsState>,
     definition: CustomAgentDefinition,
 ) -> Result<CustomAgentSetup, AppError> {
-    let agent = state.add_custom_agent(definition)?;
-    sessions.acp_lists.remember(agent.id.agent_id().as_str());
+    let (agent, declared) = state.add_custom_agent(definition)?;
+    let id = agent.id.agent_id().as_str();
+    runtime.runtime().restore_declared(id, declared);
+    sessions.acp_lists.remember(id);
     let _ = app.emit(CUSTOM_AGENTS_CHANGED_EVENT, ());
     custom_setup(&state, &runtime, &agent).await
 }
 
-/// A changed command is another process: what the agent declared and its
-/// catalogue connection are dropped. Its sessions keep their ids.
+/// A changed command, arguments or variables are another process: what the
+/// agent declared is dropped unless the form checked the new definition,
+/// and its catalogue connection is dropped. A new name keeps what it
+/// declared. Its sessions keep their ids.
 #[tauri::command]
 pub async fn agent_custom_update(
     app: AppHandle,
@@ -287,10 +291,10 @@ pub async fn agent_custom_update(
     agent: CustomAgentId,
     definition: CustomAgentDefinition,
 ) -> Result<CustomAgentSetup, AppError> {
-    let agent = state.update_custom_agent(agent, definition)?;
+    let (agent, declared) = state.update_custom_agent(agent, definition)?;
     let id = agent.id.agent_id().as_str();
     connections.forget_agent(id);
-    runtime.runtime().forget_declared(id);
+    runtime.runtime().restore_declared(id, declared);
     let _ = app.emit(CUSTOM_AGENTS_CHANGED_EVENT, ());
     custom_setup(&state, &runtime, &agent).await
 }
@@ -310,7 +314,7 @@ pub async fn agent_custom_remove(
     state.remove_custom_agent(&agent)?;
     let id = agent.agent_id().as_str();
     connections.forget_agent(id);
-    runtime.runtime().forget_declared(id);
+    runtime.runtime().restore_declared(id, None);
     sessions.acp_lists.forget(id);
     let _ = app.emit(CUSTOM_AGENTS_CHANGED_EVENT, ());
     Ok(())
@@ -336,14 +340,17 @@ pub async fn agent_custom_set_enabled(
 
 /// The user's check of a definition in the form, before it is saved:
 /// starts the command, runs `initialize` and closes it. `agent` is the
-/// custom agent being edited, none for a new one.
+/// custom agent being edited, none for a new one; what the check declared
+/// is that agent's only once the form saves this launch definition.
 #[tauri::command]
 pub async fn agent_custom_check(
+    state: State<'_, AgentSetupState>,
     connections: State<'_, Arc<AgentConnections>>,
     agent: Option<CustomAgentId>,
     definition: CustomAgentDefinition,
 ) -> Result<AgentCheck, AppError> {
     let definition = definition.normalized()?;
-    let agent = agent.map(|agent| agent.agent_id().as_str().to_string());
-    Ok(connections.check_draft(agent.as_deref(), definition).await)
+    let check = connections.check_draft(definition.clone()).await;
+    state.remember_draft_check(agent, definition, &check);
+    Ok(check)
 }

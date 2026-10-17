@@ -14,7 +14,7 @@ use tauri::async_runtime::JoinHandle;
 
 use super::*;
 use crate::agent_runtime::connections::{
-    AgentConnections, LaunchPlanner, PlanFuture, SessionOpening,
+    AgentConnections, KeepFuture, LaunchPlanner, PlanFuture, SessionOpening,
 };
 use svode_agents::activity::WriterState;
 use svode_agents::identity::SessionKey;
@@ -70,12 +70,23 @@ impl LaunchPlanner for ScriptedPlanner {
         Box::pin(async move { plan })
     }
 
-    fn plan_draft<'a>(
-        &'a self,
-        agent: Option<&'a str>,
+    fn plan_draft(
+        &self,
         _definition: svode_agents::custom::CustomAgentDefinition,
-    ) -> PlanFuture<'a> {
-        self.plan(agent.unwrap_or("draft"))
+    ) -> PlanFuture<'_> {
+        self.plan("draft")
+    }
+
+    fn declarations(&self) -> Vec<(String, svode_agents::AgentInfo)> {
+        Vec::new()
+    }
+
+    fn keep_declared<'a>(
+        &'a self,
+        _launch: &'a AcpLaunch,
+        _info: &'a svode_agents::AgentInfo,
+    ) -> KeepFuture<'a> {
+        Box::pin(async {})
     }
 }
 
@@ -333,30 +344,18 @@ async fn a_custom_agent_lists_under_its_own_id_and_one_without_a_list_starts_onc
 #[tokio::test]
 async fn a_draft_check_starts_the_command_and_reports_what_it_declares() {
     let runtime = runtime();
-    let (connections, _) = owner(
-        &runtime,
-        vec![("custom-draft", Ok(scripted("custom-draft", "none")))],
-    );
+    let (connections, _) = owner(&runtime, vec![("draft", Ok(scripted("draft", "none")))]);
     let definition = svode_agents::custom::CustomAgentDefinition {
         name: "Draft".into(),
         command: "/bin/sh".into(),
         args: Vec::new(),
         env: BTreeMap::new(),
     };
-    let AgentCheck::Ready { agent } = connections
-        .check_draft(Some("custom-draft"), definition)
-        .await
-    else {
+    let AgentCheck::Ready { agent } = connections.check_draft(definition).await else {
         panic!("the draft starts");
     };
     assert!(!agent.capabilities.list_sessions);
     assert!(open_agents(&runtime).is_empty(), "closed right after");
-    assert_eq!(
-        runtime
-            .declared("custom-draft")
-            .map(|info| info.capabilities.list_sessions),
-        Some(false)
-    );
 }
 
 #[test]
