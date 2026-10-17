@@ -807,6 +807,7 @@ for (const [path, event] of [
       target: "page",
       onPageGone: () => (gone += 1),
     });
+    const toasts = captureToasts();
     try {
       view.pages.delete(README);
       await view.fileEvent(path, event);
@@ -814,6 +815,7 @@ for (const [path, event] of [
       await view.fileEvent(README, "file:deleted");
       expect(gone).toBe(1);
     } finally {
+      toasts.restore();
       await view.cleanup();
     }
   });
