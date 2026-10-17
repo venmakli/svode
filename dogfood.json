@@ -5,6 +5,23 @@
     {
       "kind": "ci-build",
       "version": "0.0.9",
+      "commit": "787ef797d444a8051fc8cf8dfca7d9601a187b81",
+      "sourceRef": "main",
+      "runId": 39076587150,
+      "publishedAt": "2026-10-17T23:33:55.694Z",
+      "expiresAt": "2026-10-20T23:33:55.694Z",
+      "reason": "Stage 10 dogfood fixes",
+      "platforms": {
+        "darwin": {
+          "url": "https://github.com/venmakli/svode/actions/runs/39076587150/artifacts/12117349392",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/39076587150",
+          "artifactName": "Svode-macos-dmg"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.9",
       "commit": "d914b63b8b20117e6ba2fba67b89540a85d394f2",
       "sourceRef": "main",
       "runId": 39004305461,
