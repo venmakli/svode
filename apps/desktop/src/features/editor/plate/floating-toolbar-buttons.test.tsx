@@ -19,9 +19,6 @@ test("active formatting hints match installed bindings in both locales and platf
   for (const [key, keys] of bindings) {
     expect(editor.getPlugin({ key }).shortcuts.toggle?.keys).toEqual(keys);
   }
-  expect(editor.getOptions(LinkPlugin).triggerFloatingLinkHotkeys).toBe(
-    "meta+k, ctrl+k",
-  );
   const previous = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   try {
     for (const mac of [true, false]) {

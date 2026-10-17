@@ -52,6 +52,7 @@ import {
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
 import { MarkdownCommentKit } from "./markdown-comment-kit";
 import { SystemDictationPlugin } from "./system-dictation-plugin";
+import { LinkShortcutPlugin } from "./link-shortcut-plugin";
 import { PageLinkElement } from "../ui/page-link-element";
 import { PageLinkInputElement } from "../ui/page-link-input-element";
 import { FloatingToolbar } from "@/components/ui/floating-toolbar";
@@ -60,11 +61,14 @@ import { PageLinkFloatingToolbar } from "../ui/page-link-toolbar";
 
 const ProductLinkKit = [
   LinkPlugin.configure({
+    // ⌘K is LinkShortcutPlugin's: a link or Search, never both.
+    options: { triggerFloatingLinkHotkeys: "" },
     render: {
       node: PageLinkElement,
       afterEditable: () => <PageLinkFloatingToolbar />,
     },
   }),
+  LinkShortcutPlugin,
 ];
 
 const ProductMentionKit = [

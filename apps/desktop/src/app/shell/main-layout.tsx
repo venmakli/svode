@@ -79,6 +79,8 @@ import { PinnedSidebarSection } from "./pinned-sidebar-section";
 import { useKeepEditedObjects } from "./working-set";
 import { passNavigationGuards } from "./navigation-guards";
 import { cn } from "@/shared/lib/utils";
+import { shortcutLabel } from "@/shared/lib/shortcut-description";
+import { searchShortcut } from "./model/shortcut-descriptions";
 import { ShellViewContext, useShellView, type ShellView } from "./shell-view";
 import {
   HomeEntry,
@@ -302,6 +304,7 @@ function ShellLayoutContent({
         onActivateContent={onActivateContent}
         onBeforeNavigation={onBeforeNavigation}
         onOpenSearch={onOpenSearch}
+        searchShortcut={shortcutLabel(searchShortcut)}
         onNewSession={startSessionInPeek}
         onNewTerminal={newSpaceTerminal}
         allProjectsItem={<AllProjectsSidebarRow />}

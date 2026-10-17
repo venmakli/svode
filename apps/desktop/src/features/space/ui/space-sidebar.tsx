@@ -19,6 +19,8 @@ interface SpaceSidebarProps {
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
   onOpenSearch: () => void;
+  /** The Search shortcut of this platform, shown on the Search row. */
+  searchShortcut: string;
   /** Starts a new agent session in the Space at this path. */
   onNewSession?: (spacePath: string) => void;
   /** Opens a new terminal panel tab in the Space at this path. */
@@ -36,6 +38,7 @@ export function SpaceSidebar({
   onActivateContent,
   onBeforeNavigation,
   onOpenSearch,
+  searchShortcut,
   onNewSession,
   onNewTerminal,
   allProjectsItem,
@@ -51,6 +54,7 @@ export function SpaceSidebar({
           allProjectsItem={allProjectsItem}
           newSessionItem={newSessionItem}
           onOpenSearch={onOpenSearch}
+          searchShortcut={searchShortcut}
         />
         {navigationSections}
         <NavSpaces
@@ -70,10 +74,12 @@ function TopLevelSidebarActions({
   allProjectsItem,
   newSessionItem,
   onOpenSearch,
+  searchShortcut,
 }: {
   allProjectsItem?: ReactNode;
   newSessionItem?: ReactNode;
   onOpenSearch: () => void;
+  searchShortcut: string;
 }) {
   return (
     <SidebarMenu className="px-2 py-2">
@@ -90,7 +96,7 @@ function TopLevelSidebarActions({
             "group-hover/menu-item:opacity-100 group-focus-within/menu-item:opacity-100",
           )}
         >
-          {"\u2318"}P
+          {searchShortcut}
         </SidebarMenuBadge>
       </SidebarMenuItem>
     </SidebarMenu>

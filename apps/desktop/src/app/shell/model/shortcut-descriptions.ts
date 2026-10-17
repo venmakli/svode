@@ -23,13 +23,15 @@ export const newSessionShortcut: ShortcutDescription = {
   context: m.shortcuts_all_projects_context,
 };
 
+export const searchShortcut: ShortcutDescription = {
+  id: "search",
+  label: m.shortcuts_search,
+  keys: [["Mod", "K"]],
+  context: m.shortcuts_search_context,
+};
+
 export const shellShortcuts = [
-  {
-    id: "palette",
-    label: m.shortcuts_palette,
-    keys: [["Mod", "P"]],
-    context: m.shortcuts_project_context,
-  },
+  searchShortcut,
   {
     id: "close-content",
     label: m.shortcuts_close_content,

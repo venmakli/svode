@@ -167,8 +167,9 @@ export function useKeyboardShortcuts() {
         openAppSettings();
       }
 
-      // Cmd/Ctrl+P - open project command palette.
-      if (!home && activeRootPath && matchesPhysicalShortcut(e, "KeyP")) {
+      // ⌘K toggles Search. An editor takes it first for a link when one
+      // applies to its selection.
+      if (!home && activeRootPath && matchesPhysicalShortcut(e, "KeyK")) {
         e.preventDefault();
         toggleCommandPalette();
       }

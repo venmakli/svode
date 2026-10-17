@@ -103,6 +103,8 @@ if (process.env.SVODE_ALL_PROJECTS_ROW_DOM !== "1") {
   );
   const { AllProjectsSidebarRow } = await import("./all-projects-sidebar-row");
   const { ProjectSwitcher } = await import("./project-switcher");
+  const { shortcutLabel } = await import("@/shared/lib/shortcut-description");
+  const { searchShortcut } = await import("./model/shortcut-descriptions");
   const doc = dom.window.document;
   const root = createRoot(doc.getElementById("app")!);
   const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
@@ -122,6 +124,7 @@ if (process.env.SVODE_ALL_PROJECTS_ROW_DOM !== "1") {
             onActivateContent={() => {}}
             onBeforeNavigation={async () => true}
             onOpenSearch={() => {}}
+            searchShortcut={shortcutLabel(searchShortcut)}
             allProjectsItem={<AllProjectsSidebarRow />}
             newSessionItem={
               <SidebarMenuItem data-new-session>New session</SidebarMenuItem>
@@ -160,6 +163,9 @@ if (process.env.SVODE_ALL_PROJECTS_ROW_DOM !== "1") {
     expect(rows[0].textContent?.includes("All projects")).toBe(true);
     expect(rows[1].hasAttribute("data-new-session")).toBe(true);
     expect(rows[2].textContent?.includes("Search")).toBe(true);
+    expect(
+      rows[2].querySelector('[data-sidebar="menu-badge"]')!.textContent,
+    ).toBe("⌘K");
 
     const button = rowButton();
     expect(button.textContent).toBe("All projects");
@@ -231,12 +237,15 @@ if (process.env.SVODE_ALL_PROJECTS_ROW_DOM !== "1") {
     });
   });
 
-  test("Windows and Linux name the shortcut Ctrl+0", async () => {
+  test("Windows and Linux name the shortcuts Ctrl+0 and Ctrl+K", async () => {
     setPlatform(false);
     await render();
     expect(rowButton().getAttribute("aria-keyshortcuts")).toBe("Control+0");
     expect(
       row().querySelector('[data-sidebar="menu-badge"]')!.textContent,
     ).toBe("Ctrl+0");
+    expect(
+      topRows()[2].querySelector('[data-sidebar="menu-badge"]')!.textContent,
+    ).toBe("Ctrl+K");
   });
 }

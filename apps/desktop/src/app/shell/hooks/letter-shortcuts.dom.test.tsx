@@ -25,12 +25,14 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   };
   const dom = new JSDOM(
     '<div id="app"></div><input id="input"><div class="xterm"><textarea></textarea></div><div data-agent-session-content><div class="xterm"><textarea id="session-terminal"></textarea></div></div>',
+    { url: "http://localhost/" },
   );
   for (const [key, value] of Object.entries({
     window: dom.window,
     document: dom.window.document,
     navigator: dom.window.navigator,
     HTMLElement: dom.window.HTMLElement,
+    localStorage: dom.window.localStorage,
     IS_REACT_ACT_ENVIRONMENT: true,
   })) {
     Object.defineProperty(globalThis, key, {
@@ -40,7 +42,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     });
   }
   const calls = {
-    palette: 0,
+    search: 0,
     home: 0,
     navigate: 0,
     guard: 0,
@@ -63,29 +65,41 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   mock.module("@tanstack/react-router", () => ({
     useNavigate: () => () => calls.navigate++,
   }));
+  const actors = { ...(await import("@/features/actors")) };
   mock.module("@/features/actors", () => ({
+    ...actors,
     requestActorMailmapSave() {},
     requestAgentActorCatalogSave() {},
   }));
+  const artifact = { ...(await import("@/features/artifact")) };
   mock.module("@/features/artifact", () => ({
+    ...artifact,
     useActiveContentPath: () => "page.md",
     useActiveContentSpaceId: () => null,
     useCloseActiveContent: () => () => {},
   }));
+  const gitAppShell = { ...(await import("@/features/git/app-shell")) };
   mock.module("@/features/git/app-shell", () => ({
+    ...gitAppShell,
     commitSaveScopeAndMaybeSync() {},
     dirtyPathsForGitSaveScope: () => [],
     getGitSpaceStatus() {},
     gitSaveShortcutLabel: () => "",
   }));
+  const git = { ...(await import("@/features/git")) };
   mock.module("@/features/git", () => ({
+    ...git,
     repositoryAccessIsEditable: () => true,
     useRepositoryAccess: () => ({}),
   }));
+  const searchAppShell = { ...(await import("@/features/search/app-shell")) };
   mock.module("@/features/search/app-shell", () => ({
-    useToggleCommandPalette: () => () => calls.palette++,
+    ...searchAppShell,
+    useToggleCommandPalette: () => () => calls.search++,
   }));
+  const space = { ...(await import("@/features/space")) };
   mock.module("@/features/space", () => ({
+    ...space,
     useSpace: (selector: (state: unknown) => unknown) =>
       selector({
         activeRootPath,
@@ -96,12 +110,17 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
         goHome: () => calls.home++,
       }),
   }));
+  const scopeSurfaces = { ...(await import("@/features/scope-surfaces")) };
   mock.module("@/features/scope-surfaces", () => ({
+    ...scopeSurfaces,
     useScopeSurfaceStore: (selector: (state: unknown) => unknown) =>
       selector({}),
   }));
   mock.module("../model", () => ({
     useShellStore: () => ({ openAppSettings() {} }),
+  }));
+  mock.module("../agent-session-peek-host", () => ({
+    useStartSessionInMainArea: () => async () => {},
   }));
   mock.module("../navigation-guards", () => ({
     passNavigationGuards: async () => {
@@ -116,12 +135,16 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       },
     }),
   }));
+  const agentSessions = { ...(await import("@/features/agent-sessions")) };
   mock.module("@/features/agent-sessions", () => ({
+    ...agentSessions,
     isInsideAgentSessionContent: (target: EventTarget | null) =>
       target instanceof dom.window.Element &&
       target.closest("[data-agent-session-content]") !== null,
   }));
+  const collection = { ...(await import("@/features/collection")) };
   mock.module("@/features/collection", () => ({
+    ...collection,
     useCollectionActivePresentationId: () => null,
   }));
   mock.module("@/features/branding", () => ({
@@ -193,7 +216,8 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
         );
       });
       for (const [code, key, field] of [
-        ["KeyP", "З", "palette"],
+        ["KeyK", "k", "search"],
+        ["KeyK", "л", "search"],
         ["KeyN", "Т", "create"],
         ["Digit0", "0", "home"],
       ] as const) {
@@ -219,6 +243,14 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
         });
         expect(calls[field]).toBe(before + 1);
       }
+      // ⌘P / Ctrl+P no longer opens Search, in any layout.
+      for (const key of ["p", "з"]) {
+        const search = calls.search;
+        await act(async () => {
+          expect(fire("KeyP", key, mac).defaultPrevented).toBe(false);
+        });
+        expect(calls.search).toBe(search);
+      }
       // ⌘0 goes Home from a terminal on macOS; Ctrl+0 stays with the shell.
       const home = calls.home;
       await act(async () => {
@@ -227,9 +259,9 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       expect(calls.home).toBe(mac ? home + 1 : home);
       // The former hidden ⌘⇧O does nothing.
       await act(async () => {
-        expect(fire("KeyO", "O", mac, { shiftKey: true }).defaultPrevented).toBe(
-          false,
-        );
+        expect(
+          fire("KeyO", "O", mac, { shiftKey: true }).defaultPrevented,
+        ).toBe(false);
       });
       expect(calls.home).toBe(mac ? home + 1 : home);
       const before = calls.home;
@@ -247,15 +279,15 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
         expect(fire("Digit0", "0", mac).defaultPrevented).toBe(false);
       });
       expect(calls.home).toBe(before);
-      const palette = calls.palette;
+      const search = calls.search;
       activeRootPath = null;
       await act(async () => {
         root.render(<Shell />);
       });
       await act(async () => {
-        fire("KeyP", "p", mac);
+        fire("KeyK", "k", mac);
       });
-      expect(calls.palette).toBe(palette);
+      expect(calls.search).toBe(search);
       activeRootPath = "/project";
     }
     expect(calls.guard).toBe(5);
@@ -274,16 +306,16 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
           </ShellViewContext.Provider>,
         );
       });
-      const { palette, home, guard } = calls;
+      const { search, home, guard } = calls;
       const panel = terminalOpen;
       await act(async () => {
-        fire("KeyP", "p", mac);
+        fire("KeyK", "k", mac);
         expect(
           fire("Backquote", "`", false, { ctrlKey: true }).defaultPrevented,
         ).toBe(false);
         fire("Digit0", "0", mac);
       });
-      expect(calls.palette).toBe(palette);
+      expect(calls.search).toBe(search);
       expect(terminalOpen).toBe(panel);
       expect(calls.home).toBe(home);
       expect(calls.guard).toBe(guard);

@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { createPlateEditor } from "platejs/react";
-import { LinkPlugin } from "@platejs/link/react";
 import { BasicMarksKit } from "@/components/editor/plugins/basic-marks-kit";
 import { BasicBlocksKit } from "@/components/editor/plugins/basic-blocks-kit";
 import { CodeBlockKit } from "@/components/editor/plugins/code-block-kit";
 import { ExitBreakKit } from "@/components/editor/plugins/exit-break-kit";
 import { shortcutKeys, shortcutLabel } from "@/shared/lib/shortcut-description";
+import { setLocale } from "@/paraglide/runtime";
 import { settingsShortcutGroups } from "./settings-shortcuts";
 
 const commands = settingsShortcutGroups.flatMap((group) => group.commands);
@@ -14,9 +14,10 @@ const command = (id: string) => commands.find((item) => item.id === id)!;
 test("app composition contains the full active inventory", () => {
   const expectedIds = [
     "settings",
-    "palette",
+    "search",
     "close-content",
     "home",
+    "new-session",
     "sidebar",
     "terminal",
     "open-folder",
@@ -82,7 +83,6 @@ test("published editor keys agree with installed active plugin bindings", () => 
       ...BasicBlocksKit,
       ...CodeBlockKit,
       ...ExitBreakKit,
-      LinkPlugin,
     ],
   });
   for (const [id, plugin] of [
@@ -113,9 +113,6 @@ test("published editor keys agree with installed active plugin bindings", () => 
         : (actual as string[][])[0]!.map((key) => key.toLowerCase()).join("+"),
     ).toBe(expected.join("+"));
   }
-  expect(editor.getOptions(LinkPlugin).triggerFloatingLinkHotkeys).toBe(
-    "meta+k, ctrl+k",
-  );
   expect(editor.getPlugin({ key: "exitBreak" }).shortcuts.insert?.keys).toBe(
     command("insert-after").keys[0]!.join("+").toLowerCase(),
   );
@@ -130,4 +127,29 @@ test("published editor keys agree with installed active plugin bindings", () => 
     ["Mod", "Y"],
     ["Mod", "Shift", "Z"],
   ]);
+});
+
+test("Search and the editor link share ⌘K, named per platform", () => {
+  expect(command("search").label()).toBe("Search");
+  expect(command("search").context?.()).toBe("In a project, outside Terminal");
+  expect(command("link").context?.()).toBe("On selected text or in a link");
+  for (const id of ["search", "link"]) {
+    expect(shortcutLabel(command(id), true)).toBe("⌘K");
+    expect(shortcutLabel(command(id), false)).toBe("Ctrl+K");
+  }
+  expect(
+    commands.some((item) =>
+      item.keys.some((keys) => keys.join("+") === "Mod+P"),
+    ),
+  ).toBe(false);
+  setLocale("ru", { reload: false });
+  try {
+    expect(command("search").label()).toBe("Поиск");
+    expect(command("search").context?.()).toBe("В проекте, вне терминала");
+    expect(command("link").context?.()).toBe(
+      "На выделенном тексте или в ссылке",
+    );
+  } finally {
+    setLocale("en", { reload: false });
+  }
 });

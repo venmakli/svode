@@ -15,7 +15,12 @@ export const editorFormattingShortcuts = {
     keys: [["Mod", "Shift", "X"]],
   },
   code: { id: "code", label: m.editor_format_code, keys: [["Mod", "E"]] },
-  link: { id: "link", label: m.editor_format_link, keys: [["Mod", "K"]] },
+  link: {
+    id: "link",
+    label: m.editor_format_link,
+    context: m.shortcuts_link_context,
+    keys: [["Mod", "K"]],
+  },
 } satisfies Record<string, ShortcutDescription>;
 
 export const editorShortcuts = [
