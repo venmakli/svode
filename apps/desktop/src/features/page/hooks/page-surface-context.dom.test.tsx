@@ -405,15 +405,15 @@ domTest("a blocked leave names its cause, and staying keeps the draft at the ind
     const question = page.dom.window.document.querySelector(
       "[data-page-discard-confirmation=leave]",
     )!;
-    expect(question.textContent?.includes("Page changes are not saved")).toBe(
-      true,
+    expect(textOf(page.dom, "[role=alertdialog] h2")).toBe(
+      "Leave the Page “Plan” without saving?",
     );
     // A repository no Project or Space owns is named by its path.
-    expect(
-      question.textContent?.includes(
-        "Saving is blocked: /other-repo — read only.",
-      ),
-    ).toBe(true);
+    expect(leaveDescription(page.dom)).toEqual([
+      "Saving is blocked: /other-repo — read only.",
+      "Unsaved changes will be lost.",
+    ]);
+    expect(question.textContent?.includes("Leave without saving")).toBe(true);
     expect(page.dom.window.document.activeElement?.textContent).toBe("Stay");
 
     await act(async () => {
@@ -462,7 +462,7 @@ domTest("discarding on leave drops the drafts without saving and lets the naviga
     page.events.length = 0;
 
     await act(async () => {
-      buttonWithText(page.dom, "Discard changes and leave").click();
+      buttonWithText(page.dom, "Leave without saving").click();
       await settle();
     });
     expect(await first).toBe(true);
@@ -511,7 +511,12 @@ domTest("discard from the Dialog asks in place and keeps the draft when refused"
     expect(document.querySelectorAll("[role=dialog]").length).toBe(1);
     const dialog = document.querySelector<HTMLElement>("[role=dialog]")!;
     expect(dialog.dataset.pageSaveStep).toBe("discard");
-    expect(dialog.textContent?.includes("Discard Page changes?")).toBe(true);
+    expect(textOf(page.dom, "[role=dialog] h2")).toBe(
+      "Discard changes in “Plan”?",
+    );
+    expect(textOf(page.dom, "[role=dialog] p")).toBe(
+      "The Page returns to its last saved version, and unsaved edits are removed. Files and Git are not changed.",
+    );
     expect(document.activeElement?.textContent).toBe("Keep changes");
     await act(async () => {
       buttonWithText(page.dom, "Keep changes").click();
@@ -561,7 +566,7 @@ domTest("a failed discard keeps the block and the draft", async () => {
       await settle();
     });
     await act(async () => {
-      buttonWithText(page.dom, "Discard changes and leave").click();
+      buttonWithText(page.dom, "Leave without saving").click();
       await settle();
     });
     expect(await leave).toBe(false);
@@ -585,6 +590,117 @@ domTest("a failed discard keeps the block and the draft", async () => {
     await page.cleanup();
   }
 });
+
+domTest("a Peek close or expand question names its action, and Escape stays at the indicator", async () => {
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      throw { kind: "source_busy", path: "page.md" };
+    },
+  });
+  try {
+    const document = page.dom.window.document;
+    for (const [action, title, discard] of [
+      ["close", "Close “Plan” without saving?", "Close without saving"],
+      ["expand", "Expand “Plan” without saving?", "Expand without saving"],
+    ] as const) {
+      let leave!: Promise<boolean>;
+      await act(async () => {
+        leave = page.session().prepareToLeave(action);
+        await settle();
+      });
+      expect(
+        document.querySelector<HTMLElement>("[data-page-discard-confirmation]")
+          ?.dataset.pageDiscardConfirmation,
+      ).toBe(action);
+      expect(textOf(page.dom, "[role=alertdialog] h2")).toBe(title);
+      expect(leaveDescription(page.dom)).toEqual([
+        "Another Svode operation is writing this file — retry saving.",
+        "Unsaved changes will be lost.",
+      ]);
+      expect(buttonsWithText(page.dom, discard).length).toBe(1);
+      expect(document.activeElement?.textContent).toBe("Stay");
+
+      await act(async () => {
+        document.activeElement!.dispatchEvent(
+          new page.dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        );
+        await settle();
+      });
+      await act(settle);
+      expect(await leave).toBe(false);
+      expect(
+        document.querySelector("[data-page-discard-confirmation]"),
+      ).toBeNull();
+      expect(document.activeElement).toBe(indicatorOf(page.dom));
+    }
+    expect(page.events.some((event) => event.startsWith("discard:"))).toBe(
+      false,
+    );
+  } finally {
+    await page.cleanup();
+  }
+});
+
+domTest("the leave question names a source conflict and a failed write as their cause", async () => {
+  let fail = false;
+  const page = await renderPage("local", {
+    renderRecovery: true,
+    bodyFlush: async () => {
+      if (fail) throw new Error("Disk full");
+    },
+  });
+  try {
+    const conflict = {
+      status: "ready" as const,
+      pending: null,
+      failure: null,
+      writeDraft: () => undefined,
+      loadFile: () => undefined,
+      retryRead: () => undefined,
+    };
+    await act(async () => page.session().reportSourceConflict(conflict));
+    const ask = async () => {
+      let leave!: Promise<boolean>;
+      await act(async () => {
+        leave = page.session().prepareToLeave();
+        await settle();
+      });
+      const description = leaveDescription(page.dom);
+      await act(async () => {
+        buttonWithText(page.dom, "Stay").click();
+        await settle();
+      });
+      await act(settle);
+      expect(await leave).toBe(false);
+      return description;
+    };
+    expect(await ask()).toEqual([
+      "The file changed outside Svode; your text isn't saved yet",
+      "Unsaved changes will be lost.",
+    ]);
+
+    await act(async () => page.session().reportSourceConflict(null));
+    fail = true;
+    expect(await ask()).toEqual([
+      "Couldn't write the changes — the draft stays open.",
+      "Unsaved changes will be lost.",
+    ]);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+function leaveDescription(dom: JSDOM) {
+  return [
+    ...dom.window.document.querySelectorAll(
+      "[data-slot=alert-dialog-description] > span",
+    ),
+  ].map((line) => line.textContent);
+}
 
 function indicatorOf(dom: JSDOM) {
   return dom.window.document.querySelector<HTMLButtonElement>(
@@ -648,7 +764,8 @@ async function renderPage(
       currentSession = session;
     });
     const [savedTitle, setSavedTitle] = useState("Page");
-    const registerPersistence = session.registerPersistence;
+    const { registerPersistence, registerTitle } = session;
+    useEffect(() => registerTitle("Plan"), [registerTitle]);
     useEffect(() => {
       mounted += 1;
       const unregisterBody = registerPersistence("body", {
@@ -683,6 +800,7 @@ async function renderPage(
           <>
             <textarea data-editor />
             <PageSaveStatus
+              title="Plan"
               error={options.recoveryError}
               onRetry={
                 options.recoveryError ? async () => undefined : undefined

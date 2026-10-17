@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { CollectionActivationContext } from "@/features/collection";
 import {
   supportsScopeAttachments,
+  type PeekNavigationGuard,
   type ScopeOwnerRef,
 } from "@/features/scope-surfaces";
 
@@ -142,7 +143,7 @@ export interface AttachmentOwnerPeekContext {
   /** ×: closes the Peek through its close guard. */
   onClose(): void;
   onContentPathChange?: (path: string) => void;
-  registerCloseGuard(guard: () => Promise<boolean>): () => void;
+  registerCloseGuard(guard: PeekNavigationGuard): () => void;
   /** Closes the Peek at once, without its close guard: the owner is gone. */
   dismiss(): void;
 }

@@ -16,9 +16,15 @@ import * as m from "@/paraglide/messages.js";
 import { pageSaveBlock, pageSaveBlockReason } from "../lib/save-block";
 import type { PageSourceConflict } from "../model/source-conflict";
 
+/** How the Page is left: a navigation away, or its Peek closed or expanded. */
+export type PageLeaveAction = "leave" | "close" | "expand";
+
 /** The question whether to leave a Page whose save is blocked. */
 export interface PageDiscardConfirmation {
+  action: PageLeaveAction;
   resolve: (discarded: boolean) => void;
+  /** The Page as the question names it when asked. */
+  title: string;
 }
 
 export function PageDiscardDialog({
@@ -52,7 +58,7 @@ export function PageDiscardDialog({
       }}
     >
       <AlertDialogContent
-        data-page-discard-confirmation={shown ? "leave" : undefined}
+        data-page-discard-confirmation={shown?.action}
         onCloseAutoFocus={(event) => {
           const kept = keptRef.current;
           keptRef.current = false;
@@ -63,9 +69,14 @@ export function PageDiscardDialog({
         }}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>{m.page_leave_title()}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {block ? pageSaveBlockReason(block) : m.page_surface_save_error()}
+          <AlertDialogTitle>
+            {shown ? leaveTitle(shown) : null}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="flex flex-col gap-1">
+            <span>
+              {block ? pageSaveBlockReason(block) : m.page_surface_save_error()}
+            </span>
+            <span>{m.page_leave_description()}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -78,10 +89,32 @@ export function PageDiscardDialog({
               onResolve(true);
             }}
           >
-            {m.page_leave_discard()}
+            {shown ? leaveAction(shown.action) : null}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   );
+}
+
+function leaveTitle({ action, title }: PageDiscardConfirmation) {
+  switch (action) {
+    case "close":
+      return m.page_leave_close_title({ title });
+    case "expand":
+      return m.page_leave_expand_title({ title });
+    case "leave":
+      return m.page_leave_title({ title });
+  }
+}
+
+function leaveAction(action: PageLeaveAction) {
+  switch (action) {
+    case "close":
+      return m.page_leave_close_discard();
+    case "expand":
+      return m.page_leave_expand_discard();
+    case "leave":
+      return m.page_leave_discard();
+  }
 }

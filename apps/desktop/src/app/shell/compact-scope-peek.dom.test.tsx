@@ -29,6 +29,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   let mounts = 0;
   let _unmounts = 0;
   let flushBody: () => Promise<void> = async () => {};
+  let discardBody: () => Promise<void> = async () => {};
   let _convert: (path: string) => void = () => {};
   const allowCollectionNavigation = true;
   const appBroken = false;
@@ -69,7 +70,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         mounts += 1;
         const unregister = registerPersistence("body", {
           flush: () => flushBody(),
-          discard: async () => {},
+          discard: () => discardBody(),
         });
         return () => {
           _unmounts += 1;
@@ -952,6 +953,252 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         ]);
         expect(getActiveContentSelection().selection).toBe(mainSelection);
       } finally {
+        await act(async () => root.unmount());
+        closeActiveContent();
+        clearNativeMocks();
+        restore();
+        dom.window.close();
+      }
+    }
+  });
+  test("a blocked Peek asks to close or expand it by its title, and leaving discards the draft", async () => {
+    for (const family of ["collection", "attachments", "chat"] as const) {
+      const dom = new JSDOM("<!doctype html><div id=app></div>", {
+        pretendToBeVisual: true,
+        url: "http://localhost/",
+      });
+      const restore = installDomGlobals(dom);
+      let blocked = true;
+      flushBody = async () => {
+        if (blocked) throw new Error("save blocked");
+      };
+      discardBody = async () => {
+        blocked = false;
+      };
+      const page: Page = {
+        path: "Tasks/Item2.md",
+        body: "draft",
+        meta: {
+          title: "Item2 title",
+          icon: null,
+          created: "",
+          updated: "",
+          extra: {},
+        },
+      };
+      mockNativeIpc(
+        (command, args) => {
+          const path = String(args && "path" in args ? args.path : "");
+          if (command === "repository_access_get")
+            return {
+              status: "local",
+              repositoryId: "/space",
+              generation: 1,
+              checkedAt: null,
+              expiresAt: null,
+              reason: null,
+              lastKnownStatus: null,
+            };
+          if (command === "read_page") return page;
+          if (command === "get_page_schema") return null;
+          if (command === "get_scope_owner_facts")
+            return {
+              identity: "pageFile",
+              ownerPath: path,
+              contentPath: path,
+              hasApp: false,
+            };
+          if (command === "git_status")
+            return {
+              branch: "main",
+              ahead: 0,
+              behind: 0,
+              hasStaged: false,
+              hasUnstaged: false,
+              hasConflicts: false,
+              tracking: null,
+              files: [],
+            };
+          throw new Error(`Unexpected IPC: ${command}`);
+        },
+        { shouldMockEvents: true },
+      );
+      closeActiveContent();
+      const { registerRootSpace } = await import("@/features/space");
+      const { ChatAttachmentOpenerContext } =
+        await import("@/features/agent-sessions");
+      const { ChatAttachmentPeekProvider } =
+        await import("./chat-attachment-peek");
+      const { useContext } = await import("react");
+      registerRootSpace({
+        id: "space",
+        name: "Space",
+        path: "/space",
+      } as SpaceInfo);
+      function Opener() {
+        const open = useContext(ChatAttachmentOpenerContext);
+        return (
+          <button
+            data-open-attachment
+            onClick={() =>
+              open?.({ path: "/space/Tasks/Item2.md", name: "Item2.md" })
+            }
+          />
+        );
+      }
+      const root = createRoot(dom.window.document.getElementById("app")!);
+      function Harness() {
+        const [open, setOpen] = useState(true);
+        if (family === "chat")
+          return (
+            <TooltipProvider>
+              <ChatAttachmentPeekProvider>
+                <Opener />
+              </ChatAttachmentPeekProvider>
+            </TooltipProvider>
+          );
+        return (
+          <TooltipProvider>
+            {family === "collection" ? (
+              <PagePeekSheet
+                target={open ? { page, nested: false } : null}
+                readOnly={false}
+                spacePath="/space"
+                spaceId="space"
+                projectPath="/space"
+                onOpenChange={setOpen}
+                onOpenPath={() => {}}
+                onDuplicatePage={() => {}}
+                onDeletePage={() => {}}
+                onConvertedPage={() => {}}
+                renderPeek={(context) => (
+                  <CompactScopePeek key={context.sessionKey} {...context} />
+                )}
+              />
+            ) : (
+              <AttachmentsPeek
+                owner={{
+                  ownerKey: "page:Tasks",
+                  identityKind: "page-directory",
+                  projectPath: "/space",
+                  spacePath: "/space",
+                  spaceId: "space",
+                  ownerPath: "Tasks",
+                  contentPath: "Tasks/README.md",
+                  hasDirectCollection: true,
+                }}
+                readOnly={false}
+                target={
+                  open
+                    ? {
+                        row: {
+                          key: "page:Tasks/Item2.md",
+                          path: page.path,
+                          contentPath: page.path,
+                          ownerPath: page.path,
+                          sourcePath: page.path,
+                          sourceShape: "file",
+                          kind: "page",
+                          hasApp: false,
+                          icon: null,
+                          displayName: "Item2",
+                          modified: "",
+                          sizeBytes: null,
+                          format: "",
+                          availability: "available",
+                        },
+                        owner: {
+                          projectPath: "/space",
+                          spacePath: "/space",
+                          spaceId: "space",
+                          ownerPath: "Tasks",
+                          repositoryPath: "/space",
+                        },
+                        mode: "peek",
+                        sourceGeneration: "one",
+                        activation: { rowId: "page:Tasks/Item2.md" },
+                      }
+                    : null
+                }
+                onOpenChange={setOpen}
+                renderOwnerPeek={(context) => (
+                  <AttachmentOwnerPeek {...context} />
+                )}
+              />
+            )}
+          </TooltipProvider>
+        );
+      }
+      const document = dom.window.document;
+      const button = (text: string) =>
+        [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+          (candidate) => candidate.textContent?.trim() === text,
+        )!;
+      const question = () =>
+        document.querySelector<HTMLElement>("[data-page-discard-confirmation]");
+      const click = async (element: HTMLElement) => {
+        await act(async () => {
+          element.click();
+          await settle();
+        });
+        await act(settle);
+      };
+      try {
+        await act(async () => {
+          root.render(<Harness />);
+          await settle();
+        });
+        if (family === "chat")
+          await click(
+            document.querySelector<HTMLElement>("[data-open-attachment]")!,
+          );
+        const bar = topBar(dom);
+        await click(
+          bar.querySelector<HTMLElement>(`[aria-label="${m.peek_expand()}"]`)!,
+        );
+        expect(question()?.dataset.pageDiscardConfirmation).toBe("expand");
+        expect(question()?.querySelector("h2")?.textContent).toBe(
+          "Expand “Item2 title” without saving?",
+        );
+        expect(Boolean(button("Expand without saving"))).toBe(true);
+        await click(button("Stay"));
+        expect(question()).toBeNull();
+        expect(getActiveContentSelection().selection).toBeNull();
+
+        await click(
+          topBar(dom).querySelector<HTMLElement>(
+            `[aria-label="${m.peek_close()}"]`,
+          )!,
+        );
+        expect(question()?.dataset.pageDiscardConfirmation).toBe("close");
+        expect(question()?.querySelector("h2")?.textContent).toBe(
+          "Close “Item2 title” without saving?",
+        );
+        await click(button("Close without saving"));
+        expect(question()).toBeNull();
+        expect(
+          document.querySelector('[data-slot="sheet-content"]'),
+        ).toBeNull();
+        if (family === "chat") {
+          // Reopened with a new draft, it expands once the draft is discarded.
+          blocked = true;
+          await click(
+            document.querySelector<HTMLElement>("[data-open-attachment]")!,
+          );
+          await click(
+            topBar(dom).querySelector<HTMLElement>(
+              `[aria-label="${m.peek_expand()}"]`,
+            )!,
+          );
+          await click(button("Expand without saving"));
+          expect(
+            document.querySelector('[data-slot="sheet-content"]'),
+          ).toBeNull();
+          expect(getActiveContentSelection().selection?.kind).toBe("artifact");
+        }
+      } finally {
+        flushBody = async () => {};
+        discardBody = async () => {};
         await act(async () => root.unmount());
         closeActiveContent();
         clearNativeMocks();

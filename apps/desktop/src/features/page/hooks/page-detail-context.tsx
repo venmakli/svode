@@ -64,6 +64,8 @@ export interface PageDetailContextValue {
   writeFailureShown: (error: unknown) => boolean;
   retryWrites: () => Promise<void>;
   metadataDrafts: ReadonlyMap<string, { value: unknown }>;
+  /** The Page as questions about its unsaved changes name it: the unsaved title first. */
+  title: string;
   fallbackTitle: string;
   fallbackIcon: string | null;
   reload: () => Promise<void>;
@@ -469,6 +471,14 @@ export function PageDetailProvider({
       pageSurface?.registerPersistence("metadata", { flush, retry, discard }),
     [discard, flush, pageSurface, retry],
   );
+  const title =
+    (
+      (drafts.get("title")?.value as string | undefined) ??
+      page?.meta.title ??
+      resolvedFallbackTitle
+    ).trim() || m.editor_untitled();
+  const registerTitle = pageSurface?.registerTitle;
+  useEffect(() => registerTitle?.(title), [registerTitle, title]);
 
   const value = useMemo<PageDetailContextValue>(
     () => ({
@@ -480,6 +490,7 @@ export function PageDetailProvider({
       writeFailureShown,
       retryWrites,
       metadataDrafts: drafts,
+      title,
       schemaResult,
       applySchema: setSchemaResult,
       target,
@@ -522,6 +533,7 @@ export function PageDetailProvider({
       spacePath,
       status,
       target,
+      title,
       pageName.titleError,
       updateField,
       updateTitle,

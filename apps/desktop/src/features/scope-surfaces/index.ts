@@ -31,7 +31,12 @@ export type {
   ScopeSurfaceId,
   ScopeSurfaceRenderContext,
 } from "./model/types";
-export type { ScopePeekContext, ScopePeekRenderer } from "./model/peek";
+export type {
+  PeekLeaveAction,
+  PeekNavigationGuard,
+  ScopePeekContext,
+  ScopePeekRenderer,
+} from "./model/peek";
 export { knownScopeOwnerFacts } from "./model/owner-facts";
 export type { ScopeOwnerFacts, ScopeOwnerTarget } from "./model/owner-facts";
 export { useScopeOwner } from "./hooks/use-scope-owner";

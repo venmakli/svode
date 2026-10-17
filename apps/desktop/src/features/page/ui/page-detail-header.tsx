@@ -90,6 +90,7 @@ export function PageDetailHeader({
           <>
             {metadataBefore}
             <PageSaveStatus
+              title={context.title}
               error={context.writeError}
               onRetry={context.writeError ? context.retryWrites : undefined}
             >

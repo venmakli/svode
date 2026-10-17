@@ -69,7 +69,7 @@ export function AttachmentsPeek({
     navigation.leave(() => {
       dismiss();
       afterClose?.();
-    });
+    }, "close");
   usePeekStackEntry(Boolean(target), () => void close());
   const activationRef = useRef(target?.activation);
   useEffect(() => {
@@ -156,7 +156,7 @@ export function AttachmentsPeek({
               onExpand={(openFullPage) =>
                 void navigation.leave(async () => {
                   if (await openFullPage()) dismiss();
-                })
+                }, "expand")
               }
               onClose={() => void close()}
             />

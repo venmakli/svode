@@ -126,14 +126,14 @@ function ChatAttachmentPeek({
     navigation.dismiss();
     onClose();
   };
-  usePeekStackEntry(Boolean(target), () => void leave(() => close()));
+  usePeekStackEntry(Boolean(target), () => void leave(() => close(), "close"));
   const project = projectPath ?? target?.location.spacePath ?? "";
 
   return (
     <Sheet
       open={Boolean(target)}
       onOpenChange={(open) => {
-        if (!open) void leave(() => close());
+        if (!open) void leave(() => close(), "close");
       }}
     >
       <SheetContent
@@ -160,9 +160,9 @@ function ChatAttachmentPeek({
             onExpand={(openFull) =>
               void leave(async () => {
                 if (await openFull()) close();
-              })
+              }, "expand")
             }
-            onClose={() => void leave(() => close())}
+            onClose={() => void leave(() => close(), "close")}
           />
         ) : target ? (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>

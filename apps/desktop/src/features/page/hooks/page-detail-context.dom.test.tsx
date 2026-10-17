@@ -1215,6 +1215,35 @@ test("a header write failure that keeps no draft is not one the indicator presen
   }
 });
 
+// The questions rendering this title run in the isolated Page session and
+// Peek DOM tests, where Radix overlays mount reliably.
+test("questions about unsaved changes name the Page by its unsaved title, Untitled when it is empty", async () => {
+  let view = await readyHarness({}, readmePage({ title: " " }));
+  try {
+    expect(view.context().title).toBe(m.editor_untitled());
+  } finally {
+    await view.cleanup();
+  }
+  view = await readyHarness({ fieldError: new Error("Save failed") });
+  try {
+    expect(view.context().title).toBe("App only");
+    view.failField(true);
+    await act(async () => {
+      await view
+        .context()
+        .updateTitle("Roadmap")
+        .catch(() => undefined);
+      await turn();
+      await turn();
+    });
+    expect(view.context().metadataDrafts.get("title")?.value).toBe("Roadmap");
+    expect(view.context().title).toBe("Roadmap");
+    expect(view.context().page?.meta.title).toBe("App only");
+  } finally {
+    await view.cleanup();
+  }
+});
+
 function setInputValue(input: HTMLTextAreaElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(
     input.ownerDocument.defaultView!.HTMLTextAreaElement.prototype,

@@ -33,6 +33,7 @@ import {
 import { useOpenPage } from "@/features/page/navigation";
 import {
   ScopeSurfaceHost,
+  type PeekNavigationGuard,
   type ScopeOpenIntent,
   type ScopeOwnerRef,
   type ScopePresentation,
@@ -69,7 +70,7 @@ interface ScopeSurfacePageProps {
   compactSurfaceState?: CollectionPeekSurfaceState;
   fallbackTitle?: string;
   fallbackIcon?: string | null;
-  registerNavigationGuard?: (guard: () => Promise<boolean>) => () => void;
+  registerNavigationGuard?: (guard: PeekNavigationGuard) => () => void;
   onPageGone?: () => void;
 }
 
@@ -266,7 +267,7 @@ function ScopePageSurfaceHost({
   metadataBefore?: ReactNode;
   onContentPathChange?: (path: string) => void;
   onIdentityChange?: (identity: ScopeOwnerIdentity) => void;
-  registerNavigationGuard?: (guard: () => Promise<boolean>) => () => void;
+  registerNavigationGuard?: (guard: PeekNavigationGuard) => () => void;
 }) {
   const pageSurface = usePageSurfaceSession();
   const detailController = useCollectionDetailController();
@@ -298,7 +299,8 @@ function ScopePageSurfaceHost({
     onIdentityChange?.({ title: identityTitle, icon: identityIcon });
   }, [identityTitle, identityIcon, onIdentityChange]);
   useEffect(
-    () => registerNavigationGuard?.(() => pageSurface.prepareToLeave()),
+    () =>
+      registerNavigationGuard?.((action) => pageSurface.prepareToLeave(action)),
     [pageSurface, registerNavigationGuard],
   );
   usePublishMainHeader(

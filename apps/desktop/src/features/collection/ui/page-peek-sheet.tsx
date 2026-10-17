@@ -48,12 +48,12 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
     navigation.dismiss();
     props.onOpenChange(false);
   };
-  usePeekStackEntry(Boolean(target), () => void leave(() => close()));
+  usePeekStackEntry(Boolean(target), () => void leave(() => close(), "close"));
   return (
     <Sheet
       open={Boolean(target)}
       onOpenChange={(open) => {
-        if (!open) void leave(() => close());
+        if (!open) void leave(() => close(), "close");
       }}
     >
       <SheetContent
@@ -97,8 +97,8 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
               onExpand: (openFull) =>
                 void leave(async () => {
                   if (await openFull()) close();
-                }),
-              onClose: () => void leave(() => close()),
+                }, "expand"),
+              onClose: () => void leave(() => close(), "close"),
             })
           : null}
       </SheetContent>

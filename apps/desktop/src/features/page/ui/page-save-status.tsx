@@ -17,11 +17,14 @@ export function PageSaveStatus({
   children,
   error,
   onRetry,
+  title,
 }: {
   children?: ReactNode;
   /** A failed write of the detail owner the session does not present itself. */
   error?: string | null;
   onRetry?: () => Promise<void>;
+  /** The Page as the discard confirmation names it. */
+  title: string;
 }) {
   const session = usePageSurfaceSession();
   const {
@@ -99,6 +102,7 @@ export function PageSaveStatus({
         block={block}
         open={open && blocked}
         retryDisabled={Boolean(onRetry) && session.readOnly}
+        title={title}
         onClose={() => setOpen(false)}
         onCloseAutoFocus={(event) => {
           event.preventDefault();

@@ -158,15 +158,13 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       confirmation,
       onResolve,
     }: {
-      confirmation: object | null;
+      confirmation: { action: string } | null;
       onResolve: (discard: boolean) => void;
     }) =>
       confirmation ? (
-        <div data-page-discard-confirmation="leave">
+        <div data-page-discard-confirmation={confirmation.action}>
           <button onClick={() => onResolve(false)}>Stay</button>
-          <button onClick={() => onResolve(true)}>
-            Discard changes and leave
-          </button>
+          <button onClick={() => onResolve(true)}>Leave without saving</button>
         </div>
       ) : null,
   }));
@@ -673,7 +671,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       });
       const readsBefore = f.reads();
       await act(async () => {
-        button("Discard changes and leave").click();
+        button("Leave without saving").click();
         await settle();
       });
       await f.render();

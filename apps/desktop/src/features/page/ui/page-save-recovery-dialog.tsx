@@ -33,6 +33,7 @@ export function PageSaveRecoveryDialog({
   onDiscard,
   onLeaveForSettings,
   onRetryWrite,
+  title,
 }: {
   block: PageSaveBlock | null;
   open: boolean;
@@ -43,6 +44,7 @@ export function PageSaveRecoveryDialog({
   /** Closes the Dialog so the Git settings it opens next take over. */
   onLeaveForSettings: () => void;
   onRetryWrite: () => Promise<void>;
+  title: string;
 }) {
   // Keeps the content of the resolved block during the exit animation.
   const [shown, setShown] = useState(block);
@@ -84,7 +86,7 @@ export function PageSaveRecoveryDialog({
         {!shown ? null : confirming ? (
           <>
             <DialogHeader>
-              <DialogTitle>{m.page_discard_title()}</DialogTitle>
+              <DialogTitle>{m.page_discard_title({ title })}</DialogTitle>
               <DialogDescription>
                 {m.page_discard_description()}
               </DialogDescription>

@@ -25,6 +25,7 @@ import type { PageSourceConflict } from "../model/source-conflict";
 import {
   PageDiscardDialog,
   type PageDiscardConfirmation,
+  type PageLeaveAction,
 } from "../ui/page-discard-dialog";
 import {
   usePagePersistence,
@@ -40,8 +41,11 @@ interface PageSurfaceSessionContextValue {
   recovery: ReturnType<typeof useRepositoryAccessPreflight>;
   /** Saves pending work before a non-leaving step; false while it is blocked. */
   prepareForNavigation: () => Promise<boolean>;
-  /** Saves pending work before leaving the Page, asking the user when blocked. */
-  prepareToLeave: () => Promise<boolean>;
+  /**
+   * Saves pending work before leaving the Page, asking the user when blocked;
+   * the question names how it is left, a navigation away by default.
+   */
+  prepareToLeave: (action?: PageLeaveAction) => Promise<boolean>;
   recoverWriteError: (
     error: unknown,
     retry: () => Promise<void>,
@@ -52,6 +56,8 @@ interface PageSurfaceSessionContextValue {
   ) => () => void;
   /** The save block indicator the user returns to after keeping a blocked draft. */
   registerRecoveryElement: (element: HTMLElement | null) => void;
+  /** The title the questions about this Page's unsaved changes name it by. */
+  registerTitle: (title: string) => void;
   reportSourceConflict: (conflict: PageSourceConflict | null) => void;
   retryPersistence: () => Promise<void>;
   runMutation: (operation: () => Promise<void>) => Promise<void>;
@@ -170,20 +176,27 @@ function PageSurfaceSession({
   const registerRecoveryElement = useCallback((element: HTMLElement | null) => {
     recoveryElementRef.current = element;
   }, []);
+  const titleRef = useRef(displayName);
+  const registerTitle = useCallback((title: string) => {
+    titleRef.current = title;
+  }, []);
 
-  const prepareToLeave = useCallback(async () => {
-    if (leaveRef.current) return leaveRef.current;
-    if (await flushPersistence()) return true;
-    // A blocked save never cancels the navigation silently: the user keeps
-    // the draft or discards it and continues to the requested target.
-    leaveRef.current ??= new Promise<boolean>((resolve) => {
-      markActiveContentAwaitingDecision();
-      setConfirmation({ resolve });
-    }).finally(() => {
-      leaveRef.current = null;
-    });
-    return leaveRef.current;
-  }, [flushPersistence, setConfirmation]);
+  const prepareToLeave = useCallback(
+    async (action: PageLeaveAction = "leave") => {
+      if (leaveRef.current) return leaveRef.current;
+      if (await flushPersistence()) return true;
+      // A blocked save never cancels the navigation silently: the user keeps
+      // the draft or discards it and continues to the requested target.
+      leaveRef.current ??= new Promise<boolean>((resolve) => {
+        markActiveContentAwaitingDecision();
+        setConfirmation({ action, resolve, title: titleRef.current });
+      }).finally(() => {
+        leaveRef.current = null;
+      });
+      return leaveRef.current;
+    },
+    [flushPersistence, setConfirmation],
+  );
 
   const discard = useCallback(async () => {
     try {
@@ -224,6 +237,7 @@ function PageSurfaceSession({
       recovery,
       registerPersistence,
       registerRecoveryElement,
+      registerTitle,
       reportSourceConflict,
       retryPersistence,
       runMutation,
@@ -240,6 +254,7 @@ function PageSurfaceSession({
       recovery,
       registerPersistence,
       registerRecoveryElement,
+      registerTitle,
       reportSourceConflict,
       retryPersistence,
       runMutation,
