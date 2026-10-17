@@ -8,12 +8,10 @@ import {
 } from "@/features/artifact";
 import { useSpaceStore } from "../model";
 import { useMissingSpaceClone } from "./use-missing-space-clone";
-import { useSpaceActions } from "./use-space-actions";
 import { useSidebarTreeExpansionControl } from "./use-sidebar-tree-expansion-control";
 import { useSpaceLfsStateSync } from "./use-space-lfs-state-sync";
 import { useSpaceScopeActions } from "./use-space-scope-actions";
 import type { ScopeTarget } from "./use-space-scope-actions";
-import { useSpaceSidebarDelete } from "./use-space-sidebar-delete";
 import { useSpaceSidebarDialogState } from "./use-space-sidebar-dialog-state";
 import type { DeleteSpaceTarget } from "./use-space-sidebar-dialog-state";
 import { getSpaceScopeActiveRevealKey } from "./use-space-scope-collapse";
@@ -51,18 +49,11 @@ export function useSpaceSidebarActions({
     reorderSpaces,
     patchSpaceMetadata,
   } = useSpaceStore();
-  const { deleteSpace } = useSpaceActions();
   const { activeRevealRequest } = useActiveContentSelection();
   const openedFromSidebar = useActiveContentOpenedFromSidebar();
   const activeContentPath = useActiveContentPath();
   const activeContentSpaceId = useActiveContentSpaceId();
-  const {
-    deleteFiles,
-    deleteTarget,
-    resetDeleteDialog,
-    setDeleteFiles,
-    setDeleteTarget,
-  } = useSpaceSidebarDialogState();
+  const { deleteTarget, setDeleteTarget } = useSpaceSidebarDialogState();
   const {
     editRef,
     editingSpaceId,
@@ -149,12 +140,6 @@ export function useSpaceSidebarActions({
       onBeforeNavigation,
       reloadTreeParent,
     });
-  const handleDeleteSpace = useSpaceSidebarDelete({
-    activeRootPath,
-    deleteFiles,
-    deleteSpace,
-    resetDeleteDialog,
-  });
   const handleSpaceDragEnd = useSpaceSidebarOrder({
     reorderSpaces,
     spaces,
@@ -177,7 +162,6 @@ export function useSpaceSidebarActions({
     activeRootId,
     activeRootName,
     activeRootPath,
-    deleteFiles,
     deleteTarget,
     editRef,
     editingSpaceId,
@@ -185,7 +169,6 @@ export function useSpaceSidebarActions({
     ensureTreeLoaded,
     fileTrees,
     handleCloneMissing,
-    handleDeleteSpace,
     handleNewCollection,
     handleNewFolder,
     handleNewPage,
@@ -204,7 +187,6 @@ export function useSpaceSidebarActions({
     sidebarTreeExpansionLabel: sidebarTreeExpansion.label,
     getSidebarScopeCollapseState: sidebarTreeExpansion.getScopeCollapseState,
     setSidebarScopeCollapseState: sidebarTreeExpansion.setScopeCollapseState,
-    setDeleteFiles,
     setDeleteTarget,
     setEditingSpaceId,
     setEditValue,

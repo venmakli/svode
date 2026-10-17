@@ -1491,7 +1491,6 @@
   "page_updated": "Обновлено",
   "page_convert_to_folder": "Конвертировать в страницу-каталог",
   "page_convert_to_leaf": "Сделать обычной страницей",
-  "page_convert_to_nested_collection": "Конвертировать во вложенную коллекцию",
   "page_convert_leaf_blocked": "В папке есть подстраницы: {subpages}, прочие файлы: {files} — сначала вынесите их",
   "page_subpages": "Подстраницы",
   "page_add_subpage": "Добавить подстраницу",

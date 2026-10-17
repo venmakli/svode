@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { renameSpace } from "../api/space-actions";
 import type { SpaceInfo } from "../model";
+import { useSpaceRenameRequest } from "../model/space-rename-request";
 
 interface UseSpaceSidebarRenameInput {
   activeRootPath: string | null;
@@ -21,6 +22,23 @@ export function useSpaceSidebarRename({
   const [editingSpaceId, setEditingSpaceId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editRef = useRef<HTMLInputElement>(null);
+
+  const requestedSpaceId = useSpaceRenameRequest((state) => state.spaceId);
+  useEffect(() => {
+    if (!requestedSpaceId) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      useSpaceRenameRequest.getState().clear();
+      const space = spaces.find((item) => item.id === requestedSpaceId);
+      if (!space) return;
+      setEditValue(space.name);
+      setEditingSpaceId(space.id);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedSpaceId, spaces]);
 
   useEffect(() => {
     if (editingSpaceId && editRef.current) {

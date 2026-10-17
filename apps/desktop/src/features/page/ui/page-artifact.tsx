@@ -15,10 +15,7 @@ import {
   ContentDeleteDialog,
   pageFormOfPath,
 } from "@/features/content-actions";
-import {
-  NavigationMenuItems,
-  signalCreatedArtifact,
-} from "@/features/navigation";
+import { signalCreatedArtifact } from "@/features/navigation";
 import { pageNavigationItem } from "../lib/navigation-item";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 import {
@@ -157,6 +154,8 @@ function PageArtifactContent({
   const actions = page ? (
     <PageDetailActions
       page={page}
+      menuKind={{ kind: detail.schemaResult ? "collection-item" : "page" }}
+      pinItem={pageNavigationItem(page, spaceId, activeRootId)}
       spacePath={spacePath}
       projectPath={projectPath}
       spaceId={spaceId}
@@ -185,11 +184,6 @@ function PageArtifactContent({
           projectPath: projectPath ?? null,
           value: pageToDelete,
         })
-      }
-      actionItemsBeforeDuplicate={
-        <NavigationMenuItems
-          item={pageNavigationItem(page, spaceId, activeRootId)}
-        />
       }
       readOnly={pageSurface.readOnly}
       runMutation={pageSurface.runMutation}

@@ -1491,7 +1491,6 @@
   "page_updated": "Updated",
   "page_convert_to_folder": "Convert to directory-backed Page",
   "page_convert_to_leaf": "Make regular page",
-  "page_convert_to_nested_collection": "Convert to nested Collection",
   "page_convert_leaf_blocked": "Folder contains {subpages} subpages, {files} other file(s) — move them out first",
   "page_subpages": "Subpages",
   "page_add_subpage": "Add subpage",

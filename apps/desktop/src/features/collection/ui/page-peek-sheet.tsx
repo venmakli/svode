@@ -1,10 +1,8 @@
-import { Star, StarOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { keepLayerOpenOnEscape } from "@/shared/lib/escape-key";
 import { pageNavigationItem, type Page } from "@/features/page";
-import { NavigationMenuItems } from "@/features/navigation";
 import { useSpace } from "@/features/space";
 import { PageDetailActions } from "@/features/page/detail";
 import {
@@ -62,6 +60,14 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
         overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
         className="gap-0 p-0 pt-2 pb-6 data-[side=right]:sm:max-w-none"
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
+        onEscapeKeyDown={(event) => {
+          // Esc in the title cancels its edit and keeps the peek open.
+          if (
+            event.target instanceof HTMLElement &&
+            event.target.matches("[data-page-title-input]:not([readonly])")
+          )
+            keepLayerOpenOnEscape(event);
+        }}
       >
         <SheetTitle className="sr-only">
           {target?.page.meta.title ?? m.collection_open_in_peek()}
@@ -134,30 +140,26 @@ function PagePeekActions({
   const session = usePageSurfaceSession();
   const detail = usePageDetailContext();
   const activeRootId = useSpace((state) => state.activeRootId);
-  const templateDefaultAction =
-    !readOnly && template && onSetTemplateDefault ? (
-      template.isDefault ? (
-        <DropdownMenuItem
-          onClick={() => void onSetTemplateDefault(null).catch(handleError)}
-        >
-          <StarOff data-icon="inline-start" />
-          {m.collection_template_unset_default()}
-        </DropdownMenuItem>
-      ) : (
-        <DropdownMenuItem
-          onClick={() =>
-            void onSetTemplateDefault(template.slug).catch(handleError)
-          }
-        >
-          <Star data-icon="inline-start" />
-          {m.collection_template_set_default()}
-        </DropdownMenuItem>
-      )
-    ) : null;
 
   return (
     <PageDetailActions
       page={page}
+      menuKind={
+        template
+          ? { kind: "template", isDefault: template.isDefault }
+          : { kind: detail.schemaResult ? "collection-item" : "page" }
+      }
+      pinItem={
+        template ? null : pageNavigationItem(page, spaceId, activeRootId)
+      }
+      onSetTemplateDefault={
+        template && onSetTemplateDefault
+          ? (isDefault) =>
+              onSetTemplateDefault(isDefault ? template.slug : null).catch(
+                handleError,
+              )
+          : undefined
+      }
       runMutation={session.runMutation}
       spacePath={spacePath}
       projectPath={projectPath}
@@ -188,16 +190,6 @@ function PagePeekActions({
           })
           .catch(handleError);
       }}
-      actionItemsBeforeDuplicate={
-        template ? (
-          templateDefaultAction
-        ) : (
-          <NavigationMenuItems
-            item={pageNavigationItem(page, spaceId, activeRootId)}
-          />
-        )
-      }
-      duplicateLabel={template ? m.collection_template_duplicate() : undefined}
       readOnly={readOnly}
     />
   );

@@ -73,6 +73,7 @@ export function PageDetailHeader({
           void context.updateTitle(value).catch(saveHeaderField("title"))
         }
         titleError={context.titleError}
+        titleFocusRequest={context.titleFocusRequest}
         onIconChange={(value) =>
           void context.updateField("icon", value).catch(saveHeaderField("icon"))
         }

@@ -344,7 +344,7 @@ function ScopePageSurfaceHost({
               headerActions
             ) : (
               <ScopeOwnerActions
-                ownerKind={props.owner.identityKind}
+                owner={props.owner}
                 pinItem={scopeOwnerNavigationItem(props.owner, activeRootId, {
                   title: detail.page?.meta.title ?? props.owner.ownerPath,
                   icon: detail.page?.meta.icon ?? null,

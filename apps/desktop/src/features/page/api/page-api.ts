@@ -14,6 +14,7 @@ import {
   type WritePageResultDto,
 } from "@/platform/pages/pages-api";
 import {
+  createContentTreeFolder,
   readContentTreeOrder,
   saveContentTreeOrder,
 } from "@/platform/space/content-tree-api";
@@ -93,6 +94,14 @@ export interface ConvertPageToLeafInput {
 export interface ConvertPageToNestedCollectionInput {
   spacePath: string;
   filePath: string;
+  projectPath?: string | null;
+}
+
+export interface CreatePageFolderInput {
+  spacePath: string;
+  /** The folder of a folder-form Page. */
+  parentPath: string;
+  name: string;
   projectPath?: string | null;
 }
 
@@ -218,6 +227,18 @@ export async function convertPageToLeaf(
     projectPath: input.projectPath ?? null,
   });
   return pageFromDto(page);
+}
+
+/** Creates a folder inside a folder-form Page; returns the folder path. */
+export function createPageFolder(
+  input: CreatePageFolderInput,
+): Promise<string> {
+  return createContentTreeFolder({
+    space: input.spacePath,
+    parentPath: input.parentPath,
+    name: input.name,
+    projectPath: input.projectPath ?? null,
+  });
 }
 
 export async function convertPageToNestedCollection(

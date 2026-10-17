@@ -1,62 +1,63 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
-  Copy,
-  Database,
-  FilePlus,
-  FileText,
-  MoreVertical,
-  Trash2,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  ContentHeaderMenu,
+  contentActionGroups,
+  type ContentObject,
+} from "@/features/content-actions";
+import type { NavigationItem } from "@/features/navigation";
 import { useSpaceTreeSync } from "@/features/space";
 import {
   convertPageToFolder,
   convertPageToLeaf,
   convertPageToNestedCollection,
   createPage,
+  createPageFolder,
   getPageDetailState,
-  readPage,
 } from "../page-api";
 import type { Page, PageDetailState } from "../model";
 import { normalizePagePath } from "../lib/path";
 import { handleError } from "../lib/errors";
 import * as m from "@/paraglide/messages.js";
 import { publishPageFilenameWarnings } from "../lib/filename-warning";
+import { usePageDetailContext } from "../hooks/page-detail-context";
+
+/** What the header menu tells the Page apart as. */
+export type PageMenuKind =
+  | { kind: "page" | "collection-item" }
+  | { kind: "template"; isDefault: boolean };
 
 interface PageDetailActionsProps {
   page: Page;
+  menuKind: PageMenuKind;
   spacePath: string;
   projectPath?: string | null;
   spaceId: string;
+  /** The Page pinned from this menu; a template is not pinned. */
+  pinItem?: NavigationItem | null;
   onConverted?: (page: Page, nested: boolean) => void;
   onDuplicatePage: (page: Page) => void | Promise<void>;
   onDeletePage: (page: Page) => void;
-  actionItemsBeforeDuplicate?: ReactNode;
-  duplicateLabel?: string;
+  /** Makes the template the default of its Collection, or no longer. */
+  onSetTemplateDefault?: (isDefault: boolean) => Promise<void>;
   readOnly?: boolean;
   runMutation?: (operation: () => Promise<void>) => Promise<void>;
 }
 
 export function PageDetailActions({
   page,
+  menuKind,
   spacePath,
   projectPath,
   spaceId,
+  pinItem = null,
   onConverted,
   onDuplicatePage,
   onDeletePage,
-  actionItemsBeforeDuplicate,
-  duplicateLabel,
+  onSetTemplateDefault,
   readOnly = false,
   runMutation = (operation) => operation(),
 }: PageDetailActionsProps) {
+  const { requestTitleFocus } = usePageDetailContext();
   const [state, setState] = useState<{
     path: string;
     detail: PageDetailState;
@@ -90,60 +91,83 @@ export function PageDetailActions({
   const reloadTreePathParents = useSpaceTreeSync(
     (state) => state.reloadTreePathParents,
   );
-  const leafDisabledReason = useMemo(() => {
-    if (!currentState || form !== "folder") return null;
-    const blocked =
-      currentState.subpageCount > 0 || currentState.otherFileCount > 0;
-    if (!blocked) return null;
-    return m.page_convert_leaf_blocked({
-      subpages: currentState.subpageCount,
-      files: currentState.otherFileCount,
-    });
-  }, [currentState, form]);
+  // A folder Page with its own schema is a Collection, as in the sidebar.
+  const object: ContentObject =
+    form === "nestedCollection"
+      ? { kind: "collection" }
+      : {
+          ...menuKind,
+          form,
+          contents: currentState
+            ? {
+                subpageCount: currentState.subpageCount,
+                otherFileCount: currentState.otherFileCount,
+              }
+            : null,
+        };
+  const groups = contentActionGroups({ object, readOnly });
+  const makeLeafBlocked = groups.some((group) =>
+    group.actions.some((action) => action.id === "make-leaf" && action.reason),
+  );
 
-  async function refreshDetail(path: string, changedPaths: string[] = [path]) {
-    await reloadTreePathParents(spaceId, changedPaths);
-    const [nextPage, nextState] = await Promise.all([
-      readPage({ spacePath, path }),
-      getPageDetailState({
-        spacePath,
-        path,
-      }).catch(() => null),
-    ]);
-    if (nextState) setState({ path, detail: nextState });
-    return nextPage;
+  async function refreshDetailState(path: string) {
+    const next = await getPageDetailState({ spacePath, path }).catch(
+      () => null,
+    );
+    if (next) setState({ path, detail: next });
   }
 
-  async function nestPage() {
+  /** The folder children go in; a leaf Page first becomes a folder Page. */
+  async function childFolder(): Promise<{
+    folderPage: Page | null;
+    folderPath: string;
+  }> {
+    if (form !== "leaf") {
+      return { folderPage: null, folderPath: readmeFolderPath(page.path) };
+    }
     const folderPage = await convertPageToFolder({
       spacePath,
       filePath: page.path,
       projectPath: projectPath ?? null,
     });
-    const parentPath = normalizePagePath(folderPage.path).replace(
-      /\/readme\.md$/i,
-      "",
-    );
+    await reloadTreePathParents(spaceId, [page.path, folderPage.path]);
+    setState({
+      path: folderPage.path,
+      detail: { form: "folder", subpageCount: 0, otherFileCount: 0 },
+    });
+    return { folderPage, folderPath: readmeFolderPath(folderPage.path) };
+  }
+
+  async function nestPage() {
+    const { folderPath } = await childFolder();
     const childPage = await createPage({
       spacePath,
-      parentPath,
+      parentPath: folderPath,
       title: String(m.editor_untitled()),
       allocateUniqueTitle: true,
       contextualDefaults: null,
       projectPath: projectPath ?? null,
     });
     publishPageFilenameWarnings(childPage.warnings);
-    await reloadTreePathParents(spaceId, [page.path, folderPage.path]);
-    await reloadTreeParent(spaceId, parentPath);
-    setState({
-      path: folderPage.path,
-      detail: { form: "folder", subpageCount: 0, otherFileCount: 0 },
-    });
+    await reloadTreeParent(spaceId, folderPath);
     onConverted?.(childPage, false);
   }
 
+  async function newFolder() {
+    const { folderPage, folderPath } = await childFolder();
+    await createPageFolder({
+      spacePath,
+      parentPath: folderPath,
+      name: m.space_new_folder(),
+      projectPath: projectPath ?? null,
+    });
+    await reloadTreeParent(spaceId, folderPath);
+    if (folderPage) onConverted?.(folderPage, false);
+    else await refreshDetailState(page.path);
+  }
+
   async function convertToLeaf() {
-    if (leafDisabledReason) return;
+    if (makeLeafBlocked) return;
     const next = await convertPageToLeaf({
       spacePath,
       filePath: page.path,
@@ -157,90 +181,48 @@ export function PageDetailActions({
     onConverted?.(next, false);
   }
 
-  async function convertToNestedCollection() {
-    await convertPageToNestedCollection({
+  async function convertToCollection() {
+    const next = await convertPageToNestedCollection({
       spacePath,
       filePath: page.path,
       projectPath: projectPath ?? null,
     });
-    const next = await refreshDetail(page.path, [page.path]);
+    await reloadTreePathParents(spaceId, [page.path, next.path]);
     onConverted?.(next, true);
   }
 
+  const mutate = (operation: () => Promise<void>) => () =>
+    void runMutation(operation).catch(handleError);
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <MoreVertical />
-          <span className="sr-only">{m.content_actions()}</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        {form === "leaf" ? (
-          <DropdownMenuItem
-            disabled={readOnly}
-            onClick={() => void runMutation(nestPage).catch(handleError)}
-          >
-            <FilePlus data-icon="inline-start" />
-            {m.space_nest_page()}
-          </DropdownMenuItem>
-        ) : null}
-        {form === "folder" ? (
-          <>
-            <DropdownMenuItem
-              disabled={readOnly || Boolean(leafDisabledReason)}
-              title={leafDisabledReason ?? undefined}
-              onSelect={(event) => {
-                if (leafDisabledReason) {
-                  event.preventDefault();
-                  return;
-                }
-                void runMutation(convertToLeaf).catch(handleError);
-              }}
-            >
-              <FileText data-icon="inline-start" />
-              {m.page_convert_to_leaf()}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={readOnly}
-              onClick={() =>
-                void runMutation(convertToNestedCollection).catch(handleError)
-              }
-            >
-              <Database data-icon="inline-start" />
-              {m.page_convert_to_nested_collection()}
-            </DropdownMenuItem>
-          </>
-        ) : null}
-        {actionItemsBeforeDuplicate}
-        <DropdownMenuItem
-          disabled={readOnly}
-          onClick={() =>
-            void runMutation(async () => {
-              await onDuplicatePage(page);
-            }).catch(handleError)
-          }
-        >
-          <Copy data-icon="inline-start" />
-          {duplicateLabel ?? m.page_duplicate()}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          variant="destructive"
-          disabled={readOnly}
-          onClick={() => onDeletePage(page)}
-        >
-          <Trash2 data-icon="inline-start" />
-          {m.content_action_delete()}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <ContentHeaderMenu
+      groups={groups}
+      pinItem={pinItem}
+      handlers={{
+        "set-template-default": () =>
+          void onSetTemplateDefault?.(true).catch(handleError),
+        "unset-template-default": () =>
+          void onSetTemplateDefault?.(false).catch(handleError),
+        "nest-page": mutate(nestPage),
+        "new-item": mutate(nestPage),
+        "new-folder": mutate(newFolder),
+        "make-collection": mutate(convertToCollection),
+        "make-leaf": mutate(convertToLeaf),
+        rename: requestTitleFocus,
+        duplicate: mutate(async () => {
+          await onDuplicatePage(page);
+        }),
+        "duplicate-template": mutate(async () => {
+          await onDuplicatePage(page);
+        }),
+        delete: () => onDeletePage(page),
+      }}
+    />
   );
+}
+
+function readmeFolderPath(path: string): string {
+  return normalizePagePath(path).replace(/\/readme\.md$/i, "");
 }
 
 function inferPageDetailState(path: string): PageDetailState {

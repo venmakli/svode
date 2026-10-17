@@ -12,17 +12,6 @@ import {
 import { ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupContent,
@@ -38,6 +27,7 @@ import { useSpaceSidebarActions } from "../hooks/use-space-sidebar-actions";
 import { getSpaceScopeActiveRevealKey } from "../hooks/use-space-scope-collapse";
 import { hasRecordKey, visibleScopeChildren } from "../lib/nav-space-tree";
 import { RootScopeRow } from "./root-scope-row";
+import { SpaceDeleteDialog } from "./space-delete-dialog";
 import { SpaceRow } from "./space-row";
 
 interface NavSpacesProps {
@@ -67,7 +57,6 @@ export function NavSpaces({
     activeRootId,
     activeRootName,
     activeRootPath,
-    deleteFiles,
     deleteTarget,
     editRef,
     editingSpaceId,
@@ -75,7 +64,6 @@ export function NavSpaces({
     ensureTreeLoaded,
     fileTrees,
     handleCloneMissing,
-    handleDeleteSpace,
     handleNewCollection,
     handleNewFolder,
     handleNewPage,
@@ -93,7 +81,6 @@ export function NavSpaces({
     sidebarTreeExpansionLabel,
     getSidebarScopeCollapseState,
     setSidebarScopeCollapseState,
-    setDeleteFiles,
     setDeleteTarget,
     setEditingSpaceId,
     setEditValue,
@@ -231,42 +218,10 @@ export function NavSpaces({
         </SidebarGroupContent>
       </SidebarGroup>
 
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDeleteTarget(null);
-            setDeleteFiles(false);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{m.space_delete_title()}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.space_delete_description()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <label className="flex cursor-pointer items-center gap-2 py-2">
-            <Checkbox
-              checked={deleteFiles}
-              onCheckedChange={(checked) => setDeleteFiles(checked === true)}
-            />
-            <span className="text-sm text-destructive">
-              {m.space_delete_files()}
-            </span>
-          </label>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => deleteTarget && handleDeleteSpace(deleteTarget.id)}
-            >
-              {m.space_delete()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <SpaceDeleteDialog
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+      />
     </>
   );
 }

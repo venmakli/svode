@@ -27,6 +27,8 @@ interface TitleZoneProps {
   onActivateIdentity?: () => void;
   titleError?: string | null;
   titleErrorId?: string;
+  /** A new value focuses the title with its text selected, to rename. */
+  titleFocusRequest?: number;
 }
 
 export function TitleZone({
@@ -45,10 +47,14 @@ export function TitleZone({
   onActivateIdentity,
   titleError,
   titleErrorId = "page-title-error",
+  titleFocusRequest = 0,
 }: TitleZoneProps) {
   const titleRef = useRef<HTMLInputElement>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const isTitleFocusedRef = useRef(false);
+  // A rename from the menu ends on Enter instead of moving to the description.
+  const renamingRef = useRef(false);
+  const cancelTitleRef = useRef(false);
   const isDescriptionFocusedRef = useRef(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const canShowDescription = !hideDescription;
@@ -94,6 +100,17 @@ export function TitleZone({
     titleRef.current?.setSelectionRange(end, end);
   }, [titleError]);
 
+  const handledFocusRequestRef = useRef(titleFocusRequest);
+  useEffect(() => {
+    if (titleFocusRequest === handledFocusRequestRef.current) return;
+    handledFocusRequestRef.current = titleFocusRequest;
+    const node = titleRef.current;
+    if (!node || titleReadOnly) return;
+    renamingRef.current = true;
+    node.focus();
+    node.select();
+  }, [titleFocusRequest, titleReadOnly]);
+
   const resizeDescription = useCallback(() => {
     const node = descriptionRef.current;
     if (!node) return;
@@ -122,6 +139,17 @@ export function TitleZone({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Escape" && !titleReadOnly) {
+        cancelTitleRef.current = true;
+        setTitleDraft(displayValue);
+        e.currentTarget.blur();
+        return;
+      }
+      if (e.key === "Enter" && renamingRef.current) {
+        e.preventDefault();
+        e.currentTarget.blur();
+        return;
+      }
       if (e.key === "Enter") {
         e.preventDefault();
         if (
@@ -136,6 +164,7 @@ export function TitleZone({
     },
     [
       defaultTitle,
+      displayValue,
       focusDescription,
       onTitleChange,
       titleReadOnly,
@@ -221,6 +250,11 @@ export function TitleZone({
             }
             onBlur={() => {
               isTitleFocusedRef.current = false;
+              renamingRef.current = false;
+              if (cancelTitleRef.current) {
+                cancelTitleRef.current = false;
+                return;
+              }
               if (titleReadOnly) return;
               const nextTitle = titleDraft || defaultTitle;
               if (nextTitle !== title) onTitleChange(nextTitle);
@@ -231,6 +265,7 @@ export function TitleZone({
               setTitleDraft(next);
             }}
             onKeyDown={handleKeyDown}
+            data-page-title-input
             placeholder={defaultTitle}
             className="min-w-0 bg-transparent text-[22px] font-bold leading-8 outline-none placeholder:text-muted-foreground/40"
           />

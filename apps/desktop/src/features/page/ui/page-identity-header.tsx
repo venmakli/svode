@@ -27,6 +27,7 @@ interface PageIdentityHeaderProps {
   metadata?: ReactNode;
   coverSize?: "default" | "compact";
   titleError?: string | null;
+  titleFocusRequest?: number;
   readOnly?: boolean;
 }
 
@@ -52,6 +53,7 @@ export function PageIdentityHeader({
   metadata,
   coverSize = "default",
   titleError,
+  titleFocusRequest,
   readOnly = false,
 }: PageIdentityHeaderProps) {
   return (
@@ -90,6 +92,7 @@ export function PageIdentityHeader({
             onDescriptionChange={onDescriptionChange}
             onBodyFocus={onBodyFocus}
             titleError={titleError}
+            titleFocusRequest={titleFocusRequest}
             readOnly={readOnly}
           />
         </div>

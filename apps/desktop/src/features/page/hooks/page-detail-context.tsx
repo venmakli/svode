@@ -77,6 +77,10 @@ export interface PageDetailContextValue {
   ) => Promise<void>;
   updateTitle: (title: string) => Promise<void>;
   titleError: string | null;
+  /** Counts requests to rename from the header title; 0 before the first. */
+  titleFocusRequest: number;
+  /** Focuses the header title with its text selected, to rename the Page. */
+  requestTitleFocus: () => void;
   updateCover: (cover: PageCover | null) => Promise<void>;
   spacePath: string;
   projectPath: string | null;
@@ -450,6 +454,11 @@ export function PageDetailProvider({
     },
     [acceptTitle, handleSaveError, updateField],
   );
+  const [titleFocusRequest, setTitleFocusRequest] = useState(0);
+  const requestTitleFocus = useCallback(
+    () => setTitleFocusRequest((request) => request + 1),
+    [],
+  );
   const currentPath = page?.path ?? readmePath;
   const discard = useCallback(async () => {
     discardWrites();
@@ -503,6 +512,8 @@ export function PageDetailProvider({
       updateField,
       updateTitle,
       titleError: pageName.titleError,
+      titleFocusRequest,
+      requestTitleFocus,
       updateCover: (cover) => updateField("cover", cover),
       spacePath,
       projectPath,
@@ -535,6 +546,8 @@ export function PageDetailProvider({
       target,
       title,
       pageName.titleError,
+      titleFocusRequest,
+      requestTitleFocus,
       updateField,
       updateTitle,
     ],

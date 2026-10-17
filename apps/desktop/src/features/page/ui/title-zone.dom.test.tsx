@@ -216,6 +216,106 @@ test("read-only identity keeps its draft visible without emitting mutations", as
   }
 });
 
+test("a rename request selects the title, Enter applies it and Escape cancels", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const changes: string[] = [];
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const renderTitle = (titleFocusRequest: number) =>
+    root.render(
+      <TitleZone
+        title="Roadmap"
+        icon={null}
+        description=""
+        fallbackEmoji="📄"
+        titleFocusRequest={titleFocusRequest}
+        onTitleChange={(title) => changes.push(title)}
+        onIconChange={() => undefined}
+        onDescriptionChange={() => undefined}
+        onBodyFocus={() => undefined}
+      />,
+    );
+  const press = (input: HTMLInputElement, key: string) =>
+    act(async () => {
+      input.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", { bubbles: true, key }),
+      );
+      await new Promise((resolve) =>
+        dom.window.requestAnimationFrame(() => resolve(undefined)),
+      );
+    });
+
+  try {
+    await act(async () => renderTitle(0));
+    const input = dom.window.document.querySelector<HTMLInputElement>(
+      "[data-page-title-input]",
+    )!;
+    expect(dom.window.document.activeElement === input).toBe(false);
+
+    await act(async () => renderTitle(1));
+    expect(dom.window.document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 7]);
+    await act(async () => setInputValue(input, "Roadmap 2028"));
+    await press(input, "Enter");
+    expect(changes).toEqual(["Roadmap 2028"]);
+    // A rename ends in the title instead of opening the description.
+    expect(dom.window.document.activeElement === input).toBe(false);
+    expect(dom.window.document.querySelector("textarea")).toBeNull();
+
+    await act(async () => renderTitle(2));
+    expect(dom.window.document.activeElement).toBe(input);
+    await act(async () => setInputValue(input, "Discarded"));
+    await press(input, "Escape");
+    expect(changes).toEqual(["Roadmap 2028"]);
+    expect(input.value).toBe("Roadmap");
+    expect(dom.window.document.activeElement === input).toBe(false);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("a read-only title ignores a rename request", async () => {
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  try {
+    for (const titleFocusRequest of [0, 1]) {
+      await act(async () =>
+        root.render(
+          <TitleZone
+            title="Roadmap"
+            icon={null}
+            description=""
+            fallbackEmoji="📄"
+            readOnly
+            titleFocusRequest={titleFocusRequest}
+            onTitleChange={() => undefined}
+            onIconChange={() => undefined}
+            onDescriptionChange={() => undefined}
+            onBodyFocus={() => undefined}
+          />,
+        ),
+      );
+    }
+    expect(
+      dom.window.document.activeElement ===
+        dom.window.document.querySelector("[data-page-title-input]"),
+    ).toBe(false);
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(
     input.ownerDocument.defaultView!.HTMLInputElement.prototype,
