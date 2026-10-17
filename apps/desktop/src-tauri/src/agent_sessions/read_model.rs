@@ -1408,6 +1408,55 @@ mod tests {
         );
     }
 
+    /// DF-169 acceptance 1: the service records Claude Code writes after a
+    /// turn leave the session ended at the time of its last turn, and an
+    /// interrupted turn ends cancelled, alike in the list and hot status.
+    #[test]
+    fn claude_code_service_records_do_not_start_a_turn() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let mut served = claude_turn("2026-09-30T08:59:00Z", TURN_AT);
+        served.extend([
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": "<task-notification>\n<status>killed</status>\n</task-notification>"}, "origin": {"kind": "task-notification"}, "promptSource": "system", "queueTranscriptOnly": true, "timestamp": VIEWED_AT}),
+            serde_json::json!({"type": "user", "isMeta": true, "message": {"role": "user", "content": "<local-command-caveat>Caveat</local-command-caveat>"}, "timestamp": VIEWED_AT}),
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": "<command-name>/model</command-name>"}, "timestamp": VIEWED_AT}),
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": "<local-command-stdout>Set model</local-command-stdout>"}, "timestamp": VIEWED_AT}),
+            serde_json::json!({"type": "user", "isCompactSummary": true, "isVisibleInTranscriptOnly": true, "message": {"role": "user", "content": "This session is being continued"}, "timestamp": VIEWED_AT}),
+        ]);
+        write(&claude_transcript(&home, "c-served"), &rows(&served));
+        let interrupted = [
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": "hi"}, "origin": {"kind": "human"}, "promptSource": "typed", "timestamp": "2026-09-30T08:59:00Z"}),
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]}, "timestamp": TURN_AT}),
+        ];
+        write(
+            &claude_transcript(&home, "c-interrupted"),
+            &rows(&interrupted),
+        );
+        acp_list(
+            &state,
+            "claude-code",
+            true,
+            vec![
+                ("c-served", &project, Some(VIEWED_AT)),
+                ("c-interrupted", &project, Some(VIEWED_AT)),
+            ],
+        );
+
+        let result = list(&state, &project);
+        for (id, stop_reason) in [
+            ("claude-code:c-served", StopReason::EndTurn),
+            ("claude-code:c-interrupted", StopReason::Cancelled),
+        ] {
+            let listed = by_id(&result, id);
+            assert_eq!(listed.status.state, idle(Some(stop_reason)), "{id}");
+            assert_eq!(listed.last_activity_at, TURN_AT, "{id}");
+            assert!(!listed.native_external_writer, "{id}");
+            let hot = hot(&state, &project, id);
+            assert_eq!(hot.sessions[0].status, listed.status, "{id}");
+            assert_eq!(hot.sessions[0].last_activity_at, TURN_AT, "{id}");
+        }
+    }
+
     /// DF-173 acceptance 2: Codex applies its thread settings and writes a
     /// turn context when the session is read; neither is its last activity.
     #[test]

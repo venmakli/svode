@@ -198,8 +198,30 @@ impl ClaudeTailState {
             return;
         }
 
-        self.open_tool_ids.clear();
-        self.set_active(observed_at, "claude user prompt submitted");
+        match user_record(value) {
+            UserRecord::Prompt => {
+                self.open_tool_ids.clear();
+                self.set_active(observed_at, "claude user prompt submitted");
+            }
+            UserRecord::Interrupt => {
+                if self
+                    .status
+                    .as_ref()
+                    .is_some_and(|status| status.state.in_turn())
+                {
+                    self.open_tool_ids.clear();
+                    self.status = Some(NativeStatusEvidence {
+                        state: SessionState::Idle {
+                            stop_reason: Some(StopReason::Cancelled),
+                        },
+                        reason: "claude turn interrupted by the user".to_string(),
+                        observed_at,
+                        waiting_since: None,
+                    });
+                }
+            }
+            UserRecord::Service => {}
+        }
     }
 
     fn set_active(&mut self, observed_at: Option<DateTime<Utc>>, reason: &str) {
@@ -210,6 +232,58 @@ impl ClaudeTailState {
             waiting_since: None,
         });
     }
+}
+
+/// What a user record without a tool result does to the turn (DF-169 R1).
+enum UserRecord {
+    /// A record the agent answers: a user message, a task notification, a
+    /// message of another agent, or a record of a kind not known here.
+    Prompt,
+    /// The marker Claude Code writes when the user interrupts the turn.
+    Interrupt,
+    /// A transcript-only record, a local command or its output, or a
+    /// compaction summary: no turn starts and the last activity stays.
+    Service,
+}
+
+const INTERRUPT_MARKER: &str = "[Request interrupted by user";
+const LOCAL_COMMAND_TAGS: [&str; 3] = [
+    "<local-command-caveat>",
+    "<command-name>",
+    "<local-command-stdout>",
+];
+
+fn user_record(value: &Value) -> UserRecord {
+    let flag = |key: &str| value.get(key).and_then(Value::as_bool) == Some(true);
+    if flag("queueTranscriptOnly") || flag("isCompactSummary") {
+        return UserRecord::Service;
+    }
+    let Some(text) = user_text(value).map(str::trim_start) else {
+        return UserRecord::Prompt;
+    };
+    if LOCAL_COMMAND_TAGS.iter().any(|tag| text.starts_with(tag)) {
+        UserRecord::Service
+    } else if text.starts_with(INTERRUPT_MARKER) {
+        UserRecord::Interrupt
+    } else {
+        UserRecord::Prompt
+    }
+}
+
+/// The text of a user record: its string content or its first text item.
+fn user_text(value: &Value) -> Option<&str> {
+    let content = value
+        .get("message")
+        .and_then(|message| message.get("content"))
+        .or_else(|| value.get("content"))?;
+    content.as_str().or_else(|| {
+        content
+            .as_array()?
+            .iter()
+            .find(|item| string_field(item, &["type"]) == Some("text"))?
+            .get("text")?
+            .as_str()
+    })
 }
 
 fn assistant_tool_use_ids(value: &Value) -> Vec<String> {
@@ -298,6 +372,168 @@ mod tests {
             }
         );
         assert_eq!(status.reason, "claude turn complete");
+    }
+
+    /// Records of the forms Claude Code 2.1.x writes (DF-169 evidence); the
+    /// text is a placeholder.
+    fn prompt(at: &str) -> Value {
+        serde_json::json!({"type": "user", "message": {"role": "user", "content": "run it"}, "origin": {"kind": "human"}, "promptSource": "typed", "timestamp": at})
+    }
+
+    fn end_turn(at: &str) -> Value {
+        serde_json::json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"}, "timestamp": at})
+    }
+
+    fn tool_use(at: &str) -> Value {
+        serde_json::json!({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {}}], "stop_reason": "tool_use"}, "timestamp": at})
+    }
+
+    fn tool_result(at: &str) -> Value {
+        serde_json::json!({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]}, "timestamp": at})
+    }
+
+    fn task_notification(at: &str, transcript_only: bool) -> Value {
+        let mut record = serde_json::json!({"type": "user", "message": {"role": "user", "content": "<task-notification>\n<status>killed</status>\n</task-notification>"}, "origin": {"kind": "task-notification"}, "promptSource": "system", "timestamp": at});
+        if transcript_only {
+            record["queueTranscriptOnly"] = Value::Bool(true);
+        }
+        record
+    }
+
+    fn peer(at: &str) -> Value {
+        serde_json::json!({"type": "user", "isMeta": true, "message": {"role": "user", "content": "a message"}, "origin": {"kind": "peer", "from": "agent-a"}, "promptSource": "system", "timestamp": at})
+    }
+
+    fn interrupt(at: &str, marker: &str) -> Value {
+        serde_json::json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": marker}]}, "timestamp": at})
+    }
+
+    fn local_command(at: &str) -> Vec<Value> {
+        vec![
+            serde_json::json!({"type": "user", "isMeta": true, "message": {"role": "user", "content": "<local-command-caveat>Caveat</local-command-caveat>"}, "timestamp": at}),
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": "<command-name>/model</command-name>\n<command-message>model</command-message>"}, "timestamp": at}),
+            serde_json::json!({"type": "user", "message": {"role": "user", "content": "<local-command-stdout>Set model</local-command-stdout>"}, "timestamp": at}),
+        ]
+    }
+
+    fn compact_summary(at: &str) -> Value {
+        serde_json::json!({"type": "user", "isCompactSummary": true, "isVisibleInTranscriptOnly": true, "message": {"role": "user", "content": "This session is being continued"}, "timestamp": at})
+    }
+
+    fn status_of(records: &[Value]) -> NativeStatusEvidence {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let transcript = temp.path().join("claude.jsonl");
+        let lines = records
+            .iter()
+            .map(|record| format!("{record}\n"))
+            .collect::<String>();
+        write(&transcript, &lines);
+        read(&transcript).0.expect("status")
+    }
+
+    fn at(timestamp: &str) -> Option<DateTime<Utc>> {
+        Some(timestamp.parse().expect("timestamp"))
+    }
+
+    const PROMPT_AT: &str = "2026-10-04T11:13:06Z";
+    const DONE_AT: &str = "2026-10-04T11:13:13Z";
+    const LATER_AT: &str = "2026-10-04T11:13:50Z";
+
+    /// DF-169 acceptance 1: transcript-only records, a local command with its
+    /// output and a compaction summary after the turn leave it ended, with
+    /// the time of its end.
+    #[test]
+    fn service_records_after_a_turn_keep_its_end() {
+        let service = [
+            vec![task_notification(LATER_AT, true)],
+            local_command(LATER_AT),
+            vec![compact_summary(LATER_AT)],
+        ];
+        for records in service {
+            let mut log = vec![prompt(PROMPT_AT), end_turn(DONE_AT)];
+            log.extend(records.clone());
+            let status = status_of(&log);
+            assert_eq!(
+                status.state,
+                SessionState::Idle {
+                    stop_reason: Some(StopReason::EndTurn)
+                },
+                "{records:?}"
+            );
+            assert_eq!(status.observed_at, at(DONE_AT), "{records:?}");
+        }
+    }
+
+    /// A service record during an open turn does not extend it.
+    #[test]
+    fn a_service_record_keeps_the_time_of_an_open_turn() {
+        let status = status_of(&[
+            prompt(PROMPT_AT),
+            tool_use(DONE_AT),
+            task_notification(LATER_AT, true),
+        ]);
+        assert_eq!(status.state, SessionState::Running);
+        assert_eq!(status.observed_at, at(DONE_AT));
+    }
+
+    /// DF-169 acceptance 1: the interrupt marker closes an open turn as
+    /// cancelled, also when it follows the rejected tool result.
+    #[test]
+    fn the_interrupt_marker_cancels_an_open_turn() {
+        let cancelled = SessionState::Idle {
+            stop_reason: Some(StopReason::Cancelled),
+        };
+        let status = status_of(&[
+            prompt(PROMPT_AT),
+            interrupt(LATER_AT, "[Request interrupted by user]"),
+        ]);
+        assert_eq!(status.state, cancelled);
+        assert_eq!(status.observed_at, at(LATER_AT));
+
+        let status = status_of(&[
+            prompt(PROMPT_AT),
+            tool_use(DONE_AT),
+            tool_result(LATER_AT),
+            interrupt(LATER_AT, "[Request interrupted by user for tool use]"),
+        ]);
+        assert_eq!(status.state, cancelled);
+
+        let status = status_of(&[
+            prompt(PROMPT_AT),
+            end_turn(DONE_AT),
+            interrupt(LATER_AT, "[Request interrupted by user]"),
+        ]);
+        assert_eq!(
+            status.state,
+            SessionState::Idle {
+                stop_reason: Some(StopReason::EndTurn)
+            },
+            "a marker without an open turn changes nothing"
+        );
+        assert_eq!(status.observed_at, at(DONE_AT));
+    }
+
+    /// DF-169 acceptance 1: a user message, a task notification the agent
+    /// answers, a message of another agent and a record of an unknown kind
+    /// start a turn; a tool result keeps the open turn.
+    #[test]
+    fn records_the_agent_answers_start_a_turn() {
+        let unknown = serde_json::json!({"type": "user", "message": {"role": "user", "content": "<future-record>x</future-record>"}, "timestamp": LATER_AT});
+        for record in [
+            prompt(LATER_AT),
+            task_notification(LATER_AT, false),
+            peer(LATER_AT),
+            unknown,
+        ] {
+            let status = status_of(&[prompt(PROMPT_AT), end_turn(DONE_AT), record.clone()]);
+            assert_eq!(status.state, SessionState::Running, "{record}");
+            assert_eq!(status.reason, "claude user prompt submitted");
+            assert_eq!(status.observed_at, at(LATER_AT), "{record}");
+        }
+
+        let status = status_of(&[prompt(PROMPT_AT), tool_use(DONE_AT), tool_result(LATER_AT)]);
+        assert_eq!(status.state, SessionState::Running);
+        assert_eq!(status.reason, "claude tool result received");
     }
 
     #[test]
