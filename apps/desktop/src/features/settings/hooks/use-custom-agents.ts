@@ -120,19 +120,23 @@ export function useCustomAgents() {
     [setActivity],
   );
 
-  /** Resolves to the saved agent, or to the error the form shows. */
+  /**
+   * Resolves to the saved agent, or to the error the form shows. `checked`:
+   * the form's passed check is of this definition.
+   */
   const save = useCallback(
     async (
       agent: string | null,
       definition: CustomAgentDefinitionDto,
+      checked: boolean,
     ): Promise<
       | { saved: CustomAgentSetupDto; error: null }
       | { saved: null; error: AgentOperationError }
     > => {
       try {
         const saved = agent
-          ? await updateCustomAgent(agent, definition)
-          : await addCustomAgent(definition);
+          ? await updateCustomAgent(agent, definition, checked)
+          : await addCustomAgent(definition, checked);
         replace(saved);
         if (agent) setActivity(agent, null);
         return { saved, error: null };

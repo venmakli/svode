@@ -226,13 +226,15 @@ impl AgentSetupState {
     }
 
     /// Adds the agent with what the form's passed check of this launch
-    /// definition declared, else with nothing declared.
+    /// definition declared when the form shows it (`checked`), else with
+    /// nothing declared.
     fn add_custom_agent(
         &self,
         definition: CustomAgentDefinition,
+        checked: bool,
     ) -> Result<(CustomAgent, Option<AgentInfo>), AppError> {
         let definition = definition.normalized()?;
-        let declared = self.take_draft_check(None, &definition);
+        let declared = self.take_draft_check(None, &definition, checked);
         let _guard = self.choices.lock().unwrap();
         let agent = CustomAgent {
             id: self.next_custom_id(&definition.name),
@@ -248,18 +250,19 @@ impl AgentSetupState {
 
     /// Changes everything but the id, so the agent's sessions keep theirs.
     /// What the agent declared is the form's passed check of the new launch
-    /// definition, what it declared before when only the name changed, else
-    /// nothing.
+    /// definition when the form shows it (`checked`), what it declared
+    /// before when only the name changed, else nothing.
     fn update_custom_agent(
         &self,
         id: CustomAgentId,
         definition: CustomAgentDefinition,
+        checked: bool,
     ) -> Result<(CustomAgent, Option<AgentInfo>), AppError> {
         let agent = CustomAgent {
             id,
             definition: definition.normalized()?,
         };
-        let checked = self.take_draft_check(Some(&agent.id), &agent.definition);
+        let checked = self.take_draft_check(Some(&agent.id), &agent.definition, checked);
         let _guard = self.choices.lock().unwrap();
         update_file(&self.config_dir, |root| {
             let entries = custom_entries(root)?;
@@ -325,18 +328,18 @@ impl AgentSetupState {
         }
     }
 
-    /// What the form of `agent` declared in its passed check, when it
-    /// checked the launch definition being saved; the check is used up.
+    /// What the form of `agent` declared in its passed check, when the form
+    /// shows it (`checked`) and it checked the launch definition being
+    /// saved; a save uses the check up either way, so a cancelled form's
+    /// check reaches no later one.
     fn take_draft_check(
         &self,
         agent: Option<&CustomAgentId>,
         definition: &CustomAgentDefinition,
+        checked: bool,
     ) -> Option<AgentInfo> {
         let check = self.draft_checks.lock().unwrap().remove(&agent.cloned())?;
-        check
-            .definition
-            .launches_as(definition)
-            .then_some(check.declared)
+        (checked && check.definition.launches_as(definition)).then_some(check.declared)
     }
 
     /// Keeps what the agent declared unless its launch definition changed
@@ -721,16 +724,21 @@ mod tests {
         .unwrap();
         let setup = AgentSetupState::new(dir.path(), dir.path().to_path_buf());
 
-        let (first, _) = setup.add_custom_agent(definition(" Hermes ")).unwrap();
-        let (second, _) = setup.add_custom_agent(definition("Hermes")).unwrap();
+        let (first, _) = setup
+            .add_custom_agent(definition(" Hermes "), false)
+            .unwrap();
+        let (second, _) = setup.add_custom_agent(definition("Hermes"), false).unwrap();
         assert_eq!(first.id.agent_id().as_str(), "custom-hermes");
         assert_eq!(first.definition.name, "Hermes");
         assert_eq!(second.id.agent_id().as_str(), "custom-hermes-2");
         assert!(matches!(
-            setup.add_custom_agent(CustomAgentDefinition {
-                command: " ".into(),
-                ..definition("Empty")
-            }),
+            setup.add_custom_agent(
+                CustomAgentDefinition {
+                    command: " ".into(),
+                    ..definition("Empty")
+                },
+                false
+            ),
             Err(AppError::CustomAgent(CustomAgentError::CommandMissing))
         ));
 
@@ -741,6 +749,7 @@ mod tests {
                     name: "Hermes ACP".into(),
                     ..definition("ignored")
                 },
+                false,
             )
             .unwrap();
         assert_eq!(renamed.id, first.id, "editing keeps the id");
@@ -754,7 +763,7 @@ mod tests {
         setup.set_choice("custom-hermes", false).unwrap();
         setup.remove_custom_agent(&first.id).unwrap();
         assert!(matches!(
-            setup.update_custom_agent(first.id.clone(), definition("Gone")),
+            setup.update_custom_agent(first.id.clone(), definition("Gone"), false),
             Err(AppError::CustomAgent(CustomAgentError::NotFound { .. }))
         ));
         let value = read_file(dir.path()).unwrap().unwrap();
@@ -773,8 +782,8 @@ mod tests {
     async fn enabled_custom_agents_are_catalogue_agents_and_a_disabled_one_never_starts() {
         let dir = tempfile::tempdir().unwrap();
         let setup = AgentSetupState::new(dir.path(), dir.path().to_path_buf());
-        let (on, _) = setup.add_custom_agent(definition("On")).unwrap();
-        let (off, _) = setup.add_custom_agent(definition("Off")).unwrap();
+        let (on, _) = setup.add_custom_agent(definition("On"), false).unwrap();
+        let (off, _) = setup.add_custom_agent(definition("Off"), false).unwrap();
         setup.set_choice(off.id.agent_id().as_str(), false).unwrap();
 
         assert_eq!(
@@ -830,7 +839,7 @@ mod tests {
         println!("draft check: {draft_check:?} in {:?}", started.elapsed());
         assert!(matches!(draft_check, AgentCheck::Ready { .. }));
 
-        let (agent, _) = setup.add_custom_agent(draft).unwrap();
+        let (agent, _) = setup.add_custom_agent(draft, false).unwrap();
         let id = agent.id.agent_id().as_str().to_string();
         assert_eq!(id, "custom-hermes-acp");
         let started = Instant::now();
@@ -919,7 +928,7 @@ mod tests {
 
         // The form's passed check goes with the agent it adds.
         setup.remember_draft_check(None, definition("Mock"), &ready(&mock));
-        let (agent, added) = setup.add_custom_agent(definition("Mock")).unwrap();
+        let (agent, added) = setup.add_custom_agent(definition("Mock"), true).unwrap();
         assert_eq!(added, Some(mock.clone()));
         let id = agent.id.clone();
         let restarted = AgentSetupState::new(dir.path(), dir.path().to_path_buf());
@@ -936,7 +945,7 @@ mod tests {
         };
         assert_eq!(
             setup
-                .update_custom_agent(id.clone(), renamed.clone())
+                .update_custom_agent(id.clone(), renamed.clone(), false)
                 .unwrap()
                 .1,
             Some(mock.clone())
@@ -946,7 +955,10 @@ mod tests {
             ..renamed.clone()
         };
         assert_eq!(
-            setup.update_custom_agent(id.clone(), moved).unwrap().1,
+            setup
+                .update_custom_agent(id.clone(), moved, false)
+                .unwrap()
+                .1,
             None
         );
         assert_eq!(kept(dir.path(), &id), None);
@@ -955,7 +967,7 @@ mod tests {
         setup.remember_draft_check(Some(id.clone()), renamed.clone(), &ready(&mock));
         assert_eq!(
             setup
-                .update_custom_agent(id.clone(), renamed.clone())
+                .update_custom_agent(id.clone(), renamed.clone(), true)
                 .unwrap()
                 .1,
             Some(mock.clone())
@@ -972,29 +984,43 @@ mod tests {
         assert_eq!(kept(dir.path(), &id), Some(mock.clone()));
         assert_eq!(
             setup
-                .update_custom_agent(id.clone(), renamed.clone())
+                .update_custom_agent(id.clone(), renamed.clone(), false)
                 .unwrap()
                 .1,
             Some(mock.clone())
         );
         assert_eq!(
             setup
-                .update_custom_agent(id.clone(), elsewhere.clone())
+                .update_custom_agent(id.clone(), elsewhere.clone(), true)
                 .unwrap()
                 .1,
             None,
             "the check was used up by the earlier save"
         );
 
-        // A check of an added agent that was cancelled does not reach the
-        // next agent with the same name and another command, and only the
-        // last check of a form counts.
+        // A check of an added agent that was cancelled reaches no later
+        // form: neither one without a check of the same definition, nor one
+        // whose own check is of another command. Only the last check of a
+        // form counts.
+        setup.remember_draft_check(None, definition("Mock"), &ready(&mock));
+        let (unchecked, unchecked_declared) =
+            setup.add_custom_agent(definition("Mock"), false).unwrap();
+        assert_eq!(unchecked_declared, None);
+        assert_eq!(kept(dir.path(), &unchecked.id), None);
+        assert_eq!(
+            setup.add_custom_agent(definition("Mock"), true).unwrap().1,
+            None,
+            "the cancelled check was used up"
+        );
         setup.remember_draft_check(None, definition("Mock"), &ready(&mock));
         let (next, next_declared) = setup
-            .add_custom_agent(CustomAgentDefinition {
-                command: "qa-other".into(),
-                ..definition("Mock")
-            })
+            .add_custom_agent(
+                CustomAgentDefinition {
+                    command: "qa-other".into(),
+                    ..definition("Mock")
+                },
+                true,
+            )
             .unwrap();
         assert_eq!(next_declared, None);
         setup.remember_draft_check(None, definition("Third"), &ready(&mock));
@@ -1005,7 +1031,10 @@ mod tests {
                 message: "exited".into(),
             },
         );
-        assert_eq!(setup.add_custom_agent(definition("Third")).unwrap().1, None);
+        assert_eq!(
+            setup.add_custom_agent(definition("Third"), true).unwrap().1,
+            None
+        );
 
         // What an agent declares is kept only for its current definition.
         setup.keep_custom_declared(&next, &other).unwrap();
@@ -1055,7 +1084,7 @@ done"#;
         let dir = tempfile::tempdir().unwrap();
         let setup = AgentSetupState::new(dir.path(), dir.path().to_path_buf());
         let (agent, unknown) = setup
-            .add_custom_agent(scripted_definition("Plain", "none"))
+            .add_custom_agent(scripted_definition("Plain", "none"), false)
             .unwrap();
         assert_eq!(unknown, None, "added without a check");
         let id = agent.id.agent_id().as_str().to_string();
@@ -1095,7 +1124,9 @@ done"#;
 
         // The user's check keeps a changed declaration.
         let edited = scripted_definition("Plain", "ok");
-        setup.update_custom_agent(agent.id.clone(), edited).unwrap();
+        setup
+            .update_custom_agent(agent.id.clone(), edited, false)
+            .unwrap();
         runtime.restore_declared(&id, None);
         assert!(matches!(
             connections.check(&id).await,

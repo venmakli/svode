@@ -262,6 +262,8 @@ pub async fn agent_custom_list(
     Ok(setups)
 }
 
+/// `checked`: the form shows its passed check of this definition, whose
+/// declaration goes with the agent.
 #[tauri::command]
 pub async fn agent_custom_add(
     app: AppHandle,
@@ -269,8 +271,9 @@ pub async fn agent_custom_add(
     runtime: State<'_, AgentRuntimeState>,
     sessions: State<'_, AgentSessionsState>,
     definition: CustomAgentDefinition,
+    checked: bool,
 ) -> Result<CustomAgentSetup, AppError> {
-    let (agent, declared) = state.add_custom_agent(definition)?;
+    let (agent, declared) = state.add_custom_agent(definition, checked)?;
     let id = agent.id.agent_id().as_str();
     runtime.runtime().restore_declared(id, declared);
     sessions.acp_lists.remember(id);
@@ -279,9 +282,9 @@ pub async fn agent_custom_add(
 }
 
 /// A changed command, arguments or variables are another process: what the
-/// agent declared is dropped unless the form checked the new definition,
-/// and its catalogue connection is dropped. A new name keeps what it
-/// declared. Its sessions keep their ids.
+/// agent declared is dropped unless the form shows its passed check of the
+/// new definition (`checked`), and its catalogue connection is dropped. A
+/// new name keeps what it declared. Its sessions keep their ids.
 #[tauri::command]
 pub async fn agent_custom_update(
     app: AppHandle,
@@ -290,8 +293,9 @@ pub async fn agent_custom_update(
     connections: State<'_, Arc<AgentConnections>>,
     agent: CustomAgentId,
     definition: CustomAgentDefinition,
+    checked: bool,
 ) -> Result<CustomAgentSetup, AppError> {
-    let (agent, declared) = state.update_custom_agent(agent, definition)?;
+    let (agent, declared) = state.update_custom_agent(agent, definition, checked)?;
     let id = agent.id.agent_id().as_str();
     connections.forget_agent(id);
     runtime.runtime().restore_declared(id, declared);

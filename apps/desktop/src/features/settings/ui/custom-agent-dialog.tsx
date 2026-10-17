@@ -87,9 +87,11 @@ export function CustomAgentDialog({
     agent: string | null,
     definition: CustomAgentDefinitionDto,
   ) => Promise<AgentCheckDto>;
+  /** `checked`: the shown check passed and is of the saved definition. */
   onSave: (
     agent: string | null,
     definition: CustomAgentDefinitionDto,
+    checked: boolean,
   ) => Promise<AgentOperationError | null>;
   onClose: () => void;
 }) {
@@ -138,7 +140,8 @@ export function CustomAgentDialog({
     const saved = definition();
     if (!saved || saving) return;
     setSaving(true);
-    const error = await onSave(agent, saved);
+    const checked = check?.kind === "done" && check.result.state === "ready";
+    const error = await onSave(agent, saved, checked);
     setSaving(false);
     if (!error) return onClose();
     const rejected = saveProblem(error);

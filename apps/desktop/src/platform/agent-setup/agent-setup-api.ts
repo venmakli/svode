@@ -160,11 +160,17 @@ export function listCustomAgents(): Promise<CustomAgentSetupDto[]> {
   return invokeCommand<CustomAgentSetupDto[]>("agent_custom_list");
 }
 
+/**
+ * `checked`: the form's passed check is of this definition, so what the
+ * agent declared in it goes with the saved agent.
+ */
 export function addCustomAgent(
   definition: CustomAgentDefinitionDto,
+  checked: boolean,
 ): Promise<CustomAgentSetupDto> {
   return invokeCommand<CustomAgentSetupDto>("agent_custom_add", {
     definition,
+    checked,
   });
 }
 
@@ -172,10 +178,12 @@ export function addCustomAgent(
 export function updateCustomAgent(
   agent: string,
   definition: CustomAgentDefinitionDto,
+  checked: boolean,
 ): Promise<CustomAgentSetupDto> {
   return invokeCommand<CustomAgentSetupDto>("agent_custom_update", {
     agent,
     definition,
+    checked,
   });
 }
 

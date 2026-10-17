@@ -1637,7 +1637,7 @@ if (!isolatedProcess) {
         within(form, "Add").click();
         await settle();
       });
-      expect(calls[1]).toEqual(["add", { definition }]);
+      expect(calls[1]).toEqual(["add", { definition, checked: true }]);
       expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
       const row = () => agentRow(harness.dom, "custom-my-acp-agent");
       const newSessionsOnly =
@@ -1819,6 +1819,7 @@ if (!isolatedProcess) {
       expect(updates[1]).toEqual({
         agent: "custom-hermes-acp",
         definition: { ...definition, name: "Hermes" },
+        checked: false,
       });
       expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
       expect(title(agentRow(harness.dom, "custom-hermes-acp"))).toBe("Hermes");
@@ -1953,6 +1954,105 @@ if (!isolatedProcess) {
       }
     }
     await setLocale(originalLocale, { reload: false });
+  });
+
+  test("a check in a cancelled Add ACP agent form reaches no later form: adding the same command without a check is Not checked", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    let customAgents: CustomAgentSetupDto[] = [];
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const scripted = {
+      name: "scripted",
+      version: "1.0.0",
+      capabilities: {
+        loadSession: true,
+        listSessions: false,
+        resumeSession: false,
+        closeSession: false,
+      },
+    };
+    const harness = await renderSection(
+      () => providersStatus([client("codex", "Codex", false)]),
+      () => {},
+      undefined,
+      {
+        agent_custom_list: () => customAgents,
+        agent_custom_check: (args) => {
+          calls.push(["check", args]);
+          return { state: "ready", agent: scripted };
+        },
+        // As the backend: the check goes with the agent only when the form
+        // shows it passed for the saved definition.
+        agent_custom_add: (args) => {
+          calls.push(["add", args]);
+          customAgents = [
+            customSetup(
+              "custom-mock",
+              args.definition as CustomAgentDefinitionDto,
+              args.checked
+                ? { declared: scripted, restriction: "new_session_only" }
+                : {},
+            ),
+          ];
+          return customAgents[0];
+        },
+      },
+    );
+    try {
+      const document = harness.dom.window.document;
+      const [agents] = topSections(harness.dom);
+      const openForm = async () => {
+        await act(async () => {
+          within(agents, "Add ACP agent…").click();
+          await settle();
+        });
+        const form = document.querySelector<HTMLElement>(
+          "[data-custom-agent-form]",
+        )!;
+        setFieldValue(field(form, "custom-agent-name"), "Mock");
+        setFieldValue(field(form, "custom-agent-command"), "qa-acp-mock");
+        return form;
+      };
+
+      const cancelled = await openForm();
+      await act(async () => {
+        within(cancelled, "Check").click();
+        await settle();
+      });
+      expect(
+        cancelled.querySelector("[data-custom-agent-check]")?.textContent,
+      ).toBe("Check passed · scripted 1.0.0 · new sessions only");
+      await act(async () => {
+        within(cancelled, "Cancel").click();
+        await settle();
+      });
+      expect(document.querySelector("[data-custom-agent-form]")).toBeNull();
+      expect(customAgents).toEqual([]);
+
+      const added = await openForm();
+      await act(async () => {
+        within(added, "Add").click();
+        await settle();
+      });
+      expect(calls.at(-1)).toEqual([
+        "add",
+        {
+          definition: {
+            name: "Mock",
+            command: "qa-acp-mock",
+            args: [],
+            env: {},
+          },
+          checked: false,
+        },
+      ]);
+      const row = agentRow(harness.dom, "custom-mock");
+      expect(stateOf(row)).toBe("Not checked");
+      expect(within(row, "Check") === undefined).toBe(false);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
   });
 }
 

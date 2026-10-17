@@ -319,8 +319,8 @@ export function AgentsGroup({
         <CustomAgentDialog
           editing={customForm.editing}
           onCheck={custom.checkDraft}
-          onSave={async (agent, definition) =>
-            (await custom.save(agent, definition)).error
+          onSave={async (agent, definition, checked) =>
+            (await custom.save(agent, definition, checked)).error
           }
           onClose={() => setCustomForm(null)}
         />
