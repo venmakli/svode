@@ -21,7 +21,7 @@ import {
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { ShellChrome, WindowHeader } from "./window-header";
 import {
-  CommandPalette,
+  SpaceCommandPalette,
   useOpenCommandPalette,
 } from "@/features/search/app-shell";
 import {
@@ -89,6 +89,7 @@ import {
   useProjectWindowRequests,
   useStartHomeChat,
 } from "./home-workspace";
+import { HomeSearch, useOpenHomeProjectSearch } from "./home-search";
 
 type SidebarProviderStyle = CSSProperties & {
   "--sidebar-width": string;
@@ -244,12 +245,14 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
       <SpaceFileWatcher />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />
-      {view === "space" && (
-        <CommandPalette
+      {view === "space" ? (
+        <SpaceCommandPalette
           onBeforeNavigation={passNavigationGuards}
           onAfterNavigation={openContentSurface}
           onOpenGraph={openGraphSurface}
         />
+      ) : (
+        <HomeSearch onActivateContent={openContentSurface} />
       )}
     </SidebarProvider>
   );
@@ -271,6 +274,7 @@ function ShellLayoutContent({
   const startSessionInPeek = useStartSessionInPeek();
   const newSpaceTerminal = useNewSpaceTerminal();
   const startHomeChat = useStartHomeChat();
+  const openHomeProjectSearch = useOpenHomeProjectSearch();
   const view = useShellView();
   const userMenu = (
     <UserSettingsFooter
@@ -289,6 +293,7 @@ function ShellLayoutContent({
         onBeforeNavigation={onBeforeNavigation}
         onActivateContent={onActivateContent}
         onStartChat={(project) => void startHomeChat(project)}
+        onSearch={(project) => void openHomeProjectSearch(project)}
         projectItems={(project, availability) => (
           <HomeProjectItems
             project={project}

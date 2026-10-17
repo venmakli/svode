@@ -97,6 +97,7 @@ export function GraphSurface({
       spaceId: node.source.spaceId,
       spaceName: node.spaceName,
       path: knowledgeOpenPath(node),
+      title: node.title,
       kind: node.source.kind,
     });
 

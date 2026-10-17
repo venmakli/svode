@@ -145,6 +145,12 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
         return true;
       },
   }));
+  const searchOpened: boolean[] = [];
+  const searchAppShell = { ...(await import("@/features/search/app-shell")) };
+  mock.module("@/features/search/app-shell", () => ({
+    ...searchAppShell,
+    useOpenCommandPalette: () => (open: boolean) => searchOpened.push(open),
+  }));
   mock.module("./navigation-guards", () => ({
     passNavigationGuards: async () => {
       calls.guard++;
@@ -337,6 +343,28 @@ if (process.env.SVODE_HOME_WORKSPACE_DOM !== "1") {
     await open({ key: { kind: "page", path: "plan.md" }, title: "Plan" });
     await open({ key: { kind: "page", path: "gone.md" }, title: "Gone" });
     await open({ key: { kind: "session", sessionId: "codex:a" }, title: "A" });
-    expect(opened).toEqual(["/projects/d:Plan", "session:codex:a:true:composer"]);
+    expect(opened).toEqual([
+      "/projects/d:Plan",
+      "session:codex:a:true:composer",
+    ]);
+  });
+
+  test("Search another window hands over opens here without guards or a change of the main area", async () => {
+    reset("d");
+    otherWindows = [];
+    await render(projects);
+    useShellStore.getState().openContentSurface();
+    opened.length = 0;
+    searchOpened.length = 0;
+    allow = false;
+    await act(async () => {
+      requestHandler!({ kind: "search" });
+      await settle();
+    });
+    expect(searchOpened).toEqual([true]);
+    expect(calls.guard).toBe(0);
+    expect(calls.activate).toEqual([]);
+    expect(opened).toEqual([]);
+    expect(draftPath()).toBe(undefined);
   });
 }

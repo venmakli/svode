@@ -131,7 +131,9 @@ test("published editor keys agree with installed active plugin bindings", () => 
 
 test("Search and the editor link share ⌘K, named per platform", () => {
   expect(command("search").label()).toBe("Search");
-  expect(command("search").context?.()).toBe("In a project, outside Terminal");
+  expect(command("search").context?.()).toBe(
+    "In a project and on the home screen with an active project, outside Terminal",
+  );
   expect(command("link").context?.()).toBe("On selected text or in a link");
   for (const id of ["search", "link"]) {
     expect(shortcutLabel(command(id), true)).toBe("⌘K");
@@ -145,7 +147,9 @@ test("Search and the editor link share ⌘K, named per platform", () => {
   setLocale("ru", { reload: false });
   try {
     expect(command("search").label()).toBe("Поиск");
-    expect(command("search").context?.()).toBe("В проекте, вне терминала");
+    expect(command("search").context?.()).toBe(
+      "В проекте и на главном экране с активным проектом, вне терминала",
+    );
     expect(command("link").context?.()).toBe(
       "На выделенном тексте или в ссылке",
     );

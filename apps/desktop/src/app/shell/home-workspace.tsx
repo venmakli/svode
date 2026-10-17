@@ -21,6 +21,7 @@ import {
   describeNavigationItem,
   type NavigationItem,
 } from "@/features/navigation";
+import { useOpenCommandPalette } from "@/features/search/app-shell";
 import { listenProjectWindowRequest } from "@/platform/space/space-api";
 import { useOpenSessionInMainArea } from "./agent-session-peek-host";
 import { passNavigationGuards } from "./navigation-guards";
@@ -124,16 +125,21 @@ export function HomeMainPlaceholder() {
 
 /**
  * A chat or an object another window started for this window's project
- * opens here after this window's guards.
+ * opens here after this window's guards; Search opens without them.
  */
 export function useProjectWindowRequests(onActivateContent: () => void) {
   const showProjectChat = useShowProjectChat();
   const openItem = useOpenRequestedItem(onActivateContent);
+  const setSearchOpen = useOpenCommandPalette();
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
     listenProjectWindowRequest((request) => {
       if (request.kind === "focus") return;
+      if (request.kind === "search") {
+        setSearchOpen(true);
+        return;
+      }
       void passNavigationGuards().then((passed) => {
         if (!passed) return;
         if (request.kind === "newChat") showProjectChat();
@@ -151,7 +157,7 @@ export function useProjectWindowRequests(onActivateContent: () => void) {
       disposed = true;
       unlisten?.();
     };
-  }, [openItem, showProjectChat]);
+  }, [openItem, setSearchOpen, showProjectChat]);
 }
 
 /**

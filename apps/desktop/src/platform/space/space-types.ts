@@ -135,7 +135,8 @@ export type EnterProjectResultDto =
 export type ProjectWindowRequestDto =
   | { kind: "focus" }
   | { kind: "newChat" }
-  | { kind: "open"; item: NavigationItemDto };
+  | { kind: "open"; item: NavigationItemDto }
+  | { kind: "search" };
 
 export type WindowOpenIntentDto =
   | { kind: "home" }

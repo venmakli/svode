@@ -342,6 +342,7 @@ pub fn run() {
             app_windows::get_window_open_intent,
             app_windows::show_home_in_current_window,
             app_windows::list_projects_in_other_windows,
+            app_windows::send_project_window_request,
             app_windows::set_current_window_title,
             commands::space::clone_missing_space,
             commands::space::remove_missing_space,

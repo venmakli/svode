@@ -76,6 +76,8 @@ export function useSelectResult({
 export interface SearchNavigationTarget {
   spaceId: string | null;
   spaceName: string;
+  /** The path to open, relative to its Space. */
   path: string;
+  title: string;
   kind?: KnowledgeNodeKind;
 }

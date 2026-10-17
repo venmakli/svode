@@ -149,6 +149,7 @@ function useVisibleRefresh(refresh: () => void) {
  * Opens an object of a project that is not the active one: after the
  * guards the project becomes active and the object opens in the main area.
  * A project of another window opens it there, after that window's guards.
+ * Resolves false when the guards or the activation stopped it.
  */
 export function useOpenInactiveProjectItem(
   project: SpaceInfo,
@@ -163,9 +164,12 @@ export function useOpenInactiveProjectItem(
   const openSession = useOpenSessionInMainArea();
 
   return useCallback(
-    async (item: NavigationResolvedItem, session: AgentSession | null) => {
+    async (
+      item: NavigationResolvedItem,
+      session: AgentSession | null,
+    ): Promise<boolean> => {
       const elsewhere = availability === "otherWindow";
-      if (!elsewhere && !(await passNavigationGuards())) return;
+      if (!elsewhere && !(await passNavigationGuards())) return false;
       const entry = await activateHomeRoot(project.id, {
         kind: "open",
         item: {
@@ -174,7 +178,7 @@ export function useOpenInactiveProjectItem(
           ...(item.icon ? { icon: item.icon } : {}),
         },
       });
-      if (entry !== "opened") return;
+      if (entry !== "opened") return entry === "otherWindow";
       if (!isSessionKey(item.key)) {
         await openArtifact(item);
       } else if (session) {
@@ -183,6 +187,7 @@ export function useOpenInactiveProjectItem(
           guarded: true,
         });
       }
+      return true;
     },
     [activateHomeRoot, availability, openArtifact, openSession, project.id],
   );

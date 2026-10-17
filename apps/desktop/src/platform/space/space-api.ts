@@ -121,6 +121,20 @@ export function activateHomeProject(
   });
 }
 
+/**
+ * Hands `request` to the window of a project another window has; false when
+ * no other window has it. This window is not bound to the project either way.
+ */
+export function sendProjectWindowRequest(
+  projectId: string,
+  request: ProjectWindowRequestDto,
+): Promise<boolean> {
+  return invokeCommand<boolean>("send_project_window_request", {
+    projectId,
+    request,
+  });
+}
+
 /** Projects bound to other windows than this one. */
 export function listProjectsInOtherWindows(): Promise<string[]> {
   return invokeCommand<string[]>("list_projects_in_other_windows");

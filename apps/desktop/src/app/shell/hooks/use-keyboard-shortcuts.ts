@@ -61,7 +61,7 @@ export function useKeyboardShortcuts() {
   const newSessionScope =
     newSessionTarget.status === "ready" ? newSessionTarget.scope : null;
   const startSession = useStartSessionInMainArea();
-  // Home has no terminal panel, Search or Graph, and ⌘0 is where it is.
+  // Home has no terminal panel or Graph, and ⌘0 is where it is.
   const home = useShellView() === "home";
   const activeScopeSpace = useSpace((s) => {
     const scopeSpaceId = activeContentSpaceId ?? s.activeRootId;
@@ -167,9 +167,9 @@ export function useKeyboardShortcuts() {
         openAppSettings();
       }
 
-      // ⌘K toggles Search. An editor takes it first for a link when one
-      // applies to its selection.
-      if (!home && activeRootPath && matchesPhysicalShortcut(e, "KeyK")) {
+      // ⌘K toggles Search of the active project, on Home too. An editor
+      // takes it first for a link when one applies to its selection.
+      if (activeRootPath && matchesPhysicalShortcut(e, "KeyK")) {
         e.preventDefault();
         toggleCommandPalette();
       }

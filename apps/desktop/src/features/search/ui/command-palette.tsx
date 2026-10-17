@@ -21,15 +21,40 @@ import {
   type KnowledgeSearchItem,
   type KnowledgeSpaceOption,
 } from "@/features/knowledge";
-import { useSpace } from "@/features/space";
+import { useSpace, type SpaceInfo } from "@/features/space";
 import { useCommandPaletteStore } from "../model";
-import { useSelectResult } from "../hooks/use-select-result";
+import {
+  useSelectResult,
+  type SearchNavigationTarget,
+} from "../hooks/use-select-result";
 import { SearchBreadcrumb } from "./search-breadcrumb";
 import { SearchDialog } from "./search-dialog";
 import { SearchDialogShell } from "./search-dialog-shell";
 import * as m from "@/paraglide/messages.js";
 
-export function CommandPalette({
+/** The project Search looks in: its root names the scope of the whole project. */
+export interface SearchProject {
+  path: string;
+  name: string;
+  /** The child Spaces of the project; the ready ones are the Space scopes. */
+  spaces: readonly Pick<SpaceInfo, "id" | "name" | "status">[];
+}
+
+interface CommandPaletteProps {
+  /** Nothing opens without a project. */
+  project: SearchProject | null;
+  /** Opens a result where the host shows objects. */
+  onSelect: (target: SearchNavigationTarget) => void | Promise<void>;
+  onBeforeNavigation?: () => Promise<boolean>;
+  /** "Open graph" is offered only where the full-screen Graph is. */
+  onOpenGraph?: (state: KnowledgeGraphState) => void;
+}
+
+/**
+ * Search of the window's project in its Space: a result opens in its Space
+ * and is revealed in the tree.
+ */
+export function SpaceCommandPalette({
   onBeforeNavigation,
   onAfterNavigation,
   onOpenGraph,
@@ -38,25 +63,52 @@ export function CommandPalette({
   onAfterNavigation?: () => void;
   onOpenGraph: (state: KnowledgeGraphState) => void;
 }) {
-  const open = useCommandPaletteStore((s) => s.open);
-  const setOpen = useCommandPaletteStore((s) => s.setOpen);
   const activeRootPath = useSpace((s) => s.activeRootPath);
   const activeRootName = useSpace((s) => s.activeRootName);
   const spaces = useSpace((s) => s.spaces);
+  const handleSelect = useSelectResult({
+    onBeforeNavigation,
+    onAfterNavigation,
+  });
 
-  if (!open) return null;
+  return (
+    <CommandPalette
+      project={
+        activeRootPath
+          ? { path: activeRootPath, name: activeRootName ?? "Svode", spaces }
+          : null
+      }
+      onSelect={handleSelect}
+      onBeforeNavigation={onBeforeNavigation}
+      onOpenGraph={onOpenGraph}
+    />
+  );
+}
+
+/** The Search dialog of one project, opened and closed by its store. */
+export function CommandPalette({
+  project,
+  onSelect,
+  onBeforeNavigation,
+  onOpenGraph,
+}: CommandPaletteProps) {
+  const open = useCommandPaletteStore((s) => s.open);
+  const setOpen = useCommandPaletteStore((s) => s.setOpen);
+
+  if (!open || !project) return null;
 
   return (
     <CommandPaletteDialog
-      activeRootPath={activeRootPath}
+      key={project.path}
+      projectPath={project.path}
       open={open}
       setOpen={setOpen}
+      onSelect={onSelect}
       onBeforeNavigation={onBeforeNavigation}
-      onAfterNavigation={onAfterNavigation}
       onOpenGraph={onOpenGraph}
       spaces={[
-        { id: null, name: activeRootName ?? "Svode" },
-        ...spaces
+        { id: null, name: project.name },
+        ...project.spaces
           .filter((space) => space.status === "ready")
           .map((space) => ({ id: space.id, name: space.name })),
       ]}
@@ -65,20 +117,17 @@ export function CommandPalette({
 }
 
 function CommandPaletteDialog({
-  activeRootPath,
+  projectPath,
   open,
   setOpen,
+  onSelect,
   onBeforeNavigation,
-  onAfterNavigation,
   onOpenGraph,
   spaces,
-}: {
-  activeRootPath: string | null;
+}: Omit<CommandPaletteProps, "project"> & {
+  projectPath: string;
   open: boolean;
   setOpen: (open: boolean) => void;
-  onBeforeNavigation?: () => Promise<boolean>;
-  onAfterNavigation?: () => void;
-  onOpenGraph: (state: KnowledgeGraphState) => void;
   spaces: KnowledgeSpaceOption[];
 }) {
   const [query, setQuery] = useState("");
@@ -89,21 +138,17 @@ function CommandPaletteDialog({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [resetKey, setResetKey] = useState(0);
-  const knowledge = useKnowledgeSnapshot(activeRootPath, scope, query, filters);
+  const knowledge = useKnowledgeSnapshot(projectPath, scope, query, filters);
   const visibleSnapshot = useMemo(
     () => withSearchResultNodes(knowledge.snapshot),
     [knowledge.snapshot],
   );
   const visibleKnowledge = { ...knowledge, snapshot: visibleSnapshot };
-  const handleSelect = useSelectResult({
-    onBeforeNavigation,
-    onAfterNavigation,
-  });
   const selectedNode = getNodeById(visibleSnapshot, selectedNodeId);
   const breadcrumbNode =
     selectedNode ?? getNodeById(visibleSnapshot, focusedNodeId);
   const neighborState = useKnowledgeNeighbors(
-    activeRootPath,
+    projectPath,
     scope,
     filters,
     selectedNode,
@@ -118,16 +163,17 @@ function CommandPaletteDialog({
     [query, visibleSnapshot],
   );
   const openKnowledgeSource = (node: KnowledgeNode | KnowledgeSearchItem) =>
-    handleSelect({
+    onSelect({
       spaceId: node.source.spaceId,
       spaceName: node.spaceName,
       path: knowledgeOpenPath(node),
       kind: node.source.kind,
+      title: node.title,
     });
-  const openGraph = async () => {
+  const openGraph = async (open: (state: KnowledgeGraphState) => void) => {
     if (onBeforeNavigation && !(await onBeforeNavigation())) return;
     setOpen(false);
-    onOpenGraph({
+    open({
       query,
       scope,
       filters,
@@ -214,7 +260,11 @@ function CommandPaletteDialog({
           />
         }
         openGraphAction={
-          <KnowledgeOpenGraphButton onOpen={() => void openGraph()} />
+          onOpenGraph && (
+            <KnowledgeOpenGraphButton
+              onOpen={() => void openGraph(onOpenGraph)}
+            />
+          )
         }
         graph={
           <KnowledgeGraphView

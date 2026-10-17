@@ -293,32 +293,44 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     expect(calls.guard).toBe(5);
     expect(calls.navigate).toBe(3);
   });
-  test("the Home shell takes no Search, terminal panel or ⌘0", async () => {
+  test("the Home shell takes Search of its active project, but no terminal panel or ⌘0", async () => {
     for (const mac of [true, false]) {
       Object.defineProperty(navigator, "platform", {
         configurable: true,
         value: mac ? "MacIntel" : "Win32",
       });
-      await act(async () => {
-        root.render(
-          <ShellViewContext.Provider value="home">
-            <Shell />
-          </ShellViewContext.Provider>,
-        );
-      });
+      const renderHome = () =>
+        act(async () => {
+          root.render(
+            <ShellViewContext.Provider value="home">
+              <Shell />
+            </ShellViewContext.Provider>,
+          );
+        });
+      await renderHome();
       const { search, home, guard } = calls;
       const panel = terminalOpen;
       await act(async () => {
-        fire("KeyK", "k", mac);
+        expect(fire("KeyK", "k", mac).defaultPrevented).toBe(true);
+        expect(fire("KeyK", "л", mac).defaultPrevented).toBe(true);
         expect(
           fire("Backquote", "`", false, { ctrlKey: true }).defaultPrevented,
         ).toBe(false);
         fire("Digit0", "0", mac);
       });
-      expect(calls.search).toBe(search);
+      expect(calls.search).toBe(search + 2);
       expect(terminalOpen).toBe(panel);
       expect(calls.home).toBe(home);
       expect(calls.guard).toBe(guard);
+      // Without an active project ⌘K does nothing on Home.
+      activeRootPath = null;
+      await renderHome();
+      await act(async () => {
+        expect(fire("KeyK", "k", mac).defaultPrevented).toBe(false);
+      });
+      expect(calls.search).toBe(search + 2);
+      expect(calls.guard).toBe(guard);
+      activeRootPath = "/project";
     }
   });
   test("⌘W closes the main area object by its physical key, in session terminals only as Cmd", async () => {

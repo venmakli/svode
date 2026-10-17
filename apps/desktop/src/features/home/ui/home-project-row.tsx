@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   AppWindow,
   Box,
@@ -6,6 +6,7 @@ import {
   Copy,
   Ellipsis,
   FolderOpen,
+  Search,
   SquarePen,
   Trash2,
 } from "lucide-react";
@@ -57,6 +58,8 @@ interface HomeProjectRowProps {
   sharedName: boolean;
   onOpen: () => void;
   onStartChat: () => void;
+  /** Search in the project, without entering or activating it. */
+  onSearch: () => void;
   onRemove: (deleteFiles: boolean) => void;
   /** The rows under the expanded project; mounted only while expanded. */
   items: ReactNode;
@@ -73,10 +76,15 @@ export function HomeProjectRow({
   sharedName,
   onOpen,
   onStartChat,
+  onSearch,
   onRemove,
   items,
 }: HomeProjectRowProps) {
   const [removeOpen, setRemoveOpen] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  // Search from the menu opens once focus is back on the menu trigger, so
+  // closing Search returns focus there.
+  const searchAfterMenu = useRef(false);
   const [expanded, setExpanded] = useHomeProjectExpanded(project.id);
   const otherWindow = availability === "otherWindow";
   const unavailable = availability === "missing" || availability === "broken";
@@ -92,8 +100,8 @@ export function HomeProjectRow({
                 <SidebarMenuButton
                   type="button"
                   className={cn(
-                    // Both actions show over the row's end on hover and focus.
-                    "group-focus-within/menu-item:pr-14! group-hover/menu-item:pr-14!",
+                    // The three actions show over the row's end on hover and focus.
+                    "group-focus-within/menu-item:pr-20! group-hover/menu-item:pr-20!",
                     unavailable &&
                       "text-sidebar-foreground/50 hover:text-sidebar-foreground/50",
                   )}
@@ -146,18 +154,45 @@ export function HomeProjectRow({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuAction
+                  ref={menuTrigger}
                   type="button"
                   showOnHover
-                  className="right-7"
+                  className="right-13"
                   aria-label={m.home_project_actions({ project: project.name })}
                 >
                   <Ellipsis />
                 </SidebarMenuAction>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" side="bottom">
+              <DropdownMenuContent
+                align="end"
+                side="bottom"
+                onCloseAutoFocus={(event) => {
+                  if (!searchAfterMenu.current) return;
+                  searchAfterMenu.current = false;
+                  event.preventDefault();
+                  menuTrigger.current?.focus();
+                  onSearch();
+                }}
+              >
                 <DropdownMenuItem onSelect={onStartChat}>
                   <SquarePen />
                   {m.home_project_start_chat()}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={unavailable}
+                  onSelect={() => {
+                    searchAfterMenu.current = true;
+                  }}
+                >
+                  <Search />
+                  <span className="min-w-0 flex-1 truncate">
+                    {m.home_project_search()}
+                  </span>
+                  {unavailable && (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {reason}
+                    </span>
+                  )}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() =>
@@ -191,6 +226,11 @@ export function HomeProjectRow({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <HomeProjectSearchAction
+              project={project.name}
+              unavailableReason={unavailable ? reason : null}
+              onSearch={onSearch}
+            />
             <SidebarMenuAction
               type="button"
               showOnHover
@@ -215,5 +255,43 @@ export function HomeProjectRow({
         </CollapsibleContent>
       </li>
     </Collapsible>
+  );
+}
+
+/**
+ * Search in the project from its row; a project whose folder is missing or
+ * unreadable keeps the button inactive with the reason under its row.
+ */
+function HomeProjectSearchAction({
+  project,
+  unavailableReason,
+  onSearch,
+}: {
+  project: string;
+  unavailableReason: string | null;
+  onSearch: () => void;
+}) {
+  const action = (
+    <SidebarMenuAction
+      type="button"
+      showOnHover
+      className={cn(
+        "right-7",
+        unavailableReason &&
+          "cursor-default text-sidebar-foreground/50 hover:bg-transparent hover:text-sidebar-foreground/50",
+      )}
+      aria-label={m.home_project_search_in({ project })}
+      aria-disabled={unavailableReason ? true : undefined}
+      onClick={unavailableReason ? undefined : onSearch}
+    >
+      <Search />
+    </SidebarMenuAction>
+  );
+  if (!unavailableReason) return action;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{action}</TooltipTrigger>
+      <TooltipContent side="right">{unavailableReason}</TooltipContent>
+    </Tooltip>
   );
 }

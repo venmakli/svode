@@ -38,13 +38,14 @@ pub enum WindowOpenIntent {
 }
 
 /// What the window of a project does for an action started in another window:
-/// the window comes forward and, for an object or a new chat, opens it.
+/// the window comes forward and, for an object, a new chat or Search, opens it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ProjectWindowRequest {
     Focus,
     NewChat,
     Open { item: NavigationItem },
+    Search,
 }
 
 /// The view a window keeps after it takes a project: the Space of the project,
@@ -335,6 +336,25 @@ fn remember_last_view(app: &AppHandle) {
     };
     if let Err(error) = app_config_dir(app).and_then(|dir| registry::update_last_view(&dir, view)) {
         tracing::warn!("failed to remember the last view: {error}");
+    }
+}
+
+/// Hands `request` to the window of a project bound to another window than the
+/// calling one; false when no other window has the project. The calling window
+/// is not bound to the project either way.
+#[tauri::command]
+pub fn send_project_window_request(
+    app: AppHandle,
+    window: Window,
+    project_id: String,
+    request: ProjectWindowRequest,
+) -> Result<bool, AppError> {
+    match window_binding(&app, window.label(), &project_id) {
+        WindowBinding::OtherWindow(owner) => {
+            hand_off_to_project_window(&app, &owner, &request)?;
+            Ok(true)
+        }
+        WindowBinding::Unchanged | WindowBinding::Bound { .. } => Ok(false),
     }
 }
 
@@ -867,6 +887,32 @@ mod tests {
     }
 
     #[test]
+    fn a_request_for_a_project_of_another_window_leaves_the_home_window_unbound() {
+        let state = AppWindowState::new();
+        state.register_home_window("launcher-1");
+        state.bind_project("main", "project-a", WindowView::Project);
+
+        assert_eq!(
+            state.binding_for("launcher-1", "project-a"),
+            WindowBinding::OtherWindow("main".to_string())
+        );
+        assert_eq!(
+            state.binding_for("launcher-1", "project-b"),
+            WindowBinding::Bound { previous: None }
+        );
+        assert!(is_home(&state, "launcher-1"));
+        assert_eq!(
+            state.project_window_label("project-a"),
+            Some("main".to_string())
+        );
+        assert_eq!(state.project_window_label("project-b"), None);
+        assert_eq!(
+            state.projects_in_other_windows("launcher-1"),
+            vec!["project-a".to_string()]
+        );
+    }
+
+    #[test]
     fn home_activation_of_another_project_stops_the_previous_and_stays_home() {
         let state = AppWindowState::new();
         state.register_home_window("launcher-1");
@@ -1187,6 +1233,15 @@ mod tests {
             serde_json::from_value::<ProjectWindowRequest>(serde_json::json!({ "kind": "focus" }))
                 .expect("decode focus"),
             ProjectWindowRequest::Focus
+        );
+        assert_eq!(
+            serde_json::from_value::<ProjectWindowRequest>(serde_json::json!({ "kind": "search" }))
+                .expect("decode search"),
+            ProjectWindowRequest::Search
+        );
+        assert_eq!(
+            serde_json::to_value(ProjectWindowRequest::Search).expect("encode search"),
+            serde_json::json!({ "kind": "search" })
         );
     }
 

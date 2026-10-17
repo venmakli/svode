@@ -34,6 +34,8 @@ interface HomeSidebarProps {
   onActivateContent: () => void;
   /** "Start chat": a new chat with the project in the main area. */
   onStartChat: (project: SpaceInfo) => void;
+  /** Search in the project without entering or activating it. */
+  onSearch: (project: SpaceInfo) => void;
   /** The pinned and current objects shown under an expanded project. */
   projectItems: (
     project: SpaceInfo,
@@ -50,6 +52,7 @@ export function HomeSidebar({
   onBeforeNavigation,
   onActivateContent,
   onStartChat,
+  onSearch,
   projectItems,
 }: HomeSidebarProps) {
   const workflow = useRootProjectWorkflow({
@@ -123,6 +126,7 @@ export function HomeSidebar({
                 })
               }
               onStartChat={() => onStartChat(project)}
+              onSearch={() => onSearch(project)}
               onRemove={(deleteFiles) =>
                 void workflow.handleDeleteProject(project.id, deleteFiles)
               }

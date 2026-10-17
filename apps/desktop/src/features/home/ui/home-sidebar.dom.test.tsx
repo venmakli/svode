@@ -146,6 +146,7 @@ if (process.env.SVODE_HOME_SIDEBAR_DOM !== "1") {
   const m = await import("@/paraglide/messages.js");
   const root = createRoot(document.getElementById("app")!);
   const started: string[] = [];
+  const searched: string[] = [];
   const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
   function Lifecycle() {
@@ -163,6 +164,7 @@ if (process.env.SVODE_HOME_SIDEBAR_DOM !== "1") {
               onBeforeNavigation={async () => true}
               onActivateContent={() => {}}
               onStartChat={(item) => started.push(item.id)}
+              onSearch={(item) => searched.push(item.id)}
               projectItems={(item, availability) => (
                 <li data-testid={`items-${item.id}`}>
                   {`objects of ${item.id}: ${availability}`}
@@ -272,21 +274,23 @@ if (process.env.SVODE_HOME_SIDEBAR_DOM !== "1") {
     ];
     expect(items.map((item) => item.textContent)).toEqual([
       m.home_project_start_chat(),
+      m.home_project_search(),
       m.external_open_reveal_finder(),
       m.home_project_copy_path(),
       m.project_remove(),
     ]);
+    expect(items[1].querySelector("svg.lucide-search") === null).toBe(false);
     expect(document.querySelector("[role=separator]") === null).toBe(false);
-    await act(async () => items[2].click());
+    await act(async () => items[3].click());
     expect(calls.copy).toEqual(["/projects/c"]);
     await press(trigger);
     await act(async () =>
-      [...document.querySelectorAll<HTMLElement>("[role=menuitem]")][1].click(),
+      [...document.querySelectorAll<HTMLElement>("[role=menuitem]")][2].click(),
     );
     expect(calls.reveal).toEqual(["/projects/c"]);
     await press(trigger);
     await act(async () =>
-      [...document.querySelectorAll<HTMLElement>("[role=menuitem]")][3].click(),
+      [...document.querySelectorAll<HTMLElement>("[role=menuitem]")][4].click(),
     );
     await act(settle);
     const confirm = [
@@ -296,6 +300,118 @@ if (process.env.SVODE_HOME_SIDEBAR_DOM !== "1") {
     ].find((button) => button.textContent === m.project_delete_confirm())!;
     await act(async () => confirm.click());
     expect(calls.remove).toEqual([["c", false]]);
+  });
+
+  test("the row ends with the menu, Search and Start chat, past the name", async () => {
+    await render();
+    const [notes] = rowButton("Notes");
+    const row = notes.closest("[data-sidebar=menu-item]")!;
+    const actions = [
+      ...row.querySelectorAll<HTMLButtonElement>("[data-sidebar=menu-action]"),
+    ].filter(
+      (action) =>
+        action.getAttribute("aria-label") !==
+        m.home_project_toggle({ project: "Notes" }),
+    );
+    expect(actions.map((action) => action.getAttribute("aria-label"))).toEqual([
+      m.home_project_actions({ project: "Notes" }),
+      m.home_project_search_in({ project: "Notes" }),
+      m.home_project_start_chat_in({ project: "Notes" }),
+    ]);
+    // From left to right at the row's end, all clear of the name.
+    expect(actions[0].className.includes("right-13")).toBe(true);
+    expect(actions[1].className.includes("right-7")).toBe(true);
+    expect(actions[2].className.includes("right-7")).toBe(false);
+    expect(actions[2].className.includes("right-13")).toBe(false);
+    expect(notes.className.includes("group-hover/menu-item:pr-20!")).toBe(true);
+    expect(
+      notes.className.includes("group-focus-within/menu-item:pr-20!"),
+    ).toBe(true);
+    expect(actions[1].querySelector("svg.lucide-search") === null).toBe(false);
+  });
+
+  test("Search of a row and of its menu opens for that project, the menu's after focus is back on its trigger", async () => {
+    await render();
+    searched.length = 0;
+    const opened = calls.open.length;
+    const search = document.querySelector<HTMLButtonElement>(
+      `[aria-label='${m.home_project_search_in({ project: "Notes" })}']`,
+    )!;
+    await act(async () => search.click());
+    expect(searched).toEqual(["c"]);
+    // A project of another window keeps its Search.
+    const [otherWindow] = rowButton("Svode");
+    const otherSearch = otherWindow
+      .closest("[data-sidebar=menu-item]")!
+      .querySelector<HTMLButtonElement>(
+        `[aria-label='${m.home_project_search_in({ project: "Svode" })}']`,
+      )!;
+    expect(otherSearch.getAttribute("aria-disabled")).toBeNull();
+    await act(async () => otherSearch.click());
+    expect(searched).toEqual(["c", "b"]);
+
+    const trigger = document.querySelector<HTMLButtonElement>(
+      `[aria-label='${m.home_project_actions({ project: "Notes" })}']`,
+    )!;
+    await press(trigger);
+    const item = [
+      ...document.querySelectorAll<HTMLElement>("[role=menuitem]"),
+    ].find((element) => element.textContent === m.home_project_search())!;
+    const searchedBefore = searched.length;
+    await act(async () => {
+      item.click();
+      await settle();
+    });
+    expect(searched.length).toBe(searchedBefore + 1);
+    expect(searched.at(-1)).toBe("c");
+    expect(document.activeElement).toBe(trigger);
+    expect(document.querySelector("[role=menu]")).toBeNull();
+    expect(calls.open.length).toBe(opened);
+  });
+
+  test("a project with a missing folder keeps Search inactive with its reason", async () => {
+    await render();
+    searched.length = 0;
+    const search = document.querySelector<HTMLButtonElement>(
+      `[aria-label='${m.home_project_search_in({ project: "Gone" })}']`,
+    )!;
+    expect(search.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => search.click());
+    expect(searched).toEqual([]);
+    await act(async () => search.focus());
+    await act(settle);
+    const tooltip = [
+      ...document.querySelectorAll("[data-slot=tooltip-content]"),
+    ].at(-1);
+    expect(
+      (tooltip?.textContent ?? "").includes(m.home_project_missing()),
+    ).toBe(true);
+    await act(async () => search.blur());
+
+    const trigger = document.querySelector(
+      `[aria-label='${m.home_project_actions({ project: "Gone" })}']`,
+    )!;
+    await press(trigger);
+    const item = [
+      ...document.querySelectorAll<HTMLElement>("[role=menuitem]"),
+    ].find((element) =>
+      element.textContent?.startsWith(m.home_project_search()),
+    )!;
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.textContent).toBe(
+      `${m.home_project_search()}${m.home_project_missing()}`,
+    );
+    await act(async () => {
+      item.click();
+      await settle();
+    });
+    expect(searched).toEqual([]);
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      await settle();
+    });
   });
 
   test("the chevron expands a project in place and the device keeps it", async () => {
