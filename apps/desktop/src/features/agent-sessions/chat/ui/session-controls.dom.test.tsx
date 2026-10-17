@@ -700,6 +700,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
           liveness: state.liveness,
           attaching: opening.attaching,
           refusal: opening.continueRefusal,
+          sessionValues: state.sessionValues,
           attach: opening.attach,
           refresh: opening.refresh,
           refreshing: opening.refreshing,
@@ -849,6 +850,122 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(draft?.settings?.values).toEqual([
         { setting: "reasoning_effort", value: "high" },
       ]);
+    },
+  );
+
+  /**
+   * A read session whose own last turn ran on `values`; an attaching
+   * opening makes it driven unless `refuse` refuses it.
+   */
+  function readWithSessionValues(
+    values: { setting: string; value: string }[],
+    unavailableModel: string | null,
+    refuse: (() => unknown) | null = null,
+  ) {
+    let writer = "none";
+    snapshotFor = (session) => ({ ...snapshot(session), writer });
+    openAnswer = (attach) => {
+      if (!attach) {
+        return {
+          outcome: "opened",
+          session: key,
+          liveness: "free",
+          sessionValues: { values, unavailableModel },
+        };
+      }
+      if (refuse) {
+        const refusal = refuse();
+        refuse = null;
+        throw refusal;
+      }
+      writer = "acp";
+      return { outcome: "opened", session: key, liveness: "free" };
+    };
+  }
+
+  controlsTest(
+    "before a read session is attached it shows the model and reasoning of its own last turn, which its first send applies under the user's choices",
+    async () => {
+      readWithSessionValues(
+        [
+          { setting: "model", value: "gpt-6-luna" },
+          { setting: "reasoning_effort", value: "high" },
+        ],
+        null,
+        () => ({
+          kind: "agent_runtime",
+          code: "setting_refused",
+          setting: "model",
+          value: "gpt-6-luna",
+          reason: { kind: "not_declared" },
+          message: "setting model=gpt-6-luna was refused",
+        }),
+      );
+      writeComposerDraft(sessionDraftKey("codex:s1"), {
+        parts: [{ type: "text", text: "Go on" }],
+      });
+      await mount(<ReadSession />);
+      expect(agentButton().textContent?.includes("GPT-6 Luna")).toBe(true);
+      expect(agentButton().textContent?.includes("High")).toBe(true);
+      await click(agentButton());
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_chat_model_session_unavailable({ model: "GPT-6 Luna" }),
+        ),
+      ).toBe(false);
+      await click(optionByText("Low"));
+      expect(agentButton().textContent?.includes("Low")).toBe(true);
+
+      // A value of the session the agent refuses is left out, and the
+      // button goes back to what the agent reported.
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(lastCall("agent_runtime_open_session")?.settings).toEqual([
+        { setting: "model", value: "gpt-6-luna" },
+        { setting: "reasoning_effort", value: "low" },
+      ]);
+      expect(lastCall("agent_runtime_prompt")).toBe(undefined);
+      expect(agentButton().textContent?.includes("GPT-5.6 Luna")).toBe(true);
+
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(lastCall("agent_runtime_open_session")?.settings).toEqual([
+        { setting: "reasoning_effort", value: "low" },
+      ]);
+      expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+        { type: "text", text: "Go on" },
+      ]);
+    },
+  );
+
+  controlsTest(
+    "a model of the session the agent no longer offers is told in the popover and does not hold the send",
+    async () => {
+      readWithSessionValues([{ setting: "reasoning_effort", value: "high" }], "6 Astra");
+      writeComposerDraft(sessionDraftKey("codex:s1"), {
+        parts: [{ type: "text", text: "Go on" }],
+      });
+      await mount(<ReadSession />);
+      // The button shows the agent's model, which the turn runs on.
+      expect(agentButton().textContent?.includes("GPT-5.6 Luna")).toBe(true);
+      await click(agentButton());
+      expect(
+        section(m.sessions_chat_model())?.textContent?.includes(
+          m.sessions_chat_model_session_unavailable({ model: "6 Astra" }),
+        ),
+      ).toBe(true);
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(lastCall("agent_runtime_open_session")?.settings).toEqual([
+        { setting: "reasoning_effort", value: "high" },
+      ]);
+      expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
+        { type: "text", text: "Go on" },
+      ]);
+      // Attached, the line is gone with the session's own values.
+      if (!section(m.sessions_chat_model())) await click(agentButton());
+      expect(
+        section(m.sessions_chat_model())?.textContent?.includes(
+          m.sessions_chat_model_session_unavailable({ model: "6 Astra" }),
+        ),
+      ).toBe(false);
     },
   );
 

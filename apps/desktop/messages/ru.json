@@ -2642,6 +2642,7 @@
   "sessions_chat_refusal_file_unavailable": "Прикреплённого файла больше нет. Уберите его бейдж или прикрепите файл снова",
   "sessions_chat_model_after_send": "Модели появятся после первой отправки",
   "sessions_chat_model_not_declared": "Агент не объявил выбор модели",
+  "sessions_chat_model_session_unavailable": "Модель сессии «{model}» недоступна у агента",
   "sessions_chat_model_search": "Поиск моделей",
   "sessions_chat_model_search_empty": "Ничего не найдено",
   "sessions_chat_reasoning_level": "Reasoning",

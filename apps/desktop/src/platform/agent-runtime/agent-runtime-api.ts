@@ -542,6 +542,8 @@ export type AgentSessionOpeningDto =
       outcome: "opened";
       session: AgentSessionKeyDto;
       liveness: AgentExternalLivenessDto;
+      /** A session read without a writer: what its own last turn gives attaching it. */
+      sessionValues?: AgentSessionValuesDto;
     }
   /**
    * Attaching needs the user's confirmation of this attempt; `turnOpen`:
@@ -587,6 +589,16 @@ export function releaseAgentSession(
 export interface AgentSettingValueDto {
   setting: string;
   value: string;
+}
+
+/**
+ * The declared values that match the model and reasoning of a session's
+ * last turn in its agent's native store (DF-171 R2), the model first.
+ */
+export interface AgentSessionValuesDto {
+  values: AgentSettingValueDto[];
+  /** The session's model when no declared model matches it. */
+  unavailableModel: string | null;
 }
 
 /**

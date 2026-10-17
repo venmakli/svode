@@ -31,6 +31,7 @@ use std::time::UNIX_EPOCH;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use svode_agents::native_settings::NativeSessionSettings;
 use svode_agents::registry::{AdapterRuntimeRegistry, NativeStatusStore};
 use svode_agents::status::{SessionState, StopReason};
 use svode_core::agent_adapters::AgentId;
@@ -145,6 +146,13 @@ pub(crate) trait NativeStatusSource: Send + Sync {
     /// (DF-173 R1, R2).
     fn tells_conversation(&self) -> bool {
         false
+    }
+
+    /// The model and reasoning of the session's last turn, read now from
+    /// its store and kept nowhere (DF-171 R2); none for a source that does
+    /// not read them or a session the store does not know.
+    fn session_settings(&self, _id: &str) -> Option<NativeSessionSettings> {
+        None
     }
 }
 
@@ -280,6 +288,16 @@ impl NativeStatusReader {
         }
     }
 
+    /// The model and reasoning of the last turn of the agent's session with
+    /// this native id (DF-171 R2): Claude Code and Codex record them.
+    pub(crate) fn session_settings(
+        &self,
+        agent: &AgentId,
+        id: &str,
+    ) -> Option<NativeSessionSettings> {
+        self.source(agent)?.session_settings(id)
+    }
+
     /// A read saved before the app started; a newer read is kept.
     pub(crate) fn seed(&self, agent: &AgentId, id: &str, read: NativeLogRead) {
         if let Some(source) = self.source(agent) {
@@ -400,6 +418,26 @@ pub(super) fn for_each_jsonl(path: &Path, mut handle: impl FnMut(Value)) {
             handle(value);
         }
     }
+}
+
+/// The last record of the log `select` takes, looked for in its tail
+/// first; the records are not kept.
+pub(super) fn last_of<T>(path: &Path, select: impl Fn(&Value) -> Option<T>) -> Option<T> {
+    let mut last = None;
+    let tail = jsonl_tail::for_each_tail_line(path, jsonl_tail::TAIL_BYTES, |value| {
+        if let Some(found) = select(&value) {
+            last = Some(found);
+        }
+    });
+    if tail.is_err() || last.is_some() {
+        return last;
+    }
+    for_each_jsonl(path, |value| {
+        if let Some(found) = select(&value) {
+            last = Some(found);
+        }
+    });
+    last
 }
 
 pub(crate) fn short_id(source_session_id: &str) -> String {
@@ -528,6 +566,38 @@ mod tests {
 
     const RUNNING: &str = r#"{"type":"event_msg","payload":{"type":"task_started"},"timestamp":"2026-07-04T10:00:00Z"}"#;
     const COMPLETE: &str = r#"{"type":"event_msg","payload":{"type":"task_complete"},"timestamp":"2026-07-04T10:01:00Z"}"#;
+
+    #[test]
+    fn the_session_settings_are_read_on_request_from_the_session_log_the_index_finds() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+        write(
+            &temp.path().join(format!(
+                ".codex/sessions/2026/10/17/rollout-2026-10-17T10-00-00-{id}.jsonl"
+            )),
+            &format!(
+                "{}\n{RUNNING}\n",
+                json!({"type": "turn_context", "payload": {"model": "gpt-6-luna", "effort": "low"}})
+            ),
+        );
+        let reader = NativeStatusReader::new(temp.path().to_path_buf());
+        assert_eq!(
+            reader.session_settings(&AgentAdapterKind::Codex.id(), id),
+            Some(NativeSessionSettings {
+                model: Some("gpt-6-luna".into()),
+                effort: Some("low".into()),
+            })
+        );
+        assert_eq!(
+            reader.session_settings(&AgentAdapterKind::Codex.id(), "not-on-disk"),
+            None
+        );
+        // Agents other than Claude Code and Codex are not read for them.
+        assert_eq!(
+            reader.session_settings(&AgentAdapterKind::Pi.id(), id),
+            None
+        );
+    }
 
     #[test]
     fn the_reader_finds_a_listed_session_by_id_and_reads_its_log_again_only_when_it_changes() {

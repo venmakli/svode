@@ -7,6 +7,7 @@ import type {
   AgentExternalLivenessDto,
   AgentSessionKeyDto,
   AgentSessionSnapshotDto,
+  AgentSessionValuesDto,
   AgentSettingValueDto,
 } from "../api/chat";
 import {
@@ -41,6 +42,8 @@ export interface ChatContinuation {
   liveness: AgentExternalLivenessDto;
   attaching: boolean;
   refusal: ContinueRefusal | null;
+  /** What the session's own last turn gives attaching it (DF-171 R2). */
+  sessionValues: AgentSessionValuesDto | null;
   /** Attaches the session with the values chosen before it. */
   attach: (settings: AgentSettingValueDto[]) => Promise<AttachOutcome>;
   /** Reads the history again while another process writes to the session. */
@@ -87,6 +90,7 @@ export function SessionChat({
     session,
     snapshot,
     continuation?.attach,
+    continuation?.sessionValues?.values,
   );
   const settings = useSessionSettings(session);
   const [confirming, setConfirming] = useState(false);
@@ -277,6 +281,9 @@ export function SessionChat({
                   agent={session.agent}
                   draft={null}
                   settings={shownSettings}
+                  unavailableModel={
+                    planning ? (continuation.sessionValues?.unavailableModel ?? null) : null
+                  }
                   canChange={canChange}
                   changing={changing}
                   onChange={changeSetting}

@@ -474,6 +474,7 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
           liveness: "external_active",
           attaching: false,
           refusal: null,
+          sessionValues: null,
           attach: async () => ({ attached: false, refusedSetting: null }),
           refresh: () => undefined,
           refreshing: false,

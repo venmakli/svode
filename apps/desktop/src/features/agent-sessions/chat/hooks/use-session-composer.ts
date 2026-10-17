@@ -21,10 +21,12 @@ import {
   reconcileUnknownSend,
   sessionDraftKey,
 } from "../model/composer";
-import { withDraftValue } from "../model/session-controls";
+import { attachPlan, withDraftValue } from "../model/session-controls";
 import { recheckAttachments } from "./use-attachment-preview";
 import { useComposerDraft } from "./use-composer-draft";
 import type { AttachOutcome } from "./use-session-opening";
+
+const NO_VALUES: AgentSettingValueDto[] = [];
 
 /** How long an unknown send waits for the session to show a new turn. */
 const RECONCILE_MS = 1500;
@@ -51,15 +53,18 @@ export function useSessionComposer(
    * chosen values; when it did not attach, the draft stays.
    */
   attach?: (settings: AgentSettingValueDto[]) => Promise<AttachOutcome>,
+  /** What the session's own last turn gives attaching it (DF-171 R2). */
+  sessionValues: AgentSettingValueDto[] = NO_VALUES,
 ) {
   const draftKey = sessionDraftKey(sessionId);
   const [draft, updateDraft] = useComposerDraft(draftKey);
   const agent = session.agent;
-  const plan = draftValues(draft, agent);
+  const chosen = draftValues(draft, agent);
+  const plan = attachPlan(sessionValues, chosen);
   // Once the runtime drives the session its own values show; the chosen
   // ones were applied or are no longer meant for an attach.
   const attached = snapshot?.writer === "acp";
-  const planned = plan.length > 0;
+  const planned = chosen.length > 0;
   useEffect(() => {
     if (attached && planned) updateDraft({ settings: null });
   }, [attached, planned, updateDraft]);
@@ -190,7 +195,10 @@ export function useSessionComposer(
     draftKey,
     draft,
     setParts: (parts: DraftPart[]) => updateDraft({ parts, notSent: false }),
-    /** Values chosen before the session is attached, applied by attaching it. */
+    /**
+     * Values attaching the session applies: the session's own, replaced by
+     * those chosen before it is attached.
+     */
     plan,
     choose,
     sending,

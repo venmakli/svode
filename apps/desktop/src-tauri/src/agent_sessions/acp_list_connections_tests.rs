@@ -818,6 +818,7 @@ fn opened(key: &SessionKey) -> SessionOpening {
     SessionOpening::Opened {
         session: key.clone(),
         liveness: ExternalLiveness::Unknown,
+        session_values: None,
     }
 }
 
@@ -841,6 +842,7 @@ async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence
             false,
             false,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -883,6 +885,7 @@ async fn continuing_a_read_session_attaches_it_with_the_chosen_values_before_any
                     false,
                     attach,
                     &settings,
+                    None,
                 )
                 .await
         }
@@ -920,6 +923,79 @@ async fn continuing_a_read_session_attaches_it_with_the_chosen_values_before_any
     runtime.shutdown().await;
 }
 
+/// A Codex history agent whose sessions load on the model of its
+/// `config.toml`, declaring another one.
+fn settings_agent(calls: &Path) -> AcpLaunch {
+    const SCRIPT: &str = r#"while IFS= read -r line; do
+  id=${line#'{"id":'}; id=${id%%,*}
+  method=${line#*'"method":"'}; method=${method%%'"'*}
+  printf '%s\n' "$method" >> "$SVODE_CALLS"
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}},"agentInfo":{"name":"scripted","version":"1.0.0"}}}\n' "$id";;
+    *'"method":"session/load"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"gpt-6-astra","options":[{"value":"gpt-6-astra","name":"6 Astra"},{"value":"gpt-6-luna","name":"6 Luna"}]},{"id":"reasoning_effort","name":"Reasoning effort","category":"thought_level","type":"select","currentValue":"high","options":[{"value":"low","name":"Low"},{"value":"high","name":"High"}]}]}}\n' "$id";;
+    *'"method":"session/set_config_option"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"configOptions":[]}}\n' "$id";;
+    *'"method":"session/close"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id";;
+  esac
+done"#;
+    AcpLaunch {
+        args: vec!["-c".into(), SCRIPT.into()],
+        ..history_agent("codex", true, calls)
+    }
+}
+
+#[tokio::test]
+async fn a_read_session_carries_the_values_its_last_turn_gives_attaching_it() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let (connections, _) = owner(&runtime, vec![("codex", Ok(settings_agent(&log)))]);
+    let key = SessionKey::from_acp("codex", "h1", true);
+    let luna = svode_agents::native_settings::NativeSessionSettings {
+        model: Some("gpt-6-luna".into()),
+        effort: Some("low".into()),
+    };
+    let open = |attach, native| {
+        connections.open_session(
+            "codex",
+            &key,
+            dir.path(),
+            ExternalLiveness::Unknown,
+            false,
+            attach,
+            &[],
+            native,
+        )
+    };
+
+    let SessionOpening::Opened { session_values, .. } = open(false, Some(&luna)).await.unwrap()
+    else {
+        panic!("the session is read");
+    };
+    assert_eq!(
+        session_values,
+        Some(svode_agents::native_settings::SessionValues {
+            values: vec![
+                SettingValue {
+                    setting: "model".into(),
+                    value: "gpt-6-luna".into(),
+                },
+                SettingValue {
+                    setting: "reasoning_effort".into(),
+                    value: "low".into(),
+                },
+            ],
+            unavailable_model: None,
+        })
+    );
+    // Without the session's own settings, and once the runtime drives it,
+    // there are none.
+    assert_eq!(open(false, None).await.unwrap(), opened(&key));
+    assert_eq!(open(true, Some(&luna)).await.unwrap(), opened(&key));
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+    assert!(!calls(&log).contains(&"session/set_config_option".to_string()));
+    runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_again_on_request() {
     let runtime = runtime();
@@ -933,6 +1009,7 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
     let busy = SessionOpening::Opened {
         session: key.clone(),
         liveness: ExternalLiveness::ExternalActive,
+        session_values: None,
     };
 
     // An agent with read-only evidence reads the history without a writer.
@@ -945,7 +1022,8 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 ExternalLiveness::ExternalActive,
                 false,
                 false,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -966,7 +1044,8 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 ExternalLiveness::ExternalActive,
                 false,
                 true,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -984,7 +1063,8 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 ExternalLiveness::ExternalActive,
                 false,
                 false,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -1028,7 +1108,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 ExternalLiveness::Unknown,
                 false,
                 false,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -1043,7 +1124,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 ExternalLiveness::ExternalActive,
                 false,
                 true,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -1062,7 +1144,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 ExternalLiveness::Unknown,
                 false,
                 true,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -1085,7 +1168,8 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 ExternalLiveness::Unknown,
                 false,
                 false,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -1124,6 +1208,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
             turn_open,
             attach,
             &[],
+            None,
         )
     };
 
@@ -1139,6 +1224,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
                 true,
                 false,
                 &[],
+                None,
             )
             .await
             .unwrap(),
@@ -1201,6 +1287,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
                 true,
                 false,
                 &[],
+                None,
             )
             .await
             .unwrap(),
@@ -1273,6 +1360,7 @@ async fn an_agent_that_keeps_its_loaded_sessions_loads_one_again_only_in_another
             false,
             attach,
             &[],
+            None,
         )
     };
 
@@ -1323,6 +1411,7 @@ async fn an_agent_that_keeps_its_loaded_sessions_loads_one_again_only_in_another
                     false,
                     false,
                     &[],
+                    None,
                 )
                 .await
                 .unwrap(),
@@ -1367,7 +1456,8 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
                 ExternalLiveness::Unknown,
                 false,
                 true,
-                &[]
+                &[],
+                None
             )
             .await
             .unwrap(),
@@ -1384,6 +1474,7 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
                 false,
                 false,
                 &[],
+                None,
             )
             .await
             .unwrap(),

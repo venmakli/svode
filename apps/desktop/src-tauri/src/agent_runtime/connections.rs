@@ -15,14 +15,17 @@ use std::pin::Pin;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use svode_agents::activity::WriterState;
 use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::custom::CustomAgentDefinition;
 use svode_agents::identity::SessionKey;
+use svode_agents::native_settings::{NativeSessionSettings, SessionValues, session_values};
 use svode_agents::prompt::PromptPart;
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterRefusal};
 use svode_agents::{
     AcpLaunch, AgentCheck, AgentRuntime, AgentRuntimeError, ConnectionLease, SettingValue,
 };
+use svode_core::agent_adapters::AgentAdapterKind;
 
 pub(crate) type PlanFuture<'a> =
     Pin<Box<dyn Future<Output = Result<AcpLaunch, LaunchUnavailable>> + Send + 'a>>;
@@ -120,6 +123,10 @@ pub enum SessionOpening {
     Opened {
         session: SessionKey,
         liveness: ExternalLiveness,
+        /// A session read without a writer: the values its own last turn
+        /// gives attaching it where the user chose none (DF-171 R2).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_values: Option<SessionValues>,
     },
     /// Attaching the session needs the user's confirmation of this attempt:
     /// nothing tells whether another process writes to it. `turn_open`:
@@ -364,9 +371,10 @@ impl AgentConnections {
     /// the native status, DF-177 R1), else the session is attached with the
     /// writer. `attach` attaches it right away and is the user's
     /// confirmation of this one attempt. `settings` is the plan the session
-    /// is attached with (DF-171 R1); reading it takes none. Opening never
-    /// sends a prompt, and a session a managed terminal drives is left to
-    /// it.
+    /// is attached with (DF-171 R1); reading it takes none, and a session
+    /// read without a writer carries the values its `native` settings match
+    /// (R2). Opening never sends a prompt, and a session a managed terminal
+    /// drives is left to it.
     pub async fn open_session(
         &self,
         agent: &str,
@@ -376,6 +384,7 @@ impl AgentConnections {
         turn_open: bool,
         attach: bool,
         settings: &[SettingValue],
+        native: Option<&NativeSessionSettings>,
     ) -> Result<SessionOpening, AgentRuntimeError> {
         if self.runtime.writers().writer(session) == Some(Writer::Pty) {
             return Ok(SessionOpening::TerminalActive);
@@ -396,7 +405,10 @@ impl AgentConnections {
                 .await
             {
                 Err(AgentRuntimeError::ReadOnlyUnsupported) => {}
-                read => return opening(read, session, liveness, turn_open),
+                read => {
+                    let read = opening(read, session, liveness, turn_open)?;
+                    return Ok(self.with_session_values(read, agent, native));
+                }
             }
         }
         let unknown = if attach {
@@ -416,6 +428,38 @@ impl AgentConnections {
             )
             .await;
         opening(attached, session, liveness, turn_open)
+    }
+
+    /// A session the opening read without a writer, with the declared values
+    /// its native settings match by the agent's dialect.
+    fn with_session_values(
+        &self,
+        opening: SessionOpening,
+        agent: &str,
+        native: Option<&NativeSessionSettings>,
+    ) -> SessionOpening {
+        let (
+            SessionOpening::Opened {
+                session, liveness, ..
+            },
+            Some(native),
+            Some(adapter),
+        ) = (&opening, native, AgentAdapterKind::from_id(agent))
+        else {
+            return opening;
+        };
+        let Ok(read) = self.runtime.watch(session) else {
+            return opening;
+        };
+        if read.snapshot.writer != WriterState::None {
+            return opening;
+        }
+        let values = session_values(adapter, &read.snapshot.settings, native);
+        SessionOpening::Opened {
+            session: session.clone(),
+            liveness: *liveness,
+            session_values: (values != SessionValues::default()).then_some(values),
+        }
     }
 
     /// The chat no longer drives the session, e.g. to continue it in the
@@ -549,6 +593,7 @@ fn opening(
         Ok(()) => Ok(SessionOpening::Opened {
             session: session.clone(),
             liveness,
+            session_values: None,
         }),
         Err(AgentRuntimeError::WriterRefused { refusal }) => Ok(match refusal {
             WriterRefusal::ConfirmationRequired => {
@@ -565,6 +610,7 @@ fn opening(
             } => SessionOpening::Opened {
                 session: session.clone(),
                 liveness,
+                session_values: None,
             },
         }),
         Err(AgentRuntimeError::OpenUnsupported | AgentRuntimeError::SessionNotFound) => {

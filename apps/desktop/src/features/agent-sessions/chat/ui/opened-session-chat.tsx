@@ -108,6 +108,7 @@ export function OpenedSessionChat({
           liveness: state.liveness,
           attaching: opening.attaching,
           refusal: opening.continueRefusal,
+          sessionValues: state.sessionValues,
           attach: opening.attach,
           refreshing: opening.refreshing,
           refresh: opening.refresh,

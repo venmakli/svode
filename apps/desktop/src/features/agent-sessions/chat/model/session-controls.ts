@@ -150,3 +150,20 @@ export function plannedSettings(
       : setting;
   });
 }
+
+/**
+ * The plan attaching a read session applies (DF-171 R1, R2): the values of
+ * the session's own last turn first, then the user's choices, which replace
+ * them setting by setting.
+ */
+export function attachPlan(
+  sessionValues: SettingValue[],
+  chosen: SettingValue[],
+): SettingValue[] {
+  return [
+    ...sessionValues.filter(
+      (value) => !chosen.some((known) => known.setting === value.setting),
+    ),
+    ...chosen,
+  ];
+}

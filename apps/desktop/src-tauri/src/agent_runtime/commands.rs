@@ -17,7 +17,7 @@ use tauri::{State, Webview};
 use super::connections::{AgentConnections, DraftAgent, SessionOpening, SessionStart};
 use super::{ActivityMessage, AgentRuntimeState};
 use crate::agent_sessions::AgentSessionsState;
-use crate::agent_sessions::chat::chat_target;
+use crate::agent_sessions::chat::{chat_target, native_session_settings};
 use crate::agent_sessions::types::catalog_session_id;
 use crate::agent_setup::AgentSetupState;
 use crate::error::AppError;
@@ -211,17 +211,25 @@ pub async fn agent_runtime_open_session(
     let terminal_manager = terminal_manager.inner().clone();
     let runtime_sessions = runtime.runtime().sessions();
     let target = tokio::task::spawn_blocking(move || {
-        chat_target(
+        let target = chat_target(
             &sessions,
             project_path,
             &session_id,
             terminal_manager.list_agent_surfaces()?,
             runtime_sessions,
-        )
+        )?;
+        // A reading shows the values attaching would take from the session's
+        // own last turn (DF-171 R2).
+        Ok::<_, AppError>(target.map(|target| {
+            let native = (!attach)
+                .then(|| native_session_settings(&sessions, &target))
+                .flatten();
+            (target, native)
+        }))
     })
     .await
     .map_err(|error| AppError::General(format!("Agent sessions task failed: {error}")))??;
-    let Some(target) = target else {
+    let Some((target, native)) = target else {
         return Ok(SessionOpening::Unsupported);
     };
     Ok(connections
@@ -233,6 +241,7 @@ pub async fn agent_runtime_open_session(
             target.turn_open,
             attach,
             &settings,
+            native.as_ref(),
         )
         .await?)
 }

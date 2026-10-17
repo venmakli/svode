@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { AgentSessionSnapshotDto } from "@/platform/agent-runtime/agent-runtime-api";
 import {
+  attachPlan,
   contextUsage,
   currentOptionName,
   draftValuesToApply,
@@ -147,4 +148,17 @@ test("a read session shows the values chosen before attaching it, if it declares
     codex.find((setting) => setting.id === "reasoning_effort")?.currentValue,
   );
   expect(plannedSettings(codex, [])).toEqual(codex);
+});
+
+test("attaching applies the session's own values with the user's choices over them", () => {
+  const own = [
+    { setting: "model", value: "gpt-6-luna" },
+    { setting: "reasoning_effort", value: "low" },
+  ];
+  expect(attachPlan(own, [{ setting: "reasoning_effort", value: "high" }])).toEqual([
+    { setting: "model", value: "gpt-6-luna" },
+    { setting: "reasoning_effort", value: "high" },
+  ]);
+  expect(attachPlan(own, [])).toEqual(own);
+  expect(attachPlan([], own)).toEqual(own);
 });

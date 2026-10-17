@@ -12,6 +12,7 @@ pub mod custom;
 mod error;
 pub mod identity;
 pub mod interaction;
+pub mod native_settings;
 mod process;
 mod projection;
 pub mod prompt;

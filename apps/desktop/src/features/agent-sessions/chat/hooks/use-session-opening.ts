@@ -7,6 +7,7 @@ import {
   type AgentLaunchUnavailableDto,
   type AgentSessionKeyDto,
   type AgentSessionOpeningDto,
+  type AgentSessionValuesDto,
   type AgentSettingRefusalDto,
   type AgentSettingValueDto,
 } from "../api/chat";
@@ -18,6 +19,11 @@ export type SessionOpening =
       state: "opened";
       session: AgentSessionKeyDto;
       liveness: AgentExternalLivenessDto;
+      /**
+       * What the session's own last turn gives attaching it where the user
+       * chose no value (DF-171 R2); a value it refused is left out.
+       */
+      sessionValues: AgentSessionValuesDto | null;
       /** Grows when the session is attached again; the chat subscribes anew. */
       epoch: number;
     }
@@ -114,6 +120,7 @@ export function useSessionOpening(projectPath: string | null, sessionId: string)
       } catch (error) {
         const refusal = agentSettingRefusal(error);
         if (refusal) {
+          setOpening((current) => withoutRefused(current, refusal));
           setContinueRefusal({ outcome: "setting_refused", refusal });
           return { attached: false, refusedSetting: refusal };
         }
@@ -168,6 +175,7 @@ function opened(current: SessionOpening, outcome: AgentSessionOpeningDto): Sessi
         state: "opened",
         session: outcome.session,
         liveness: outcome.liveness,
+        sessionValues: outcome.sessionValues ?? null,
         epoch: epoch + 1,
       };
     case "external_active":
@@ -184,4 +192,22 @@ function opened(current: SessionOpening, outcome: AgentSessionOpeningDto): Sessi
     default:
       return { state: outcome.outcome };
   }
+}
+
+/** The opening without a session value attaching it refused. */
+function withoutRefused(
+  current: SessionOpening,
+  refused: AgentSettingRefusalDto,
+): SessionOpening {
+  if (current.state !== "opened" || !current.sessionValues) return current;
+  return {
+    ...current,
+    sessionValues: {
+      ...current.sessionValues,
+      values: current.sessionValues.values.filter(
+        (value) =>
+          value.setting !== refused.setting || value.value !== refused.value,
+      ),
+    },
+  };
 }

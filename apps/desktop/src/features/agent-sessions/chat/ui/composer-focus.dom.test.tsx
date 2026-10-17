@@ -412,6 +412,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
             liveness: "unknown",
             attaching,
             refusal: null,
+            sessionValues: null,
             attach: async () => {
               setAttaching(true);
               await new Promise((resolve) => setTimeout(resolve, 10));

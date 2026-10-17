@@ -6,9 +6,10 @@ use serde_json::Value;
 
 use super::session_logs::SessionLogLayout;
 use super::{
-    NativeStatusEvidence, StoreRead, TurnEvidence, for_each_jsonl, launch_id_from_text,
+    NativeStatusEvidence, StoreRead, TurnEvidence, for_each_jsonl, last_of, launch_id_from_text,
     nested_string_field, string_field, timestamp_from_fields,
 };
+use svode_agents::native_settings::NativeSessionSettings;
 use svode_agents::status::{SessionState, StopReason};
 
 /// The session transcripts under the Claude config directory.
@@ -37,6 +38,29 @@ impl SessionLogLayout for Projects {
     fn tells_conversation(&self) -> bool {
         true
     }
+
+    fn session_settings(&self, log: &Path) -> Option<NativeSessionSettings> {
+        session_settings(log)
+    }
+}
+
+/// The model of the agent's last answer and the effort of its turn (DF-171
+/// R2). A subagent's answer is not the session's, and the synthetic answer
+/// Claude Code writes for a failed request ran on no model.
+pub(super) fn session_settings(path: &Path) -> Option<NativeSessionSettings> {
+    last_of(path, |value| {
+        if string_field(value, &["type"]) != Some("assistant")
+            || value.get("isSidechain").and_then(Value::as_bool) == Some(true)
+        {
+            return None;
+        }
+        let model = nested_string_field(value, &["message", "model"])
+            .filter(|model| *model != "<synthetic>")?;
+        Some(NativeSessionSettings {
+            model: Some(model.to_string()),
+            effort: string_field(value, &["perTurnEffort", "effort"]).map(str::to_string),
+        })
+    })
 }
 
 /// Session transcripts `projects/<project>/<session id>.jsonl` under the
@@ -549,5 +573,80 @@ mod tests {
         );
 
         assert_eq!(read(&transcript).1.as_deref(), Some("launch-claude"));
+    }
+
+    /// An answer of the form Claude Code 2.1.x writes; the text is a
+    /// placeholder.
+    fn answer(model: &str, effort: Option<&str>, per_turn: Option<&str>) -> Value {
+        serde_json::json!({"type": "assistant", "isSidechain": false, "effort": effort, "perTurnEffort": per_turn, "message": {"role": "assistant", "model": model, "content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"}, "timestamp": "2026-10-17T09:00:00Z"})
+    }
+
+    fn lines(records: &[Value]) -> String {
+        records.iter().map(|record| format!("{record}\n")).collect()
+    }
+
+    #[test]
+    fn the_session_settings_are_the_model_of_the_last_answer_and_the_effort_of_its_turn() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let transcript = temp.path().join("claude-settings.jsonl");
+        let mut subagent = answer("claude-haiku-5-5", Some("low"), Some("low"));
+        subagent["isSidechain"] = Value::Bool(true);
+        write(
+            &transcript,
+            &lines(&[
+                answer("claude-opus-5-5", Some("high"), Some("max")),
+                prompt("2026-10-17T09:01:00Z"),
+                answer("claude-haiku-4-5-20251001", None, None),
+                subagent,
+                answer("<synthetic>", None, Some("high")),
+                prompt("2026-10-17T09:02:00Z"),
+            ]),
+        );
+        assert_eq!(
+            session_settings(&transcript),
+            Some(NativeSessionSettings {
+                model: Some("claude-haiku-4-5-20251001".into()),
+                effort: None,
+            })
+        );
+
+        // The turn's own effort before the session's; older records have
+        // only the session's.
+        write(
+            &transcript,
+            &lines(&[answer("claude-opus-5", Some("high"), None)]),
+        );
+        assert_eq!(
+            session_settings(&transcript).and_then(|settings| settings.effort),
+            Some("high".into())
+        );
+        write(
+            &transcript,
+            &lines(&[answer("claude-opus-5-5", Some("high"), Some("xhigh"))]),
+        );
+        assert_eq!(
+            session_settings(&transcript).and_then(|settings| settings.effort),
+            Some("xhigh".into())
+        );
+    }
+
+    #[test]
+    fn an_answer_before_a_long_tail_is_found_and_a_transcript_without_one_has_none() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let transcript = temp.path().join("claude-long.jsonl");
+        let mut output = tool_result("2026-10-17T09:01:00Z");
+        output["message"]["content"][0]["content"] =
+            Value::String("x".repeat(super::super::jsonl_tail::TAIL_BYTES as usize));
+        write(
+            &transcript,
+            &lines(&[answer("claude-sonnet-5", Some("high"), None), output]),
+        );
+        assert_eq!(
+            session_settings(&transcript).and_then(|settings| settings.model),
+            Some("claude-sonnet-5".into())
+        );
+
+        write(&transcript, &lines(&[prompt("2026-10-17T09:00:00Z")]));
+        assert_eq!(session_settings(&transcript), None);
     }
 }

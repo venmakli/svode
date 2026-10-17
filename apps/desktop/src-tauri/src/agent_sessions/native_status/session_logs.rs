@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use svode_agents::native_settings::NativeSessionSettings;
+
 use super::{
     NativeLogFile, NativeLogRead, NativeStatusSource, SourceReads, StoreRead, TurnEvidence,
 };
@@ -37,6 +39,11 @@ pub(crate) trait SessionLogLayout: Send + Sync {
     fn tells_conversation(&self) -> bool {
         false
     }
+
+    /// See [`NativeStatusSource::session_settings`].
+    fn session_settings(&self, _log: &Path) -> Option<NativeSessionSettings> {
+        None
+    }
 }
 
 /// Reads of the agent's session logs, kept per session and repeated only
@@ -64,6 +71,28 @@ impl<L: SessionLogLayout> SessionLogs<L> {
             layout,
             state: Mutex::new(LogsState::default()),
         }
+    }
+
+    /// The session's log as last read or indexed; an id the index does not
+    /// know rebuilds it.
+    fn log(&self, id: &str) -> Option<PathBuf> {
+        {
+            let state = self.state.lock().unwrap();
+            let known = state.reads.get(id).and_then(|read| read.file.as_ref());
+            if let Some(file) = known {
+                return Some(file.path.clone());
+            }
+            if let Some(path) = state.index.as_ref().and_then(|index| index.files.get(id)) {
+                return Some(path.clone());
+            }
+        }
+        let files = self.layout.index();
+        let path = files.get(id).cloned();
+        self.state.lock().unwrap().index = Some(LogIndex {
+            files,
+            built: Instant::now(),
+        });
+        path
     }
 
     fn companions(&self, log: &Path) -> Vec<NativeLogFile> {
@@ -182,5 +211,9 @@ impl<L: SessionLogLayout> NativeStatusSource for SessionLogs<L> {
 
     fn tells_conversation(&self) -> bool {
         self.layout.tells_conversation()
+    }
+
+    fn session_settings(&self, id: &str) -> Option<NativeSessionSettings> {
+        self.layout.session_settings(&self.log(id)?)
     }
 }

@@ -8,9 +8,10 @@ use serde_json::Value;
 
 use super::session_logs::SessionLogLayout;
 use super::{
-    NativeStatusEvidence, StoreRead, TurnEvidence, for_each_jsonl, launch_id_from_text,
+    NativeStatusEvidence, StoreRead, TurnEvidence, for_each_jsonl, last_of, launch_id_from_text,
     string_field, timestamp_from_fields,
 };
+use svode_agents::native_settings::NativeSessionSettings;
 use svode_agents::status::{InteractionKind, SessionState, StopReason};
 
 /// The rollout files under the Codex home.
@@ -39,6 +40,24 @@ impl SessionLogLayout for Rollouts {
     fn tells_conversation(&self) -> bool {
         true
     }
+
+    fn session_settings(&self, log: &Path) -> Option<NativeSessionSettings> {
+        session_settings(log)
+    }
+}
+
+/// The model and effort of the last turn's `turn_context` (DF-171 R2).
+pub(super) fn session_settings(path: &Path) -> Option<NativeSessionSettings> {
+    last_of(path, |value| {
+        if string_field(value, &["type"]) != Some("turn_context") {
+            return None;
+        }
+        let payload = value.get("payload")?;
+        Some(NativeSessionSettings {
+            model: string_field(payload, &["model"]).map(str::to_string),
+            effort: string_field(payload, &["effort"]).map(str::to_string),
+        })
+    })
 }
 
 static ROLLOUT_ID: LazyLock<Regex> = LazyLock::new(|| {
@@ -716,5 +735,51 @@ mod tests {
                 stop_reason: Some(StopReason::EndTurn)
             }
         );
+    }
+
+    #[test]
+    fn the_session_settings_are_the_model_and_effort_of_the_last_turn_context() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let rollout = temp.path().join("rollout.jsonl");
+        let context = |model: &str, effort: Value| {
+            let mut record = turn_context(Value::String("on-request".into()), "user");
+            record["payload"]["model"] = Value::String(model.into());
+            record["payload"]["effort"] = effort;
+            record
+        };
+        let records = [
+            context("gpt-6-luna", Value::String("low".into())),
+            task_started(),
+            context("gpt-6-astra", Value::String("high".into())),
+            task_started(),
+        ];
+        write(
+            &rollout,
+            &records
+                .iter()
+                .map(|record| format!("{record}\n"))
+                .collect::<String>(),
+        );
+        assert_eq!(
+            session_settings(&rollout),
+            Some(NativeSessionSettings {
+                model: Some("gpt-6-astra".into()),
+                effort: Some("high".into()),
+            })
+        );
+
+        write(
+            &rollout,
+            &format!("{}\n", context("gpt-6-luna", Value::Null)),
+        );
+        assert_eq!(
+            session_settings(&rollout),
+            Some(NativeSessionSettings {
+                model: Some("gpt-6-luna".into()),
+                effort: None,
+            })
+        );
+        write(&rollout, &format!("{}\n", task_started()));
+        assert_eq!(session_settings(&rollout), None);
     }
 }

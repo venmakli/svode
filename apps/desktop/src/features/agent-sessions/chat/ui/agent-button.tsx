@@ -102,6 +102,7 @@ export function AgentModelButton({
   agent,
   draft,
   settings,
+  unavailableModel = null,
   canChange,
   changing,
   onChange,
@@ -111,6 +112,11 @@ export function AgentModelButton({
   draft: DraftAgentChoice | null;
   /** The session's declared settings; null while they are not known yet. */
   settings: SessionSetting[] | null;
+  /**
+   * The model the session ran on, which the agent does not offer now: the
+   * next turn runs on the agent's model (DF-171 R2).
+   */
+  unavailableModel?: string | null;
   /** The runtime drives the session, so its settings can change. */
   canChange: boolean;
   /** The setting whose change waits for the agent. */
@@ -169,6 +175,7 @@ export function AgentModelButton({
             draft={draft}
             settings={settings}
             model={controls.model}
+            unavailableModel={unavailableModel}
             {...blockProps}
           />
           {controls.reasoning && (
@@ -264,11 +271,13 @@ function ModelBlock({
   draft,
   settings,
   model,
+  unavailableModel,
   ...props
 }: BlockProps & {
   draft: DraftAgentChoice | null;
   settings: SessionSetting[] | null;
   model: SessionSetting | null;
+  unavailableModel: string | null;
 }) {
   const readiness = draft?.readiness;
   let content: ReactNode;
@@ -293,7 +302,14 @@ function ModelBlock({
   } else {
     content = <OptionList setting={model} search={model.options.length >= MODEL_SEARCH_FROM} {...props} />;
   }
-  return <Block label={m.sessions_chat_model()}>{content}</Block>;
+  return (
+    <Block label={m.sessions_chat_model()}>
+      {content}
+      {unavailableModel && (
+        <Note>{m.sessions_chat_model_session_unavailable({ model: unavailableModel })}</Note>
+      )}
+    </Block>
+  );
 }
 
 /** Reasoning and the agent's other settings, under their label. */

@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use svode_agents::catalog::RuntimeSession;
 use svode_agents::identity::SessionKey;
+use svode_agents::native_settings::NativeSessionSettings;
 use svode_agents::writer::ExternalLiveness;
+use svode_core::agent_adapters::AgentId;
 
 use super::AgentSessionsState;
 use super::live_status::{external_liveness, native_turn_open};
@@ -60,4 +62,16 @@ pub fn chat_target(
         liveness: external_liveness(session),
         turn_open: native_turn_open(session),
     }))
+}
+
+/// The model and reasoning of the target's last turn in its agent's native
+/// store, read now (DF-171 R2); Claude Code and Codex record them.
+pub fn native_session_settings(
+    state: &AgentSessionsState,
+    target: &ChatTarget,
+) -> Option<NativeSessionSettings> {
+    let agent = AgentId::parse(&target.agent).ok()?;
+    state
+        .native_status
+        .session_settings(&agent, &target.key.session_id)
 }
