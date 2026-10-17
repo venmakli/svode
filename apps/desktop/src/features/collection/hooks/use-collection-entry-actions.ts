@@ -49,7 +49,6 @@ export function useCollectionEntryActions({
   const { reloadTreeParent, reloadTreePathParent, removeTreePath } =
     useSpaceTreeSync();
   const signalUserEdit = useSignalUserEdit();
-  const [deleteEntry, setDeleteEntry] = useState<Page | null>(null);
   const [entriesVersion, setEntriesVersion] = useState(0);
   const refreshEntries = useCallback(() => {
     setEntriesVersion((version) => version + 1);
@@ -151,7 +150,6 @@ export function useCollectionEntryActions({
       path: entryToDelete.path,
       projectPath: target.projectPath ?? null,
     });
-    setDeleteEntry(null);
     refreshEntries();
     if (!peekTarget) signalUserEdit();
     removeTreePath(target.spaceId, entryToDelete.path);
@@ -171,8 +169,6 @@ export function useCollectionEntryActions({
   }
 
   return {
-    deleteEntry,
-    setDeleteEntry,
     entriesVersion,
     refreshEntries,
     createEntry,

@@ -125,8 +125,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   mock.module("@/features/page/ui/page-system-fields", () => ({
     PageSystemFields: () => null,
   }));
-  mock.module("@/features/page/ui/page-delete-dialog", () => ({
-    PageDeleteDialog: () => null,
+  mock.module("@/features/content-actions/ui/content-delete-dialog", () => ({
+    ContentDeleteDialog: () => null,
   }));
   mock.module(
     "@/features/collection/detail-peek/detail-peek",

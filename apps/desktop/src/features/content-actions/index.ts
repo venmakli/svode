@@ -18,3 +18,10 @@ export {
   ContentActionMenuItems,
   type ContentActionHandlers,
 } from "./ui/content-action-menu-items";
+export {
+  pageFormOfPath,
+  type ContentBacklink,
+  type ContentDeleteConfirmation,
+  type DeletableContentObject,
+} from "./model/delete-confirmation";
+export { ContentDeleteDialog } from "./ui/content-delete-dialog";

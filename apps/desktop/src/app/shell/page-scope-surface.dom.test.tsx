@@ -136,11 +136,19 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   mock.module("@/features/page/ui/page-system-fields", () => ({
     PageSystemFields: () => null,
   }));
-  mock.module("@/features/page/ui/page-delete-dialog", () => ({
-    PageDeleteDialog: (props: Props) => {
+  mock.module("@/features/content-actions/ui/content-delete-dialog", () => ({
+    ContentDeleteDialog: (props: Props) => {
       deleteDialogProps = props;
-      const page = props.page as Page | null;
-      return page ? <div data-delete={page.path} /> : null;
+      const confirmation = props.confirmation as {
+        object: { kind: string };
+        value: Page;
+      } | null;
+      return confirmation ? (
+        <div
+          data-delete={confirmation.value.path}
+          data-delete-kind={confirmation.object.kind}
+        />
+      ) : null;
     },
   }));
   // Radix portals need DOM globals before import; the real dialog has its
@@ -311,6 +319,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
             )
             .then(() => null);
         }
+        if (command === "get_backlinks") return [];
         if (command === "duplicate_page")
           return { ...page("Note copy.md"), warnings: [] };
         if (command === "repository_access_get")
@@ -877,9 +886,9 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         await settle();
       });
       await act(async () => {
-        (deleteDialogProps.onDeletePage as (page: Page) => void)(
-          page("Note.md"),
-        );
+        // The confirm action of the alert dialog also closes it.
+        (deleteDialogProps.onConfirm as (page: Page) => void)(page("Note.md"));
+        (deleteDialogProps.onCancel as () => void)();
         await settle();
       });
       await act(settle);
@@ -975,6 +984,37 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     }
   });
 
+  test("full Page delete confirms a Page or a Collection item by its schema", async () => {
+    for (const [schemaColumns, kind] of [
+      [0, "page"],
+      [1, "collection-item"],
+    ] as const) {
+      const f = await fixture("Folder/Note.md", false, { schemaColumns });
+      try {
+        await act(async () => {
+          (actionsProps.onDeletePage as (page: Page) => void)(
+            page("Folder/Note.md"),
+          );
+          await settle();
+        });
+        expect(
+          f.dom.window.document
+            .querySelector("[data-delete]")
+            ?.getAttribute("data-delete-kind"),
+        ).toBe(kind);
+        expect(
+          (deleteDialogProps.confirmation as { name: string }).name,
+        ).toBe("Folder/Note.md");
+        expect(
+          f.calls.find(({ command }) => command === "get_backlinks")?.args
+            .targetPath,
+        ).toBe("Folder/Note.md");
+      } finally {
+        await f.cleanup();
+      }
+    }
+  });
+
   test("full Page delete, duplicate and conversions keep their tree and navigation effects", async () => {
     const f = await fixture("Note.md");
     const doc = f.dom.window.document;
@@ -988,11 +1028,14 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       expect(
         doc.querySelector("[data-delete]")?.getAttribute("data-delete"),
       ).toBe("Note.md");
+      expect(
+        doc.querySelector("[data-delete]")?.getAttribute("data-delete-kind"),
+      ).toBe("page");
       const before = f.calls.length;
       await act(async () => {
-        (deleteDialogProps.onDeletePage as (page: Page) => void)(
-          page("Note.md"),
-        );
+        // The confirm action of the alert dialog also closes it.
+        (deleteDialogProps.onConfirm as (page: Page) => void)(page("Note.md"));
+        (deleteDialogProps.onCancel as () => void)();
         await settle();
       });
       expect(

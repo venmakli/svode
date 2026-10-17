@@ -157,8 +157,6 @@ export function useFileTreeItemActions({
     spaceId,
     space,
     activeRootPath,
-    rootSpaces,
-    spaces,
     reloadTreePathParent,
     removeTreePath,
   });
@@ -182,10 +180,9 @@ export function useFileTreeItemActions({
   return {
     bareFolder,
     pinItem: treeNodeNavigationItem(node, spaceId, activeRootId),
-    backlinkLabel: deletion.backlinkLabel,
+    cancelDelete: deletion.cancelDelete,
     childLoading,
-    closeDeleteDialog: deletion.closeDeleteDialog,
-    deleteDialog: deletion.deleteDialog,
+    deleteConfirmation: deletion.deleteConfirmation,
     editRef: rename.editRef,
     editValue: rename.editValue,
     expandable,

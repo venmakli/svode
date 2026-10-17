@@ -8,35 +8,31 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { Page } from "../model";
 import * as m from "@/paraglide/messages.js";
 
-export function PageDeleteDialog({
-  page,
+export function DeleteViewDialog({
+  open,
   onOpenChange,
-  onDeletePage,
+  onDeleteView,
 }: {
-  page: Page | null;
+  open: boolean;
   onOpenChange: (open: boolean) => void;
-  onDeletePage: (page: Page) => void;
+  onDeleteView: () => void;
 }) {
   return (
-    <AlertDialog
-      open={Boolean(page)}
-      onOpenChange={(open) => {
-        if (!open) onOpenChange(false);
-      }}
-    >
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{m.space_delete()}</AlertDialogTitle>
+          <AlertDialogTitle>
+            {m.collection_delete_view_title()}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            {page?.meta.title ?? ""}
+            {m.collection_delete_view_description()}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
-          <AlertDialogAction onClick={() => page && onDeletePage(page)}>
+          <AlertDialogAction onClick={onDeleteView}>
             {m.space_delete()}
           </AlertDialogAction>
         </AlertDialogFooter>

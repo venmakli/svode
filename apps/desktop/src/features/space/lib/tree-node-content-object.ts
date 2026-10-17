@@ -1,5 +1,5 @@
 import type {
-  ContentObject,
+  DeletableContentObject,
   PageFolderContents,
 } from "@/features/content-actions";
 import type { TreeNode } from "../model/types";
@@ -9,7 +9,7 @@ import { isReadmePath } from "./tree-patches";
 export function treeNodeContentObject(
   node: TreeNode,
   contents: PageFolderContents | null = null,
-): ContentObject {
+): DeletableContentObject {
   if (node.has_schema) return { kind: "collection" };
   if (node.kind === "app" || node.has_app) return { kind: "app" };
   if (!node.path.endsWith(".md")) return { kind: "folder" };

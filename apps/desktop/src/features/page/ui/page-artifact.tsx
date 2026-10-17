@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useCloseActiveContent, useOpenScopeOwner } from "@/features/artifact";
 import {
   deletePage as deletePageApi,
@@ -6,7 +6,15 @@ import {
 } from "../page-api";
 import { useOpenPage } from "../navigation";
 import type { Page } from "../model";
-import { useSpace, useSpaceTreeSync } from "@/features/space";
+import {
+  useContentDeleteConfirmation,
+  useSpace,
+  useSpaceTreeSync,
+} from "@/features/space";
+import {
+  ContentDeleteDialog,
+  pageFormOfPath,
+} from "@/features/content-actions";
 import {
   NavigationMenuItems,
   signalCreatedArtifact,
@@ -23,7 +31,6 @@ import { handleError } from "../lib/errors";
 import { publishPageFilenameWarnings } from "../lib/filename-warning";
 import { isReadmeMissingError } from "../lib/readme-state";
 import type { PageSurfaceLayout } from "../model/page-surface-layout";
-import { PageDeleteDialog } from "./page-delete-dialog";
 import { PageDetailActions } from "./page-detail-actions";
 import { PageDetailHeader } from "./page-detail-header";
 import { ReadmeSurface } from "./readme-surface";
@@ -101,7 +108,8 @@ function PageArtifactContent({
   );
   const removeTreePath = useSpaceTreeSync((state) => state.removeTreePath);
   const activeRootId = useSpace((state) => state.activeRootId);
-  const [deletePage, setDeletePage] = useState<Page | null>(null);
+  const { confirmation, requestDelete, cancelDelete } =
+    useContentDeleteConfirmation<Page>();
   const page = detail.page;
   usePageOpenTiming(detail.status, spaceId);
 
@@ -114,15 +122,15 @@ function PageArtifactContent({
   }, [openScopeOwner, rootReadmeMissing, spaceId]);
 
   useEffect(() => {
-    if (!pageSurface.readOnly || !deletePage) return;
+    if (!pageSurface.readOnly || !confirmation) return;
     let cancelled = false;
     queueMicrotask(() => {
-      if (!cancelled) setDeletePage(null);
+      if (!cancelled) cancelDelete();
     });
     return () => {
       cancelled = true;
     };
-  }, [deletePage, pageSurface.readOnly]);
+  }, [cancelDelete, confirmation, pageSurface.readOnly]);
 
   async function deleteCurrentPage(pageToDelete: Page) {
     await deletePageApi({
@@ -130,7 +138,6 @@ function PageArtifactContent({
       path: pageToDelete.path,
       projectPath: projectPath ?? null,
     });
-    setDeletePage(null);
     removeTreePath(spaceId, pageToDelete.path);
     await reloadTreePathParent(spaceId, pageToDelete.path);
   }
@@ -166,7 +173,19 @@ function PageArtifactContent({
         }
       }}
       onDuplicatePage={duplicateCurrentPage}
-      onDeletePage={setDeletePage}
+      onDeletePage={(pageToDelete) =>
+        void requestDelete({
+          object: {
+            kind: detail.schemaResult ? "collection-item" : "page",
+            form: pageFormOfPath(pageToDelete.path),
+          },
+          name: pageToDelete.meta.title,
+          spacePath,
+          path: pageToDelete.path,
+          projectPath: projectPath ?? null,
+          value: pageToDelete,
+        })
+      }
       actionItemsBeforeDuplicate={
         <NavigationMenuItems
           item={pageNavigationItem(page, spaceId, activeRootId)}
@@ -189,12 +208,10 @@ function PageArtifactContent({
         ),
         children: <ReadmeSurface />,
       })}
-      <PageDeleteDialog
-        page={pageSurface.readOnly ? null : deletePage}
-        onOpenChange={(open) => {
-          if (!open) setDeletePage(null);
-        }}
-        onDeletePage={(pageToDelete) =>
+      <ContentDeleteDialog
+        confirmation={pageSurface.readOnly ? null : confirmation}
+        onCancel={cancelDelete}
+        onConfirm={(pageToDelete) =>
           void pageSurface
             .runMutation(() => deleteCurrentPage(pageToDelete))
             .catch(handleError)

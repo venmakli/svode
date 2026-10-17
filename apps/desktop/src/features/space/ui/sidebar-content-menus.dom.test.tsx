@@ -71,6 +71,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
 
   const commands: [string, Record<string, unknown>][] = [];
   let folderContents = { subpageCount: 0, otherFileCount: 0 };
+  let backlinks: unknown[] = [];
   const pageDto = (path: string) => ({ path, meta: { title: path }, body: "" });
   let callbackId = 0;
   Object.defineProperty(dom.window, "__TAURI_INTERNALS__", {
@@ -88,6 +89,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
           case "convert_page_to_leaf":
             return pageDto("guide.md");
           case "get_backlinks":
+            return backlinks;
           case "list_tree_children":
             return [];
           case "create_page":
@@ -423,6 +425,117 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
     await select("Rename");
     observer.disconnect();
     expect(renameValues[0]).toBe("Board");
+  });
+
+  function deleteDialog() {
+    const dialog = document.querySelector('[role="alertdialog"]');
+    if (!dialog) return null;
+    return {
+      title: dialog.querySelector('[data-slot="alert-dialog-title"]')
+        ?.textContent,
+      description: dialog.querySelector(
+        '[data-slot="alert-dialog-description"]',
+      )?.textContent,
+      backlinks: [
+        ...dialog.querySelectorAll("[data-content-delete-backlinks] li"),
+      ].map((item) => item.textContent),
+    };
+  }
+
+  async function clickDialogButton(label: string) {
+    const button = [
+      ...document.querySelectorAll('[role="alertdialog"] button'),
+    ].find((element) => element.textContent === label) as
+      | HTMLElement
+      | undefined;
+    if (!button) throw new Error(`no dialog button ${label}`);
+    await act(async () => {
+      button.click();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    // Radix finishes closing the dialog after its own state update.
+    await settle();
+  }
+
+  test("deleting a tree node confirms with its type, name, consequences and links", async () => {
+    await render(<SpaceRow {...spaceProps()} />);
+    const deletes = () =>
+      commands.filter(([command]) => command === "delete_content");
+
+    backlinks = [
+      { sourceSpaceId: null, sourcePath: "notes/plan.md", linkCount: 1 },
+      { sourceSpaceId: "docs", sourcePath: "intro.md", linkCount: 2 },
+    ];
+    await openMenu(treeTrigger("Doc"));
+    await select("Delete");
+    await settle();
+    expect(deleteDialog()).toEqual({
+      title: "Delete page?",
+      description: "The page “Doc” will be deleted.",
+      backlinks: ["notes/plan.md", "Docs · intro.md"],
+    });
+    expect(
+      commands.filter(([command]) => command === "get_backlinks").at(-1)?.[1],
+    ).toEqual({
+      space: "/project/docs",
+      targetPath: "doc.md",
+      projectPath: "/project",
+    });
+    commands.length = 0;
+    await clickDialogButton("Cancel");
+    expect(deleteDialog()).toBeNull();
+    expect(deletes()).toEqual([]);
+
+    backlinks = [];
+    const cases: [string, string, string][] = [
+      [
+        "Guide",
+        "Delete page?",
+        "The page “Guide” will be deleted with its nested pages and files.",
+      ],
+      [
+        "Attic",
+        "Delete folder?",
+        "The folder “Attic” and everything inside it will be deleted.",
+      ],
+      [
+        "Tasks",
+        "Delete collection?",
+        "The collection “Tasks” will be deleted with its schema and all items.",
+      ],
+      [
+        "Board",
+        "Delete app?",
+        "The app “Board” will be deleted with its files.",
+      ],
+      ["Tool", "Delete app?", "The app “Tool” will be deleted with its files."],
+    ];
+    folderContents = { subpageCount: 1, otherFileCount: 0 };
+    for (const [title, dialogTitle, description] of cases) {
+      await openMenu(treeTrigger(title));
+      await select("Delete");
+      await settle();
+      expect(deleteDialog()).toEqual({
+        title: dialogTitle,
+        description,
+        backlinks: [],
+      });
+      await clickDialogButton("Cancel");
+    }
+    expect(deletes()).toEqual([]);
+
+    await openMenu(treeTrigger("Attic"));
+    await select("Delete");
+    await settle();
+    await clickDialogButton("Delete");
+    expect(deleteDialog()).toBeNull();
+    expect(deletes()).toEqual([
+      [
+        "delete_content",
+        { space: "/project/docs", path: "attic", projectPath: "/project" },
+      ],
+    ]);
+    folderContents = { subpageCount: 0, otherFileCount: 0 };
   });
 
   test("the Space row menu adds Save all with unsaved changes and its launch group", async () => {

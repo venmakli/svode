@@ -2,6 +2,7 @@ export * from "./use-collection-actors";
 export * from "./use-collection-active-tab";
 export * from "./use-collection-column-actions";
 export * from "./use-collection-entry-actions";
+export * from "./use-collection-entry-delete";
 export * from "./use-collection-entry-events";
 export * from "./use-collection-entry-field-save";
 export * from "./use-collection-keyboard-shortcuts";

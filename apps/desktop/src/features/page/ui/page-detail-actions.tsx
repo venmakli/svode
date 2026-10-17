@@ -236,7 +236,7 @@ export function PageDetailActions({
           onClick={() => onDeletePage(page)}
         >
           <Trash2 data-icon="inline-start" />
-          {m.page_delete_row()}
+          {m.content_action_delete()}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

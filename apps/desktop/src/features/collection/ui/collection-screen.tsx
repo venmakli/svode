@@ -19,8 +19,9 @@ import type { ScopePeekRenderer } from "@/features/scope-surfaces";
 import type { GitSaveScopeTreeNode } from "@/features/git/app-shell";
 import { useSignalUserEdit } from "@/features/navigation";
 import { useSpace } from "@/features/space";
+import { ContentDeleteDialog } from "@/features/content-actions";
 import { useViewQuery } from "../query/hooks";
-import { DeleteDialogs } from "./delete-dialogs";
+import { DeleteViewDialog } from "./delete-view-dialog";
 import { PagePeekSheet } from "./page-peek-sheet";
 import { handleError } from "../hooks/error-feedback";
 import { CollectionSkeleton } from "./skeleton";
@@ -30,6 +31,7 @@ import { CollectionTabStrip } from "./view-tabs";
 import { ViewActionBar } from "./view-action-bar";
 import {
   useCollectionEntryActions,
+  useCollectionEntryDelete,
   useCollectionActiveTab,
   useCollectionKeyboardShortcuts,
   useCollectionSaveShortcuts,
@@ -77,12 +79,6 @@ export function CollectionViewsSurface({
   routeState,
   renderPeek,
 }: CollectionViewsSurfaceProps) {
-  const [peekDeleteContext, setPeekDeleteContext] = useState<{
-    page: Page;
-    spacePath: string;
-    projectPath: string | null | undefined;
-    spaceId: string;
-  } | null>(null);
   const entryContext = useOptionalPageDetailContext();
   const collectionPath = useMemo(() => collectionPathFor(pagePath), [pagePath]);
   const previousCollectionPath = collectionPathHandoffFromEntry(
@@ -130,8 +126,6 @@ export function CollectionViewsSurface({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [peekTarget, setPeekTarget] = useState<PagePeekTarget | null>(null);
   const {
-    deleteEntry,
-    setDeleteEntry,
     entriesVersion,
     refreshEntries,
     createEntry,
@@ -145,6 +139,13 @@ export function CollectionViewsSurface({
     spaceId,
     openPage,
   });
+  const entryDelete = useCollectionEntryDelete({
+    readOnly,
+    spacePath,
+    projectPath,
+    deleteRow,
+  });
+  const cancelEntryDelete = entryDelete.cancelDelete;
   useCollectionRefreshEvents({
     spacePath,
     collectionPath,
@@ -204,9 +205,9 @@ export function CollectionViewsSurface({
     queueMicrotask(() => {
       if (!isLocalQueryPane(settingsPane)) setSettingsOpen(false);
       setDeleteOpen(false);
-      setDeleteEntry(null);
+      cancelEntryDelete();
     });
-  }, [readOnly, setDeleteEntry, settingsPane]);
+  }, [cancelEntryDelete, readOnly, settingsPane]);
 
   useEffect(() => {
     if (!activeView) return;
@@ -431,7 +432,7 @@ export function CollectionViewsSurface({
                   }
                 },
                 onDeletePage: (pageToDelete) => {
-                  if (!readOnly) setDeleteEntry(pageToDelete);
+                  entryDelete.requestRowDelete(pageToDelete);
                 },
                 onSchemaChange: (nextSchema) => {
                   if (!readOnly) setSchema(normalizeSchema(nextSchema));
@@ -463,29 +464,12 @@ export function CollectionViewsSurface({
         }
       />
 
-      <DeleteDialogs
-        viewOpen={!readOnly && deleteOpen}
-        entry={
-          peekDeleteContext?.page === deleteEntry
-            ? deleteEntry
-            : readOnly
-              ? null
-              : deleteEntry
-        }
-        onViewOpenChange={setDeleteOpen}
-        onEntryOpenChange={(open) => {
-          if (!open) setDeleteEntry(null);
-        }}
+      <DeleteViewDialog
+        open={!readOnly && deleteOpen}
+        onOpenChange={setDeleteOpen}
         onDeleteView={() => void deleteActiveView().catch(handleError)}
-        onDeletePage={(pageToDelete) =>
-          void deleteRow(
-            pageToDelete,
-            peekDeleteContext?.page === pageToDelete
-              ? peekDeleteContext
-              : undefined,
-          ).catch(handleError)
-        }
       />
+      <ContentDeleteDialog {...entryDelete.dialog} />
       <PagePeekSheet
         readOnly={readOnly}
         target={peekTarget}
@@ -511,14 +495,17 @@ export function CollectionViewsSurface({
           }).catch(handleError);
         }}
         onDeletePage={(entryToDelete) => {
-          setPeekDeleteContext({
-            page: entryToDelete,
-            spacePath: peekTarget?.spacePath ?? spacePath,
-            projectPath: peekTarget?.projectPath ?? projectPath,
-            spaceId: peekTarget?.spaceId ?? spaceId,
-          });
+          const template = peekTarget?.template;
           setPeekTarget(null);
-          setDeleteEntry(entryToDelete);
+          entryDelete.requestPeekDelete(
+            entryToDelete,
+            {
+              spacePath: peekTarget?.spacePath ?? spacePath,
+              projectPath: peekTarget?.projectPath ?? projectPath,
+              spaceId: peekTarget?.spaceId ?? spaceId,
+            },
+            template,
+          );
         }}
         onSetTemplateDefault={setDefaultTemplateForMenu}
         onDuplicateTemplate={duplicateTemplateEntry}

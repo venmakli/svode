@@ -20,16 +20,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
@@ -52,6 +42,7 @@ import {
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
 import { getArtifactPresentationKind } from "@/features/artifact";
+import { ContentDeleteDialog } from "@/features/content-actions";
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
@@ -86,10 +77,9 @@ export function FileTreeItem({
 }: FileTreeItemProps) {
   const {
     bareFolder,
-    backlinkLabel,
+    cancelDelete,
     childLoading,
-    closeDeleteDialog,
-    deleteDialog,
+    deleteConfirmation,
     editRef,
     editValue,
     expandable,
@@ -304,51 +294,11 @@ export function FileTreeItem({
     : "";
 
   const deleteConfirmDialog = (
-    <AlertDialog
-      open={deleteDialog.open}
-      onOpenChange={(open) => {
-        if (!open) closeDeleteDialog();
-      }}
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{m.file_delete_title()}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {node.has_schema
-              ? m.file_delete_collection_description()
-              : knownChildren
-                ? m.file_delete_tree_description()
-                : m.file_delete_description()}
-            {deleteDialog.backlinks.length > 0 && (
-              <>
-                <br />
-                <br />
-                {m.file_delete_has_backlinks()}
-                <ul className="mt-2 list-disc pl-5">
-                  {deleteDialog.backlinks.map((bl) => (
-                    <li
-                      key={`${bl.sourceSpaceId ?? "root"}:${bl.sourcePath}`}
-                      className="text-foreground"
-                    >
-                      {backlinkLabel(bl)}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>{m.file_delete_cancel()}</AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            onClick={handleDeleteConfirm}
-          >
-            {m.file_delete_confirm()}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ContentDeleteDialog
+      confirmation={deleteConfirmation}
+      onCancel={cancelDelete}
+      onConfirm={(path) => void handleDeleteConfirm(path)}
+    />
   );
 
   function withDescriptionTooltip(element: ReactElement) {

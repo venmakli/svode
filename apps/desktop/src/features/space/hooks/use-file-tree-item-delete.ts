@@ -1,26 +1,16 @@
-import { useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "../model/types";
-import {
-  deleteTreeItem,
-  getTreePageBacklinks,
-  type BacklinkInfo,
-} from "../api/content-tree-actions";
+import { deleteTreeItem } from "../api/content-tree-actions";
+import { treeNodeContentObject } from "../lib/tree-node-content-object";
 import type { SpaceInfo } from "../model";
-
-export interface FileTreeDeleteDialogState {
-  open: boolean;
-  backlinks: BacklinkInfo[];
-}
+import { useContentDeleteConfirmation } from "./use-content-delete-confirmation";
 
 interface UseFileTreeItemDeleteInput {
   node: TreeNode;
   spaceId: string;
   space: SpaceInfo | undefined;
   activeRootPath: string | null;
-  rootSpaces: SpaceInfo[];
-  spaces: SpaceInfo[];
   reloadTreePathParent: (spaceId: string, path: string) => Promise<void>;
   removeTreePath: (spaceId: string, path: string) => void;
 }
@@ -30,65 +20,43 @@ export function useFileTreeItemDelete({
   spaceId,
   space,
   activeRootPath,
-  rootSpaces,
-  spaces,
   reloadTreePathParent,
   removeTreePath,
 }: UseFileTreeItemDeleteInput) {
-  const [deleteDialog, setDeleteDialog] = useState<FileTreeDeleteDialogState>({
-    open: false,
-    backlinks: [],
-  });
-
-  function backlinkLabel(backlink: BacklinkInfo): string {
-    if (!backlink.sourceSpaceId) return backlink.sourcePath;
-    const sourceSpace = [...rootSpaces, ...spaces].find(
-      (item) => item.id === backlink.sourceSpaceId,
-    );
-    return sourceSpace
-      ? `${sourceSpace.name} · ${backlink.sourcePath}`
-      : backlink.sourcePath;
-  }
+  const { confirmation, requestDelete, cancelDelete } =
+    useContentDeleteConfirmation<string>();
 
   async function handleDeleteRequest() {
     if (!space) return;
-    try {
-      const backlinks = await getTreePageBacklinks({
-        spacePath: space.path,
-        targetPath: node.path,
-        projectPath: activeRootPath ?? null,
-      });
-      setDeleteDialog({ open: true, backlinks });
-    } catch {
-      setDeleteDialog({ open: true, backlinks: [] });
-    }
+    await requestDelete({
+      object: treeNodeContentObject(node),
+      name: node.title,
+      spacePath: space.path,
+      path: node.path,
+      projectPath: activeRootPath ?? null,
+      value: node.path,
+    });
   }
 
-  async function handleDeleteConfirm() {
+  async function handleDeleteConfirm(path: string) {
     if (!space) return;
-    setDeleteDialog({ open: false, backlinks: [] });
     try {
       await deleteTreeItem({
         spacePath: space.path,
-        path: node.path,
+        path,
         projectPath: activeRootPath,
       });
-      removeTreePath(spaceId, node.path);
-      await reloadTreePathParent(spaceId, node.path);
+      removeTreePath(spaceId, path);
+      await reloadTreePathParent(spaceId, path);
     } catch (err) {
       console.error("Failed to delete content item:", err);
       toast.error(m.toast_error());
     }
   }
 
-  function closeDeleteDialog() {
-    setDeleteDialog({ open: false, backlinks: [] });
-  }
-
   return {
-    backlinkLabel,
-    closeDeleteDialog,
-    deleteDialog,
+    cancelDelete,
+    deleteConfirmation: confirmation,
     handleDeleteConfirm,
     handleDeleteRequest,
   };
