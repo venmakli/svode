@@ -2372,6 +2372,47 @@ async fn rename_content_refuses_titled_and_unsupported_targets_with_stable_codes
 }
 
 #[tokio::test]
+async fn structural_actions_in_a_submodule_space_need_the_parent_gitlink_repository() {
+    let fixture = structure_fixture();
+    let project = &fixture.project;
+    let child = project.join("child");
+    write(&child.join("notes/page.md"), "---\ntitle: Page\n---\n");
+    git(&child, &["init", "-q"]);
+    write(
+        &project.join(".gitmodules"),
+        "[submodule \"child\"]\n\tpath = child\n\turl = https://example.invalid/child.git\n",
+    );
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    *host.denied_repositories.lock().unwrap() = vec![project.clone()];
+    let target = root_target(&fixture);
+    let before = source_snapshot(project);
+    let actions = [
+        (
+            "rename_content",
+            json!({ "spaceId": "child", "from": "notes", "to": "ideas" }),
+        ),
+        (
+            "move_content",
+            json!({ "spaceId": "child", "from": "notes/page.md", "toParent": "" }),
+        ),
+    ];
+
+    for (name, args) in &actions {
+        let result = call_tool(&host, Some(&target), name, args.clone()).await;
+        assert_eq!(error_code(&result), "REPOSITORY_ACCESS_DENIED", "{name}");
+    }
+
+    assert_eq!(source_snapshot(project), before);
+    assert!(host.authorized().contains(project));
+
+    host.denied_repositories.lock().unwrap().clear();
+    let (name, args) = &actions[0];
+    let renamed = call_tool(&host, Some(&target), name, args.clone()).await;
+    assert!(!renamed.is_error, "{:?}", renamed.structured_content);
+    assert!(child.join("ideas/page.md").is_file());
+}
+
+#[tokio::test]
 async fn managed_import_uses_the_shared_plan_and_host_delivery() {
     let fixture = write_fixture();
     let target = root_target(&fixture);

@@ -906,6 +906,21 @@ pub async fn detect_space_git_type(
     Ok(SpaceGitType::Independent)
 }
 
+/// The Project repository of a submodule Space records a path change of
+/// its sources through the gitlink the structural commit updates, so a plan
+/// that renames or moves them authorizes it too. Without Git CLI no Space
+/// counts as a submodule.
+pub async fn submodule_parent(
+    project: Option<&str>,
+    space: &str,
+) -> Result<Option<std::path::PathBuf>, GitError> {
+    let (Some(project), Some(cli)) = (project, crate::git::state::detected_cli()) else {
+        return Ok(None);
+    };
+    let kind = detect_space_git_type(&cli, Path::new(project), Path::new(space)).await?;
+    Ok((kind == SpaceGitType::Submodule).then(|| std::path::PathBuf::from(project)))
+}
+
 /// Detect git type and resolve which repo should be the commit target.
 /// Inline → project repo, Independent/Submodule → the space's own repo.
 pub async fn resolve_target_repo(

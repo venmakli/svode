@@ -36,6 +36,7 @@ pub async fn move_mutation_paths(
     paths.extend_from_slice(link_plan.mutation_paths());
     paths.extend(managed_attachment_policy_paths(space, Some(project)));
     paths.push(PathBuf::from(space));
+    paths.extend(crate::git::ops::submodule_parent(Some(project), space).await?);
     paths.sort();
     paths.dedup();
     Ok(paths)

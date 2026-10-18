@@ -208,7 +208,7 @@ async fn prepare(
     let mut link_targets = Vec::new();
     let mut parent_gitlink = None;
     if let Some(planned) = &rename {
-        parent_gitlink = submodule_parent(request).await?;
+        parent_gitlink = crate::git::ops::submodule_parent(request.project, request.space).await?;
         let (old_root, new_root) = rename_roots(request, planned);
         paths.extend(
             relation_paths
@@ -306,18 +306,6 @@ async fn prepare(
         paths,
         parent_gitlink,
     })
-}
-
-/// The Project repository of a submodule Space records a rename of its
-/// sources through the gitlink the structural commit updates.
-async fn submodule_parent(request: &PageWrite<'_>) -> Result<Option<PathBuf>, PageError> {
-    let (Some(project), Some(cli)) = (request.project, crate::git::state::detected_cli()) else {
-        return Ok(None);
-    };
-    let kind =
-        crate::git::ops::detect_space_git_type(&cli, Path::new(project), Path::new(request.space))
-            .await?;
-    Ok((kind == crate::storage::config::SpaceGitType::Submodule).then(|| PathBuf::from(project)))
 }
 
 async fn publish<E: GitDateExecutor>(

@@ -817,3 +817,72 @@ async fn renaming_a_folder_page_by_title_rewrites_relation_schemas_of_nested_col
     }
     assert_nested_collections_moved(root, "Zone");
 }
+
+#[tokio::test]
+async fn a_structural_plan_in_a_submodule_space_authorizes_the_parent_gitlink() {
+    let Some(cli) = crate::git::state::detected_cli() else {
+        return;
+    };
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    cli.exec(root, &["init", "-q"]).await.unwrap();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::write(
+        root.join(".svode/config.json"),
+        r#"{"name":"Root","spaces":[{"id":"a","path":"spaces/a"}]}"#,
+    )
+    .unwrap();
+    let space = root.join("spaces/a");
+    crate::page::test_support::scaffold_space(&space, "a");
+    fs::create_dir_all(space.join(".git")).unwrap();
+    fs::create_dir_all(space.join("Notes")).unwrap();
+    fs::write(space.join("Notes/Page.md"), "---\ntitle: Page\n---\n").unwrap();
+    fs::write(space.join("Link.md"), "[Page](Notes/Page.md)\n").unwrap();
+    let state = IndexRuntimeState::default();
+    state
+        .upsert_space(
+            root,
+            "a",
+            "spaces/a",
+            crate::index::resolver::SpaceStatus::Ready,
+            None,
+        )
+        .await;
+    let (space, project) = (space.to_str().unwrap(), root.to_str().unwrap());
+    let plan = async |from: &str, to: &str| {
+        super::move_mutation_paths(&state, space, Some(project), from, to)
+            .await
+            .unwrap()
+    };
+    let independent = [
+        plan("Notes", "Ideas").await,
+        plan("Notes/Page.md", "Page.md").await,
+    ];
+    for paths in &independent {
+        assert!(!paths.contains(&root.to_path_buf()), "{paths:?}");
+    }
+
+    fs::write(
+        root.join(".gitmodules"),
+        "[submodule \"spaces/a\"]\n\tpath = spaces/a\n\turl = https://example.invalid/a.git\n",
+    )
+    .unwrap();
+    let submodule = [
+        plan("Notes", "Ideas").await,
+        plan("Notes/Page.md", "Page.md").await,
+    ];
+
+    // The rename and the move gain only the parent gitlink, the Project
+    // repository the title rename of the same Space authorizes.
+    let gitlink = crate::git::ops::submodule_parent(Some(project), space)
+        .await
+        .unwrap()
+        .expect("submodule parent");
+    assert_eq!(gitlink, root);
+    for (before, after) in independent.iter().zip(&submodule) {
+        let mut expected = before.clone();
+        expected.push(gitlink.clone());
+        expected.sort();
+        assert_eq!(after, &expected);
+    }
+}
