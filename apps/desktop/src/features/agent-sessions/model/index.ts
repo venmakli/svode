@@ -8,6 +8,7 @@ export * from "./pending";
 export * from "./scopes";
 export * from "./status";
 export * from "./target";
+export * from "./terminal-follow";
 export * from "./types";
 export * from "./new-session";
 export * from "./activity";

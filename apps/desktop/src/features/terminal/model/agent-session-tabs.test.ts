@@ -104,6 +104,25 @@ test("a tab linked in this sync shows its session before the catalog lists the P
   expect(tab?.title).toBe("Fix login");
 });
 
+test("a tab whose PTY the catalog lists at another session shows that session", () => {
+  const tab = shellTab({
+    id: "shell-claude",
+    ptyId: "pty-claude",
+    title: "Old dialog",
+    agentSessionId: "claude:old",
+  });
+  const previous = session({ id: "claude:old", title: "Old dialog" });
+  const next = session({
+    id: "claude:new",
+    title: "New dialog",
+    runtime: { live: true, ptyId: "pty-claude" },
+  });
+
+  const [shown] = applyAgentSessionsToTabs([tab], [previous, next], new Map());
+  expect(shown?.agentSessionId).toBe("claude:new");
+  expect(shown?.title).toBe("New dialog");
+});
+
 test("a tab already showing a session is not matched again", () => {
   const tab = shellTab({ agentSessionId: "codex:first" });
   const next = session({

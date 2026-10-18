@@ -11,7 +11,10 @@ import type {
   DraftSpaceChoices,
   NewSessionDraftTarget,
 } from "../model";
-import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
+import {
+  AGENT_SESSION_CONTENT_ATTRIBUTE,
+  agentSessionContentKey,
+} from "../lib/session-content";
 import type { ComposerFocusRequest } from "../chat/hooks/use-composer-focus";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
 import type { StartedSession } from "../chat/hooks/use-new-session-draft";
@@ -33,6 +36,7 @@ export interface AgentSessionMainHeader {
 /** A session as the one object of the main area. */
 export function AgentSessionMainSurface({
   target,
+  openingKey,
   focus,
   focusTerminal = false,
   composerFocus = null,
@@ -41,6 +45,12 @@ export function AgentSessionMainSurface({
   renderHeader,
 }: {
   target: AgentSessionTarget;
+  /**
+   * Tells one opening of a session from the next. While it stays, a new
+   * target is this surface following its terminal to the session the agent
+   * went on to, shown in place (DF-163 R4).
+   */
+  openingKey?: number;
   /** Move focus into the main area, as after "Expand"; otherwise the opener keeps it. */
   focus: boolean;
   /** The session was started for work in its terminal, e.g. a new session. */
@@ -65,7 +75,7 @@ export function AgentSessionMainSurface({
   return (
     <div ref={surfaceRef} tabIndex={-1} className="h-full outline-none">
       <AgentSessionContent
-        key={`${target.sessionId}\n${target.launchId ?? ""}`}
+        key={agentSessionContentKey(target, openingKey)}
         target={target}
         focusTerminal={focusTerminal}
         composerFocus={composerFocus}

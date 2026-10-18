@@ -16,6 +16,7 @@ import type {
 import { keepLayerOpenOnEscape } from "@/shared/lib/escape-key";
 import {
   AGENT_SESSION_CONTENT_ATTRIBUTE,
+  agentSessionContentKey,
   isInsideAgentSessionContent,
 } from "../lib/session-content";
 import { NewSessionDraft } from "../chat/ui/new-session-draft";
@@ -26,6 +27,12 @@ import * as m from "@/paraglide/messages.js";
 
 interface AgentSessionPeekProps {
   target: AgentSessionTarget | null;
+  /**
+   * Tells one opening of a session from the next. While it stays, a new
+   * target is the peek following its terminal to the session the agent went
+   * on to, shown in place (DF-163 R4).
+   */
+  openingKey?: number;
   /** A new session draft shown instead of a session. */
   draft?: NewSessionDraftTarget | null;
   /** The draft's first send created this session; the peek now shows it. */
@@ -45,6 +52,7 @@ interface AgentSessionPeekProps {
 /** Session in the Page Peek pattern: a wide temporary panel over the context. */
 export function AgentSessionPeek({
   target,
+  openingKey,
   draft = null,
   onDraftStarted,
   onOpenAgentSettings,
@@ -132,7 +140,7 @@ export function AgentSessionPeek({
           )}
           {shownTarget && (
             <AgentSessionContent
-              key={`${shownTarget.sessionId}\n${shownTarget.launchId ?? ""}`}
+              key={agentSessionContentKey(shownTarget, openingKey)}
               target={shownTarget}
               focusTerminal={focusTerminal}
               onOpenRoutine={onOpenRoutine}

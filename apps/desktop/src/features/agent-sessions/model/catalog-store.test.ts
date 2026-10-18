@@ -4,6 +4,7 @@ import {
   sessionTerminalAgentsBusy,
   sessionTerminalPtyIds,
 } from "./catalog-store";
+import { agentSessionTerminalFollow } from "./terminal-follow";
 import type { AgentSessionScopeGroup } from "./types";
 import {
   fakeCatalogApi,
@@ -417,4 +418,84 @@ test("session terminals count each PTY once and leave shell tabs out", async () 
     "close:pty-panel",
     "close:pty-resume-codex:history",
   ]);
+});
+
+test("a hot status that takes a terminal without naming its new session keeps it until the full list it starts", async () => {
+  const api = fakeCatalogApi();
+  const old = listedSession({ id: "claude:old", source: "claude" });
+  api.listed = [old];
+  api.surfaces.set("pty-1", "claude:old");
+  const store = createAgentSessionCatalogStore(api);
+  store.getState().setProject("/project");
+  await store.getState().load();
+  const followed: (string | undefined)[] = [];
+  store.subscribe((state, previous) => {
+    const follow = agentSessionTerminalFollow(previous, state);
+    if (follow) {
+      followed.push(follow({ sessionId: "claude:old", launchId: null })?.sessionId);
+    }
+  });
+
+  // The agent in the terminal went on to a session the catalog has not read.
+  api.listed = [old, listedSession({ id: "claude:new", source: "claude" })];
+  api.surfaces.set("pty-1", "claude:new");
+  let releaseList!: () => void;
+  const listGate = new Promise<void>((resolve) => {
+    releaseList = resolve;
+  });
+  const list = api.list;
+  api.list = async (projectPath) => {
+    await listGate;
+    return list(projectPath);
+  };
+  await store.getState().loadHotStatus(["claude:old"]);
+  const runtimeOf = (id: string) =>
+    store.getState().sessions.find((session) => session.id === id)?.runtime;
+  expect(runtimeOf("claude:old")?.ptyId).toBe("pty-1");
+
+  releaseList();
+  await flushPromises();
+  expect(api.calls).toEqual(["list:/project", "hot:claude:old", "list:/project"]);
+  expect(runtimeOf("claude:old")).toBe(undefined);
+  expect(runtimeOf("claude:new")?.ptyId).toBe("pty-1");
+  expect(followed).toEqual(["claude:new"]);
+});
+
+test("a re-entry terminal the read-model lists at another session leaves the resumed session", async () => {
+  const api = fakeCatalogApi();
+  const history = listedSession({ id: "claude:history", source: "claude" });
+  api.listed = [history];
+  const store = createAgentSessionCatalogStore(api);
+  store.getState().setProject("/project");
+  await store.getState().load();
+  await store.getState().reenter(history);
+  await flushPromises();
+  const ptyId = "pty-resume-claude:history";
+  expect(store.getState().reentryResults["claude:history"]?.ptyId).toBe(ptyId);
+
+  api.listed = [
+    history,
+    listedSession({
+      id: "claude:new",
+      source: "claude",
+      status: {
+        state: "running",
+        source: "native_status_reader",
+        confidence: "exact",
+      },
+    }),
+  ];
+  api.surfaces.set(ptyId, "claude:new");
+  await store.getState().load();
+
+  const state = store.getState();
+  expect(state.reentryResults).toEqual({});
+  expect(
+    state.sessions.map((session) => [session.id, session.runtime?.ptyId]),
+  ).toEqual([
+    ["claude:history", undefined],
+    ["claude:new", ptyId],
+  ]);
+  expect([...sessionTerminalPtyIds(state)]).toEqual([ptyId]);
+  expect(sessionTerminalAgentsBusy(state)).toBe(true);
 });

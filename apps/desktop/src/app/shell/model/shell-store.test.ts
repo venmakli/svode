@@ -104,3 +104,35 @@ test("closing the Graph returns to the object it was opened over", () => {
   useShellStore.getState().closeGraphSurface();
   expect(useShellStore.getState().mainSurface).toBe("content");
 });
+
+test("the main area and the peek follow a moved terminal in place; other openings stay", () => {
+  const old = { sessionId: "claude:old", launchId: null };
+  const moved = { sessionId: "claude:new", launchId: null };
+  const other = { sessionId: "codex:other", launchId: null };
+  const follow = (target: { sessionId: string; launchId: string | null }) =>
+    target.sessionId === old.sessionId ? moved : null;
+
+  useShellStore.getState().openSessionMainSurface(old);
+  useShellStore.getState().openSessionPeek(other);
+  const { mainSessionOpening, sessionPeekOpening } = useShellStore.getState();
+  useShellStore.getState().followSessionTerminal(follow);
+  let state = useShellStore.getState();
+  expect(state.mainSessionTarget).toEqual(moved);
+  expect(state.sessionPeekTarget).toEqual(other);
+  // Following is no new opening: the surfaces keep their content.
+  expect(state.mainSessionOpening).toBe(mainSessionOpening);
+  expect(state.sessionPeekOpening).toBe(sessionPeekOpening);
+
+  useShellStore.getState().openSessionPeek(old);
+  useShellStore.getState().followSessionTerminal(follow);
+  state = useShellStore.getState();
+  expect(state.sessionPeekTarget).toEqual(moved);
+  expect(state.sessionPeekOpening).toBe(sessionPeekOpening + 1);
+
+  // Opening the same session again is a new opening.
+  useShellStore.getState().openSessionMainSurface(moved);
+  expect(useShellStore.getState().mainSessionOpening).toBe(
+    mainSessionOpening + 1,
+  );
+  useShellStore.getState().openContentSurface();
+});

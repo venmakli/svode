@@ -137,3 +137,46 @@ test("a session in the main area is temporary once it stops being active", () =>
     }).temporary,
   ).toBeNull();
 });
+
+test("after a terminal moves to a new session, Now has one row for it and the previous one only where it is kept", () => {
+  const previous = session("claude:old");
+  const next = session("claude:new", {
+    runtime: { ptyId: "pty-1", live: true },
+  });
+  // The main area followed the terminal; the new session's turn has ended.
+  const mainObject: MainAreaObject = {
+    kind: "session",
+    item: sessionItem(next.id),
+    session: next,
+    target: { sessionId: next.id, launchId: null },
+  };
+  const moved = { ...none, activeSessions: [next], mainObject };
+
+  const now = composeNow(moved);
+  expect(now.active.map((item) => item.id)).toEqual(["claude:new"]);
+  expect(now.kept).toEqual([]);
+  expect(now.temporary).toBeNull();
+
+  // Kept and pinned rows of the previous session are not redirected.
+  const kept = composeNow({
+    ...moved,
+    kept: [{ ...sessionItem(previous.id), available: true }],
+  });
+  expect(kept.kept.map((item) => item.key)).toEqual([
+    { kind: "session", sessionId: "claude:old" },
+  ]);
+  expect(
+    composeNow({ ...moved, pinned: [sessionItem(previous.id)] }).active.map(
+      (item) => item.id,
+    ),
+  ).toEqual(["claude:new"]);
+
+  // Once its terminal closes, the new session stays as the main area object.
+  const closed = { ...next, runtime: undefined };
+  expect(
+    composeNow({
+      ...none,
+      mainObject: { ...mainObject, session: closed },
+    }).temporary?.item.key,
+  ).toEqual({ kind: "session", sessionId: "claude:new" });
+});

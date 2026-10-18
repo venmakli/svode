@@ -165,6 +165,7 @@ function useShowSessionInMainArea() {
 /** The session peek of the shell; "Expand" opens it in the main area. */
 export function AgentSessionPeekHost() {
   const target = useShellStore((state) => state.sessionPeekTarget);
+  const opening = useShellStore((state) => state.sessionPeekOpening);
   const draft = useShellStore((state) => state.sessionPeekDraft);
   const openSessionPeek = useShellStore((state) => state.openSessionPeek);
   const openAppSettings = useShellStore((state) => state.openAppSettings);
@@ -178,6 +179,7 @@ export function AgentSessionPeekHost() {
   return (
     <AgentSessionPeek
       target={target}
+      openingKey={opening}
       draft={draft}
       onDraftStarted={(started) =>
         openSessionPeek({ sessionId: started.sessionId, launchId: null })

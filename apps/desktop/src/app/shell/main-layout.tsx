@@ -443,6 +443,9 @@ function ShellMainInset({
 }) {
   const openSessionRoutine = useOpenSessionRoutine();
   const mainSessionTarget = useShellStore((state) => state.mainSessionTarget);
+  const mainSessionOpening = useShellStore(
+    (state) => state.mainSessionOpening,
+  );
   const mainSessionDraft = useShellStore((state) => state.mainSessionDraft);
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const showStartedSession = useShowStartedSessionInMainArea();
@@ -477,6 +480,7 @@ function ShellMainInset({
           ) : mainSurface === "session" && mainSessionTarget ? (
             <SessionSurface
               target={mainSessionTarget}
+              openingKey={mainSessionOpening}
               focus={mainSessionFocus}
               focusTerminal={mainSessionFocusTerminal}
               composerFocus={mainSessionComposerFocus}

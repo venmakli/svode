@@ -30,6 +30,11 @@ interface ShellState {
    * "session"; the Graph keeps it to return to.
    */
   mainSessionTarget: AgentSessionTarget | null;
+  /**
+   * Tells one opening of a session in the main area from the next; a
+   * terminal follow changes the target and keeps it.
+   */
+  mainSessionOpening: number;
   /** A new session draft shown in the main area instead of a session. */
   mainSessionDraft: NewSessionDraftTarget | null;
   /** The main area session was opened by a move into the main area. */
@@ -39,6 +44,8 @@ interface ShellState {
   /** A row of the sidebar opened the main area session for its composer. */
   mainSessionComposerFocus: ComposerFocusRequest | null;
   sessionPeekTarget: AgentSessionTarget | null;
+  /** Tells one opening of the session peek from the next, as for the main area. */
+  sessionPeekOpening: number;
   /** A new session draft in the session peek instead of a session. */
   sessionPeekDraft: NewSessionDraftTarget | null;
   /** The peek was opened for work in the terminal, e.g. a new session. */
@@ -71,6 +78,14 @@ interface ShellState {
   /** A new session draft in the session peek over the current context. */
   openSessionDraftPeek: (draft: NewSessionDraftTarget) => void;
   closeSessionPeek: () => void;
+  /**
+   * The main area and the peek go on with the session the terminal they
+   * show moved to, in place: `follow` gives the new target of a target it
+   * moves and null for any other (DF-163 R4).
+   */
+  followSessionTerminal: (
+    follow: (target: AgentSessionTarget) => AgentSessionTarget | null,
+  ) => void;
 }
 
 export interface MainSessionOpenOptions {
@@ -117,11 +132,13 @@ export const useShellStore = create<ShellState>((set) => ({
   settingsDestination: null,
   mainSurface: "content",
   mainSessionTarget: null,
+  mainSessionOpening: 0,
   mainSessionDraft: null,
   mainSessionFocus: false,
   mainSessionFocusTerminal: false,
   mainSessionComposerFocus: null,
   sessionPeekTarget: null,
+  sessionPeekOpening: 0,
   sessionPeekDraft: null,
   sessionPeekFocusTerminal: false,
   knowledgeGraphOpenRequest: null,
@@ -152,16 +169,17 @@ export const useShellStore = create<ShellState>((set) => ({
       sessionPeekDraft: null,
     }),
   openSessionMainSurface: (target, options) =>
-    set({
+    set((state) => ({
       mainSurface: "session",
       mainSessionTarget: target,
+      mainSessionOpening: state.mainSessionOpening + 1,
       mainSessionDraft: null,
       mainSessionFocus: options?.focus ?? true,
       mainSessionFocusTerminal: options?.focusTerminal ?? false,
       mainSessionComposerFocus: options?.composerFocus ?? null,
       sessionPeekTarget: null,
       sessionPeekDraft: null,
-    }),
+    })),
   openSessionDraftMainSurface: (draft) =>
     set({
       mainSurface: "session",
@@ -200,11 +218,12 @@ export const useShellStore = create<ShellState>((set) => ({
         : {},
     ),
   openSessionPeek: (target, options) =>
-    set({
+    set((state) => ({
       sessionPeekTarget: target,
+      sessionPeekOpening: state.sessionPeekOpening + 1,
       sessionPeekDraft: null,
       sessionPeekFocusTerminal: options?.focusTerminal ?? false,
-    }),
+    })),
   openSessionDraftPeek: (draft) =>
     set({
       sessionPeekTarget: null,
@@ -212,4 +231,14 @@ export const useShellStore = create<ShellState>((set) => ({
       sessionPeekFocusTerminal: false,
     }),
   closeSessionPeek: () => set({ sessionPeekTarget: null, sessionPeekDraft: null }),
+  followSessionTerminal: (follow) =>
+    set((state) => {
+      const main = state.mainSessionTarget && follow(state.mainSessionTarget);
+      const peek = state.sessionPeekTarget && follow(state.sessionPeekTarget);
+      if (!main && !peek) return state;
+      return {
+        ...(main ? { mainSessionTarget: main } : {}),
+        ...(peek ? { sessionPeekTarget: peek } : {}),
+      };
+    }),
 }));

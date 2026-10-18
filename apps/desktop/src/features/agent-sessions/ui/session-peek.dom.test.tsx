@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as bunTest from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act, useEffect } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { AgentSession as ListedAgentSession } from "../api";
@@ -216,8 +216,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   const { AttachmentOpenerContext } = await import(
     "../chat/hooks/use-attachment-opener"
   );
-  const { useAgentSessionCatalog, useAgentSessionCatalogLifecycle } =
-    await import("../hooks");
+  const {
+    subscribeAgentSessionTerminalFollow,
+    useAgentSessionCatalog,
+    useAgentSessionCatalogLifecycle,
+  } = await import("../hooks");
   let reloadCatalog: () => Promise<void> = async () => {};
   const { AgentSessionPeek } = await import("./session-peek");
   const { AgentSessionMainSurface } = await import("./session-main-surface");
@@ -1755,6 +1758,206 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(
         header.querySelector("[data-slot=breadcrumb-page]")?.textContent,
       ).toBe("Main checked");
+    },
+  );
+
+  /** Opens a session in the peek of the following harness, a new opening. */
+  let openFollowingPeek: (target: AgentSessionTarget) => void = () => {};
+
+  /**
+   * The main area and the peek as the shell hosts them: a terminal follow
+   * rewrites their targets and keeps their openings.
+   */
+  function FollowingHarness({
+    projectPath,
+    main,
+  }: {
+    projectPath: string;
+    main: AgentSessionTarget;
+  }) {
+    useAgentSessionCatalogLifecycle(projectPath);
+    const load = useAgentSessionCatalog((state) => state.load);
+    useEffect(() => {
+      reloadCatalog = load;
+    }, [load]);
+    const [hosts, setHosts] = useState<{
+      main: AgentSessionTarget;
+      peek: AgentSessionTarget | null;
+      peekOpening: number;
+    }>({ main, peek: null, peekOpening: 0 });
+    useEffect(() => {
+      openFollowingPeek = (peek) =>
+        setHosts((current) => ({
+          ...current,
+          peek,
+          peekOpening: current.peekOpening + 1,
+        }));
+      return subscribeAgentSessionTerminalFollow((follow) =>
+        setHosts((current) => ({
+          ...current,
+          main: follow(current.main) ?? current.main,
+          peek: current.peek && (follow(current.peek) ?? current.peek),
+        })),
+      );
+    }, []);
+    return (
+      <TooltipProvider>
+        <AgentSessionMainSurface
+          target={hosts.main}
+          openingKey={1}
+          focus={false}
+          onOpenRoutine={() => undefined}
+          renderHeader={({ current }) => (
+            <div data-main-header>{current}</div>
+          )}
+        />
+        <AgentSessionPeek
+          target={hosts.peek}
+          openingKey={hosts.peekOpening}
+          onOpenChange={() => undefined}
+          onExpand={async () => true}
+          onOpenRoutine={() => undefined}
+        />
+      </TooltipProvider>
+    );
+  }
+
+  async function mountFollowing(projectPath: string, main: AgentSessionTarget) {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root: Root = createRoot(container);
+    mounted.push(root);
+    await act(async () => {
+      root.render(<FollowingHarness projectPath={projectPath} main={main} />);
+    });
+    await settle();
+  }
+
+  async function listAgain(sessions: ListedAgentSession[]) {
+    listed = sessions;
+    await act(async () => {
+      await reloadCatalog();
+    });
+    await settle();
+  }
+
+  function mainTitle() {
+    return document.querySelector(
+      "[data-main-header] [data-slot=breadcrumb-page] .truncate",
+    )?.textContent;
+  }
+
+  function peekTitle() {
+    return document.querySelector("[data-peek-identity] [title]")?.textContent;
+  }
+
+  function terminalIn(selector: string) {
+    return document.querySelector<HTMLElement>(`${selector} [data-terminal]`);
+  }
+
+  peekTest(
+    "the main area follows its terminal to the session its agent went on to, in place",
+    async () => {
+      const previous = session({
+        id: "claude:old",
+        source: "claude",
+        title: "Old dialog",
+        runtime: { ptyId: "pty-follow", live: true },
+      });
+      listed = [previous];
+      commands.length = 0;
+      await mountFollowing("/p-follow-main", {
+        sessionId: "claude:old",
+        launchId: null,
+      });
+      expect(mainTitle()).toBe("Old dialog");
+      const shown = terminal();
+      expect(shown?.dataset.terminal).toBe("pty-follow");
+
+      // The read-model lists the terminal at the new session after `/clear`.
+      await listAgain([
+        { ...previous, runtime: undefined },
+        session({
+          id: "claude:new",
+          source: "claude",
+          title: "New dialog",
+          runtime: { ptyId: "pty-follow", live: true },
+        }),
+      ]);
+      expect(mainTitle()).toBe("New dialog");
+      // The same terminal, not mounted again, and no new PTY.
+      expect(terminal() === shown).toBe(true);
+      expect(commands.includes("agent_sessions_reenter")).toBe(false);
+
+      // After the turn of the new session it stays the main area session.
+      await listAgain([
+        { ...previous, runtime: undefined },
+        session({
+          id: "claude:new",
+          source: "claude",
+          title: "New dialog",
+          status: {
+            state: "idle",
+            stopReason: "end_turn",
+            source: "native_status_reader",
+            confidence: "exact",
+          },
+          runtime: { ptyId: "pty-follow", live: true },
+        }),
+      ]);
+      expect(mainTitle()).toBe("New dialog");
+      expect(terminal() === shown).toBe(true);
+    },
+  );
+
+  peekTest(
+    "the peek follows its terminal in place; the previous session opened later stays without it",
+    async () => {
+      const main = session({ id: "codex:main-other", title: "Other work" });
+      const previous = session({
+        id: "claude:peek-old",
+        source: "claude",
+        title: "Old peek dialog",
+        runtime: { ptyId: "pty-peek", live: true },
+      });
+      listed = [main, previous];
+      await mountFollowing("/p-follow-peek", {
+        sessionId: "codex:main-other",
+        launchId: null,
+      });
+      await act(async () =>
+        openFollowingPeek({ sessionId: "claude:peek-old", launchId: null }),
+      );
+      await settle();
+      expect(peekTitle()).toBe("Old peek dialog");
+      const shown = terminalIn("[data-slot=sheet-content]");
+      expect(shown?.dataset.terminal).toBe("pty-peek");
+
+      const moved = [
+        main,
+        { ...previous, runtime: undefined },
+        session({
+          id: "claude:peek-new",
+          source: "claude",
+          title: "New peek dialog",
+          runtime: { ptyId: "pty-peek", live: true },
+        }),
+      ];
+      await listAgain(moved);
+      expect(peekTitle()).toBe("New peek dialog");
+      expect(terminalIn("[data-slot=sheet-content]") === shown).toBe(true);
+      // The main area showed another session and stays with it.
+      expect(mainTitle()).toBe("Other work");
+
+      // The previous session, opened again, has no terminal and keeps it so.
+      await act(async () =>
+        openFollowingPeek({ sessionId: "claude:peek-old", launchId: null }),
+      );
+      await settle();
+      expect(peekTitle()).toBe("Old peek dialog");
+      expect(terminalIn("[data-slot=sheet-content]")).toBeNull();
+      await listAgain(moved);
+      expect(peekTitle()).toBe("Old peek dialog");
     },
   );
 

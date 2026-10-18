@@ -18,6 +18,7 @@ import {
 } from "../api";
 import {
   activeAgentSessions,
+  agentSessionTerminalFollow,
   confirmedMissingAgentSessionKeys,
   createAgentSessionCatalogStore,
   retitledAgentSessionItems,
@@ -25,6 +26,7 @@ import {
   type AgentSession,
   type AgentSessionCatalogRefreshEnvironment,
   type AgentSessionCatalogState,
+  type AgentSessionTarget,
 } from "../model";
 
 const agentSessionCatalog = createAgentSessionCatalogStore({
@@ -134,4 +136,22 @@ export function useActiveAgentSessions(): AgentSession[] {
 /** Keeps the accelerated full-list refresh while the returned release is pending. */
 export function requestAgentSessionCatalogFastRefresh(): () => void {
   return agentSessionCatalog.getState().requestFastRefresh();
+}
+
+/**
+ * Calls the listener each time the read-model lists a live session terminal
+ * at another session, with how the target of a surface follows it: a
+ * surface showing the previous session with that terminal goes on to the
+ * new one in place (DF-163 R4); null leaves any other target where it is.
+ */
+export function subscribeAgentSessionTerminalFollow(
+  listener: (
+    follow: (target: AgentSessionTarget) => AgentSessionTarget | null,
+  ) => void,
+): () => void {
+  return agentSessionCatalog.subscribe((state, previous) => {
+    if (state.projectPath !== previous.projectPath) return;
+    const follow = agentSessionTerminalFollow(previous, state);
+    if (follow) listener(follow);
+  });
 }

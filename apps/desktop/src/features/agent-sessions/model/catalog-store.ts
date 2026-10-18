@@ -14,6 +14,7 @@ import {
 } from "./pending";
 import { isAgentTurnActive } from "./status";
 import { resolveAgentSessionId, type AgentSessionTarget } from "./target";
+import { liveTerminalPtyId } from "./terminal-follow";
 import type { AgentSession, AgentSessionScopeGroup } from "./types";
 
 /** A managed terminal linked to the session its agent CLI runs. */
@@ -204,22 +205,67 @@ function withoutTerminalRuntime(
   return changed ? { ...result, sessions } : result;
 }
 
+/**
+ * The list with the hot sessions read again, and whether one of them lost a
+ * live terminal no merged session lists. A hot status reads only the
+ * sessions asked for, so the session the terminal went on to (DF-163 R3)
+ * may be missing from it: the terminal stays with its session until the
+ * full list names the one that took it.
+ */
 function mergeHotStatusSessions(
   current: AgentSessionsListResult,
   hotSessions: AgentSessionsListResult["sessions"],
-): AgentSessionsListResult {
-  if (hotSessions.length === 0) return current;
+): { result: AgentSessionsListResult; terminalUnlisted: boolean } {
+  if (hotSessions.length === 0) {
+    return { result: current, terminalUnlisted: false };
+  }
 
   const hotById = new Map(hotSessions.map((session) => [session.id, session]));
   let changed = false;
-  const sessions = current.sessions.map((session) => {
+  const merged = current.sessions.map((session) => {
     const hot = hotById.get(session.id);
     if (!hot) return session;
     changed = true;
     return hot;
   });
+  if (!changed) return { result: current, terminalUnlisted: false };
 
-  return changed ? { ...current, sessions } : current;
+  const listedPtyIds = new Set(merged.map(liveTerminalPtyId));
+  let terminalUnlisted = false;
+  const sessions = merged.map((session, index) => {
+    const ptyId = liveTerminalPtyId(current.sessions[index]);
+    if (!ptyId || listedPtyIds.has(ptyId)) return session;
+    terminalUnlisted = true;
+    return { ...session, runtime: current.sessions[index].runtime };
+  });
+
+  return { result: { ...current, sessions }, terminalUnlisted };
+}
+
+/**
+ * Re-entry results without those whose terminal the read-model lists at
+ * another session: the agent CLI in it went on to that session (DF-163 R3),
+ * so the session it was resumed for no longer has it.
+ */
+function withoutMovedReentryTerminals(
+  reentryResults: Record<string, AgentSessionReentryResult>,
+  sessions: AgentSessionsListResult["sessions"],
+): Record<string, AgentSessionReentryResult> {
+  const ownerByPtyId = new Map<string, string>();
+  for (const session of sessions) {
+    const ptyId = liveTerminalPtyId(session);
+    if (ptyId) ownerByPtyId.set(ptyId, session.id);
+  }
+  let moved = false;
+  const kept = Object.fromEntries(
+    Object.entries(reentryResults).filter(([sessionId, result]) => {
+      const owner = result.ptyId ? ownerByPtyId.get(result.ptyId) : undefined;
+      const stays = owner === undefined || owner === sessionId;
+      if (!stays) moved = true;
+      return stays;
+    }),
+  );
+  return moved ? kept : reentryResults;
 }
 
 /**
@@ -327,7 +373,9 @@ export function createAgentSessionCatalogStore(
     };
 
     /** Hands each pending terminal off to the session listed with it as runtime. */
-    const handOffPendingTerminals = (sessions: AgentSession[]) => {
+    const handOffPendingTerminals = (
+      sessions: AgentSession[],
+    ): Partial<CatalogData> => {
       const { pendingTerminals, reentryResults, pendingHandoffs } = get();
       if (pendingTerminals.length === 0) return {};
 
@@ -382,8 +430,13 @@ export function createAgentSessionCatalogStore(
             next = await api.list(projectPath);
             if (!isCurrentProject(token, projectPath)) return;
           }
+          const handoff = handOffPendingTerminals(next.sessions);
           update({
-            ...handOffPendingTerminals(next.sessions),
+            ...handoff,
+            reentryResults: withoutMovedReentryTerminals(
+              handoff.reentryResults ?? get().reentryResults,
+              next.sessions,
+            ),
             result: next,
             listedAt: now(),
           });
@@ -480,10 +533,20 @@ export function createAgentSessionCatalogStore(
             ) {
               return;
             }
-            const result = get().result;
-            if (result) {
-              update({ result: mergeHotStatusSessions(result, hot.sessions) });
-            }
+            const current = get().result;
+            if (!current) return;
+            const { result, terminalUnlisted } = mergeHotStatusSessions(
+              current,
+              hot.sessions,
+            );
+            update({
+              result,
+              reentryResults: withoutMovedReentryTerminals(
+                get().reentryResults,
+                result.sessions,
+              ),
+            });
+            if (terminalUnlisted) void load();
           } catch (error) {
             console.warn("Failed to refresh agent session hot status:", error);
           } finally {

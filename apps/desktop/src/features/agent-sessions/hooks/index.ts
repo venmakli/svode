@@ -4,6 +4,7 @@ export {
   useAgentSessionCatalog,
   useAgentSessionCatalogLifecycle,
   useListedAgentSessions,
+  subscribeAgentSessionTerminalFollow,
 } from "./use-agent-session-catalog";
 export { useAgentSessionScopes } from "./use-agent-session-scopes";
 export { useNewSessionTarget } from "./use-new-session-target";
