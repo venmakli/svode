@@ -7,6 +7,7 @@ pub use model::{
 };
 pub use persistence::{entry_from_source, read, read_with_git_dates, replaced_by_staged_copy};
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -82,6 +83,32 @@ fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str)
 
 fn order_remove_key(space: &Path, dir_key: &str) {
     let _ = content_tree::update_order(space, |order| order.remove(dir_key).is_some());
+}
+
+/// Carry the order keys of a moved directory and of every directory nested in
+/// it to the new directory path. Returns whether any key moved.
+fn rebase_directory_order_keys(
+    order: &mut HashMap<String, Vec<String>>,
+    from: &str,
+    to: &str,
+) -> bool {
+    let source_key = from.trim_matches('/');
+    let target_key = to.trim_matches('/');
+    let prefix = format!("{source_key}/");
+    let moved_keys: Vec<(String, Vec<String>)> = order
+        .iter()
+        .filter(|(key, _)| *key == source_key || key.starts_with(&prefix))
+        .map(|(key, children)| {
+            let suffix = key.strip_prefix(source_key).unwrap_or_default();
+            (format!("{target_key}{suffix}"), children.clone())
+        })
+        .collect();
+    if moved_keys.is_empty() {
+        return false;
+    }
+    order.retain(|key, _| key != source_key && !key.starts_with(&prefix));
+    order.extend(moved_keys);
+    true
 }
 
 fn dir_key_for(parent: &Path) -> String {
@@ -959,23 +986,11 @@ pub fn write_under_name_lock(
             };
             // Rename folder entry in parent's order list
             order_rename_checked(sp_path, &dir_key, &old_dir_name, &new_dir_name)?;
-            // Rename the key itself (children order moves to new dir name)
-            let old_key = if dir_key == "." {
-                old_dir_name.clone()
-            } else {
-                format!("{}/{}", dir_key, old_dir_name)
-            };
-            let new_key = if dir_key == "." {
-                new_dir_name
-            } else {
-                format!("{}/{}", dir_key, new_dir_name)
-            };
+            // Carry the folder's own and nested order keys to the new dir name
+            let old_dir = dir_key_for(Path::new(path).parent().unwrap_or(Path::new("")));
+            let new_dir = dir_key_for(Path::new(np.as_str()).parent().unwrap_or(Path::new("")));
             content_tree::update_order(sp_path, |order| {
-                let Some(children) = order.remove(&old_key) else {
-                    return false;
-                };
-                order.insert(new_key, children);
-                true
+                rebase_directory_order_keys(order, &old_dir, &new_dir)
             })?;
         } else {
             // Regular file: dir_key is the parent directory
@@ -1307,19 +1322,7 @@ fn update_order_after_move(
         target_items.push(target_name.to_string());
 
         if moved_directory {
-            let source_key = from.trim_matches('/');
-            let target_key = to.trim_matches('/');
-            let prefix = format!("{source_key}/");
-            let moved_keys: Vec<(String, Vec<String>)> = order
-                .iter()
-                .filter(|(key, _)| *key == source_key || key.starts_with(&prefix))
-                .map(|(key, children)| {
-                    let suffix = key.strip_prefix(source_key).unwrap_or_default();
-                    (format!("{target_key}{suffix}"), children.clone())
-                })
-                .collect();
-            order.retain(|key, _| key != source_key && !key.starts_with(&prefix));
-            order.extend(moved_keys);
+            rebase_directory_order_keys(order, from, to);
         }
         true
     })?)
@@ -2140,24 +2143,10 @@ pub fn rename_with_project(
     let sp_path = Path::new(space);
     order_rename(sp_path, &dir_key, &old_name, &new_name);
 
-    // If it's a directory, also rename the key in order.json
+    // If it's a directory, also carry its own and nested keys in order.json
     if abs_to.is_dir() {
-        let old_key = if dir_key == "." {
-            old_name
-        } else {
-            format!("{}/{}", dir_key, old_name)
-        };
-        let new_key = if dir_key == "." {
-            new_name
-        } else {
-            format!("{}/{}", dir_key, new_name)
-        };
         let _ = content_tree::update_order(sp_path, |order| {
-            let Some(children) = order.remove(&old_key) else {
-                return false;
-            };
-            order.insert(new_key, children);
-            true
+            rebase_directory_order_keys(order, from, to)
         });
     }
 

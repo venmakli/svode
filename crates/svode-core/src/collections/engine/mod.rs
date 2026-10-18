@@ -1210,16 +1210,15 @@ fn rewrite_relation_paths_for_move_with_project_plan(
 
     let space_path = Path::new(space);
     let new_abs = space_path.join(&new_path);
-    let collection_rename = new_abs.is_dir() && new_abs.join(SCHEMA_FILE).is_file();
-    let old_collection_path = old_path.clone();
-    let new_collection_path = new_path.clone();
+    let moved_collections = moved_collection_pairs(space, &new_path, &old_path, &new_abs)?
+        .into_iter()
+        .map(|(new_collection, old_collection)| (old_collection, new_collection))
+        .collect::<Vec<_>>();
     let moved_paths = moved_markdown_path_pairs(space_path, &old_path, &new_path, &new_abs)?;
     let mut touched = relation_move_mutation_paths_from_pairs(
         space,
         project_path,
-        &old_path,
-        &new_path,
-        collection_rename,
+        &moved_collections,
         &moved_paths,
     )?;
     if let Some(authorized_paths) = authorized_paths {
@@ -1236,12 +1235,11 @@ fn rewrite_relation_paths_for_move_with_project_plan(
     }
 
     with_rollback(touched, || {
-        if collection_rename {
+        if !moved_collections.is_empty() {
             rewrite_relation_collection_paths_for_target_space(
                 space,
                 project_path,
-                &old_collection_path,
-                &new_collection_path,
+                &moved_collections,
             )?;
         }
 
@@ -1297,15 +1295,13 @@ pub fn relation_move_mutation_paths_with_project(
         return Ok(Vec::new());
     }
     let old_abs = space_path.join(&old_path);
-    let collection_rename = old_abs.is_dir() && old_abs.join(SCHEMA_FILE).is_file();
+    let moved_collections = moved_collection_pairs(space, &old_path, &new_path, &old_abs)?;
     let moved_paths =
         moved_markdown_path_pairs_before_move(space_path, &old_path, &new_path, &old_abs)?;
     let paths = relation_move_mutation_paths_from_pairs(
         space,
         project_path,
-        &old_path,
-        &new_path,
-        collection_rename,
+        &moved_collections,
         &moved_paths,
     )?;
     let new_abs = space_path.join(&new_path);
@@ -1399,15 +1395,45 @@ fn moved_markdown_path_pairs_before_move(
     Ok(Vec::new())
 }
 
+/// Collections that move with a directory, as `(path at dir_rel, path at
+/// other_rel)` pairs: the directory itself when it is a Collection and every
+/// Collection nested in it at any depth. `dir_abs` is the side that exists.
+fn moved_collection_pairs(
+    space: &str,
+    dir_rel: &str,
+    other_rel: &str,
+    dir_abs: &Path,
+) -> Result<Vec<(String, String)>, CollectionError> {
+    if !dir_abs.is_dir() {
+        return Ok(Vec::new());
+    }
+    let prefix = format!("{dir_rel}/");
+    let mut pairs = Vec::new();
+    for collection in list_collections(space)? {
+        let path = normalize_collection_path(&collection.path)?;
+        let suffix = if path == dir_rel {
+            ""
+        } else if let Some(suffix) = path.strip_prefix(&prefix) {
+            suffix
+        } else {
+            continue;
+        };
+        let other = if suffix.is_empty() {
+            other_rel.to_string()
+        } else {
+            format!("{other_rel}/{suffix}")
+        };
+        pairs.push((path.clone(), normalize_collection_path(&other)?));
+    }
+    Ok(pairs)
+}
+
 fn relation_move_mutation_paths_from_pairs(
     target_space: &str,
     project_path: Option<&str>,
-    old_path: &str,
-    _new_path: &str,
-    collection_rename: bool,
+    moved_collections: &[(String, String)],
     moved_paths: &[(String, String)],
 ) -> Result<Vec<PathBuf>, CollectionError> {
-    let old_collection = normalize_collection_path(old_path).unwrap_or_else(|_| old_path.into());
     let mut paths = Vec::new();
     for source_space in project_relation_scan_spaces(target_space, project_path)? {
         for collection in list_collections(&source_space)? {
@@ -1421,11 +1447,11 @@ fn relation_move_mutation_paths_from_pairs(
                         .map(|relation| relation.map(|relation| (column, relation)))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            if collection_rename
-                && relation_columns
+            if relation_columns.iter().any(|(_, relation)| {
+                moved_collections
                     .iter()
-                    .any(|(_, relation)| relation == &old_collection)
-            {
+                    .any(|(old_collection, _)| relation == old_collection)
+            }) {
                 paths.push(collection_dir(&source_space, &collection.path).join(SCHEMA_FILE));
             }
             if relation_columns.is_empty() || moved_paths.is_empty() {
@@ -1742,23 +1768,13 @@ fn copy_rel_from_abs(space: &Path, path: &Path) -> String {
     if rel.is_empty() { ".".to_string() } else { rel }
 }
 
-#[allow(dead_code)]
-fn rewrite_relation_collection_paths(
-    space: &str,
-    old_collection: &str,
-    new_collection: &str,
-) -> Result<(), CollectionError> {
-    rewrite_relation_collection_paths_for_target_space(space, None, old_collection, new_collection)
-}
-
+/// Point every relation column whose target is one of `moved_collections`
+/// (`(old, new)` Collection paths in `target_space`) at the new path.
 fn rewrite_relation_collection_paths_for_target_space(
     target_space: &str,
     project_path: Option<&str>,
-    old_collection: &str,
-    new_collection: &str,
+    moved_collections: &[(String, String)],
 ) -> Result<(), CollectionError> {
-    let old_collection = collection_root_for_schema(old_collection);
-    let new_collection = collection_root_for_schema(new_collection);
     for source_space in project_relation_scan_spaces(target_space, project_path)? {
         for collection in list_collections(&source_space)? {
             let mut schema = read_schema_or_default(&source_space, &collection.path)?;
@@ -1773,7 +1789,10 @@ fn rewrite_relation_collection_paths_for_target_space(
                 else {
                     continue;
                 };
-                if relation == old_collection {
+                if let Some((_, new_collection)) = moved_collections
+                    .iter()
+                    .find(|(old_collection, _)| old_collection == &relation)
+                {
                     column.relation = Some(new_collection.clone());
                     changed = true;
                 }

@@ -536,3 +536,284 @@ async fn bare_folder_rename_changes_case_and_refuses_portable_collisions() {
         .expect("an App folder has no title");
     assert!(tmp.path().join("Site/app.yaml").is_file());
 }
+
+/// Project whose child Space `alpha` holds `Area` with Collections at depth 1
+/// (`Area/Tasks`) and 2 (`Area/Sub/Deep`), referenced by a two-way relation
+/// of the same Space, by the root Space and by the sibling Space `beta`.
+/// `Area` is a folder Page when `folder_page`, a bare folder otherwise.
+fn nested_collections_project(root: &Path, folder_page: bool) -> std::path::PathBuf {
+    use crate::page::test_support::scaffold_space;
+
+    scaffold_space(root, "Root");
+    fs::write(
+        root.join(".svode/config.json"),
+        r#"{"name":"Root","spaces":[{"id":"alpha","path":"spaces/alpha"},{"id":"beta","path":"spaces/beta"}]}"#,
+    )
+    .unwrap();
+    let alpha = root.join("spaces/alpha");
+    scaffold_space(&alpha, "alpha");
+    scaffold_space(&root.join("spaces/beta"), "beta");
+    for repository in [root, &alpha, &root.join("spaces/beta")] {
+        fs::create_dir_all(repository.join(".git")).unwrap();
+    }
+    let files = [
+        (
+            "spaces/alpha/Area/Tasks/schema.yaml",
+            "columns:\n  - name: Decisions\n    type: relation\n    relation: Decisions\n    two_way: Task\n",
+        ),
+        (
+            "spaces/alpha/Area/Tasks/README.md",
+            "---\ntitle: Tasks\n---\n",
+        ),
+        (
+            "spaces/alpha/Area/Tasks/Item.md",
+            "---\ntitle: Item\nDecisions: [Decision.md]\n---\n",
+        ),
+        ("spaces/alpha/Area/Sub/Deep/schema.yaml", "columns: []\n"),
+        (
+            "spaces/alpha/Area/Sub/Deep/README.md",
+            "---\ntitle: Deep\n---\n",
+        ),
+        (
+            "spaces/alpha/Area/Sub/Deep/Leaf.md",
+            "---\ntitle: Leaf\n---\n",
+        ),
+        (
+            "spaces/alpha/Decisions/schema.yaml",
+            "columns:\n  - name: Task\n    type: relation\n    relation: Area/Tasks\n    two_way: Decisions\n  - name: Deep\n    type: relation\n    relation: Area/Sub/Deep\n",
+        ),
+        (
+            "spaces/alpha/Decisions/README.md",
+            "---\ntitle: Decisions\n---\n",
+        ),
+        (
+            "spaces/alpha/Decisions/Decision.md",
+            "---\ntitle: Decision\nTask: [Item.md]\nDeep: [Leaf.md]\n---\n",
+        ),
+        (
+            "spaces/alpha/.svode/order.json",
+            r#"{".":["Area","Decisions"],"Area":["Sub","Tasks"],"Area/Sub":["Deep"],"Area/Tasks":["Item.md"]}"#,
+        ),
+        (
+            "Refs/schema.yaml",
+            "columns:\n  - name: Task\n    type: relation\n    relation: Area/Tasks\n    relation_scope:\n      type: space\n      id: alpha\n",
+        ),
+        ("Refs/README.md", "---\ntitle: Refs\n---\n"),
+        ("Refs/Ref.md", "---\ntitle: Ref\nTask: [Item.md]\n---\n"),
+        (
+            "spaces/beta/Refs/schema.yaml",
+            "columns:\n  - name: Deep\n    type: relation\n    relation: Area/Sub/Deep\n    relation_scope:\n      type: space\n      id: alpha\n",
+        ),
+        ("spaces/beta/Refs/README.md", "---\ntitle: Refs\n---\n"),
+        (
+            "spaces/beta/Refs/Ref.md",
+            "---\ntitle: Ref\nDeep: [Leaf.md]\n---\n",
+        ),
+    ];
+    for (path, content) in files {
+        fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+        fs::write(root.join(path), content).unwrap();
+    }
+    if folder_page {
+        fs::write(alpha.join("Area/README.md"), "---\ntitle: Area\n---\n").unwrap();
+    }
+    alpha
+}
+
+fn relation_targets(schema: &Path) -> Vec<String> {
+    let schema: crate::collections::engine::CollectionSchema =
+        serde_norway::from_str(&fs::read_to_string(schema).unwrap()).unwrap();
+    schema
+        .columns
+        .into_iter()
+        .filter_map(|column| column.relation)
+        .collect()
+}
+
+/// Every schema that pointed into `Area` points into `moved` instead, the
+/// moved Collections keep their own relations, order keys of the whole tree
+/// moved and the integrity check of each Space is clean.
+fn assert_nested_collections_moved(root: &Path, moved: &str) {
+    let alpha = root.join("spaces/alpha");
+    assert_eq!(
+        relation_targets(&alpha.join("Decisions/schema.yaml")),
+        vec![format!("{moved}/Tasks"), format!("{moved}/Sub/Deep")]
+    );
+    assert_eq!(
+        relation_targets(&root.join("Refs/schema.yaml")),
+        vec![format!("{moved}/Tasks")]
+    );
+    assert_eq!(
+        relation_targets(&root.join("spaces/beta/Refs/schema.yaml")),
+        vec![format!("{moved}/Sub/Deep")]
+    );
+    assert_eq!(
+        relation_targets(&alpha.join(moved).join("Tasks/schema.yaml")),
+        vec!["Decisions".to_string()]
+    );
+    let order: std::collections::HashMap<String, Vec<String>> =
+        serde_json::from_str(&fs::read_to_string(alpha.join(".svode/order.json")).unwrap())
+            .unwrap();
+    assert_eq!(order[&format!("{moved}")], vec!["Sub", "Tasks"]);
+    assert_eq!(order[&format!("{moved}/Sub")], vec!["Deep"]);
+    assert_eq!(order[&format!("{moved}/Tasks")], vec!["Item.md"]);
+    assert!(
+        order
+            .keys()
+            .all(|key| key != "Area" && !key.starts_with("Area/")),
+        "{order:?}"
+    );
+    let project = root.to_str().unwrap();
+    for space in [alpha.clone(), root.to_path_buf(), root.join("spaces/beta")] {
+        let report = crate::collections::engine::validate_collection_integrity_with_project(
+            space.to_str().unwrap(),
+            None,
+            Some(project),
+        )
+        .unwrap();
+        assert!(
+            report.errors.is_empty(),
+            "{}: {:?}",
+            space.display(),
+            report.errors
+        );
+    }
+}
+
+fn nested_collection_schema_paths(root: &Path) -> [std::path::PathBuf; 3] {
+    [
+        root.join("spaces/alpha/Decisions/schema.yaml"),
+        root.join("Refs/schema.yaml"),
+        root.join("spaces/beta/Refs/schema.yaml"),
+    ]
+}
+
+#[tokio::test]
+async fn renaming_a_folder_rewrites_relation_schemas_of_nested_collections() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alpha = nested_collections_project(root, false);
+    let state = IndexRuntimeState::default();
+    let project = root.to_str().unwrap();
+
+    let plan = super::plan::move_mutation_paths(
+        &state,
+        alpha.to_str().unwrap(),
+        Some(project),
+        "Area",
+        "Zone",
+    )
+    .await
+    .unwrap();
+    for schema in nested_collection_schema_paths(root) {
+        assert!(
+            plan.contains(&schema),
+            "{} not in {plan:?}",
+            schema.display()
+        );
+    }
+
+    super::rename(
+        alpha.to_str().unwrap(),
+        "Area",
+        "Zone",
+        Some(project),
+        runtime(&state),
+    )
+    .await
+    .unwrap();
+
+    assert!(!alpha.join("Area").exists());
+    let order: std::collections::HashMap<String, Vec<String>> =
+        serde_json::from_str(&fs::read_to_string(alpha.join(".svode/order.json")).unwrap())
+            .unwrap();
+    assert_eq!(order["."], vec!["Zone", "Decisions"]);
+    assert_nested_collections_moved(root, "Zone");
+}
+
+#[tokio::test]
+async fn moving_a_folder_rewrites_relation_schemas_of_nested_collections() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alpha = nested_collections_project(root, false);
+    fs::create_dir_all(alpha.join("Archive")).unwrap();
+    let state = IndexRuntimeState::default();
+    let project = root.to_str().unwrap();
+
+    let plan = super::plan::move_mutation_paths(
+        &state,
+        alpha.to_str().unwrap(),
+        Some(project),
+        "Area",
+        "Archive/Area",
+    )
+    .await
+    .unwrap();
+    for schema in nested_collection_schema_paths(root) {
+        assert!(
+            plan.contains(&schema),
+            "{} not in {plan:?}",
+            schema.display()
+        );
+    }
+
+    let moved = super::move_entry(
+        alpha.to_str().unwrap(),
+        "Area",
+        "Archive",
+        Some(project),
+        runtime(&state),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(moved, "Archive/Area");
+    assert_nested_collections_moved(root, "Archive/Area");
+}
+
+#[tokio::test]
+async fn renaming_a_folder_page_by_title_rewrites_relation_schemas_of_nested_collections() {
+    use crate::page::nonce::WriteNonceRegistry;
+    use crate::page::write::{PageWrite, write};
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alpha = nested_collections_project(root, true);
+    let state = IndexRuntimeState::default();
+    let nonces = WriteNonceRegistry::new();
+    let authorized = std::sync::Mutex::new(Vec::new());
+
+    let outcome = write(
+        PageWrite {
+            space: alpha.to_str().unwrap(),
+            path: "Area/README.md",
+            content: "",
+            title: Some("Zone"),
+            icon: None,
+            extra: None,
+            metadata: None,
+            field_batch: None,
+            skip_rename: false,
+            project: Some(root.to_str().unwrap()),
+            source_version: None,
+        },
+        crate::page::test_support::runtime(&state, &nonces),
+        |paths| {
+            authorized.lock().unwrap().extend(paths.clone());
+            async move { Ok::<_, crate::page::PageError>(paths) }
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.result.new_path.as_deref(), Some("Zone/README.md"));
+    let authorized = authorized.into_inner().unwrap();
+    for schema in nested_collection_schema_paths(root) {
+        assert!(
+            authorized.contains(&schema),
+            "{} not in {authorized:?}",
+            schema.display()
+        );
+    }
+    assert_nested_collections_moved(root, "Zone");
+}
