@@ -17,10 +17,17 @@ pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
 
 /// What Svode knows about an agent process outside it writing to the
 /// session. Only fresh native evidence of a turn that tells of another
-/// writer counts (`07` N6); there is no process scan, so everything else is
-/// unknown, never free.
+/// writer counts (`07` N6), and a live managed PTY of Svode that runs the
+/// session: the PTY's writer slot refuses first, and a PTY whose process
+/// moved to the session while another writer of Svode held it has none
+/// (DF-163 R3). There is no process scan, so everything else is unknown,
+/// never free.
 pub(super) fn external_liveness(session: &AgentSession) -> ExternalLiveness {
-    if native_turn_open(session) && session.native_external_writer {
+    let runs_in_terminal = session
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.live && runtime.pty_id.is_some());
+    if (native_turn_open(session) && session.native_external_writer) || runs_in_terminal {
         ExternalLiveness::ExternalActive
     } else {
         ExternalLiveness::Unknown
@@ -311,7 +318,9 @@ fn apply_terminal_runtime(
             surface.agent_session_id == session.id
                 || (surface.source == session.source
                     && surface.source_session_id == session.source_session_id)
-                || (session.launch_id.is_some() && session.launch_id == surface.launch_id)
+                || (!surface.rebound
+                    && session.launch_id.is_some()
+                    && session.launch_id == surface.launch_id)
         })
         .collect::<Vec<_>>();
     // A live terminal is the runtime of its session before the closed ones
@@ -323,14 +332,18 @@ fn apply_terminal_runtime(
         return Vec::new();
     };
 
-    session.launch_id = session
-        .launch_id
-        .clone()
-        .or_else(|| runtime_surface.launch_id.clone());
-    session.routine_run_id = session
-        .routine_run_id
-        .clone()
-        .or_else(|| runtime_surface.routine_run_id.clone());
+    // The launch and its run stay with the session of the launch when the
+    // process moved to another one (DF-163 R3).
+    if !runtime_surface.rebound {
+        session.launch_id = session
+            .launch_id
+            .clone()
+            .or_else(|| runtime_surface.launch_id.clone());
+        session.routine_run_id = session
+            .routine_run_id
+            .clone()
+            .or_else(|| runtime_surface.routine_run_id.clone());
+    }
     session.runtime = Some(AgentSessionRuntime {
         pty_id: runtime_surface.live.then(|| runtime_surface.pty_id.clone()),
         pid: None,

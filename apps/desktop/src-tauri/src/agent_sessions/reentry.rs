@@ -421,6 +421,7 @@ mod tests {
             failure_reason: None,
             status_evidence: None,
             exit_marker_buffer: String::new(),
+            rebound: false,
         }
     }
 

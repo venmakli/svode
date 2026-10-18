@@ -69,7 +69,7 @@ pub(crate) fn process_signals(records: &[Option<&ProcessRecord>]) -> Vec<Process
 /// `start_time` gives the start in seconds since the epoch of a running
 /// process, `Some(None)` for an exited one not reaped yet and `None` when no
 /// process has the pid.
-fn signal_of(
+pub(crate) fn signal_of(
     record: Option<&ProcessRecord>,
     this_host: Option<&str>,
     start_time: impl Fn(u32) -> Option<Option<u64>>,

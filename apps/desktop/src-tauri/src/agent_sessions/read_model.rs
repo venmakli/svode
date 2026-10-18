@@ -488,7 +488,7 @@ fn append_provisional_sessions(
         .map(|session| session.id.clone())
         .collect::<HashSet<_>>();
 
-    for surface in terminal_surfaces {
+    for surface in terminal_surfaces.iter().filter(|surface| !surface.rebound) {
         let Some(launch_id) = surface.launch_id.as_ref() else {
             continue;
         };
@@ -768,6 +768,7 @@ mod tests {
             failure_reason: None,
             status_evidence: evidence,
             exit_marker_buffer: String::new(),
+            rebound: false,
         }
     }
 

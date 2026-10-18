@@ -12,6 +12,11 @@ use super::{
 use svode_agents::native_settings::NativeSessionSettings;
 use svode_agents::status::{SessionState, StopReason};
 
+/// The Claude config directory of this device.
+pub(crate) fn config_dir(home: &Path) -> PathBuf {
+    home.join(".claude")
+}
+
 /// The session transcripts under the Claude config directory.
 pub(super) struct Projects {
     pub root: PathBuf,

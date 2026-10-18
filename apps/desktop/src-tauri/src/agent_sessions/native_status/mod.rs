@@ -323,7 +323,7 @@ fn source_of(
             root: home.join(".codex"),
         })),
         NativeStatusStore::ClaudeProjects => Arc::new(SessionLogs::new(claude_code::Projects {
-            root: home.join(".claude"),
+            root: claude_code::config_dir(home),
         })),
         NativeStatusStore::HermesStates => Arc::new(hermes::HermesStates::new(hermes_home.clone())),
         NativeStatusStore::OpencodeDb => {

@@ -1,4 +1,5 @@
 pub mod commands;
+mod process_tree;
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -21,6 +22,8 @@ use svode_agents::writer::{
     ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRegistry, WriterTarget,
 };
 use svode_core::system_path;
+
+pub(crate) use process_tree::PtyProcess;
 
 const OUTPUT_EVENT: &str = "terminal:output";
 const EXIT_EVENT: &str = "terminal:exit";
@@ -160,6 +163,28 @@ pub(crate) struct AgentTerminalSurface {
     pub status_evidence: Option<AgentTerminalStatusEvidence>,
     #[serde(skip)]
     pub(crate) exit_marker_buffer: String,
+    /// The agent process in this PTY moved to another session than the one
+    /// the terminal was opened with (DF-163 R3): its launch no longer names
+    /// the session of this terminal.
+    #[serde(skip)]
+    pub(crate) rebound: bool,
+}
+
+/// A live PTY with the running processes under its shell, the shell first
+/// and nearer processes before deeper ones (DF-163 R2).
+pub(crate) struct LivePtyProcesses {
+    pub pty_id: String,
+    pub processes: Vec<PtyProcess>,
+}
+
+/// The session the agent process in a live PTY runs now, by the native
+/// evidence of that process (DF-163 R2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CurrentPtySession {
+    pub pty_id: String,
+    pub agent_session_id: String,
+    pub source: AgentId,
+    pub source_session_id: String,
 }
 
 /// Status evidence of a managed PTY: an exit code is exact, a request
@@ -670,6 +695,118 @@ impl TerminalManager {
         Ok(surfaces.values().cloned().collect())
     }
 
+    /// The live PTYs with the running processes under their shells
+    /// (DF-163 R2); the process table is read only when a PTY lives.
+    pub(crate) fn live_pty_processes(&self) -> Result<Vec<LivePtyProcesses>, AppError> {
+        let shells = self
+            .sessions
+            .lock()
+            .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
+            .iter()
+            .filter_map(|(pty_id, process)| Some((pty_id.clone(), process.child.process_id()?)))
+            .collect::<Vec<_>>();
+        let pids = shells.iter().map(|(_, pid)| *pid).collect::<Vec<_>>();
+        let mut trees = process_tree::descendants(&pids);
+        Ok(shells
+            .into_iter()
+            .map(|(pty_id, pid)| LivePtyProcesses {
+                pty_id,
+                processes: trees.remove(&pid).unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Moves each live PTY to the session its agent process runs now
+    /// (DF-163 R3): the surface takes the session's keys and drops the
+    /// approximate evidence read from the text of the session it leaves; its
+    /// writer claim leaves the previous key and takes the new one. A PTY
+    /// without a surface becomes the surface of that session, as a shell tab
+    /// linked to its session does. A key another writer of Svode holds stays
+    /// with it, and the surface moves all the same: the process already runs
+    /// that session (R6). A finished agent command keeps its outcome, and a
+    /// launch whose canonical session is not known yet moves by its launch id
+    /// (R5).
+    pub(crate) fn follow_current_sessions(
+        &self,
+        current: &[CurrentPtySession],
+    ) -> Result<(), AppError> {
+        for current in current {
+            // Held until the claim is taken: the reader of an exiting PTY
+            // removes it here before it releases the writer.
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+            let Some(process) = sessions.get(&current.pty_id) else {
+                continue;
+            };
+            {
+                let mut surfaces = self
+                    .agent_surfaces
+                    .lock()
+                    .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
+                match surfaces.get_mut(&current.pty_id) {
+                    Some(surface) => {
+                        let awaits_launch = self
+                            .writer_claims
+                            .lock()
+                            .map_err(|_| {
+                                AppError::General("Terminal state lock poisoned".to_string())
+                            })?
+                            .get(&current.pty_id)
+                            .is_some_and(|claim| matches!(claim.target(), WriterTarget::Launch(_)));
+                        if surface.finished_at.is_some()
+                            || awaits_launch
+                            || (surface.source == current.source
+                                && surface.source_session_id == current.source_session_id)
+                        {
+                            continue;
+                        }
+                        tracing::info!(
+                            pty_id = current.pty_id,
+                            from = surface.agent_session_id,
+                            to = current.agent_session_id,
+                            "managed terminal follows the session its agent process runs"
+                        );
+                        surface.agent_session_id = current.agent_session_id.clone();
+                        surface.source = current.source.clone();
+                        surface.source_session_id = current.source_session_id.clone();
+                        surface.title = None;
+                        surface.status_evidence = None;
+                        surface.rebound = true;
+                    }
+                    None => {
+                        surfaces.insert(
+                            current.pty_id.clone(),
+                            agent_surface_from_existing_session(
+                                current.pty_id.clone(),
+                                current.agent_session_id.clone(),
+                                None,
+                                current.source.clone(),
+                                current.source_session_id.clone(),
+                                process.session.cwd.clone(),
+                                now_rfc3339(),
+                            ),
+                        );
+                    }
+                }
+            }
+            if let Err(error) = self.hold_existing_session_writer(
+                &current.pty_id,
+                &current.source,
+                &current.source_session_id,
+            ) {
+                tracing::warn!(
+                    pty_id = current.pty_id,
+                    agent_session_id = current.agent_session_id,
+                    "managed terminal runs a session another writer holds: {error}"
+                );
+            }
+            drop(sessions);
+        }
+        Ok(())
+    }
+
     pub(crate) fn resolve_routine_mcp_caller(
         &self,
         token: &str,
@@ -746,19 +883,24 @@ impl TerminalManager {
                     .values_mut()
                     .filter(|surface| surface.launch_id.as_deref() == Some(launch_id))
                 {
-                    surface.agent_session_id = session.id.clone();
-                    surface.source_session_id = session.source_session_id.clone();
-                    // The launch's writer claim moves to its canonical session.
-                    if let Some(claim) = claims.get_mut(&surface.pty_id)
-                        && let Err(refusal) = claim.bind(&native_writer_key(
-                            &session.source,
-                            &session.source_session_id,
-                        ))
-                    {
-                        tracing::warn!(
-                            agent_session_id = session.id,
-                            "managed terminal keeps its launch writer claim: {refusal:?}"
-                        );
+                    // A process that moved to another session keeps it; the
+                    // Routine link stays with the session of the launch
+                    // (DF-163 R3).
+                    if !surface.rebound {
+                        surface.agent_session_id = session.id.clone();
+                        surface.source_session_id = session.source_session_id.clone();
+                        // The launch's writer claim moves to its canonical session.
+                        if let Some(claim) = claims.get_mut(&surface.pty_id)
+                            && let Err(refusal) = claim.bind(&native_writer_key(
+                                &session.source,
+                                &session.source_session_id,
+                            ))
+                        {
+                            tracing::warn!(
+                                agent_session_id = session.id,
+                                "managed terminal keeps its launch writer claim: {refusal:?}"
+                            );
+                        }
                     }
                     if let Some(sink) = sinks.get(&surface.pty_id) {
                         reconciliations.push((
@@ -852,7 +994,7 @@ impl TerminalManager {
     /// A live shell in a PTY as `terminal_spawn` starts it, without the
     /// app-bound environment and output reader.
     #[cfg(test)]
-    fn insert_shell_for_test(&self, pty_id: &str, cwd: &Path) {
+    pub(crate) fn insert_shell_for_test(&self, pty_id: &str, cwd: &Path) {
         let shell = default_shell();
         let size = pty_size(80, 24);
         let pair = native_pty_system().openpty(size).expect("open PTY");
@@ -1193,6 +1335,7 @@ fn agent_surface_from_spawn(
         failure_reason: None,
         status_evidence: None,
         exit_marker_buffer: String::new(),
+        rebound: false,
     }
 }
 
@@ -1228,6 +1371,7 @@ fn agent_surface_from_existing_session(
         failure_reason: None,
         status_evidence: None,
         exit_marker_buffer: String::new(),
+        rebound: false,
     }
 }
 
@@ -1673,6 +1817,7 @@ mod tests {
             failure_reason: None,
             status_evidence: None,
             exit_marker_buffer: String::new(),
+            rebound: false,
         }
     }
 
@@ -2012,6 +2157,330 @@ mod tests {
         assert_eq!(evidence.state, INTERRUPTED);
         assert_eq!(evidence.confidence, StatusConfidence::Exact);
         assert_eq!(writers.writer(&codex_key("s1")), None);
+    }
+
+    fn claude_key(session_id: &str) -> svode_agents::identity::SessionKey {
+        native_writer_key(&AgentAdapterKind::ClaudeCode.id(), session_id)
+    }
+
+    fn claude_now(pty_id: &str, session_id: &str) -> CurrentPtySession {
+        CurrentPtySession {
+            pty_id: pty_id.to_string(),
+            agent_session_id: format!("claude-code:{session_id}"),
+            source: AgentAdapterKind::ClaudeCode.id(),
+            source_session_id: session_id.to_string(),
+        }
+    }
+
+    fn acp_claim(
+        writers: &WriterRegistry,
+        session_id: &str,
+    ) -> Result<WriterClaim, svode_agents::writer::WriterRefusal> {
+        writers.claim(
+            &claude_key(session_id),
+            Writer::Acp,
+            ExternalLiveness::Free,
+            UnknownLiveness::NotConfirmed,
+        )
+    }
+
+    fn surface_of(manager: &TerminalManager, pty_id: &str) -> AgentTerminalSurface {
+        manager
+            .list_agent_surfaces()
+            .unwrap()
+            .into_iter()
+            .find(|surface| surface.pty_id == pty_id)
+            .expect("surface")
+    }
+
+    fn register_claude(manager: &TerminalManager, pty_id: &str, session_id: &str) {
+        manager
+            .register_existing_agent_session(
+                pty_id.to_string(),
+                format!("claude-code:{session_id}"),
+                Some(format!("Session {session_id}")),
+                AgentAdapterKind::ClaudeCode.id(),
+                session_id.to_string(),
+                None,
+                None,
+            )
+            .expect("register the terminal");
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        outcomes: Mutex<Vec<SessionState>>,
+        reconciled: Mutex<Vec<(String, String)>>,
+    }
+
+    impl AgentTerminalLifecycleSink for RecordingSink {
+        fn record_terminal_outcome(
+            &self,
+            evidence: &AgentTerminalOutcomeEvidence,
+        ) -> Result<(), AppError> {
+            self.outcomes.lock().unwrap().push(evidence.state);
+            Ok(())
+        }
+
+        fn reconcile_agent_session(
+            &self,
+            source_session_id: &str,
+            agent_session_id: &str,
+            _session_state: SessionState,
+            _observed_at: &str,
+        ) -> Result<(), AppError> {
+            self.reconciled
+                .lock()
+                .unwrap()
+                .push((source_session_id.to_string(), agent_session_id.to_string()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_terminal_moves_with_its_writer_and_outcome_to_the_session_its_process_runs_now() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        manager.insert_shell_for_test("pty-a", cwd.path());
+        register_claude(&manager, "pty-a", "s1");
+        manager
+            .agent_surfaces
+            .lock()
+            .unwrap()
+            .get_mut("pty-a")
+            .unwrap()
+            .status_evidence = Some(AgentTerminalStatusEvidence {
+            state: SessionState::RequiresAction {
+                request: InteractionKind::Permission,
+            },
+            confidence: StatusConfidence::Approximate,
+            reason: "approval prompt of the session it leaves".to_string(),
+            observed_at: now_rfc3339(),
+        });
+
+        manager
+            .follow_current_sessions(&[claude_now("pty-a", "s2")])
+            .unwrap();
+        // The next boundary finds the same session: nothing moves.
+        manager
+            .follow_current_sessions(&[claude_now("pty-a", "s2")])
+            .unwrap();
+
+        let moved = surface_of(&manager, "pty-a");
+        assert_eq!(moved.agent_session_id, "claude-code:s2");
+        assert_eq!(moved.source_session_id, "s2");
+        assert!(moved.live && moved.rebound);
+        assert!(moved.title.is_none());
+        assert!(moved.status_evidence.is_none(), "evidence of s1 is dropped");
+        assert_eq!(writers.writer(&claude_key("s2")), Some(Writer::Pty));
+        assert_eq!(writers.writer(&claude_key("s1")), None);
+        assert_eq!(
+            acp_claim(&writers, "s2").err(),
+            Some(svode_agents::writer::WriterRefusal::WriterActive {
+                writer: Writer::Pty
+            }),
+            "continuing the new session in the chat is refused while the PTY lives"
+        );
+        drop(acp_claim(&writers, "s1").expect("the previous session continues"));
+
+        manager.kill("pty-a").unwrap();
+        let closed = surface_of(&manager, "pty-a");
+        assert_eq!(closed.agent_session_id, "claude-code:s2");
+        assert_eq!(
+            closed.status_evidence.expect("terminal outcome").state,
+            INTERRUPTED
+        );
+        assert_eq!(writers.writer(&claude_key("s2")), None);
+    }
+
+    #[test]
+    fn a_terminal_moves_to_a_session_the_chat_writes_and_leaves_the_key_to_it() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        manager.insert_shell_for_test("pty-a", cwd.path());
+        register_claude(&manager, "pty-a", "s1");
+        let chat = acp_claim(&writers, "s2").expect("the chat writes s2");
+
+        manager
+            .follow_current_sessions(&[claude_now("pty-a", "s2")])
+            .unwrap();
+
+        assert_eq!(
+            surface_of(&manager, "pty-a").agent_session_id,
+            "claude-code:s2"
+        );
+        assert_eq!(writers.writer(&claude_key("s2")), Some(Writer::Acp));
+        assert_eq!(writers.writer(&claude_key("s1")), None, "s1 is released");
+        drop(chat);
+        assert_eq!(writers.writer(&claude_key("s2")), None);
+        manager.kill("pty-a").unwrap();
+    }
+
+    #[test]
+    fn a_plain_terminal_becomes_the_surface_of_the_session_its_process_runs() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        manager.insert_shell_for_test("pty-tab", cwd.path());
+
+        manager
+            .follow_current_sessions(&[claude_now("pty-tab", "s1"), claude_now("pty-gone", "s9")])
+            .unwrap();
+
+        let surfaces = manager.list_agent_surfaces().unwrap();
+        assert_eq!(surfaces.len(), 1, "a PTY that no longer lives gets none");
+        let surface = &surfaces[0];
+        assert_eq!(surface.agent_session_id, "claude-code:s1");
+        assert!(surface.live && !surface.rebound);
+        assert_eq!(writers.writer(&claude_key("s1")), Some(Writer::Pty));
+        assert_eq!(writers.writer(&claude_key("s9")), None);
+        manager.kill("pty-tab").unwrap();
+    }
+
+    #[test]
+    fn a_routine_terminal_that_moves_keeps_its_run_with_the_session_of_its_launch() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        manager.insert_shell_for_test("pty-agent", cwd.path());
+        let mut surface = test_surface();
+        surface.agent_session_id = "claude-code:s1".to_string();
+        surface.source = AgentAdapterKind::ClaudeCode.id();
+        surface.source_session_id = "s1".to_string();
+        surface.launch_id = Some("launch-1".to_string());
+        surface.routine_run_id = Some("run-1".to_string());
+        manager.insert_agent_surface_for_test(surface);
+        manager.writer_claims.lock().unwrap().insert(
+            "pty-agent".to_string(),
+            writers
+                .claim(
+                    &claude_key("s1"),
+                    Writer::Pty,
+                    ExternalLiveness::Free,
+                    UnknownLiveness::NotConfirmed,
+                )
+                .unwrap(),
+        );
+        let sink = Arc::new(RecordingSink::default());
+        manager
+            .lifecycle_sinks
+            .lock()
+            .unwrap()
+            .insert("pty-agent".to_string(), sink.clone());
+
+        manager
+            .follow_current_sessions(&[claude_now("pty-agent", "s2")])
+            .unwrap();
+        let launch_session: AgentSession = serde_json::from_value(serde_json::json!({
+            "id": "claude-code:s1",
+            "launchId": "launch-1",
+            "source": "claude-code",
+            "sourceSessionId": "s1",
+            "title": "s1",
+            "titleSource": "session-id",
+            "status": {
+                "state": "idle",
+                "stopReason": "end_turn",
+                "source": "native_status_reader",
+                "confidence": "approximate"
+            },
+            "scopeKind": "project",
+            "scopeStatus": "ready",
+            "scopeConfidence": "exact",
+            "lastActivityAt": "2026-07-04T10:00:00Z",
+            "capabilities": { "canResume": true },
+        }))
+        .expect("session fixture");
+        manager.reconcile_agent_sessions(&[launch_session]).unwrap();
+
+        let moved = surface_of(&manager, "pty-agent");
+        assert_eq!(moved.agent_session_id, "claude-code:s2");
+        assert_eq!(moved.launch_id.as_deref(), Some("launch-1"));
+        assert_eq!(writers.writer(&claude_key("s2")), Some(Writer::Pty));
+        assert_eq!(writers.writer(&claude_key("s1")), None);
+        assert_eq!(
+            *sink.reconciled.lock().unwrap(),
+            vec![("s1".to_string(), "claude-code:s1".to_string())],
+            "the run stays with the session of its launch"
+        );
+
+        manager.kill("pty-agent").unwrap();
+        assert_eq!(*sink.outcomes.lock().unwrap(), vec![INTERRUPTED]);
+        assert_eq!(
+            surface_of(&manager, "pty-agent").agent_session_id,
+            "claude-code:s2"
+        );
+    }
+
+    #[test]
+    fn a_launch_without_its_session_and_a_finished_agent_command_keep_their_link() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        manager.insert_shell_for_test("pty-launch", cwd.path());
+        manager.insert_shell_for_test("pty-done", cwd.path());
+        let mut launch = test_surface();
+        launch.pty_id = "pty-launch".to_string();
+        launch.agent_session_id = "claude-code:launch:launch-1".to_string();
+        launch.source = AgentAdapterKind::ClaudeCode.id();
+        launch.source_session_id = "launch:launch-1".to_string();
+        launch.launch_id = Some("launch-1".to_string());
+        manager.insert_agent_surface_for_test(launch);
+        manager.writer_claims.lock().unwrap().insert(
+            "pty-launch".to_string(),
+            writers.claim_launch("launch-1", Writer::Pty).unwrap(),
+        );
+        let mut done = test_surface();
+        done.pty_id = "pty-done".to_string();
+        done.agent_session_id = "claude-code:s1".to_string();
+        done.source = AgentAdapterKind::ClaudeCode.id();
+        done.source_session_id = "s1".to_string();
+        done.finished_at = Some(now_rfc3339());
+        manager.insert_agent_surface_for_test(done);
+
+        manager
+            .follow_current_sessions(&[
+                claude_now("pty-launch", "s2"),
+                claude_now("pty-done", "s3"),
+            ])
+            .unwrap();
+
+        let launch = surface_of(&manager, "pty-launch");
+        assert_eq!(launch.agent_session_id, "claude-code:launch:launch-1");
+        assert!(!launch.rebound);
+        assert_eq!(writers.writer(&claude_key("s2")), None);
+        assert_eq!(
+            surface_of(&manager, "pty-done").agent_session_id,
+            "claude-code:s1"
+        );
+        assert_eq!(writers.writer(&claude_key("s3")), None);
+        manager.kill("pty-launch").unwrap();
+        manager.kill("pty-done").unwrap();
+    }
+
+    #[test]
+    fn the_processes_of_a_live_terminal_start_with_its_shell() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let manager = TerminalManager::new(WriterRegistry::default());
+        manager.insert_shell_for_test("pty-a", cwd.path());
+        let shell = manager
+            .sessions
+            .lock()
+            .unwrap()
+            .get("pty-a")
+            .and_then(|process| process.child.process_id())
+            .expect("shell pid");
+
+        let ptys = manager.live_pty_processes().unwrap();
+        manager.kill("pty-a").unwrap();
+
+        assert_eq!(ptys.len(), 1);
+        assert_eq!(ptys[0].pty_id, "pty-a");
+        let first = ptys[0].processes.first().expect("the shell runs");
+        assert_eq!((first.pid, first.depth), (shell, 0));
+        assert!(manager.live_pty_processes().unwrap().is_empty());
     }
 
     #[test]
