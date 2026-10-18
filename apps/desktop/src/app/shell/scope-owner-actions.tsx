@@ -66,17 +66,23 @@ export function ScopeOwnerActions(props: ScopeOwnerActionsProps) {
   return <ReadmeOwnerActions {...props} />;
 }
 
+/** A folder with an App is an App, also when its README Page opened it. */
+function isAppOwner(owner: ScopeOwnerRef) {
+  return (
+    owner.identityKind === "app-directory" || owner.capabilities.includes("app")
+  );
+}
+
 /** What deleting the owner deletes, as its dialog names it. */
 function ownerDeleteObject(
-  identityKind: ScopeOwnerRef["identityKind"],
+  owner: ScopeOwnerRef,
   page: Page,
   inCollection: boolean,
 ): DeletableContentObject {
-  switch (identityKind) {
+  if (isAppOwner(owner)) return { kind: "app" };
+  switch (owner.identityKind) {
     case "collection-directory":
       return { kind: "collection" };
-    case "app-directory":
-      return { kind: "app" };
     default:
       return {
         kind: inCollection ? "collection-item" : "page",
@@ -119,8 +125,7 @@ function ReadmeOwnerActions({
   }, [cancelDelete, readOnly]);
 
   const directoryOwner =
-    owner.identityKind === "collection-directory" ||
-    owner.identityKind === "app-directory";
+    owner.identityKind === "collection-directory" || isAppOwner(owner);
   const ownerPage = context.page;
   if (!ownerPage && !(directoryOwner && context.status === "missing"))
     return null;
@@ -128,7 +133,7 @@ function ReadmeOwnerActions({
   function requestOwnerDelete(page: Page) {
     void requestDelete({
       object: ownerDeleteObject(
-        owner.identityKind,
+        owner,
         page,
         Boolean(context.schemaResult),
       ),

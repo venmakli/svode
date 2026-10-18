@@ -225,6 +225,16 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
       readmePath: "README.md",
       capabilities: ["space"],
     },
+    pageApp: {
+      ownerKey: "page:docs:dash",
+      identityKind: "page-directory",
+      spaceId: "docs",
+      spacePath: "/project/docs",
+      projectPath: "/project",
+      ownerPath: "dash",
+      readmePath: "dash/README.md",
+      capabilities: ["app"],
+    },
     page: {
       ownerKey: "page:docs:guide",
       identityKind: "page-directory",
@@ -368,13 +378,15 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
     ]);
     await closeMenu();
 
-    await render("app");
-    expect(await openMenu()).toEqual([
-      { group: "navigation", items: pin },
-      { group: "edit", items: ["Rename"] },
-      { group: "delete", items: ["Delete"] },
-    ]);
-    await closeMenu();
+    for (const app of ["app", "pageApp"] as const) {
+      await render(app);
+      expect(await openMenu()).toEqual([
+        { group: "navigation", items: pin },
+        { group: "edit", items: ["Rename"] },
+        { group: "delete", items: ["Delete"] },
+      ]);
+      await closeMenu();
+    }
 
     for (const unsaved of [false, true]) {
       dirty = unsaved;
@@ -492,6 +504,7 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
         "The collection “X” will be deleted with its schema and all items.",
       ],
       ["app", "Delete app?", "The app “X” will be deleted with its files."],
+      ["pageApp", "Delete app?", "The app “X” will be deleted with its files."],
     ];
     for (const [owner, title, description] of cases) {
       await render(owner);
