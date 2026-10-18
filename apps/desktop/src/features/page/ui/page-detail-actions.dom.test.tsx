@@ -293,6 +293,16 @@ if (process.env.SVODE_PAGE_DETAIL_ACTIONS_DOM !== "1") {
     ]);
     await closeMenu();
 
+    // A folder Page with an App is an App, as in the sidebar.
+    detailState = { form: "folder", subpageCount: 0, otherFileCount: 1 };
+    await render("dash/README.md", { menuKind: { kind: "app" }, pinItem });
+    expect(await openMenu()).toEqual([
+      { group: "navigation", items: ["Pin", "Keep in Now"] },
+      { group: "edit", items: ["Rename"] },
+      { group: "delete", items: ["Delete"] },
+    ]);
+    await closeMenu();
+
     detailState = { form: "leaf", subpageCount: 0, otherFileCount: 0 };
     for (const [isDefault, label] of [
       [false, "Set as default"],

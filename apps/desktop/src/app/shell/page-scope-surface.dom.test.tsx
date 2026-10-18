@@ -1013,6 +1013,26 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     }
   });
 
+  test("a full folder Page with an App has the menu and delete dialog of an App", async () => {
+    const f = await fixture("Board/README.md", true);
+    try {
+      expect(actionsProps.menuKind).toEqual({ kind: "app" });
+      await act(async () => {
+        (actionsProps.onDeletePage as (page: Page) => void)(
+          page("Board/README.md"),
+        );
+        await settle();
+      });
+      expect(
+        f.dom.window.document
+          .querySelector("[data-delete]")
+          ?.getAttribute("data-delete-kind"),
+      ).toBe("app");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
   test("full Page delete, duplicate and conversions keep their tree and navigation effects", async () => {
     const f = await fixture("Note.md");
     const doc = f.dom.window.document;

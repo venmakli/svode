@@ -27,7 +27,10 @@ import { usePageSurfaceSession } from "../hooks/page-surface-context";
 import { handleError } from "../lib/errors";
 import { publishPageFilenameWarnings } from "../lib/filename-warning";
 import { isReadmeMissingError } from "../lib/readme-state";
-import type { PageSurfaceLayout } from "../model/page-surface-layout";
+import type {
+  PageSurfaceLayout,
+  PageSurfaceOwner,
+} from "../model/page-surface-layout";
 import { PageDetailActions } from "./page-detail-actions";
 import { PageDetailHeader } from "./page-detail-header";
 import { ReadmeSurface } from "./readme-surface";
@@ -151,53 +154,54 @@ function PageArtifactContent({
     signalCreatedArtifact(spaceId, duplicated.path);
   }
 
-  const actions = page ? (
-    <PageDetailActions
-      page={page}
-      menuKind={{ kind: detail.schemaResult ? "collection-item" : "page" }}
-      pinItem={pageNavigationItem(page, spaceId, activeRootId)}
-      spacePath={spacePath}
-      projectPath={projectPath}
-      spaceId={spaceId}
-      onConverted={(nextPage, nested) => {
-        if (nested) {
-          openScopeOwner({
-            kind: "collection",
-            path: nextPage.path,
-            spaceId,
-          });
-          void reloadTreePathParents(spaceId, [nextPage.path]);
-        } else {
-          openPage(nextPage.path, spaceId);
+  const pageKind = detail.schemaResult ? "collection-item" : "page";
+  const renderActions = (owner: PageSurfaceOwner) =>
+    page ? (
+      <PageDetailActions
+        page={page}
+        menuKind={{ kind: owner.isApp ? "app" : pageKind }}
+        pinItem={pageNavigationItem(page, spaceId, activeRootId)}
+        spacePath={spacePath}
+        projectPath={projectPath}
+        spaceId={spaceId}
+        onConverted={(nextPage, nested) => {
+          if (nested) {
+            openScopeOwner({
+              kind: "collection",
+              path: nextPage.path,
+              spaceId,
+            });
+            void reloadTreePathParents(spaceId, [nextPage.path]);
+          } else {
+            openPage(nextPage.path, spaceId);
+          }
+        }}
+        onDuplicatePage={duplicateCurrentPage}
+        onDeletePage={(pageToDelete) =>
+          void requestDelete({
+            object: owner.isApp
+              ? { kind: "app" }
+              : { kind: pageKind, form: pageFormOfPath(pageToDelete.path) },
+            name: pageToDelete.meta.title,
+            spacePath,
+            path: pageToDelete.path,
+            projectPath: projectPath ?? null,
+            value: pageToDelete,
+          })
         }
-      }}
-      onDuplicatePage={duplicateCurrentPage}
-      onDeletePage={(pageToDelete) =>
-        void requestDelete({
-          object: {
-            kind: detail.schemaResult ? "collection-item" : "page",
-            form: pageFormOfPath(pageToDelete.path),
-          },
-          name: pageToDelete.meta.title,
-          spacePath,
-          path: pageToDelete.path,
-          projectPath: projectPath ?? null,
-          value: pageToDelete,
-        })
-      }
-      readOnly={pageSurface.readOnly}
-      runMutation={pageSurface.runMutation}
-    />
-  ) : null;
+        readOnly={pageSurface.readOnly}
+        runMutation={pageSurface.runMutation}
+      />
+    ) : null;
 
   return (
     <>
       {renderSurface({
-        header: (activeSurfaceId) => (
+        header: (activeSurfaceId, owner) => (
           <PageDetailHeader
             readOnly={pageSurface.readOnly}
             showReadError={activeSurfaceId !== "readme"}
-            actions={actions}
+            actions={renderActions(owner)}
           />
         ),
         children: <ReadmeSurface />,

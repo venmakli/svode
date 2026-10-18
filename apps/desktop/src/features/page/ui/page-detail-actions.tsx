@@ -14,7 +14,7 @@ import { usePageContentOperations } from "../hooks/use-page-content-operations";
 
 /** What the header menu tells the Page apart as. */
 export type PageMenuKind =
-  | { kind: "page" | "collection-item" }
+  | { kind: "page" | "collection-item" | "app" }
   | { kind: "template"; isDefault: boolean };
 
 interface PageDetailActionsProps {
@@ -85,18 +85,20 @@ export function PageDetailActions({
   });
   // A folder Page with its own schema is a Collection, as in the sidebar.
   const object: ContentObject =
-    form === "nestedCollection"
-      ? { kind: "collection" }
-      : {
-          ...menuKind,
-          form,
-          contents: currentState
-            ? {
-                subpageCount: currentState.subpageCount,
-                otherFileCount: currentState.otherFileCount,
-              }
-            : null,
-        };
+    menuKind.kind === "app"
+      ? { kind: "app" }
+      : form === "nestedCollection"
+        ? { kind: "collection" }
+        : {
+            ...menuKind,
+            form,
+            contents: currentState
+              ? {
+                  subpageCount: currentState.subpageCount,
+                  otherFileCount: currentState.otherFileCount,
+                }
+              : null,
+          };
   const groups = contentActionGroups({ object, readOnly });
   const makeLeafBlocked = groups.some((group) =>
     group.actions.some((action) => action.id === "make-leaf" && action.reason),

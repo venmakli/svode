@@ -9,6 +9,7 @@ import {
 import { useCollectionDetailController } from "@/features/collection/app-shell";
 import {
   ScopeSurfaceHost,
+  hasScopeCapability,
   type ScopeOwnerRef,
 } from "@/features/scope-surfaces";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
@@ -61,7 +62,9 @@ export function PageScopeSurface({
     <ScopeSurfaceHost
       owner={owner}
       presentation="full"
-      header={header}
+      header={(activeSurfaceId) =>
+        header(activeSurfaceId, { isApp: hasScopeCapability(owner, "app") })
+      }
       contributions={contributions}
       sessionKey={sessionKey}
       openRequestKey={sessionKey}
