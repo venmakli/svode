@@ -658,13 +658,18 @@ pub async fn commit_paths(
     }
     let message = generate_commit_message_for_paths(cli, space_dir, &file_paths).await?;
     super::staging::verify(cli, space_dir, &file_paths, &prepared).await?;
-    let mut args = vec!["commit", "--only", "-m", &message, "--"];
-    let literal_paths = file_paths
-        .iter()
-        .map(|path| format!(":(literal){path}"))
-        .collect::<Vec<_>>();
-    args.extend(literal_paths.iter().map(String::as_str));
-    let out = super::staging::exec(cli, space_dir, &args, "commit", &file_paths).await?;
+    let mut presence = super::staging::Presence::new(space_dir);
+    let out = if file_paths.iter().any(|path| presence.shadowed(path)) {
+        super::staging::commit_prepared(cli, space_dir, &file_paths, &message).await?
+    } else {
+        let mut args = vec!["commit", "--only", "-m", &message, "--"];
+        let literal_paths = file_paths
+            .iter()
+            .map(|path| format!(":(literal){path}"))
+            .collect::<Vec<_>>();
+        args.extend(literal_paths.iter().map(String::as_str));
+        super::staging::exec(cli, space_dir, &args, "commit", &file_paths).await?
+    };
     if out.exit_code != 0 {
         return Err(super::staging::failure(
             "commit",

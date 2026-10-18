@@ -254,3 +254,39 @@ async fn submodule_space_save_keeps_its_parent_pointer_step() {
         head(&child).await
     );
 }
+
+#[tokio::test]
+async fn a_case_only_relocation_commits_its_new_spelling_and_keeps_unrelated_staged_bytes() {
+    let cli = cli();
+    let tmp = repo(&cli, true).await;
+    let space = tmp.path();
+    write(space, "note.md", "note\n");
+    git(&cli, space, &["add", "note.md"]).await;
+    git(&cli, space, &["commit", "-m", "Note"]).await;
+    write(space, "unrelated.md", "staged\n");
+    git(&cli, space, &["add", "unrelated.md"]).await;
+    let staged_before = git(&cli, space, &["ls-files", "--stage", "-z", "unrelated.md"]).await;
+    std::fs::rename(space.join("note.md"), space.join("Note.md")).unwrap();
+
+    save(
+        &runtime(),
+        &TestHost::default(),
+        None,
+        space,
+        Some(vec!["note.md".to_string(), "Note.md".to_string()]),
+    )
+    .await
+    .expect("case-only save");
+
+    let tree = git(&cli, space, &["ls-tree", "-r", "--name-only", "HEAD"]).await;
+    assert!(tree.lines().any(|path| path == "Note.md"));
+    assert!(!tree.lines().any(|path| path == "note.md"));
+    assert!(!tree.lines().any(|path| path == "unrelated.md"));
+    assert_eq!(
+        git(&cli, space, &["ls-files", "--stage", "-z", "unrelated.md"]).await,
+        staged_before
+    );
+    let status = git(&cli, space, &["status", "--porcelain"]).await;
+    assert!(status.lines().any(|line| line == "A  unrelated.md"));
+    assert!(!status.to_lowercase().contains("note.md"));
+}

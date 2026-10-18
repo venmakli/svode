@@ -608,3 +608,83 @@ async fn a_scoped_save_after_a_structural_rename_or_move_leaves_a_clean_status()
     );
     assert!(fixture.pending().is_empty());
 }
+
+#[tokio::test]
+async fn a_case_only_folder_rename_is_listed_and_saved_as_a_relocation() {
+    let fixture = Fixture::new(&[
+        ("jobs/Ship.md", "---\ntitle: Ship\n---\nShip\n"),
+        ("Index.md", "See [Ship](jobs/Ship.md).\n"),
+        ("Unrelated.md", "---\ntitle: Unrelated\n---\n"),
+    ])
+    .await;
+    let root = fixture.space();
+    let cli = cli();
+    let listed = async || {
+        let mut files = super::ops::status(&cli, fixture.root())
+            .await
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| format!("{} {}", file.state, file.path))
+            .collect::<Vec<_>>();
+        files.sort();
+        files
+    };
+    let tree = async || {
+        git(
+            &cli,
+            fixture.root(),
+            &["ls-tree", "-r", "--name-only", "HEAD"],
+        )
+        .await
+    };
+
+    structure::rename(root, "jobs", "Jobs", Some(root), fixture.structure())
+        .await
+        .unwrap();
+    write(
+        fixture.root(),
+        "Unrelated.md",
+        "---\ntitle: Unrelated\n---\nEdited\n",
+    );
+    // A case-insensitive file system hides the relocation from Git's own status.
+    assert_eq!(
+        listed().await,
+        [
+            "deleted jobs/Ship.md",
+            "modified Index.md",
+            "modified Unrelated.md",
+            "untracked Jobs/Ship.md",
+        ]
+    );
+    fixture
+        .save(Some(&["Jobs/Ship.md"]))
+        .await
+        .expect("case-only rename save");
+    assert_eq!(
+        without_order(fixture.committed().await),
+        records(&["A\tJobs/Ship.md", "D\tjobs/Ship.md", "M\tIndex.md"])
+    );
+    assert!(tree().await.lines().any(|path| path == "Jobs/Ship.md"));
+    assert_eq!(listed().await, ["modified Unrelated.md"]);
+    assert!(fixture.pending().is_empty());
+
+    structure::rename(root, "Jobs", "jobs", Some(root), fixture.structure())
+        .await
+        .unwrap();
+    fixture.save(None).await.expect("save all");
+    assert_eq!(
+        without_order(fixture.committed().await),
+        records(&[
+            "A\tjobs/Ship.md",
+            "D\tJobs/Ship.md",
+            "M\tIndex.md",
+            "M\tUnrelated.md",
+        ])
+    );
+    assert!(listed().await.is_empty());
+    assert_eq!(
+        git(&cli, fixture.root(), &["status", "--porcelain"]).await,
+        ""
+    );
+}

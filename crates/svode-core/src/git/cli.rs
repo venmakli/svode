@@ -111,6 +111,16 @@ impl GitCli {
         self.exec_logged(space_dir, args, &[], false).await
     }
 
+    /// [`Self::exec_redacted`] with extra environment variables.
+    pub async fn exec_redacted_with_env(
+        &self,
+        space_dir: &Path,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+    ) -> Result<GitOutput, GitError> {
+        self.exec_logged(space_dir, args, extra_env, false).await
+    }
+
     async fn exec_logged(
         &self,
         space_dir: &Path,

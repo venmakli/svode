@@ -10,6 +10,7 @@ import {
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import type { TreeNode } from "../model/types";
+import { isDescendantOf } from "../lib/tree-dnd-utilities";
 import {
   markEditorFilesStale,
   suppressEditorFileEvents,
@@ -143,7 +144,15 @@ export function useFileTreeItemRename({
           .handoffTreePath(space.path, node.path, newPath);
         if (modifiedFiles.length > 0) {
           markEditorFilesStale(space.path, modifiedFiles);
-          suppressEditorFileEvents(space.path, modifiedFiles);
+          // Rewritten link sources outside the folder reach an open document
+          // through the watcher, which reloads it like any other change.
+          const relocated = modifiedFiles.filter(
+            (path) =>
+              isDescendantOf(path, newPath) || isDescendantOf(path, node.path),
+          );
+          if (relocated.length > 0) {
+            suppressEditorFileEvents(space.path, relocated);
+          }
         }
         finishTreeMutation();
         removeTreePath(spaceId, node.path);

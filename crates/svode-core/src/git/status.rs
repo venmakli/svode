@@ -1,5 +1,7 @@
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use unicode_normalization::UnicodeNormalization;
 
 use super::GitError;
 use super::cli::{GitCli, read_bounded};
@@ -76,6 +78,11 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, GitErro
         ));
     }
     strip_status_path_prefix(&mut status, &prefix)?;
+    let relocations = case_relocations(cli, space_dir, &status.files).await?;
+    if !relocations.is_empty() {
+        status.has_unstaged = true;
+        status.files.extend(relocations);
+    }
     let local_conflicts = status
         .files
         .iter()
@@ -100,6 +107,84 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, GitErro
         status.has_conflicts = local_conflicts;
     }
     Ok(status)
+}
+
+/// Git folding names on a case-insensitive file system reports nothing for a
+/// case-only relocation: the new spelling counts as its tracked old one. Such a
+/// relocation is listed as the deleted old spelling and the untracked new one.
+async fn case_relocations(
+    cli: &GitCli,
+    space_dir: &Path,
+    reported: &[FileGitStatus],
+) -> Result<Vec<FileGitStatus>, GitError> {
+    let folding = cli
+        .exec(space_dir, &["config", "--bool", "core.ignorecase"])
+        .await?;
+    if folding.stdout.trim() != "true" {
+        return Ok(Vec::new());
+    }
+    let listed = async |args: &[&str]| -> Result<Vec<String>, GitError> {
+        let out = cli.exec(space_dir, args).await?;
+        if out.exit_code != 0 {
+            return Err(GitError::GitCommandFailed(
+                "Repository status unavailable".into(),
+            ));
+        }
+        out.stdout
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(|path| normalize_repo_relative(path.trim_end_matches('/'), RootMode::Reject))
+            .collect()
+    };
+    let reported = reported
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<HashSet<_>>();
+    let spelled = listed(&[
+        "-c",
+        "core.ignorecase=false",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        ".",
+    ])
+    .await?
+    .into_iter()
+    .filter(|path| !reported.contains(path.as_str()))
+    .collect::<Vec<_>>();
+    if spelled.is_empty() {
+        return Ok(Vec::new());
+    }
+    let fold = |path: &str| path.nfc().collect::<String>().to_lowercase();
+    let tracked = listed(&["ls-files", "--cached", "-z", "--", "."])
+        .await?
+        .into_iter()
+        .map(|path| (fold(&path), path))
+        .collect::<HashMap<_, _>>();
+    let mut presence = super::staging::Presence::new(space_dir);
+    let mut relocations = Vec::new();
+    let mut deleted = HashSet::new();
+    for path in spelled {
+        let Some(old) = tracked.get(&fold(&path)) else {
+            continue;
+        };
+        if *old == path || presence.exact(old) {
+            continue;
+        }
+        if deleted.insert(old.clone()) && !reported.contains(old.as_str()) {
+            relocations.push(FileGitStatus {
+                path: old.clone(),
+                state: "deleted".into(),
+            });
+        }
+        relocations.push(FileGitStatus {
+            path,
+            state: "untracked".into(),
+        });
+    }
+    Ok(relocations)
 }
 
 pub async fn status_with_remote_counts(
