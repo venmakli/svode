@@ -1,5 +1,15 @@
-import { useMemo, type Dispatch, type SetStateAction } from "react";
-import type { ColumnDef, ColumnSizingState } from "@tanstack/react-table";
+import {
+  useMemo,
+  type ComponentProps,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import type {
+  ColumnDef,
+  ColumnSizingState,
+  HeaderContext,
+  RowData,
+} from "@tanstack/react-table";
 import type { Page } from "@/features/page";
 import type {
   CollectionView,
@@ -29,6 +39,39 @@ import {
   minColumnWidth,
 } from "./utils";
 import * as m from "@/paraglide/messages.js";
+
+interface TableColumnHeaderMeta extends Omit<
+  ComponentProps<typeof ColumnHeader>,
+  "children" | "onResizeMouseDown"
+> {
+  menu: Omit<ComponentProps<typeof ColumnMenuPopover>, "trigger"> | null;
+}
+
+declare module "@tanstack/react-table" {
+  // Type parameters must match the declaration being merged.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface ColumnMeta<TData extends RowData, TValue> {
+    header?: TableColumnHeaderMeta;
+  }
+}
+
+// One component type for every header: an inline `header` function would be a
+// new component on each column recompute and remount the open column menu.
+function TableColumnHeader({
+  header,
+}: HeaderContext<CollectionTableRow, unknown>) {
+  const meta = header.column.columnDef.meta?.header;
+  if (!meta) return null;
+  const { menu, ...headerProps } = meta;
+  return (
+    <ColumnHeader
+      {...headerProps}
+      onResizeMouseDown={header.getResizeHandler()}
+    >
+      {menu ? <ColumnMenuPopover {...menu} trigger={<span />} /> : null}
+    </ColumnHeader>
+  );
+}
 
 export function useTableColumns({
   readOnly,
@@ -106,34 +149,31 @@ export function useTableColumns({
             id: "title",
             size: columnSizing.title ?? 260,
             minSize: 200,
-            header: ({ header }) => (
-              <ColumnHeader
-                readOnly={readOnly}
-                label={label}
-                icon={TITLE_ICON}
-                open={openColumn === "title"}
-                onOpenChange={(open) => setOpenColumn(open ? "title" : null)}
-                onResizeMouseDown={header.getResizeHandler()}
-              >
-                <ColumnMenuPopover
-                  field="title"
-                  label={label}
-                  open={openColumn === "title"}
-                  view={view}
-                  query={query}
-                  schema={schema}
-                  collectionPath={collectionPath}
-                  spacePath={spacePath}
-                  projectPath={projectPath}
-                  onOpenChange={(open) => setOpenColumn(open ? "title" : null)}
-                  onSchemaChange={(next) =>
-                    onSchemaChange(normalizeSchema(next))
-                  }
-                  onUpdateViewPatch={onUpdateViewPatch}
-                  trigger={<span />}
-                />
-              </ColumnHeader>
-            ),
+            header: TableColumnHeader,
+            meta: {
+              header: {
+                readOnly,
+                label,
+                icon: TITLE_ICON,
+                open: openColumn === "title",
+                onOpenChange: (open) => setOpenColumn(open ? "title" : null),
+                menu: {
+                  field: "title",
+                  label,
+                  open: openColumn === "title",
+                  view,
+                  query,
+                  schema,
+                  collectionPath,
+                  spacePath,
+                  projectPath,
+                  onOpenChange: (open) => setOpenColumn(open ? "title" : null),
+                  onSchemaChange: (next) =>
+                    onSchemaChange(normalizeSchema(next)),
+                  onUpdateViewPatch,
+                },
+              },
+            },
             cell: ({ row }) => (
               <TitleCell
                 row={row.original}
@@ -168,46 +208,40 @@ export function useTableColumns({
           size:
             columnSizing[field] ?? defaultColumnWidth(property ?? undefined),
           minSize: minColumnWidth(property ?? undefined),
-          header: ({ header }) => (
-            <ColumnHeader
-              readOnly={readOnly}
-              label={propertyDefinition?.label ?? field}
-              icon={Icon}
-              open={openColumn === field}
-              onOpenChange={(open) => setOpenColumn(open ? field : null)}
-              onResizeMouseDown={header.getResizeHandler()}
-            >
-              {property ? (
-                <ColumnMenuPopover
-                  field={field}
-                  label={field}
-                  column={property}
-                  open={openColumn === field}
-                  view={view}
-                  query={query}
-                  schema={schema}
-                  collectionPath={collectionPath}
-                  spacePath={spacePath}
-                  projectPath={projectPath}
-                  affectedEntries={
-                    entries.filter(
+          header: TableColumnHeader,
+          meta: {
+            header: {
+              readOnly,
+              label: propertyDefinition?.label ?? field,
+              icon: Icon,
+              open: openColumn === field,
+              onOpenChange: (open) => setOpenColumn(open ? field : null),
+              menu: property
+                ? {
+                    field,
+                    label: field,
+                    column: property,
+                    open: openColumn === field,
+                    view,
+                    query,
+                    schema,
+                    collectionPath,
+                    spacePath,
+                    projectPath,
+                    affectedEntries: entries.filter(
                       (entry) => entry.meta.extra?.[field] !== undefined,
-                    ).length
+                    ).length,
+                    actors,
+                    onRequestActors: (allTime = false) =>
+                      onRequestActors(allTime),
+                    onOpenChange: (open) => setOpenColumn(open ? field : null),
+                    onSchemaChange: (next) =>
+                      onSchemaChange(normalizeSchema(next)),
+                    onUpdateViewPatch,
                   }
-                  actors={actors}
-                  onRequestActors={(allTime = false) =>
-                    onRequestActors(allTime)
-                  }
-                  onOpenChange={(open) => setOpenColumn(open ? field : null)}
-                  onSchemaChange={(next) =>
-                    onSchemaChange(normalizeSchema(next))
-                  }
-                  onUpdateViewPatch={onUpdateViewPatch}
-                  trigger={<span />}
-                />
-              ) : null}
-            </ColumnHeader>
-          ),
+                : null,
+            },
+          },
           cell: ({ row }) =>
             property && propertyDefinition ? (
               <PropertyCell
