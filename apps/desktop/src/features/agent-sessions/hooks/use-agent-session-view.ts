@@ -63,7 +63,6 @@ export function useAgentSessionView(
   const pendingHandoffs = useAgentSessionCatalog(
     (state) => state.pendingHandoffs,
   );
-  const terminals = useAgentSessionCatalog((state) => state.terminals);
   const reentryResults = useAgentSessionCatalog(
     (state) => state.reentryResults,
   );
@@ -82,11 +81,7 @@ export function useAgentSessionView(
   const sessionId = resolveAgentSessionId(target, sessions, pendingHandoffs);
   const session = sessions.find((item) => item.id === sessionId) ?? null;
   const reentryResult = reentryResults[sessionId] ?? null;
-  const ptyId =
-    session?.runtime?.ptyId ??
-    terminals[sessionId]?.ptyId ??
-    reentryResult?.ptyId ??
-    null;
+  const ptyId = session?.runtime?.ptyId ?? reentryResult?.ptyId ?? null;
   const reentering = reenteringSessionIds.has(sessionId);
 
   const { sessionId: targetSessionId, launchId: targetLaunchId } = target;

@@ -90,15 +90,139 @@ test("pending new-session terminal hands off to its CLI session", async () => {
   await store.getState().load();
 
   const state = store.getState();
+  expect(api.calls.slice(-3)).toEqual([
+    "list:/project",
+    "register:pty-1:codex:started",
+    "list:/project",
+  ]);
   expect(state.pendingHandoffs).toEqual({
     "new-session:pty-1": "codex:started",
   });
   expect(state.pendingTerminals).toEqual([]);
-  expect(state.terminals["codex:started"]?.ptyId).toBe("pty-1");
   expect(state.sessions.map((session) => session.id)).toEqual([
     "codex:started",
   ]);
-  expect(state.sessions[0]?.runtime?.ptyId).toBe("pty-1");
+  expect(state.sessions[0]?.runtime).toEqual({ ptyId: "pty-1", live: true });
+});
+
+test("a recognized new-session terminal takes its runtime only from the read-model", async () => {
+  const api = fakeCatalogApi();
+  const store = createAgentSessionCatalogStore(api, () =>
+    Date.parse("2026-09-29T10:00:00Z"),
+  );
+  store.getState().setProject("/project");
+  await store.getState().openNewSessionTerminal(rootScope, "New session");
+  await flushPromises();
+  api.listed = [
+    listedSession({
+      id: "codex:started",
+      cwd: "/project",
+      lastActivityAt: "2026-09-29T10:00:03Z",
+    }),
+  ];
+  await store.getState().load();
+  expect(store.getState().sessions[0]?.runtime?.ptyId).toBe("pty-1");
+
+  // A list without the terminal surface leaves the session without runtime.
+  api.surfaces.clear();
+  await store.getState().load();
+  expect(store.getState().sessions[0]?.runtime).toBe(undefined);
+  expect(api.calls.filter((call) => call.startsWith("register:"))).toEqual([
+    "register:pty-1:codex:started",
+  ]);
+});
+
+test("closing a recognized new-session terminal removes the session runtime", async () => {
+  const api = fakeCatalogApi();
+  const store = createAgentSessionCatalogStore(api, () =>
+    Date.parse("2026-09-29T10:00:00Z"),
+  );
+  store.getState().setProject("/project");
+  await store.getState().openNewSessionTerminal(rootScope, "New session");
+  await flushPromises();
+  api.listed = [
+    listedSession({
+      id: "codex:started",
+      cwd: "/project",
+      lastActivityAt: "2026-09-29T10:00:03Z",
+    }),
+  ];
+  await store.getState().load();
+
+  await store.getState().closeTerminal("codex:started", "pty-1");
+
+  const state = store.getState();
+  expect(api.calls.includes("close:pty-1")).toBe(true);
+  expect(state.sessions.map((session) => session.id)).toEqual([
+    "codex:started",
+  ]);
+  expect(state.sessions[0]?.runtime?.ptyId).toBe(undefined);
+  expect(sessionTerminalPtyIds(state).size).toBe(0);
+});
+
+test("a new-session terminal stays pending while its registration fails", async () => {
+  const api = fakeCatalogApi();
+  api.registerTerminal = async ({ ptyId, agentSessionId }) => {
+    api.calls.push(`register:${ptyId}:${agentSessionId}`);
+    throw new Error("writer refused");
+  };
+  const store = createAgentSessionCatalogStore(api, () =>
+    Date.parse("2026-09-29T10:00:00Z"),
+  );
+  store.getState().setProject("/project");
+  await store.getState().openNewSessionTerminal(rootScope, "New session");
+  await flushPromises();
+  api.listed = [
+    listedSession({
+      id: "codex:started",
+      cwd: "/project",
+      lastActivityAt: "2026-09-29T10:00:03Z",
+    }),
+  ];
+  const warn = console.warn;
+  console.warn = () => undefined;
+  try {
+    await store.getState().load();
+  } finally {
+    console.warn = warn;
+  }
+
+  const state = store.getState();
+  expect(api.calls.slice(-2)).toEqual([
+    "list:/project",
+    "register:pty-1:codex:started",
+  ]);
+  expect(state.pendingHandoffs).toEqual({});
+  expect(state.sessions.map((session) => session.id)).toEqual([
+    "codex:started",
+    "new-session:pty-1",
+  ]);
+  expect(state.sessions[0]?.runtime).toBe(undefined);
+  expect(state.sessions[1]?.runtime?.ptyId).toBe("pty-1");
+});
+
+test("a session another terminal runs is not recognized for a new-session terminal", async () => {
+  const api = fakeCatalogApi();
+  const store = createAgentSessionCatalogStore(api, () =>
+    Date.parse("2026-09-29T10:00:00Z"),
+  );
+  store.getState().setProject("/project");
+  await store.getState().openNewSessionTerminal(rootScope, "New session");
+  await flushPromises();
+  api.listed = [
+    listedSession({
+      id: "codex:elsewhere",
+      cwd: "/project",
+      lastActivityAt: "2026-09-29T10:00:03Z",
+      runtime: { ptyId: "pty-other", live: true },
+    }),
+  ];
+  await store.getState().load();
+
+  expect(api.calls.some((call) => call.startsWith("register:"))).toBe(false);
+  expect(store.getState().pendingTerminals.map((item) => item.ptyId)).toEqual([
+    "pty-1",
+  ]);
 });
 
 test("re-entry result and session terminal belong to the catalog, not a screen", async () => {
@@ -116,17 +240,14 @@ test("re-entry result and session terminal belong to the catalog, not a screen",
   expect(state.reentryResults["codex:history"]?.ptyId).toBe(
     "pty-resume-codex:history",
   );
-  expect(state.terminals["codex:history"]?.ptyId).toBe(
-    "pty-resume-codex:history",
-  );
   expect(state.reenteringSessionIds.has("codex:history")).toBe(false);
   expect(state.sessions[0]?.runtime?.ptyId).toBe("pty-resume-codex:history");
   expect(state.sessions[0]?.runtime?.live).toBe(true);
 
   await store.getState().closeAllTerminals();
   expect(api.calls.includes("close:pty-resume-codex:history")).toBe(true);
-  expect(store.getState().terminals).toEqual({});
   expect(store.getState().reentryResults).toEqual({});
+  expect(store.getState().sessions[0]?.runtime?.ptyId).toBe(undefined);
 });
 
 test("repeated open of one session joins its re-entry instead of a second resume", async () => {
@@ -187,6 +308,7 @@ test("an exited session terminal stops being live for every consumer", async () 
   await flushPromises();
 
   api.listed = [{ ...listed, runtime: { live: false } }, history];
+  api.surfaces.clear();
   store.getState().releaseTerminal("pty-listed");
   store.getState().releaseTerminal("pty-resume-codex:history");
   store.getState().releaseTerminal("pty-1");
@@ -198,7 +320,6 @@ test("an exited session terminal stops being live for every consumer", async () 
     "codex:history",
   ]);
   expect(state.sessions.every((session) => !session.runtime?.ptyId)).toBe(true);
-  expect(state.terminals).toEqual({});
   expect(state.reentryResults).toEqual({});
   expect(pendingId).toBe("new-session:pty-1");
   expect(api.calls.some((call) => call.startsWith("close:"))).toBe(false);

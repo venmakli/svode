@@ -79,7 +79,6 @@ export function useAgentSessionsCollection({
   const error = useAgentSessionCatalog((state) => state.error);
   const loading = useAgentSessionCatalog((state) => state.loading);
   const refreshing = useAgentSessionCatalog((state) => state.refreshing);
-  const terminals = useAgentSessionCatalog((state) => state.terminals);
   const reentryResults = useAgentSessionCatalog(
     (state) => state.reentryResults,
   );
@@ -122,11 +121,8 @@ export function useAgentSessionsCollection({
 
   const terminalOf = useCallback(
     (session: AgentSession) =>
-      session.runtime?.ptyId ??
-      terminals[session.id]?.ptyId ??
-      reentryResults[session.id]?.ptyId ??
-      null,
-    [reentryResults, terminals],
+      session.runtime?.ptyId ?? reentryResults[session.id]?.ptyId ?? null,
+    [reentryResults],
   );
 
   const closeTerminal = useCallback(

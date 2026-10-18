@@ -5,17 +5,27 @@ import type {
   AgentSessionsListResult,
 } from "../api";
 import {
-  applyLocalTerminalRuntime,
   buildPendingAgentSession,
   findMatchingSessionForPendingTerminal,
+  findSessionBoundToPendingTerminal,
   isPendingSessionId,
   pendingSessionId,
-  type LocalSessionTerminal,
   type PendingAgentSessionTerminal,
 } from "./pending";
 import { isAgentTurnActive } from "./status";
 import { resolveAgentSessionId, type AgentSessionTarget } from "./target";
 import type { AgentSession, AgentSessionScopeGroup } from "./types";
+
+/** A managed terminal linked to the session its agent CLI runs. */
+export interface AgentSessionTerminalRegistration {
+  ptyId: string;
+  agentSessionId: string;
+  title: string;
+  source: string;
+  sourceSessionId: string;
+  shellCwd: string;
+  createdAt: string;
+}
 
 /** Backend and terminal effects the project session catalog depends on. */
 export interface AgentSessionCatalogApi {
@@ -36,6 +46,13 @@ export interface AgentSessionCatalogApi {
     projectPath: string,
   ) => Promise<{ ptyId: string; cwd: string }>;
   closeTerminal: (ptyId: string) => Promise<void>;
+  /**
+   * Makes the terminal the backend surface and writer of the session, so
+   * the read-model reports it as the session runtime.
+   */
+  registerTerminal: (
+    registration: AgentSessionTerminalRegistration,
+  ) => Promise<void>;
   errorMessage: (error: unknown) => string;
 }
 
@@ -46,16 +63,16 @@ export interface AgentSessionCatalogLoadOptions {
 export interface AgentSessionCatalogState {
   projectPath: string | null;
   result: AgentSessionsListResult | null;
-  /** Listed sessions with local terminal runtime, followed by pending sessions. */
+  /** Listed sessions, followed by pending sessions. */
   sessions: AgentSession[];
   loading: boolean;
   refreshing: boolean;
   error: string | null;
   /** Completion time of the last successful full list, in epoch ms. */
   listedAt: number | null;
-  terminals: Record<string, LocalSessionTerminal>;
+  /** New-session terminals the read-model does not list as a session runtime yet. */
   pendingTerminals: PendingAgentSessionTerminal[];
-  /** Pending session id → canonical session id after its terminal was matched. */
+  /** Pending session id → canonical session id its terminal became the runtime of. */
   pendingHandoffs: Record<string, string>;
   reentryResults: Record<string, AgentSessionReentryResult>;
   reenteringSessionIds: ReadonlySet<string>;
@@ -116,7 +133,6 @@ function emptyCatalogData(projectPath: string | null): CatalogData {
     refreshing: false,
     error: null,
     listedAt: null,
-    terminals: {},
     pendingTerminals: [],
     pendingHandoffs: {},
     reentryResults: {},
@@ -128,31 +144,25 @@ function emptyCatalogData(projectPath: string | null): CatalogData {
 
 function deriveSessions(
   result: AgentSessionsListResult | null,
-  terminals: Record<string, LocalSessionTerminal>,
   pendingTerminals: PendingAgentSessionTerminal[],
 ): AgentSession[] {
-  const listed = (result?.sessions ?? []).map((session) =>
-    applyLocalTerminalRuntime(session, terminals[session.id]),
-  );
-  return [...listed, ...pendingTerminals.map(buildPendingAgentSession)];
+  return [
+    ...(result?.sessions ?? []),
+    ...pendingTerminals.map(buildPendingAgentSession),
+  ];
 }
 
 function withSessions(
   state: AgentSessionCatalogState,
   patch: Partial<CatalogData>,
 ): Partial<CatalogData> {
-  if (
-    !("result" in patch) &&
-    !("terminals" in patch) &&
-    !("pendingTerminals" in patch)
-  ) {
+  if (!("result" in patch) && !("pendingTerminals" in patch)) {
     return patch;
   }
   return {
     ...patch,
     sessions: deriveSessions(
       patch.result !== undefined ? patch.result : state.result,
-      patch.terminals ?? state.terminals,
       patch.pendingTerminals ?? state.pendingTerminals,
     ),
   };
@@ -218,17 +228,11 @@ function mergeHotStatusSessions(
  * recognizes as an agent session. Shell tabs are not among them.
  */
 export function sessionTerminalPtyIds(
-  state: Pick<
-    AgentSessionCatalogState,
-    "sessions" | "terminals" | "reentryResults"
-  >,
+  state: Pick<AgentSessionCatalogState, "sessions" | "reentryResults">,
 ): Set<string> {
   const ptyIds = new Set<string>();
   state.sessions.forEach((session) => {
     if (session.runtime?.ptyId) ptyIds.add(session.runtime.ptyId);
-  });
-  Object.values(state.terminals).forEach((terminal) => {
-    ptyIds.add(terminal.ptyId);
   });
   Object.values(state.reentryResults).forEach((result) => {
     if (result.ptyId) ptyIds.add(result.ptyId);
@@ -241,12 +245,13 @@ export function sessionTerminalPtyIds(
  * terminals, so closing them all interrupts it.
  */
 export function sessionTerminalAgentsBusy(
-  state: Pick<AgentSessionCatalogState, "sessions" | "terminals">,
+  state: Pick<AgentSessionCatalogState, "sessions" | "reentryResults">,
 ): boolean {
   return state.sessions.some(
     (session) =>
-      Boolean(session.runtime?.ptyId ?? state.terminals[session.id]) &&
-      isAgentTurnActive(session),
+      Boolean(
+        session.runtime?.ptyId ?? state.reentryResults[session.id]?.ptyId,
+      ) && isAgentTurnActive(session),
   );
 }
 
@@ -285,44 +290,66 @@ export function createAgentSessionCatalogStore(
     const isCurrentProject = (token: number, projectPath: string) =>
       generation === token && get().projectPath === projectPath;
 
-    const reconcilePendingTerminals = (sessions: AgentSession[]) => {
-      const { pendingTerminals, terminals, reentryResults, pendingHandoffs } =
-        get();
-      if (pendingTerminals.length === 0) return {};
-
+    /**
+     * Registers each pending terminal recognized as a listed session as that
+     * session's backend surface; true when one was registered, so the next
+     * list reports it as the session runtime.
+     */
+    const registerRecognizedTerminals = async (sessions: AgentSession[]) => {
       const usedSessionIds = new Set<string>();
-      const remaining: PendingAgentSessionTerminal[] = [];
-      const nextTerminals = { ...terminals };
-      let nextReentryResults = reentryResults;
-      const nextHandoffs = { ...pendingHandoffs };
-      let matched = false;
-
-      pendingTerminals.forEach((pending) => {
+      let registered = false;
+      for (const pending of get().pendingTerminals) {
+        if (findSessionBoundToPendingTerminal(pending, sessions)) continue;
         const match = findMatchingSessionForPendingTerminal(
           pending,
           sessions,
           usedSessionIds,
         );
-        if (!match) {
+        if (!match) continue;
+        usedSessionIds.add(match.id);
+        try {
+          await api.registerTerminal({
+            ptyId: pending.ptyId,
+            agentSessionId: match.id,
+            title: match.title,
+            source: match.source,
+            sourceSessionId: match.sourceSessionId,
+            shellCwd: pending.cwd,
+            createdAt: pending.createdAt,
+          });
+          registered = true;
+        } catch (error) {
+          // The terminal stays pending and is recognized again on the next list.
+          console.warn("Failed to link a new session terminal:", error);
+        }
+      }
+      return registered;
+    };
+
+    /** Hands each pending terminal off to the session listed with it as runtime. */
+    const handOffPendingTerminals = (sessions: AgentSession[]) => {
+      const { pendingTerminals, reentryResults, pendingHandoffs } = get();
+      if (pendingTerminals.length === 0) return {};
+
+      const remaining: PendingAgentSessionTerminal[] = [];
+      let nextReentryResults = reentryResults;
+      const nextHandoffs = { ...pendingHandoffs };
+      let handedOff = false;
+
+      pendingTerminals.forEach((pending) => {
+        const session = findSessionBoundToPendingTerminal(pending, sessions);
+        if (!session) {
           remaining.push(pending);
           return;
         }
-        matched = true;
-        usedSessionIds.add(match.id);
-        delete nextTerminals[pending.id];
-        nextTerminals[match.id] = {
-          ptyId: pending.ptyId,
-          cwd: pending.cwd,
-          createdAt: pending.createdAt,
-        };
+        handedOff = true;
         nextReentryResults = withoutKey(nextReentryResults, pending.id);
-        nextHandoffs[pending.id] = match.id;
+        nextHandoffs[pending.id] = session.id;
       });
 
-      if (!matched) return {};
+      if (!handedOff) return {};
       return {
         pendingTerminals: remaining,
-        terminals: nextTerminals,
         reentryResults: nextReentryResults,
         pendingHandoffs: nextHandoffs,
       };
@@ -346,12 +373,17 @@ export function createAgentSessionCatalogStore(
 
       const promise = (async () => {
         try {
-          const next = force
+          let next = force
             ? await api.refresh(projectPath)
             : await api.list(projectPath);
           if (!isCurrentProject(token, projectPath)) return;
+          if (await registerRecognizedTerminals(next.sessions)) {
+            if (!isCurrentProject(token, projectPath)) return;
+            next = await api.list(projectPath);
+            if (!isCurrentProject(token, projectPath)) return;
+          }
           update({
-            ...reconcilePendingTerminals(next.sessions),
+            ...handOffPendingTerminals(next.sessions),
             result: next,
             listedAt: now(),
           });
@@ -375,18 +407,13 @@ export function createAgentSessionCatalogStore(
       return promise;
     };
 
-    /** Drops local runtime of terminals that no longer run. */
+    /** Drops runtime of terminals that no longer run. */
     const forgetTerminals = (ptyIds: ReadonlySet<string>) => {
       const current = get();
       update({
         result: withoutTerminalRuntime(current.result, ptyIds),
         pendingTerminals: current.pendingTerminals.filter(
           (pending) => !ptyIds.has(pending.ptyId),
-        ),
-        terminals: Object.fromEntries(
-          Object.entries(current.terminals).filter(
-            ([, terminal]) => !ptyIds.has(terminal.ptyId),
-          ),
         ),
         reentryResults: Object.fromEntries(
           Object.entries(current.reentryResults).filter(
@@ -497,20 +524,7 @@ export function createAgentSessionCatalogStore(
           try {
             const reentry = await api.reenter(projectPath, session.id);
             if (!isCurrentProject(token, projectPath)) return;
-            const ptyId = reentry.ptyId;
             update({
-              ...(ptyId
-                ? {
-                    terminals: {
-                      ...get().terminals,
-                      [session.id]: {
-                        ptyId,
-                        cwd: reentry.cwd ?? reentry.command?.cwd ?? session.cwd,
-                        createdAt: new Date(now()).toISOString(),
-                      },
-                    },
-                  }
-                : {}),
               reentryResults: {
                 ...get().reentryResults,
                 [session.id]: reentry,
@@ -576,17 +590,7 @@ export function createAgentSessionCatalogStore(
           cwd: terminal.cwd || scope.path,
           createdAt: openedAt,
         };
-        update({
-          pendingTerminals: [...get().pendingTerminals, pending],
-          terminals: {
-            ...get().terminals,
-            [pending.id]: {
-              ptyId: pending.ptyId,
-              cwd: pending.cwd,
-              createdAt: pending.createdAt,
-            },
-          },
-        });
+        update({ pendingTerminals: [...get().pendingTerminals, pending] });
         void load({ force: true });
         return pending.id;
       },
@@ -594,12 +598,10 @@ export function createAgentSessionCatalogStore(
       closeTerminal: async (sessionId, ptyId) => {
         await api.closeTerminal(ptyId);
         forgetTerminals(new Set([ptyId]));
-        const { pendingTerminals, terminals } = get();
         update({
-          pendingTerminals: pendingTerminals.filter(
+          pendingTerminals: get().pendingTerminals.filter(
             (pending) => pending.id !== sessionId,
           ),
-          terminals: withoutKey(terminals, sessionId),
         });
         await load();
       },
@@ -636,12 +638,9 @@ export function createAgentSessionCatalogStore(
       },
 
       releaseTerminal: (ptyId) => {
-        const { sessions, terminals, reentryResults } = get();
+        const { sessions, reentryResults } = get();
         const known =
           sessions.some((session) => session.runtime?.ptyId === ptyId) ||
-          Object.values(terminals).some(
-            (terminal) => terminal.ptyId === ptyId,
-          ) ||
           Object.values(reentryResults).some(
             (result) => result.ptyId === ptyId,
           );

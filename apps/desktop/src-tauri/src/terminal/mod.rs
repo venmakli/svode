@@ -848,6 +848,39 @@ impl TerminalManager {
             .expect("agent surfaces lock")
             .insert(surface.pty_id.clone(), surface);
     }
+
+    /// A live shell in a PTY as `terminal_spawn` starts it, without the
+    /// app-bound environment and output reader.
+    #[cfg(test)]
+    fn insert_shell_for_test(&self, pty_id: &str, cwd: &Path) {
+        let shell = default_shell();
+        let size = pty_size(80, 24);
+        let pair = native_pty_system().openpty(size).expect("open PTY");
+        let mut cmd = CommandBuilder::new(shell.program.clone());
+        for arg in &shell.args {
+            cmd.arg(arg);
+        }
+        cmd.cwd(cwd);
+        let child = pair.slave.spawn_command(cmd).expect("spawn shell");
+        let writer = pair.master.take_writer().expect("PTY writer");
+        let process = TerminalProcess {
+            session: TerminalSession {
+                pty_id: pty_id.to_string(),
+                cwd: system_path::user_facing_path(cwd),
+                shell: shell.display(),
+                cols: size.cols,
+                rows: size.rows,
+            },
+            shell_kind: shell.kind,
+            child,
+            master: pair.master,
+            writer,
+        };
+        self.sessions
+            .lock()
+            .expect("terminal sessions lock")
+            .insert(pty_id.to_string(), process);
+    }
 }
 
 fn spawn_reader_loop(
@@ -1930,6 +1963,55 @@ mod tests {
         manager
             .hold_existing_session_writer("pty-b", &AgentAdapterKind::Codex.id(), "s1")
             .expect("the slot is free again");
+    }
+
+    #[test]
+    fn a_new_session_terminal_registered_to_its_session_writes_it_and_keeps_its_outcome() {
+        let cwd = tempfile::tempdir().expect("terminal cwd");
+        let writers = WriterRegistry::default();
+        let manager = TerminalManager::new(writers.clone());
+        manager.insert_shell_for_test("pty-new", cwd.path());
+
+        manager
+            .register_existing_agent_session(
+                "pty-new".to_string(),
+                "codex:s1".to_string(),
+                Some("Started in the terminal".to_string()),
+                AgentAdapterKind::Codex.id(),
+                "s1".to_string(),
+                None,
+                Some("2026-10-18T10:00:00Z".to_string()),
+            )
+            .expect("the terminal becomes the surface of its session");
+
+        let surface = manager.list_agent_surfaces().unwrap().pop().unwrap();
+        assert_eq!(surface.pty_id, "pty-new");
+        assert_eq!(surface.agent_session_id, "codex:s1");
+        assert!(surface.live);
+        assert_eq!(writers.writer(&codex_key("s1")), Some(Writer::Pty));
+        // Continuing the session in the chat is refused while the PTY lives.
+        assert_eq!(
+            writers
+                .claim(
+                    &codex_key("s1"),
+                    Writer::Acp,
+                    ExternalLiveness::Free,
+                    UnknownLiveness::NotConfirmed
+                )
+                .err(),
+            Some(svode_agents::writer::WriterRefusal::WriterActive {
+                writer: Writer::Pty
+            })
+        );
+
+        manager.kill("pty-new").unwrap();
+
+        let retained = manager.list_agent_surfaces().unwrap().pop().unwrap();
+        assert!(!retained.live);
+        let evidence = retained.status_evidence.expect("terminal outcome");
+        assert_eq!(evidence.state, INTERRUPTED);
+        assert_eq!(evidence.confidence, StatusConfidence::Exact);
+        assert_eq!(writers.writer(&codex_key("s1")), None);
     }
 
     #[test]

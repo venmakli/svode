@@ -5,3 +5,4 @@ export {
   subscribeManagedTerminalExit,
 } from "./ui/managed-terminal-surface";
 export { usePanelTerminal } from "./hooks/use-panel-terminal";
+export { registerAgentTerminalSession } from "./api/terminal";

@@ -11,12 +11,6 @@ export interface PendingAgentSessionTerminal {
   createdAt: string;
 }
 
-export interface LocalSessionTerminal {
-  ptyId: string;
-  cwd?: string;
-  createdAt?: string;
-}
-
 export function pendingSessionId(ptyId: string): string {
   return `${NEW_SESSION_ID_PREFIX}${ptyId}`;
 }
@@ -60,24 +54,20 @@ export function buildPendingAgentSession(
   return session;
 }
 
-export function applyLocalTerminalRuntime(
-  session: AgentSession,
-  terminal: LocalSessionTerminal | undefined,
-): AgentSession {
-  if (!terminal) return session;
-
-  return {
-    ...session,
-    runtime: {
-      ...session.runtime,
-      ptyId: terminal.ptyId,
-      live: true,
-      lastInputAt:
-        session.runtime?.lastInputAt ??
-        terminal.createdAt ??
-        session.lastActivityAt,
-    },
-  };
+/**
+ * The session the read-model lists with this pending terminal as its live
+ * runtime: the backend surface of the terminal now belongs to it.
+ */
+export function findSessionBoundToPendingTerminal(
+  pending: PendingAgentSessionTerminal,
+  sessions: AgentSession[],
+): AgentSession | null {
+  return (
+    sessions.find(
+      (session) =>
+        session.runtime?.live && session.runtime.ptyId === pending.ptyId,
+    ) ?? null
+  );
 }
 
 export function findMatchingSessionForPendingTerminal(
@@ -90,6 +80,9 @@ export function findMatchingSessionForPendingTerminal(
     .filter((session) => {
       if (usedSessionIds.has(session.id)) return false;
       if (session.source === "unknown") return false;
+      if (session.runtime?.ptyId && session.runtime.ptyId !== pending.ptyId) {
+        return false;
+      }
       if (!sessionMatchesPendingScope(session, pending)) return false;
       if (!sessionActivityAfterPendingOpen(session, createdAtMs)) return false;
       return true;

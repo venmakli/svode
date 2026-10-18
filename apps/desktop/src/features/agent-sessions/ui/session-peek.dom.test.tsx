@@ -69,6 +69,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         if (exitListener === listener) exitListener = null;
       };
     },
+    registerAgentTerminalSession: async () => undefined,
   }));
   const realExternalOpen = await import("@/features/external-open");
   mock.module("@/features/external-open", () => ({

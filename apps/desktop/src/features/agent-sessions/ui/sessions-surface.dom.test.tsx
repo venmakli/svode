@@ -41,6 +41,7 @@ if (process.env.SVODE_AGENT_SESSIONS_SURFACE_DOM !== "1") {
       return { ptyId: "pty-new", cwd };
     },
     subscribeManagedTerminalExit: () => () => undefined,
+    registerAgentTerminalSession: async () => undefined,
   }));
   const realExternalOpen = await import("@/features/external-open");
   mock.module("@/features/external-open", () => ({

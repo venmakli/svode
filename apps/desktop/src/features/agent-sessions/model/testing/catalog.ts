@@ -54,7 +54,26 @@ export function listResult(
 export interface FakeCatalogApi extends AgentSessionCatalogApi {
   calls: string[];
   listed: ListedAgentSession[];
+  /** Live registered terminal surfaces, pty id → session id. */
+  surfaces: Map<string, string>;
   reentry: (sessionId: string) => AgentSessionReentryResult;
+}
+
+/**
+ * Listed sessions with the runtime of their live registered terminal, as
+ * the read-model lays the terminal surfaces over them.
+ */
+function withSurfaces(
+  sessions: ListedAgentSession[],
+  surfaces: ReadonlyMap<string, string>,
+): ListedAgentSession[] {
+  const ptyIdBySession = new Map(
+    Array.from(surfaces, ([ptyId, sessionId]) => [sessionId, ptyId]),
+  );
+  return sessions.map((session) => {
+    const ptyId = ptyIdBySession.get(session.id);
+    return ptyId ? { ...session, runtime: { ptyId, live: true } } : session;
+  });
 }
 
 export function fakeCatalogApi(): FakeCatalogApi {
@@ -62,27 +81,27 @@ export function fakeCatalogApi(): FakeCatalogApi {
   const api: FakeCatalogApi = {
     calls: [],
     listed: [],
-    reentry: (sessionId) => ({
-      mode: "spawned-resume-pty",
-      sessionId,
-      ptyId: `pty-resume-${sessionId}`,
-      cwd: "/project",
-    }),
+    surfaces: new Map(),
+    reentry: (sessionId) => {
+      const ptyId = `pty-resume-${sessionId}`;
+      api.surfaces.set(ptyId, sessionId);
+      return { mode: "spawned-resume-pty", sessionId, ptyId, cwd: "/project" };
+    },
     list: async (projectPath) => {
       api.calls.push(`list:${projectPath}`);
-      return listResult(api.listed);
+      return listResult(withSurfaces(api.listed, api.surfaces));
     },
     refresh: async (projectPath) => {
       api.calls.push(`refresh:${projectPath}`);
-      return listResult(api.listed);
+      return listResult(withSurfaces(api.listed, api.surfaces));
     },
     raiseCatalog: async () => {
       api.calls.push("raise");
     },
     hotStatus: async (projectPath, sessionIds) => {
       api.calls.push(`hot:${sessionIds.join(",")}`);
-      const sessions = api.listed.filter((session) =>
-        sessionIds.includes(session.id),
+      const sessions = withSurfaces(api.listed, api.surfaces).filter(
+        (session) => sessionIds.includes(session.id),
       );
       return {
         generatedAt: "2026-09-29T10:00:00Z",
@@ -105,6 +124,11 @@ export function fakeCatalogApi(): FakeCatalogApi {
     },
     closeTerminal: async (ptyId) => {
       api.calls.push(`close:${ptyId}`);
+      api.surfaces.delete(ptyId);
+    },
+    registerTerminal: async ({ ptyId, agentSessionId }) => {
+      api.calls.push(`register:${ptyId}:${agentSessionId}`);
+      api.surfaces.set(ptyId, agentSessionId);
     },
     errorMessage: (error) => String(error),
   };

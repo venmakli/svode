@@ -3,6 +3,7 @@ import { useStore } from "zustand";
 import { getNavigationState } from "@/features/navigation";
 import {
   closeManagedTerminalSurface,
+  registerAgentTerminalSession,
   spawnManagedTerminalSurface,
   subscribeManagedTerminalExit,
 } from "@/features/terminal/session-surface";
@@ -34,6 +35,7 @@ const agentSessionCatalog = createAgentSessionCatalogStore({
   reenter: reenterAgentSession,
   spawnTerminal: spawnManagedTerminalSurface,
   closeTerminal: closeManagedTerminalSurface,
+  registerTerminal: registerAgentTerminalSession,
   errorMessage: getNativeErrorMessage,
 });
 

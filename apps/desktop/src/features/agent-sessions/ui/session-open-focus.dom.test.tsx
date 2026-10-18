@@ -63,6 +63,7 @@ if (process.env.SVODE_SESSION_OPEN_FOCUS_DOM !== "1") {
     spawnManagedTerminalSurface: async () => ({ ptyId: "pty-new", cwd: "/project" }),
     usePanelTerminal: () => ({ inPanel: false, show: () => undefined }),
     subscribeManagedTerminalExit: () => () => undefined,
+    registerAgentTerminalSession: async () => undefined,
   }));
   const realExternalOpen = await import("@/features/external-open");
   mock.module("@/features/external-open", () => ({
