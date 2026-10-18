@@ -2,6 +2,7 @@ use chrono::{SecondsFormat, Utc};
 
 use super::native_catalog::NativeListing;
 use super::native_status::{NativeSessionRead, NativeStatusEvidence, short_id};
+use super::terminal_outcomes::SavedTerminalOutcome;
 use super::types::{
     AgentSession, AgentSessionCapabilities, AgentSessionResumeCommand, AgentSessionRuntime,
     AgentSessionScope, AgentSessionTitleSource, catalog_session_id, terminal_resume_argv,
@@ -193,7 +194,8 @@ fn terminal_observation(evidence: AgentTerminalStatusEvidence) -> Observation {
 
 /// The catalogue record of a listed session, with its terminal surfaces laid
 /// over it: runtime of the most recent surface and one status resolved from
-/// the native evidence and the evidence of every matching surface. A native
+/// the native evidence, the evidence of every matching surface and the
+/// matching outcomes saved before the app started (DF-164 R3). A native
 /// catalogue source tells where the agent continues the session and whether
 /// its origin opens in the chat (Stage 10 `07` N6).
 pub(super) fn map_listed(
@@ -204,6 +206,7 @@ pub(super) fn map_listed(
     scope: AgentSessionScope,
     last_activity_at: chrono::DateTime<Utc>,
     terminal_surfaces: &[AgentTerminalSurface],
+    saved_outcomes: &[SavedTerminalOutcome],
 ) -> AgentSession {
     let id = catalog_session_id(&source, &listed.key);
     // Only a native id is the target of the agent's CLI resume and of a
@@ -316,6 +319,7 @@ pub(super) fn map_listed(
         native_external_writer,
     };
     if native {
+        observations.extend(saved_outcome_observations(&session, saved_outcomes));
         observations.extend(apply_terminal_runtime(&mut session, terminal_surfaces));
     }
     let (status, reason, waiting_since) = resolve_status(observations);
@@ -335,12 +339,14 @@ fn apply_terminal_runtime(
     let matching = terminal_surfaces
         .iter()
         .filter(|surface| {
-            surface.agent_session_id == session.id
-                || (surface.source == session.source
-                    && surface.source_session_id == session.source_session_id)
-                || (!surface.rebound
-                    && session.launch_id.is_some()
-                    && session.launch_id == surface.launch_id)
+            terminal_of_session(
+                session,
+                &surface.agent_session_id,
+                &surface.source,
+                &surface.source_session_id,
+                // A re-bound terminal no longer runs its launch's session.
+                surface.launch_id.as_ref().filter(|_| !surface.rebound),
+            )
         })
         .collect::<Vec<_>>();
     // A live terminal is the runtime of its session before the closed ones
@@ -378,6 +384,49 @@ fn apply_terminal_runtime(
         .iter()
         .filter_map(|surface| surface_status_evidence(surface))
         .map(terminal_observation)
+        .collect()
+}
+
+/// A terminal of the session: under its catalogue id, its agent and native
+/// id, or the launch that became it.
+fn terminal_of_session(
+    session: &AgentSession,
+    agent_session_id: &str,
+    source: &AgentId,
+    source_session_id: &str,
+    launch_id: Option<&String>,
+) -> bool {
+    agent_session_id == session.id
+        || (*source == session.source && source_session_id == session.source_session_id)
+        || (session.launch_id.is_some() && session.launch_id.as_ref() == launch_id)
+}
+
+/// The saved outcomes of the session as the exact evidence of a managed PTY,
+/// matched as its surfaces are; one of a surface this process still holds
+/// is the same observation as the surface's own.
+fn saved_outcome_observations(
+    session: &AgentSession,
+    saved_outcomes: &[SavedTerminalOutcome],
+) -> Vec<Observation> {
+    saved_outcomes
+        .iter()
+        .filter(|outcome| {
+            terminal_of_session(
+                session,
+                &outcome.agent_session_id,
+                &outcome.source,
+                &outcome.source_session_id,
+                outcome.launch_id.as_ref(),
+            )
+        })
+        .map(|outcome| {
+            terminal_observation(AgentTerminalStatusEvidence {
+                state: outcome.state,
+                confidence: StatusConfidence::Exact,
+                reason: outcome.reason.clone(),
+                observed_at: outcome.observed_at.clone(),
+            })
+        })
         .collect()
 }
 

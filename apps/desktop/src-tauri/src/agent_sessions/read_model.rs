@@ -88,6 +88,7 @@ fn list(
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
     let catalogs = catalogs(state, &project);
+    let saved_outcomes = state.terminal_outcomes.of_project(&project);
     let snapshot_shown = catalogs.iter().any(|catalog| catalog.snapshot);
     let mut sessions = Vec::new();
     let mut reports = Vec::new();
@@ -137,6 +138,7 @@ fn list(
                 session.scope,
                 session.last_activity_at,
                 &terminal_surfaces,
+                &saved_outcomes,
             ));
             report.counts.returned_sessions += 1;
         }
@@ -193,6 +195,7 @@ pub(crate) fn hot_status(
     let mut sessions = Vec::new();
     let mut checked_sessions = 0usize;
     let mut updated_sessions = 0usize;
+    let saved_outcomes = state.terminal_outcomes.of_project(&project);
 
     for catalog in catalogs(state, &project) {
         let source = catalog.key.agent.clone();
@@ -216,6 +219,7 @@ pub(crate) fn hot_status(
                 session.scope,
                 session.last_activity_at,
                 &terminal_surfaces,
+                &saved_outcomes,
             ));
         }
     }
@@ -2301,6 +2305,302 @@ mod tests {
         assert!(runtime.live);
         assert_eq!(runtime.pty_id.as_deref(), Some("pty-live"));
         assert_eq!(session.status.state, idle(Some(StopReason::Interrupted)));
+    }
+
+    /// A Codex session of the project with a turn its log tells open.
+    fn listed_open_codex_turn(state: &AgentSessionsState, home: &Path, project: &Path, id: &str) {
+        listed_codex(
+            state,
+            home,
+            project,
+            id,
+            vec![task_started(&timestamp_offset(chrono::Duration::minutes(
+                -2,
+            )))],
+        );
+    }
+
+    /// The managed terminal of a session opened from `project`.
+    fn project_terminal(
+        terminals: &crate::terminal::TerminalManager,
+        project: &Path,
+        pty_id: &str,
+        source: AgentId,
+        source_session_id: &str,
+    ) {
+        let mut terminal = surface(pty_id, source, source_session_id, None);
+        terminal.mcp_project_path = Some(project.to_string_lossy().into_owned());
+        terminals.insert_agent_surface_for_test(terminal);
+    }
+
+    /// DF-164 acceptance 2: after a restart, without terminal surfaces, the
+    /// saved outcomes give the sessions the status and source they had, in
+    /// the saved list, the list and its refresh, hot status and the chat
+    /// target, and the open turn of a log no longer tells of another writer.
+    #[test]
+    fn saved_terminal_outcomes_give_the_same_status_after_a_restart() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let prompt_at = timestamp_offset(chrono::Duration::minutes(-2));
+        write(
+            &claude_transcript(&home, "c-closed"),
+            &rows(&[claude_prompt(&prompt_at)]),
+        );
+        acp_list(
+            &state,
+            "claude-code",
+            true,
+            vec![("c-closed", &project, LISTED_AT)],
+        );
+        let interrupted = codex_id(44);
+        let failed = codex_id(45);
+        write_rollout(&home, &interrupted, vec![task_started(&prompt_at)]);
+        write_rollout(&home, &failed, vec![task_started(&prompt_at)]);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![
+                (&interrupted, &project, LISTED_AT),
+                (&failed, &project, LISTED_AT),
+            ],
+        );
+        let terminals =
+            crate::terminal::TerminalManager::new(svode_agents::writer::WriterRegistry::default());
+        project_terminal(
+            &terminals,
+            &project,
+            "pty-claude",
+            AgentAdapterKind::ClaudeCode.id(),
+            "c-closed",
+        );
+        project_terminal(
+            &terminals,
+            &project,
+            "pty-codex",
+            AgentAdapterKind::Codex.id(),
+            &interrupted,
+        );
+        terminals.kill("pty-claude").unwrap();
+        terminals.kill("pty-codex").unwrap();
+        // A Routine launch whose agent was killed with SIGKILL.
+        let failed_at = recent_source_log_timestamp();
+        let reason = "initial agent command exited with code 137";
+        crate::agent_sessions::terminal_outcomes::save_terminal_outcome(
+            &project,
+            &crate::agent_sessions::terminal_outcomes::SavedTerminalOutcome {
+                agent_session_id: format!("codex:{failed}"),
+                source: AgentAdapterKind::Codex.id(),
+                source_session_id: failed.clone(),
+                launch_id: Some("launch-failed".to_string()),
+                state: idle(Some(StopReason::Error)),
+                exit_code: Some(137),
+                reason: reason.to_string(),
+                observed_at: failed_at.clone(),
+            },
+        );
+        let mut routine = surface(
+            "pty-routine",
+            AgentAdapterKind::Codex.id(),
+            &failed,
+            Some(AgentTerminalStatusEvidence {
+                state: idle(Some(StopReason::Error)),
+                confidence: StatusConfidence::Exact,
+                reason: reason.to_string(),
+                observed_at: failed_at.clone(),
+            }),
+        );
+        routine.live = false;
+        routine.finished_at = Some(failed_at);
+        routine.exit_code = Some(137);
+        routine.routine_run_id = Some("run-failed".to_string());
+        routine.launch_id = Some("launch-failed".to_string());
+        let mut surfaces = terminals.list_agent_surfaces().unwrap();
+        surfaces.push(routine);
+
+        let before = list_with(&state, &project, surfaces);
+        let restarted = AgentSessionsState::with_home(home);
+        let saved = list_saved(&restarted, &project);
+        let listed = list(&restarted, &project);
+        let refreshed = list(&restarted, &project);
+
+        let expected = [
+            ("claude-code:c-closed".to_string(), StopReason::Interrupted),
+            (format!("codex:{interrupted}"), StopReason::Interrupted),
+            (format!("codex:{failed}"), StopReason::Error),
+        ];
+        for (id, stop_reason) in expected {
+            let was = by_id(&before, &id);
+            assert_eq!(
+                was.status,
+                SessionStatus {
+                    state: idle(Some(stop_reason)),
+                    source: StatusSource::ManagedPty,
+                    confidence: StatusConfidence::Exact,
+                },
+                "{id}"
+            );
+            for result in [&saved, &listed, &refreshed] {
+                let now = by_id(result, &id);
+                assert_eq!(now.status, was.status, "{id}");
+                assert_eq!(now.status_reason, was.status_reason, "{id}");
+            }
+            assert_eq!(
+                hot(&restarted, &project, &id).sessions[0].status,
+                was.status
+            );
+            let target = crate::agent_sessions::chat::chat_target(
+                &restarted,
+                project.to_string_lossy().into_owned(),
+                &id,
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("chat target")
+            .expect("listed session");
+            assert_eq!(target.liveness, ExternalLiveness::Unknown, "{id}");
+            assert!(!target.turn_open, "{id}");
+        }
+    }
+
+    /// DF-164 R1 over saved outcomes: a saved interruption after a turn the
+    /// log or an earlier saved outcome tells ended gives that turn's outcome.
+    #[test]
+    fn a_saved_interruption_after_an_ended_turn_gives_the_outcome_of_that_turn() {
+        let (_temp, home, project) = project_dirs();
+        let ended = codex_id(48);
+        let exited = codex_id(49);
+        let state = AgentSessionsState::with_home(home.clone());
+        let turn_at = timestamp_offset(chrono::Duration::minutes(-3));
+        let done_at = timestamp_offset(chrono::Duration::minutes(-2));
+        write_rollout(
+            &home,
+            &ended,
+            vec![task_started(&turn_at), task_complete(&done_at)],
+        );
+        write_rollout(&home, &exited, vec![task_started(&turn_at)]);
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![
+                (&ended, &project, LISTED_AT),
+                (&exited, &project, LISTED_AT),
+            ],
+        );
+        // An outcome of the app's earlier run: the agent command ended.
+        crate::agent_sessions::terminal_outcomes::save_terminal_outcome(
+            &project,
+            &crate::agent_sessions::terminal_outcomes::SavedTerminalOutcome {
+                agent_session_id: format!("codex:{exited}"),
+                source: AgentAdapterKind::Codex.id(),
+                source_session_id: exited.clone(),
+                launch_id: None,
+                state: idle(None),
+                exit_code: Some(0),
+                reason: "initial agent command exited successfully".to_string(),
+                observed_at: done_at.clone(),
+            },
+        );
+        assert_eq!(
+            by_id(&list(&state, &project), &format!("codex:{exited}")).status,
+            SessionStatus {
+                state: idle(None),
+                source: StatusSource::ManagedPty,
+                confidence: StatusConfidence::Exact,
+            }
+        );
+        let terminals =
+            crate::terminal::TerminalManager::new(svode_agents::writer::WriterRegistry::default());
+        for (pty_id, id) in [("pty-ended", &ended), ("pty-exited", &exited)] {
+            project_terminal(
+                &terminals,
+                &project,
+                pty_id,
+                AgentAdapterKind::Codex.id(),
+                id,
+            );
+            terminals.kill(pty_id).unwrap();
+        }
+        let surfaces = terminals.list_agent_surfaces().unwrap();
+
+        let running = list_with(&state, &project, surfaces);
+        let ended_id = format!("codex:{ended}");
+        let session = by_id(&running, &ended_id);
+        assert_eq!(session.status.state, idle(Some(StopReason::EndTurn)));
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
+        let session = by_id(&running, &format!("codex:{exited}"));
+        assert_eq!(session.status.state, idle(None));
+        assert_eq!(session.status.source, StatusSource::ManagedPty);
+
+        let restarted = AgentSessionsState::with_home(home);
+        let session = by_id(&list(&restarted, &project), &ended_id).clone();
+        assert_eq!(session.status.state, idle(Some(StopReason::EndTurn)));
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
+        assert_eq!(
+            hot(&restarted, &project, &ended_id).sessions[0].status,
+            session.status
+        );
+    }
+
+    /// DF-164 R4: an unreadable store and a failed write leave the status
+    /// as without saved outcomes.
+    #[test]
+    fn an_unreadable_or_unwritable_outcome_store_leaves_the_status_as_without_it() {
+        let (_temp, home, project) = project_dirs();
+        let unreadable = codex_id(46);
+        let state = AgentSessionsState::with_home(home.clone());
+        listed_open_codex_turn(&state, &home, &project, &unreadable);
+        let terminals =
+            crate::terminal::TerminalManager::new(svode_agents::writer::WriterRegistry::default());
+        project_terminal(
+            &terminals,
+            &project,
+            "pty-unreadable",
+            AgentAdapterKind::Codex.id(),
+            &unreadable,
+        );
+        terminals.kill("pty-unreadable").unwrap();
+        fs::write(super::super::cache::cache_db_path(&project), "not sqlite").unwrap();
+
+        let restarted = AgentSessionsState::with_home(home.clone());
+        listed_open_codex_turn(&restarted, &home, &project, &unreadable);
+        let session_id = format!("codex:{unreadable}");
+        let session = by_id(&list(&restarted, &project), &session_id).clone();
+        assert_eq!(session.status.state, SessionState::Running);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
+        assert_eq!(
+            hot(&restarted, &project, &session_id).sessions[0].status,
+            session.status
+        );
+
+        let (_temp, home, project) = project_dirs();
+        let unwritable = codex_id(47);
+        fs::create_dir_all(super::super::cache::cache_db_path(&project)).unwrap();
+        let state = AgentSessionsState::with_home(home.clone());
+        listed_open_codex_turn(&state, &home, &project, &unwritable);
+        let terminals =
+            crate::terminal::TerminalManager::new(svode_agents::writer::WriterRegistry::default());
+        project_terminal(
+            &terminals,
+            &project,
+            "pty-unwritable",
+            AgentAdapterKind::Codex.id(),
+            &unwritable,
+        );
+        terminals.kill("pty-unwritable").unwrap();
+        let session_id = format!("codex:{unwritable}");
+
+        let running = list_with(&state, &project, terminals.list_agent_surfaces().unwrap());
+        assert_eq!(
+            by_id(&running, &session_id).status.state,
+            idle(Some(StopReason::Interrupted))
+        );
+        let restarted = AgentSessionsState::with_home(home.clone());
+        listed_open_codex_turn(&restarted, &home, &project, &unwritable);
+        let session = by_id(&list(&restarted, &project), &session_id).clone();
+        assert_eq!(session.status.state, SessionState::Running);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
     }
 
     /// C8: neither the list nor the saved snapshot carries transcript or

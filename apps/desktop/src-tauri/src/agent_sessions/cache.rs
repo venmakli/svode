@@ -233,7 +233,7 @@ pub(super) fn cache_db_path(project: &Path) -> PathBuf {
     project.join(".svode").join("agent-sessions.db")
 }
 
-async fn open_cache_pool(
+pub(super) async fn open_cache_pool(
     db_path: &Path,
     create_if_missing: bool,
 ) -> Result<sqlx::SqlitePool, AppError> {
@@ -253,7 +253,7 @@ async fn open_cache_pool(
         .await?)
 }
 
-async fn open_writable_cache_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AppError> {
+pub(super) async fn open_writable_cache_pool(db_path: &Path) -> Result<sqlx::SqlitePool, AppError> {
     let initial = open_cache_pool(db_path, true).await;
     match initial {
         Ok(pool) => match ensure_cache_schema(&pool).await {

@@ -9,6 +9,7 @@ mod read_model;
 mod reentry;
 mod refresh;
 mod scope;
+pub(crate) mod terminal_outcomes;
 mod terminal_sessions;
 pub mod types;
 
@@ -20,6 +21,7 @@ use cache::CatalogSnapshots;
 use native_catalog::{CatalogRoots, NativeCatalogSources, cursor_chats, cursor_ide};
 use native_status::NativeStatusReader;
 use native_status::hermes;
+use terminal_outcomes::SavedTerminalOutcomes;
 
 /// Where an agent's store lives, found when the store is read: it may depend
 /// on the environment of the agent (Stage 10 `07` N7).
@@ -28,8 +30,9 @@ use refresh::AgentSessionsReadCoordinator;
 
 /// The Sessions catalogue: each agent's ACP list, the native catalogue
 /// sources of agents that list their sessions from their store, the lists
-/// saved per project for the time before a source is read, and the native
-/// status reader of the listed sessions.
+/// saved per project for the time before a source is read, the outcomes of
+/// Svode terminals saved per project, and the native status reader of the
+/// listed sessions.
 #[derive(Clone)]
 pub struct AgentSessionsState {
     pub(crate) home_dir: PathBuf,
@@ -37,6 +40,7 @@ pub struct AgentSessionsState {
     pub(crate) acp_lists: Arc<AcpListSources>,
     pub(crate) native_catalogs: Arc<NativeCatalogSources>,
     pub(crate) snapshots: Arc<CatalogSnapshots>,
+    pub(crate) terminal_outcomes: Arc<SavedTerminalOutcomes>,
     pub(crate) native_status: Arc<NativeStatusReader>,
 }
 
@@ -93,6 +97,7 @@ impl AgentSessionsState {
             reads: AgentSessionsReadCoordinator::default(),
             acp_lists: Arc::new(AcpListSources::default()),
             snapshots: Arc::new(CatalogSnapshots::default()),
+            terminal_outcomes: Arc::new(SavedTerminalOutcomes::default()),
         }
     }
 }

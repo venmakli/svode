@@ -13,6 +13,7 @@ use portable_pty::{Child as PtyChild, CommandBuilder, MasterPty, PtySize, native
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
+use crate::agent_sessions::terminal_outcomes::{SavedTerminalOutcome, save_terminal_outcome};
 use crate::agent_sessions::types::{
     AgentSession, AgentSessionResumeCommand, native_writer_key, terminal_resume_argv,
 };
@@ -63,6 +64,8 @@ struct TerminalErrorEvent {
 
 struct TerminalProcess {
     session: TerminalSession,
+    /// The project the terminal is opened from, given to its shell.
+    mcp_project_path: Option<String>,
     shell_kind: TerminalShellKind,
     child: Box<dyn PtyChild + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -308,11 +311,9 @@ impl TerminalManager {
                 system_path::user_facing_path(&discovery_path),
             );
         }
-        if let Some(path) = mcp_project_path {
-            cmd.env(
-                svode_mcp::MCP_PROJECT_PATH_ENV,
-                system_path::user_facing_path(&path),
-            );
+        let mcp_project_path = mcp_project_path.map(|path| system_path::user_facing_path(&path));
+        if let Some(path) = &mcp_project_path {
+            cmd.env(svode_mcp::MCP_PROJECT_PATH_ENV, path);
         }
         if let Some(token) = routine_caller_token {
             cmd.env(svode_mcp::MCP_ROUTINE_CALLER_TOKEN_ENV, token);
@@ -342,6 +343,7 @@ impl TerminalManager {
 
         let process = TerminalProcess {
             session: session.clone(),
+            mcp_project_path,
             shell_kind: shell.kind,
             child,
             master: pair.master,
@@ -453,17 +455,18 @@ impl TerminalManager {
         shell_cwd: Option<String>,
         created_at: Option<String>,
     ) -> Result<(), AppError> {
-        let session_cwd = {
+        let (session_cwd, mcp_project_path) = {
             let sessions = self
                 .sessions
                 .lock()
                 .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?;
-            sessions
-                .get(&pty_id)
-                .ok_or_else(|| AppError::General(format!("Terminal session not found: {pty_id}")))?
-                .session
-                .cwd
-                .clone()
+            let process = sessions.get(&pty_id).ok_or_else(|| {
+                AppError::General(format!("Terminal session not found: {pty_id}"))
+            })?;
+            (
+                process.session.cwd.clone(),
+                process.mcp_project_path.clone(),
+            )
         };
 
         self.hold_existing_session_writer(&pty_id, &source, &source_session_id)?;
@@ -474,6 +477,7 @@ impl TerminalManager {
             title,
             source,
             source_session_id,
+            mcp_project_path,
             shell_cwd.unwrap_or(session_cwd),
             created_at.unwrap_or_else(now_rfc3339),
         );
@@ -784,6 +788,7 @@ impl TerminalManager {
                                 None,
                                 current.source.clone(),
                                 current.source_session_id.clone(),
+                                process.mcp_project_path.clone(),
                                 process.session.cwd.clone(),
                                 now_rfc3339(),
                             ),
@@ -941,11 +946,17 @@ impl TerminalManager {
         reason: &str,
     ) {
         let observed_at = now_rfc3339();
-        let should_record = self.agent_surfaces.lock().ok().and_then(|mut surfaces| {
+        let outcome = AgentTerminalOutcomeEvidence {
+            state,
+            exit_code,
+            reason: reason.to_string(),
+            observed_at: observed_at.clone(),
+        };
+        let finished = self.agent_surfaces.lock().ok().and_then(|mut surfaces| {
             let surface = surfaces.get_mut(pty_id)?;
             surface.live = false;
             if surface.finished_at.is_some() {
-                return Some(false);
+                return Some(None);
             }
             surface.finished_at = Some(observed_at.clone());
             surface.exit_code = exit_code;
@@ -955,31 +966,16 @@ impl TerminalManager {
                 reason.to_string(),
                 observed_at.clone(),
             ));
-            Some(true)
+            Some(Some(saved_outcome(surface, &outcome)))
         });
-        let Some(should_record) = should_record else {
+        let Some(finished) = finished else {
             if let Ok(mut sinks) = self.lifecycle_sinks.lock() {
                 sinks.remove(pty_id);
             }
             return;
         };
-        if !should_record {
-            return;
-        }
-        let sink = self
-            .lifecycle_sinks
-            .lock()
-            .ok()
-            .and_then(|sinks| sinks.get(pty_id).cloned());
-        if let Some(sink) = sink
-            && let Err(error) = sink.record_terminal_outcome(&AgentTerminalOutcomeEvidence {
-                state,
-                exit_code,
-                reason: reason.to_string(),
-                observed_at,
-            })
-        {
-            tracing::warn!("failed to persist agent terminal outcome: {error}");
+        if let Some(saved) = finished {
+            record_outcome(&self.lifecycle_sinks, pty_id, &outcome, saved);
         }
     }
 
@@ -991,8 +987,8 @@ impl TerminalManager {
             .insert(surface.pty_id.clone(), surface);
     }
 
-    /// A live shell in a PTY as `terminal_spawn` starts it, without the
-    /// app-bound environment and output reader.
+    /// A live shell in a PTY as `terminal_spawn` starts it for a tab of the
+    /// project at `cwd`, without the app-bound environment and output reader.
     #[cfg(test)]
     pub(crate) fn insert_shell_for_test(&self, pty_id: &str, cwd: &Path) {
         let shell = default_shell();
@@ -1013,6 +1009,7 @@ impl TerminalManager {
                 cols: size.cols,
                 rows: size.rows,
             },
+            mcp_project_path: Some(system_path::user_facing_path(cwd)),
             shell_kind: shell.kind,
             child,
             master: pair.master,
@@ -1120,6 +1117,7 @@ fn update_agent_surface_output(
     surface.last_output_at = Some(observed_at.clone());
     let (visible, exit_code) = strip_agent_exit_marker(surface, data);
     let mut outcome = None;
+    let mut saved = None;
     if let Some(exit_code) = exit_code {
         let (state, reason) = agent_exit_outcome(exit_code);
         surface.finished_at = Some(observed_at.clone());
@@ -1130,12 +1128,14 @@ fn update_agent_surface_output(
             reason.clone(),
             observed_at.clone(),
         ));
-        outcome = Some(AgentTerminalOutcomeEvidence {
+        let observed = AgentTerminalOutcomeEvidence {
             state,
             exit_code: Some(exit_code),
             reason,
             observed_at: observed_at.clone(),
-        });
+        };
+        saved = saved_outcome(surface, &observed);
+        outcome = Some(observed);
     }
     if outcome.is_none()
         && let Some(signal) = classify_agent_terminal_output(&surface.source, &visible)
@@ -1150,12 +1150,8 @@ fn update_agent_surface_output(
         });
     }
     drop(surfaces);
-    if let Some(outcome) = outcome
-        && let Ok(sinks) = lifecycle_sinks.lock()
-        && let Some(sink) = sinks.get(pty_id)
-        && let Err(error) = sink.record_terminal_outcome(&outcome)
-    {
-        tracing::warn!("failed to persist agent terminal outcome: {error}");
+    if let Some(outcome) = outcome {
+        record_outcome(lifecycle_sinks, pty_id, &outcome, saved);
     }
     visible
 }
@@ -1235,17 +1231,61 @@ fn finish_reader_surface(
             reason.clone(),
             observed_at.clone(),
         ));
-        Some(AgentTerminalOutcomeEvidence {
+        let outcome = AgentTerminalOutcomeEvidence {
             state: INTERRUPTED,
             exit_code: None,
             reason,
             observed_at: observed_at.clone(),
-        })
+        };
+        let saved = saved_outcome(surface, &outcome);
+        Some((outcome, saved))
     });
-    if let Some(outcome) = outcome
-        && let Ok(sinks) = lifecycle_sinks.lock()
-        && let Some(sink) = sinks.get(pty_id)
-        && let Err(error) = sink.record_terminal_outcome(&outcome)
+    if let Some((outcome, saved)) = outcome {
+        record_outcome(lifecycle_sinks, pty_id, &outcome, saved);
+    }
+}
+
+/// The outcome as the catalogue saves it in the project the terminal is
+/// opened from; a terminal without a project keeps it in memory alone
+/// (DF-164 R2).
+fn saved_outcome(
+    surface: &AgentTerminalSurface,
+    outcome: &AgentTerminalOutcomeEvidence,
+) -> Option<(PathBuf, SavedTerminalOutcome)> {
+    let project = surface.mcp_project_path.as_deref()?;
+    Some((
+        PathBuf::from(project),
+        SavedTerminalOutcome {
+            agent_session_id: surface.agent_session_id.clone(),
+            source: surface.source.clone(),
+            source_session_id: surface.source_session_id.clone(),
+            // A re-bound terminal no longer runs its launch's session.
+            launch_id: surface.launch_id.clone().filter(|_| !surface.rebound),
+            state: outcome.state,
+            exit_code: outcome.exit_code,
+            reason: outcome.reason.clone(),
+            observed_at: outcome.observed_at.clone(),
+        },
+    ))
+}
+
+/// Saves the observed outcome for the catalogue and hands it to the
+/// launch's lifecycle sink.
+fn record_outcome(
+    lifecycle_sinks: &Mutex<HashMap<String, Arc<dyn AgentTerminalLifecycleSink>>>,
+    pty_id: &str,
+    outcome: &AgentTerminalOutcomeEvidence,
+    saved: Option<(PathBuf, SavedTerminalOutcome)>,
+) {
+    if let Some((project, saved)) = saved {
+        save_terminal_outcome(&project, &saved);
+    }
+    let sink = lifecycle_sinks
+        .lock()
+        .ok()
+        .and_then(|sinks| sinks.get(pty_id).cloned());
+    if let Some(sink) = sink
+        && let Err(error) = sink.record_terminal_outcome(outcome)
     {
         tracing::warn!("failed to persist agent terminal outcome: {error}");
     }
@@ -1345,6 +1385,7 @@ fn agent_surface_from_existing_session(
     title: Option<String>,
     source: AgentId,
     source_session_id: String,
+    mcp_project_path: Option<String>,
     shell_cwd: String,
     created_at: String,
 ) -> AgentTerminalSurface {
@@ -1353,7 +1394,7 @@ fn agent_surface_from_existing_session(
         agent_session_id,
         launch_id: None,
         routine_run_id: None,
-        mcp_project_path: None,
+        mcp_project_path,
         mcp_routine_caller_token: None,
         title,
         initial_agent_argv: terminal_resume_argv(&source, &source_session_id, None)
@@ -2863,6 +2904,277 @@ mod tests {
         );
     }
 
+    /// A Svode project the terminal is opened from.
+    fn svode_project() -> tempfile::TempDir {
+        let project = tempfile::tempdir().expect("project");
+        std::fs::create_dir_all(project.path().join(".svode")).expect(".svode");
+        project
+    }
+
+    /// The surface of a session terminal opened from `project`; a Routine
+    /// launch also carries its run and launch.
+    fn project_surface(
+        project: &Path,
+        pty_id: &str,
+        source: &AgentId,
+        session_id: &str,
+        routine: bool,
+    ) -> AgentTerminalSurface {
+        let mut surface = test_surface();
+        surface.pty_id = pty_id.to_string();
+        surface.agent_session_id = format!("{}:{session_id}", source.as_str());
+        surface.source = source.clone();
+        surface.source_session_id = session_id.to_string();
+        surface.mcp_project_path = Some(system_path::user_facing_path(project));
+        surface.launch_id = Some(format!("launch-{pty_id}"));
+        if routine {
+            surface.routine_run_id = Some(format!("run-{pty_id}"));
+        }
+        surface
+    }
+
+    /// What a later start of the app reads from the project.
+    fn saved_after_restart(project: &Path) -> Vec<SavedTerminalOutcome> {
+        crate::agent_sessions::terminal_outcomes::SavedTerminalOutcomes::default()
+            .of_project(project)
+    }
+
+    /// DF-164 acceptance 2: the outcome of a closed terminal, of the app
+    /// exit, of a shell exit and of an exit code is saved in the terminal's
+    /// project for Routine launches and other sessions of Claude Code and
+    /// Codex, as the same observation the surface keeps.
+    #[test]
+    fn every_outcome_of_a_session_terminal_is_saved_in_its_project() {
+        for source in [
+            AgentAdapterKind::ClaudeCode.id(),
+            AgentAdapterKind::Codex.id(),
+        ] {
+            for routine in [false, true] {
+                let project = svode_project();
+                let manager = TerminalManager::new(WriterRegistry::default());
+                for (pty_id, session_id) in [
+                    ("pty-closed", "s-closed"),
+                    ("pty-shell", "s-shell"),
+                    ("pty-exit", "s-exit"),
+                    ("pty-quit", "s-quit"),
+                ] {
+                    manager.insert_agent_surface_for_test(project_surface(
+                        project.path(),
+                        pty_id,
+                        &source,
+                        session_id,
+                        routine,
+                    ));
+                }
+
+                manager.kill("pty-closed").unwrap();
+                finish_reader_surface(
+                    &manager.agent_surfaces,
+                    &manager.lifecycle_sinks,
+                    "pty-shell",
+                );
+                update_agent_surface_output(
+                    &manager.agent_surfaces,
+                    &manager.lifecycle_sinks,
+                    "pty-exit",
+                    "__SVODE_AGENT_EXIT__:launch-pty-exit:137\n",
+                );
+                manager.kill_all();
+
+                let saved = saved_after_restart(project.path());
+                assert_eq!(saved.len(), 4, "{source:?} routine={routine}");
+                for surface in manager.list_agent_surfaces().unwrap() {
+                    let outcome = saved
+                        .iter()
+                        .find(|outcome| outcome.agent_session_id == surface.agent_session_id)
+                        .unwrap_or_else(|| panic!("no saved outcome of {}", surface.pty_id));
+                    let evidence = surface.status_evidence.expect("terminal outcome");
+                    assert_eq!(outcome.source, source);
+                    assert_eq!(outcome.source_session_id, surface.source_session_id);
+                    assert_eq!(outcome.launch_id, surface.launch_id);
+                    assert_eq!(outcome.state, evidence.state, "{}", surface.pty_id);
+                    assert_eq!(outcome.reason, evidence.reason, "{}", surface.pty_id);
+                    assert_eq!(outcome.observed_at, evidence.observed_at);
+                    assert_eq!(outcome.exit_code, surface.exit_code);
+                }
+                let exited = saved
+                    .iter()
+                    .find(|outcome| outcome.source_session_id == "s-exit")
+                    .unwrap();
+                assert_eq!(
+                    exited.state,
+                    SessionState::Idle {
+                        stop_reason: Some(StopReason::Error)
+                    }
+                );
+                assert_eq!(exited.exit_code, Some(137));
+                let quit = saved
+                    .iter()
+                    .find(|outcome| outcome.source_session_id == "s-quit")
+                    .unwrap();
+                assert_eq!(quit.state, INTERRUPTED);
+                assert_eq!(
+                    quit.reason,
+                    "managed terminal stopped during application shutdown"
+                );
+            }
+        }
+    }
+
+    /// A tab where the user started the agent CLI saves the outcome of its
+    /// session in the project the tab is opened from.
+    #[test]
+    fn a_tab_linked_to_a_session_saves_its_outcome_in_its_project() {
+        let project = svode_project();
+        let manager = TerminalManager::new(WriterRegistry::default());
+        manager.insert_shell_for_test("pty-tab", project.path());
+        manager
+            .register_existing_agent_session(
+                "pty-tab".to_string(),
+                "claude-code:c1".to_string(),
+                None,
+                AgentAdapterKind::ClaudeCode.id(),
+                "c1".to_string(),
+                None,
+                None,
+            )
+            .unwrap();
+
+        manager.kill("pty-tab").unwrap();
+
+        let saved = saved_after_restart(project.path());
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].agent_session_id, "claude-code:c1");
+        assert_eq!(saved[0].source_session_id, "c1");
+        assert_eq!(saved[0].state, INTERRUPTED);
+        assert_eq!(saved[0].reason, "managed terminal stopped by user");
+    }
+
+    /// The last outcome of a session replaces the saved one, under any key
+    /// the catalogue matches the session by.
+    #[test]
+    fn a_newer_outcome_of_a_session_replaces_the_saved_one() {
+        let project = svode_project();
+        let source = AgentAdapterKind::Codex.id();
+        let manager = TerminalManager::new(WriterRegistry::default());
+        let mut launch = project_surface(project.path(), "pty-launch", &source, "", true);
+        launch.agent_session_id = "codex:launch:launch-1".to_string();
+        launch.source_session_id = "launch:launch-1".to_string();
+        launch.launch_id = Some("launch-1".to_string());
+        manager.insert_agent_surface_for_test(launch);
+        manager.kill("pty-launch").unwrap();
+        let mut resumed = project_surface(project.path(), "pty-resumed", &source, "s1", false);
+        resumed.launch_id = Some("launch-1".to_string());
+        manager.insert_agent_surface_for_test(resumed);
+        update_agent_surface_output(
+            &manager.agent_surfaces,
+            &manager.lifecycle_sinks,
+            "pty-resumed",
+            "__SVODE_AGENT_EXIT__:launch-1:2\n",
+        );
+        let other = project_surface(project.path(), "pty-other", &source, "s2", false);
+        manager.insert_agent_surface_for_test(other);
+        manager.kill("pty-other").unwrap();
+
+        let saved = saved_after_restart(project.path());
+        assert_eq!(saved.len(), 2);
+        let s1 = saved
+            .iter()
+            .find(|outcome| outcome.agent_session_id == "codex:s1")
+            .expect("the newer outcome of the launch's session");
+        assert_eq!(s1.exit_code, Some(2));
+        assert_eq!(
+            s1.state,
+            SessionState::Idle {
+                stop_reason: Some(StopReason::Error)
+            }
+        );
+        assert!(
+            saved
+                .iter()
+                .any(|outcome| outcome.agent_session_id == "codex:s2")
+        );
+    }
+
+    /// DF-163 R3 with DF-164 R2: a terminal closed after its process moved
+    /// to another session saves the outcome of that session alone, without
+    /// the launch it was started for.
+    #[test]
+    fn a_terminal_closed_after_a_re_bind_saves_the_outcome_of_its_new_session_alone() {
+        let project = svode_project();
+        let manager = TerminalManager::new(WriterRegistry::default());
+        manager.insert_shell_for_test("pty-tab", project.path());
+        register_claude(&manager, "pty-tab", "s1");
+        manager.insert_shell_for_test("pty-launch", project.path());
+        manager.insert_agent_surface_for_test(project_surface(
+            project.path(),
+            "pty-launch",
+            &AgentAdapterKind::ClaudeCode.id(),
+            "s3",
+            true,
+        ));
+
+        manager
+            .follow_current_sessions(&[claude_now("pty-tab", "s2"), claude_now("pty-launch", "s4")])
+            .unwrap();
+        manager.kill("pty-tab").unwrap();
+        manager.kill("pty-launch").unwrap();
+
+        let mut saved = saved_after_restart(project.path());
+        saved.sort_by(|a, b| a.agent_session_id.cmp(&b.agent_session_id));
+        let sessions = saved
+            .iter()
+            .map(|outcome| {
+                (
+                    outcome.agent_session_id.as_str(),
+                    outcome.launch_id.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sessions,
+            [("claude-code:s2", None), ("claude-code:s4", None)]
+        );
+        assert!(saved.iter().all(|outcome| outcome.state == INTERRUPTED));
+    }
+
+    /// A terminal without a known Svode project keeps its outcome in memory
+    /// alone and creates nothing on disk.
+    #[test]
+    fn a_terminal_without_a_project_saves_no_outcome() {
+        let project = svode_project();
+        let plain = tempfile::tempdir().expect("plain directory");
+        let manager = TerminalManager::new(WriterRegistry::default());
+        let mut unknown = project_surface(
+            project.path(),
+            "pty-unknown",
+            &AgentAdapterKind::Codex.id(),
+            "s1",
+            false,
+        );
+        unknown.mcp_project_path = None;
+        manager.insert_agent_surface_for_test(unknown);
+        manager.insert_agent_surface_for_test(project_surface(
+            plain.path(),
+            "pty-plain",
+            &AgentAdapterKind::Codex.id(),
+            "s2",
+            false,
+        ));
+
+        manager.kill_all();
+
+        assert!(
+            manager
+                .list_agent_surfaces()
+                .unwrap()
+                .iter()
+                .all(|surface| surface.status_evidence.is_some())
+        );
+        assert!(!project.path().join(".svode/agent-sessions.db").exists());
+        assert_eq!(std::fs::read_dir(plain.path()).unwrap().count(), 0);
+    }
+
     #[test]
     fn terminal_existing_agent_session_metadata_uses_source_resume_argv() {
         let surface = agent_surface_from_existing_session(
@@ -2871,6 +3183,7 @@ mod tests {
             Some("Existing session".to_string()),
             AgentAdapterKind::Codex.id(),
             "session".to_string(),
+            None,
             "/tmp/project".to_string(),
             "2026-07-04T10:00:00Z".to_string(),
         );
