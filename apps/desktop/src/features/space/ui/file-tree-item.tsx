@@ -42,7 +42,10 @@ import {
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
 import { getArtifactPresentationKind } from "@/features/artifact";
-import { ContentDeleteDialog } from "@/features/content-actions";
+import {
+  ContentDeleteDialog,
+  useContentMenuHandlers,
+} from "@/features/content-actions";
 import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import { useFileTreeItemActions } from "../hooks/use-file-tree-item-actions";
@@ -252,6 +255,18 @@ export function FileTreeItem({
     </button>
   );
 
+  const menu = useContentMenuHandlers({
+    "nest-page": () => void handleNewPage(),
+    "new-item": () => void handleNewPage(),
+    "new-folder": () => void handleNewFolder(),
+    "make-page": () => void handleMakePage(),
+    "make-collection": () => void handleMakeCollection(),
+    "make-leaf": () => void handleMakeLeaf(),
+    rename: handleStartRename,
+    duplicate: () => void handleDuplicate(),
+    delete: () => void handleDeleteRequest(),
+  });
+
   const contextMenu = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -259,22 +274,16 @@ export function FileTreeItem({
           <Ellipsis className="h-3 w-3" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" side="bottom">
+      <DropdownMenuContent
+        align="end"
+        side="bottom"
+        onCloseAutoFocus={menu.onCloseAutoFocus}
+      >
         <FileTreeItemMenuItems
           node={node}
           spacePath={spacePath}
           pinItem={pinItem}
-          handlers={{
-            "nest-page": () => void handleNewPage(),
-            "new-item": () => void handleNewPage(),
-            "new-folder": () => void handleNewFolder(),
-            "make-page": () => void handleMakePage(),
-            "make-collection": () => void handleMakeCollection(),
-            "make-leaf": () => void handleMakeLeaf(),
-            rename: handleStartRename,
-            duplicate: () => void handleDuplicate(),
-            delete: () => void handleDeleteRequest(),
-          }}
+          handlers={menu.handlers}
         />
       </DropdownMenuContent>
     </DropdownMenu>

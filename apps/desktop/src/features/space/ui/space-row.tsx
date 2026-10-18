@@ -6,6 +6,7 @@ import * as m from "@/paraglide/messages.js";
 import {
   ContentActionMenuItems,
   contentActionGroups,
+  useContentMenuHandlers,
 } from "@/features/content-actions";
 import { spaceNavigationKey } from "@/features/navigation";
 import {
@@ -148,6 +149,19 @@ export function SpaceRow({
     onScopeStateChange,
     scopeState,
   });
+  const menu = useContentMenuHandlers({
+    "new-page": () => handleNewPage(scope),
+    "new-folder": () => handleNewFolder(scope),
+    "new-collection": () => handleNewCollection(scope),
+    "new-session": () => onNewSession?.(ws.path),
+    "new-terminal": () => onNewTerminal?.(ws.path),
+    "save-all": gitControls.commitAll,
+    rename: () => {
+      setEditingSpaceId(ws.id);
+      setEditValue(ws.name);
+    },
+    "remove-space": () => setDeleteTarget({ id: ws.id, name: ws.name }),
+  });
 
   if (ws.status === "missing" || ws.status === "broken") {
     return (
@@ -262,7 +276,11 @@ export function SpaceRow({
               <Ellipsis />
             </SidebarMenuAction>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom">
+          <DropdownMenuContent
+            align="end"
+            side="bottom"
+            onCloseAutoFocus={menu.onCloseAutoFocus}
+          >
             <ContentActionMenuItems
               groups={contentActionGroups({
                 object: { kind: "space", unsavedChanges: gitControls.dirty },
@@ -276,20 +294,7 @@ export function SpaceRow({
                 title: ws.name,
                 ...(ws.icon ? { icon: ws.icon } : {}),
               }}
-              handlers={{
-                "new-page": () => handleNewPage(scope),
-                "new-folder": () => handleNewFolder(scope),
-                "new-collection": () => handleNewCollection(scope),
-                "new-session": () => onNewSession?.(ws.path),
-                "new-terminal": () => onNewTerminal?.(ws.path),
-                "save-all": gitControls.commitAll,
-                rename: () => {
-                  setEditingSpaceId(ws.id);
-                  setEditValue(ws.name);
-                },
-                "remove-space": () =>
-                  setDeleteTarget({ id: ws.id, name: ws.name }),
-              }}
+              handlers={menu.handlers}
             />
           </DropdownMenuContent>
         </DropdownMenu>

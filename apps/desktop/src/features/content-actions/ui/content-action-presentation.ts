@@ -22,6 +22,8 @@ export interface ContentActionPresentation {
   label: () => string;
   icon: LucideIcon;
   destructive?: boolean;
+  /** Moves focus to a name field, so it runs once its menu has closed. */
+  focusesNameField?: boolean;
 }
 
 /** The one label and icon of each action, on every surface. */
@@ -55,7 +57,11 @@ export const CONTENT_ACTION_PRESENTATION: Record<
   "make-collection": { label: () => m.collection_make(), icon: Database },
   "make-leaf": { label: () => m.page_convert_to_leaf(), icon: FileText },
   "save-all": { label: () => m.git_save_all(), icon: Save },
-  rename: { label: () => m.space_rename(), icon: Pencil },
+  rename: {
+    label: () => m.space_rename(),
+    icon: Pencil,
+    focusesNameField: true,
+  },
   duplicate: { label: () => m.page_duplicate(), icon: Copy },
   "duplicate-template": {
     label: () => m.collection_template_duplicate(),

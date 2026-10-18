@@ -96,6 +96,16 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
             return pageDto("tasks/Untitled.md");
           case "create_folder":
             return "attic/New folder";
+          case "update_page_field":
+            return {
+              path: args.filePath,
+              meta: { title: args.value },
+              body: "",
+            };
+          case "rename_content":
+            return [];
+          case "get_space_config":
+            return { name: "Docs" };
           default:
             return command.includes("expan") ? [] : null;
         }
@@ -131,6 +141,8 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
   const { getNavigationState } = await import("@/features/navigation");
   const { useSpaceStore } = await import("../model");
   const { SpaceRow } = await import("./space-row");
+  const { useSpaceSidebarRename } =
+    await import("../hooks/use-space-sidebar-rename");
   const { RootScopeRow } = await import("./root-scope-row");
 
   const root = createRoot(document.getElementById("app")!);
@@ -403,28 +415,109 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
     );
     expect(document.querySelector('[role="alertdialog"]') === null).toBe(false);
     await closeMenu();
+  });
 
-    // Focus after Rename from the menu belongs to DF-157, so the field may
-    // already have closed again; it must have opened with the current name.
-    const renameValues: string[] = [];
-    const observer = new dom.window.MutationObserver((records) => {
-      for (const record of records) {
-        for (const added of record.addedNodes) {
-          const input =
-            added instanceof dom.window.HTMLInputElement
-              ? added
-              : added instanceof dom.window.Element
-                ? added.querySelector("input")
-                : null;
-          if (input) renameValues.push(input.value);
-        }
-      }
+  function setInputValue(input: HTMLInputElement, value: string) {
+    Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, value);
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  }
+
+  async function press(key: string) {
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", { bubbles: true, key }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    observer.observe(document.body, { childList: true, subtree: true });
-    await openMenu(treeTrigger("Board"));
+    await settle();
+  }
+
+  /** The focused field of a rename, with the whole current name selected. */
+  function focusedNameField(name: string) {
+    const input = document.activeElement;
+    if (!(input instanceof dom.window.HTMLInputElement)) {
+      throw new Error(`focus is on ${input?.outerHTML}, not a name field`);
+    }
+    expect([input.value, input.selectionStart, input.selectionEnd]).toEqual([
+      name,
+      0,
+      name.length,
+    ]);
+    return input;
+  }
+
+  const renameCommands = () =>
+    commands.filter(
+      ([command]) =>
+        command === "update_page_field" || command === "rename_content",
+    );
+
+  test("Rename from a tree node menu focuses its name field with the name selected", async () => {
+    await render(<SpaceRow {...spaceProps()} />);
+    commands.length = 0;
+
+    await openMenu(treeTrigger("Doc"));
     await select("Rename");
-    observer.disconnect();
-    expect(renameValues[0]).toBe("Board");
+    await settle();
+    await act(async () => setInputValue(focusedNameField("Doc"), "Handbook"));
+    await press("Enter");
+    expect(renameCommands()).toEqual([
+      [
+        "update_page_field",
+        {
+          space: "/project/docs",
+          filePath: "doc.md",
+          field: "title",
+          value: "Handbook",
+          projectPath: "/project",
+        },
+      ],
+    ]);
+    expect(document.querySelector(".group\\/tree-item input")).toBeNull();
+
+    commands.length = 0;
+    await openMenu(treeTrigger("Attic"));
+    await select("Rename");
+    await settle();
+    await act(async () => setInputValue(focusedNameField("Attic"), "Archive"));
+    await press("Enter");
+    expect(renameCommands()).toEqual([
+      [
+        "rename_content",
+        {
+          space: "/project/docs",
+          from: "attic",
+          to: "Archive",
+          projectPath: "/project",
+        },
+      ],
+    ]);
+
+    commands.length = 0;
+    for (const title of ["Tasks", "Board"]) {
+      await openMenu(treeTrigger(title));
+      await select("Rename");
+      await settle();
+      focusedNameField(title);
+      await press("Escape");
+      expect(document.querySelector(".group\\/tree-item input")).toBeNull();
+    }
+    expect(renameCommands()).toEqual([]);
+  });
+
+  test("other tree node items and closing the menu hand focus back to its trigger", async () => {
+    await render(<SpaceRow {...spaceProps()} />);
+    await openMenu(treeTrigger("Doc"));
+    await select("Duplicate");
+    await settle();
+    expect(document.activeElement).toBe(treeTrigger("Doc"));
+
+    await openMenu(treeTrigger("Tasks"));
+    await closeMenu();
+    expect(document.activeElement).toBe(treeTrigger("Tasks"));
   });
 
   test("a rename asked for outside the tree starts in the row of its path", async () => {
@@ -625,6 +718,68 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
       "terminal:/project/docs",
     ]);
     expect(saves).toBe(1);
+  });
+
+  /** A Space row with the sidebar's own rename state. */
+  function RenamableSpaceRow() {
+    const rename = useSpaceSidebarRename({
+      activeRootPath: "/project",
+      patchSpaceMetadata: () => {},
+      spaces: [space],
+    });
+    return (
+      <SpaceRow
+        {...spaceProps({
+          tree: [],
+          editingSpaceId: rename.editingSpaceId,
+          editValue: rename.editValue,
+          setEditValue: rename.setEditValue,
+          setEditingSpaceId: rename.setEditingSpaceId,
+          handleRenameSpace: () => void rename.handleRenameSpace(),
+          editRef: rename.editRef,
+          onNewTerminal: () => {},
+        })}
+      />
+    );
+  }
+
+  test("Rename from the Space row menu focuses its name field with the name selected", async () => {
+    dirty = false;
+    await render(<RenamableSpaceRow />);
+    commands.length = 0;
+    const spaceRenames = () =>
+      commands.filter(([command]) => command === "save_space_config");
+
+    await openMenu(spaceTrigger());
+    await select("Rename");
+    await settle();
+    await act(async () => setInputValue(focusedNameField("Docs"), "Notes"));
+    await press("Enter");
+    expect(spaceRenames().map(([, args]) => args.configData)).toEqual([
+      { name: "Notes" },
+    ]);
+    expect(
+      document.querySelector('[data-sidebar="menu-item"] input'),
+    ).toBeNull();
+
+    commands.length = 0;
+    await openMenu(spaceTrigger());
+    await select("Rename");
+    await settle();
+    focusedNameField("Docs");
+    await press("Escape");
+    expect(
+      document.querySelector('[data-sidebar="menu-item"] input'),
+    ).toBeNull();
+    expect(spaceRenames()).toEqual([]);
+
+    await openMenu(spaceTrigger());
+    await select("New terminal");
+    await settle();
+    expect(document.activeElement).toBe(spaceTrigger());
+    await openMenu(spaceTrigger());
+    await closeMenu();
+    expect(document.activeElement).toBe(spaceTrigger());
   });
 
   test("the project root menu pins and creates, with its launch group when given", async () => {

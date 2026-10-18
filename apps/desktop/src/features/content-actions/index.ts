@@ -19,6 +19,7 @@ export {
   type ContentActionHandlers,
 } from "./ui/content-action-menu-items";
 export { ContentHeaderMenu } from "./ui/content-header-menu";
+export { useContentMenuHandlers } from "./hooks/use-content-menu-handlers";
 export {
   pageFormOfPath,
   type ContentBacklink,

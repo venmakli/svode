@@ -2,10 +2,11 @@ import * as bunTest from "bun:test";
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act } from "react";
+import { act, useState } from "react";
 import { JSDOM } from "jsdom";
 import type { Page } from "@/features/page";
 import type { ScopePeekContext } from "@/features/scope-surfaces";
+import type { PagePeekTarget } from "../model";
 
 if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
   test("Collection Peek title focus DOM", () => {
@@ -52,6 +53,7 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
       unobserve() {}
       disconnect() {}
     },
+    DOMRect: dom.window.DOMRect,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
@@ -109,7 +111,11 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
     PageSurfaceSessionProvider,
     usePageDetailContext,
   } = await import("@/features/page/scope-surface");
+  const { ContextMenu, ContextMenuContent, ContextMenuTrigger } =
+    await import("@/components/ui/context-menu");
   const { PagePeekSheet } = await import("./page-peek-sheet");
+  const { CollectionEntryContextMenuItems, CollectionEntryMenuProvider } =
+    await import("./entry-context-menu");
 
   /** The Peek host's header: the item's title and the Peek's actions. */
   function PeekHeader({ context }: { context: ScopePeekContext }) {
@@ -129,43 +135,49 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
     }
   }
 
+  function peekSheet(target: PagePeekTarget | null) {
+    return (
+      <PagePeekSheet
+        target={target}
+        readOnly={false}
+        spacePath="/space"
+        spaceId="space"
+        projectPath="/space"
+        onOpenChange={() => {}}
+        onOpenPath={() => {}}
+        onDuplicatePage={() => {}}
+        onDeletePage={() => {}}
+        onConvertedPage={() => {}}
+        renderPeek={(context) => (
+          <PageSurfaceSessionProvider
+            displayName={item.meta.title}
+            displayPath={context.path}
+            spacePath={context.spacePath}
+            targetKey={context.sessionKey}
+          >
+            <PageDetailProvider
+              spacePath={context.spacePath}
+              spaceId={context.spaceId}
+              readmePath={context.path}
+              ownerPath={context.path}
+              target="page"
+              onOpenPath={() => {}}
+            >
+              <PeekHeader context={context} />
+            </PageDetailProvider>
+          </PageSurfaceSessionProvider>
+        )}
+      />
+    );
+  }
+
   async function openPeek(focusTitle: boolean) {
     const root = createRoot(document.getElementById("app")!);
     await act(async () => {
       root.render(
         <ThemeProvider theme="light" setTheme={() => {}}>
           <TooltipProvider>
-            <PagePeekSheet
-              target={{ page: item, nested: false, focusTitle }}
-              readOnly={false}
-              spacePath="/space"
-              spaceId="space"
-              projectPath="/space"
-              onOpenChange={() => {}}
-              onOpenPath={() => {}}
-              onDuplicatePage={() => {}}
-              onDeletePage={() => {}}
-              onConvertedPage={() => {}}
-              renderPeek={(context) => (
-                <PageSurfaceSessionProvider
-                  displayName={item.meta.title}
-                  displayPath={context.path}
-                  spacePath={context.spacePath}
-                  targetKey={context.sessionKey}
-                >
-                  <PageDetailProvider
-                    spacePath={context.spacePath}
-                    spaceId={context.spaceId}
-                    readmePath={context.path}
-                    ownerPath={context.path}
-                    target="page"
-                    onOpenPath={() => {}}
-                  >
-                    <PeekHeader context={context} />
-                  </PageDetailProvider>
-                </PageSurfaceSessionProvider>
-              )}
-            />
+            {peekSheet({ page: item, nested: false, focusTitle })}
           </TooltipProvider>
         </ThemeProvider>,
       );
@@ -180,6 +192,77 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
 
   test("rename from a row opens its peek with the title focused and selected", async () => {
     const root = await openPeek(true);
+    const input = titleInput()!;
+    expect(input.value).toBe("Roadmap");
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 7]);
+    await act(async () => root.unmount());
+  });
+
+  /** A Collection row whose Rename opens its peek on the title, as the screen does. */
+  function RowWithPeek() {
+    const [target, setTarget] = useState<PagePeekTarget | null>(null);
+    return (
+      <CollectionEntryMenuProvider
+        value={{
+          readOnly: false,
+          spacePath: "/space",
+          pinItem: () => null,
+          handlers: (entry) => ({
+            rename: () =>
+              setTarget({ page: entry, nested: false, focusTitle: true }),
+          }),
+        }}
+      >
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div data-row>{item.meta.title}</div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <CollectionEntryContextMenuItems
+              entry={item}
+              onOpenInPeek={() => {}}
+            />
+          </ContextMenuContent>
+        </ContextMenu>
+        {peekSheet(target)}
+      </CollectionEntryMenuProvider>
+    );
+  }
+
+  test("Rename from a row's context menu leaves the focus in the selected peek title", async () => {
+    const root = createRoot(document.getElementById("app")!);
+    await act(async () => {
+      root.render(
+        <ThemeProvider theme="light" setTheme={() => {}}>
+          <TooltipProvider>
+            <RowWithPeek />
+          </TooltipProvider>
+        </ThemeProvider>,
+      );
+    });
+    await act(async () => {
+      document.querySelector("[data-row]")!.dispatchEvent(
+        new window.MouseEvent("contextmenu", {
+          bubbles: true,
+          button: 2,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
+      await settle();
+    });
+    const rename = document.querySelector<HTMLElement>(
+      '[data-content-action="rename"]',
+    )!;
+    await act(async () => {
+      rename.click();
+      await settle();
+    });
+    await act(async () => settle());
+    expect(document.querySelector('[data-slot="context-menu-content"]')).toBe(
+      null,
+    );
     const input = titleInput()!;
     expect(input.value).toBe("Roadmap");
     expect(document.activeElement).toBe(input);

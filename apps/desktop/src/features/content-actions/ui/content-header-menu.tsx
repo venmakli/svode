@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import { MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,17 +7,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { NavigationItem } from "@/features/navigation";
 import * as m from "@/paraglide/messages.js";
+import { useContentMenuHandlers } from "../hooks/use-content-menu-handlers";
 import type { ContentActionGroup } from "../model/catalog";
 import {
   ContentActionMenuItems,
   type ContentActionHandlers,
 } from "./content-action-menu-items";
 
-/**
- * The "⋮" menu of an object's header, built from its catalog groups. Rename
- * moves focus to a name field, so it runs once the menu has closed instead of
- * the menu handing focus back to its trigger.
- */
+/** The "⋮" menu of an object's header, built from its catalog groups. */
 export function ContentHeaderMenu({
   groups,
   pinItem = null,
@@ -28,16 +24,7 @@ export function ContentHeaderMenu({
   pinItem?: NavigationItem | null;
   handlers: ContentActionHandlers;
 }) {
-  const afterCloseRef = useRef<(() => void) | null>(null);
-  const rename = handlers.rename;
-  const shownHandlers: ContentActionHandlers = rename
-    ? {
-        ...handlers,
-        rename: () => {
-          afterCloseRef.current = rename;
-        },
-      }
-    : handlers;
+  const menu = useContentMenuHandlers(handlers);
 
   return (
     <DropdownMenu>
@@ -55,18 +42,12 @@ export function ContentHeaderMenu({
       <DropdownMenuContent
         align="end"
         className="w-64"
-        onCloseAutoFocus={(event) => {
-          const afterClose = afterCloseRef.current;
-          if (!afterClose) return;
-          afterCloseRef.current = null;
-          event.preventDefault();
-          afterClose();
-        }}
+        onCloseAutoFocus={menu.onCloseAutoFocus}
       >
         <ContentActionMenuItems
           groups={groups}
           pinItem={pinItem}
-          handlers={shownHandlers}
+          handlers={menu.handlers}
         />
       </DropdownMenuContent>
     </DropdownMenu>
