@@ -24,6 +24,7 @@ export type SettingsPane =
   | "properties"
   | "propertyAddType"
   | "propertyEdit"
+  | "propertyType"
   | "filter"
   | "filterField"
   | "filterEditor"

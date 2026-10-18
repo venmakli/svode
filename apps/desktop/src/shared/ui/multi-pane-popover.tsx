@@ -13,6 +13,8 @@ import { cn } from "@/shared/lib/utils";
 export interface MultiPaneDefinition<TPane extends string> {
   id: TPane;
   title: string;
+  /** Pane the back button returns to; the main pane by default. */
+  parent?: TPane;
   content: ReactNode;
   footer?: ReactNode;
   footerSeparator?: boolean;
@@ -74,7 +76,7 @@ export function MultiPanePopover<TPane extends string>({
       onOpenChange?.(false);
       return;
     }
-    setPane(mainPane);
+    setPane(paneById.get(activePane)?.parent ?? mainPane);
   }
 
   return (

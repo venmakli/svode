@@ -1437,6 +1437,7 @@
   "collection_field_description": "Description",
   "collection_field_created": "Created",
   "collection_field_updated": "Updated",
+  "collection_field_type_icon": "Icon",
   "collection_no_properties": "No custom properties",
   "collection_add_property": "Add property",
   "collection_properties_notice": "Visibility is saved in this view configuration. Collection item values stay unchanged.",

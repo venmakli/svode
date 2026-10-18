@@ -68,3 +68,26 @@ export function SettingsRow({
     </Button>
   );
 }
+
+/** A read-only fact laid out on the grid of `SettingsRow`. */
+export function SettingsStaticRow({
+  icon: Icon,
+  label,
+  meta,
+}: {
+  icon: LucideIcon;
+  label: string;
+  meta: string;
+}) {
+  return (
+    <div className="flex h-8 w-full items-center gap-2.5 rounded-md border border-transparent px-2 py-1.5 text-[13px] whitespace-nowrap select-none">
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate text-left font-medium">
+        {label}
+      </span>
+      <span className="shrink-0 text-[11.5px] text-muted-foreground">
+        {meta}
+      </span>
+    </div>
+  );
+}

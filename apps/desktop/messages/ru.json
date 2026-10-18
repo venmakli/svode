@@ -1437,6 +1437,7 @@
   "collection_field_description": "Описание",
   "collection_field_created": "Создано",
   "collection_field_updated": "Обновлено",
+  "collection_field_type_icon": "Иконка",
   "collection_no_properties": "Пользовательских свойств нет",
   "collection_add_property": "Добавить свойство",
   "collection_properties_notice": "Видимость сохраняется в настройках этого вида. Значения элементов коллекции не меняются.",

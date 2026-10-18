@@ -32,10 +32,15 @@ import { TypeSettingsPane } from "@/features/properties/column-settings";
 import {
   PropertyTypeMenuPane,
   propertyTypeAddUnavailableReason,
+  propertyTypeLabel,
 } from "@/features/properties/column-menu";
 import { handleError } from "../../hooks/error-feedback";
 import { SortableFieldVisibilityRow } from "../view-settings-panes";
-import { SettingsRow, SettingsSection } from "../settings-row";
+import {
+  SettingsRow,
+  SettingsSection,
+  SettingsStaticRow,
+} from "../settings-row";
 import * as m from "@/paraglide/messages.js";
 
 export function ViewSettingsPropertiesPane({
@@ -172,6 +177,7 @@ export function ViewSettingsPropertyEditPane({
   schema,
   query,
   toggleField,
+  openPropertyType,
   openFieldFilter,
   openFieldSort,
   spacePath,
@@ -184,6 +190,7 @@ export function ViewSettingsPropertyEditPane({
   schema: CollectionSchema;
   query: UseViewQueryResult;
   toggleField: (field: string, locked?: boolean) => void;
+  openPropertyType: () => void;
   openFieldFilter: (field: string) => void;
   openFieldSort: (field: string) => void;
   spacePath: string;
@@ -194,25 +201,25 @@ export function ViewSettingsPropertyEditPane({
   const selectedColumn = schema.columns.find(
     (column) => column.name === selectedProperty,
   );
+  const systemType = selectedColumn ? null : systemFieldType(selectedProperty);
 
   return (
     <div className="flex flex-col p-1">
       <SettingsSection label={m.collection_properties_label()} />
-      {selectedProperty === "title" ? (
-        <SettingsRow
-          icon={FileText}
-          label={m.collection_field_title()}
-          meta={schema.systemFields?.title?.label ?? m.collection_field_title()}
-          onClick={() => undefined}
-        />
-      ) : (
+      {selectedColumn ? (
         <SettingsRow
           icon={LayoutGrid}
           label={m.table_column_type()}
-          meta={selectedColumn?.type ?? "-"}
-          onClick={() => undefined}
+          meta={propertyTypeLabel(selectedColumn.type)}
+          onClick={openPropertyType}
         />
-      )}
+      ) : systemType ? (
+        <SettingsStaticRow
+          icon={LayoutGrid}
+          label={m.table_column_type()}
+          meta={systemType}
+        />
+      ) : null}
       <SettingsRow
         icon={savedFields.includes(selectedProperty) ? Eye : EyeOff}
         label={m.table_visible()}
@@ -260,4 +267,19 @@ export function ViewSettingsPropertyEditPane({
       />
     </div>
   );
+}
+
+function systemFieldType(field: string) {
+  switch (field) {
+    case "title":
+    case "description":
+      return propertyTypeLabel("text");
+    case "created":
+    case "updated":
+      return propertyTypeLabel("date");
+    case "icon":
+      return m.collection_field_type_icon();
+    default:
+      return null;
+  }
 }

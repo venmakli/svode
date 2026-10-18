@@ -8,6 +8,10 @@ import type {
   ViewType,
 } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
+import {
+  ColumnTypeChangeDialog,
+  PropertyTypeMenuPane,
+} from "@/features/properties/column-menu";
 import { useCollectionActors, useViewSettingsActions } from "../hooks";
 import { viewType } from "../lib/utils";
 import type { SettingsPane } from "../model";
@@ -95,6 +99,7 @@ export function ViewSettingsPopover({
     applySortDraft,
     clearFilterDraft,
     clearSortDraft,
+    closeTypeChange,
     customFieldIds,
     filterDraft,
     openExistingFilter,
@@ -105,11 +110,14 @@ export function ViewSettingsPopover({
     openNewSort,
     openPane,
     openProperty,
+    openPropertyType,
     reorderFields,
+    requestTypeChange,
     selectedProperty,
     setPane,
     sortDraft,
     toggleField,
+    typeChange,
     updateFilterDraft,
     updateSortDraft,
     updateTypeSetting,
@@ -128,6 +136,12 @@ export function ViewSettingsPopover({
     onUpdateView,
     onSchemaChange,
   });
+  const selectedColumn = schema.columns.find(
+    (column) => column.name === selectedProperty,
+  );
+  const typeChangeColumn = typeChange
+    ? schema.columns.find((column) => column.name === typeChange.field)
+    : undefined;
   const filterPane = ViewSettingsFilterPane({
     schema,
     query,
@@ -243,6 +257,7 @@ export function ViewSettingsPopover({
           schema={schema}
           query={query}
           toggleField={toggleField}
+          openPropertyType={openPropertyType}
           openFieldFilter={openFieldFilter}
           openFieldSort={openFieldSort}
           spacePath={spacePath}
@@ -251,6 +266,19 @@ export function ViewSettingsPopover({
           onSchemaChange={onSchemaChange}
         />
       ),
+    },
+    {
+      id: "propertyType" as const,
+      title: m.table_column_type(),
+      parent: "propertyEdit" as const,
+      content: selectedColumn ? (
+        <PropertyTypeMenuPane
+          activeType={selectedColumn.type}
+          disableActive
+          onSelect={requestTypeChange}
+        />
+      ) : null,
+      notice: m.property_dialog_change_type_desc(),
     },
     {
       id: "filter" as const,
@@ -308,34 +336,48 @@ export function ViewSettingsPopover({
   ];
 
   return (
-    <MultiPanePopover
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (nextOpen && !readOnly) setPane("main");
-        onOpenChange(nextOpen);
-      }}
-      pane={pane}
-      onPaneChange={setPane}
-      mainPane={readOnly ? pane : "main"}
-      className="w-80 max-w-[calc(100vw-2rem)]"
-      trigger={
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          disabled={readOnly}
-          className={cn(
-            "rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground",
-            open &&
-              pane === "main" &&
-              "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
-          )}
-        >
-          <Settings />
-          <span className="sr-only">{m.view_query_settings_title()}</span>
-        </Button>
-      }
-      panes={panes}
-    />
+    <>
+      <MultiPanePopover
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (nextOpen && !readOnly) setPane("main");
+          onOpenChange(nextOpen);
+        }}
+        pane={pane}
+        onPaneChange={setPane}
+        mainPane={readOnly ? pane : "main"}
+        className="w-80 max-w-[calc(100vw-2rem)]"
+        trigger={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            disabled={readOnly}
+            className={cn(
+              "rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground",
+              open &&
+                pane === "main" &&
+                "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
+            )}
+          >
+            <Settings />
+            <span className="sr-only">{m.view_query_settings_title()}</span>
+          </Button>
+        }
+        panes={panes}
+      />
+      {typeChange && typeChangeColumn ? (
+        <ColumnTypeChangeDialog
+          column={typeChangeColumn}
+          requestedType={typeChange.type}
+          schema={schema}
+          collectionPath={collectionPath}
+          spacePath={spacePath}
+          projectPath={projectPath}
+          onClose={closeTypeChange}
+          onSchemaChange={onSchemaChange}
+        />
+      ) : null}
+    </>
   );
 }

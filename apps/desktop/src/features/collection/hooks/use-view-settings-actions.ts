@@ -51,6 +51,10 @@ export function useViewSettingsActions({
   onSchemaChange: (schema: CollectionSchema) => void;
 }) {
   const [selectedProperty, setSelectedProperty] = useState("title");
+  const [typeChange, setTypeChange] = useState<{
+    field: string;
+    type: PropertyType | null;
+  } | null>(null);
 
   const customFieldIds = schema.columns.map((column) => column.name);
   const editorFields = new Map<
@@ -258,6 +262,20 @@ export function useViewSettingsActions({
     setPane("propertyEdit");
   }
 
+  function openPropertyType() {
+    setPane("propertyType");
+  }
+
+  function requestTypeChange(type: PropertyType) {
+    setTypeChange({ field: selectedProperty, type });
+    onOpenChange(false);
+  }
+
+  function closeTypeChange() {
+    // The field stays so the dialog keeps its column while it closes.
+    setTypeChange((current) => (current ? { ...current, type: null } : null));
+  }
+
   function openFieldFilter(field: string) {
     const existingIndex = query.merged.filter.findIndex(
       (item) => item.field === field,
@@ -297,6 +315,7 @@ export function useViewSettingsActions({
     applySortDraft,
     clearFilterDraft,
     clearSortDraft,
+    closeTypeChange,
     customFieldIds,
     filterDraft,
     openExistingFilter,
@@ -307,11 +326,14 @@ export function useViewSettingsActions({
     openNewSort,
     openPane,
     openProperty,
+    openPropertyType,
     reorderFields,
+    requestTypeChange,
     selectedProperty,
     setPane,
     sortDraft,
     toggleField,
+    typeChange,
     updateFilterDraft,
     updateSortDraft,
     updateTypeSetting,
