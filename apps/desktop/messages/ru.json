@@ -402,6 +402,7 @@
   "sessions_status_source_managed_pty": "Терминал Svode",
   "sessions_status_source_native_status_reader": "Лог агента",
   "sessions_status_source_none": "Нет данных",
+  "sessions_status_terminal_link": "Привязка терминала",
   "sessions_status_confidence_exact": "точно",
   "sessions_status_confidence_approximate": "приблизительно",
   "sessions_action_refresh": "Обновить сессии",

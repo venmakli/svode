@@ -15,14 +15,17 @@ pub(crate) struct PtyProcess {
     pub depth: usize,
     /// Seconds since the epoch; 0 when the start time cannot be read.
     pub start_time: u64,
+    /// The name of its executable, as the process table tells it.
+    pub name: String,
 }
 
-/// One running process of the table: pid, parent and start time.
-#[derive(Debug, Clone, Copy)]
+/// One running process of the table: pid, parent, start time and name.
+#[derive(Debug, Clone)]
 struct TableEntry {
     pid: u32,
     parent: Option<u32>,
     start_time: u64,
+    name: String,
 }
 
 /// The running processes in the tree of each shell, the shell first and
@@ -43,6 +46,7 @@ pub(crate) fn descendants(shells: &[u32]) -> HashMap<u32, Vec<PtyProcess>> {
             pid: process.pid().as_u32(),
             parent: process.parent().map(|parent| parent.as_u32()),
             start_time: process.start_time(),
+            name: process.name().to_string_lossy().into_owned(),
         })
         .collect::<Vec<_>>();
     trees(&table, shells)
@@ -78,6 +82,7 @@ fn trees(table: &[TableEntry], shells: &[u32]) -> HashMap<u32, Vec<PtyProcess>> 
                             pid: entry.pid,
                             depth,
                             start_time: entry.start_time,
+                            name: entry.name.clone(),
                         });
                         next.extend(children.get(&entry.pid).into_iter().flatten().copied());
                     }
@@ -99,6 +104,7 @@ mod tests {
             pid,
             parent,
             start_time,
+            name: format!("p{pid}"),
         }
     }
 
@@ -107,6 +113,7 @@ mod tests {
             pid,
             depth,
             start_time,
+            name: format!("p{pid}"),
         }
     }
 
@@ -162,10 +169,12 @@ mod tests {
         child.kill().ok();
         child.wait().ok();
         assert_eq!(tree.first().map(|process| process.pid), Some(this));
-        assert!(
-            tree.iter()
-                .any(|process| process.pid == child.id() && process.depth == 1),
-            "{tree:?}"
-        );
+        let found = tree
+            .iter()
+            .find(|process| process.pid == child.id() && process.depth == 1);
+        assert!(found.is_some(), "{tree:?}");
+        if cfg!(unix) {
+            assert_eq!(found.map(|process| process.name.as_str()), Some("sleep"));
+        }
     }
 }

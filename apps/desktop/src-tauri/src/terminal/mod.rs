@@ -171,12 +171,18 @@ pub(crate) struct AgentTerminalSurface {
     /// the session of this terminal.
     #[serde(skip)]
     pub(crate) rebound: bool,
+    /// The surface follows its session by the approximate source of Codex
+    /// (DF-163 R7), not by an exact record of its process.
+    #[serde(skip)]
+    pub(crate) approximate_binding: bool,
 }
 
 /// A live PTY with the running processes under its shell, the shell first
 /// and nearer processes before deeper ones (DF-163 R2).
 pub(crate) struct LivePtyProcesses {
     pub pty_id: String,
+    /// The directory the shell was started in.
+    pub cwd: String,
     pub processes: Vec<PtyProcess>,
 }
 
@@ -188,6 +194,8 @@ pub(crate) struct CurrentPtySession {
     pub agent_session_id: String,
     pub source: AgentId,
     pub source_session_id: String,
+    /// Told by the approximate source of Codex (DF-163 R7).
+    pub approximate: bool,
 }
 
 /// Status evidence of a managed PTY: an exit code is exact, a request
@@ -707,14 +715,21 @@ impl TerminalManager {
             .lock()
             .map_err(|_| AppError::General("Terminal state lock poisoned".to_string()))?
             .iter()
-            .filter_map(|(pty_id, process)| Some((pty_id.clone(), process.child.process_id()?)))
+            .filter_map(|(pty_id, process)| {
+                Some((
+                    pty_id.clone(),
+                    process.session.cwd.clone(),
+                    process.child.process_id()?,
+                ))
+            })
             .collect::<Vec<_>>();
-        let pids = shells.iter().map(|(_, pid)| *pid).collect::<Vec<_>>();
+        let pids = shells.iter().map(|(_, _, pid)| *pid).collect::<Vec<_>>();
         let mut trees = process_tree::descendants(&pids);
         Ok(shells
             .into_iter()
-            .map(|(pty_id, pid)| LivePtyProcesses {
+            .map(|(pty_id, cwd, pid)| LivePtyProcesses {
                 pty_id,
+                cwd,
                 processes: trees.remove(&pid).unwrap_or_default(),
             })
             .collect())
@@ -778,6 +793,7 @@ impl TerminalManager {
                         surface.title = None;
                         surface.status_evidence = None;
                         surface.rebound = true;
+                        surface.approximate_binding = current.approximate;
                     }
                     None => {
                         surfaces.insert(
@@ -1376,6 +1392,7 @@ fn agent_surface_from_spawn(
         status_evidence: None,
         exit_marker_buffer: String::new(),
         rebound: false,
+        approximate_binding: false,
     }
 }
 
@@ -1413,6 +1430,7 @@ fn agent_surface_from_existing_session(
         status_evidence: None,
         exit_marker_buffer: String::new(),
         rebound: false,
+        approximate_binding: false,
     }
 }
 
@@ -1859,6 +1877,7 @@ mod tests {
             status_evidence: None,
             exit_marker_buffer: String::new(),
             rebound: false,
+            approximate_binding: false,
         }
     }
 
@@ -2210,6 +2229,7 @@ mod tests {
             agent_session_id: format!("claude-code:{session_id}"),
             source: AgentAdapterKind::ClaudeCode.id(),
             source_session_id: session_id.to_string(),
+            approximate: false,
         }
     }
 

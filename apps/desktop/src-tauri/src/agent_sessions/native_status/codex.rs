@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -67,7 +69,7 @@ static ROLLOUT_ID: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Rollout files under the Codex home by session id: the id is the uuid in
 /// the file name (E01: `sessionId` = `thread.id` = rollout id).
-pub(super) fn index(root: &Path) -> HashMap<String, PathBuf> {
+pub(crate) fn index(root: &Path) -> HashMap<String, PathBuf> {
     let mut files = HashMap::new();
     collect_rollouts(&root.join("sessions"), &mut files);
     files
@@ -96,6 +98,52 @@ fn collect_rollouts(dir: &Path, files: &mut HashMap<String, PathBuf>) {
             files.insert(id.as_str().to_ascii_lowercase(), path);
         }
     }
+}
+
+/// What the approximate source of the session a Codex terminal runs reads
+/// of a thread (DF-163 R7): where and by which client it was started, when
+/// its latest turn started and when it last did anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ThreadActivity {
+    pub cwd: Option<String>,
+    pub originator: Option<String>,
+    pub turn_started_at: Option<DateTime<Utc>>,
+    pub last_activity_at: Option<DateTime<Utc>>,
+}
+
+/// The thread's `session_meta`, its latest `task_started` and its latest
+/// record other than settings the agent applies (DF-173 R1); none for a
+/// rollout that does not start with `session_meta`.
+pub(crate) fn thread_activity(path: &Path) -> Option<ThreadActivity> {
+    let mut first = String::new();
+    BufReader::new(File::open(path).ok()?)
+        .read_line(&mut first)
+        .ok()?;
+    let meta = serde_json::from_str::<Value>(&first).ok()?;
+    if string_field(&meta, &["type"]) != Some("session_meta") {
+        return None;
+    }
+    let payload = meta.get("payload")?;
+    Some(ThreadActivity {
+        cwd: string_field(payload, &["cwd"]).map(str::to_string),
+        originator: string_field(payload, &["originator"]).map(str::to_string),
+        turn_started_at: last_of(path, |value| {
+            (string_field(value, &["type"]) == Some("event_msg")
+                && value
+                    .get("payload")
+                    .and_then(|payload| string_field(payload, &["type"]))
+                    == Some("task_started"))
+            .then(|| timestamp_from_fields(value))
+            .flatten()
+        }),
+        last_activity_at: last_of(path, |value| {
+            let settings = value
+                .get("payload")
+                .and_then(|payload| string_field(payload, &["type"]))
+                == Some("thread_settings_applied");
+            (!settings).then(|| timestamp_from_fields(value)).flatten()
+        }),
+    })
 }
 
 /// Status from the rollout tail and the launch marker of the first user

@@ -175,9 +175,16 @@ export function statusSourceLabel(session: AgentSession): string {
   return `${sourceLabel}, ${confidenceLabel}`;
 }
 
+/** How the session's terminal is linked to it, when only approximately. */
+export function terminalLinkLabel(session: AgentSession): string | null {
+  if (!session.runtime?.approximateBinding) return null;
+  return `${m.sessions_status_terminal_link()}, ${m.sessions_status_confidence_approximate()}`;
+}
+
 /**
  * The tooltip line under the marker label: the status when the marker names
- * the open terminal instead, its qualifier, then its source.
+ * the open terminal instead, its qualifier, its source, then an approximate
+ * link of its terminal.
  */
 export function statusTooltipDetail(session: AgentSession): string {
   const label = statusLabel(session);
@@ -185,6 +192,7 @@ export function statusTooltipDetail(session: AgentSession): string {
     statusMarkerLabel(session) === label ? null : label,
     statusQualifier(session),
     statusSourceLabel(session),
+    terminalLinkLabel(session),
   ]
     .filter(Boolean)
     .join(" · ");

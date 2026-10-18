@@ -402,6 +402,7 @@
   "sessions_status_source_managed_pty": "Svode terminal",
   "sessions_status_source_native_status_reader": "Agent log",
   "sessions_status_source_none": "No evidence",
+  "sessions_status_terminal_link": "Terminal link",
   "sessions_status_confidence_exact": "exact",
   "sessions_status_confidence_approximate": "approximate",
   "sessions_action_refresh": "Refresh sessions",

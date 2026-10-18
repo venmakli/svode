@@ -773,6 +773,7 @@ mod tests {
             status_evidence: evidence,
             exit_marker_buffer: String::new(),
             rebound: false,
+            approximate_binding: false,
         }
     }
 

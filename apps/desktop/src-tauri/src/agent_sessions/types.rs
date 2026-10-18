@@ -204,6 +204,10 @@ pub struct AgentSessionRuntime {
     /// subscribes to its activity by it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acp_session: Option<SessionKey>,
+    /// The terminal came to the session by the approximate source of Codex
+    /// (DF-163 R7).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub approximate_binding: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

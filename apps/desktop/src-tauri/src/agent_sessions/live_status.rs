@@ -378,6 +378,7 @@ fn apply_terminal_runtime(
         last_output_at: runtime_surface.last_output_at.clone(),
         last_input_at: runtime_surface.last_input_at.clone(),
         acp_session: None,
+        approximate_binding: runtime_surface.approximate_binding,
     });
 
     matching
@@ -481,6 +482,7 @@ pub(super) fn map_provisional_surface(
             last_output_at: surface.last_output_at.clone(),
             last_input_at: surface.last_input_at.clone(),
             acp_session: None,
+            approximate_binding: false,
         }),
         project_id: None,
         project_path: Some(scope.project_path.clone()),

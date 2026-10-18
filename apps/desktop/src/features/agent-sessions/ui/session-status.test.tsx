@@ -61,6 +61,23 @@ test("status label stays normalized when a terminal is open", () => {
   );
 });
 
+test("a terminal linked approximately says so after the status source", () => {
+  const followed = session({
+    runtime: { live: true, ptyId: "pty-1", approximateBinding: true },
+  });
+
+  expect(statusTooltipDetail(followed)).toBe(
+    [
+      m.sessions_status_done(),
+      statusSourceLabel(followed),
+      `${m.sessions_status_terminal_link()}, ${m.sessions_status_confidence_approximate()}`,
+    ].join(" · "),
+  );
+  expect(statusSourceLabel(followed)).toBe(
+    `${m.sessions_status_source_native_status_reader()}, ${m.sessions_status_confidence_approximate()}`,
+  );
+});
+
 test("pid-only runtime without managed pty is not a terminal-open marker", () => {
   const doneWithPidOnlyRuntime = session({
     runtime: { live: true, pid: 4242 },

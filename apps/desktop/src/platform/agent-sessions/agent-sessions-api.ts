@@ -22,6 +22,8 @@ export interface AgentSessionRuntime {
   lastInputAt?: string;
   /** The key a Svode ACP connection drives the session under. */
   acpSession?: AgentSessionKeyDto;
+  /** The terminal came to the session by the approximate source of Codex. */
+  approximateBinding?: boolean;
 }
 
 export interface AgentResumeCommand {
