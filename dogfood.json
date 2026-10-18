@@ -8,8 +8,8 @@
       "commit": "787ef797d444a8051fc8cf8dfca7d9601a187b81",
       "sourceRef": "main",
       "runId": 39076587150,
-      "publishedAt": "2026-10-17T23:34:13.866Z",
-      "expiresAt": "2026-10-20T23:34:13.866Z",
+      "publishedAt": "2026-10-18T02:22:24.092Z",
+      "expiresAt": "2026-10-21T02:22:24.092Z",
       "reason": "Stage 10 dogfood fixes",
       "platforms": {
         "darwin": {
@@ -21,6 +21,11 @@
           "url": "https://github.com/venmakli/svode/actions/runs/39076587150/artifacts/12118182944",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/39076587150",
           "artifactName": "Svode-windows-nsis"
+        },
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/39076587150/artifacts/12122575356",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/39076587150",
+          "artifactName": "Svode-linux-deb"
         }
       }
     },
