@@ -133,7 +133,7 @@ fn rename_roots(request: &PageWrite<'_>, rename: &entry::PlannedWriteRename) -> 
     }
 }
 
-fn mapped_path(path: &Path, roots: Option<&(PathBuf, PathBuf)>) -> PathBuf {
+pub(crate) fn mapped_path(path: &Path, roots: Option<&(PathBuf, PathBuf)>) -> PathBuf {
     match roots {
         Some((old, new)) if path == old => new.clone(),
         Some((old, new)) => path
@@ -144,13 +144,29 @@ fn mapped_path(path: &Path, roots: Option<&(PathBuf, PathBuf)>) -> PathBuf {
     }
 }
 
-struct SourceSnapshot {
+/// Bytes of every file a source operation may write, keyed by the path before
+/// an optional relocation of `roots` (old, new), so a failed operation is
+/// restored as a whole. Also used by structural rename and move.
+pub(crate) struct SourceSnapshot {
     files: BTreeMap<PathBuf, Option<Vec<u8>>>,
     roots: Option<(PathBuf, PathBuf)>,
 }
 
+/// Whether `path` names an existing entry with exactly this name, so a
+/// case-only relocation is told apart on a case-insensitive file system.
+fn present_as_named(path: &Path) -> bool {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return path.exists();
+    };
+    fs::read_dir(parent)
+        .is_ok_and(|entries| entries.flatten().any(|entry| entry.file_name() == name))
+}
+
 impl SourceSnapshot {
-    fn capture(paths: &[PathBuf], roots: Option<(PathBuf, PathBuf)>) -> Result<Self, PageError> {
+    pub(crate) fn capture(
+        paths: &[PathBuf],
+        roots: Option<(PathBuf, PathBuf)>,
+    ) -> Result<Self, PageError> {
         let mut files = BTreeMap::new();
         for path in paths {
             let bytes = match fs::read(path) {
@@ -163,13 +179,13 @@ impl SourceSnapshot {
         Ok(Self { files, roots })
     }
 
-    fn rollback(&self, cause: PageError) -> PageError {
+    pub(crate) fn rollback(&self, cause: PageError) -> PageError {
         let mut failed = Vec::new();
         if let Some((old, new)) = &self.roots {
-            if !old.exists() && new.exists() && fs::rename(new, old).is_err() {
+            if !present_as_named(old) && present_as_named(new) && fs::rename(new, old).is_err() {
                 failed.extend([old.display().to_string(), new.display().to_string()]);
             }
-            if new.exists() {
+            if present_as_named(new) {
                 failed.push(new.display().to_string());
             }
         }
@@ -198,7 +214,30 @@ impl SourceSnapshot {
         }
     }
 
-    fn changes(&self) -> Result<Vec<PathBuf>, PageError> {
+    /// Whether the relocated root has left its old path, that is whether the
+    /// operation got past its filesystem rename.
+    pub(crate) fn relocated(&self) -> bool {
+        self.roots
+            .as_ref()
+            .is_some_and(|(old, _)| !present_as_named(old))
+    }
+
+    /// Current paths of the captured files whose bytes changed.
+    pub(crate) fn rewritten(&self) -> Result<Vec<PathBuf>, PageError> {
+        let mut rewritten = Vec::new();
+        for (old, bytes) in &self.files {
+            let current = mapped_path(old, self.roots.as_ref());
+            match fs::read(&current) {
+                Ok(now) if bytes.as_ref() != Some(&now) => rewritten.push(current),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(rewritten)
+    }
+
+    pub(crate) fn changes(&self) -> Result<Vec<PathBuf>, PageError> {
         let mut changed = Vec::new();
         for (old, bytes) in &self.files {
             let current = mapped_path(old, self.roots.as_ref());
@@ -410,8 +449,22 @@ fn checkpoint(_: &str) -> Result<(), PageError> {
 thread_local! { static FAILURE: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) }; }
 
 #[cfg(test)]
+thread_local! { static FAILURE_EFFECT: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) }; }
+
+/// Make `checkpoint(stage)` fail on this thread; `effect` runs just before
+/// the injected failure, such as making a written file unrestorable.
+#[cfg(test)]
+pub(crate) fn inject_failure(stage: Option<&'static str>, effect: Option<Box<dyn FnOnce()>>) {
+    FAILURE.with(|failure| *failure.borrow_mut() = stage);
+    FAILURE_EFFECT.with(|slot| *slot.borrow_mut() = effect);
+}
+
+#[cfg(test)]
 pub(crate) fn checkpoint(stage: &str) -> Result<(), PageError> {
     if FAILURE.with(|failure| *failure.borrow() == Some(stage)) {
+        if let Some(effect) = FAILURE_EFFECT.with(|slot| slot.borrow_mut().take()) {
+            effect();
+        }
         Err(PageError::General(format!("injected {stage} failure")))
     } else {
         Ok(())

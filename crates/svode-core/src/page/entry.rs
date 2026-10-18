@@ -1210,6 +1210,10 @@ pub fn move_entry(
     move_entry_with_project(space, from, to_parent, backlink_index, None)
 }
 
+/// Move a path under a new parent with its order, schema defaults, relations
+/// and Space-local backlinks. A failure after the filesystem rename is
+/// returned as is: structural move restores the whole touched set from its
+/// snapshot.
 pub fn move_entry_with_project(
     space: &Path,
     from: &str,
@@ -1264,25 +1268,29 @@ pub fn move_entry_with_project(
 
     fs::rename(&abs_from, &abs_to)?;
     update_order_after_move(space, from, &new_rel, from_is_dir, &target_sibling_order)?;
+    #[cfg(test)]
+    crate::page::write::checkpoint("move_order")?;
     crate::collections::engine::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
-    rewrite_relations_after_fs_move_with_project(
-        space,
+    #[cfg(test)]
+    crate::page::write::checkpoint("move_defaults")?;
+    crate::collections::engine::rewrite_relation_paths_for_move_with_authorized_plan(
+        &space.to_string_lossy(),
         project_path,
         from,
         &new_rel,
-        &abs_from,
-        &abs_to,
-        Some(&relation_plan),
+        &relation_plan,
     )?;
+    #[cfg(test)]
+    crate::page::write::checkpoint("move_relations")?;
 
     // Update backlinks. For folder moves, every .md descendant sits under a
     // new path now — rewrite their inbound links too, not just the folder itself
     // (which isn't even a .md target).
     if let Some(index) = backlink_index {
         if from_is_dir {
-            let _ = index.update_links_on_folder_rename(space, from, &new_rel);
+            index.update_links_on_folder_rename(space, from, &new_rel)?;
         } else if is_md {
-            let _ = index.update_links_on_rename(space, from, &new_rel, None);
+            index.update_links_on_rename(space, from, &new_rel, None)?;
             let _ = index.update_file(space, &new_rel);
         }
     }
@@ -2084,6 +2092,9 @@ pub fn rename(space: &str, from: &str, to: &str) -> Result<(), PageError> {
     rename_with_project(space, from, to, None)
 }
 
+/// Rename a path in its parent with its relations and sidebar order. A
+/// failure after the filesystem rename is returned as is: structural rename
+/// restores the whole touched set from its snapshot.
 pub fn rename_with_project(
     space: &str,
     from: &str,
@@ -2113,15 +2124,15 @@ pub fn rename_with_project(
     }
 
     fs::rename(&abs_from, &abs_to)?;
-    rewrite_relations_after_fs_move_with_project(
-        Path::new(space),
+    crate::collections::engine::rewrite_relation_paths_for_move_with_authorized_plan(
+        space,
         project_path,
         from,
         to,
-        &abs_from,
-        &abs_to,
-        Some(&relation_plan),
+        &relation_plan,
     )?;
+    #[cfg(test)]
+    crate::page::write::checkpoint("move_relations")?;
 
     // Update order.json: rename entry in parent's order list
     let old_name = Path::new(from)
@@ -2141,14 +2152,16 @@ pub fn rename_with_project(
         parent_dir.to_string_lossy().to_string()
     };
     let sp_path = Path::new(space);
-    order_rename(sp_path, &dir_key, &old_name, &new_name);
+    order_rename_checked(sp_path, &dir_key, &old_name, &new_name)?;
 
     // If it's a directory, also carry its own and nested keys in order.json
     if abs_to.is_dir() {
-        let _ = content_tree::update_order(sp_path, |order| {
+        content_tree::update_order(sp_path, |order| {
             rebase_directory_order_keys(order, from, to)
-        });
+        })?;
     }
+    #[cfg(test)]
+    crate::page::write::checkpoint("move_order")?;
 
     Ok(())
 }

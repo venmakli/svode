@@ -97,7 +97,8 @@ fn rebase_legacy_source_tree_after_move_preserves_internal_moved_targets() {
         &index,
         "Folder",
         "Archive/Folder",
-    );
+    )
+    .unwrap();
 
     assert_eq!(
         fs::read_to_string(tmp.path().join("Archive").join("Folder").join("Source.md")).unwrap(),
@@ -166,7 +167,8 @@ async fn moved_collection_tree_replaces_descendant_index_paths() {
         "Renamed collection",
         "test_collection_rename",
     )
-    .await;
+    .await
+    .unwrap();
 
     assert_eq!(
         indexed_paths(&pool).await,
@@ -958,4 +960,440 @@ async fn df_154_move_rename_and_conversion_rewrite_percent_encoded_links() {
             .unwrap()
             .ends_with("[План](../../%D0%9F%D0%BB%D0%B0%D0%BD.md)\n")
     );
+}
+
+/// Records each structural history registration with its Space and whether
+/// it is an immediate commit.
+#[derive(Default)]
+struct GroupSink(std::sync::Mutex<Vec<(bool, std::path::PathBuf, Vec<std::path::PathBuf>)>>);
+
+impl GroupSink {
+    fn take(&self) -> Vec<(bool, std::path::PathBuf, Vec<std::path::PathBuf>)> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+impl super::StructuralCommitSink for GroupSink {
+    fn schedule(
+        &self,
+        _: &Path,
+        space: &Path,
+        _: crate::git::pending::StructuralChange,
+        paths: Vec<std::path::PathBuf>,
+    ) {
+        self.0
+            .lock()
+            .unwrap()
+            .push((false, space.to_path_buf(), paths));
+    }
+
+    fn commit_now<'a>(
+        &'a self,
+        _: &'a Path,
+        space: &'a Path,
+        paths: Vec<std::path::PathBuf>,
+        _: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((true, space.to_path_buf(), paths));
+        Box::pin(async {})
+    }
+}
+
+/// Source files of the tree with their bytes, without the device-local state
+/// (`.svode/local.json`, `variables.*`, `*.db*`) the index repair rewrites.
+fn source_snapshot(root: &Path) -> Vec<(String, String)> {
+    tree_snapshot(root)
+        .into_iter()
+        .filter(|(path, _)| {
+            let local = path.strip_prefix(".svode/").is_some_and(|name| {
+                name == "local.json" || name.starts_with("variables.") || name.contains(".db")
+            });
+            !local
+        })
+        .map(|(path, bytes)| (path, String::from_utf8_lossy(&bytes).to_string()))
+        .collect()
+}
+
+/// Inline Project Space: the bare folder `Area` holds the Collection
+/// `Area/Tasks`, whose item `Item.md` is a relation target of `Decisions` and
+/// the link target of `Link.md`; `Area/Tasks/Sub` is an empty folder.
+fn relation_target_space(root: &Path) {
+    crate::page::test_support::scaffold_space(root, "Root");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    write_tree(
+        root,
+        &[
+            ("Area/Tasks/schema.yaml", "columns: []\n"),
+            ("Area/Tasks/README.md", "---\ntitle: Tasks\n---\n"),
+            (
+                "Area/Tasks/Item.md",
+                "---\ntitle: Item\n---\nSee [Decision](../../Decisions/Decision.md).\n",
+            ),
+            (
+                "Decisions/schema.yaml",
+                "columns:\n  - name: Task\n    type: relation\n    relation: Area/Tasks\n",
+            ),
+            ("Decisions/README.md", "---\ntitle: Decisions\n---\n"),
+            (
+                "Decisions/Decision.md",
+                "---\ntitle: Decision\nTask: [Item.md]\n---\n",
+            ),
+            ("Link.md", "See [Item](Area/Tasks/Item.md).\n"),
+            (
+                ".svode/order.json",
+                r#"{".":["Area","Decisions","Link.md"],"Area/Tasks":["Item.md"]}"#,
+            ),
+        ],
+    );
+    fs::create_dir_all(root.join("Area/Tasks/Sub")).unwrap();
+}
+
+fn assert_contains_all(paths: &[std::path::PathBuf], root: &Path, expected: &[&str]) {
+    for path in expected {
+        assert!(paths.contains(&root.join(path)), "{path} not in {paths:?}");
+    }
+}
+
+#[tokio::test]
+async fn rename_and_move_register_every_changed_file_in_one_group() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    relation_target_space(root);
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+    let runtime = || StructureRuntime {
+        commits: Some(&sink),
+        ..runtime(&state)
+    };
+
+    let modified = super::rename(space, "Area", "Zone", Some(space), runtime())
+        .await
+        .unwrap();
+    assert_eq!(modified, vec!["Link.md".to_string()]);
+    let groups = sink.take();
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    let (now, owner, paths) = &groups[0];
+    assert!(!now);
+    assert_eq!(owner, root);
+    assert_contains_all(
+        paths,
+        root,
+        &[
+            "Area",
+            "Zone",
+            "Area/Tasks/Item.md",
+            "Zone/Tasks/Item.md",
+            "Link.md",
+            "Decisions/schema.yaml",
+            ".svode/order.json",
+        ],
+    );
+    assert!(!paths.contains(&root.join("Decisions/Decision.md")));
+    assert_eq!(
+        relation_targets(&root.join("Decisions/schema.yaml")),
+        vec!["Zone/Tasks".to_string()]
+    );
+
+    let moved = super::move_entry(
+        space,
+        "Zone/Tasks/Item.md",
+        "Zone/Tasks/Sub",
+        Some(space),
+        runtime(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved, "Zone/Tasks/Sub/Item.md");
+    assert!(
+        fs::read_to_string(root.join("Decisions/Decision.md"))
+            .unwrap()
+            .contains("Sub/Item.md")
+    );
+    let groups = sink.take();
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    let (now, owner, paths) = &groups[0];
+    assert!(!now);
+    assert_eq!(owner, root);
+    assert_contains_all(
+        paths,
+        root,
+        &[
+            "Zone/Tasks/Item.md",
+            "Zone/Tasks/Sub/Item.md",
+            "Decisions/Decision.md",
+            "Link.md",
+            ".svode/order.json",
+        ],
+    );
+    assert!(!paths.contains(&root.join("Decisions/schema.yaml")));
+}
+
+#[tokio::test]
+async fn a_move_with_unique_ids_commits_the_whole_changed_set_at_once() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    crate::page::test_support::scaffold_space(root, "Root");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    write_tree(
+        root,
+        &[
+            (
+                "Tasks/schema.yaml",
+                "columns:\n  - { name: Key, type: unique_id, prefix: ISSUE, next: 4 }\n",
+            ),
+            ("Tasks/README.md", "---\ntitle: Tasks\n---\n"),
+            ("Loose.md", "---\ntitle: Loose\n---\n"),
+            ("Link.md", "See [Loose](Loose.md).\n"),
+        ],
+    );
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+
+    super::move_entry(
+        space,
+        "Loose.md",
+        "Tasks",
+        Some(space),
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        fs::read_to_string(root.join("Tasks/Loose.md"))
+            .unwrap()
+            .contains("Key: 4")
+    );
+    let groups = sink.take();
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    let (now, owner, paths) = &groups[0];
+    assert!(now);
+    assert_eq!(owner, root);
+    assert_contains_all(
+        paths,
+        root,
+        &[
+            "Loose.md",
+            "Tasks/Loose.md",
+            "Tasks/schema.yaml",
+            "Link.md",
+            ".svode/order.json",
+        ],
+    );
+}
+
+/// Runs `operation` with a failure injected at `stage` and asserts that the
+/// sources are restored, the injected cause is returned and nothing is
+/// registered in history.
+async fn assert_failure_restores(
+    stage: &'static str,
+    operation: impl AsyncFnOnce(
+        &str,
+        StructureRuntime<'_, SystemGitDateExecutor>,
+    ) -> crate::page::PageError,
+) {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    relation_target_space(root);
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+    let before = source_snapshot(root);
+
+    crate::page::write::inject_failure(Some(stage), None);
+    let error = operation(
+        space,
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await;
+    crate::page::write::inject_failure(None, None);
+
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("injected {stage} failure")),
+        "{stage}: {error:?}"
+    );
+    assert_eq!(source_snapshot(root), before, "{stage}");
+    assert!(sink.take().is_empty(), "{stage}");
+}
+
+#[tokio::test]
+async fn a_failed_step_of_a_rename_or_move_restores_the_touched_set() {
+    for stage in [
+        "move_relations",
+        "move_order",
+        "move_routing",
+        "move_links",
+        "move_sources",
+    ] {
+        assert_failure_restores(stage, async |space, runtime| {
+            super::rename(space, "Area", "Zone", Some(space), runtime)
+                .await
+                .expect_err("injected rename failure")
+        })
+        .await;
+    }
+    for stage in [
+        "move_order",
+        "move_defaults",
+        "move_relations",
+        "move_routing",
+        "move_links",
+        "move_sources",
+    ] {
+        assert_failure_restores(stage, async |space, runtime| {
+            super::move_entry(
+                space,
+                "Area/Tasks/Item.md",
+                "Area/Tasks/Sub",
+                Some(space),
+                runtime,
+            )
+            .await
+            .expect_err("injected move failure")
+        })
+        .await;
+        assert_failure_restores(stage, async |space, runtime| {
+            fs::create_dir_all(Path::new(space).join("Archive")).unwrap();
+            let error = super::move_entry(space, "Area", "Archive", Some(space), runtime)
+                .await
+                .expect_err("injected folder move failure");
+            fs::remove_dir(Path::new(space).join("Archive")).unwrap();
+            error
+        })
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn a_failed_case_only_rename_keeps_the_original_name() {
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().to_str().unwrap();
+    write_tree(
+        tmp.path(),
+        &[
+            ("notes/a.md", "---\ntitle: A\n---\n"),
+            (".svode/order.json", r#"{".":["notes"]}"#),
+        ],
+    );
+    let state = IndexRuntimeState::default();
+    let before = source_snapshot(tmp.path());
+
+    crate::page::write::inject_failure(Some("move_order"), None);
+    let error = super::rename(space, "notes", "Notes", None, runtime(&state)).await;
+    crate::page::write::inject_failure(None, None);
+
+    assert!(error.is_err());
+    let names = fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"notes".to_string()), "{names:?}");
+    assert!(!names.contains(&"Notes".to_string()), "{names:?}");
+    assert_eq!(source_snapshot(tmp.path()), before);
+}
+
+#[tokio::test]
+async fn an_unrestorable_file_fails_the_rename_with_its_path() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    relation_target_space(root);
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+    let link = root.join("Link.md");
+
+    let replaced = link.clone();
+    crate::page::write::inject_failure(
+        Some("move_sources"),
+        Some(Box::new(move || {
+            fs::remove_file(&replaced).unwrap();
+            fs::create_dir(&replaced).unwrap();
+        })),
+    );
+    let error = super::rename(
+        space,
+        "Area",
+        "Zone",
+        Some(space),
+        StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        },
+    )
+    .await
+    .expect_err("unrestorable link source");
+    crate::page::write::inject_failure(None, None);
+
+    match error {
+        crate::page::PageError::Recovery { cause, paths } => {
+            assert!(cause.contains("injected move_sources failure"), "{cause}");
+            assert_eq!(paths, vec![link.display().to_string()]);
+        }
+        error => panic!("expected recovery, got {error:?}"),
+    }
+    assert!(root.join("Area/Tasks/Item.md").is_file());
+    assert!(!root.join("Zone").exists());
+    assert!(sink.take().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_read_only_source_fails_the_operation_without_a_false_recovery() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (read_only, rename) in [
+        ("Link.md", true),
+        (".svode/order.json", true),
+        ("Decisions/Decision.md", false),
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        relation_target_space(root);
+        let space = root.to_str().unwrap();
+        let state = IndexRuntimeState::default();
+        let sink = GroupSink::default();
+        let path = root.join(read_only);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        let before = source_snapshot(root);
+        let runtime = StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        };
+
+        let result = if rename {
+            super::rename(space, "Area", "Zone", Some(space), runtime).await
+        } else {
+            super::move_entry(
+                space,
+                "Area/Tasks/Item.md",
+                "Area/Tasks/Sub",
+                Some(space),
+                runtime,
+            )
+            .await
+            .map(|path| vec![path])
+        };
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let error = result.expect_err(read_only);
+        assert!(
+            !matches!(error, crate::page::PageError::Recovery { .. }),
+            "{read_only}: {error:?}"
+        );
+        assert_eq!(source_snapshot(root), before, "{read_only}");
+        assert!(sink.take().is_empty(), "{read_only}");
+    }
 }

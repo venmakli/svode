@@ -451,7 +451,7 @@ fn a_held_repository_of_the_touched_set_is_busy_until_it_is_released() {
 
 #[cfg(unix)]
 #[test]
-fn a_link_rewrite_that_fails_keeps_the_applied_move_as_a_partial_outcome() {
+fn a_link_rewrite_that_fails_rolls_the_whole_rename_back() {
     use std::os::unix::fs::PermissionsExt;
 
     let Some((_temp, root)) = project() else {
@@ -462,19 +462,22 @@ fn a_link_rewrite_that_fails_keeps_the_applied_move_as_a_partial_outcome() {
     let original = text(root, "child/ref.md");
     fs::set_permissions(&reference, fs::Permissions::from_mode(0o444)).unwrap();
 
-    // The shared operation keeps the rename and reports what it changed; it
-    // does not roll the rename back because a backlink could not be written.
-    let renamed = ok(
+    // A backlink that cannot be written fails the operation, which restores
+    // the rename instead of leaving the link pointing at the old path.
+    let (exit, value) = json(
         root,
         &["content", "rename", "--path", "drafts", "--to", "roadmap"],
+        None,
     );
     fs::set_permissions(&reference, fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(root.join("roadmap/plan.md").is_file() && !root.join("drafts").exists());
-    assert_eq!(text(root, "child/ref.md"), original);
-    assert!(
-        !strings(&renamed["affectedProjectPaths"]).contains("child/ref.md"),
-        "{renamed}"
+    assert_eq!(exit, 1, "{value}");
+    assert_eq!(value["ok"], false);
+    assert_ne!(
+        value["error"]["code"], "PAGE_WRITE_RECOVERY_FAILED",
+        "{value}"
     );
+    assert!(root.join("drafts/plan.md").is_file() && !root.join("roadmap").exists());
+    assert_eq!(text(root, "child/ref.md"), original);
 }
 
 #[test]

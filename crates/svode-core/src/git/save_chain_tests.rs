@@ -544,3 +544,67 @@ async fn a_refused_commit_returns_the_chain_and_a_retry_commits_it() {
     );
     assert_eq!(fixture.pending(), vec![fixture.root().join("Unrelated.md")]);
 }
+
+#[tokio::test]
+async fn a_scoped_save_after_a_structural_rename_or_move_leaves_a_clean_status() {
+    let fixture = Fixture::new(&[
+        ("Area/Tasks/schema.yaml", "columns: []\n"),
+        ("Area/Tasks/README.md", "---\ntitle: Tasks\n---\n"),
+        ("Area/Tasks/Item.md", "---\ntitle: Item\n---\nItem\n"),
+        ("Area/Tasks/Sub/Other.md", "---\ntitle: Other\n---\n"),
+        (
+            "Decisions/schema.yaml",
+            "columns:\n  - name: Task\n    type: relation\n    relation: Area/Tasks\n",
+        ),
+        ("Decisions/README.md", "---\ntitle: Decisions\n---\n"),
+        (
+            "Decisions/Decision.md",
+            "---\ntitle: Decision\nTask: [Item.md]\n---\n",
+        ),
+        ("Link.md", "See [Item](Area/Tasks/Item.md).\n"),
+    ])
+    .await;
+    let root = fixture.space();
+    let cli = cli();
+    let status = async || git(&cli, fixture.root(), &["status", "--porcelain"]).await;
+
+    let modified = structure::rename(root, "Area", "Zone", Some(root), fixture.structure())
+        .await
+        .unwrap();
+    assert_eq!(modified, vec!["Link.md".to_string()]);
+    fixture
+        .save(Some(&["Zone/Tasks/Item.md"]))
+        .await
+        .expect("rename save");
+    assert_eq!(status().await, "");
+    assert!(
+        fixture
+            .show("Decisions/schema.yaml")
+            .await
+            .contains("Zone/Tasks")
+    );
+    assert!(fixture.pending().is_empty());
+
+    let moved = structure::move_entry(
+        root,
+        "Zone/Tasks/Item.md",
+        "Zone/Tasks/Sub",
+        Some(root),
+        fixture.structure(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved, "Zone/Tasks/Sub/Item.md");
+    fixture.save(Some(&[&moved])).await.expect("move save");
+    assert_eq!(status().await, "");
+    assert_eq!(
+        without_order(fixture.committed().await),
+        records(&[
+            "A\tZone/Tasks/Sub/Item.md",
+            "D\tZone/Tasks/Item.md",
+            "M\tDecisions/Decision.md",
+            "M\tLink.md",
+        ])
+    );
+    assert!(fixture.pending().is_empty());
+}

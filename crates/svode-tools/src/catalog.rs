@@ -690,7 +690,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Deleted, file_of("/collectionPath", COLLECTION_README), None)] }),
         def(
             "rename_content",
-            "Rename a folder without a title in its current parent through Svode's managed structural backend. A Page, Collection item, or Collection is named by its title: rename_content refuses it with TITLE_RENAME_REQUIRED and changes nothing; to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. A file, a child Space directory, or a system or hidden path (such as .assets) is refused with UNSUPPORTED_RENAME_TARGET. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            "Rename a folder without a title in its current parent through Svode's managed structural backend. A Page, Collection item, or Collection is named by its title: rename_content refuses it with TITLE_RENAME_REQUIRED and changes nothing; to rename one, change its title with update_page_metadata, update_collection_item_metadata, update_collection_item_fields, or update_collection_metadata instead. A file, a child Space directory, or a system or hidden path (such as .assets) is refused with UNSUPPORTED_RENAME_TARGET. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed. To change parent, use move_content. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the rename restores every touched file and returns the error, so a failed rename changes nothing.",
             schema(
                 &[
                     space_id(),
@@ -708,7 +708,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Moved, at("/to"), at("/newPath"))] }),
         def(
             "move_content",
-            "Move a Page, folder, or Collection under a new parent through Svode's managed structural backend. Use an empty toParent to move to the space root. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit.",
+            "Move a Page, folder, or Collection under a new parent through Svode's managed structural backend. Use an empty toParent to move to the space root. This rewrites managed relations, backlinks, sidebar order, and indexes; it returns all changed paths and does not autocommit. If any step fails, the move restores every touched file and returns the error, so a failed move changes nothing; PAGE_WRITE_RECOVERY_FAILED names the paths that could not be restored.",
             schema(
                 &[
                     space_id(),
@@ -993,7 +993,7 @@ Body saves:
 Structural work and integrity:
 - Files-first work covers the body text described under Body saves and new plain Markdown Pages in an existing folder without a schema; create them directly and Svode picks them up. Everything that changes frontmatter, names, structure, schema, attachments or system folders goes through Svode tools.
 - Do not construct `.svode/order`, relation migrations, managed `.assets/` paths, renames, moves, or Collections manually. Rename a Page, Collection item, or Collection by changing its title as described under Renaming; use rename_content only for a folder without a title (it refuses every other target) and move_content, reorder_content, reorder_spaces, convert_page_to_leaf, or convert_to_collection for the other structural changes so Svode preserves relations, backlinks, sidebar order, and indexes. Discover spaces with list_spaces; root is `spaceId: "root"`, while reorder_spaces accepts child ids only.
-- Structural tools do not autocommit and return changed/touched paths. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
+- Structural tools do not autocommit and return changed/touched paths. rename_content and move_content apply all their effects or none: when any step fails they restore every touched file, return the error and leave no pending change. PAGE_WRITE_RECOVERY_FAILED names the paths that could not be restored; inspect them before retrying. convert_to_collection is in-place and manages Page/Collection identity; convert_page_to_leaf applies only to a supported directory-backed Page and does not demote a Collection or remove schema.yaml.
 - When structural files changed outside Svode (by hand, Git or another program), run validate_collection_integrity for the Collection or selected Space and repair every reported relation target, missing Collection item, or stale order reference before continuing.
 
 Renaming:
@@ -2126,6 +2126,10 @@ mod tests {
                 "{name}"
             );
         }
+        for name in ["rename_content", "move_content"] {
+            assert!(description(name).contains("changes nothing"), "{name}");
+        }
+        assert!(description("move_content").contains("PAGE_WRITE_RECOVERY_FAILED"));
         let rename_content = description("rename_content");
         assert!(rename_content.contains("Rename a folder without a title"));
         assert!(rename_content.contains("change its title"));
@@ -2142,6 +2146,7 @@ mod tests {
         assert!(guide.contains("never renames the Space"));
         assert!(guide.contains("use rename_content only for a folder without a title"));
         assert!(guide.contains("rename_content renames only a folder without a title"));
+        assert!(guide.contains("rename_content and move_content apply all their effects or none"));
         assert!(guide.contains("TITLE_RENAME_REQUIRED"));
         assert!(guide.contains("UNSUPPORTED_RENAME_TARGET"));
         assert!(!guide.contains("keeps the old title"));

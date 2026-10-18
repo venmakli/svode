@@ -3,8 +3,9 @@
 //!
 //! Each operation authorizes its touched-set, changes the source, rewrites the
 //! links and relations it invalidates, republishes the derived projection and
-//! hands the resulting history to the commit sink. Only the compound Collection
-//! create rolls back; the other intents keep their existing partial outcomes.
+//! hands the resulting history to the commit sink. The compound Collection
+//! create, rename and move roll back; the other intents keep their existing
+//! partial outcomes.
 
 use std::collections::HashMap;
 use std::fs;
@@ -23,13 +24,15 @@ use crate::index::update::{self, IndexUpdateState};
 use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
 use crate::page::entry::{self, Entry};
+use crate::page::write::{SourceSnapshot, mapped_path};
 
 use super::commit::{StructuralCommitSink, schedule_structural_paths};
 use super::naming::{
     abs_entry_path, basename, collection_schema_path, collection_schema_path_rel,
     entry_commit_name, entry_history_commit_name, entry_history_name,
     entry_in_sensitive_collection, entry_paths_with_order, entry_relocation, entry_rename_op,
-    normalize_rel_lossy, order_path, rel_changed_path, root_path_for_head, same_parent,
+    grouped_abs_paths_by_space, normalize_rel_lossy, order_path, rel_changed_path,
+    root_path_for_head, same_parent,
 };
 use super::plan::{delete_mutation_paths, revalidate_backlink_plan};
 
@@ -163,36 +166,59 @@ async fn rebase_project_source_after_move<E: GitDateExecutor>(
     new_path: &str,
     context: &str,
     publish_projection: bool,
-) -> Vec<ModifiedLinkSource> {
+) -> Result<Vec<ModifiedLinkSource>, PageError> {
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    match runtime
+    let Some(source) = runtime
         .index
         .rebase_source_links_project(Path::new(project), space_id, old_path, new_path)
-        .await
-    {
-        Ok(Some(source)) => {
-            if publish_projection {
-                let _ = update::publish_paths_or_repair(
-                    runtime.index,
-                    runtime.updates,
-                    runtime.git_dates,
-                    project_path,
-                    space,
-                    vec![Path::new(space).join(new_path)],
-                    context,
-                )
-                .await;
-            }
-            vec![source]
-        }
-        Ok(None) => Vec::new(),
-        Err(error) => {
-            tracing::warn!("{context}: source link rebase failed for {new_path}: {error}");
-            Vec::new()
-        }
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    if publish_projection {
+        let _ = update::publish_paths_or_repair(
+            runtime.index,
+            runtime.updates,
+            runtime.git_dates,
+            project_path,
+            space,
+            vec![Path::new(space).join(new_path)],
+            context,
+        )
+        .await;
     }
+    Ok(vec![source])
+}
+
+/// [`rebase_project_source_after_move`] for the conversions that keep their
+/// applied change when the rebase fails.
+async fn rebase_project_source_after_move_or_warn<E: GitDateExecutor>(
+    runtime: StructureRuntime<'_, E>,
+    project_path: Option<&str>,
+    space: &str,
+    space_id: Option<&str>,
+    old_path: &str,
+    new_path: &str,
+    context: &str,
+    publish_projection: bool,
+) -> Vec<ModifiedLinkSource> {
+    rebase_project_source_after_move(
+        runtime,
+        project_path,
+        space,
+        space_id,
+        old_path,
+        new_path,
+        context,
+        publish_projection,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        tracing::warn!("{context}: source link rebase failed for {new_path}: {error}");
+        Vec::new()
+    })
 }
 
 /// Rewrite the links inside every source of a moved folder.
@@ -204,23 +230,17 @@ pub(crate) async fn rebase_project_source_tree_after_move<E: GitDateExecutor>(
     old_root: &str,
     new_root: &str,
     context: &str,
-) -> Vec<ModifiedLinkSource> {
+) -> Result<Vec<ModifiedLinkSource>, PageError> {
     let Some(project) = project_path.filter(|path| !path.is_empty()) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let state = runtime.index;
     let root = Path::new(space);
-    let files = match crate::content_tree::collect_markdown_paths(
+    let files = crate::content_tree::collect_markdown_paths(
         root,
         &root.join(new_root),
         &TreeIgnorePolicy::from_space_root(root),
-    ) {
-        Ok(files) => files,
-        Err(error) => {
-            tracing::warn!("{context}: collect moved markdown sources failed: {error}");
-            return Vec::new();
-        }
-    };
+    )?;
     let mut modified = Vec::new();
     let mut deleted = Vec::new();
     let mut updated = Vec::new();
@@ -236,20 +256,20 @@ pub(crate) async fn rebase_project_source_tree_after_move<E: GitDateExecutor>(
             .await;
         let old_abs = root.join(&old_rel);
         let new_abs = root.join(&new_rel);
-        if let Ok(content) = fs::read_to_string(&new_abs) {
-            let rebased = crate::index::backlinks::rebase_source_links_between_moved_tree(
-                &content,
-                &old_abs,
-                &new_abs,
-                &old_root_abs,
-                &new_root_abs,
-            );
-            if rebased != content && fs::write(&new_abs, rebased).is_ok() {
-                modified.push(ModifiedLinkSource {
-                    space_id: space_id.map(ToString::to_string),
-                    path: new_rel.clone(),
-                });
-            }
+        let content = fs::read_to_string(&new_abs)?;
+        let rebased = crate::index::backlinks::rebase_source_links_between_moved_tree(
+            &content,
+            &old_abs,
+            &new_abs,
+            &old_root_abs,
+            &new_root_abs,
+        );
+        if rebased != content {
+            fs::write(&new_abs, rebased)?;
+            modified.push(ModifiedLinkSource {
+                space_id: space_id.map(ToString::to_string),
+                path: new_rel.clone(),
+            });
         }
         let _ = state
             .update_file_backlinks(Path::new(project), space_id, &new_rel)
@@ -280,7 +300,7 @@ pub(crate) async fn rebase_project_source_tree_after_move<E: GitDateExecutor>(
     {
         tracing::warn!("{context}: rebase collection schema manifest failed: {error}");
     }
-    modified
+    Ok(modified)
 }
 
 /// Space without an open Project: rebase against the Space-local backlink index.
@@ -312,15 +332,13 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
     backlinks: &BacklinkIndex,
     old_root: &str,
     new_root: &str,
-) {
+) -> Result<(), PageError> {
     let root = Path::new(space);
-    let Ok(files) = crate::content_tree::collect_markdown_paths(
+    let files = crate::content_tree::collect_markdown_paths(
         root,
         &root.join(new_root),
         &TreeIgnorePolicy::from_space_root(root),
-    ) else {
-        return;
-    };
+    )?;
     let old_root_abs = root.join(old_root);
     let new_root_abs = root.join(new_root);
     for file in files {
@@ -329,9 +347,7 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
         let old_abs = root.join(&old_rel);
         let new_abs = root.join(&new_rel);
         backlinks.remove_file(&old_rel);
-        let Ok(content) = fs::read_to_string(&new_abs) else {
-            continue;
-        };
+        let content = fs::read_to_string(&new_abs)?;
         let updated = crate::index::backlinks::rebase_source_links_between_moved_tree(
             &content,
             &old_abs,
@@ -340,10 +356,11 @@ pub(crate) fn rebase_legacy_source_tree_after_move(
             &new_root_abs,
         );
         if updated != content {
-            let _ = fs::write(&new_abs, updated);
+            fs::write(&new_abs, updated)?;
         }
         let _ = backlinks.update_file(root, &new_rel);
     }
+    Ok(())
 }
 
 pub async fn delete<E: GitDateExecutor>(
@@ -780,7 +797,7 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
                 Vec::new()
             });
         modified.extend(
-            rebase_project_source_after_move(
+            rebase_project_source_after_move_or_warn(
                 runtime,
                 project_path,
                 space,
@@ -884,7 +901,7 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
                 Vec::new()
             });
         modified.extend(
-            rebase_project_source_after_move(
+            rebase_project_source_after_move_or_warn(
                 runtime,
                 project_path,
                 space,
@@ -1096,6 +1113,106 @@ struct MoveOutcome {
     modified_paths: Vec<String>,
 }
 
+/// Path a move of `from` under `to_parent` lands on.
+fn moved_path(from: &str, to_parent: &str) -> Result<String, PageError> {
+    let name = Path::new(from)
+        .file_name()
+        .ok_or_else(|| PageError::General("invalid source path".to_string()))?
+        .to_string_lossy();
+    Ok(if to_parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{to_parent}/{name}")
+    })
+}
+
+/// Markdown sources and Collection schemas of a moved tree, which its links,
+/// relations, schema defaults and unique ids may rewrite. A missing source is
+/// reported by the move itself.
+fn moved_tree_sources(path: &Path) -> Result<Vec<PathBuf>, PageError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.is_dir() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    let mut files = Vec::new();
+    let mut dirs = vec![path.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for child in fs::read_dir(&dir)? {
+            let child = child?;
+            let kind = child.file_type()?;
+            let path = child.path();
+            if kind.is_dir() {
+                dirs.push(path);
+            } else if kind.is_file()
+                && (path.extension().is_some_and(|extension| extension == "md")
+                    || child.file_name() == "schema.yaml")
+            {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// Snapshot of every file a rename or move of `from` to `to` may write, taken
+/// before its first write: the files of its authorization plan (the
+/// directories it authorizes hold no source of their own), the sidebar
+/// order, the moved tree, the schemas of the destination Collections that
+/// allocate unique ids and, without a Project, the relation and Space-local
+/// link sources the plan does not list. Returns the captured paths too.
+async fn move_snapshot(
+    state: &IndexRuntimeState,
+    backlinks: &BacklinkIndex,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to: &str,
+) -> Result<(SourceSnapshot, Vec<PathBuf>), PageError> {
+    let root = Path::new(space);
+    let roots = (root.join(from), root.join(to));
+    let before_move = (roots.1.clone(), roots.0.clone());
+    let mut paths = super::plan::move_mutation_paths(state, space, project_path, from, to)
+        .await?
+        .into_iter()
+        .filter(|path| !path.is_dir())
+        .collect::<Vec<_>>();
+    paths.push(order_path(space));
+    paths.extend(moved_tree_sources(&roots.0)?);
+    for ancestor in Path::new(to).parent().into_iter().flat_map(Path::ancestors) {
+        paths.push(collection_schema_path(space, &ancestor.to_string_lossy()));
+    }
+    if project_path.filter(|path| !path.is_empty()).is_none() {
+        paths.extend(engine::relation_move_mutation_paths_with_project(
+            space, None, from, to,
+        )?);
+        if !backlinks.is_built() {
+            backlinks.build(root)?;
+        }
+        let mut targets = backlinks.target_paths_under(from);
+        targets.push(from.to_string());
+        for target in targets {
+            for (source, _) in backlinks.sources_for_target(&target) {
+                paths.push(root.join(source.source_path));
+            }
+        }
+    }
+    let mut paths = paths
+        .iter()
+        .map(|path| mapped_path(path, Some(&before_move)))
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    Ok((SourceSnapshot::capture(&paths, Some(roots))?, paths))
+}
+
+/// Rename or move `from`: every step after the first write runs under one
+/// snapshot, so the operation applies all its effects or restores the
+/// touched set and returns the cause. History is registered only for the
+/// files that actually changed, grouped by the Space that owns them.
 async fn apply_move<E: GitDateExecutor>(
     space: &str,
     from: &str,
@@ -1107,143 +1224,80 @@ async fn apply_move<E: GitDateExecutor>(
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     let was_dir = Path::new(space).join(from).is_dir();
-    let old_abs = Path::new(space).join(from);
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, from, was_dir).await?;
-    let new_path = if let Some(to) = rename_to {
-        entry::rename_with_project(space, from, to, project_path)?;
-        to.to_string()
-    } else {
-        entry::move_entry_with_project(
-            Path::new(space),
-            from,
-            to_parent.unwrap_or_default(),
-            project_path
-                .filter(|path| !path.is_empty())
-                .is_none()
-                .then_some(&backlinks),
-            project_path,
-        )?
+    let planned = match rename_to {
+        Some(to) => to.to_string(),
+        None => moved_path(from, to_parent.unwrap_or_default())?,
     };
-    let policy_paths = crate::storage::routes::rebase_managed_attachment_routes(
-        space,
-        project_path,
-        from,
-        &new_path,
-        was_dir,
-    )?;
+    let (snapshot, captured) =
+        move_snapshot(state, &backlinks, space, project_path, from, &planned).await?;
+    let applied = async {
+        let new_path = move_sources(
+            space,
+            from,
+            rename_to,
+            to_parent,
+            project_path,
+            runtime,
+            &backlinks,
+            was_dir,
+        )
+        .await?;
+        let unique_id_paths = if rename_to.is_none() {
+            engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?
+        } else {
+            Vec::new()
+        };
+        Ok::<_, PageError>((
+            new_path,
+            unique_id_paths,
+            snapshot.changes()?,
+            snapshot.rewritten()?,
+        ))
+    }
+    .await;
+    let (new_path, unique_id_paths, changed, rewritten) = match applied {
+        Ok(applied) => applied,
+        Err(error) => {
+            let wrote = snapshot.relocated();
+            let error = snapshot.rollback(error);
+            if wrote {
+                republish_after_rollback(runtime, project_path, space, &captured).await;
+            }
+            return Err(error);
+        }
+    };
+
     let change = StructuralChange::new(if rename_to.is_some() {
         entry_rename_op(space, from, &new_path)
     } else {
         StructuralOp::Move(entry_commit_name(space, &new_path))
     })
     .relocating(entry_relocation(space, from, &new_path));
-    let mut modified_paths = Vec::new();
-    if let Some(project) = project_path.filter(|path| !path.is_empty()) {
-        let project = Path::new(project);
-        let space_id = state.space_id_for_dir(Path::new(space)).await;
-        let mut modified = if was_dir {
-            state
-                .update_links_on_folder_rename_project(
-                    runtime.updates,
-                    runtime.git_dates,
-                    project,
-                    space_id.as_deref(),
-                    from,
-                    &new_path,
-                    None,
-                )
-                .await
-        } else {
-            state
-                .update_links_on_rename_project(
-                    runtime.updates,
-                    runtime.git_dates,
-                    project,
-                    space_id.as_deref(),
-                    from,
-                    &new_path,
-                    None,
-                )
-                .await
-        }
-        .unwrap_or_else(|error| {
-            tracing::warn!("cross-space structural backlink rewrite failed: {error}");
-            Vec::new()
-        });
-        let operation_context = if rename_to.is_some() {
-            "rename_entry"
-        } else {
-            "move_entry"
-        };
-        modified.extend(if was_dir {
-            rebase_project_source_tree_after_move(
-                runtime,
-                project_path,
-                space,
-                space_id.as_deref(),
-                from,
-                &new_path,
-                operation_context,
-            )
-            .await
-        } else if rename_to.is_none() || !same_parent(from, &new_path) {
-            rebase_project_source_after_move(
-                runtime,
-                project_path,
-                space,
-                space_id.as_deref(),
-                from,
-                &new_path,
-                operation_context,
-                true,
-            )
-            .await
-        } else {
-            Vec::new()
-        });
-        let modified = dedupe_modified_sources(modified);
-        modified_paths = modified.iter().map(|source| source.path.clone()).collect();
-        schedule_modified_source_spaces(runtime, project_path, &modified, &change).await;
-        if !was_dir {
-            let _ = state
-                .remove_file_backlinks(project, space_id.as_deref(), from)
-                .await;
-            let _ = state
-                .update_file_backlinks(project, space_id.as_deref(), &new_path)
-                .await;
-        }
-    } else if rename_to.is_some() {
-        modified_paths = backlinks
-            .update_links_on_rename(Path::new(space), from, &new_path, None)
-            .unwrap_or_default();
-        if was_dir {
-            rebase_legacy_source_tree_after_move(space, &backlinks, from, &new_path);
-        } else if !same_parent(from, &new_path)
-            && rebase_legacy_source_after_move(space, &backlinks, from, &new_path)?
-            && !modified_paths.iter().any(|path| path == &new_path)
-        {
-            modified_paths.push(new_path.clone());
-        }
-        let _ = backlinks.update_file(Path::new(space), &new_path);
-    } else if was_dir {
-        rebase_legacy_source_tree_after_move(space, &backlinks, from, &new_path);
-    } else {
-        let _ = rebase_legacy_source_after_move(space, &backlinks, from, &new_path);
-    }
     if let Some(commits) = runtime.commits {
-        let mut paths =
-            entry_paths_with_order(space, [old_abs.clone(), abs_entry_path(space, &new_path)]);
-        paths.extend(policy_paths);
-        if rename_to.is_some() {
-            schedule_structural_paths(Some(commits), project_path, space, change, paths);
-        } else {
-            let unique_id_paths =
-                engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?;
-            if unique_id_paths.is_empty() {
-                schedule_structural_paths(Some(commits), project_path, space, change, paths);
+        for (owner, mut paths) in grouped_abs_paths_by_space(project_path, space, &changed) {
+            let owner_path = owner.to_string_lossy();
+            if owner != Path::new(space) {
+                schedule_structural_paths(
+                    Some(commits),
+                    project_path,
+                    &owner_path,
+                    change.companion(),
+                    paths,
+                );
+            } else if unique_id_paths.is_empty() {
+                schedule_structural_paths(
+                    Some(commits),
+                    project_path,
+                    space,
+                    change.clone(),
+                    paths,
+                );
             } else {
-                paths.extend(unique_id_paths);
+                paths.extend(unique_id_paths.iter().cloned());
+                paths.sort();
+                paths.dedup();
                 commit_schema_now(
                     commits,
                     project_path,
@@ -1259,10 +1313,171 @@ async fn apply_move<E: GitDateExecutor>(
             }
         }
     }
+    let mut modified_paths = grouped_abs_paths_by_space(project_path, space, &rewritten)
+        .remove(Path::new(space))
+        .unwrap_or_default()
+        .iter()
+        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        .map(|path| rel_changed_path(space, path))
+        .collect::<Vec<_>>();
+    modified_paths.sort();
     Ok(MoveOutcome {
         new_path,
         modified_paths,
     })
+}
+
+/// The source steps of a rename or move. Each failure is returned, so the
+/// caller restores the whole touched set.
+async fn move_sources<E: GitDateExecutor>(
+    space: &str,
+    from: &str,
+    rename_to: Option<&str>,
+    to_parent: Option<&str>,
+    project_path: Option<&str>,
+    runtime: StructureRuntime<'_, E>,
+    backlinks: &BacklinkIndex,
+    was_dir: bool,
+) -> Result<String, PageError> {
+    let state = runtime.index;
+    let new_path = if let Some(to) = rename_to {
+        entry::rename_with_project(space, from, to, project_path)?;
+        to.to_string()
+    } else {
+        entry::move_entry_with_project(
+            Path::new(space),
+            from,
+            to_parent.unwrap_or_default(),
+            project_path
+                .filter(|path| !path.is_empty())
+                .is_none()
+                .then_some(backlinks),
+            project_path,
+        )?
+    };
+    crate::storage::routes::rebase_managed_attachment_routes(
+        space,
+        project_path,
+        from,
+        &new_path,
+        was_dir,
+    )?;
+    #[cfg(test)]
+    crate::page::write::checkpoint("move_routing")?;
+    if let Some(project) = project_path.filter(|path| !path.is_empty()) {
+        let project = Path::new(project);
+        let space_id = state.space_id_for_dir(Path::new(space)).await;
+        if was_dir {
+            state
+                .update_links_on_folder_rename_project(
+                    runtime.updates,
+                    runtime.git_dates,
+                    project,
+                    space_id.as_deref(),
+                    from,
+                    &new_path,
+                    None,
+                )
+                .await?;
+        } else {
+            state
+                .update_links_on_rename_project(
+                    runtime.updates,
+                    runtime.git_dates,
+                    project,
+                    space_id.as_deref(),
+                    from,
+                    &new_path,
+                    None,
+                )
+                .await?;
+        }
+        #[cfg(test)]
+        crate::page::write::checkpoint("move_links")?;
+        let operation_context = if rename_to.is_some() {
+            "rename_entry"
+        } else {
+            "move_entry"
+        };
+        if was_dir {
+            rebase_project_source_tree_after_move(
+                runtime,
+                project_path,
+                space,
+                space_id.as_deref(),
+                from,
+                &new_path,
+                operation_context,
+            )
+            .await?;
+        } else if rename_to.is_none() || !same_parent(from, &new_path) {
+            rebase_project_source_after_move(
+                runtime,
+                project_path,
+                space,
+                space_id.as_deref(),
+                from,
+                &new_path,
+                operation_context,
+                true,
+            )
+            .await?;
+        }
+        if !was_dir {
+            let _ = state
+                .remove_file_backlinks(project, space_id.as_deref(), from)
+                .await;
+            let _ = state
+                .update_file_backlinks(project, space_id.as_deref(), &new_path)
+                .await;
+        }
+    } else {
+        if rename_to.is_some() {
+            backlinks.update_links_on_rename(Path::new(space), from, &new_path, None)?;
+        }
+        #[cfg(test)]
+        crate::page::write::checkpoint("move_links")?;
+        if was_dir {
+            rebase_legacy_source_tree_after_move(space, backlinks, from, &new_path)?;
+        } else if rename_to.is_none() || !same_parent(from, &new_path) {
+            rebase_legacy_source_after_move(space, backlinks, from, &new_path)?;
+        }
+        if rename_to.is_some() {
+            let _ = backlinks.update_file(Path::new(space), &new_path);
+        }
+    }
+    #[cfg(test)]
+    crate::page::write::checkpoint("move_sources")?;
+    Ok(new_path)
+}
+
+/// Bring the derived projection back to the restored sources: the owning
+/// Space is repaired, the restored sources of other Spaces republished.
+async fn republish_after_rollback<E: GitDateExecutor>(
+    runtime: StructureRuntime<'_, E>,
+    project_path: Option<&str>,
+    space: &str,
+    captured: &[PathBuf],
+) {
+    update::repair_space_dir(runtime.index, runtime.updates, runtime.git_dates, space).await;
+    let others = grouped_abs_paths_by_space(project_path, space, captured)
+        .into_iter()
+        .filter(|(owner, _)| owner != Path::new(space))
+        .flat_map(|(_, paths)| paths)
+        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        .collect::<Vec<_>>();
+    if !others.is_empty() {
+        update::publish_paths_or_repair(
+            runtime.index,
+            runtime.updates,
+            runtime.git_dates,
+            project_path,
+            space,
+            others,
+            "structural_rollback",
+        )
+        .await;
+    }
 }
 
 pub async fn nest<E: GitDateExecutor>(
@@ -1324,7 +1539,7 @@ async fn reshape<E: GitDateExecutor>(
                 Vec::new()
             });
         modified.extend(
-            rebase_project_source_after_move(
+            rebase_project_source_after_move_or_warn(
                 runtime,
                 project_path,
                 space,

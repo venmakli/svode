@@ -3073,7 +3073,12 @@ where
         Err(error) => {
             let mut failed = Vec::new();
             for (path, content) in snapshots {
+                // An unchanged file is already restored; writing it again
+                // would fail on a read-only source the step never touched.
                 let restored = if let Some(content) = content {
+                    if fs::read(&path).ok().as_ref() == Some(&content) {
+                        continue;
+                    }
                     if let Some(parent) = path.parent() {
                         if let Err(restore_error) = fs::create_dir_all(parent) {
                             let _ = restore_error;
