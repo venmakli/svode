@@ -9,7 +9,9 @@ use super::types::{
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
 use svode_agents::catalog::{ListedSession, RuntimeSession};
 use svode_agents::identity::{IdentityNamespace, SessionKey};
-use svode_agents::status::{SessionState, SessionStatus, StatusConfidence, StatusSource};
+use svode_agents::status::{
+    SessionState, SessionStatus, StatusConfidence, StatusSource, StopReason,
+};
 use svode_agents::writer::ExternalLiveness;
 use svode_core::agent_adapters::AgentId;
 
@@ -52,30 +54,48 @@ struct Observation {
 /// The session status from its evidence (Stage 10 `02` C10): an exact
 /// outcome outranks approximate evidence of the turn it ended, and only
 /// evidence observed in a later second, of a later turn, supersedes it
-/// (DF-169 R3). Then the latest observation wins, and different states
-/// observed at that same moment give `unknown` with a diagnostic. No
+/// (DF-169 R3). An interruption interrupts only a turn still open: when the
+/// other evidence up to its second tells the turn has ended, that evidence
+/// stands (DF-164 R1). Then the latest observation wins, and different
+/// states observed at that same moment give `unknown` with a diagnostic. No
 /// evidence is `unknown`.
 fn resolve_status(observations: Vec<Observation>) -> (SessionStatus, String, Option<String>) {
-    let outcome_at = observations
+    let Some(outcome_at) = observations
         .iter()
         .filter(|observation| observation.status.confidence == StatusConfidence::Exact)
         .map(|observation| observation.observed_at.clone())
-        .max();
-    let ranked = match outcome_at {
-        Some(outcome_at) => {
-            let (later, rest): (Vec<_>, Vec<_>) = observations
-                .into_iter()
-                .partition(|observation| observation.observed_at > outcome_at);
-            if later.is_empty() {
-                rest.into_iter()
-                    .filter(|observation| observation.status.confidence == StatusConfidence::Exact)
-                    .collect()
-            } else {
-                later
-            }
-        }
-        None => observations,
+        .max()
+    else {
+        return latest_status(observations);
     };
+    let (later, rest): (Vec<_>, Vec<_>) = observations
+        .into_iter()
+        .partition(|observation| observation.observed_at > outcome_at);
+    if !later.is_empty() {
+        return latest_status(later);
+    }
+    let (outcome, other): (Vec<_>, Vec<_>) = rest.into_iter().partition(|observation| {
+        observation.status.confidence == StatusConfidence::Exact
+            && observation.observed_at == outcome_at
+    });
+    let resolved = latest_status(outcome);
+    if matches!(
+        resolved.0.state,
+        SessionState::Idle {
+            stop_reason: Some(StopReason::Interrupted)
+        }
+    ) {
+        let before = resolve_status(other);
+        if matches!(before.0.state, SessionState::Idle { .. }) {
+            return before;
+        }
+    }
+    resolved
+}
+
+/// The latest of the observations; different states observed at that
+/// moment give `unknown`.
+fn latest_status(ranked: Vec<Observation>) -> (SessionStatus, String, Option<String>) {
     let Some(latest) = ranked
         .iter()
         .map(|observation| observation.observed_at.clone())
@@ -573,7 +593,7 @@ fn surface_activity_key(surface: &AgentTerminalSurface) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use svode_agents::status::{InteractionKind, StopReason};
+    use svode_agents::status::InteractionKind;
 
     fn observation(
         state: SessionState,
@@ -735,6 +755,210 @@ mod tests {
             }
         );
         assert_eq!(status.confidence, StatusConfidence::Exact);
+    }
+
+    const INTERRUPTED: SessionState = SessionState::Idle {
+        stop_reason: Some(StopReason::Interrupted),
+    };
+    const END_TURN: SessionState = SessionState::Idle {
+        stop_reason: Some(StopReason::EndTurn),
+    };
+    const CLOSED_AT: &str = "2026-07-04T10:00:00Z";
+
+    fn closed(mut before: Vec<Observation>) -> (SessionStatus, String, Option<String>) {
+        before.push(observation(
+            INTERRUPTED,
+            StatusSource::ManagedPty,
+            StatusConfidence::Exact,
+            CLOSED_AT,
+        ));
+        resolve_status(before)
+    }
+
+    fn exact_interruption() -> SessionStatus {
+        SessionStatus {
+            state: INTERRUPTED,
+            source: StatusSource::ManagedPty,
+            confidence: StatusConfidence::Exact,
+        }
+    }
+
+    /// DF-164 R1: an interruption stands over a turn still open by the
+    /// evidence up to its second, an unknown one or none.
+    #[test]
+    fn an_interruption_interrupts_an_open_or_unknown_turn() {
+        let cases = [
+            (
+                "running in the log",
+                vec![observation(
+                    SessionState::Running,
+                    StatusSource::NativeStatusReader,
+                    StatusConfidence::Approximate,
+                    "2026-07-04T09:59:00Z",
+                )],
+            ),
+            (
+                "request in the log",
+                vec![observation(
+                    SessionState::RequiresAction {
+                        request: InteractionKind::Permission,
+                    },
+                    StatusSource::NativeStatusReader,
+                    StatusConfidence::Approximate,
+                    "2026-07-04T09:59:00Z",
+                )],
+            ),
+            (
+                "request in the terminal text",
+                vec![observation(
+                    SessionState::RequiresAction {
+                        request: InteractionKind::Question,
+                    },
+                    StatusSource::ManagedPty,
+                    StatusConfidence::Approximate,
+                    CLOSED_AT,
+                )],
+            ),
+            (
+                "running in the same second",
+                vec![observation(
+                    SessionState::Running,
+                    StatusSource::NativeStatusReader,
+                    StatusConfidence::Approximate,
+                    CLOSED_AT,
+                )],
+            ),
+            (
+                "stale turn",
+                vec![observation(
+                    SessionState::Unknown,
+                    StatusSource::NativeStatusReader,
+                    StatusConfidence::Approximate,
+                    "2026-07-04T03:00:00Z",
+                )],
+            ),
+            (
+                "contradiction",
+                vec![
+                    observation(
+                        END_TURN,
+                        StatusSource::NativeStatusReader,
+                        StatusConfidence::Approximate,
+                        "2026-07-04T09:59:00Z",
+                    ),
+                    observation(
+                        SessionState::Running,
+                        StatusSource::ManagedPty,
+                        StatusConfidence::Approximate,
+                        "2026-07-04T09:59:00Z",
+                    ),
+                ],
+            ),
+            (
+                "a turn begun after an earlier outcome",
+                vec![
+                    observation(
+                        SessionState::Idle { stop_reason: None },
+                        StatusSource::ManagedPty,
+                        StatusConfidence::Exact,
+                        "2026-07-04T09:00:00Z",
+                    ),
+                    observation(
+                        SessionState::Running,
+                        StatusSource::NativeStatusReader,
+                        StatusConfidence::Approximate,
+                        "2026-07-04T09:30:00Z",
+                    ),
+                ],
+            ),
+            ("no other evidence", Vec::new()),
+        ];
+        for (case, before) in cases {
+            let (status, reason, _) = closed(before);
+            assert_eq!(status, exact_interruption(), "{case}");
+            assert_eq!(reason, format!("{INTERRUPTED:?}"), "{case}");
+        }
+    }
+
+    /// DF-164 R1: an interruption after an ended turn leaves the outcome of
+    /// that turn, its source and confidence.
+    #[test]
+    fn an_interruption_after_an_ended_turn_leaves_its_outcome() {
+        for ended_at in ["2026-07-04T09:59:00Z", CLOSED_AT] {
+            let (status, _, _) = closed(vec![
+                observation(
+                    SessionState::Running,
+                    StatusSource::NativeStatusReader,
+                    StatusConfidence::Approximate,
+                    "2026-07-04T09:58:00Z",
+                ),
+                observation(
+                    END_TURN,
+                    StatusSource::NativeStatusReader,
+                    StatusConfidence::Approximate,
+                    ended_at,
+                ),
+            ]);
+            assert_eq!(
+                status,
+                SessionStatus {
+                    state: END_TURN,
+                    source: StatusSource::NativeStatusReader,
+                    confidence: StatusConfidence::Approximate,
+                },
+                "{ended_at}"
+            );
+        }
+
+        // An earlier exact outcome is other evidence too.
+        let exited = SessionState::Idle {
+            stop_reason: Some(StopReason::Error),
+        };
+        let (status, _, _) = closed(vec![
+            observation(
+                SessionState::Running,
+                StatusSource::NativeStatusReader,
+                StatusConfidence::Approximate,
+                "2026-07-04T09:00:00Z",
+            ),
+            observation(
+                exited,
+                StatusSource::ManagedPty,
+                StatusConfidence::Exact,
+                "2026-07-04T09:30:00Z",
+            ),
+        ]);
+        assert_eq!(status.state, exited);
+        assert_eq!(status.confidence, StatusConfidence::Exact);
+    }
+
+    /// DF-164 R1: outcomes by exit code stay over an ended turn.
+    #[test]
+    fn an_exit_code_outcome_stays_after_an_ended_turn() {
+        for exited in [
+            SessionState::Idle {
+                stop_reason: Some(StopReason::Error),
+            },
+            SessionState::Idle { stop_reason: None },
+        ] {
+            let (status, _, _) = resolve_status(vec![
+                observation(
+                    END_TURN,
+                    StatusSource::NativeStatusReader,
+                    StatusConfidence::Approximate,
+                    "2026-07-04T09:59:00Z",
+                ),
+                observation(
+                    exited,
+                    StatusSource::ManagedPty,
+                    StatusConfidence::Exact,
+                    CLOSED_AT,
+                ),
+            ]);
+            assert_eq!(status.state, exited);
+            assert_eq!(status.source, StatusSource::ManagedPty);
+            assert_eq!(status.confidence, StatusConfidence::Exact);
+        }
     }
 
     #[test]

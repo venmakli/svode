@@ -2147,6 +2147,134 @@ mod tests {
         assert_eq!(held.status.confidence, StatusConfidence::Exact);
     }
 
+    /// DF-164 acceptance 1: a Svode terminal closed after its turn ended
+    /// leaves the outcome of that turn, earlier or in the same second, alike
+    /// in the list and hot status; an exit code still gives its own outcome.
+    #[test]
+    fn a_session_terminal_closed_after_an_ended_turn_leaves_its_outcome() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let prompt_at = timestamp_offset(chrono::Duration::minutes(-3));
+        let done_at = timestamp_offset(chrono::Duration::minutes(-2));
+        let closed_at = recent_source_log_timestamp();
+        let earlier = codex_id(44);
+        let same_second = codex_id(45);
+        let failed = codex_id(46);
+        write_rollout(
+            &home,
+            &earlier,
+            vec![task_started(&prompt_at), task_complete(&done_at)],
+        );
+        write_rollout(
+            &home,
+            &same_second,
+            vec![task_started(&prompt_at), task_complete(&closed_at)],
+        );
+        write_rollout(
+            &home,
+            &failed,
+            vec![task_started(&prompt_at), task_complete(&done_at)],
+        );
+        acp_list(
+            &state,
+            "codex",
+            true,
+            vec![
+                (&earlier, &project, LISTED_AT),
+                (&same_second, &project, LISTED_AT),
+                (&failed, &project, LISTED_AT),
+            ],
+        );
+        write(
+            &claude_transcript(&home, "c-answered"),
+            &rows(&claude_turn(&prompt_at, &done_at)),
+        );
+        acp_list(
+            &state,
+            "claude-code",
+            true,
+            vec![("c-answered", &project, LISTED_AT)],
+        );
+        let mut failed_surface = surface("pty-failed", AgentAdapterKind::Codex.id(), &failed, None);
+        failed_surface.live = false;
+        failed_surface.finished_at = Some(closed_at.clone());
+        failed_surface.exit_code = Some(137);
+        let surfaces = vec![
+            closed_surface(
+                "pty-earlier",
+                AgentAdapterKind::Codex.id(),
+                &earlier,
+                &closed_at,
+            ),
+            closed_surface(
+                "pty-same-second",
+                AgentAdapterKind::Codex.id(),
+                &same_second,
+                &closed_at,
+            ),
+            failed_surface,
+            closed_surface(
+                "pty-claude",
+                AgentAdapterKind::ClaudeCode.id(),
+                "c-answered",
+                &closed_at,
+            ),
+        ];
+
+        let result = list_with(&state, &project, surfaces.clone());
+        let failed_id = format!("codex:{failed}");
+        for session_id in [
+            format!("codex:{earlier}"),
+            format!("codex:{same_second}"),
+            "claude-code:c-answered".to_string(),
+            failed_id.clone(),
+        ] {
+            let session = by_id(&result, &session_id);
+            let expected = if session_id == failed_id {
+                SessionStatus {
+                    state: idle(Some(StopReason::Error)),
+                    source: StatusSource::ManagedPty,
+                    confidence: StatusConfidence::Exact,
+                }
+            } else {
+                SessionStatus {
+                    state: idle(Some(StopReason::EndTurn)),
+                    source: StatusSource::NativeStatusReader,
+                    confidence: StatusConfidence::Approximate,
+                }
+            };
+            assert_eq!(session.status, expected, "{session_id}");
+            assert!(
+                !session.runtime.as_ref().expect("runtime").live,
+                "{session_id}"
+            );
+            let hot = hot_status(
+                &state,
+                project.to_string_lossy().into_owned(),
+                vec![session_id.clone()],
+                surfaces.clone(),
+                Vec::new(),
+            )
+            .expect("hot status");
+            assert_eq!(hot.sessions[0].status, session.status, "{session_id}");
+            assert_eq!(
+                hot.sessions[0].status_reason, session.status_reason,
+                "{session_id}"
+            );
+            let target = crate::agent_sessions::chat::chat_target(
+                &state,
+                project.to_string_lossy().into_owned(),
+                &session_id,
+                surfaces.clone(),
+                Vec::new(),
+            )
+            .expect("chat target")
+            .expect("listed session");
+            assert_eq!(target.liveness, ExternalLiveness::Unknown, "{session_id}");
+            assert!(!target.turn_open, "{session_id}");
+        }
+    }
+
     #[test]
     fn a_live_session_terminal_is_its_runtime_before_a_closed_one() {
         let (_temp, home, project) = project_dirs();
