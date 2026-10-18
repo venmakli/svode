@@ -309,6 +309,12 @@ export function useEditorDocumentWriter({
     [sourceSync],
   );
 
+  // Any write of the source that went through ends a pause of autosave, also
+  // a retried explicit save; one that opened a source conflict keeps it.
+  const resumeAutoSave = useCallback(() => {
+    if (!sourceSync.isOpen()) autoSavePausedRef.current = false;
+  }, [sourceSync]);
+
   const persistLatestSource = useCallback(async () => {
     const path = currentPathRef.current;
     const cacheKey = currentCacheKeyRef.current;
@@ -317,19 +323,15 @@ export function useEditorDocumentWriter({
       applyAutoSaveResult(result, path, cacheKey);
       if (result) void refreshGitSpaceStatus(spacePath);
     };
-    // A write that opened a source conflict keeps autosave paused for it.
-    const resume = () => {
-      if (!sourceSync.isOpen()) autoSavePausedRef.current = false;
-    };
     try {
       await write();
-      resume();
+      resumeAutoSave();
     } catch (error) {
       if (
         onWriteAccessError &&
         (await onWriteAccessError(error, async () => {
           await write();
-          resume();
+          resumeAutoSave();
         }))
       ) {
         autoSavePausedRef.current = true;
@@ -343,7 +345,7 @@ export function useEditorDocumentWriter({
     currentPathRef,
     onWriteAccessError,
     performWrite,
-    sourceSync,
+    resumeAutoSave,
     spacePath,
   ]);
 
@@ -432,6 +434,7 @@ export function useEditorDocumentWriter({
     if (!currentDocument) return;
     const result = await performWrite(true);
     if (!result) return;
+    resumeAutoSave();
 
     applySavedDocumentResult(currentDocument);
     const status = getGitSpaceStatus(spacePath);
@@ -461,6 +464,7 @@ export function useEditorDocumentWriter({
     currentDocument,
     performWrite,
     projectPath,
+    resumeAutoSave,
     spacePath,
     titleRef,
   ]);
@@ -546,6 +550,7 @@ export function useEditorDocumentWriter({
       const saveAll = async () => {
         const result = await performWrite(true);
         if (!result) return;
+        resumeAutoSave();
         applySavedDocumentResult(currentDocument, {
           cacheCurrentDocument: false,
         });
@@ -578,6 +583,7 @@ export function useEditorDocumentWriter({
       onWriteAccessError,
       performWrite,
       projectPath,
+      resumeAutoSave,
       saveScopeTree,
       spacePath,
     ],
