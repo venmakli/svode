@@ -1911,6 +1911,47 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   );
 
   peekTest(
+    "the main area keeps its terminal while no list names the new session, then follows in place",
+    async () => {
+      const previous = session({
+        id: "claude:gap-s1",
+        source: "claude",
+        title: "First dialog",
+        runtime: { ptyId: "pty-gap", live: true },
+      });
+      listed = [previous];
+      await mountFollowing("/p-follow-gap", {
+        sessionId: "claude:gap-s1",
+        launchId: null,
+      });
+      const shown = terminal();
+      expect(shown?.dataset.terminal).toBe("pty-gap");
+
+      // After `/clear` the new session is listed only after its first prompt.
+      await listAgain([{ ...previous, runtime: undefined }]);
+      expect(mainTitle()).toBe("First dialog");
+      expect(terminal() === shown).toBe(true);
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_terminal_finished_title(),
+        ),
+      ).toBe(false);
+
+      await listAgain([
+        { ...previous, runtime: undefined },
+        session({
+          id: "claude:gap-s2",
+          source: "claude",
+          title: "Second dialog",
+          runtime: { ptyId: "pty-gap", live: true },
+        }),
+      ]);
+      expect(mainTitle()).toBe("Second dialog");
+      expect(terminal() === shown).toBe(true);
+    },
+  );
+
+  peekTest(
     "the peek follows its terminal in place; the previous session opened later stays without it",
     async () => {
       const main = session({ id: "codex:main-other", title: "Other work" });

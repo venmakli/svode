@@ -75,6 +75,12 @@ export interface AgentSessionCatalogState {
   pendingTerminals: PendingAgentSessionTerminal[];
   /** Pending session id → canonical session id its terminal became the runtime of. */
   pendingHandoffs: Record<string, string>;
+  /**
+   * Live terminals the latest read lists at no session, as while the agent
+   * in one has gone on to a session the catalog has not read yet (DF-163
+   * R3); each stays with the last session the read-model listed it at.
+   */
+  unlistedTerminalPtyIds: ReadonlySet<string>;
   reentryResults: Record<string, AgentSessionReentryResult>;
   reenteringSessionIds: ReadonlySet<string>;
   /** Session ids a consumer keeps under hot status while it shows them. */
@@ -136,6 +142,7 @@ function emptyCatalogData(projectPath: string | null): CatalogData {
     listedAt: null,
     pendingTerminals: [],
     pendingHandoffs: {},
+    unlistedTerminalPtyIds: EMPTY_SET,
     reentryResults: {},
     reenteringSessionIds: EMPTY_SET,
     observedSessionIds: {},
@@ -205,41 +212,56 @@ function withoutTerminalRuntime(
   return changed ? { ...result, sessions } : result;
 }
 
-/**
- * The list with the hot sessions read again, and whether one of them lost a
- * live terminal no merged session lists. A hot status reads only the
- * sessions asked for, so the session the terminal went on to (DF-163 R3)
- * may be missing from it: the terminal stays with its session until the
- * full list names the one that took it.
- */
 function mergeHotStatusSessions(
   current: AgentSessionsListResult,
   hotSessions: AgentSessionsListResult["sessions"],
-): { result: AgentSessionsListResult; terminalUnlisted: boolean } {
-  if (hotSessions.length === 0) {
-    return { result: current, terminalUnlisted: false };
-  }
+): AgentSessionsListResult {
+  if (hotSessions.length === 0) return current;
 
   const hotById = new Map(hotSessions.map((session) => [session.id, session]));
   let changed = false;
-  const merged = current.sessions.map((session) => {
+  const sessions = current.sessions.map((session) => {
     const hot = hotById.get(session.id);
     if (!hot) return session;
     changed = true;
     return hot;
   });
-  if (!changed) return { result: current, terminalUnlisted: false };
 
-  const listedPtyIds = new Set(merged.map(liveTerminalPtyId));
-  let terminalUnlisted = false;
-  const sessions = merged.map((session, index) => {
-    const ptyId = liveTerminalPtyId(current.sessions[index]);
-    if (!ptyId || listedPtyIds.has(ptyId)) return session;
-    terminalUnlisted = true;
-    return { ...session, runtime: current.sessions[index].runtime };
+  return changed ? { ...current, sessions } : current;
+}
+
+/**
+ * A new read with each live terminal of the previous one that it lists at
+ * no session put back at the session it was listed at, and those terminals.
+ * The agent in such a terminal went on to a session the read does not
+ * name (DF-163 R3): a hot status reads only the sessions asked for, and a
+ * new Claude Code session is listed only after its first prompt. The last
+ * binding of the read-model stays until a read names the new session; an
+ * exited or closed terminal has already left the previous read.
+ */
+function keepUnlistedTerminals(
+  previous: AgentSessionsListResult | null,
+  next: AgentSessionsListResult,
+): { result: AgentSessionsListResult; unlisted: ReadonlySet<string> } {
+  const listedPtyIds = new Set(next.sessions.map(liveTerminalPtyId));
+  const kept = new Map<string, AgentSession>();
+  for (const session of previous?.sessions ?? []) {
+    const ptyId = liveTerminalPtyId(session);
+    if (ptyId && !listedPtyIds.has(ptyId)) kept.set(session.id, session);
+  }
+  if (kept.size === 0) return { result: next, unlisted: EMPTY_SET };
+
+  const unlisted = new Set<string>();
+  const sessions = next.sessions.map((session) => {
+    const last = kept.get(session.id);
+    if (!last?.runtime?.ptyId) return session;
+    unlisted.add(last.runtime.ptyId);
+    return { ...session, runtime: last.runtime };
   });
-
-  return { result: { ...current, sessions }, terminalUnlisted };
+  return {
+    result: unlisted.size > 0 ? { ...next, sessions } : next,
+    unlisted: unlisted.size > 0 ? unlisted : EMPTY_SET,
+  };
 }
 
 /**
@@ -430,14 +452,19 @@ export function createAgentSessionCatalogStore(
             next = await api.list(projectPath);
             if (!isCurrentProject(token, projectPath)) return;
           }
-          const handoff = handOffPendingTerminals(next.sessions);
+          const { result, unlisted } = keepUnlistedTerminals(
+            get().result,
+            next,
+          );
+          const handoff = handOffPendingTerminals(result.sessions);
           update({
             ...handoff,
             reentryResults: withoutMovedReentryTerminals(
               handoff.reentryResults ?? get().reentryResults,
-              next.sessions,
+              result.sessions,
             ),
-            result: next,
+            result,
+            unlistedTerminalPtyIds: unlisted,
             listedAt: now(),
           });
         } catch (error) {
@@ -471,6 +498,11 @@ export function createAgentSessionCatalogStore(
         reentryResults: Object.fromEntries(
           Object.entries(current.reentryResults).filter(
             ([, result]) => !result.ptyId || !ptyIds.has(result.ptyId),
+          ),
+        ),
+        unlistedTerminalPtyIds: new Set(
+          [...current.unlistedTerminalPtyIds].filter(
+            (ptyId) => !ptyIds.has(ptyId),
           ),
         ),
       });
@@ -535,18 +567,22 @@ export function createAgentSessionCatalogStore(
             }
             const current = get().result;
             if (!current) return;
-            const { result, terminalUnlisted } = mergeHotStatusSessions(
+            const { result, unlisted } = keepUnlistedTerminals(
               current,
-              hot.sessions,
+              mergeHotStatusSessions(current, hot.sessions),
             );
+            const known = get().unlistedTerminalPtyIds;
             update({
               result,
               reentryResults: withoutMovedReentryTerminals(
                 get().reentryResults,
                 result.sessions,
               ),
+              unlistedTerminalPtyIds: unlisted,
             });
-            if (terminalUnlisted) void load();
+            // A terminal this read is the first to leave unlisted: the full
+            // list may already name the session its agent went on to.
+            if ([...unlisted].some((ptyId) => !known.has(ptyId))) void load();
           } catch (error) {
             console.warn("Failed to refresh agent session hot status:", error);
           } finally {

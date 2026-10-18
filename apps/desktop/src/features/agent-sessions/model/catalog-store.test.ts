@@ -124,10 +124,12 @@ test("a recognized new-session terminal takes its runtime only from the read-mod
   await store.getState().load();
   expect(store.getState().sessions[0]?.runtime?.ptyId).toBe("pty-1");
 
-  // A list without the terminal surface leaves the session without runtime.
-  api.surfaces.clear();
+  // A list that shows the terminal at another session takes it from this one.
+  api.listed = [...api.listed, listedSession({ id: "codex:next" })];
+  api.surfaces.set("pty-1", "codex:next");
   await store.getState().load();
   expect(store.getState().sessions[0]?.runtime).toBe(undefined);
+  expect(store.getState().sessions[1]?.runtime?.ptyId).toBe("pty-1");
   expect(api.calls.filter((call) => call.startsWith("register:"))).toEqual([
     "register:pty-1:codex:started",
   ]);
@@ -498,4 +500,57 @@ test("a re-entry terminal the read-model lists at another session leaves the res
   ]);
   expect([...sessionTerminalPtyIds(state)]).toEqual([ptyId]);
   expect(sessionTerminalAgentsBusy(state)).toBe(true);
+});
+
+test("a live terminal a full list shows at no session stays with its last session until a list names the new one", async () => {
+  const api = fakeCatalogApi();
+  const old = listedSession({ id: "claude:s1", source: "claude" });
+  api.listed = [old];
+  api.surfaces.set("pty-1", "claude:s1");
+  const store = createAgentSessionCatalogStore(api);
+  store.getState().setProject("/project");
+  await store.getState().load();
+  const followed: (string | undefined)[] = [];
+  store.subscribe((state, previous) => {
+    const follow = agentSessionTerminalFollow(previous, state);
+    if (follow) {
+      followed.push(follow({ sessionId: "claude:s1", launchId: null })?.sessionId);
+    }
+  });
+  const runtimeOf = (id: string) =>
+    store.getState().sessions.find((session) => session.id === id)?.runtime;
+
+  // After `/clear` the surface belongs to a session the catalog lists only
+  // after its first prompt.
+  api.surfaces.set("pty-1", "claude:s2");
+  await store.getState().load();
+  expect(runtimeOf("claude:s1")?.ptyId).toBe("pty-1");
+  expect([...store.getState().unlistedTerminalPtyIds]).toEqual(["pty-1"]);
+  await store.getState().load({ force: true });
+  expect(runtimeOf("claude:s1")?.ptyId).toBe("pty-1");
+  expect(followed).toEqual([]);
+
+  api.listed = [old, listedSession({ id: "claude:s2", source: "claude" })];
+  await store.getState().load();
+  expect(runtimeOf("claude:s1")).toBe(undefined);
+  expect(runtimeOf("claude:s2")?.ptyId).toBe("pty-1");
+  expect(store.getState().unlistedTerminalPtyIds.size).toBe(0);
+  expect(followed).toEqual(["claude:s2"]);
+});
+
+test("an unlisted terminal that exits leaves its last session", async () => {
+  const api = fakeCatalogApi();
+  api.listed = [listedSession({ id: "claude:s1", source: "claude" })];
+  api.surfaces.set("pty-1", "claude:s1");
+  const store = createAgentSessionCatalogStore(api);
+  store.getState().setProject("/project");
+  await store.getState().load();
+  api.surfaces.set("pty-1", "claude:s2");
+  await store.getState().load();
+
+  api.surfaces.delete("pty-1");
+  store.getState().releaseTerminal("pty-1");
+  await flushPromises();
+  expect(store.getState().sessions[0]?.runtime).toBe(undefined);
+  expect(store.getState().unlistedTerminalPtyIds.size).toBe(0);
 });

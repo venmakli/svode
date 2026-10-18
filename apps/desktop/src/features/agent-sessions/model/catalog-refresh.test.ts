@@ -165,6 +165,33 @@ test("pending and provisional records and explicit demand accelerate the list", 
   stop();
 });
 
+test("a live terminal no session is listed with accelerates the list until one is", async () => {
+  const { api, env, store, stop } = await startCatalog();
+  api.listed = [listedSession({ id: "claude:s1", source: "claude" })];
+  api.surfaces.set("pty-1", "claude:s1");
+  await store.getState().load();
+  expect(env.activeIntervals()).toEqual([INTERVALS.hotMs, INTERVALS.listMs]);
+
+  api.surfaces.set("pty-1", "claude:s2");
+  await store.getState().load();
+  expect(env.activeIntervals()).toEqual([
+    INTERVALS.hotMs,
+    INTERVALS.fastListMs,
+  ]);
+
+  api.listed = [
+    ...api.listed,
+    listedSession({ id: "claude:s2", source: "claude" }),
+  ];
+  await env.advance(INTERVALS.fastListMs);
+  expect(
+    store.getState().sessions.find((session) => session.id === "claude:s2")
+      ?.runtime?.ptyId,
+  ).toBe("pty-1");
+  expect(env.activeIntervals()).toEqual([INTERVALS.hotMs, INTERVALS.listMs]);
+  stop();
+});
+
 test("returning to the foreground reloads the list after the minimal gap", async () => {
   const { api, env, stop } = await startCatalog();
 
