@@ -173,6 +173,38 @@ async fn search_unique_id_exact(
     results
 }
 
+/// Merges per-pool title hits by `TitleQuery` level before the limit, so a
+/// more exact match from any pool is never cut by fresher weaker ones.
+/// Exact `unique_id` hits rank with exact titles.
+fn rank_title_hits(
+    query: &str,
+    unique_id_hits: Vec<(IndexKey, SearchResult)>,
+    pools: Vec<PoolHits>,
+    limit: i64,
+) -> Vec<(IndexKey, SearchResult)> {
+    let title_query = search::TitleQuery::new(query);
+    let mut merged = unique_id_hits
+        .into_iter()
+        .map(|(key, hit)| (key, hit, 0))
+        .collect::<Vec<_>>();
+    for pool in pools {
+        for hit in pool.hits {
+            if let Some(level) = title_query.level(&hit.title, &hit.path) {
+                merged.push((pool.key.clone(), hit, level));
+            }
+        }
+    }
+    merged.sort_by(|left, right| {
+        left.2
+            .cmp(&right.2)
+            .then_with(|| right.1.updated_at.cmp(&left.1.updated_at))
+    });
+    let mut seen = HashSet::new();
+    merged.retain(|(key, hit, _)| seen.insert((key.clone(), hit.path.clone())));
+    merged.truncate(limit as usize);
+    merged.into_iter().map(|(key, hit, _)| (key, hit)).collect()
+}
+
 pub async fn search_by_title(
     state: &IndexState,
     project: PathBuf,
@@ -191,33 +223,11 @@ pub async fn search_by_title(
     })
     .await;
 
-    let query_lower = query.to_lowercase();
-    let mut merged = Vec::new();
-    for (key, hit) in search_unique_id_exact(state, &keys_for_unique_id, &query, limit).await {
-        merged.push((key, hit, 0));
-    }
-    for pool in pools {
-        for hit in pool.hits {
-            let prefix = u8::from(!hit.title.to_lowercase().starts_with(&query_lower));
-            merged.push((pool.key.clone(), hit, prefix));
-        }
-    }
-    merged.sort_by(|left, right| {
-        left.2.cmp(&right.2).then_with(|| {
-            match (right.1.updated_at.as_deref(), left.1.updated_at.as_deref()) {
-                (Some(left), Some(right)) => left.cmp(right),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-        })
-    });
-    let mut seen = HashSet::new();
-    merged.retain(|(key, hit, _)| seen.insert((key.clone(), hit.path.clone())));
-    merged.truncate(limit as usize);
+    let unique_id_hits = search_unique_id_exact(state, &keys_for_unique_id, &query, limit).await;
+    let merged = rank_title_hits(&query, unique_id_hits, pools, limit);
 
     let mut items = Vec::with_capacity(merged.len());
-    for (key, hit, _) in merged {
+    for (key, hit) in merged {
         items.push(enrich(state, &key, hit).await);
     }
     Ok(SearchResponse {
@@ -387,6 +397,103 @@ mod tests {
     use crate::index::update::IndexUpdateState;
     use crate::page::dates::SystemGitDateExecutor;
     use crate::routines::store_state::RoutineStoreState;
+
+    fn hit(path: &str, title: &str, updated: &str) -> SearchResult {
+        SearchResult {
+            id: path.to_string(),
+            path: path.to_string(),
+            title: title.to_string(),
+            entry_type: "page".to_string(),
+            snippet: None,
+            table_name: None,
+            updated_at: Some(updated.to_string()),
+        }
+    }
+
+    #[test]
+    fn title_merge_ranks_levels_across_pools_before_limit() {
+        let root = IndexKey::Root(PathBuf::from("/project"));
+        let space = IndexKey::Space {
+            project: PathBuf::from("/project"),
+            space_id: "space".to_string(),
+        };
+        let pools = vec![
+            PoolHits {
+                key: root.clone(),
+                hits: vec![
+                    hit("Plan A.md", "Plan A", "2026-01-05"),
+                    hit("Plan B.md", "Plan B", "2026-01-04"),
+                ],
+            },
+            PoolHits {
+                key: space.clone(),
+                hits: vec![
+                    hit("plan.md", "plan", "2026-01-01"),
+                    hit("My Plan.md", "My Plan", "2026-01-09"),
+                    hit("plans/other.md", "Other", "2026-01-10"),
+                ],
+            },
+        ];
+        let unique_id = vec![(root.clone(), hit("tasks/a.md", "Task", "2026-01-03"))];
+
+        let merged = rank_title_hits("PLAN", unique_id, pools, 6);
+
+        assert_eq!(
+            merged
+                .iter()
+                .map(|(key, hit)| (key == &space, hit.title.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (false, "Task"),
+                (true, "plan"),
+                (false, "Plan A"),
+                (false, "Plan B"),
+                (true, "My Plan"),
+                (true, "Other"),
+            ]
+        );
+        let pools = vec![PoolHits {
+            key: space,
+            hits: vec![hit("plan.md", "plan", "2026-01-01")],
+        }];
+        let first = rank_title_hits("Plan", Vec::new(), pools, 1);
+        assert_eq!(first[0].1.title, "plan");
+    }
+
+    #[tokio::test]
+    async fn title_search_through_index_folds_cyrillic_case() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        for (file, title) in [("plan.md", "План"), ("work.md", "План работ")] {
+            std::fs::write(
+                project.join(file),
+                format!("---\ntitle: {title}\n---\nBody\n"),
+            )
+            .unwrap();
+        }
+        let state = IndexState::default();
+        IndexUpdateState::new(Arc::new(RoutineStoreState::new()))
+            .repair_space(
+                &state,
+                &IndexKey::Root(project.to_path_buf()),
+                None::<&SystemGitDateExecutor>,
+            )
+            .await
+            .unwrap();
+
+        let response = search_by_title(&state, project.to_path_buf(), "план".into(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            response
+                .items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["План", "План работ"]
+        );
+    }
 
     #[tokio::test]
     async fn standalone_repair_search_knowledge_and_diagnostics_share_prepared_pool() {

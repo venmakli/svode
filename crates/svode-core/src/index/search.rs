@@ -6,6 +6,7 @@ use sqlx::{Row, SqlitePool};
 use crate::collections::model::{Column, PropertyType};
 use crate::collections::schema::{normalize_rel_path, read_schema_at};
 use crate::index::IndexError as AppError;
+use crate::page::naming::display_name_key;
 
 /// Per-pool query row carrier. Crosses module boundaries internally; the
 /// wire-shape returned to the frontend is `SearchItem` (built by
@@ -25,22 +26,6 @@ pub struct SearchResult {
     pub table_name: Option<String>,
     #[serde(skip)]
     pub updated_at: Option<String>,
-}
-
-/// Escape `%` and `_` in a LIKE pattern so user input is treated literally.
-/// The escape character is `\`, which must be declared via `ESCAPE '\'`.
-fn escape_like(query: &str) -> String {
-    let mut out = String::with_capacity(query.len());
-    for c in query.chars() {
-        match c {
-            '\\' | '%' | '_' => {
-                out.push('\\');
-                out.push(c);
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 /// Build a safe FTS5 MATCH expression from user input.
@@ -76,18 +61,51 @@ fn build_fts_query(query: &str) -> String {
         .join(" ")
 }
 
-/// Search entries by title substring (case-insensitive LIKE).
-/// Results where the title starts with the query come first, then by
-/// `updated_at DESC`.
+/// Match level of a Page against a title query, compared in the Page name key
+/// form (`display_name_key`: NFKC + case fold) so letters of any script match
+/// regardless of case. Lower levels are more exact: exact title, title prefix,
+/// title substring, path substring.
+pub(crate) struct TitleQuery {
+    key: String,
+}
+
+impl TitleQuery {
+    pub(crate) fn new(query: &str) -> Self {
+        Self {
+            key: display_name_key(query),
+        }
+    }
+
+    /// `None` when neither the title nor the path matches. An empty query
+    /// matches every Page at one level.
+    pub(crate) fn level(&self, title: &str, path: &str) -> Option<u8> {
+        if self.key.is_empty() {
+            return Some(0);
+        }
+        let title = display_name_key(title);
+        if title == self.key {
+            Some(0)
+        } else if title.starts_with(&self.key) {
+            Some(1)
+        } else if title.contains(&self.key) {
+            Some(2)
+        } else if display_name_key(path).contains(&self.key) {
+            Some(3)
+        } else {
+            None
+        }
+    }
+}
+
+/// Search entries by title or path, ranked by `TitleQuery` level, then by
+/// `updated_at DESC`, before the limit is applied. Matching happens in Rust
+/// because SQLite `LIKE` folds only ASCII case.
 pub async fn search_by_title(
     pool: &SqlitePool,
     query: &str,
     limit: i64,
 ) -> Result<Vec<SearchResult>, AppError> {
-    let escaped = escape_like(query);
-    let contains_pat = format!("%{escaped}%");
-    let prefix_pat = format!("{escaped}%");
-
+    let title_query = TitleQuery::new(query);
     let rows = sqlx::query(
         r#"
         SELECT
@@ -99,7 +117,6 @@ pub async fn search_by_title(
             updated AS updated_at
         FROM entries
         WHERE is_discoverable = 1
-          AND (title LIKE ? ESCAPE '\' OR file_path LIKE ? ESCAPE '\')
           AND NOT (
               LOWER(file_path) = 'readme.md'
               OR (
@@ -113,37 +130,34 @@ pub async fn search_by_title(
                   )
               )
           )
-        ORDER BY
-            CASE
-                WHEN title LIKE ? ESCAPE '\' THEN 0
-                WHEN file_path LIKE ? ESCAPE '\' THEN 1
-                ELSE 2
-            END,
-            updated DESC
-        LIMIT ?
         "#,
     )
-    .bind(&contains_pat)
-    .bind(&contains_pat)
-    .bind(&prefix_pat)
-    .bind(&prefix_pat)
-    .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(|e| AppError::Index(format!("search_by_title query={query:?} failed: {e}")))?;
 
-    Ok(rows
+    let mut ranked = rows
         .into_iter()
-        .map(|r| SearchResult {
-            id: r.get::<String, _>("id"),
-            path: r.get::<String, _>("path"),
-            title: r.get::<String, _>("title"),
-            entry_type: r.get::<String, _>("type"),
-            snippet: None,
-            table_name: r.get::<Option<String>, _>("table_name"),
-            updated_at: r.get::<Option<String>, _>("updated_at"),
+        .filter_map(|r| {
+            let hit = SearchResult {
+                id: r.get::<String, _>("id"),
+                path: r.get::<String, _>("path"),
+                title: r.get::<String, _>("title"),
+                entry_type: r.get::<String, _>("type"),
+                snippet: None,
+                table_name: r.get::<Option<String>, _>("table_name"),
+                updated_at: r.get::<Option<String>, _>("updated_at"),
+            };
+            Some((title_query.level(&hit.title, &hit.path)?, hit))
         })
-        .collect())
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| right.1.updated_at.cmp(&left.1.updated_at))
+    });
+    ranked.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    Ok(ranked.into_iter().map(|(_, hit)| hit).collect())
 }
 
 /// Exact lookup for collection `unique_id` display values such as `ISSUE-24`.
@@ -397,6 +411,92 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    async fn title_pool(rows: &[(&str, &str, &str, i64)]) -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE entries (
+                file_path TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                updated TEXT NOT NULL,
+                collection_root_path TEXT,
+                in_collection INTEGER NOT NULL,
+                is_discoverable INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (path, title, updated, discoverable) in rows {
+            sqlx::query(
+                "INSERT INTO entries (file_path,title,updated,collection_root_path,in_collection,is_discoverable) VALUES (?,?,?,NULL,0,?)",
+            )
+            .bind(path)
+            .bind(title)
+            .bind(updated)
+            .bind(discoverable)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    async fn titles(pool: &SqlitePool, query: &str, limit: i64) -> Vec<String> {
+        search_by_title(pool, query, limit)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.title)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn title_search_ranks_levels_before_limit() {
+        let pool = title_pool(&[
+            ("Plan.md", "Plan", "2026-01-01", 1),
+            ("Plan A.md", "Plan A", "2026-01-02", 1),
+            ("Plan B.md", "Plan B", "2026-01-03", 1),
+            ("Plan C.md", "Plan C", "2026-01-04", 1),
+            ("My Plan.md", "My Plan", "2026-01-05", 1),
+            ("plans/other.md", "Other", "2026-01-06", 1),
+            ("hidden.md", "Plan", "2026-01-07", 0),
+            ("README.md", "Plan", "2026-01-08", 1),
+            ("unrelated.md", "Unrelated", "2026-01-09", 1),
+        ])
+        .await;
+
+        assert_eq!(titles(&pool, "Plan", 2).await, vec!["Plan", "Plan C"]);
+        assert_eq!(
+            titles(&pool, "plan", 10).await,
+            vec!["Plan", "Plan C", "Plan B", "Plan A", "My Plan", "Other"]
+        );
+        assert_eq!(titles(&pool, "", 2).await, vec!["Unrelated", "Other"]);
+    }
+
+    #[tokio::test]
+    async fn title_search_folds_case_and_unicode_forms_of_any_script() {
+        let pool = title_pool(&[
+            ("План.md", "План", "2026-01-01", 1),
+            ("План работ.md", "План работ", "2026-01-02", 1),
+            ("Мой план.md", "Мой план", "2026-01-03", 1),
+            ("Йод.md", "Йод", "2026-01-04", 1),
+            ("Plan.md", "Plan", "2026-01-05", 1),
+        ])
+        .await;
+
+        for query in ["план", "ПЛАН", "План"] {
+            assert_eq!(
+                titles(&pool, query, 10).await,
+                vec!["План", "План работ", "Мой план"],
+                "query {query:?}"
+            );
+        }
+        assert_eq!(titles(&pool, "\u{0438}\u{0306}од", 10).await, vec!["Йод"]);
+        assert_eq!(titles(&pool, "ＰＬＡＮ", 10).await, vec!["Plan"]);
+    }
 
     #[tokio::test]
     async fn unique_id_exact_search_resolves_prefixed_display_value() {
