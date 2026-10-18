@@ -112,6 +112,8 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
   let context = {
     page: page("tasks/README.md", "Tasks") as Page | null,
     schemaResult: null as object | null,
+    status: "ready" as "ready" | "missing",
+    fallbackTitle: "X",
   };
   let titleFocusRequests = 0;
   const scopeSurface = await import("@/features/page/scope-surface");
@@ -147,6 +149,13 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
   mock.module("@/features/page/navigation", () => ({
     ...pageNavigation,
     useOpenPage: () => (path: string) => opened.push(path),
+  }));
+  const rowRenames: string[] = [];
+  const spaceAppShell = await import("@/features/space/app-shell");
+  mock.module("@/features/space/app-shell", () => ({
+    ...spaceAppShell,
+    useRequestTreeRowRename: () => (spaceId: string, path: string) =>
+      rowRenames.push(`${spaceId}:${path}`),
   }));
   let dirty = false;
   const gitSidebar = await import("@/features/git/sidebar");
@@ -230,12 +239,16 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
 
   async function render(
     ownerName: keyof typeof owners,
-    options: { readOnly?: boolean } = {},
+    options: { readOnly?: boolean; withoutReadme?: boolean } = {},
   ) {
     const owner = owners[ownerName];
     context = {
-      page: page(owner.readmePath, ownerName === "space" ? "Docs home" : "X"),
+      page: options.withoutReadme
+        ? null
+        : page(owner.readmePath, ownerName === "space" ? "Docs home" : "X"),
       schemaResult: null,
+      status: options.withoutReadme ? "missing" : "ready",
+      fallbackTitle: "X",
     };
     await act(async () =>
       root.render(
@@ -243,7 +256,7 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
           <SidebarProvider>
             <div data-header>
               <ScopeOwnerActions
-                key={`${ownerName}:${options.readOnly}`}
+                key={`${ownerName}:${options.readOnly}:${options.withoutReadme}`}
                 owner={owner}
                 pinItem={{
                   key:
@@ -405,6 +418,52 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
       { group: "delete", items: ["Delete (disabled)"] },
     ]);
     await closeMenu();
+  });
+
+  test("an App or a Collection without README keeps its menu on its folder", async () => {
+    await render("app", { withoutReadme: true });
+    expect(await openMenu()).toEqual([
+      { group: "navigation", items: pin },
+      { group: "edit", items: ["Rename"] },
+      { group: "delete", items: ["Delete"] },
+    ]);
+    titleFocusRequests = 0;
+    await select("Rename");
+    expect(titleFocusRequests).toBe(0);
+    expect(rowRenames).toEqual(["docs:board"]);
+
+    commands.length = 0;
+    await openMenu();
+    await select("Delete");
+    expect(dialog()).toEqual({
+      title: "Delete app?",
+      description: "The app “X” will be deleted with its files.",
+    });
+    await clickDialogButton("Delete");
+    expect(
+      commands.filter(([command]) => command === "delete_content"),
+    ).toEqual([
+      [
+        "delete_content",
+        { space: "/project/docs", path: "board", projectPath: "/project" },
+      ],
+    ]);
+
+    await render("collection", { withoutReadme: true });
+    expect(await openMenu()).toEqual([
+      { group: "navigation", items: pin },
+      { group: "create", items: ["New item"] },
+      { group: "edit", items: ["Rename"] },
+      { group: "delete", items: ["Delete"] },
+    ]);
+    await closeMenu();
+
+    await render("page", { withoutReadme: true });
+    expect(
+      document.querySelector(
+        '[data-header] [data-slot="dropdown-menu-trigger"]',
+      ),
+    ).toBeNull();
   });
 
   test("Collection and App items run their operations", async () => {

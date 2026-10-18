@@ -1,4 +1,5 @@
 import { useSpaceStore } from "../model/space-store";
+import { useTreeRenameRequest } from "../model/tree-rename-request";
 import {
   useEffect,
   useRef,
@@ -71,6 +72,25 @@ export function useFileTreeItemRename({
       editRef.current.select();
     }
   }, [isEditing]);
+
+  const renameRequested = useTreeRenameRequest(
+    (state) =>
+      state.target?.spaceId === spaceId && state.target.path === node.path,
+  );
+  useEffect(() => {
+    if (!renameRequested) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      useTreeRenameRequest.getState().clear();
+      setEditValue(node.title);
+      setRenameConflictPath(null);
+      setIsEditing(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [node.title, renameRequested]);
 
   function handleStartRename() {
     setEditValue(node.title);

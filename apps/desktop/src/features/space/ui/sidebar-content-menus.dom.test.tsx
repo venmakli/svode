@@ -427,6 +427,29 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
     expect(renameValues[0]).toBe("Board");
   });
 
+  test("a rename asked for outside the tree starts in the row of its path", async () => {
+    const { useTreeRenameRequest } =
+      await import("../model/tree-rename-request");
+    await render(<SpaceRow {...spaceProps()} />);
+    await act(async () => {
+      useTreeRenameRequest.getState().request("docs", "tool");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    const input = document.activeElement;
+    expect(input instanceof dom.window.HTMLInputElement).toBe(true);
+    expect((input as HTMLInputElement).value).toBe("Tool");
+    expect(useTreeRenameRequest.getState().target).toBeNull();
+    await act(async () => {
+      input?.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "Escape",
+        }),
+      );
+    });
+    await settle();
+  });
+
   function deleteDialog() {
     const dialog = document.querySelector('[role="alertdialog"]');
     if (!dialog) return null;

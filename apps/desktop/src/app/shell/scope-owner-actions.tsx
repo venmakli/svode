@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type ComponentProps } from "react";
 import { toast } from "sonner";
 import {
   useContentDeleteConfirmation,
@@ -7,6 +7,7 @@ import {
 import {
   ProjectRootHomeActions,
   SpaceHomeActions,
+  useRequestTreeRowRename,
 } from "@/features/space/app-shell";
 import {
   ContentDeleteDialog,
@@ -84,7 +85,10 @@ function ownerDeleteObject(
   }
 }
 
-/** A Collection, an App or a Page, each shown with its README Page. */
+/**
+ * A Collection, an App or a Page, each shown with its README Page. A
+ * Collection or an App without README keeps its menu on its folder.
+ */
 function ReadmeOwnerActions({
   owner,
   pinItem,
@@ -95,7 +99,7 @@ function ReadmeOwnerActions({
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const { confirmation, requestDelete, cancelDelete } =
-    useContentDeleteConfirmation<Page>();
+    useContentDeleteConfirmation<Page | null>();
   const {
     reloadTreeParent,
     reloadTreePathParent,
@@ -114,8 +118,12 @@ function ReadmeOwnerActions({
     };
   }, [cancelDelete, readOnly]);
 
-  if (!context.page) return null;
+  const directoryOwner =
+    owner.identityKind === "collection-directory" ||
+    owner.identityKind === "app-directory";
   const ownerPage = context.page;
+  if (!ownerPage && !(directoryOwner && context.status === "missing"))
+    return null;
 
   function requestOwnerDelete(page: Page) {
     void requestDelete({
@@ -132,6 +140,20 @@ function ReadmeOwnerActions({
     });
   }
 
+  function requestFolderDelete() {
+    void requestDelete({
+      object: {
+        kind:
+          owner.identityKind === "collection-directory" ? "collection" : "app",
+      },
+      name: context.fallbackTitle,
+      spacePath: context.spacePath,
+      path: owner.ownerPath,
+      projectPath: context.projectPath,
+      value: null,
+    });
+  }
+
   async function duplicateOwner(page: Page) {
     const duplicated = await duplicatePage({
       spacePath: context.spacePath,
@@ -144,15 +166,16 @@ function ReadmeOwnerActions({
     signalCreatedArtifact(context.spaceId, duplicated.path);
   }
 
-  async function deleteOwner(page: Page) {
+  async function deleteOwner(page: Page | null) {
+    const path = page?.path ?? owner.ownerPath;
     await deletePage({
       spacePath: context.spacePath,
-      path: page.path,
+      path,
       projectPath: context.projectPath,
     });
-    removeTreePath(context.spaceId, page.path);
-    await reloadTreePathParent(context.spaceId, page.path);
-    await context.reload();
+    removeTreePath(context.spaceId, path);
+    await reloadTreePathParent(context.spaceId, path);
+    if (page) await context.reload();
   }
 
   // "New item" of the sidebar: a new Page in the Collection's folder.
@@ -172,54 +195,58 @@ function ReadmeOwnerActions({
     toast.success(m.toast_page_created());
   }
 
-  const menu =
-    owner.identityKind === "collection-directory" ||
-    owner.identityKind === "app-directory" ? (
-      <ContentHeaderMenu
-        groups={contentActionGroups({
-          object: {
-            kind:
-              owner.identityKind === "collection-directory"
-                ? "collection"
-                : "app",
-          },
-          readOnly,
-        })}
-        pinItem={pinItem}
-        handlers={{
-          "new-item": () => void newItem().catch(handleError),
-          rename: context.requestTitleFocus,
-          delete: () => requestOwnerDelete(ownerPage),
-        }}
-      />
-    ) : (
-      <PageDetailActions
-        page={ownerPage}
-        menuKind={{
-          kind: context.schemaResult ? "collection-item" : "page",
-        }}
-        pinItem={pinItem}
-        spacePath={context.spacePath}
-        projectPath={context.projectPath}
-        spaceId={context.spaceId}
-        onConverted={(page, nested) => {
-          context.setPage(page);
-          if (nested) {
-            openScopeOwner({
-              kind: "collection",
-              path: page.path,
-              spaceId: context.spaceId,
-            });
-            void reloadTreePathParents(context.spaceId, [page.path]);
-          } else {
-            openPage(page.path, context.spaceId);
-          }
-        }}
-        onDuplicatePage={(page) => void duplicateOwner(page).catch(handleError)}
-        onDeletePage={requestOwnerDelete}
-        readOnly={readOnly}
-      />
-    );
+  const directoryMenu: ComponentProps<typeof ContentHeaderMenu> = {
+    groups: contentActionGroups({
+      object: {
+        kind:
+          owner.identityKind === "collection-directory" ? "collection" : "app",
+      },
+      readOnly,
+    }),
+    pinItem,
+    handlers: {
+      "new-item": () => void newItem().catch(handleError),
+      rename: context.requestTitleFocus,
+      delete: () =>
+        ownerPage ? requestOwnerDelete(ownerPage) : requestFolderDelete(),
+    },
+  };
+  const menu = !ownerPage ? (
+    <FolderOwnerMenu
+      {...directoryMenu}
+      spaceId={context.spaceId}
+      folderPath={owner.ownerPath}
+    />
+  ) : directoryOwner ? (
+    <ContentHeaderMenu {...directoryMenu} />
+  ) : (
+    <PageDetailActions
+      page={ownerPage}
+      menuKind={{
+        kind: context.schemaResult ? "collection-item" : "page",
+      }}
+      pinItem={pinItem}
+      spacePath={context.spacePath}
+      projectPath={context.projectPath}
+      spaceId={context.spaceId}
+      onConverted={(page, nested) => {
+        context.setPage(page);
+        if (nested) {
+          openScopeOwner({
+            kind: "collection",
+            path: page.path,
+            spaceId: context.spaceId,
+          });
+          void reloadTreePathParents(context.spaceId, [page.path]);
+        } else {
+          openPage(page.path, context.spaceId);
+        }
+      }}
+      onDuplicatePage={(page) => void duplicateOwner(page).catch(handleError)}
+      onDeletePage={requestOwnerDelete}
+      readOnly={readOnly}
+    />
+  );
 
   return (
     <>
@@ -230,5 +257,27 @@ function ReadmeOwnerActions({
         onConfirm={(page) => void deleteOwner(page).catch(handleError)}
       />
     </>
+  );
+}
+
+/** Without README the owner has no title to edit: its sidebar row renames it. */
+function FolderOwnerMenu({
+  spaceId,
+  folderPath,
+  handlers,
+  ...props
+}: ComponentProps<typeof ContentHeaderMenu> & {
+  spaceId: string;
+  folderPath: string;
+}) {
+  const requestTreeRowRename = useRequestTreeRowRename();
+  return (
+    <ContentHeaderMenu
+      {...props}
+      handlers={{
+        ...handlers,
+        rename: () => requestTreeRowRename(spaceId, folderPath),
+      }}
+    />
   );
 }

@@ -6,3 +6,4 @@ export {
   ProjectRootHomeActions,
   SpaceHomeActions,
 } from "./ui/space-home-actions";
+export { useRequestTreeRowRename } from "./hooks/use-request-tree-row-rename";
