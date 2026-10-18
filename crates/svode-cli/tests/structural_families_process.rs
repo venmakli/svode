@@ -115,9 +115,12 @@ fn project() -> Option<(tempfile::TempDir, PathBuf)> {
     write(&root.join("README.md"), "---\ntitle: Project\n---\n");
     write(
         &root.join("notes.md"),
-        "---\ntitle: Notes\n---\nSee [Plan](plan.md).\n",
+        "---\ntitle: Notes\n---\nSee [Plan](drafts/plan.md).\n",
     );
-    write(&root.join("plan.md"), "---\ntitle: Plan\n---\nPlan body\n");
+    write(
+        &root.join("drafts/plan.md"),
+        "---\ntitle: Plan\n---\nPlan body\n",
+    );
     write(&root.join("ideas.md"), "---\ntitle: Ideas\n---\nIdeas\n");
     write(
         &root.join("archive/README.md"),
@@ -143,7 +146,7 @@ fn project() -> Option<(tempfile::TempDir, PathBuf)> {
     write(&root.join("wiki/README.md"), "---\ntitle: Wiki\n---\n");
     write(
         &root.join("wiki/links.md"),
-        "---\ntitle: Links\n---\nSee [Plan](../plan.md).\n",
+        "---\ntitle: Links\n---\nSee [Plan](../drafts/plan.md).\n",
     );
     commit(&root);
     let child = root.join("child");
@@ -151,7 +154,7 @@ fn project() -> Option<(tempfile::TempDir, PathBuf)> {
     write(&child.join("README.md"), "---\ntitle: Child\n---\n");
     write(
         &child.join("ref.md"),
-        "---\ntitle: Ref\n---\nSee [Plan](../plan.md).\n",
+        "---\ntitle: Ref\n---\nSee [Plan](../drafts/plan.md).\n",
     );
     commit(&child);
     Some((temp, root))
@@ -209,26 +212,25 @@ fn create_structural_and_reorder_commands_apply_across_spaces_without_a_commit()
         git(&child, &["rev-parse", "HEAD"]),
     );
 
-    // Rename rewrites the links into the target from its own Space, the
-    // inline child Space and the independent child repository.
+    // Rename of a folder without a title rewrites the links into it from
+    // its own Space, the inline child Space and the independent child
+    // repository.
     let renamed = ok(
         root,
-        &[
-            "content",
-            "rename",
-            "--path",
-            "plan.md",
-            "--to",
-            "Roadmap.md",
-        ],
+        &["content", "rename", "--path", "drafts", "--to", "roadmap"],
     );
-    assert_eq!(renamed["newPath"], "Roadmap.md");
-    assert!(!root.join("plan.md").exists());
-    assert!(text(root, "notes.md").contains("[Plan](Roadmap.md)"));
-    assert!(text(root, "wiki/links.md").contains("(../Roadmap.md)"));
-    assert!(text(root, "child/ref.md").contains("(../Roadmap.md)"));
+    assert_eq!(renamed["newPath"], "roadmap");
+    assert!(!root.join("drafts").exists());
+    assert!(text(root, "notes.md").contains("[Plan](roadmap/plan.md)"));
+    assert!(text(root, "wiki/links.md").contains("(../roadmap/plan.md)"));
+    assert!(text(root, "child/ref.md").contains("(../roadmap/plan.md)"));
     let affected = strings(&renamed["affectedProjectPaths"]);
-    for path in ["Roadmap.md", "notes.md", "wiki/links.md", "child/ref.md"] {
+    for path in [
+        "roadmap/plan.md",
+        "notes.md",
+        "wiki/links.md",
+        "child/ref.md",
+    ] {
         assert!(affected.contains(path), "{path}: {renamed}");
     }
 
@@ -239,14 +241,14 @@ fn create_structural_and_reorder_commands_apply_across_spaces_without_a_commit()
             "content",
             "move",
             "--path",
-            "Roadmap.md",
+            "roadmap/plan.md",
             "--to-parent",
             "archive",
         ],
     );
-    assert_eq!(moved["newPath"], "archive/Roadmap.md");
-    assert!(text(root, "notes.md").contains("(archive/Roadmap.md)"));
-    assert!(text(root, "child/ref.md").contains("(../archive/Roadmap.md)"));
+    assert_eq!(moved["newPath"], "archive/plan.md");
+    assert!(text(root, "notes.md").contains("(archive/plan.md)"));
+    assert!(text(root, "child/ref.md").contains("(../archive/plan.md)"));
 
     // Create a Page, a Collection item and a Collection.
     let page = ok(
@@ -346,13 +348,13 @@ fn create_structural_and_reorder_commands_apply_across_spaces_without_a_commit()
             "--child",
             "archive/Old.md",
             "--child",
-            "archive/Roadmap.md",
+            "archive/plan.md",
         ],
     );
     assert_eq!(reordered["changedPaths"], json!([".svode/order.json"]));
     assert_eq!(
         reordered["previousOrder"],
-        json!(["archive/Roadmap.md", "archive/Old.md"])
+        json!(["archive/plan.md", "archive/Old.md"])
     );
     let spaces = ok(root, &["space", "reorder", "--id", "wiki", "--id", "child"]);
     assert_eq!(spaces["orderedSpaceIds"], json!(["wiki", "child"]));
@@ -372,7 +374,7 @@ fn create_structural_and_reorder_commands_apply_across_spaces_without_a_commit()
 
     // The index of each Space sees the result through the next read.
     let found = ok(root, &["search", "Plan body"]);
-    assert_eq!(found["items"][0]["path"], "archive/Roadmap.md", "{found}");
+    assert_eq!(found["items"][0]["path"], "archive/plan.md", "{found}");
     let found = ok(root, &["--space", "child", "search", "Child note"]);
     assert!(found.to_string().contains("Child note.md"), "{found}");
 
@@ -407,14 +409,7 @@ fn a_held_repository_of_the_touched_set_is_busy_until_it_is_released() {
     let started = Instant::now();
     let (exit, busy) = json(
         root,
-        &[
-            "content",
-            "rename",
-            "--path",
-            "plan.md",
-            "--to",
-            "Roadmap.md",
-        ],
+        &["content", "rename", "--path", "drafts", "--to", "roadmap"],
         None,
     );
     assert_eq!(exit, 1, "{busy}");
@@ -448,17 +443,10 @@ fn a_held_repository_of_the_touched_set_is_busy_until_it_is_released() {
     // After the release the same intent applies.
     let renamed = ok(
         root,
-        &[
-            "content",
-            "rename",
-            "--path",
-            "plan.md",
-            "--to",
-            "Roadmap.md",
-        ],
+        &["content", "rename", "--path", "drafts", "--to", "roadmap"],
     );
-    assert_eq!(renamed["newPath"], "Roadmap.md");
-    assert!(text(root, "child/ref.md").contains("(../Roadmap.md)"));
+    assert_eq!(renamed["newPath"], "roadmap");
+    assert!(text(root, "child/ref.md").contains("(../roadmap/plan.md)"));
 }
 
 #[cfg(unix)]
@@ -478,17 +466,10 @@ fn a_link_rewrite_that_fails_keeps_the_applied_move_as_a_partial_outcome() {
     // does not roll the rename back because a backlink could not be written.
     let renamed = ok(
         root,
-        &[
-            "content",
-            "rename",
-            "--path",
-            "plan.md",
-            "--to",
-            "Roadmap.md",
-        ],
+        &["content", "rename", "--path", "drafts", "--to", "roadmap"],
     );
     fs::set_permissions(&reference, fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(root.join("Roadmap.md").is_file() && !root.join("plan.md").exists());
+    assert!(root.join("roadmap/plan.md").is_file() && !root.join("drafts").exists());
     assert_eq!(text(root, "child/ref.md"), original);
     assert!(
         !strings(&renamed["affectedProjectPaths"]).contains("child/ref.md"),

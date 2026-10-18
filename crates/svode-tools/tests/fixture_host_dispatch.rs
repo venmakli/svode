@@ -1940,6 +1940,8 @@ fn structure_fixture() -> Fixture {
         ("README.md", "---\ntitle: Project\n---\n"),
         ("leaf.md", "---\ntitle: Leaf\n---\nLeaf body\n"),
         ("notes.md", "---\ntitle: Notes\n---\n[Leaf](leaf.md)\n"),
+        ("hub.md", "---\ntitle: Hub\n---\n[Plan](drafts/plan.md)\n"),
+        ("drafts/plan.md", "---\ntitle: Plan\n---\n"),
         ("archive/README.md", "---\ntitle: Archive\n---\n"),
         ("archive/a.md", "---\ntitle: A\n---\n"),
         ("archive/b.md", "---\ntitle: B\n---\n"),
@@ -2024,27 +2026,27 @@ async fn structural_actions_keep_link_relation_order_and_conversion_effects() {
         &host,
         Some(&target),
         "rename_content",
-        json!({ "from": "leaf.md", "to": "Renamed.md" }),
+        json!({ "from": "drafts", "to": "Final" }),
     )
     .await;
     let renamed = structured(&renamed);
-    assert_eq!(renamed["newPath"], "Renamed.md");
-    assert!(read(&fixture, "notes.md").contains("(Renamed.md)"));
-    assert!(changed(renamed).contains(&"notes.md".to_string()));
-    assert!(changed(renamed).contains(&"Renamed.md".to_string()));
-    assert!(strings(&renamed["touchedPaths"]["backlinks"]).contains(&"notes.md".to_string()));
+    assert_eq!(renamed["newPath"], "Final");
+    assert!(read(&fixture, "hub.md").contains("(Final/plan.md)"));
+    assert!(changed(renamed).contains(&"hub.md".to_string()));
+    assert!(changed(renamed).contains(&"Final/plan.md".to_string()));
+    assert!(strings(&renamed["touchedPaths"]["backlinks"]).contains(&"hub.md".to_string()));
 
     let moved = call_tool(
         &host,
         Some(&target),
         "move_content",
-        json!({ "from": "Renamed.md", "toParent": "archive" }),
+        json!({ "from": "leaf.md", "toParent": "archive" }),
     )
     .await;
     let moved = structured(&moved);
-    assert_eq!(moved["newPath"], "archive/Renamed.md");
-    assert!(fixture.project.join("archive/Renamed.md").is_file());
-    assert!(read(&fixture, "notes.md").contains("archive/Renamed.md"));
+    assert_eq!(moved["newPath"], "archive/leaf.md");
+    assert!(fixture.project.join("archive/leaf.md").is_file());
+    assert!(read(&fixture, "notes.md").contains("archive/leaf.md"));
 
     let reordered = call_tool(
         &host,
@@ -2052,7 +2054,7 @@ async fn structural_actions_keep_link_relation_order_and_conversion_effects() {
         "reorder_content",
         json!({
             "parentPath": "archive/README.md",
-            "orderedChildren": ["archive/b.md", "archive/Renamed.md", "archive/a.md"]
+            "orderedChildren": ["archive/b.md", "archive/leaf.md", "archive/a.md"]
         }),
     )
     .await;
@@ -2249,10 +2251,7 @@ async fn structural_and_import_actions_authorize_before_the_first_write() {
             json!({ "path": "sprints/one.md" }),
         ),
         ("delete_collection", json!({ "collectionPath": "sprints" })),
-        (
-            "rename_content",
-            json!({ "from": "leaf.md", "to": "Renamed.md" }),
-        ),
+        ("rename_content", json!({ "from": "drafts", "to": "Final" })),
         (
             "move_content",
             json!({ "from": "leaf.md", "toParent": "archive" }),
@@ -2291,6 +2290,85 @@ async fn structural_and_import_actions_authorize_before_the_first_write() {
         let result = call_tool(&limited, Some(&target), name, json!({})).await;
         assert_eq!(error_code(&result), "UNKNOWN_TOOL", "{name}");
     }
+}
+
+/// rename_content renames only a folder without a title: titled content
+/// is routed to a title change and any other target is refused, both before
+/// planning, authorization or any write.
+#[tokio::test]
+async fn rename_content_refuses_titled_and_unsupported_targets_with_stable_codes() {
+    let fixture = structure_fixture();
+    let denied = indexed_host(&fixture, FixtureHost::denying_mutations()).await;
+    let target = root_target(&fixture);
+    write(&fixture.project.join("archive/photo.png"), "image");
+    write(&fixture.project.join(".assets/old.png"), "image");
+    let before = source_snapshot(&fixture.project);
+
+    for (from, to, code, named) in [
+        (
+            "leaf.md",
+            "Plan.md",
+            "TITLE_RENAME_REQUIRED",
+            "update_page_metadata",
+        ),
+        (
+            "solo",
+            "Single",
+            "TITLE_RENAME_REQUIRED",
+            "update_page_metadata",
+        ),
+        (
+            "solo/README.md",
+            "solo/Single.md",
+            "TITLE_RENAME_REQUIRED",
+            "update_page_metadata",
+        ),
+        (
+            "tasks/alpha.md",
+            "tasks/beta.md",
+            "TITLE_RENAME_REQUIRED",
+            "update_collection_item_fields",
+        ),
+        (
+            "tasks",
+            "jobs",
+            "TITLE_RENAME_REQUIRED",
+            "update_collection_metadata",
+        ),
+        (
+            "tasks/README.md",
+            "tasks/Jobs.md",
+            "TITLE_RENAME_REQUIRED",
+            "update_collection_metadata",
+        ),
+        (
+            "archive/photo.png",
+            "archive/cover.png",
+            "UNSUPPORTED_RENAME_TARGET",
+            "folders without a title",
+        ),
+        ("child", "kid", "UNSUPPORTED_RENAME_TARGET", "child Space"),
+        (
+            ".assets/old.png",
+            ".assets/new.png",
+            "UNSUPPORTED_RENAME_TARGET",
+            "system paths",
+        ),
+    ] {
+        let result = call_tool(
+            &denied,
+            Some(&target),
+            "rename_content",
+            json!({ "from": from, "to": to }),
+        )
+        .await;
+        assert_eq!(error_code(&result), code, "{from}");
+        assert!(format!("{result:?}").contains(named), "{from}: {result:?}");
+    }
+
+    assert_eq!(source_snapshot(&fixture.project), before);
+    assert!(denied.authorized().is_empty());
+    assert!(denied.deliveries.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

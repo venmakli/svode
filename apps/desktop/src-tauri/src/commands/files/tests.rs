@@ -1169,21 +1169,18 @@ fn tree_order_save_refuses_an_unreadable_order_file() {
 async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
-    std::fs::create_dir(space.join("target")).unwrap();
-    std::fs::write(space.join("a.md"), "a").unwrap();
-    std::fs::write(space.join("b.md"), "b").unwrap();
+    for folder in ["target", "a", "b"] {
+        std::fs::create_dir(space.join(folder)).unwrap();
+    }
     let mut order = HashMap::new();
-    order.insert(
-        ".".to_string(),
-        vec!["a.md".to_string(), "b.md".to_string()],
-    );
+    order.insert(".".to_string(), vec!["a".to_string(), "b".to_string()]);
     svode_core::content_tree::write_order(space, &order).unwrap();
     let index_state = IndexState::new();
 
     let invalid = crate::structure::rename(
         space.to_str().unwrap(),
-        "a.md",
-        "target/a.md",
+        "a",
+        "target/a",
         None,
         &index_state,
         updates(),
@@ -1191,12 +1188,12 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
     )
     .await;
     assert!(invalid.is_err());
-    assert!(space.join("a.md").is_file());
+    assert!(space.join("a").is_dir());
 
     crate::structure::rename(
         space.to_str().unwrap(),
-        "a.md",
-        "renamed.md",
+        "a",
+        "renamed",
         None,
         &index_state,
         updates(),
@@ -1208,7 +1205,7 @@ async fn shared_rename_rejects_parent_change_and_preserves_sibling_position() {
         svode_core::content_tree::read_order(space)
             .get(".")
             .unwrap(),
-        &vec!["renamed.md".to_string(), "b.md".to_string()]
+        &vec!["renamed".to_string(), "b".to_string()]
     );
 }
 

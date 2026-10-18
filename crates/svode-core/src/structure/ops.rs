@@ -1073,11 +1073,7 @@ pub async fn rename<E: GitDateExecutor>(
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<Vec<String>, PageError> {
-    if !same_parent(from, to) {
-        return Err(PageError::General(
-            "rename_entry cannot change parent; use move_entry to move an entry".to_string(),
-        ));
-    }
+    super::rename_target::ensure_renamable_folder(space, from, to)?;
     apply_move(space, from, Some(to), None, project_path, runtime)
         .await
         .map(|outcome| outcome.modified_paths)

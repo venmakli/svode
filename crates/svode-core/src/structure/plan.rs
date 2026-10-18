@@ -41,6 +41,19 @@ pub async fn move_mutation_paths(
     Ok(paths)
 }
 
+/// Touched set of a rename by path, planned only for a folder without a
+/// title: any other target is refused before planning.
+pub async fn rename_mutation_paths(
+    state: &IndexRuntimeState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to: &str,
+) -> Result<Vec<PathBuf>, PageError> {
+    super::rename_target::ensure_renamable_folder(space, from, to)?;
+    move_mutation_paths(state, space, project_path, from, to).await
+}
+
 pub async fn backlink_mutation_paths(
     state: &IndexRuntimeState,
     space: &str,

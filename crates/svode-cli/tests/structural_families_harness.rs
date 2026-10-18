@@ -53,6 +53,8 @@ async fn fixture(host: &WriteHost) -> Fixture {
         ("README.md", "---\ntitle: Project\n---\n"),
         ("leaf.md", "---\ntitle: Leaf\n---\nLeaf body\n"),
         ("notes.md", "---\ntitle: Notes\n---\n[Leaf](leaf.md)\n"),
+        ("hub.md", "---\ntitle: Hub\n---\n[Plan](drafts/plan.md)\n"),
+        ("drafts/plan.md", "---\ntitle: Plan\n---\n"),
         ("archive/README.md", "---\ntitle: Archive\n---\n"),
         ("archive/a.md", "---\ntitle: A\n---\n"),
         ("archive/b.md", "---\ntitle: B\n---\n"),
@@ -249,14 +251,7 @@ const STRUCTURAL_COMMANDS: [(&[&str], &str); 17] = [
         "delete_collection_view",
     ),
     (
-        &[
-            "content",
-            "rename",
-            "--path",
-            "leaf.md",
-            "--to",
-            "Renamed.md",
-        ],
+        &["content", "rename", "--path", "drafts", "--to", "Final"],
         "rename_content",
     ),
     (
@@ -264,7 +259,7 @@ const STRUCTURAL_COMMANDS: [(&[&str], &str); 17] = [
             "content",
             "move",
             "--path",
-            "Renamed.md",
+            "leaf.md",
             "--to-parent",
             "archive",
         ],
@@ -279,7 +274,7 @@ const STRUCTURAL_COMMANDS: [(&[&str], &str); 17] = [
             "--child",
             "archive/b.md",
             "--child",
-            "archive/Renamed.md",
+            "archive/leaf.md",
             "--child",
             "archive/a.md",
         ],
@@ -390,28 +385,48 @@ async fn structural_commands_keep_link_relation_order_and_conversion_effects() {
     let project = &fixture.project;
     let head = has_git().then(|| git(project, &["rev-parse", "HEAD"]));
 
-    // Rename rewrites the link source and reports the backlink.
+    // Rename of a folder without a title rewrites the link source and
+    // reports the backlink.
     let (exit, value) = svode(
         &host,
         project,
-        &[
-            "content",
-            "rename",
-            "--path",
-            "leaf.md",
-            "--to",
-            "Renamed.md",
-        ],
+        &["content", "rename", "--path", "drafts", "--to", "Final"],
     )
     .await;
     ok(exit, &value);
-    assert_eq!(value["target"]["path"], "leaf.md");
-    assert_eq!(value["newPath"], "Renamed.md");
-    assert!(fixture.read("notes.md").contains("(Renamed.md)"));
+    assert_eq!(value["target"]["path"], "drafts");
+    assert_eq!(value["newPath"], "Final");
+    assert!(fixture.read("hub.md").contains("(Final/plan.md)"));
     let changed = strings(&value["changedPaths"]);
-    assert!(changed.contains(&"notes.md".to_string()), "{value}");
-    assert!(changed.contains(&"Renamed.md".to_string()), "{value}");
-    assert!(strings(&value["touchedPaths"]["backlinks"]).contains(&"notes.md".to_string()));
+    assert!(changed.contains(&"hub.md".to_string()), "{value}");
+    assert!(changed.contains(&"Final/plan.md".to_string()), "{value}");
+    assert!(strings(&value["touchedPaths"]["backlinks"]).contains(&"hub.md".to_string()));
+
+    // A Page, item or Collection is renamed by its title and any other
+    // target is refused, before any write.
+    let before = snapshot(project);
+    for (from, to, code) in [
+        ("leaf.md", "Plan.md", "TITLE_RENAME_REQUIRED"),
+        ("solo", "Single", "TITLE_RENAME_REQUIRED"),
+        ("tasks/alpha.md", "tasks/beta.md", "TITLE_RENAME_REQUIRED"),
+        ("tasks", "jobs", "TITLE_RENAME_REQUIRED"),
+        ("child", "kid", "UNSUPPORTED_RENAME_TARGET"),
+        (
+            "input/column.json",
+            "input/col.json",
+            "UNSUPPORTED_RENAME_TARGET",
+        ),
+    ] {
+        let (exit, value) = svode(
+            &host,
+            project,
+            &["content", "rename", "--path", from, "--to", to],
+        )
+        .await;
+        assert_eq!(exit, 1, "{from}: {value}");
+        assert_eq!(value["error"]["code"], code, "{from}: {value}");
+    }
+    assert_eq!(snapshot(project), before);
 
     // Move keeps the link; the human output is the summary, then paths.
     let rendered = human(
@@ -421,20 +436,20 @@ async fn structural_commands_keep_link_relation_order_and_conversion_effects() {
             "content",
             "move",
             "--path",
-            "Renamed.md",
+            "leaf.md",
             "--to-parent",
             "archive",
         ],
     )
     .await;
     assert_eq!(rendered.exit, 0, "{rendered:?}");
-    assert!(fixture.exists("archive/Renamed.md"));
-    assert!(fixture.read("notes.md").contains("archive/Renamed.md"));
+    assert!(fixture.exists("archive/leaf.md"));
+    assert!(fixture.read("notes.md").contains("archive/leaf.md"));
     let mut lines = rendered.stdout.lines();
     assert!(!lines.next().unwrap().is_empty());
     let printed = lines.map(str::to_string).collect::<Vec<_>>();
     assert!(
-        printed.contains(&"archive/Renamed.md".to_string()),
+        printed.contains(&"archive/leaf.md".to_string()),
         "{rendered:?}"
     );
     assert!(printed.contains(&"notes.md".to_string()), "{rendered:?}");
@@ -452,7 +467,7 @@ async fn structural_commands_keep_link_relation_order_and_conversion_effects() {
             "--child",
             "archive/b.md",
             "--child",
-            "archive/Renamed.md",
+            "archive/leaf.md",
             "--child",
             "archive/a.md",
         ],
@@ -463,7 +478,7 @@ async fn structural_commands_keep_link_relation_order_and_conversion_effects() {
     assert_eq!(strings(&value["changedPaths"]), vec![".svode/order.json"]);
     assert_eq!(
         value["orderedChildren"],
-        json!(["archive/b.md", "archive/Renamed.md", "archive/a.md"])
+        json!(["archive/b.md", "archive/leaf.md", "archive/a.md"])
     );
     let order = fixture.read(".svode/order.json");
     let (exit, value) = svode(

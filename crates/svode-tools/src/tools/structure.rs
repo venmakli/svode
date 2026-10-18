@@ -294,7 +294,7 @@ pub(crate) async fn rename_content(
     let project = target.project_path.as_str();
     let handles = PageHandles::of(host);
     let planned =
-        structure::move_mutation_paths(handles.runtime.index, &space, Some(project), &from, &to)
+        structure::rename_mutation_paths(handles.runtime.index, &space, Some(project), &from, &to)
             .await?;
     let authorized = authorize(host, &space, planned).await?;
     let (_, changes) = within_authorized(

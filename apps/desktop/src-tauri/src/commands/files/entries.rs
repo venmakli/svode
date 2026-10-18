@@ -411,7 +411,7 @@ pub async fn rename_content(
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
-    let authorized_paths = require_entry_move_mutation_plan(
+    let authorized_paths = require_entry_rename_mutation_plan(
         &app,
         &index_state,
         &space,

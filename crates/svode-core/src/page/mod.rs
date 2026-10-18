@@ -20,7 +20,7 @@ pub mod templates;
 pub(crate) mod test_support;
 pub mod write;
 
-pub use error::PageError;
+pub use error::{PageError, TitledContent};
 
 pub use target::{
     ProjectConfig, ResolvedSpaceTarget, SpaceReadiness, SpaceReference, project_for_directory,

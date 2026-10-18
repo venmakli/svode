@@ -264,6 +264,25 @@ fn is_readme_name(name: &str) -> bool {
     name.eq_ignore_ascii_case("readme.md")
 }
 
+/// Kind of a directory by its direct markers on disk, whatever the tree
+/// visibility policy shows of them.
+pub fn source_directory_kind(dir: &Path) -> Result<DirectoryKind, std::io::Error> {
+    let mut has_head = false;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if is_readme_name(&entry.file_name().to_string_lossy()) && entry.file_type()?.is_file() {
+            has_head = true;
+            break;
+        }
+    }
+    Ok(DirectoryFacts {
+        has_head,
+        has_schema: is_regular_source(&dir.join("schema.yaml")),
+        has_app: is_regular_source(&dir.join("app.yaml")),
+    }
+    .kind())
+}
+
 /// Find a readme.md file inside a directory (case-insensitive).
 /// Returns the absolute path if found.
 fn find_readme(

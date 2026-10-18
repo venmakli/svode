@@ -2094,7 +2094,7 @@ pub fn rename_with_project(
         return Err(PageError::FileNotFound(from.to_string()));
     }
 
-    if abs_to.exists() {
+    if from == to || name_taken_by_another_entry(&abs_from, &abs_to)? {
         return Err(PageError::FileAlreadyExists(to.to_string()));
     }
     let relation_plan = crate::collections::engine::relation_move_mutation_paths_with_project(
@@ -2162,6 +2162,20 @@ pub fn rename_with_project(
     }
 
     Ok(())
+}
+
+/// Whether the target name is taken in its parent by an entry other than the
+/// source, compared portably: a case-only or normalization-only rename of
+/// the source itself stays free on any file system.
+fn name_taken_by_another_entry(abs_from: &Path, abs_to: &Path) -> Result<bool, PageError> {
+    let (Some(parent), Some(name)) = (abs_to.parent(), abs_to.file_name()) else {
+        return Ok(abs_to.exists());
+    };
+    let source = abs_from
+        .file_name()
+        .filter(|_| abs_from.parent() == Some(parent))
+        .map(|name| name.to_string_lossy());
+    filename::component_conflicts_portably(parent, &name.to_string_lossy(), source.as_deref())
 }
 
 #[cfg(test)]

@@ -332,7 +332,7 @@ pub const CASES: &[Case] = &[
     ),
     case(
         "content rename",
-        &["content", "rename", "--path", "notes.md", "--to", "Plan.md"],
+        &["content", "rename", "--path", "drafts", "--to", "archive"],
         &["rename_content"],
     ),
     case(
@@ -548,6 +548,7 @@ pub fn fixture() -> Fixture {
         &project.join("folder/README.md"),
         "---\ntitle: Folder\n---\nFolder body\n",
     );
+    write(&project.join("drafts/plan.md"), "---\ntitle: Plan\n---\n");
     write(&project.join("list/README.md"), "---\ntitle: List\n---\n");
     write(&project.join("list/a.md"), "---\ntitle: A\n---\n");
     write(&project.join("list/b.md"), "---\ntitle: B\n---\n");

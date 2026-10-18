@@ -18,7 +18,7 @@ fn title_write_help(example: &str) -> String {
     format!("{WRITE}\n\n{TITLE_RENAME}\n\nExample:\n  {example}")
 }
 
-const CONTENT_RENAME: &str = "Rename is for folders without a title. A Page, Collection item or Collection keeps its old title and gets only a new file or directory name: rename it by setting its title with `meta set --title` (or `item fields set`) instead.";
+const CONTENT_RENAME: &str = "Rename is for folders without a title. A Page, Collection item or Collection is renamed by setting its title with `meta set --title` (or `item fields set`); this command refuses it with TITLE_RENAME_REQUIRED and changes nothing. A file, a child Space directory or a system or hidden path is refused with UNSUPPORTED_RENAME_TARGET. A sibling with the same name ignoring case and Unicode normalization fails with FILE_ALREADY_EXISTS; a case-only rename of the folder itself is allowed.";
 
 const BODY_WRITE: &str = "Safe cycle: read the source with --json and keep its sourceVersion, edit the body, then write the whole result with --source-version <token>. If the source changed after your read, the write fails with SOURCE_STALE and writes nothing: read it again and reapply your change to the current text. SOURCE_BUSY means another Svode operation is writing the same repository: retry later. The result carries the sourceVersion of the written source for the next write. Bodies come from --body-file <path> or --body-file - (stdin); --body <text> is for short inline text. A command reads stdin at most once. The write does not commit to Git; never delete or hand-repair .svode metadata.\n\nWith file access, edit the text below the frontmatter with your own tools instead and keep the frontmatter unchanged; this command is the path for clients without file access.";
 
@@ -734,8 +734,7 @@ pub enum ContentVerb {
 
 #[derive(Debug, Args)]
 pub struct ContentRenameArgs {
-    /// Existing folder relative to the selected Space; a Page or Collection
-    /// keeps its old title.
+    /// Existing folder without a title, relative to the selected Space.
     #[arg(long, value_name = "RELATIVE")]
     pub path: String,
     /// New path in the same parent.

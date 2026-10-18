@@ -12,7 +12,7 @@ use svode_core::content_tree::ContentTreeError;
 use svode_core::git::GitError;
 use svode_core::index::IndexError;
 use svode_core::index::freshness::IndexUnavailable;
-use svode_core::page::{PageError, PageSourceError};
+use svode_core::page::{PageError, PageSourceError, TitledContent};
 use svode_core::routines::RoutineStoreError;
 use svode_core::routines::local::LocalConfigError;
 use svode_core::routines::observation::ObservationError;
@@ -85,6 +85,37 @@ fn invalid_encoding(path: String) -> ToolError {
 /// Busy or stale target of a source write, before any effect.
 fn source_refused(code: &str, message: String, path: String) -> ToolError {
     ToolError::new(code, message).with_evidence("path", serde_json::Value::String(path))
+}
+
+/// A rename by path of content named by its title; the message names the
+/// title change that renames it.
+fn title_rename_required(path: String, kind: TitledContent) -> ToolError {
+    let how = match kind {
+        TitledContent::Page => {
+            "update_page_metadata with a new title (CLI: svode page meta set --title)"
+        }
+        TitledContent::CollectionItem => {
+            "update_collection_item_metadata or update_collection_item_fields with a new title (CLI: svode item meta set --title or a title in svode item fields set)"
+        }
+        TitledContent::Collection => {
+            "update_collection_metadata with a new title (CLI: svode collection meta set --title)"
+        }
+    };
+    ToolError::new(
+        "TITLE_RENAME_REQUIRED",
+        format!(
+            "{path} is a {kind}: rename_content renames only folders without a title and changed nothing. Rename the {kind} by changing its title with {how}."
+        ),
+    )
+}
+
+fn unsupported_rename_target(path: String) -> ToolError {
+    ToolError::new(
+        "UNSUPPORTED_RENAME_TARGET",
+        format!(
+            "{path} cannot be renamed: rename_content renames only folders without a title, not files, child Space directories or system paths, and changed nothing."
+        ),
+    )
 }
 
 fn name_conflict() -> ToolError {
@@ -279,6 +310,8 @@ impl From<PageError> for ToolError {
             PageError::InvalidEncoding(path) => invalid_encoding(path),
             PageError::SourceBusy { path } => source_refused("SOURCE_BUSY", message, path),
             PageError::SourceStale { path } => source_refused("SOURCE_STALE", message, path),
+            PageError::TitleRenameRequired { path, kind } => title_rename_required(path, kind),
+            PageError::UnsupportedRenameTarget { path } => unsupported_rename_target(path),
             PageError::General(message) => general(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),

@@ -209,6 +209,19 @@ async fn require_entry_move_mutation_plan(
     require_planned_mutation_paths(app, space, paths).await
 }
 
+async fn require_entry_rename_mutation_plan(
+    app: &AppHandle,
+    index_state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    let paths =
+        crate::structure::rename_mutation_paths(index_state, space, project_path, from, to).await?;
+    require_planned_mutation_paths(app, space, paths).await
+}
+
 async fn require_entry_backlink_mutation_plan(
     app: &AppHandle,
     index_state: &IndexState,

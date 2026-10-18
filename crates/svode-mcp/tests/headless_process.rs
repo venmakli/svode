@@ -984,6 +984,7 @@ fn create_structural_reorder_and_import_changes_are_served_in_one_session() {
     .unwrap();
     let photo = fixture.temp.path().join("photo.png");
     fs::write(&photo, "image").unwrap();
+    write(&project.join("drafts/plan.md"), "---\ntitle: Plan\n---\n");
     let mut live = Live::start(
         fixture.temp.path(),
         &["--project", project.to_str().unwrap()],
@@ -1012,11 +1013,26 @@ fn create_structural_reorder_and_import_changes_are_served_in_one_session() {
         json!({ "from": "notes.md", "toParent": "Weekly" }),
     );
     assert_eq!(moved["newPath"], "Weekly/notes.md", "{moved}");
-    let renamed = live.ok(
+    // A Page is renamed by its title; rename_content renames a folder
+    // without a title and refuses the Page without a change.
+    let refused = live.call(
         "rename_content",
         json!({ "from": "Weekly/notes.md", "to": "Weekly/Journal.md" }),
     );
-    assert_eq!(renamed["newPath"], "Weekly/Journal.md", "{renamed}");
+    assert_eq!(
+        business_code(&refused),
+        "TITLE_RENAME_REQUIRED",
+        "{refused}"
+    );
+    assert!(project.join("Weekly/notes.md").is_file());
+    let retitled = live.ok(
+        "update_page_metadata",
+        json!({ "path": "Weekly/notes.md", "title": "Journal" }),
+    );
+    assert_eq!(retitled["page"]["path"], "Weekly/Journal.md", "{retitled}");
+    let renamed = live.ok("rename_content", json!({ "from": "drafts", "to": "Final" }));
+    assert_eq!(renamed["newPath"], "Final", "{renamed}");
+    assert!(project.join("Final/plan.md").is_file());
     let ordered = live.ok(
         "reorder_content",
         json!({ "parentPath": "Weekly", "orderedChildren": ["Weekly/Journal.md", "Weekly/Sub.md"] }),
@@ -1073,10 +1089,7 @@ fn create_structural_reorder_and_import_changes_are_served_in_one_session() {
             &[],
         ))
         .unwrap();
-    let busy = live.call(
-        "rename_content",
-        json!({ "from": "Backlog/README.md", "to": "Backlog/Moved.md" }),
-    );
+    let busy = live.call("rename_content", json!({ "from": "Final", "to": "Drafts" }));
     assert_eq!(business_code(&busy), "SOURCE_BUSY", "{busy}");
     let path = busy["result"]["structuredContent"]["error"]["path"]
         .as_str()
@@ -1520,6 +1533,7 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
     let head_before = head(project);
     let photo = fixture.temp.path().join("photo.png");
     fs::write(&photo, "image").unwrap();
+    write(&project.join("drafts/plan.md"), "---\ntitle: Plan\n---\n");
     let mut live = Live::start(
         fixture.temp.path(),
         &["--project", project.to_str().unwrap()],
@@ -1713,17 +1727,17 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
     ok(
         &mut live,
         "rename_content",
-        json!({ "from": "notes.md", "to": "Journal.md" }),
+        json!({ "from": "drafts", "to": "Final" }),
     );
     ok(
         &mut live,
         "move_content",
-        json!({ "from": "Journal.md", "toParent": "Weekly" }),
+        json!({ "from": "notes.md", "toParent": "Weekly" }),
     );
     ok(
         &mut live,
         "reorder_content",
-        json!({ "parentPath": "Weekly", "orderedChildren": ["Weekly/Journal.md", "Weekly/Sub.md"] }),
+        json!({ "parentPath": "Weekly", "orderedChildren": ["Weekly/notes.md", "Weekly/Sub.md"] }),
     );
     ok(
         &mut live,
@@ -1734,7 +1748,7 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
     ok(
         &mut live,
         "delete_page",
-        json!({ "path": "Weekly/Journal.md" }),
+        json!({ "path": "Weekly/notes.md" }),
     );
     ok(
         &mut live,

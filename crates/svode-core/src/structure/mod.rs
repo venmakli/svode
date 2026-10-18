@@ -4,6 +4,7 @@ pub mod commit;
 pub mod naming;
 pub mod ops;
 pub mod plan;
+mod rename_target;
 pub mod spaces;
 #[cfg(test)]
 mod tests;
@@ -21,6 +22,6 @@ pub use ops::{
 };
 pub use plan::{
     backlink_mutation_paths, collection_create_schema_paths, delete_mutation_paths,
-    move_mutation_paths,
+    move_mutation_paths, rename_mutation_paths,
 };
 pub use spaces::{ChildSpaceOrderOutcome, reorder_child_spaces};

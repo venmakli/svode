@@ -317,9 +317,7 @@ async fn rename_move_and_folder_relocations_commit_from_the_final_folder() {
     ])
     .await;
     let root = fixture.space();
-    structure::rename(root, "Page.md", "Plan.md", Some(root), fixture.structure())
-        .await
-        .unwrap();
+    assert_eq!(fixture.rename("Page.md", "Plan").await, "Plan.md");
     let moved = structure::move_entry(root, "Plan.md", "Area", Some(root), fixture.structure())
         .await
         .unwrap();
@@ -328,15 +326,10 @@ async fn rename_move_and_folder_relocations_commit_from_the_final_folder() {
         .await
         .unwrap();
     assert_eq!(converted.path, "Area/Plan/README.md");
-    structure::rename(
-        root,
-        "Area/Plan",
-        "Area/Goal",
-        Some(root),
-        fixture.structure(),
-    )
-    .await
-    .unwrap();
+    assert_eq!(
+        fixture.rename(&converted.path, "Goal").await,
+        "Area/Goal/README.md"
+    );
     write(
         fixture.root(),
         "Area/Goal/README.md",
@@ -450,17 +443,8 @@ async fn operations_with_equal_labels_or_shared_companions_stay_separate() {
         ("Staged.md", "staged baseline\n"),
     ])
     .await;
-    let root = fixture.space();
     for folder in ["a", "b"] {
-        structure::rename(
-            root,
-            &format!("{folder}/Note.md"),
-            &format!("{folder}/Plan.md"),
-            Some(root),
-            fixture.structure(),
-        )
-        .await
-        .unwrap();
+        fixture.rename(&format!("{folder}/Note.md"), "Plan").await;
     }
     let ann = fixture.rename("People/Ann.md", "Anna").await;
     fixture.rename("People/Bob.md", "Robert").await;

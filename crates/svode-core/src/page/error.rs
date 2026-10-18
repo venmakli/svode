@@ -42,6 +42,10 @@ pub enum PageError {
     SourceBusy { path: String },
     #[error("Source changed after it was read: {path}; read it again and reapply the change")]
     SourceStale { path: String },
+    #[error("{path} is a {kind}: rename it by changing its title")]
+    TitleRenameRequired { path: String, kind: TitledContent },
+    #[error("{path} cannot be renamed by path: only a folder without a title can")]
+    UnsupportedRenameTarget { path: String },
     #[error("{0}")]
     General(String),
     #[error(transparent)]
@@ -54,6 +58,24 @@ pub enum PageError {
     Routine(#[from] crate::routines::RoutineStoreError),
     #[error(transparent)]
     Observation(#[from] crate::routines::observation::ObservationError),
+}
+
+/// Content whose name follows its title, so it is renamed by a title change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitledContent {
+    Page,
+    CollectionItem,
+    Collection,
+}
+
+impl std::fmt::Display for TitledContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Page => "Page",
+            Self::CollectionItem => "Collection item",
+            Self::Collection => "Collection",
+        })
+    }
 }
 
 /// A Page error never locates the repositories of an access denial; hosts

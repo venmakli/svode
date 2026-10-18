@@ -25,7 +25,7 @@ Create Pages, Collection items and Collections with `svode page create` and `svo
 - Rename a Page, Collection item or Collection by changing its title: `svode page meta set --title`, `svode item meta set --title` (or `title` in `svode item fields set`), `svode collection meta set --title`; in MCP `update_page_metadata`, `update_collection_item_metadata`, `update_collection_item_fields`, `update_collection_metadata`. Svode renames the file or directory, rewrites links to it (including link text that followed the old name), relations and sidebar order; continue with the path the result returns.
 - Warning `filename_rename_collision` means the name is taken: the title is saved, the filename kept. Warning `filename_rename_deferred` means a relation schema or another repository blocked the rename: fix the cause, then set the same title again.
 - A Space README title never renames the Space.
-- `svode content rename` (`rename_content`) is only for folders without a title; a Page, item or Collection renamed with it keeps its old title.
+- `svode content rename` (`rename_content`) renames only a folder without a title. It refuses a Page, item or Collection with `TITLE_RENAME_REQUIRED` (rename it by its title as above) and a file, child Space directory or system or hidden path with `UNSUPPORTED_RENAME_TARGET`; a refusal changes nothing. A sibling with the same name in another case or Unicode form is `FILE_ALREADY_EXISTS`; a case-only rename of the folder itself is allowed.
 
 ## Review
 

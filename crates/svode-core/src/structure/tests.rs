@@ -278,3 +278,261 @@ async fn unreadable_order_is_kept_by_content_changes_and_refuses_reorder() {
     assert!(error.to_string().contains(".svode/order.json"));
     assert_eq!(fs::read_to_string(&order_path).expect("order"), conflicted);
 }
+
+/// Records every structural history registration of an operation.
+#[derive(Default)]
+struct RecordingSink(std::sync::Mutex<Vec<std::path::PathBuf>>);
+
+impl super::StructuralCommitSink for RecordingSink {
+    fn schedule(
+        &self,
+        _: &Path,
+        _: &Path,
+        _: crate::git::pending::StructuralChange,
+        paths: Vec<std::path::PathBuf>,
+    ) {
+        self.0.lock().unwrap().extend(paths);
+    }
+
+    fn commit_now<'a>(
+        &'a self,
+        _: &'a Path,
+        _: &'a Path,
+        paths: Vec<std::path::PathBuf>,
+        _: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        self.0.lock().unwrap().extend(paths);
+        Box::pin(async {})
+    }
+}
+
+/// Every file of the tree with its bytes, so a refusal is shown to change
+/// nothing on disk.
+fn tree_snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files.push((
+                    path.strip_prefix(root).unwrap().display().to_string(),
+                    Vec::new(),
+                ));
+                dirs.push(path);
+            } else {
+                let rel = path.strip_prefix(root).unwrap().display().to_string();
+                files.push((rel, fs::read(&path).unwrap()));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn write_tree(root: &Path, files: &[(&str, &str)]) {
+    for (path, content) in files {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+}
+
+fn rename_target_fixture() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    write_tree(
+        tmp.path(),
+        &[
+            (
+                ".svode/config.json",
+                "{\"name\":\"Root\",\"spaces\":[{\"id\":\"child\",\"path\":\"child\"}]}",
+            ),
+            ("README.md", "---\ntitle: Root\n---\n"),
+            ("AGENTS.md", "Agent instructions\n"),
+            (
+                "Leaf.md",
+                "---\ntitle: Leaf\n---\nSee [Doc](Doc/README.md).\n",
+            ),
+            ("Doc/README.md", "---\ntitle: Doc\n---\n"),
+            ("Doc/Child.md", "---\ntitle: Child\n---\n"),
+            ("Tasks/schema.yaml", "columns: []\n"),
+            ("Tasks/README.md", "---\ntitle: Tasks\n---\n"),
+            ("Tasks/Item.md", "---\ntitle: Item\n---\n"),
+            (
+                "Tasks/Folder item/README.md",
+                "---\ntitle: Folder item\n---\n",
+            ),
+            ("App/app.yaml", "runtime: static\n"),
+            ("Notes/photo.png", "png"),
+            ("Notes/brief.pdf", "pdf"),
+            ("child/.svode/config.json", "{\"name\":\"Child\"}"),
+            ("child/README.md", "---\ntitle: Child\n---\n"),
+            (".assets/image.png", "png"),
+        ],
+    );
+    tmp
+}
+
+const TITLED_TARGETS: &[(&str, crate::page::TitledContent)] = &[
+    ("Leaf.md", crate::page::TitledContent::Page),
+    ("Doc", crate::page::TitledContent::Page),
+    ("Doc/README.md", crate::page::TitledContent::Page),
+    ("Tasks/Item.md", crate::page::TitledContent::CollectionItem),
+    (
+        "Tasks/Folder item",
+        crate::page::TitledContent::CollectionItem,
+    ),
+    (
+        "Tasks/Folder item/README.md",
+        crate::page::TitledContent::CollectionItem,
+    ),
+    ("Tasks", crate::page::TitledContent::Collection),
+    ("Tasks/README.md", crate::page::TitledContent::Collection),
+];
+
+const UNSUPPORTED_TARGETS: &[&str] = &[
+    "Notes/photo.png",
+    "Notes/brief.pdf",
+    "App/app.yaml",
+    "README.md",
+    "AGENTS.md",
+    "child",
+    "child/README.md",
+    ".assets",
+    ".assets/image.png",
+];
+
+fn renamed_sibling(path: &str) -> String {
+    match path.rsplit_once('/') {
+        Some((parent, name)) => format!("{parent}/Renamed {name}"),
+        None => format!("Renamed {path}"),
+    }
+}
+
+#[tokio::test]
+async fn rename_by_path_refuses_titled_and_unsupported_targets_without_changes() {
+    use crate::page::PageError;
+
+    let tmp = rename_target_fixture();
+    let space = tmp.path().to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = RecordingSink::default();
+    let before = tree_snapshot(tmp.path());
+
+    for (path, kind) in TITLED_TARGETS {
+        let runtime = StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        };
+        let error = super::rename(space, path, &renamed_sibling(path), Some(space), runtime)
+            .await
+            .expect_err(path);
+        assert!(
+            matches!(&error, PageError::TitleRenameRequired { path: refused, kind: refused_kind }
+                if refused == path && refused_kind == kind),
+            "{path}: {error:?}"
+        );
+    }
+    for path in UNSUPPORTED_TARGETS {
+        let runtime = StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        };
+        let error = super::rename(space, path, &renamed_sibling(path), Some(space), runtime)
+            .await
+            .expect_err(path);
+        assert!(
+            matches!(&error, PageError::UnsupportedRenameTarget { path: refused } if refused == path),
+            "{path}: {error:?}"
+        );
+    }
+    let missing = super::rename(space, "Missing", "Other", Some(space), runtime(&state))
+        .await
+        .expect_err("missing");
+    assert!(matches!(missing, PageError::FileNotFound(ref path) if path == "Missing"));
+
+    assert_eq!(tree_snapshot(tmp.path()), before);
+    assert!(sink.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn rename_plan_refuses_a_target_before_planning() {
+    use crate::page::PageError;
+
+    let tmp = rename_target_fixture();
+    let space = tmp.path().to_str().unwrap();
+    let state = IndexRuntimeState::default();
+
+    let page = super::rename_mutation_paths(&state, space, Some(space), "Leaf.md", "Plan.md")
+        .await
+        .expect_err("page");
+    assert!(matches!(page, PageError::TitleRenameRequired { .. }));
+    let file = super::rename_mutation_paths(
+        &state,
+        space,
+        Some(space),
+        "Notes/photo.png",
+        "Notes/cover.png",
+    )
+    .await
+    .expect_err("file");
+    assert!(matches!(file, PageError::UnsupportedRenameTarget { .. }));
+    let moved = super::rename_mutation_paths(&state, space, Some(space), "Notes", "Doc/Notes")
+        .await
+        .expect_err("parent change");
+    assert!(moved.to_string().contains("cannot change parent"));
+    let planned = super::rename_mutation_paths(&state, space, None, "Notes", "Archive")
+        .await
+        .expect("bare folder plan");
+    assert!(planned.contains(&tmp.path().to_path_buf()));
+}
+
+#[tokio::test]
+async fn bare_folder_rename_changes_case_and_refuses_portable_collisions() {
+    use crate::page::PageError;
+
+    let tmp = TempDir::new().unwrap();
+    let space = tmp.path().to_str().unwrap();
+    write_tree(
+        tmp.path(),
+        &[
+            ("notes/a.md", "---\ntitle: A\n---\n"),
+            ("Archive/b.md", "---\ntitle: B\n---\n"),
+            ("Caf\u{e9}/c.md", "---\ntitle: C\n---\n"),
+            ("App/app.yaml", "runtime: static\n"),
+        ],
+    );
+    let state = IndexRuntimeState::default();
+    let names = || {
+        let mut names = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+
+    super::rename(space, "notes", "Notes", None, runtime(&state))
+        .await
+        .expect("case-only rename");
+    assert!(names().contains(&"Notes".to_string()), "{:?}", names());
+    assert!(!names().contains(&"notes".to_string()), "{:?}", names());
+    assert!(tmp.path().join("Notes/a.md").is_file());
+
+    let before = tree_snapshot(tmp.path());
+    for taken in ["archive", "ARCHIVE", "Cafe\u{301}"] {
+        let error = super::rename(space, "Notes", taken, None, runtime(&state))
+            .await
+            .expect_err(taken);
+        assert!(
+            matches!(&error, PageError::FileAlreadyExists(path) if path == taken),
+            "{taken}: {error:?}"
+        );
+    }
+    assert_eq!(tree_snapshot(tmp.path()), before);
+
+    super::rename(space, "App", "Site", None, runtime(&state))
+        .await
+        .expect("an App folder has no title");
+    assert!(tmp.path().join("Site/app.yaml").is_file());
+}

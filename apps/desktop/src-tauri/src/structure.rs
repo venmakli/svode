@@ -24,6 +24,7 @@ pub use svode_core::structure::{
 use svode_core::structure::{
     backlink_mutation_paths as core_backlink_mutation_paths,
     move_mutation_paths as core_move_mutation_paths,
+    rename_mutation_paths as core_rename_mutation_paths,
 };
 
 /// Queue a structural change for the pending batch of `space_path`. A Space
@@ -106,6 +107,16 @@ pub async fn move_mutation_paths(
     to: &str,
 ) -> Result<Vec<PathBuf>, AppError> {
     Ok(core_move_mutation_paths(&state.core, space, project_path, from, to).await?)
+}
+
+pub async fn rename_mutation_paths(
+    state: &IndexState,
+    space: &str,
+    project_path: Option<&str>,
+    from: &str,
+    to: &str,
+) -> Result<Vec<PathBuf>, AppError> {
+    Ok(core_rename_mutation_paths(&state.core, space, project_path, from, to).await?)
 }
 
 pub async fn backlink_mutation_paths(

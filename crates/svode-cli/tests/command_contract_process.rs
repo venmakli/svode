@@ -203,7 +203,7 @@ fn every_help_page_has_an_example_and_needs_no_project() {
 }
 
 /// Help routes a Page, item or Collection rename to a title change and
-/// keeps `content rename` for folders without a title.
+/// keeps `content rename` for folders without a title with its refusals.
 #[test]
 fn rename_help_routes_pages_and_collections_to_a_title_change() {
     let empty = tempfile::tempdir().unwrap();
@@ -221,4 +221,7 @@ fn rename_help_routes_pages_and_collections_to_a_title_change() {
     let content = help(&["content", "rename"]);
     assert!(content.contains("folders without a title"), "{content}");
     assert!(content.contains("meta set --title"), "{content}");
+    assert!(content.contains("TITLE_RENAME_REQUIRED"), "{content}");
+    assert!(content.contains("UNSUPPORTED_RENAME_TARGET"), "{content}");
+    assert!(!content.contains("keeps its old title"), "{content}");
 }

@@ -338,6 +338,10 @@ impl From<svode_core::page::PageError> for AppError {
             )),
             PageError::SourceBusy { path } => Self::SourceBusy { path },
             PageError::SourceStale { path } => Self::SourceStale { path },
+            PageError::TitleRenameRequired { path, kind } => {
+                Self::TitleRenameRequired { path, kind }
+            }
+            PageError::UnsupportedRenameTarget { path } => Self::UnsupportedRenameTarget { path },
             PageError::General(message) => Self::General(message),
             PageError::Git(error) => error.into(),
             PageError::Actor(error) => error.into(),
@@ -550,6 +554,15 @@ pub enum AppError {
     #[error("Page order file {path} cannot be read; fix or remove it, then reorder again")]
     TreeOrderUnreadable { path: String },
 
+    #[error("{path} is a {kind}: rename it by changing its title")]
+    TitleRenameRequired {
+        path: String,
+        kind: svode_core::page::TitledContent,
+    },
+
+    #[error("{path} cannot be renamed by path: only a folder without a title can")]
+    UnsupportedRenameTarget { path: String },
+
     #[error("{0}")]
     AgentRuntime(svode_agents::AgentRuntimeError),
 
@@ -605,6 +618,8 @@ impl AppError {
             AppError::SourceBusy { .. } => "source_busy",
             AppError::SourceStale { .. } => "source_stale",
             AppError::TreeOrderUnreadable { .. } => "tree_order_unreadable",
+            AppError::TitleRenameRequired { .. } => "title_rename_required",
+            AppError::UnsupportedRenameTarget { .. } => "unsupported_rename_target",
             AppError::AgentRuntime(_) => "agent_runtime",
             AppError::AgentAdapter(_) => "agent_adapter",
             AppError::CustomAgent(_) => "custom_agent",
@@ -650,7 +665,9 @@ impl Serialize for AppError {
             }
             AppError::SourceBusy { path }
             | AppError::SourceStale { path }
-            | AppError::TreeOrderUnreadable { path } => {
+            | AppError::TreeOrderUnreadable { path }
+            | AppError::TitleRenameRequired { path, .. }
+            | AppError::UnsupportedRenameTarget { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
             }
             AppError::GitPublicationBlocked { repository, child, reason } => {
@@ -723,6 +740,32 @@ mod tests {
         assert_eq!(value["kind"], "agent_runtime");
         assert_eq!(value["code"], "turn_active");
         assert_eq!(value["message"], "a turn is already active in this session");
+    }
+
+    #[test]
+    fn rename_target_refusals_serialize_their_kind_and_path() {
+        let titled = serde_json::to_value(AppError::from(
+            svode_core::page::PageError::TitleRenameRequired {
+                path: "Plan.md".into(),
+                kind: svode_core::page::TitledContent::Page,
+            },
+        ))
+        .unwrap();
+        assert_eq!(titled["kind"], "title_rename_required");
+        assert_eq!(titled["path"], "Plan.md");
+        assert_eq!(
+            titled["message"],
+            "Plan.md is a Page: rename it by changing its title"
+        );
+
+        let unsupported = serde_json::to_value(AppError::from(
+            svode_core::page::PageError::UnsupportedRenameTarget {
+                path: "photo.png".into(),
+            },
+        ))
+        .unwrap();
+        assert_eq!(unsupported["kind"], "unsupported_rename_target");
+        assert_eq!(unsupported["path"], "photo.png");
     }
 
     #[test]

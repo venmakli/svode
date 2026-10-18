@@ -33,6 +33,8 @@ impl From<AppError> for ToolError {
             AppError::GitNoRemote => "GIT_NO_REMOTE",
             AppError::PageWriteRecovery { .. } => "PAGE_WRITE_RECOVERY_FAILED",
             AppError::DocumentNameConflict(_) => "PAGE_NAME_CONFLICT",
+            AppError::TitleRenameRequired { .. } => "TITLE_RENAME_REQUIRED",
+            AppError::UnsupportedRenameTarget { .. } => "UNSUPPORTED_RENAME_TARGET",
             AppError::Index(_) => "INDEX_ERROR",
             AppError::Db(_) => "DATABASE_ERROR",
             _ => "SVODE_ERROR",
