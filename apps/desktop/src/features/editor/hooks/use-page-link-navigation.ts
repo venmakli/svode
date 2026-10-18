@@ -12,7 +12,8 @@ import {
 import { useEditorStore } from "../model";
 import {
   absoluteDocumentPath,
-  isPageLink,
+  isBrokenPageLink,
+  pageLinkPath,
   relativeDocumentPath,
   resolveRelativeDocPath,
 } from "../lib/page-link-utils";
@@ -57,16 +58,15 @@ export function usePageLinkNavigation(
     activeDocument && currentSpacePath
       ? absoluteDocumentPath(activeDocument, currentSpacePath)
       : activeDocument;
-  const resolvedPath =
-    activeRel && url ? resolveRelativeDocPath(activeRel, url) : url;
+  const resolvedPath = url
+    ? activeRel
+      ? resolveRelativeDocPath(activeRel, url)
+      : pageLinkPath(url)
+    : undefined;
   const tooltipPath =
     activeAbs && url ? resolveRelativeDocPath(activeAbs, url) : resolvedPath;
   const sourceSpaceId = editorDocument?.sourceSpaceId ?? null;
-  const isBroken =
-    !!url &&
-    isPageLink(url) &&
-    (brokenLinks.has(url) ||
-      (resolvedPath ? brokenLinks.has(resolvedPath) : false));
+  const isBroken = isBrokenPageLink(brokenLinks, url, activeRel);
 
   const openResolvedLink = useCallback(
     async (resolved: PageLinkResolveResult) => {

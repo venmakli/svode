@@ -31,11 +31,7 @@ import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useEditorStore } from "../model";
 import * as m from "@/paraglide/messages.js";
-import {
-  isPageLink,
-  relativeDocumentPath,
-  resolveRelativeDocPath,
-} from "../lib/page-link-utils";
+import { isBrokenPageLink, relativeDocumentPath } from "../lib/page-link-utils";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
 import { BrokenLinkRepair } from "./broken-link-repair";
 import { PageLinkTargetPicker } from "./page-link-target-picker";
@@ -221,12 +217,7 @@ function PageLinkEditContent({
     activeDocument && currentSpacePath
       ? relativeDocumentPath(activeDocument, currentSpacePath)
       : activeDocument;
-  const resolvedPath =
-    activeRel && url ? resolveRelativeDocPath(activeRel, url) : url;
-  const isBroken =
-    isPageLink(url) &&
-    (brokenLinks.has(url) ||
-      (resolvedPath ? brokenLinks.has(resolvedPath) : false));
+  const isBroken = isBrokenPageLink(brokenLinks, url, activeRel);
 
   if (isBroken && projectPath && activeRel) {
     return (

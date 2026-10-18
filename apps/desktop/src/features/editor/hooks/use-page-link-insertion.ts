@@ -5,7 +5,11 @@ import type { SearchItem } from "@/features/search";
 
 import { makeRelativePageUrl } from "../api/page-link-api";
 import { applyLinkUrl } from "../lib/page-link-editor-actions";
-import { absoluteDocumentPath, joinAbs } from "../lib/page-link-utils";
+import {
+  absoluteDocumentPath,
+  encodePageLinkPath,
+  joinAbs,
+} from "../lib/page-link-utils";
 import { useEditorDocumentContext } from "./use-resolved-asset-url";
 
 type PageLinkEditor = ReturnType<typeof useEditorRef>;
@@ -22,7 +26,9 @@ function usePageLinkTargetUrl() {
 
   return useCallback(
     async (item: SearchItem, fallbackToItemPath: boolean) => {
-      if (!sourceAbs) return fallbackToItemPath ? item.path : null;
+      if (!sourceAbs) {
+        return fallbackToItemPath ? encodePageLinkPath(item.path) : null;
+      }
       return makeRelativePageUrl(sourceAbs, joinAbs(item.spacePath, item.path));
     },
     [sourceAbs],
