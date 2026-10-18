@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { SearchItem } from "@/features/search";
 import type { TreeNode } from "@/features/space";
@@ -30,38 +30,35 @@ export function usePageLinkTargetSearch({
   items: SearchItem[];
   loading: boolean;
 } {
-  const [items, setItems] = useState<SearchItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const request = useMemo(
+    () =>
+      projectPath
+        ? { localCurrentSpace, projectPath, query, sourceSpaceId }
+        : null,
+    [localCurrentSpace, projectPath, query, sourceSpaceId],
+  );
+  // Items keep the request they answer: items for older input mean loading.
+  const [result, setResult] = useState<{
+    request: typeof request;
+    items: SearchItem[];
+  }>({ request: null, items: [] });
 
   useEffect(() => {
-    if (!projectPath) {
-      let cancelled = false;
-      queueMicrotask(() => {
-        if (!cancelled) {
-          setItems([]);
-          setLoading(false);
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-
+    if (!request) return;
     let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) setLoading(true);
-    });
     const timer = window.setTimeout(() => {
-      searchPageLinkTargets(projectPath, sourceSpaceId, query, localCurrentSpace)
-        .then((next) => {
-          if (!cancelled) setItems(next);
-        })
+      searchPageLinkTargets(
+        request.projectPath,
+        request.sourceSpaceId,
+        request.query,
+        request.localCurrentSpace,
+      )
         .catch((err) => {
           console.error("doc link search failed:", err);
-          if (!cancelled) setItems([]);
+          return [];
         })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
+        .then((items) => {
+          if (!cancelled) setResult({ request, items });
         });
     }, debounceMs);
 
@@ -69,7 +66,8 @@ export function usePageLinkTargetSearch({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [debounceMs, localCurrentSpace, projectPath, query, sourceSpaceId]);
+  }, [debounceMs, request]);
 
-  return { items, loading };
+  if (!request) return { items: [], loading: false };
+  return { items: result.items, loading: result.request !== request };
 }

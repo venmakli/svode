@@ -1,7 +1,7 @@
 import type { PlateElementProps } from "platejs/react";
 import type { TComboboxInputElement } from "platejs";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { PlateElement } from "platejs/react";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -12,7 +12,7 @@ import {
   InlineComboboxInput,
   InlineComboboxItem,
 } from "@/components/ui/inline-combobox";
-import { FileText } from "lucide-react";
+import { FileText, Loader2 } from "lucide-react";
 import { useSpace } from "@/features/space";
 import { findSpaceById } from "../lib/page-link-utils";
 import { useInsertPageLinkTarget } from "../hooks/use-page-link-insertion";
@@ -45,18 +45,26 @@ export function PageLinkInputElement(
         : null,
     [fileTrees, sourceSpace, sourceSpaceId],
   );
-  const { items } = usePageLinkTargetSearch({
+  const [query, setQuery] = useState("");
+  const { items, loading } = usePageLinkTargetSearch({
     debounceMs: 0,
     localCurrentSpace,
     projectPath,
-    query: "",
+    query,
     sourceSpaceId,
   });
   const insertPageLinkTarget = useInsertPageLinkTarget(editor);
 
   return (
     <PlateElement {...props} as="span">
-      <InlineCombobox element={element} trigger="/page" showTrigger={false}>
+      <InlineCombobox
+        element={element}
+        trigger="/page"
+        showTrigger={false}
+        filter={false}
+        value={query}
+        setValue={setQuery}
+      >
         <InlineComboboxInput
           aria-label={m.editor_page_link_search()}
           className="placeholder:text-muted-foreground"
@@ -64,7 +72,14 @@ export function PageLinkInputElement(
         />
         <InlineComboboxContent>
           <InlineComboboxEmpty>
-            {m.editor_page_link_no_results()}
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="size-4 animate-spin" />
+                {m.common_loading()}
+              </span>
+            ) : (
+              m.editor_page_link_no_results()
+            )}
           </InlineComboboxEmpty>
           <InlineComboboxGroup>
             {items.map((item) => (

@@ -10,6 +10,12 @@ import { searchEntriesByTitle, type SearchItem } from "@/features/search";
 import type { TreeNode } from "@/features/space";
 
 import { makeRelativePath } from "../lib/page-link-utils";
+import {
+  PAGE_LINK_NO_MATCH,
+  pageLinkMatchLevel,
+  pageNameKey,
+  rankPageLinkTargets,
+} from "../lib/page-link-target-rank";
 
 const PAGE_SEARCH_LIMIT = 8;
 
@@ -93,24 +99,24 @@ export async function searchPageLinkTargets(
         ];
 
   const responses = await Promise.all(calls);
+  const queryKey = pageNameKey(trimmed);
+  const local =
+    activeSpaceId !== null && localCurrentSpace?.spaceId === activeSpaceId
+      ? treeToSearchItems(localCurrentSpace, queryKey)
+      : [];
   const seen = new Set<string>();
   const merged: SearchItem[] = [];
-  if (activeSpaceId !== null && localCurrentSpace?.spaceId === activeSpaceId) {
-    for (const item of treeToSearchItems(localCurrentSpace, trimmed)) {
-      const key = `${item.spaceId ?? ""}::${item.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      merged.push(item);
-    }
-  }
-  for (const item of responses.flatMap((response) => response.items)) {
+  for (const item of [
+    ...local,
+    ...responses.flatMap((response) => response.items),
+  ]) {
     if (item.type !== "page") continue;
     const key = `${item.spaceId ?? ""}::${item.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
     merged.push(item);
   }
-  return merged.slice(0, PAGE_SEARCH_LIMIT);
+  return rankPageLinkTargets(merged, queryKey).slice(0, PAGE_SEARCH_LIMIT);
 }
 
 function treeToSearchItems(
@@ -120,17 +126,15 @@ function treeToSearchItems(
     spaceName: string;
     tree: TreeNode[];
   },
-  query: string,
+  queryKey: string,
 ): SearchItem[] {
-  const q = query.toLowerCase();
   const out: SearchItem[] = [];
   const walk = (nodes: TreeNode[]) => {
     for (const node of nodes) {
       if (node.path.endsWith(".md")) {
         const matches =
-          q.length === 0 ||
-          node.title.toLowerCase().includes(q) ||
-          node.path.toLowerCase().includes(q);
+          queryKey.length === 0 ||
+          pageLinkMatchLevel(node, queryKey) < PAGE_LINK_NO_MATCH;
         if (matches) {
           out.push({
             id: `${source.spaceId}:${node.path}`,
