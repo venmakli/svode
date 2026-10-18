@@ -383,6 +383,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::index::knowledge::KnowledgeSource;
     use crate::index::update::IndexUpdateState;
     use crate::page::dates::SystemGitDateExecutor;
     use crate::routines::store_state::RoutineStoreState;
@@ -441,5 +442,158 @@ mod tests {
         assert!(graph.nodes.iter().any(|node| node.source.path == "note.md"));
         assert_eq!(count_broken_links(&state, project).await.unwrap(), 1);
         assert_eq!(state.pools.lock().await.physical_count(), 1);
+    }
+
+    fn write_percent_link_project(project: &Path) {
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        std::fs::write(
+            project.join("Roadmap Draft.md"),
+            "---\ntitle: Roadmap Draft\n---\nDraft\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("Index.md"),
+            "---\ntitle: Index\n---\n[R](Roadmap%20Draft.md) [N](Nope%20Here.md)\n",
+        )
+        .unwrap();
+    }
+
+    async fn repair_root(state: &IndexState, project: &Path) {
+        IndexUpdateState::new(Arc::new(RoutineStoreState::new()))
+            .repair_space(
+                state,
+                &IndexKey::Root(project.to_path_buf()),
+                None::<&SystemGitDateExecutor>,
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn index_link_edges(state: &IndexState, project: &Path) -> Vec<(String, String)> {
+        let page = |path: &str| KnowledgeSource {
+            space_id: None,
+            path: path.to_string(),
+            kind: "page".to_string(),
+        };
+        let graph = read_project_knowledge(
+            state,
+            project,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            KnowledgeFilters {
+                edge_sources: Some(vec![page("Index.md")]),
+                ..KnowledgeFilters::default()
+            },
+        )
+        .await;
+        let mut edges = graph
+            .edges
+            .into_iter()
+            .filter(|edge| edge.kind == "links_to")
+            .map(|edge| (edge.target_url, edge.target_status))
+            .collect::<Vec<_>>();
+        edges.sort();
+        edges
+    }
+
+    #[tokio::test]
+    async fn df_154_percent_links_are_ready_knowledge_edges_and_not_broken() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        write_percent_link_project(project);
+        let state = IndexState::default();
+        repair_root(&state, project).await;
+
+        assert_eq!(
+            index_link_edges(&state, project).await,
+            vec![
+                ("Nope Here.md".to_string(), "broken".to_string()),
+                ("Roadmap Draft.md".to_string(), "ready".to_string()),
+            ]
+        );
+        let graph = read_project_knowledge(
+            &state,
+            project,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            KnowledgeFilters {
+                node_kinds: Some(Vec::new()),
+                neighbor: Some(KnowledgeSource {
+                    space_id: None,
+                    path: "Roadmap Draft.md".to_string(),
+                    kind: "page".to_string(),
+                }),
+                ..KnowledgeFilters::default()
+            },
+        )
+        .await;
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source.path == "Index.md"
+                && edge
+                    .target
+                    .as_ref()
+                    .is_some_and(|target| target.path == "Roadmap Draft.md")
+                && edge.target_status == "ready"
+        }));
+        assert_eq!(count_broken_links(&state, project).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn df_154_index_of_the_previous_schema_is_rebuilt_with_decoded_link_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        write_percent_link_project(project);
+        let key = IndexKey::Root(project.to_path_buf());
+        let state = IndexState::default();
+        repair_root(&state, project).await;
+        // Leave the rows the previous version wrote: undecoded link paths and
+        // a broken row for the working link.
+        let pool = state.get_or_create(&key).await.unwrap();
+        sqlx::query("UPDATE knowledge_links SET target_url = 'Roadmap%20Draft.md' WHERE target_url = 'Roadmap Draft.md'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO broken_links (source_rel_path, target_space_id, target_url, detected_at) VALUES ('Index.md', NULL, 'Roadmap%20Draft.md', 'then')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE schema_version SET version = ?")
+            .bind(crate::index::db::SCHEMA_VERSION - 1)
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.close_project(project).await;
+
+        // Reopen as every host does: open the pool, then reconcile, which
+        // rebuilds only an index without a compatible snapshot.
+        let state = IndexState::default();
+        let pool = state.get_or_create(&key).await.unwrap();
+        IndexUpdateState::new(Arc::new(RoutineStoreState::new()))
+            .reconcile_space(&state, &key, None::<&SystemGitDateExecutor>)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            index_link_edges(&state, project).await,
+            vec![
+                ("Nope Here.md".to_string(), "broken".to_string()),
+                ("Roadmap Draft.md".to_string(), "ready".to_string()),
+            ]
+        );
+        let broken: Vec<String> = sqlx::query_scalar("SELECT target_url FROM broken_links")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(broken, vec!["Nope Here.md".to_string()]);
     }
 }

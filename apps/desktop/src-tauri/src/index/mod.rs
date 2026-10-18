@@ -202,16 +202,32 @@ impl IndexState {
                 space_name: String::new(),
             });
         }
+        self.resolve_doc_link_path(
+            project,
+            source_space_id,
+            source_path,
+            &markdown_url_path(url),
+        )
+        .await
+    }
 
+    /// Resolve a link path returned by the link parser, which is already
+    /// percent-decoded and must not be decoded again.
+    pub async fn resolve_doc_link_path(
+        &self,
+        project: &Path,
+        source_space_id: Option<&str>,
+        source_path: &str,
+        target_link: &str,
+    ) -> Result<ResolvedDocLink, AppError> {
         let source_key = self
             .key_for_project_space_id(project, source_space_id)
             .await?;
         let source_dir = self.dir_for_key(&source_key).await?;
         let source_rel = normalize_rel_result(source_path)?;
-        let target_link = markdown_url_path(url);
         let source_parent_rel = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
         let source_parent_abs = source_dir.join(source_parent_rel);
-        let Some(target_abs) = normalize_abs_path(&source_parent_abs.join(&target_link)) else {
+        let Some(target_abs) = normalize_abs_path(&source_parent_abs.join(target_link)) else {
             return Ok(ResolvedDocLink {
                 target_space_id: None,
                 target_space_path: None,
@@ -764,6 +780,37 @@ mod tests {
         assert_eq!(backlinks.len(), 1);
         assert_eq!(backlinks[0].source_path, "Source.md");
         assert_eq!(backlinks[0].source_space_id, None);
+    }
+
+    #[tokio::test]
+    async fn df_154_doc_links_decode_raw_urls_once() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        fs::create_dir_all(project.join(".svode")).unwrap();
+        fs::create_dir_all(project.join("tasks")).unwrap();
+        fs::write(project.join("Roadmap Draft.md"), "Draft.\n").unwrap();
+        fs::write(project.join("a%20b.md"), "Literal.\n").unwrap();
+        let state = IndexState::new();
+
+        let resolved = state
+            .resolve_doc_link(project, None, "tasks/Ship.md", "../Roadmap%20Draft.md#Next")
+            .await
+            .unwrap();
+        assert_eq!(resolved.target_path.as_deref(), Some("Roadmap Draft.md"));
+        assert!(resolved.exists);
+        let missing = state
+            .resolve_doc_link(project, None, "Index.md", "Nope%20Here.md")
+            .await
+            .unwrap();
+        assert_eq!(missing.target_path.as_deref(), Some("Nope Here.md"));
+        assert!(!missing.exists);
+        // A parsed path is already decoded: `a%2520b.md` was parsed to `a%20b.md`.
+        let parsed = state
+            .resolve_doc_link_path(project, None, "Index.md", "a%20b.md")
+            .await
+            .unwrap();
+        assert_eq!(parsed.target_path.as_deref(), Some("a%20b.md"));
+        assert!(parsed.exists);
     }
 
     #[tokio::test]

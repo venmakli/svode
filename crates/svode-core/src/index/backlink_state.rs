@@ -4,8 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use sqlx::SqlitePool;
 
 use super::backlinks::{
-    LinkSource, LinkSpan, collect_md_files, is_backlink_discoverable_path,
-    is_external_or_anchor_url, markdown_url_path, parse_markdown_links,
+    LinkSource, LinkSpan, collect_md_files, is_backlink_discoverable_path, parse_markdown_links,
 };
 use super::state::IndexRuntimeState;
 use super::{IndexError, IndexKey};
@@ -23,20 +22,12 @@ impl IndexRuntimeState {
         &self,
         project: &Path,
         source_dir: &Path,
-        source_space_id: Option<&str>,
         source_rel: &str,
-        url: &str,
+        link_path: &str,
     ) -> Option<String> {
-        if is_external_or_anchor_url(url) {
-            return source_space_id.map(ToString::to_string);
-        }
         let mut target = PathBuf::new();
         let parent = Path::new(source_rel).parent().unwrap_or(Path::new(""));
-        for component in source_dir
-            .join(parent)
-            .join(markdown_url_path(url))
-            .components()
-        {
+        for component in source_dir.join(parent).join(link_path).components() {
             match component {
                 Component::Prefix(value) => target.push(value.as_os_str()),
                 Component::RootDir => target.push(std::path::MAIN_SEPARATOR.to_string()),
@@ -100,13 +91,7 @@ impl IndexRuntimeState {
                 .await?
             else {
                 let target_space_id = self
-                    .unready_target_space_id(
-                        project,
-                        &source_dir,
-                        source_space_id,
-                        &source_rel,
-                        &url,
-                    )
+                    .unready_target_space_id(project, &source_dir, &source_rel, &url)
                     .await;
                 insert_broken_link(&pool, &source_rel, target_space_id.as_deref(), &url).await?;
                 continue;

@@ -7,8 +7,9 @@ use crate::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::IndexError;
 use crate::page::filename;
 use crate::page::links::{
-    LinkDestinationStyle, MarkdownLink, normalize_link_path_preserve_parent,
-    parse_markdown_link_nodes,
+    LinkDestinationStyle, MarkdownLink, escape_literal_percent,
+    normalize_link_path_preserve_parent, parse_markdown_link_nodes, percent_decode_link_path,
+    percent_encode_link_path,
 };
 pub use crate::page::links::{LinkSpan, parse_markdown_links};
 use crate::page::naming::slugify;
@@ -496,7 +497,15 @@ where
     if changed { result } else { content.to_string() }
 }
 
+/// Write a link destination for `path` in the style of the link it replaces.
+/// A literal `%` is always written as `%25`, so the link decodes to `path`.
 fn serialize_destination(path: &str, anchor: &str, style: LinkDestinationStyle) -> String {
+    let path = match style {
+        LinkDestinationStyle::PercentEncoded { non_ascii } => {
+            percent_encode_link_path(path, non_ascii)
+        }
+        LinkDestinationStyle::Plain | LinkDestinationStyle::Angle => escape_literal_percent(path),
+    };
     let destination = format!("{path}{anchor}");
     if matches!(style, LinkDestinationStyle::Angle) || requires_angle_destination(&destination) {
         format!("<{}>", escape_angle_destination(&destination))
@@ -662,12 +671,13 @@ fn has_url_scheme(url: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
 }
 
-/// Strip the fragment from a markdown URL and normalize separators while
-/// preserving leading `..` for the resolver.
+/// Path of a raw markdown URL: strip the fragment, percent-decode once and
+/// normalize separators while preserving leading `..` for the resolver. Paths
+/// returned by the link parser are already decoded and must not pass here.
 pub fn markdown_url_path(url: &str) -> String {
     let url = unwrap_angle_destination(url.trim());
     let path_part = url.split('#').next().unwrap_or(url);
-    normalize_link_path_preserve_parent(path_part)
+    normalize_link_path_preserve_parent(&percent_decode_link_path(path_part).0)
 }
 
 fn unwrap_angle_destination(url: &str) -> &str {
@@ -677,10 +687,20 @@ fn unwrap_angle_destination(url: &str) -> &str {
 }
 
 /// Make a relative markdown URL from a source document absolute path to a
-/// target document absolute path.
+/// target document absolute path. A literal `%` of a `.md` target is written
+/// as `%25` so the link decodes to that Page; other targets stay unencoded.
 pub fn make_relative_link_between(source_doc_abs: &Path, target_doc_abs: &Path) -> String {
     let source_dir = source_doc_abs.parent().unwrap_or(Path::new(""));
-    make_relative_path(source_dir, target_doc_abs)
+    let path = make_relative_path(source_dir, target_doc_abs);
+    let is_markdown = target_doc_abs
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+    if is_markdown {
+        escape_literal_percent(&path)
+    } else {
+        path
+    }
 }
 
 /// Make a relative markdown URL from an absolute source directory to an
@@ -1009,6 +1029,106 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_markdown_links_percent_decodes_paths_once() {
+        for (destination, path) in [
+            ("Roadmap%20Draft.md", "Roadmap Draft.md"),
+            ("%D0%9F%D0%BB%D0%B0%D0%BD.md", "План.md"),
+            ("a%2Fb.md", "a/b.md"),
+            ("50%25.md", "50%.md"),
+            ("a%2520b.md", "a%20b.md"),
+            ("a%23b.md", "a#b.md"),
+            ("100% done.md", "100% done.md"),
+            ("%ZZ.md", "%ZZ.md"),
+            ("%FF.md", "%FF.md"),
+            ("%FF%20x.md", "%FF x.md"),
+            ("%E2%82.md", "%E2%82.md"),
+            ("<Roadmap%20Draft.md>", "Roadmap Draft.md"),
+            ("../Roadmap%20Draft.md#Next%20Steps", "../Roadmap Draft.md"),
+        ] {
+            let content = format!("See [doc]({destination}).");
+            let links = parse_markdown_links(&content);
+            assert_eq!(links.len(), 1, "{destination}");
+            assert_eq!(links[0].0, path, "{destination}");
+        }
+    }
+
+    #[test]
+    fn test_parse_markdown_links_percent_style_and_raw_anchor() {
+        let content = "\
+[a](Roadmap%20Draft.md#Next%20Steps)
+[b](%D0%9F%D0%BB%D0%B0%D0%BD.md)
+[c](<Roadmap%20Draft.md>)
+[d](План.md)
+[e](%ZZ.md)
+";
+        let links = parse_markdown_link_nodes(content);
+        let styles = links.iter().map(|link| link.style).collect::<Vec<_>>();
+        assert_eq!(
+            styles,
+            vec![
+                LinkDestinationStyle::PercentEncoded { non_ascii: false },
+                LinkDestinationStyle::PercentEncoded { non_ascii: true },
+                LinkDestinationStyle::Angle,
+                LinkDestinationStyle::Plain,
+                LinkDestinationStyle::Plain,
+            ]
+        );
+        assert_eq!(links[0].anchor, "#Next%20Steps");
+    }
+
+    #[test]
+    fn test_markdown_url_path_decodes_raw_urls() {
+        assert_eq!(markdown_url_path("Roadmap%20Draft.md"), "Roadmap Draft.md");
+        assert_eq!(markdown_url_path("<../a%2520b.md#x>"), "../a%20b.md");
+        assert_eq!(
+            markdown_url_path("./%D0%9F%D0%BB%D0%B0%D0%BD.md"),
+            "План.md"
+        );
+    }
+
+    #[test]
+    fn test_serialize_destination_keeps_style_and_writes_literal_percent() {
+        let percent = LinkDestinationStyle::PercentEncoded { non_ascii: false };
+        let non_ascii = LinkDestinationStyle::PercentEncoded { non_ascii: true };
+        assert_eq!(
+            serialize_destination("Roadmap 2027.md", "", percent),
+            "Roadmap%202027.md"
+        );
+        assert_eq!(
+            serialize_destination("Планы (v2) [#1] 50%.md", "#Raw%20Anchor", percent),
+            "Планы%20%28v2%29%20%5B%231%5D%2050%25.md#Raw%20Anchor"
+        );
+        assert_eq!(
+            serialize_destination("Планы 2.md", "", non_ascii),
+            "%D0%9F%D0%BB%D0%B0%D0%BD%D1%8B%202.md"
+        );
+        assert_eq!(
+            serialize_destination("Планы.md", "", LinkDestinationStyle::Plain),
+            "Планы.md"
+        );
+        assert_eq!(
+            serialize_destination("A%B.md", "", LinkDestinationStyle::Plain),
+            "A%25B.md"
+        );
+        assert_eq!(
+            serialize_destination("A%B c.md", "", LinkDestinationStyle::Plain),
+            "<A%25B c.md>"
+        );
+        assert_eq!(
+            serialize_destination("A%B.md", "", LinkDestinationStyle::Angle),
+            "<A%25B.md>"
+        );
+        for style in [
+            percent,
+            LinkDestinationStyle::Plain,
+            LinkDestinationStyle::Angle,
+        ] {
+            let content = format!("[x]({})", serialize_destination("A%2B 50%.md", "", style));
+            assert_eq!(parse_markdown_links(&content)[0].0, "A%2B 50%.md");
+        }
+    }
+
+    #[test]
     fn test_parse_markdown_links_escaped_label_brackets() {
         let content = r"See [escaped \[label\]](docs/guide.md).";
         let links = parse_markdown_links(content);
@@ -1243,6 +1363,145 @@ mod tests {
     }
 
     #[test]
+    fn test_update_links_on_rename_preserves_percent_encoding() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::create_dir_all(ws.join("tasks")).unwrap();
+        fs::write(ws.join("Roadmap Draft.md"), "Draft.\n").unwrap();
+        fs::write(ws.join("План.md"), "План.\n").unwrap();
+        fs::write(
+            ws.join("Index.md"),
+            "[Roadmap Draft](Roadmap%20Draft.md) [Roadmap Draft](<Roadmap Draft.md>)\n\
+             [План](%D0%9F%D0%BB%D0%B0%D0%BD.md) [План](План.md)\n",
+        )
+        .unwrap();
+        fs::write(
+            ws.join("tasks/Ship.md"),
+            "[Roadmap Draft](../Roadmap%20Draft.md#Next%20Steps)\n",
+        )
+        .unwrap();
+
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+        assert_eq!(index.get_backlinks("Roadmap Draft.md").len(), 2);
+
+        let mut modified = index
+            .update_links_on_rename(
+                ws,
+                "Roadmap Draft.md",
+                "Roadmap 2027.md",
+                Some("Roadmap 2027"),
+            )
+            .unwrap();
+        modified.sort();
+        assert_eq!(modified, vec!["Index.md", "tasks/Ship.md"]);
+        index
+            .update_links_on_rename(ws, "План.md", "Планы.md", Some("Планы"))
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(ws.join("Index.md")).unwrap(),
+            "[Roadmap 2027](Roadmap%202027.md) [Roadmap 2027](<Roadmap 2027.md>)\n\
+             [Планы](%D0%9F%D0%BB%D0%B0%D0%BD%D1%8B.md) [Планы](Планы.md)\n"
+        );
+        assert_eq!(
+            fs::read_to_string(ws.join("tasks/Ship.md")).unwrap(),
+            "[Roadmap 2027](../Roadmap%202027.md#Next%20Steps)\n"
+        );
+        assert_eq!(index.get_backlinks("Roadmap 2027.md").len(), 2);
+        assert!(index.get_backlinks("Roadmap Draft.md").is_empty());
+    }
+
+    #[test]
+    fn test_update_links_on_rename_writes_literal_percent_as_25() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("b.md"), "B.\n").unwrap();
+        fs::write(ws.join("a.md"), "[B](b.md) [B](<b.md>)\n").unwrap();
+
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+        index
+            .update_links_on_rename(ws, "b.md", "A%2B 50%.md", None)
+            .unwrap();
+        fs::rename(ws.join("b.md"), ws.join("A%2B 50%.md")).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(ws.join("a.md")).unwrap(),
+            "[B](<A%252B 50%25.md>) [B](<A%252B 50%25.md>)\n"
+        );
+        let validation = validate_links(ws, "a.md").unwrap();
+        assert_eq!(validation.len(), 1);
+        assert_eq!(validation[0].url, "A%2B 50%.md");
+        assert!(validation[0].exists);
+    }
+
+    #[test]
+    fn test_update_links_on_folder_rename_preserves_percent_encoding() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::create_dir_all(ws.join("notes")).unwrap();
+        fs::write(ws.join("notes/Roadmap Draft.md"), "Draft.\n").unwrap();
+        fs::write(ws.join("Index.md"), "[R](notes/Roadmap%20Draft.md)\n").unwrap();
+
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+        fs::rename(ws.join("notes"), ws.join("Old Notes")).unwrap();
+        let modified = index
+            .update_links_on_folder_rename(ws, "notes", "Old Notes")
+            .unwrap();
+
+        assert_eq!(modified, vec!["Index.md"]);
+        assert_eq!(
+            fs::read_to_string(ws.join("Index.md")).unwrap(),
+            "[R](Old%20Notes/Roadmap%20Draft.md)\n"
+        );
+    }
+
+    #[test]
+    fn test_validate_links_decodes_percent_encoded_paths() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("Roadmap Draft.md"), "Draft.\n").unwrap();
+        fs::write(ws.join("A%2B.md"), "Literal.\n").unwrap();
+        fs::write(
+            ws.join("Index.md"),
+            "[R](Roadmap%20Draft.md) [N](Nope%20Here.md) [L](A%2B.md)\n",
+        )
+        .unwrap();
+
+        let validation = validate_links(ws, "Index.md").unwrap();
+        let result = validation
+            .iter()
+            .map(|item| (item.url.as_str(), item.exists))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            result,
+            vec![
+                ("Roadmap Draft.md", true),
+                ("Nope Here.md", false),
+                ("A+.md", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_rebase_source_links_preserves_percent_encoding() {
+        let content = "[R](Roadmap%20Draft.md) [P](%D0%9F%D0%BB%D0%B0%D0%BD.md) [Q](<Roadmap%20Draft.md>) [F](50%25.md)\n";
+        let moved = rebase_source_links(content, "Index.md", "tasks/Index.md");
+        assert_eq!(
+            moved,
+            "[R](../Roadmap%20Draft.md) [P](../%D0%9F%D0%BB%D0%B0%D0%BD.md) [Q](<../Roadmap Draft.md>) [F](../50%25.md)\n"
+        );
+        let between = rebase_source_links_between(
+            content,
+            Path::new("/space/Index.md"),
+            Path::new("/space/tasks/Index.md"),
+        );
+        assert_eq!(between, moved);
+    }
+
+    #[test]
     fn test_rebase_source_links_root_to_folder() {
         let content = "See [B](B.md) and [C](C.md#heading).\n";
         let updated = rebase_source_links(content, "A.md", "Folder/A.md");
@@ -1318,6 +1577,19 @@ mod tests {
         assert_eq!(
             make_relative_link(Path::new("docs"), "docs/guide.md"),
             "guide.md"
+        );
+    }
+
+    #[test]
+    fn test_make_relative_link_between_writes_literal_percent_only_for_pages() {
+        let source = Path::new("/space/docs/source.md");
+        assert_eq!(
+            make_relative_link_between(source, Path::new("/space/50% done.md")),
+            "../50%25 done.md"
+        );
+        assert_eq!(
+            make_relative_link_between(source, Path::new("/space/docs/attachments/50%.png")),
+            "attachments/50%.png"
         );
     }
 

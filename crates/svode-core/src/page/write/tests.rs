@@ -919,3 +919,59 @@ async fn a_submodule_rename_needs_the_parent_gitlink_repository() {
         .unwrap();
     assert_eq!(renamed.result.new_path.as_deref(), Some("New.md"));
 }
+
+#[tokio::test]
+async fn df_154_title_rename_rewrites_percent_encoded_links_in_their_form() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = linked_project(root, "Roadmap Draft.md", &["a"]).await;
+    fs::write(
+        root.join("spaces/a/Link.md"),
+        "[Roadmap Draft](../../Roadmap%20Draft.md)\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("tasks")).unwrap();
+    fs::write(
+        root.join("Index.md"),
+        "[Roadmap Draft](Roadmap%20Draft.md) [Roadmap Draft](<Roadmap Draft.md>)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tasks/Ship.md"),
+        "[Roadmap Draft](../Roadmap%20Draft.md)\n",
+    )
+    .unwrap();
+
+    let renamed = save_denied(
+        root,
+        root,
+        "Roadmap Draft.md",
+        "Roadmap 2027",
+        &state,
+        &[],
+        &std::sync::Mutex::new(Vec::new()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(renamed.result.new_path.as_deref(), Some("Roadmap 2027.md"));
+    for path in ["Index.md", "tasks/Ship.md", "spaces/a/Link.md"] {
+        assert!(
+            renamed.changed_paths.contains(&root.join(path)),
+            "{path}: {:?}",
+            renamed.changed_paths
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("Index.md")).unwrap(),
+        "[Roadmap 2027](Roadmap%202027.md) [Roadmap 2027](<Roadmap 2027.md>)\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("tasks/Ship.md")).unwrap(),
+        "[Roadmap 2027](../Roadmap%202027.md)\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("spaces/a/Link.md")).unwrap(),
+        "[Roadmap 2027](../../Roadmap%202027.md)\n"
+    );
+}

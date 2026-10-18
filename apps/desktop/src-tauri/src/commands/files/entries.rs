@@ -540,7 +540,7 @@ pub async fn validate_links(
                 continue;
             }
             let resolved = index_state
-                .resolve_doc_link(Path::new(proj), source_space_id.as_deref(), &path, &url)
+                .resolve_doc_link_path(Path::new(proj), source_space_id.as_deref(), &path, &url)
                 .await?;
             out.push(LinkValidation {
                 url,

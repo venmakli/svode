@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use serde::Serialize;
 
 /// Byte span of a markdown link `[text](url)` in the source content.
@@ -11,6 +13,11 @@ pub struct LinkSpan {
 pub enum LinkDestinationStyle {
     Plain,
     Angle,
+    /// Plain destination with at least one decoded `%XX`. `non_ascii` records
+    /// that it percent-encoded non-ASCII characters, so a rewrite encodes them too.
+    PercentEncoded {
+        non_ascii: bool,
+    },
 }
 
 /// Parsed ordinary inline Markdown link. Spans are byte offsets into the
@@ -108,7 +115,15 @@ pub fn parse_markdown_link_nodes(content: &str) -> Vec<MarkdownLink> {
 
         let full_end = destination.full_end;
         let destination = destination.value;
-        if let Some((path, anchor)) = parse_internal_markdown_destination(destination) {
+        if let Some((path, anchor, form)) = parse_internal_markdown_destination(destination) {
+            let style = match style {
+                LinkDestinationStyle::Plain if form.decoded => {
+                    LinkDestinationStyle::PercentEncoded {
+                        non_ascii: form.non_ascii,
+                    }
+                }
+                style => style,
+            };
             links.push(MarkdownLink {
                 full_start: open,
                 full_end,
@@ -223,7 +238,10 @@ fn plain_destination_end(destination_with_suffix: &str) -> Option<usize> {
     best.or(Some(trimmed_end))
 }
 
-fn parse_internal_markdown_destination(destination: &str) -> Option<(String, String)> {
+/// Split a destination into its decoded, normalized path and its raw anchor.
+/// The anchor is cut before percent-decoding, so an encoded `#` stays part of
+/// the path; the anchor itself is never decoded.
+fn parse_internal_markdown_destination(destination: &str) -> Option<(String, String, PercentForm)> {
     let unescaped;
     let destination = if destination.contains("\\<") || destination.contains("\\>") {
         unescaped = destination.replace("\\<", "<").replace("\\>", ">");
@@ -238,13 +256,120 @@ fn parse_internal_markdown_destination(destination: &str) -> Option<(String, Str
         Some(pos) => (&destination[..pos], &destination[pos..]),
         None => (destination, ""),
     };
-    if path_part.is_empty() || !path_part.to_ascii_lowercase().ends_with(".md") {
+    let (path, mut form) = percent_decode_link_path(path_part);
+    if path.is_empty() || !path.to_ascii_lowercase().ends_with(".md") {
         return None;
     }
+    let anchor_form = percent_decode_link_path(anchor).1;
+    form.decoded |= anchor_form.decoded;
+    form.non_ascii |= anchor_form.non_ascii;
     Some((
-        normalize_link_path_preserve_parent(path_part),
+        normalize_link_path_preserve_parent(&path),
         anchor.to_string(),
+        form,
     ))
+}
+
+/// What percent-decoding found in a destination.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PercentForm {
+    /// At least one `%XX` was decoded.
+    pub decoded: bool,
+    /// A decoded `%XX` sequence produced a non-ASCII character.
+    pub non_ascii: bool,
+}
+
+/// Percent-decode a link path once, as UTF-8. Every `%XX` with two hex digits
+/// is decoded; a `%` without them and escapes that do not form valid UTF-8
+/// stay literal.
+pub(crate) fn percent_decode_link_path(raw: &str) -> (String, PercentForm) {
+    let bytes = raw.as_bytes();
+    if !bytes.contains(&b'%') {
+        return (raw.to_string(), PercentForm::default());
+    }
+    // Decoded bytes with the source offset of the `%` they were decoded from.
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut escapes = Vec::with_capacity(bytes.len());
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        let escaped = if bytes[idx] == b'%' && idx + 2 < bytes.len() {
+            hex_value(bytes[idx + 1]).zip(hex_value(bytes[idx + 2]))
+        } else {
+            None
+        };
+        if let Some((high, low)) = escaped {
+            let byte = (high << 4) | low;
+            decoded.push(byte);
+            escapes.push(Some(idx));
+            idx += 3;
+        } else {
+            decoded.push(bytes[idx]);
+            escapes.push(None);
+            idx += 1;
+        }
+    }
+
+    let mut out = String::with_capacity(decoded.len());
+    let mut form = PercentForm::default();
+    let mut start = 0usize;
+    while start < decoded.len() {
+        let (valid_end, invalid) = match std::str::from_utf8(&decoded[start..]) {
+            Ok(_) => (decoded.len(), false),
+            Err(error) => (start + error.valid_up_to(), true),
+        };
+        let valid = std::str::from_utf8(&decoded[start..valid_end]).unwrap_or_default();
+        for (offset, ch) in valid.char_indices() {
+            let at = start + offset;
+            if escapes[at..at + ch.len_utf8()].iter().any(Option::is_some) {
+                form.decoded = true;
+                form.non_ascii |= !ch.is_ascii();
+            }
+        }
+        out.push_str(valid);
+        if !invalid {
+            break;
+        }
+        // Only a decoded byte can start an invalid sequence: the raw bytes of
+        // the input always form whole characters. Keep its source literally.
+        match escapes[valid_end] {
+            Some(source) => out.push_str(&raw[source..source + 3]),
+            None => out.push(char::REPLACEMENT_CHARACTER),
+        }
+        start = valid_end + 1;
+    }
+    (out, form)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    (byte as char).to_digit(16).map(|value| value as u8)
+}
+
+/// Percent-encode a link path for a percent-encoded destination: whitespace,
+/// control characters, `<`, `>`, `(`, `)`, `[`, `]`, `#` and `%` always, and
+/// non-ASCII characters when the original destination encoded them.
+pub(crate) fn percent_encode_link_path(path: &str, non_ascii: bool) -> String {
+    let mut out = String::with_capacity(path.len());
+    for ch in path.chars() {
+        let encode = ch.is_whitespace()
+            || ch.is_control()
+            || matches!(ch, '<' | '>' | '(' | ')' | '[' | ']' | '#' | '%')
+            || (non_ascii && !ch.is_ascii());
+        if encode {
+            let mut buffer = [0u8; 4];
+            for byte in ch.encode_utf8(&mut buffer).bytes() {
+                let _ = write!(out, "%{byte:02X}");
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Encode a literal `%` of a Markdown link path as `%25`, so the written link
+/// decodes back to exactly this path.
+pub(crate) fn escape_literal_percent(path: &str) -> String {
+    path.replace('%', "%25")
 }
 
 /// Normalize a link URL while preserving leading `..` segments. This is the

@@ -8,7 +8,6 @@ use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
 use super::backlinks::BacklinkIndex;
-use super::backlinks::{is_external_or_anchor_url, markdown_url_path};
 use super::freshness::Verification;
 use super::lifecycle::IndexPools;
 use super::resolver::{ProjectSpacesCache, SpaceStatus, resolve_index_target};
@@ -26,16 +25,15 @@ pub struct IndexRuntimeState {
 }
 
 impl IndexRuntimeState {
+    /// Resolve a link path returned by the link parser (already decoded, also
+    /// as stored in the index) from its source document to its target pool.
     pub async fn resolve_link_target_key(
         &self,
         project: &Path,
         source_space_id: Option<&str>,
         source_path: &str,
-        url: &str,
+        link_path: &str,
     ) -> Result<Option<(IndexKey, String)>, IndexError> {
-        if is_external_or_anchor_url(url) {
-            return Ok(None);
-        }
         let source_key = self
             .key_for_project_space_id(project, source_space_id)
             .await?;
@@ -45,13 +43,8 @@ impl IndexRuntimeState {
             crate::git::path::RootMode::Reject,
         )?;
         let source_parent = Path::new(&source_rel).parent().unwrap_or(Path::new(""));
-        let target_link = markdown_url_path(url);
         let mut target = PathBuf::new();
-        for component in source_dir
-            .join(source_parent)
-            .join(target_link)
-            .components()
-        {
+        for component in source_dir.join(source_parent).join(link_path).components() {
             match component {
                 std::path::Component::Prefix(value) => target.push(value.as_os_str()),
                 std::path::Component::RootDir => target.push(std::path::MAIN_SEPARATOR.to_string()),

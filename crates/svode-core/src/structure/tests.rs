@@ -886,3 +886,76 @@ async fn a_structural_plan_in_a_submodule_space_authorizes_the_parent_gitlink() 
         assert_eq!(after, &expected);
     }
 }
+
+#[tokio::test]
+async fn df_154_move_rename_and_conversion_rewrite_percent_encoded_links() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let space = root.to_str().unwrap();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::create_dir_all(root.join("notes")).unwrap();
+    fs::create_dir_all(root.join("tasks")).unwrap();
+    fs::write(
+        root.join("Roadmap Draft.md"),
+        "---\ntitle: Roadmap Draft\n---\n[План](%D0%9F%D0%BB%D0%B0%D0%BD.md)\n",
+    )
+    .unwrap();
+    fs::write(root.join("План.md"), "---\ntitle: План\n---\n").unwrap();
+    fs::write(root.join("Index.md"), "[R](Roadmap%20Draft.md)\n").unwrap();
+    fs::write(root.join("tasks/Ship.md"), "[R](../Roadmap%20Draft.md)\n").unwrap();
+    let state = IndexRuntimeState::default();
+
+    let moved = super::ops::move_entry(
+        space,
+        "Roadmap Draft.md",
+        "notes",
+        Some(space),
+        runtime(&state),
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved, "notes/Roadmap Draft.md");
+    assert_eq!(
+        fs::read_to_string(root.join("Index.md")).unwrap(),
+        "[R](notes/Roadmap%20Draft.md)\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("tasks/Ship.md")).unwrap(),
+        "[R](../notes/Roadmap%20Draft.md)\n"
+    );
+    assert!(
+        fs::read_to_string(root.join("notes/Roadmap Draft.md"))
+            .unwrap()
+            .ends_with("[План](../%D0%9F%D0%BB%D0%B0%D0%BD.md)\n")
+    );
+
+    let modified = super::ops::rename(space, "notes", "Old Notes", Some(space), runtime(&state))
+        .await
+        .unwrap();
+    assert!(
+        modified.iter().any(|path| path == "Index.md"),
+        "{modified:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("Index.md")).unwrap(),
+        "[R](Old%20Notes/Roadmap%20Draft.md)\n"
+    );
+
+    super::ops::convert_to_folder(
+        space,
+        "Old Notes/Roadmap Draft.md",
+        Some(space),
+        runtime(&state),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("tasks/Ship.md")).unwrap(),
+        "[R](../Old%20Notes/Roadmap%20Draft/README.md)\n"
+    );
+    assert!(
+        fs::read_to_string(root.join("Old Notes/Roadmap Draft/README.md"))
+            .unwrap()
+            .ends_with("[План](../../%D0%9F%D0%BB%D0%B0%D0%BD.md)\n")
+    );
+}

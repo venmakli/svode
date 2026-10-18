@@ -64,7 +64,10 @@ use super::IndexError;
 /// Bumped to 18 in Stage 10 `05`: rebuilds projections without the
 /// instruction files every agent of the list reads, such as `QWEN.md`, which
 /// left the content of a Space.
-pub const SCHEMA_VERSION: i64 = 18;
+///
+/// Bumped to 19 in Stage 10 DF-154: rebuilds link rows (`knowledge_links`,
+/// `broken_links`) with percent-decoded link paths.
+pub const SCHEMA_VERSION: i64 = 19;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaStatus {
