@@ -119,14 +119,19 @@ export function usePagePersistence({
     [enqueuePersistenceTask, flushPersistenceNow],
   );
 
+  const explicitRetryOf = useCallback(
+    (retry: () => Promise<void>) => async () => {
+      await enqueuePersistenceTask(retry);
+      writeBlockedRef.current = false;
+      setPersistenceError(null);
+      retryPersistenceRef.current = null;
+    },
+    [enqueuePersistenceTask],
+  );
+
   const recoverWriteError = useCallback(
     async (error: unknown, retry: () => Promise<void>) => {
-      const explicitRetry = async () => {
-        await enqueuePersistenceTask(retry);
-        writeBlockedRef.current = false;
-        setPersistenceError(null);
-        retryPersistenceRef.current = null;
-      };
+      const explicitRetry = explicitRetryOf(retry);
       if (pageSourceErrorKind(error) === "source_busy") {
         writeBlockedRef.current = true;
         retryPersistenceRef.current = explicitRetry;
@@ -159,11 +164,25 @@ export function usePagePersistence({
       }
       return handled;
     },
-    [enqueuePersistenceTask, makeAccessRequest, recovery, targetKey],
+    [explicitRetryOf, makeAccessRequest, recovery, targetKey],
   );
   useEffect(() => {
     recoverWriteErrorRef.current = recoverWriteError;
   }, [recoverWriteError]);
+
+  // A failed write of the Page source blocks saving like refused access: the
+  // draft stays, its writer pauses and the indicator names the failure.
+  const recoverSourceWriteError = useCallback(
+    async (error: unknown, retry: () => Promise<void>) => {
+      if (await recoverWriteError(error, retry)) return true;
+      console.error("Failed to save Page:", error);
+      writeBlockedRef.current = true;
+      retryPersistenceRef.current = explicitRetryOf(retry);
+      setPersistenceError(m.page_surface_save_error());
+      return true;
+    },
+    [explicitRetryOf, recoverWriteError],
+  );
 
   const discardChanges = useCallback(
     () =>
@@ -210,6 +229,7 @@ export function usePagePersistence({
     discardChanges,
     flushPersistence,
     persistenceError,
+    recoverSourceWriteError,
     recoverWriteError,
     registerPersistence,
     reportSourceConflict,

@@ -50,6 +50,11 @@ interface PageSurfaceSessionContextValue {
     error: unknown,
     retry: () => Promise<void>,
   ) => Promise<boolean>;
+  /** Holds any failed write of the Page source as a save block; always true. */
+  recoverSourceWriteError: (
+    error: unknown,
+    retry: () => Promise<void>,
+  ) => Promise<boolean>;
   registerPersistence: (
     kind: PagePersistenceKind,
     participant: PagePersistenceParticipant,
@@ -128,6 +133,7 @@ function PageSurfaceSession({
     discardChanges,
     flushPersistence,
     persistenceError,
+    recoverSourceWriteError,
     recoverWriteError,
     registerPersistence,
     reportSourceConflict,
@@ -233,6 +239,7 @@ function PageSurfaceSession({
       prepareForNavigation,
       prepareToLeave,
       readOnly,
+      recoverSourceWriteError,
       recoverWriteError,
       recovery,
       registerPersistence,
@@ -250,6 +257,7 @@ function PageSurfaceSession({
       prepareForNavigation,
       prepareToLeave,
       readOnly,
+      recoverSourceWriteError,
       recoverWriteError,
       recovery,
       registerPersistence,

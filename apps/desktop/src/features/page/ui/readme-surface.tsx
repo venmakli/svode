@@ -68,7 +68,7 @@ export function ReadmeSurface() {
         documentPathHandoff={context.pathHandoff}
         readOnly={pageSurface.readOnly}
         registerPersistence={pageSurface.registerPersistence}
-        onWriteAccessError={pageSurface.recoverWriteError}
+        onWriteAccessError={pageSurface.recoverSourceWriteError}
         saveFailureShown={saveFailureShown}
         onSourceConflict={pageSurface.reportSourceConflict}
         prepareManagedImport={async () => {

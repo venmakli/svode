@@ -209,6 +209,62 @@ domTest("a busy source is retried from the Dialog, which closes and returns to t
   }
 });
 
+domTest("a failed autosave of the source is a save block retried from the Dialog", async () => {
+  const page = await renderPage("local", { renderRecovery: true });
+  try {
+    const document = page.dom.window.document;
+    let failing = true;
+    let writes = 0;
+    const write = async () => {
+      writes += 1;
+      if (failing) throw new Error("EACCES: permission denied");
+    };
+    let held = false;
+    await act(async () => {
+      try {
+        await write();
+      } catch (error) {
+        held = await page.session().recoverSourceWriteError(error, write);
+      }
+      await settle();
+    });
+    expect(held).toBe(true);
+    expect(indicatorOf(page.dom)?.getAttribute("aria-label")).toBe(
+      "Not saved: Couldn't write the changes — the draft stays open.",
+    );
+    expect(document.querySelector("[data-updated]")).toBeNull();
+    let ready = true;
+    await act(async () => {
+      ready = await page.session().prepareForNavigation();
+    });
+    expect(ready).toBe(false);
+
+    await openRecovery(page.dom);
+    await act(async () => {
+      buttonWithText(page.dom, "Retry save").click();
+      await settle();
+    });
+    expect(writes).toBe(2);
+    expect(indicatorOf(page.dom) !== null).toBe(true);
+
+    failing = false;
+    await act(async () => {
+      buttonWithText(page.dom, "Retry save").click();
+      await settle();
+    });
+    await act(settle);
+    expect(writes).toBe(3);
+    expect(indicatorOf(page.dom)).toBeNull();
+    expect(document.querySelector("[data-updated]") !== null).toBe(true);
+    await act(async () => {
+      ready = await page.session().prepareForNavigation();
+    });
+    expect(ready).toBe(true);
+  } finally {
+    await page.cleanup();
+  }
+});
+
 domTest("closing the Dialog keeps the block and returns focus to the indicator", async () => {
   const page = await renderPage("local", {
     renderRecovery: true,
