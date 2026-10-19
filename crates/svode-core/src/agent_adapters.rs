@@ -2343,8 +2343,9 @@ fn common_executable_locations(id: AgentAdapterKind, home_dir: &Path) -> Vec<Pat
             home_dir.join(".npm/bin").join(executable),
             home_dir.join(".bun/bin").join(executable),
         ],
-        // The vendor installers of opencode and Grok Build put them here
-        // and add them to PATH only in the interactive shell profile.
+        // The vendor installers of opencode, Grok Build and Kimi Code put
+        // them here and add them to PATH only in the interactive shell
+        // profile.
         AgentAdapterKind::Opencode => vec![
             home_dir.join(".opencode/bin").join(executable),
             home_dir.join(".local/bin").join(executable),
@@ -2352,6 +2353,10 @@ fn common_executable_locations(id: AgentAdapterKind, home_dir: &Path) -> Vec<Pat
         ],
         AgentAdapterKind::GrokBuild => vec![
             home_dir.join(".grok/bin").join(executable),
+            home_dir.join(".local/bin").join(executable),
+        ],
+        AgentAdapterKind::KimiCode => vec![
+            home_dir.join(".kimi-code/bin").join(executable),
             home_dir.join(".local/bin").join(executable),
         ],
         _ => vec![
@@ -2639,10 +2644,11 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn opencode_and_grok_build_are_found_where_their_installers_put_them() {
+    fn opencode_grok_build_and_kimi_code_are_found_where_their_installers_put_them() {
         for (agent, location) in [
             (AgentAdapterKind::Opencode, ".opencode/bin/opencode"),
             (AgentAdapterKind::GrokBuild, ".grok/bin/grok"),
+            (AgentAdapterKind::KimiCode, ".kimi-code/bin/kimi"),
         ] {
             let directory = tempfile::tempdir().unwrap();
             let installed = directory.path().join(location);

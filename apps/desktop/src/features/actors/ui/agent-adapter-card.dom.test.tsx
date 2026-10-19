@@ -44,6 +44,14 @@ const qwen: AgentActorAdapterDescriptor = {
   modelOptions: [clientDefault],
 };
 
+const kimi: AgentActorAdapterDescriptor = {
+  defaultEffortLabel: "Client default",
+  defaultModelLabel: "Client default",
+  id: "kimi-code",
+  label: "Kimi Code",
+  modelOptions: [clientDefault],
+};
+
 const isolatedCardDomProcess =
   process.env.SVODE_AGENT_ADAPTER_CARD_DOM_PROCESS === "1";
 
@@ -111,6 +119,29 @@ if (!isolatedCardDomProcess) {
       try {
         expect(harness.labels()).toEqual([]);
         expect(harness.text().includes(`Qwen Code ${boundary}`)).toBe(true);
+      } finally {
+        await harness.cleanup();
+      }
+    }
+  });
+
+  test("each Kimi Code mode shows its boundary in ru", async () => {
+    for (const [native, requested, boundary] of [
+      ["kimi_default", "ask", "правит файлы в папке сессии без вопроса"],
+      ["kimi_auto", "auto", "без вопроса одобряет операции, которые считает безопасными"],
+      ["kimi_yolo", "full", "одобряет все вызовы инструментов без вопроса"],
+    ] as const) {
+      const harness = await renderCard({
+        approvalMapping: mapping(native, requested),
+        approvalMode: requested,
+        binding: binding("kimi-code"),
+        descriptor: kimi,
+        effortOptions: [clientDefault],
+        locale: "ru",
+      });
+      try {
+        expect(harness.labels()).toEqual([]);
+        expect(harness.text().includes(`Kimi Code ${boundary}`)).toBe(true);
       } finally {
         await harness.cleanup();
       }

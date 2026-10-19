@@ -53,7 +53,10 @@ export interface AgentActorApprovalMappingDto {
     | "hermes_accept_edits"
     | "qwen_default"
     | "qwen_auto_edit"
-    | "qwen_yolo";
+    | "qwen_yolo"
+    | "kimi_default"
+    | "kimi_auto"
+    | "kimi_yolo";
   label: string;
   effectiveBoundary: string;
   danger: boolean;

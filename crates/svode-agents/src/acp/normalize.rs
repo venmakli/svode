@@ -82,7 +82,7 @@ pub(crate) enum Normalized {
     /// The session title the agent reported.
     Title(String),
     /// A known update that carries no activity (a session info update
-    /// without a title).
+    /// without a title, a reminder Kimi Code replays as user text).
     None,
     /// An update or extension the runtime does not model.
     Generic(String),
@@ -110,6 +110,11 @@ pub(crate) fn session_update(
 
 fn normalize(update: wire::SessionUpdate, agent: Option<AgentAdapterKind>) -> Normalized {
     match update {
+        wire::SessionUpdate::UserMessageChunk(chunk)
+            if agent == Some(AgentAdapterKind::KimiCode) && kimi_reminder(&chunk.content) =>
+        {
+            Normalized::None
+        }
         wire::SessionUpdate::UserMessageChunk(chunk) => message(MessageRole::User, chunk),
         wire::SessionUpdate::AgentMessageChunk(chunk) => message(MessageRole::Agent, chunk),
         wire::SessionUpdate::AgentThoughtChunk(chunk) => message(MessageRole::Reasoning, chunk),
@@ -365,6 +370,20 @@ fn message(role: MessageRole, chunk: wire::ContentChunk) -> Normalized {
         segments,
         media,
     }
+}
+
+/// Kimi Code replays the reminders it added to a prompt, such as the current
+/// date, as user text chunks of their own (slice 3.5 live on Kimi Code
+/// 2.1.1); the user did not write them.
+fn kimi_reminder(content: &Value) -> bool {
+    content.get("type").and_then(Value::as_str) == Some("text")
+        && content
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|text| {
+                text.starts_with("<system-reminder>") && text.ends_with("</system-reminder>")
+            })
 }
 
 /// A block of a user message: text, or a link or an image kept as a
@@ -767,6 +786,37 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn a_reminder_kimi_code_replays_as_user_text_is_not_a_user_message() {
+        let user = |agent: AgentAdapterKind, text: &str| {
+            session_update(
+                json!({
+                    "sessionId": "s1",
+                    "update": {
+                        "sessionUpdate": "user_message_chunk",
+                        "content": { "type": "text", "text": text }
+                    }
+                }),
+                Some(agent),
+            )
+            .map(|(_, normalized)| normalized)
+        };
+        let reminder = "<system-reminder>\nToday's date is 2026-10-19.\n</system-reminder><system-reminder>\nAuto permission mode is active.\n</system-reminder>";
+        assert_eq!(
+            user(AgentAdapterKind::KimiCode, reminder),
+            Some(Normalized::None)
+        );
+        for (agent, text) in [
+            (AgentAdapterKind::KimiCode, "Explain <system-reminder> tags"),
+            (AgentAdapterKind::ClaudeCode, reminder),
+        ] {
+            assert!(matches!(
+                user(agent, text),
+                Some(Normalized::Message { role: MessageRole::User, text: kept, .. }) if kept == text
+            ));
+        }
+    }
 
     #[test]
     fn links_and_images_of_a_user_message_become_segments() {

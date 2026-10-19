@@ -91,8 +91,7 @@ pub struct CliVersionRange {
 /// pinned `codex-acp` declares. opencode, Cursor and pi: the version checked
 /// live in slice 3.2 (2026-10-03), the only one verified with their
 /// entrypoint; Hermes: its release date checked live in slice 3.3; Grok
-/// Build and Qwen Code: the version checked live in slice 3.5. `None` until
-/// the agent's range is verified.
+/// Build, Qwen Code and Kimi Code: the version checked live in slice 3.5.
 pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
     match agent {
         AgentAdapterKind::ClaudeCode => Some(CliVersionRange {
@@ -131,7 +130,12 @@ pub fn cli_version_range(agent: AgentAdapterKind) -> Option<CliVersionRange> {
             minimum: "0.24.7",
             tested_up_to: "0.24.7",
         }),
-        _ => None,
+        // `kimi --version` prints `2.1.1`; the archived Kimi CLI 1.x installs
+        // the same command and is below this range.
+        AgentAdapterKind::KimiCode => Some(CliVersionRange {
+            minimum: "2.1.1",
+            tested_up_to: "2.1.1",
+        }),
     }
 }
 
@@ -262,6 +266,21 @@ mod tests {
             CliVersionStatus::Unknown
         );
         assert_eq!(evaluate_cli_version(None, range), CliVersionStatus::Unknown);
+    }
+
+    #[test]
+    fn the_legacy_kimi_cli_on_the_same_command_is_an_unsupported_version() {
+        let range = cli_version_range(AgentAdapterKind::KimiCode).unwrap();
+        assert_eq!(
+            evaluate_cli_version(Some("kimi, version 1.52.0"), range),
+            CliVersionStatus::Unsupported {
+                minimum: "2.1.1".into()
+            }
+        );
+        assert_eq!(
+            evaluate_cli_version(Some("2.1.1"), range),
+            CliVersionStatus::Supported
+        );
     }
 
     #[test]

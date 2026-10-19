@@ -372,6 +372,7 @@ fn an_open_collection_keeps_the_agents_whose_acp_list_is_their_catalogue() {
             // Hermes lists its sessions from its own store (slice 8.1).
             "pi",
             "qwen-code",
+            "kimi-code",
             "grok-build"
         ]
     );

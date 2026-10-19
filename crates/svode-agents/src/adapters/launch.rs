@@ -444,21 +444,6 @@ mod tests {
                 minimum: "2.0.22".into()
             }
         );
-        // A described agent that is not found stays missing, an undescribed
-        // one is not supported.
-        executable(bin.path(), "kimi");
-        assert_eq!(
-            store
-                .launch_plan(
-                    AgentAdapterKind::KimiCode,
-                    None,
-                    &context(bin.path()),
-                    &opencode("2.1.1"),
-                )
-                .await
-                .unwrap_err(),
-            LaunchUnavailable::NotSupported
-        );
     }
 }
 

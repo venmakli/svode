@@ -48,6 +48,12 @@ export function agentActorEffectiveBoundary(
       return m.agent_actors_boundary_qwen_auto_edit();
     case "qwen_yolo":
       return m.agent_actors_boundary_qwen_yolo();
+    case "kimi_default":
+      return m.agent_actors_boundary_kimi_default();
+    case "kimi_auto":
+      return m.agent_actors_boundary_kimi_auto();
+    case "kimi_yolo":
+      return m.agent_actors_boundary_kimi_yolo();
   }
 }
 

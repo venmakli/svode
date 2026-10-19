@@ -194,6 +194,9 @@ pub enum NativeApprovalMode {
     QwenDefault,
     QwenAutoEdit,
     QwenYolo,
+    KimiDefault,
+    KimiAuto,
+    KimiYolo,
 }
 
 impl NativeApprovalMode {
@@ -212,6 +215,9 @@ impl NativeApprovalMode {
             Self::QwenDefault => "default",
             Self::QwenAutoEdit => "auto-edit",
             Self::QwenYolo => "yolo",
+            Self::KimiDefault => "default",
+            Self::KimiAuto => "auto",
+            Self::KimiYolo => "yolo",
         }
     }
 
@@ -243,7 +249,10 @@ impl NativeApprovalMode {
             | Self::HermesAcceptEdits
             | Self::QwenDefault
             | Self::QwenAutoEdit
-            | Self::QwenYolo => return None,
+            | Self::QwenYolo
+            | Self::KimiDefault
+            | Self::KimiAuto
+            | Self::KimiYolo => return None,
         };
         Some(argv.iter().map(|arg| arg.to_string()).collect())
     }
@@ -720,7 +729,10 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Codex => "CODEX_PATH",
             AgentAdapterKind::ClaudeCode => "CLAUDE_CODE_EXECUTABLE",
             AgentAdapterKind::Pi => "PI_ACP_PI_COMMAND",
-            AgentAdapterKind::Opencode | AgentAdapterKind::Cursor | AgentAdapterKind::Hermes => {
+            AgentAdapterKind::Opencode
+            | AgentAdapterKind::Cursor
+            | AgentAdapterKind::Hermes
+            | AgentAdapterKind::KimiCode => {
                 return Some(AcpEntrypoint::Command { args: &["acp"] });
             }
             AgentAdapterKind::GrokBuild => {
@@ -731,7 +743,6 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::QwenCode => {
                 return Some(AcpEntrypoint::Command { args: &["--acp"] });
             }
-            _ => return None,
         };
         Some(AcpEntrypoint::Adapter {
             adapter: adapter_pin(adapter)?,
@@ -747,9 +758,10 @@ impl AdapterRuntimeRegistry {
     /// drop sessions in a Space's subfolders. Slice 3.2: the lists of
     /// opencode and pi cover their terminal sessions; the list of Cursor
     /// has only the sessions its ACP entrypoint created. Slice 3.5: the
-    /// lists of Grok Build and Qwen Code cover their terminal sessions.
-    /// Slice 8.1: the `state.db` of every Hermes profile is the one source
-    /// of all its origins, ACP among them, so its list is no longer read.
+    /// lists of Grok Build, Qwen Code and Kimi Code cover their terminal
+    /// sessions; Kimi Code lists every directory without `cwd`. Slice 8.1:
+    /// the `state.db` of every Hermes profile is the one source of all its
+    /// origins, ACP among them, so its list is no longer read.
     /// Slice 8.4: the chat folders of the Cursor CLI are the source of its
     /// terminal chats beside the list of its ACP sessions. Slice 8.5: the
     /// chat headers of the Cursor IDE are the source of its IDE chats.
@@ -760,14 +772,14 @@ impl AdapterRuntimeRegistry {
             | AgentAdapterKind::Opencode
             | AgentAdapterKind::Pi
             | AgentAdapterKind::GrokBuild
-            | AgentAdapterKind::QwenCode => &[CatalogSource::AcpList],
+            | AgentAdapterKind::QwenCode
+            | AgentAdapterKind::KimiCode => &[CatalogSource::AcpList],
             AgentAdapterKind::Cursor => &[
                 CatalogSource::AcpList,
                 CatalogSource::Native(NativeCatalogStore::CursorChats),
                 CatalogSource::Native(NativeCatalogStore::CursorIde),
             ],
             AgentAdapterKind::Hermes => &[CatalogSource::Native(NativeCatalogStore::HermesStates)],
-            _ => &[],
         }
     }
 
@@ -795,7 +807,8 @@ impl AdapterRuntimeRegistry {
     /// is its session under `~/.grok/sessions`, which `grok --resume`
     /// continues, and its terminal sessions are listed by their ids. So is
     /// a session of Qwen Code under `~/.qwen/projects`, which `qwen
-    /// --resume` continues.
+    /// --resume` continues, and of Kimi Code under `~/.kimi-code/sessions`,
+    /// which `kimi --session` continues.
     pub fn acp_id_is_native(&self, adapter: AgentAdapterKind) -> bool {
         matches!(
             adapter,
@@ -806,6 +819,7 @@ impl AdapterRuntimeRegistry {
                 | AgentAdapterKind::Pi
                 | AgentAdapterKind::GrokBuild
                 | AgentAdapterKind::QwenCode
+                | AgentAdapterKind::KimiCode
         )
     }
 
@@ -875,7 +889,8 @@ impl AdapterRuntimeRegistry {
             lists_catalog: self.lists_catalog(adapter),
             // E01, slices 3.2, 3.3 and 3.5: load and close of these agents
             // change their store at most in service records, which Svode
-            // accepts; Qwen Code leaves it unchanged.
+            // accepts; Qwen Code leaves it unchanged, and Kimi Code adds a
+            // runtime binding record without moving `updatedAt`.
             read_only_open: true,
             reads_during_external_turn: self.reads_during_external_turn(adapter),
             writer_refusal: match adapter {
@@ -901,7 +916,8 @@ impl AdapterRuntimeRegistry {
     /// Arguments that continue the agent's session in its terminal by native
     /// id, when the agent documents such a command. Slice 3.2: `opencode
     /// --session` and `pi --session` continue the same session. Slice 3.3:
-    /// `hermes --resume`. Slice 3.5: `grok --resume` and `qwen --resume`.
+    /// `hermes --resume`. Slice 3.5: `grok --resume`, `qwen --resume` and
+    /// `kimi --session`.
     /// Slice 8.4: `cursor-agent --resume` continues a terminal chat, the
     /// one origin of Cursor with a native id; its ACP sessions keep their
     /// own namespace, since its `--resume` with such an id starts an empty
@@ -919,8 +935,9 @@ impl AdapterRuntimeRegistry {
             | AgentAdapterKind::Hermes
             | AgentAdapterKind::GrokBuild
             | AgentAdapterKind::QwenCode => "--resume",
-            AgentAdapterKind::Opencode | AgentAdapterKind::Pi => "--session",
-            _ => return None,
+            AgentAdapterKind::Opencode | AgentAdapterKind::Pi | AgentAdapterKind::KimiCode => {
+                "--session"
+            }
         };
         Some(vec![flag.to_string(), native_session_id.to_string()])
     }
@@ -997,7 +1014,8 @@ impl AdapterRuntimeRegistry {
     /// continuation and their external sessions live (E01, slice 2.5b).
     /// opencode: the same with opencode 2.0.22 (slice 3.2). Cursor
     /// 2026.10.01 and pi 1.0.0 with `pi-acp` 0.0.34: limited (slice 3.2).
-    /// Grok Build 1.0.46 and Qwen Code 0.24.7: supported (slice 3.5).
+    /// Grok Build 1.0.46, Qwen Code 0.24.7 and Kimi Code 2.1.1: supported
+    /// (slice 3.5).
     /// Hermes 2026.9.24: supported once its sessions of every origin come
     /// from its own store (slice 8.1, live in acceptance 8.7). Cursor lists
     /// its terminal and IDE chats from its stores (slices 8.4 and 8.5), and
@@ -1009,6 +1027,7 @@ impl AdapterRuntimeRegistry {
             | AgentAdapterKind::Opencode
             | AgentAdapterKind::GrokBuild
             | AgentAdapterKind::QwenCode
+            | AgentAdapterKind::KimiCode
             | AgentAdapterKind::Hermes => AgentVerdict::Supported,
             AgentAdapterKind::Cursor => AgentVerdict::Limited {
                 restrictions: &[AgentRestriction::NoTerminalContinuation],
@@ -1019,7 +1038,6 @@ impl AdapterRuntimeRegistry {
                     AgentRestriction::TurnErrorsHidden,
                 ],
             },
-            _ => AgentVerdict::Deferred,
         }
     }
 
@@ -1032,7 +1050,8 @@ impl AdapterRuntimeRegistry {
     /// terminal auth method `hermes-setup`. Slice 3.5: `grok login`; Grok
     /// Build declares no terminal auth method. `qwen --auth-type=openai`,
     /// the Qwen Code terminal auth method `openai`, opens its provider
-    /// dialog.
+    /// dialog. `kimi acp --login`, the Kimi Code terminal auth method
+    /// `login`, runs its device-code sign-in.
     pub fn sign_in_arguments(&self, adapter: AgentAdapterKind) -> Option<Vec<String>> {
         match adapter {
             AgentAdapterKind::Codex | AgentAdapterKind::Cursor | AgentAdapterKind::GrokBuild => {
@@ -1044,7 +1063,7 @@ impl AdapterRuntimeRegistry {
             AgentAdapterKind::Pi => Some(Vec::new()),
             AgentAdapterKind::Hermes => Some(vec!["acp".into(), "--setup".into()]),
             AgentAdapterKind::QwenCode => Some(vec!["--auth-type=openai".into()]),
-            _ => None,
+            AgentAdapterKind::KimiCode => Some(vec!["acp".into(), "--login".into()]),
         }
     }
 }
@@ -1229,7 +1248,9 @@ fn descriptor(id: AgentAdapterKind) -> Option<AdapterRuntimeDescriptor> {
             ]
             .as_slice(),
         ),
-        AgentAdapterKind::Hermes | AgentAdapterKind::QwenCode => (id.display_name(), [].as_slice()),
+        AgentAdapterKind::Hermes | AgentAdapterKind::QwenCode | AgentAdapterKind::KimiCode => {
+            (id.display_name(), [].as_slice())
+        }
         _ => return None,
     };
     Some(AdapterRuntimeDescriptor {
@@ -1481,7 +1502,11 @@ fn acp_launch_settings(
 /// user's decision: `auto` is `accept_edits`, `full` has no equivalent.
 /// Slice 3.5 live on Qwen Code 0.24.7: config option `mode` with `plan`,
 /// `default`, `auto-edit`, `auto` and `yolo`; the user's decision: `ask` is
-/// `default`, `auto` is `auto-edit`, `full` is `yolo`.
+/// `default`, `auto` is `auto-edit`, `full` is `yolo`. Slice 3.5 live on Kimi
+/// Code 2.1.1: config option and session mode `mode` with `default` (manual
+/// approvals), `plan`, `auto` (safe operations approved) and `yolo`
+/// (everything approved); `ask` is `default`, `auto` is `auto`, `full` is
+/// `yolo`.
 fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<ApprovalMapping> {
     Some(match (adapter, mode) {
         (AgentAdapterKind::Codex, ApprovalMode::Ask) => ApprovalMapping {
@@ -1559,6 +1584,27 @@ fn approval_mapping(adapter: AgentAdapterKind, mode: ApprovalMode) -> Option<App
             native: NativeApprovalMode::QwenYolo,
             label: "Full access".into(),
             effective_boundary: "Qwen Code approves every tool call without asking.".into(),
+            danger: true,
+        },
+        (AgentAdapterKind::KimiCode, ApprovalMode::Ask) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::KimiDefault,
+            label: "Ask".into(),
+            effective_boundary: "Kimi Code edits files in the session folder without asking and asks before other edits and shell commands.".into(),
+            danger: false,
+        },
+        (AgentAdapterKind::KimiCode, ApprovalMode::Auto) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::KimiAuto,
+            label: "Auto".into(),
+            effective_boundary: "Kimi Code approves the operations it deems safe, file edits and shell commands among them, without asking.".into(),
+            danger: false,
+        },
+        (AgentAdapterKind::KimiCode, ApprovalMode::Full) => ApprovalMapping {
+            requested: mode,
+            native: NativeApprovalMode::KimiYolo,
+            label: "Full access".into(),
+            effective_boundary: "Kimi Code approves every tool call without asking.".into(),
             danger: true,
         },
         _ => return None,
@@ -1681,7 +1727,7 @@ mod tests {
     fn descriptors_and_unknown_selectors_are_fail_closed_without_mutation() {
         let registry = AdapterRuntimeRegistry;
         let descriptors = registry.descriptors();
-        assert_eq!(descriptors.len(), 4);
+        assert_eq!(descriptors.len(), 5);
         assert_eq!(descriptors[0].model_options[0].value, None);
         assert_eq!(
             descriptors[0].model_options[1].value.as_deref(),
@@ -1976,10 +2022,14 @@ mod tests {
         let qwen = registry
             .approval_mapping(&AgentAdapterKind::QwenCode.id(), ApprovalMode::Full)
             .unwrap();
+        let kimi = registry
+            .approval_mapping(&AgentAdapterKind::KimiCode.id(), ApprovalMode::Full)
+            .unwrap();
         assert_eq!(codex.native, NativeApprovalMode::CodexFullAccess);
         assert_eq!(claude.native, NativeApprovalMode::ClaudeBypassPermissions);
         assert_eq!(qwen.native, NativeApprovalMode::QwenYolo);
-        assert!(codex.danger && claude.danger && qwen.danger);
+        assert_eq!(kimi.native, NativeApprovalMode::KimiYolo);
+        assert!(codex.danger && claude.danger && qwen.danger && kimi.danger);
     }
 
     #[test]
@@ -2009,6 +2059,9 @@ mod tests {
             (AgentAdapterKind::QwenCode, ApprovalMode::Ask, "default"),
             (AgentAdapterKind::QwenCode, ApprovalMode::Auto, "auto-edit"),
             (AgentAdapterKind::QwenCode, ApprovalMode::Full, "yolo"),
+            (AgentAdapterKind::KimiCode, ApprovalMode::Ask, "default"),
+            (AgentAdapterKind::KimiCode, ApprovalMode::Auto, "auto"),
+            (AgentAdapterKind::KimiCode, ApprovalMode::Full, "yolo"),
         ] {
             assert_eq!(
                 registry.acp_approval(adapter, mode),
@@ -2275,7 +2328,8 @@ mod tests {
                 AgentAdapterKind::Codex,
                 AgentAdapterKind::ClaudeCode,
                 AgentAdapterKind::Hermes,
-                AgentAdapterKind::QwenCode
+                AgentAdapterKind::QwenCode,
+                AgentAdapterKind::KimiCode
             ]
         );
         let future = AgentAdapter {
@@ -2283,7 +2337,7 @@ mod tests {
             model: Some("future-model".into()),
             effort: None,
         };
-        let unmapped = binding(AgentAdapterKind::KimiCode, None, None);
+        let unmapped = binding(AgentAdapterKind::Opencode, None, None);
         let custom = AgentAdapter {
             adapter: AgentId::parse("custom-hermes").unwrap(),
             model: None,
@@ -2346,25 +2400,6 @@ mod tests {
         assert_eq!(
             selection.attempts[1].reason_code.as_deref(),
             Some("approval_mapping_missing")
-        );
-    }
-
-    #[test]
-    fn an_agent_without_a_description_has_no_entrypoint_or_catalogue() {
-        let registry = AdapterRuntimeRegistry;
-        let agent = AgentAdapterKind::KimiCode;
-        assert_eq!(registry.acp_entrypoint(agent), None);
-        assert!(!registry.lists_catalog(agent));
-        assert!(!registry.lists_by_folder(agent));
-        assert!(!registry.acp_id_is_native(agent));
-        assert_eq!(registry.terminal_resume_args(agent, "s1"), None);
-        assert_eq!(registry.native_status_store(agent), None);
-        assert_eq!(registry.acp_approval(agent, ApprovalMode::Ask), None);
-        assert_eq!(registry.verdict(agent), AgentVerdict::Deferred);
-        assert_eq!(registry.sign_in_arguments(agent), None);
-        assert_eq!(
-            registry.terminal_resume_args(AgentAdapterKind::Codex, "s1"),
-            Some(vec!["resume".to_string(), "s1".to_string()])
         );
     }
 
@@ -2843,6 +2878,66 @@ mod tests {
             assert!(!registry.has_terminal_launch(&qwen.adapter, mode));
             assert_eq!(
                 registry.launch_transport(&qwen, mode, Ok(())),
+                LaunchTransport::Acp {
+                    settings: vec![setting("mode", value)],
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn kimi_code_runs_its_acp_command_with_native_ids_listed_across_folders() {
+        let agent = AgentAdapterKind::KimiCode;
+        let launch = AdapterRuntimeRegistry
+            .acp_launch(agent, Path::new("/bin/kimi"), None, Path::new("/home"))
+            .unwrap();
+        assert_eq!(launch.program, PathBuf::from("/bin/kimi"));
+        assert_eq!(launch.args, ["acp"]);
+        assert!(launch.env.is_empty());
+        assert!(launch.lists_catalog);
+        assert!(!AdapterRuntimeRegistry.lists_by_folder(agent));
+        assert!(launch.acp_id_is_native);
+        assert!(launch.read_only_open);
+        assert!(!launch.reads_during_external_turn);
+        assert_eq!(launch.writer_refusal, None);
+        assert!(!launch.session_per_connection);
+        assert!(!launch.draft_session);
+        assert_eq!(AdapterRuntimeRegistry.native_status_store(agent), None);
+        assert_eq!(
+            AdapterRuntimeRegistry.terminal_resume_args(agent, "s1"),
+            Some(vec!["--session".to_string(), "s1".to_string()])
+        );
+        assert_eq!(
+            AdapterRuntimeRegistry.verdict(agent),
+            AgentVerdict::Supported
+        );
+        assert_eq!(
+            AdapterRuntimeRegistry.sign_in_arguments(agent),
+            Some(vec!["acp".to_string(), "--login".to_string()])
+        );
+    }
+
+    #[test]
+    fn kimi_code_runs_an_actor_over_acp_only_with_native_model() {
+        let registry = AdapterRuntimeRegistry;
+        let kimi = binding(AgentAdapterKind::KimiCode, None, None);
+        assert_eq!(
+            registry.validate_binding(&kimi).status,
+            BindingValidationStatus::Valid
+        );
+        let with_model = binding(AgentAdapterKind::KimiCode, Some("kimi-code/k3"), None);
+        assert_eq!(
+            registry.validate_binding(&with_model).issues[0].code,
+            "unknown_model_selector"
+        );
+        for (mode, value) in [
+            (ApprovalMode::Ask, "default"),
+            (ApprovalMode::Auto, "auto"),
+            (ApprovalMode::Full, "yolo"),
+        ] {
+            assert!(!registry.has_terminal_launch(&kimi.adapter, mode));
+            assert_eq!(
+                registry.launch_transport(&kimi, mode, Ok(())),
                 LaunchTransport::Acp {
                     settings: vec![setting("mode", value)],
                 }

@@ -795,6 +795,7 @@ mod tests {
                 "opencode",
                 "pi",
                 "qwen-code",
+                "kimi-code",
                 "grok-build",
                 on.id.agent_id().as_str()
             ]
