@@ -440,8 +440,13 @@ pub(super) fn last_of<T>(path: &Path, select: impl Fn(&Value) -> Option<T>) -> O
     last
 }
 
+/// The title of a session its agent lists without one. Kimi Code prefixes
+/// every id with `session_`, which says nothing about the session.
 pub(crate) fn short_id(source_session_id: &str) -> String {
-    source_session_id.chars().take(8).collect()
+    let id = source_session_id
+        .strip_prefix("session_")
+        .unwrap_or(source_session_id);
+    id.chars().take(8).collect()
 }
 
 const MAX_LAUNCH_CONTEXT_BYTES: usize = 16 * 1024;
@@ -851,6 +856,15 @@ mod tests {
 
         assert_eq!(seconds.timestamp(), 1_700_000_000);
         assert_eq!(millis.timestamp(), 1_700_000_000);
+    }
+
+    #[test]
+    fn a_short_id_skips_the_session_prefix_kimi_code_gives_every_id() {
+        assert_eq!(
+            short_id("session_51f1297f-26bd-44c8-9e5e-343ab195eb63"),
+            "51f1297f"
+        );
+        assert_eq!(short_id("019a2b3c-4d5e"), "019a2b3c");
     }
 
     #[test]
