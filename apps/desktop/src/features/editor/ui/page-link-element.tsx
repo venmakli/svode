@@ -59,6 +59,17 @@ export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
     await pageLink.openPageLink();
   };
 
+  const content = (
+    <>
+      <span contentEditable={false} className="inline-flex items-center">
+        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      </span>
+      {children}
+    </>
+  );
+
+  // The hint trigger is a span inside the element: PlateElement renders only
+  // its attributes, so a trigger slotted onto it loses the pointer handlers.
   const pill = (
     <PlateElement
       {...props}
@@ -77,23 +88,25 @@ export function PageLinkElement(props: PlateElementProps<TLinkElement>) {
         onClick: handleClick,
       }}
     >
-      <span contentEditable={false} className="inline-flex items-center">
-        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      </span>
-      {children}
-    </PlateElement>
-  );
-
-  // Wrap in tooltip showing the resolved path
-  if (pageLink.resolvedPath) {
-    return (
-      <>
+      {pageLink.resolvedPath ? (
         <TooltipProvider>
           <Tooltip>
-            <TooltipTrigger asChild>{pill}</TooltipTrigger>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1">{content}</span>
+            </TooltipTrigger>
             <TooltipContent side="bottom">{pageLink.tooltipPath}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
+      ) : (
+        content
+      )}
+    </PlateElement>
+  );
+
+  if (pageLink.resolvedPath) {
+    return (
+      <>
+        {pill}
         <GhostCloneDialog
           open={pageLink.cloneTarget !== null}
           spaceName={pageLink.cloneTarget?.spaceName ?? ""}

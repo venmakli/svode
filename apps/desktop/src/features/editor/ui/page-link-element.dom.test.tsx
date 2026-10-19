@@ -208,6 +208,19 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
     expect(probe(links[2])).toBe("true|Nope Here.md|/proj/Nope Here.md");
   });
 
+  test("hovering a link opens its hint with the decoded path", async () => {
+    const text = pill(0).querySelector("[data-slate-string]") ?? pill(0);
+    const move = new window.MouseEvent("pointermove", { bubbles: true });
+    Object.defineProperty(move, "pointerType", { value: "mouse" });
+    await act(async () => {
+      text.dispatchEvent(move);
+    });
+    await until(() => dom.document.querySelector('[role="tooltip"]') !== null);
+    expect(dom.document.querySelector('[role="tooltip"]')?.textContent).toBe(
+      "/proj/Roadmap Draft.md",
+    );
+  });
+
   test("a click resolves the raw url and opens the Page", async () => {
     opened.length = 0;
     await act(async () => {
