@@ -5,8 +5,7 @@ import codexMono from "@lobehub/icons-static-svg/icons/codex.svg?url";
 import cursor from "@lobehub/icons-static-svg/icons/cursor.svg?url";
 import grok from "@lobehub/icons-static-svg/icons/grok.svg?url";
 import hermes from "@lobehub/icons-static-svg/icons/hermesagent.svg?url";
-import kimi from "@lobehub/icons-static-svg/icons/kimi-color.svg?url";
-import kimiMono from "@lobehub/icons-static-svg/icons/kimi.svg?url";
+import kimi from "@lobehub/icons-static-svg/icons/kimi.svg?url";
 import opencode from "@lobehub/icons-static-svg/icons/opencode.svg?url";
 import pi from "@lobehub/icons-static-svg/icons/pi.svg?url";
 import qwen from "@lobehub/icons-static-svg/icons/qwen-color.svg?url";
@@ -31,6 +30,6 @@ export const AGENT_ICONS: Readonly<Record<string, AgentIconAsset>> = {
   hermes: { src: hermes, colored: false, mono: hermes },
   pi: { src: pi, colored: false, mono: pi },
   "qwen-code": { src: qwen, colored: true, mono: qwenMono },
-  "kimi-code": { src: kimi, colored: true, mono: kimiMono },
+  "kimi-code": { src: kimi, colored: false, mono: kimi },
   "grok-build": { src: grok, colored: false, mono: grok },
 };
