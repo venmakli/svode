@@ -5,6 +5,23 @@
     {
       "kind": "ci-build",
       "version": "0.0.9",
+      "commit": "74b20c35b09eed82564a1a7cdddaadc122f2e8bc",
+      "sourceRef": "main",
+      "runId": 39248765983,
+      "publishedAt": "2026-10-19T12:27:21.115Z",
+      "expiresAt": "2026-10-22T12:27:21.115Z",
+      "reason": "Исправления dogfood Stage 10",
+      "platforms": {
+        "linux": {
+          "url": "https://github.com/venmakli/svode/actions/runs/39248765983/artifacts/12185323771",
+          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/39248765983",
+          "artifactName": "Svode-linux-deb"
+        }
+      }
+    },
+    {
+      "kind": "ci-build",
+      "version": "0.0.9",
       "commit": "787ef797d444a8051fc8cf8dfca7d9601a187b81",
       "sourceRef": "main",
       "runId": 39076587150,
@@ -52,33 +69,6 @@
         "darwin": {
           "url": "https://github.com/venmakli/svode/actions/runs/39004305461/artifacts/12091117353",
           "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/39004305461",
-          "artifactName": "Svode-macos-dmg"
-        }
-      }
-    },
-    {
-      "kind": "ci-build",
-      "version": "0.0.9",
-      "commit": "654190e82fba5276470c98fefd56f947d20ad091",
-      "sourceRef": "main",
-      "runId": 38839893758,
-      "publishedAt": "2026-10-16T03:05:59.763Z",
-      "expiresAt": "2026-10-19T03:05:59.763Z",
-      "reason": "Коллекция «Контекст»",
-      "platforms": {
-        "linux": {
-          "url": "https://github.com/venmakli/svode/actions/runs/38839893758/artifacts/12021379144",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/38839893758",
-          "artifactName": "Svode-linux-deb"
-        },
-        "windows": {
-          "url": "https://github.com/venmakli/svode/actions/runs/38839893758/artifacts/12021503855",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/38839893758",
-          "artifactName": "Svode-windows-nsis"
-        },
-        "darwin": {
-          "url": "https://github.com/venmakli/svode/actions/runs/38839893758/artifacts/12022377291",
-          "fallbackUrl": "https://github.com/venmakli/svode/actions/runs/38839893758",
           "artifactName": "Svode-macos-dmg"
         }
       }
