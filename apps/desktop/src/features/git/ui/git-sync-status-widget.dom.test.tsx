@@ -80,10 +80,11 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
         await setLocale(locale, { reload: false });
         for (const failed of [false, true]) {
           failFetch = failed;
+          // A project-level refusal stays a sync error; a list of Spaces is a stop.
           const cause = gitSyncErrorMessage({
             kind: "git_publication_blocked",
-            reason: "spaces",
-            spaces: [{ path: "develop", class: "local_commits" }],
+            repository: path,
+            reason: "revision_unavailable",
           });
           useGitStore.getState().setSyncError(path, cause);
           await dom.render(

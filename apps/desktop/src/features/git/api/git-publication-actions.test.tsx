@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import { mockNativeIpc, clearNativeMocks } from "@/platform/native/testing";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
+import * as m from "@/paraglide/messages.js";
 import { useGitStore } from "../model/git-store";
 import { parentRecoveryAction, isFullSyncSuccess } from "../model/publication";
 import { GitPublicationResult } from "../ui/git-publication-result";
@@ -63,15 +64,17 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
     files: [],
   };
 
-  test("sync cause survives successful and failed counter refreshes", async () => {
+  test("the Spaces that stop publication survive successful and failed counter refreshes", async () => {
     let failFetch = false;
     let fetches = 0;
+    const spaces = [{ path: "develop", class: "local_commits" }];
     mockNativeIpc(async (command) => {
       if (command === "git_sync")
         throw {
           kind: "git_publication_blocked",
+          repository: "/project",
           reason: "spaces",
-          spaces: [{ path: "develop", class: "local_commits" }],
+          spaces,
         };
       if (command === "git_fetch_status") {
         fetches++;
@@ -82,19 +85,20 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
     });
     try {
       const outcome = await syncSpace(path);
-      expect(outcome.type).toBe("Failed");
-      const cause = useGitStore.getState().syncError[path];
-      expect(cause.includes("develop")).toBe(true);
-      expect(cause.includes("[object Object]")).toBe(false);
+      const cause = { project: "/project", spaces };
+      expect(outcome.type === "Failed" && outcome.block).toEqual(cause);
+      // A stop by Spaces is not a sync error.
+      expect(useGitStore.getState().syncError[path] === undefined).toBe(true);
+      expect(useGitStore.getState().publicationBlock[path]).toEqual(cause);
       await Promise.all([
         refreshGitRemoteStatus(path),
         refreshGitRemoteStatus(path),
       ]);
       expect(fetches).toBe(2);
-      expect(useGitStore.getState().syncError[path]).toBe(cause);
+      expect(useGitStore.getState().publicationBlock[path]).toEqual(cause);
       failFetch = true;
       await refreshGitRemoteStatus(path).catch(() => {});
-      expect(useGitStore.getState().syncError[path]).toBe(cause);
+      expect(useGitStore.getState().publicationBlock[path]).toEqual(cause);
       expect(
         useGitStore
           .getState()
@@ -103,7 +107,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       failFetch = false;
       await refreshGitRemoteStatus(path);
       expect(useGitStore.getState().remoteError[path] === undefined).toBe(true);
-      expect(useGitStore.getState().syncError[path]).toBe(cause);
+      expect(useGitStore.getState().publicationBlock[path]).toEqual(cause);
     } finally {
       clearNativeMocks();
       useGitStore.getState().clear(path);
@@ -232,26 +236,16 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
         ]) {
           const copy = gitSyncErrorMessage({
             kind: "git_publication_blocked",
+            repository: "/project",
             reason: "spaces",
             spaces: [{ path: "develop", class: spaceClass }],
             stderr: "SECRET",
           });
-          expect(copy.startsWith("develop: ")).toBe(true);
           expect(copy.includes("SECRET")).toBe(false);
           classes.add(copy);
         }
-        expect(classes.size).toBe(4);
-        const several = gitSyncErrorMessage({
-          kind: "git_publication_blocked",
-          reason: "spaces",
-          spaces: [
-            { path: "compliance", class: "local_commits" },
-            { path: "legal", class: "missing" },
-            { path: "ops", class: "uninitialized" },
-          ],
-        });
-        expect(several.startsWith("compliance, legal: ")).toBe(true);
-        expect(several.includes(" ops: ")).toBe(true);
+        // Text without the list only names the stop; the list is the block's.
+        expect([...classes]).toEqual([m.git_sync_publication_blocked_status()]);
         const parent = toParentPublication({
           repository: "/project",
           pointer: "local",
@@ -516,6 +510,62 @@ if (process.env.SVODE_PUBLICATION_TEST === "1") {
     expect(selectIndicator(useGitStore.getState(), alias)).toBe("clean");
     git.clear(alias);
     git.clear(repo);
+  });
+
+  test("a background refusal by Spaces is a stop of the project, not a sync error", async () => {
+    const { recordGitOperationOutcome } =
+      await import("./git-operation-events");
+    const { selectIndicator } = await import("../model/git-store");
+    const repo = "/blocked-project";
+    const spaces = [
+      { path: "compliance", class: "local_commits" },
+      { path: "legal", class: "missing" },
+    ];
+    recordGitOperationOutcome({
+      repository: repo,
+      active: false,
+      report: null,
+      error: {
+        kind: "git_publication_blocked",
+        repository: repo,
+        reason: "spaces",
+        spaces,
+      },
+    });
+    expect(useGitStore.getState().publicationBlock[repo]).toEqual({
+      project: repo,
+      spaces,
+    });
+    expect(useGitStore.getState().syncError[repo] === undefined).toBe(true);
+    expect(selectIndicator(useGitStore.getState(), repo)).toBe("clean");
+    // The next sync of the project starts without the previous list.
+    recordGitOperationOutcome({
+      repository: repo,
+      active: true,
+      report: null,
+      error: null,
+    });
+    expect(useGitStore.getState().publicationBlock[repo] === undefined).toBe(
+      true,
+    );
+    // A refusal for a project reason keeps the existing error text.
+    recordGitOperationOutcome({
+      repository: repo,
+      active: false,
+      report: null,
+      error: {
+        kind: "git_publication_blocked",
+        repository: repo,
+        reason: "target_changed",
+      },
+    });
+    expect(useGitStore.getState().syncError[repo]).toBe(
+      m.git_publication_target_changed(),
+    );
+    expect(useGitStore.getState().publicationBlock[repo] === undefined).toBe(
+      true,
+    );
+    useGitStore.getState().clear(repo);
   });
 
   test("overlapping publication reads keep the newest result and unknown remains distinct", async () => {

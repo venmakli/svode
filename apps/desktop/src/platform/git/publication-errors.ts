@@ -23,6 +23,8 @@ export type GitPublicationBlockDto =
   | {
       kind: "git_publication_blocked";
       reason: "spaces";
+      /** The project repository whose gitlinks name these Spaces. */
+      repository: string;
       spaces: GitPublicationBlockedSpaceDto[];
     };
 
@@ -72,13 +74,24 @@ export function toGitPublicationBlockDto(
     case "revision_unavailable":
       return { kind: "git_publication_blocked", reason };
     case "spaces": {
-      if (!("spaces" in error) || !Array.isArray(error.spaces)) return null;
+      if (
+        !("repository" in error) ||
+        typeof error.repository !== "string" ||
+        !("spaces" in error) ||
+        !Array.isArray(error.spaces)
+      )
+        return null;
       const spaces = error.spaces
         .map(toBlockedSpace)
         .filter((space) => space !== null);
       if (spaces.length === 0 || spaces.length !== error.spaces.length)
         return null;
-      return { kind: "git_publication_blocked", reason, spaces };
+      return {
+        kind: "git_publication_blocked",
+        reason,
+        repository: error.repository,
+        spaces,
+      };
     }
     default:
       return null;

@@ -4,7 +4,18 @@ import { toGitPushRejectionDto } from "@/platform/git/push-rejection-errors";
 import { toRepositoryAccessDeniedDto } from "@/platform/git/repository-access-api";
 import { redactUrlCredentials } from "../model/remote-auth";
 import { gitBranchErrorMessage } from "./git-branch-error";
+import type { GitPublicationBlock } from "../model/publication-block";
 import * as m from "@/paraglide/messages.js";
+
+/** The Spaces a publication refusal names, or `null` for any other error. */
+export function toGitPublicationBlock(
+  error: unknown,
+): GitPublicationBlock | null {
+  const dto = toGitPublicationBlockDto(error);
+  return dto?.reason === "spaces"
+    ? { project: dto.repository, spaces: dto.spaces }
+    : null;
+}
 
 export function gitSyncErrorMessage(error: unknown): string {
   const branch = gitBranchErrorMessage(error);
@@ -23,23 +34,7 @@ export function gitSyncErrorMessage(error: unknown): string {
         source_unavailable: m.git_sync_publication_source_unavailable,
         revision_unavailable: m.git_publication_revision_unavailable,
       }[publication.reason]();
-    // Minimal summary: Spaces sharing a reason are named together by path.
-    const groups = new Map<string, string[]>();
-    for (const space of publication.spaces) {
-      const reason = {
-        local_commits: m.git_publication_revision_unavailable,
-        outside_branch: m.git_publication_revision_unavailable,
-        missing: m.git_publication_revision_unavailable,
-        unverified: m.git_publication_revision_unavailable,
-        source_unavailable: m.git_sync_publication_source_unavailable,
-        uninitialized: m.git_sync_publication_uninitialized,
-        configuration: m.git_sync_publication_configuration,
-      }[space.class]();
-      groups.set(reason, [...(groups.get(reason) ?? []), space.path]);
-    }
-    return [...groups]
-      .map(([reason, paths]) => `${paths.join(", ")}: ${reason}`)
-      .join(" ");
+    return m.git_sync_publication_blocked_status();
   }
   const pullBlock = toGitPullBlockDto(error);
   if (pullBlock)

@@ -7,6 +7,7 @@ import type {
   GitPublicationStatus,
 } from "./types";
 import type { GitSyncStop } from "./sync-stop";
+import type { GitPublicationBlock } from "./publication-block";
 import {
   containerPathForNodePath,
   isGitStatusPathDescendant,
@@ -22,6 +23,8 @@ import {
  * - `cloning` tracks in-progress `git clone` operations and their percent.
  * - `syncError` is set when sync fails (auth/network) → indicator goes to `✕`.
  * - `syncStop` is the unfinished Git operation that stops sync.
+ * - `publicationBlock` lists the Spaces that stopped the project publication;
+ *   like a stop, it is not a sync error.
  */
 interface GitState {
   publications: Record<string, GitPublicationStatus>;
@@ -37,6 +40,7 @@ interface GitState {
   updateBackendSyncing: (path: string, active: boolean) => void;
   syncError: Record<string, string>;
   syncStop: Record<string, GitSyncStop>;
+  publicationBlock: Record<string, GitPublicationBlock>;
   remoteError: Record<string, string>;
   remoteChecked: Record<string, boolean>;
   remoteStatuses: Record<string, GitStatus>;
@@ -64,6 +68,10 @@ interface GitState {
   setSyncing: (spacePath: string, syncing: boolean) => void;
   setSyncError: (spacePath: string, error: string | null) => void;
   setSyncStop: (spacePath: string, stop: GitSyncStop | null) => void;
+  setPublicationBlock: (
+    spacePath: string,
+    block: GitPublicationBlock | null,
+  ) => void;
   setRemoteError: (spacePath: string, error: string | null) => void;
 
   setBranchError: (spacePath: string, error: string | null) => void;
@@ -120,6 +128,7 @@ export const useGitStore = create<GitState>((set, get) => {
     },
     syncError: {},
     syncStop: {},
+    publicationBlock: {},
     remoteError: {},
     remoteChecked: {},
     remoteStatuses: {},
@@ -132,6 +141,7 @@ export const useGitStore = create<GitState>((set, get) => {
       const version = ++pending.version;
       get().setSyncing(path, true);
       get().setSyncError(path, null);
+      get().setPublicationBlock(path, null);
       get().setBranchError(path, null);
       return {
         current: () =>
@@ -210,6 +220,11 @@ export const useGitStore = create<GitState>((set, get) => {
         ),
         syncError: repositoryState(s.syncError, spacePath, status.repository),
         syncStop: repositoryState(s.syncStop, spacePath, status.repository),
+        publicationBlock: repositoryState(
+          s.publicationBlock,
+          spacePath,
+          status.repository,
+        ),
         branchError: repositoryState(
           s.branchError,
           spacePath,
@@ -266,6 +281,8 @@ export const useGitStore = create<GitState>((set, get) => {
         const { [spacePath]: _rmSync, ...syncing } = s.syncing;
         const { [spacePath]: _rmError, ...syncError } = s.syncError;
         const { [spacePath]: _rmStop, ...syncStop } = s.syncStop;
+        const { [spacePath]: _rmBlock, ...publicationBlock } =
+          s.publicationBlock;
         const { [spacePath]: _rmRemoteError, ...remoteError } = s.remoteError;
         const { [spacePath]: _rmRemoteChecked, ...remoteChecked } =
           s.remoteChecked;
@@ -281,6 +298,7 @@ export const useGitStore = create<GitState>((set, get) => {
           backendSyncing,
           syncError,
           syncStop,
+          publicationBlock,
           remoteError,
           remoteChecked,
           remoteStatuses,
@@ -313,6 +331,15 @@ export const useGitStore = create<GitState>((set, get) => {
         if (stop) next[repository] = stop;
         else delete next[repository];
         return { syncStop: next };
+      }),
+
+    setPublicationBlock: (spacePath, block) =>
+      set((s) => {
+        const repository = s.statuses[spacePath]?.repository ?? spacePath;
+        const next = { ...s.publicationBlock };
+        if (block) next[repository] = block;
+        else delete next[repository];
+        return { publicationBlock: next };
       }),
 
     setBranchError: (spacePath, error) =>

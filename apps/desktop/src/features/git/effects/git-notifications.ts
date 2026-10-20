@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import { toGitPublicationBlock } from "../api/git-sync-error";
 import { syncStopFromResult, type GitSyncOutcome } from "../model";
 import { gitSyncStopTitle } from "../ui/git-sync-stop-copy";
 
@@ -33,7 +34,9 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
       break;
     }
     case "Failed":
-      notifyGitSyncFailed();
+      // Spaces that stop the project publication are a stop, not a failure.
+      if (outcome.block) toast.info(m.git_sync_publication_blocked_status());
+      else notifyGitSyncFailed();
       break;
     case "Success":
       if (outcome.parent?.pointer === "newer")
@@ -41,7 +44,11 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
       else if (outcome.parent?.unpublishedCommits !== undefined)
         toast.info(m.git_publication_held_summary());
       else if (outcome.parent && outcome.parent.pointer !== "published")
-        toast.info(m.git_publication_partial());
+        toast.info(
+          toGitPublicationBlock(outcome.parent.error)
+            ? m.git_publication_blocked_summary()
+            : m.git_publication_partial(),
+        );
       break;
     case "Resolved":
     case "NoRemote":

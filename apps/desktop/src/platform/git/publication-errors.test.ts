@@ -20,7 +20,12 @@ test("a publication refusal is a project reason or a list of Spaces", () => {
       reason: "spaces",
       spaces,
     }),
-  ).toEqual({ kind: "git_publication_blocked", reason: "spaces", spaces });
+  ).toEqual({
+    kind: "git_publication_blocked",
+    reason: "spaces",
+    repository: "/project",
+    spaces,
+  });
 });
 
 test("the replaced single-child shape and malformed Spaces are not a refusal", () => {
@@ -31,6 +36,11 @@ test("the replaced single-child shape and malformed Spaces are not a refusal", (
       child: "develop",
     },
     { kind: "git_publication_blocked", reason: "spaces" },
+    {
+      kind: "git_publication_blocked",
+      reason: "spaces",
+      spaces: [{ path: "develop", class: "local_commits" }],
+    },
     { kind: "git_publication_blocked", reason: "spaces", spaces: [] },
     {
       kind: "git_publication_blocked",

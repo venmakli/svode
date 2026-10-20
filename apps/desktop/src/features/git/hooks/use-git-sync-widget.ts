@@ -19,6 +19,7 @@ import { notifyGitSyncOutcome } from "../effects/git-notifications";
 import {
   useGitStore,
   type GitAuthChallenge,
+  type GitPublicationBlock,
   type GitRemoteAuthCredentials,
   type GitStatus,
   type GitSyncStop,
@@ -44,6 +45,8 @@ export interface GitSyncWidget {
   remoteError: string | null;
   branchError: string | null;
   stop: GitSyncStop | null;
+  /** Spaces that stopped the project publication; replaces the sync error. */
+  publicationBlock: GitPublicationBlock | null;
   syncing: boolean;
   autoSync: boolean;
   savingAutoSync: boolean;
@@ -121,6 +124,9 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   );
   const stop = useGitStore((state) =>
     repository ? (state.syncStop[repository] ?? null) : null,
+  );
+  const publicationBlock = useGitStore((state) =>
+    repository ? (state.publicationBlock[repository] ?? null) : null,
   );
 
   const [hasRemote, setHasRemote] = useState(false);
@@ -378,6 +384,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
         !!syncError ||
         !!remoteError ||
         !!stop ||
+        !!publicationBlock ||
         !!parent.publication),
     open,
     setOpen,
@@ -390,6 +397,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     remoteError,
     branchError,
     stop,
+    publicationBlock,
     syncing,
     autoSync,
     savingAutoSync,

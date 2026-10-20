@@ -3,7 +3,7 @@ import {
   recordSyncPublication,
 } from "./git-publication-actions";
 import { gitBranchErrorMessage } from "./git-branch-error";
-import { gitSyncErrorMessage } from "./git-sync-error";
+import { gitSyncErrorMessage, toGitPublicationBlock } from "./git-sync-error";
 import { useGitStore } from "../model";
 import {
   commitGitAll,
@@ -122,12 +122,14 @@ async function runSync(
   } catch (err) {
     console.error("git_sync failed:", err);
     const branchMessage = gitBranchErrorMessage(err);
-    if (!request.current())
-      return { type: "Failed", message: gitSyncErrorMessage(err) };
-    if (branchMessage) git.setBranchError(spacePath, branchMessage);
     const message = gitSyncErrorMessage(err);
-    git.setSyncError(spacePath, branchMessage ? null : message);
-    return { type: "Failed", message };
+    const block = toGitPublicationBlock(err) ?? undefined;
+    const failed = { type: "Failed" as const, message, block };
+    if (!request.current()) return failed;
+    if (branchMessage) git.setBranchError(spacePath, branchMessage);
+    git.setPublicationBlock(spacePath, block ?? null);
+    git.setSyncError(spacePath, branchMessage || block ? null : message);
+    return failed;
   } finally {
     request.finish();
   }

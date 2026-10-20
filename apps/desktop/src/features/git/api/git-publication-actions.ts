@@ -13,8 +13,9 @@ import {
   useGitStore,
   selectPublication,
   type GitSyncOutcome,
+  type ParentPublication,
 } from "../model";
-import { gitSyncErrorMessage } from "./git-sync-error";
+import { gitSyncErrorMessage, toGitPublicationBlock } from "./git-sync-error";
 import { toParentPublication } from "./git-mappers";
 
 function apply(path: string, dto: PublicationStatusDto | null) {
@@ -91,12 +92,27 @@ export async function retryParentPublication(
     await refreshGitPublication(path);
     return;
   }
-  const dto = await retryGitParent({
-    spacePath: path,
-    expectedHead: pending.childHead,
-    expectedParent: pending.parent.repository,
-    expectedTarget: pending.parent.target,
-  });
+  let dto: PublicationStatusDto;
+  try {
+    dto = await retryGitParent({
+      spacePath: path,
+      expectedHead: pending.childHead,
+      expectedParent: pending.parent.repository,
+      expectedTarget: pending.parent.target,
+    });
+  } catch (error) {
+    // Spaces that stop the project are the result of this retry, not a failure.
+    if (!toGitPublicationBlock(error)) throw error;
+    if (selectPublication(useGitStore.getState(), path) === pending)
+      useGitStore.getState().setPublication(path, {
+        ...pending,
+        parent: {
+          ...pending.parent,
+          error: error as ParentPublication["error"],
+        },
+      });
+    return;
+  }
   if (selectPublication(useGitStore.getState(), path) === pending)
     apply(path, dto);
 }

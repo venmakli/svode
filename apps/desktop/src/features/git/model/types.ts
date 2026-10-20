@@ -1,3 +1,5 @@
+import type { GitPublicationBlock } from "./publication-block";
+
 export interface GitAvailability {
   git: boolean;
   gitLfs: boolean;
@@ -73,7 +75,14 @@ export interface ParentPublication {
   unpublishedCommits?: number;
 }
 
-export type GitSyncOutcome = SyncResult | { type: "Failed"; message: string };
+export type GitSyncOutcome =
+  | SyncResult
+  | {
+      type: "Failed";
+      message: string;
+      /** Spaces that stopped the project publication; a stop, not a failure. */
+      block?: GitPublicationBlock;
+    };
 
 export interface GitUserPolicy {
   autoSync: boolean;

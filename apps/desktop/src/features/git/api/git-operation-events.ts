@@ -1,7 +1,7 @@
 import { listenGitSyncState } from "@/platform/git/git-api";
 import { useGitStore } from "../model";
 import { gitBranchErrorMessage } from "./git-branch-error";
-import { gitSyncErrorMessage } from "./git-sync-error";
+import { gitSyncErrorMessage, toGitPublicationBlock } from "./git-sync-error";
 import { toGitStatus, toSyncResult } from "./git-mappers";
 import { recordSyncPublication } from "./git-publication-actions";
 import { recordSyncStop } from "./git-sync-stop-actions";
@@ -18,13 +18,19 @@ export function recordGitOperationOutcome(
   git.updateBackendSyncing(path, event.active);
   if (event.active) {
     git.setSyncError(path, null);
+    git.setPublicationBlock(path, null);
     git.setBranchError(path, null);
     return;
   }
   if (event.error) {
     const branch = gitBranchErrorMessage(event.error);
+    const block = toGitPublicationBlock(event.error);
     git.setBranchError(path, branch);
-    git.setSyncError(path, branch ? null : gitSyncErrorMessage(event.error));
+    git.setPublicationBlock(path, block);
+    git.setSyncError(
+      path,
+      branch || block ? null : gitSyncErrorMessage(event.error),
+    );
     return;
   }
   if (!event.report) return;

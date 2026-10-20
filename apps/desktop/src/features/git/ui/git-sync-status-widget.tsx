@@ -1,3 +1,4 @@
+import { GitPublicationBlockNotice } from "./git-publication-block";
 import { GitPublicationResult } from "./git-publication-result";
 import { publicationCopy } from "./git-publication-copy";
 import {
@@ -78,9 +79,11 @@ export function GitSyncStatusWidget({
   const busy = sync.syncing || sync.checkingRemote || sync.parent.busy;
   const pendingParent = isParentPointerPending(sync.parent.publication);
   const stop = sync.stop;
+  const block = sync.publicationBlock;
   const error = sync.syncError ?? sync.remoteError;
-  // An unfinished Git operation explains why sync cannot run; it takes focus.
-  const hasSyncError = !!error && !stop;
+  // An unfinished Git operation or the Spaces that stop publication explain
+  // why sync cannot finish; they take focus.
+  const hasSyncError = !!error && !stop && !block;
   // An unreachable remote also leaves access unconfirmed; the sync warning covers both.
   const showAccessIndicator =
     !!accessLabel && !(hasSyncError && presentation.status === "unknown");
@@ -97,7 +100,11 @@ export function GitSyncStatusWidget({
           : null,
         pendingParent: !!pendingParent,
         remoteChecked: sync.remoteChecked,
-        stopLabel: stop ? gitSyncStopTitle(stop) : null,
+        stopLabel: stop
+          ? gitSyncStopTitle(stop)
+          : block
+            ? m.git_sync_publication_blocked_status()
+            : null,
         synced,
       })
     : null;
@@ -165,13 +172,13 @@ export function GitSyncStatusWidget({
                   >
                     {busy ? (
                       <RefreshCw className="animate-spin" />
-                    ) : hasSyncError || stop || pendingParent ? (
+                    ) : hasSyncError || stop || block || pendingParent ? (
                       <AlertTriangle
                         className={
                           hasSyncError ? "text-destructive" : undefined
                         }
                         data-git-sync-error={hasSyncError || undefined}
-                        data-git-sync-stopped={!!stop || undefined}
+                        data-git-sync-stopped={!!(stop || block) || undefined}
                       />
                     ) : synced ? (
                       <Check data-git-sync-synced />
@@ -240,6 +247,7 @@ export function GitSyncStatusWidget({
                 {stop && (
                   <GitSyncStopNotice stop={stop} onOpenPage={openPage} />
                 )}
+                {block && <GitPublicationBlockNotice block={block} />}
                 {hasSyncError && (
                   <Alert variant="destructive">
                     <AlertTriangle />
