@@ -4,7 +4,7 @@ use crate::git::{flow, staging_tests::TestHost, state};
 use std::sync::Arc;
 
 /// Add a Submodule Space with its own source, published together with the project.
-fn add_space(f: &Fixture, name: &str) -> (PathBuf, PathBuf) {
+pub(super) fn add_space(f: &Fixture, name: &str) -> (PathBuf, PathBuf) {
     let seed = f._temp.path().join(format!("{name}-seed"));
     std::fs::create_dir(&seed).unwrap();
     git(&seed, &["init", "-b", "main"]);

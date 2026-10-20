@@ -10,6 +10,7 @@ import type {
   GitAvailabilityDto,
   GitStatusDto,
   GitUserPolicyDto,
+  SpacesPublicationDto,
   SyncResultDto,
   UnpushedCommitDto,
 } from "./git-types";
@@ -89,6 +90,14 @@ export function syncGit(
   background = false,
 ): Promise<SyncResultDto> {
   return invokeCommand<SyncResultDto>("git_sync", { spacePath, background });
+}
+
+/** Publish the shown Spaces that still block the project, then sync it. */
+export function publishGitSpaces(input: {
+  projectPath: string;
+  spaces: string[];
+}): Promise<SpacesPublicationDto> {
+  return invokeCommand<SpacesPublicationDto>("git_publish_spaces", input);
 }
 
 export function saveGitHttpCredentials(input: {

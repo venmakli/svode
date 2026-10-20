@@ -409,6 +409,7 @@ pub fn run() {
             git::commands::git_commit_all,
             git::commands::git_commit_paths,
             git::commands::git_sync,
+            git::commands::git_publish_spaces,
             git::commands::git_publication_status,
             git::commands::git_retry_parent,
             git::commands::git_save_http_credentials,

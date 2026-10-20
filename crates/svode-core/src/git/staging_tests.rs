@@ -11,6 +11,9 @@ use tempfile::TempDir;
 #[derive(Default)]
 pub(super) struct TestHost {
     pub(super) authorization: Option<GitError>,
+    /// Repositories refused on their own, as an access snapshot would.
+    pub(super) denied_repositories: Vec<PathBuf>,
+    pub(super) authorized: Mutex<Vec<PathBuf>>,
     pub(super) commits: Mutex<Vec<(PathBuf, PathBuf)>>,
     pub(super) auto_syncs: Mutex<Vec<PathBuf>>,
     pub(super) sync_states: Mutex<Vec<(PathBuf, bool)>>,
@@ -44,8 +47,28 @@ impl TestHost {
 }
 
 impl GitHost for TestHost {
-    fn authorize_repository<'a>(&'a self, _: &'a Path) -> HostFuture<'a, Result<(), GitError>> {
-        Box::pin(async move { self.authorization() })
+    fn authorize_repository<'a>(
+        &'a self,
+        repository: &'a Path,
+    ) -> HostFuture<'a, Result<(), GitError>> {
+        Box::pin(async move {
+            self.authorized
+                .lock()
+                .unwrap()
+                .push(repository.to_path_buf());
+            if self
+                .denied_repositories
+                .iter()
+                .any(|denied| denied == repository)
+            {
+                return Err(GitError::RepositoryAccessDenied {
+                    repository_id: repository.to_string_lossy().into_owned(),
+                    status: "read_only".into(),
+                    reason: "fixture".into(),
+                });
+            }
+            self.authorization()
+        })
     }
 
     fn authorize_paths<'a>(&'a self, _: Vec<PathBuf>) -> HostFuture<'a, Result<(), GitError>> {

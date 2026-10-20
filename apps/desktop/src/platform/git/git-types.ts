@@ -80,6 +80,22 @@ export interface ParentPublicationDto {
   unpublishedCommits?: number;
 }
 
+/** One Space a project publication took, by its gitlink path in the project. */
+export interface SpaceStepDto {
+  path: string;
+  status: "published" | "failed" | "not_run";
+  /** The Space sync with its pointer step, when the sync ran. */
+  report?: SyncResultDto;
+  error?: string | { kind: string; [key: string]: unknown };
+}
+
+export interface SpacesPublicationDto {
+  spaces: SpaceStepDto[];
+  /** The project sync, run once when every blocker was published. */
+  project?: SyncResultDto;
+  projectError?: string | { kind: string; [key: string]: unknown };
+}
+
 export interface GitUserPolicyDto {
   autoSync: boolean;
   autoCommitStructural: boolean;

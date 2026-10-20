@@ -4,6 +4,7 @@ use super::host::GitHost;
 use super::operations::{
     Completion, Intent, Output, ParentEvidence, Request, SharedError, Snapshot,
 };
+use super::publication::{PublicationBlockReason, SpaceBlockClass};
 use super::state::GitRuntime;
 use super::{access, branch, ops, sync::SyncResult};
 use serde::Serialize;
@@ -51,13 +52,180 @@ pub enum PointerState {
 
 /// Lock order is child then root, matching clone, manual save and Actors.
 /// Root-only operations never acquire child locks or initiate child writes.
+/// A background project sync refused by Spaces with local commits publishes
+/// those whose own auto-sync allows it, each as its own child operation after
+/// the project operation has released its lock.
 pub async fn sync(
     runtime: &Arc<GitRuntime>,
     host: &Arc<dyn GitHost>,
     repo: &Path,
     background: bool,
 ) -> Result<SyncReport, SharedError> {
-    sync_report(runtime, host, repo, Intent::Sync { background }).await
+    let result = sync_report(runtime, host, repo, Intent::Sync { background }).await;
+    let Err(error) = &result else {
+        return result;
+    };
+    let (
+        true,
+        GitError::PublicationBlocked {
+            repository,
+            reason: PublicationBlockReason::Spaces { spaces },
+        },
+    ) = (background, &**error)
+    else {
+        return result;
+    };
+    let root = Path::new(repository);
+    let taken = spaces
+        .iter()
+        .filter(|space| {
+            space.class == SpaceBlockClass::LocalCommits
+                && super::policy::effective_user_policy(&root.join(&space.path)).auto_sync
+        })
+        .map(|space| space.path.clone())
+        .collect::<Vec<_>>();
+    if taken.is_empty() {
+        return result;
+    }
+    let published = publish_taken(runtime, host, root, taken, spaces.len(), true).await;
+    match (published.project, published.project_error) {
+        (Some(report), _) => Ok(report),
+        (None, Some(error)) => Err(error),
+        (None, None) => result,
+    }
+}
+
+/// What happened to one Space a project publication took.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpaceStep {
+    /// Gitlink path relative to the project, as the publication refusal lists it.
+    pub path: String,
+    pub status: SpaceStepStatus,
+    /// The Space sync with its pointer step, when the sync ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<SyncReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<SharedError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpaceStepStatus {
+    Published,
+    Failed,
+    /// A background step its Space policy or access did not admit.
+    NotRun,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpacesPublication {
+    pub spaces: Vec<SpaceStep>,
+    /// The project sync, run once when the taken Spaces were every blocker
+    /// and all of them were published.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<SyncReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_error: Option<SharedError>,
+}
+
+/// Publish the given Spaces a fresh proof still blocks with local commits,
+/// one at a time through their explicit sync, then sync the project once if
+/// they were all of its blockers. Spaces outside the set and blockers of
+/// other classes are left untouched.
+pub async fn publish_spaces(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    project: &Path,
+    spaces: &[String],
+) -> Result<SpacesPublication, SharedError> {
+    let cli = runtime.require_cli()?;
+    let root = access::resolve_repository(&cli, project).await?;
+    // The proof holds only the project lock, like a project push; it is
+    // released before any Space lock is taken.
+    let blockers = {
+        let lock = runtime.get_lock(&root).await;
+        let _guard = lock.lock().await;
+        super::publication::blocked_spaces(&cli, &root).await?
+    };
+    let taken = blockers
+        .iter()
+        .filter(|space| {
+            space.class == SpaceBlockClass::LocalCommits && spaces.contains(&space.path)
+        })
+        .map(|space| space.path.clone())
+        .collect();
+    Ok(publish_taken(runtime, host, &root, taken, blockers.len(), false).await)
+}
+
+async fn publish_taken(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    root: &Path,
+    taken: Vec<String>,
+    blockers: usize,
+    background: bool,
+) -> SpacesPublication {
+    let complete = taken.len() == blockers;
+    let mut steps = Vec::with_capacity(taken.len());
+    for path in taken {
+        let space = root.join(&path);
+        let intent = Intent::PublishSpace { background };
+        let step = if !intent.admitted(&space) {
+            SpaceStep {
+                path,
+                status: SpaceStepStatus::NotRun,
+                report: None,
+                error: None,
+            }
+        } else {
+            match request(runtime, host, &space, intent).await {
+                Ok(Output::Sync(report)) => SpaceStep {
+                    path,
+                    status: if matches!(report.child, SyncResult::Success { .. }) {
+                        SpaceStepStatus::Published
+                    } else {
+                        SpaceStepStatus::Failed
+                    },
+                    report: Some(report),
+                    error: None,
+                },
+                Ok(_) => unreachable!("Space sync returned a different intent"),
+                Err(error) => SpaceStep {
+                    path,
+                    // The background sync of a Space skips it without access.
+                    status: if background
+                        && matches!(&*error, GitError::RepositoryAccessDenied { .. })
+                    {
+                        SpaceStepStatus::NotRun
+                    } else {
+                        SpaceStepStatus::Failed
+                    },
+                    report: None,
+                    error: Some(error),
+                },
+            }
+        };
+        steps.push(step);
+    }
+    let mut publication = SpacesPublication {
+        spaces: steps,
+        project: None,
+        project_error: None,
+    };
+    if complete
+        && publication
+            .spaces
+            .iter()
+            .all(|step| step.status == SpaceStepStatus::Published)
+    {
+        match sync_report(runtime, host, root, Intent::Sync { background }).await {
+            Ok(report) => publication.project = Some(report),
+            Err(error) => publication.project_error = Some(error),
+        }
+    }
+    publication
 }
 
 /// Continues a sync merge with the paths the user resolved (relative to `repo`).
@@ -197,6 +365,20 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 repo,
                 *background,
                 None,
+                true,
+                &request,
+                &mut parent_evidence,
+            )
+            .await
+            .map(Output::Sync),
+            Intent::PublishSpace { background } => sync_locked(
+                runtime,
+                host,
+                &cli,
+                repo,
+                *background,
+                None,
+                false,
                 &request,
                 &mut parent_evidence,
             )
@@ -209,6 +391,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 repo,
                 false,
                 Some(paths.as_slice()),
+                true,
                 &request,
                 &mut parent_evidence,
             )
@@ -352,6 +535,7 @@ async fn sync_locked(
     repo: &Path,
     background: bool,
     resolve: Option<&[String]>,
+    publish_parent: bool,
     request: &Request,
     parent_evidence: &mut Option<ParentEvidence>,
 ) -> Result<SyncReport, GitError> {
@@ -419,7 +603,7 @@ async fn sync_locked(
             &parent,
             &expected,
             background,
-            true,
+            publish_parent,
             expected_target,
             None,
         )

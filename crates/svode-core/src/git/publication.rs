@@ -217,6 +217,36 @@ pub async fn push(cli: &GitCli, repo: &Path, first: bool) -> Result<GitOutput, G
     Ok(push_snapshot(cli, repo, first).await?.0)
 }
 
+/// Every Space that blocks publication of the current history, from the same
+/// fresh proof a push runs, without pushing. Project-level refusals stay errors.
+pub async fn blocked_spaces(cli: &GitCli, repo: &Path) -> Result<Vec<BlockedSpace>, GitError> {
+    let repository = super::access::resolve_repository(cli, repo).await?;
+    let repo = repository.as_path();
+    let upstream = cli
+        .exec(repo, &["rev-parse", "--verify", "--quiet", "@{upstream}"])
+        .await?;
+    let fixed = match snapshot(cli, repo, upstream.exit_code != 0).await? {
+        Ok(fixed) => fixed,
+        Err(out) => {
+            return Err(super::ops::git_remote_command_error(
+                "git push",
+                out.stderr.trim(),
+            ));
+        }
+    };
+    if fixed.updates.is_empty() {
+        return Ok(Vec::new());
+    }
+    match prove(cli, repo, &fixed).await {
+        Ok(_) => Ok(Vec::new()),
+        Err(GitError::PublicationBlocked {
+            reason: PublicationBlockReason::Spaces { spaces },
+            ..
+        }) => Ok(spaces),
+        Err(error) => Err(error),
+    }
+}
+
 async fn set_upstream(cli: &GitCli, repo: &Path) -> Result<(), GitError> {
     let branch = super::ops::current_branch(cli, repo).await?;
     checked(

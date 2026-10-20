@@ -512,6 +512,22 @@ pub async fn git_sync(
     .await
 }
 
+/// Publish the shown Spaces that still block the project, then sync it.
+#[tauri::command]
+pub async fn git_publish_spaces(
+    app: AppHandle,
+    project_path: String,
+    spaces: Vec<String>,
+) -> Result<flow::SpacesPublication, SharedError> {
+    flow::publish_spaces(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&project_path),
+        &spaces,
+    )
+    .await
+}
+
 pub(crate) async fn refresh_synced_repository(app: &AppHandle, cli: &GitCli, path: &Path) {
     let access_state = app.state::<super::access::RepositoryAccessState>();
     let index_state = app.state::<IndexState>();

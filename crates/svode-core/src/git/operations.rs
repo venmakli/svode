@@ -47,6 +47,11 @@ pub enum Intent {
     Sync {
         background: bool,
     },
+    /// A Space sync whose parent step only records the pointer: the project
+    /// publishes once, after every Space it waits for.
+    PublishSpace {
+        background: bool,
+    },
     Push,
     Publish,
     /// Abandon the merge a sync stopped in (`git merge --abort`).
@@ -76,12 +81,18 @@ impl Intent {
                 (
                     Self::Sync { background: false },
                     Self::Sync { background: true }
+                ) | (
+                    Self::PublishSpace { background: false },
+                    Self::PublishSpace { background: true }
                 )
             )
     }
 
     pub fn background(&self) -> bool {
-        matches!(self, Self::Sync { background: true })
+        matches!(
+            self,
+            Self::Sync { background: true } | Self::PublishSpace { background: true }
+        )
     }
 
     pub fn admitted(&self, repo: &Path) -> bool {
@@ -91,7 +102,10 @@ impl Intent {
     fn reserves_parent(&self) -> bool {
         matches!(
             self,
-            Self::Sync { .. } | Self::Resolve { .. } | Self::RetryParent { .. }
+            Self::Sync { .. }
+                | Self::PublishSpace { .. }
+                | Self::Resolve { .. }
+                | Self::RetryParent { .. }
         )
     }
 }

@@ -11,6 +11,8 @@ mod pointer_forward_tests;
 mod push_rejection_tests;
 #[path = "publication_reuse_tests.rs"]
 mod reuse_tests;
+#[path = "space_publication_tests.rs"]
+mod space_publication_tests;
 use super::*;
 use std::{path::PathBuf, process::Command};
 
