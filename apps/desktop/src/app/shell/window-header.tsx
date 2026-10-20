@@ -10,7 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
-import { useActiveContentSelection } from "@/features/artifact";
+import { openScopeOwner, useActiveContentSelection } from "@/features/artifact";
 import {
   getSpaceSnapshot,
   selectActiveSpacePath,
@@ -208,6 +208,7 @@ export function WindowHeader() {
             activateAccess={mainSurface === "content"}
             onOpenRepositorySettings={(path) => openSpaceSettings(path, "git")}
             onOpenPage={openRepositoryPage}
+            onOpenSpace={openRepositorySpace}
           />
         ) : null}
         {activeRootPath ? (
@@ -219,6 +220,21 @@ export function WindowHeader() {
       </div>
     </header>
   );
+}
+
+/** Open a Space of the project by its location, as the sidebar opens it. */
+function openRepositorySpace(spacePath: string) {
+  const spaceId = getSpaceSnapshot().spaces.find(
+    (space) => space.path === spacePath,
+  )?.id;
+  if (!spaceId) return;
+  void passNavigationGuards().then((passed) => {
+    if (!passed) return;
+    const { activeSpaceId, openSpace } = getSpaceSnapshot();
+    useShellStore.getState().openContentSurface();
+    if (spaceId !== activeSpaceId) void openSpace(spaceId);
+    openScopeOwner({ kind: "space", spaceId });
+  });
 }
 
 /** Open a Page by its path in a repository: the root project or a Space. */

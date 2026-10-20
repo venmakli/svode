@@ -30,6 +30,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
+import { useEffect, useRef } from "react";
+import { usePublishSpaces } from "../hooks/use-publish-spaces";
 import { useGitSyncAbort } from "../hooks/use-git-sync-abort";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
 import { isParentPointerPending } from "../model/publication";
@@ -59,6 +61,8 @@ export interface GitSyncStatusWidgetProps {
     repositoryPath: string;
     path: string;
   }) => void;
+  /** Open a Space, whose Git sync Dialog then holds its recovery. */
+  onOpenSpace?: (spacePath: string) => void;
 }
 
 export function GitSyncStatusWidget({
@@ -66,8 +70,26 @@ export function GitSyncStatusWidget({
   activateAccess = false,
   onOpenRepositorySettings,
   onOpenPage,
+  onOpenSpace,
 }: GitSyncStatusWidgetProps) {
   const sync = useGitSyncWidget(repositoryPath);
+  const block = sync.publicationBlock;
+  // In a Space Dialog the list belongs to its project version result.
+  const parentBlock = sync.parent.publication
+    ? publicationCopy(sync.parent.publication).block
+    : null;
+  const publish = usePublishSpaces(block ?? parentBlock, {
+    onAuthRequired: block ? sync.requestAuth : undefined,
+    onSynced: sync.closeAfterSync,
+  });
+  const pendingSpace = useRef<string | null>(null);
+  const { openDialog, spacePath } = sync;
+  // The Space opened from a row shows its own Dialog with the recovery.
+  useEffect(() => {
+    const target = pendingSpace.current;
+    pendingSpace.current = null;
+    if (target && target === spacePath) void openDialog();
+  }, [openDialog, spacePath]);
   const abort = useGitSyncAbort(sync.spacePath, sync.stop?.kind === "conflict");
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
   const access = useRepositoryAccess(sync.spacePath);
@@ -76,10 +98,10 @@ export function GitSyncStatusWidget({
 
   if (!sync.spacePath || (!sync.visible && !accessLabel)) return null;
 
-  const busy = sync.syncing || sync.checkingRemote || sync.parent.busy;
+  const busy =
+    sync.syncing || sync.checkingRemote || sync.parent.busy || publish.running;
   const pendingParent = isParentPointerPending(sync.parent.publication);
   const stop = sync.stop;
-  const block = sync.publicationBlock;
   const error = sync.syncError ?? sync.remoteError;
   // An unfinished Git operation or the Spaces that stop publication explain
   // why sync cannot finish; they take focus.
@@ -115,9 +137,13 @@ export function GitSyncStatusWidget({
   ]
     .filter(Boolean)
     .join(", ");
+  // Publishing the shown Spaces takes the place of sync or the project retry.
+  const publishAction =
+    sync.visible && (publish.available || publish.running) && !stop;
   // Sync cannot run through an unfinished Git operation.
   const footerAction =
     sync.visible &&
+    !publishAction &&
     sync.parent.action !== "none" &&
     !(stop && sync.parent.action === "sync");
   const openPage = onOpenPage
@@ -128,6 +154,14 @@ export function GitSyncStatusWidget({
           repositoryPath: sync.repositoryPath,
           path,
         });
+      }
+    : undefined;
+  const openSpace = onOpenSpace
+    ? (target: string) => {
+        if (target === sync.spacePath) return;
+        sync.setOpen(false);
+        pendingSpace.current = target;
+        onOpenSpace(target);
       }
     : undefined;
   const openSettings = onOpenRepositorySettings
@@ -233,6 +267,8 @@ export function GitSyncStatusWidget({
                   <GitPublicationResult
                     publication={sync.parent.publication}
                     error={sync.parent.error}
+                    publish={publish}
+                    onOpenSpace={openSpace}
                   />
                 )}
                 {stop?.kind === "conflict" && abort.error && (
@@ -247,7 +283,12 @@ export function GitSyncStatusWidget({
                 {stop && (
                   <GitSyncStopNotice stop={stop} onOpenPage={openPage} />
                 )}
-                {block && <GitPublicationBlockNotice block={block} />}
+                {!parentBlock && publish.block && (
+                  <GitPublicationBlockNotice
+                    publish={publish}
+                    onOpenSpace={openSpace}
+                  />
+                )}
                 {hasSyncError && (
                   <Alert variant="destructive">
                     <AlertTriangle />
@@ -341,6 +382,22 @@ export function GitSyncStatusWidget({
                 disabled={busy}
                 onConfirm={() => void abort.abort()}
               />
+            )}
+            {publishAction && (
+              <Button
+                className="w-full sm:w-auto"
+                onClick={() => void publish.publish()}
+                disabled={busy}
+                data-spaces-publication-action
+              >
+                {publish.running && (
+                  <RefreshCw
+                    data-icon="inline-start"
+                    className="animate-spin"
+                  />
+                )}
+                {publish.label}
+              </Button>
             )}
             {footerAction && (
               <Button

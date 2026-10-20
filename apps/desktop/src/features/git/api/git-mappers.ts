@@ -88,10 +88,15 @@ export function toParentPublication(
 ): ParentPublication {
   return {
     ...dto,
-    error:
-      typeof dto.error === "string"
-        ? { kind: "git_command_failed", message: dto.error }
-        : dto.error,
+    error: toParentError(dto.error),
     result: dto.result ? toSyncResult(dto.result) : undefined,
   };
+}
+
+export function toParentError(
+  error: ParentPublicationDto["error"],
+): ParentPublication["error"] {
+  return typeof error === "string"
+    ? { kind: "git_command_failed", message: error }
+    : error;
 }

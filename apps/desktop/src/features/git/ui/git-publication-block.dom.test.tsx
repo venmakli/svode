@@ -177,11 +177,15 @@ if (process.env.SVODE_PUBLICATION_BLOCK_DOM !== "1") {
         expect(
           rows()[1].querySelector("span")!.classList.contains("truncate"),
         ).toBe(true);
-        // Outgoing commits, counters and the sync action stay below.
+        // Outgoing commits and counters stay below; publishing the
+        // publishable Spaces takes the place of sync.
         expect(
           dialog().textContent.includes(m.git_sync_outgoing_section()),
         ).toBe(true);
-        expect(button(m.git_sync_action())?.disabled).toBe(false);
+        expect(button(m.git_publication_publish_spaces())?.disabled).toBe(
+          false,
+        );
+        expect(button(m.git_sync_action())).toBe(undefined);
 
         // The header shows a stop without the red error.
         const indicator = control().querySelector<HTMLElement>(
@@ -214,11 +218,15 @@ if (process.env.SVODE_PUBLICATION_BLOCK_DOM !== "1") {
           reason: "target_changed",
         };
         toasts.length = 0;
+        const { syncSpace } = await import("../api/git-actions");
+        const { notifyGitSyncOutcome } =
+          await import("../effects/git-notifications");
         await act(async () => {
-          button(m.git_sync_action())!.click();
+          notifyGitSyncOutcome(await syncSpace(path));
         });
         await settle();
         expect(rows().length).toBe(0);
+        expect(button(m.git_sync_action())?.disabled).toBe(false);
         expect(
           dialog()
             .querySelector("[data-slot=alert].text-destructive")

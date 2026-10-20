@@ -58,6 +58,10 @@ export interface GitSyncWidget {
   authError: string | null;
   openDialog: () => Promise<void>;
   syncNow: () => Promise<void>;
+  /** Ask for the remote sign-in of this repository. */
+  requestAuth: (challenge: GitAuthChallenge) => void;
+  /** Finish the Dialog like a successful sync. */
+  closeAfterSync: () => void;
   setAuthOpen: (open: boolean) => void;
   saveAuthAndRetry: (credentials: GitRemoteAuthCredentials) => Promise<void>;
   setAutoSync: (enabled: boolean) => Promise<void>;
@@ -267,6 +271,18 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     await loadCommits();
   }, [loadCommits, refreshRemote, refreshStop, spacePath]);
 
+  const requestAuth = useCallback((challenge: GitAuthChallenge) => {
+    setAuthChallenge(challenge);
+    setAuthError(null);
+    setAuthOpenState(true);
+  }, []);
+
+  const closeAfterSync = useCallback(() => {
+    outgoingRequest.current++;
+    setOpen(false);
+    setCommits([]);
+  }, []);
+
   const syncNow = useCallback(async () => {
     if (!spacePath) return;
     const identity = active.current;
@@ -274,23 +290,16 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     const outcome = await syncGitNow(spacePath);
     if (active.current !== identity) return;
     if (outcome.type === "AuthRequired") {
-      if (outcome.challenge) {
-        setAuthChallenge(outcome.challenge);
-        setAuthError(null);
-        setAuthOpenState(true);
-      } else {
-        notifyGitSyncOutcome(outcome);
-      }
+      if (outcome.challenge) requestAuth(outcome.challenge);
+      else notifyGitSyncOutcome(outcome);
       return;
     }
     notifyGitSyncOutcome(outcome);
     if (isFullSyncSuccess(outcome)) {
-      outgoingRequest.current++;
       toast.success(m.git_sync_success());
-      setOpen(false);
-      setCommits([]);
+      closeAfterSync();
     }
-  }, [spacePath]);
+  }, [closeAfterSync, requestAuth, spacePath]);
 
   const setAuthOpen = useCallback((nextOpen: boolean) => {
     setAuthOpenState(nextOpen);
@@ -316,12 +325,10 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
         const outcome = await syncGitNow(spacePath);
         if (active.current !== identity) return;
         if (isFullSyncSuccess(outcome)) {
-          outgoingRequest.current++;
           toast.success(m.git_sync_success());
           setAuthOpenState(false);
           setAuthChallenge(null);
-          setOpen(false);
-          setCommits([]);
+          closeAfterSync();
           return;
         }
         if (outcome.type === "AuthRequired") {
@@ -340,7 +347,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
         if (active.current === identity) setAuthSaving(false);
       }
     },
-    [authChallenge, authSaving, spacePath],
+    [authChallenge, authSaving, closeAfterSync, spacePath],
   );
 
   const setAutoSync = useCallback(
@@ -409,6 +416,8 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     authError,
     openDialog,
     syncNow,
+    requestAuth,
+    closeAfterSync,
     setAuthOpen,
     saveAuthAndRetry,
     setAutoSync,

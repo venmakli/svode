@@ -2,6 +2,7 @@ export * from "./types";
 export * from "./git-store";
 export * from "./sync-stop";
 export * from "./publication-block";
+export * from "./spaces-publication";
 export * from "./git-paths";
 export * from "./save-scope";
 export * from "./save-shortcuts";

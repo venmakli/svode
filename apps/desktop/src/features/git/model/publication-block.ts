@@ -75,13 +75,29 @@ function knownSpace(
 ) {
   const locations = new Set([joinPath(block.project, path)]);
   if (context.projectPath) locations.add(joinPath(context.projectPath, path));
-  return context.spaces.find((space) => locations.has(locationKey(space.path)));
+  return context.spaces.find((space) =>
+    locations.has(repositoryLocationKey(space.path)),
+  );
+}
+
+/** The location of a gitlink path inside the project repository. */
+export function blockedSpaceLocation(project: string, path: string) {
+  return joinPath(project, path);
+}
+
+/** One identity for the same list of Spaces and classes. */
+export function publicationBlockKey(block: GitPublicationBlock) {
+  return JSON.stringify([
+    repositoryLocationKey(block.project),
+    block.spaces.map((space) => [space.path, space.class]),
+  ]);
 }
 
 function joinPath(root: string, path: string) {
-  return `${locationKey(root)}/${locationKey(path)}`;
+  return `${repositoryLocationKey(root)}/${repositoryLocationKey(path)}`;
 }
 
-function locationKey(path: string) {
+/** A path compared with forward slashes and no trailing slash. */
+export function repositoryLocationKey(path: string) {
   return path.replace(/\\/g, "/").replace(/\/+$/, "");
 }
