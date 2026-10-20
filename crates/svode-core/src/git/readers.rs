@@ -216,6 +216,7 @@ pub async fn inspect(
             },
             error: permission.err().map(Into::into),
             policy_skipped: None,
+            unpublished_commits: None,
         },
     };
     if Snapshot::read(cli, parent).await? != parent_snapshot {

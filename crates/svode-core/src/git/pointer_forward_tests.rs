@@ -102,6 +102,7 @@ async fn a_space_behind_the_project_pointer_is_reported_and_never_moves_it_back(
                 background,
                 publish,
                 Ok(()),
+                false,
             )
             .await;
             let outcome = serde_json::to_value(outcome).unwrap();
@@ -177,8 +178,17 @@ async fn a_space_ahead_of_the_project_pointer_still_moves_it_forward() {
 
     commit(&f.child, "note", "ahead again");
     let head = git(&f.child, &["rev-parse", "HEAD"]);
-    let outcome =
-        flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, false, Ok(())).await;
+    let outcome = flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        false,
+        Ok(()),
+        false,
+    )
+    .await;
     assert_eq!(serde_json::to_value(outcome).unwrap()["pointer"], "local");
     assert_eq!(pointer(&f), head);
 }

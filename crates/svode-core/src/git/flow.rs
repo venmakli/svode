@@ -33,6 +33,10 @@ pub struct ParentPublication {
     pub(crate) error: Option<SharedError>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) policy_skipped: Option<bool>,
+    /// Unpublished project commits that kept the pointer local after an
+    /// explicit Space sync while project auto-sync is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) unpublished_commits: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -392,6 +396,7 @@ async fn sync_locked(
                     result: None,
                     error: Some(error.into()),
                     policy_skipped: None,
+                    unpublished_commits: None,
                 }),
             });
         }
@@ -428,6 +433,7 @@ async fn sync_locked(
                 result: None,
                 error: Some(super::operations::target_changed(&parent).into()),
                 policy_skipped: None,
+                unpublished_commits: None,
             },
             None,
         )
@@ -509,8 +515,12 @@ async fn parent_step_recorded(
             permission = Err(error);
         }
     }
-    let outcome =
-        parent_step_locked(cli, repo, parent, expected, background, publish, permission).await;
+    // A retry is addressed to the project; only a Space sync holds its unrelated commits.
+    let space_sync = publish && !background && retry_target.is_none();
+    let outcome = parent_step_locked(
+        cli, repo, parent, expected, background, publish, permission, space_sync,
+    )
+    .await;
     if matches!(outcome.result, Some(SyncResult::Success { .. })) {
         host.refresh_synced_repository(cli, parent).await;
     } else if matches!(outcome.result, Some(SyncResult::AuthRequired { .. }))
@@ -570,6 +580,7 @@ pub async fn parent_step_locked(
     background: bool,
     publish: bool,
     permission: Result<(), GitError>,
+    space_sync: bool,
 ) -> ParentPublication {
     let target = publication_target(cli, repo, parent).await;
     let transport = super::operations::read_transport(cli, parent).await;
@@ -580,6 +591,7 @@ pub async fn parent_step_locked(
         result: None,
         error: None,
         policy_skipped: None,
+        unpublished_commits: None,
     };
     if let Ok(path) =
         crate::git::path::repo_relative_from_base(&parent, repo, crate::git::path::RootMode::Reject)
@@ -642,6 +654,12 @@ pub async fn parent_step_locked(
         if !publish {
             return Ok(());
         }
+        if space_sync && !policy.auto_sync {
+            if let Some(count) = unrelated_commits(cli, parent).await? {
+                outcome.unpublished_commits = Some(count);
+                return Ok(());
+            }
+        }
         super::sync::validate_transport(cli, parent, &transport?).await?;
         let root_result = super::sync::sync(cli, parent).await?;
         if let SyncResult::Success { published_head } = &root_result {
@@ -662,6 +680,50 @@ pub async fn parent_step_locked(
         outcome.error = Some(error.into());
     }
     outcome
+}
+
+/// Counts the project commits an explicit Space sync must not publish while
+/// project auto-sync is off: the non-merge commits absent from the tracking
+/// ref, unless each only moves Space gitlinks. A branch without upstream is
+/// always held. Local only, with no remote access.
+async fn unrelated_commits(cli: &GitCli, parent: &Path) -> Result<Option<usize>, GitError> {
+    let upstream = cli
+        .exec(parent, &["rev-parse", "--verify", "--quiet", "@{upstream}"])
+        .await?;
+    let tracked = upstream.exit_code == 0;
+    let mut args = vec![
+        "log",
+        "--no-merges",
+        "--no-renames",
+        "--ignore-submodules=none",
+        "--raw",
+        "--no-abbrev",
+        "--format=%x01",
+        "HEAD",
+        "--not",
+    ];
+    args.push(if tracked { "@{upstream}" } else { "--remotes" });
+    let out = cli.exec(parent, &args).await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(
+            "Cannot read unpublished project commits".into(),
+        ));
+    }
+    let commits = out.stdout.split('\u{1}').skip(1).collect::<Vec<_>>();
+    let pointers_only = commits.iter().all(|commit| {
+        let mut changes = commit
+            .lines()
+            .filter(|line| line.starts_with(':'))
+            .peekable();
+        changes.peek().is_some()
+            && changes.all(|line| {
+                line[1..]
+                    .split(' ')
+                    .take(2)
+                    .all(|mode| mode == "160000" || mode == "000000")
+            })
+    });
+    Ok((!tracked || !pointers_only).then_some(commits.len()))
 }
 
 pub async fn fetch_status(

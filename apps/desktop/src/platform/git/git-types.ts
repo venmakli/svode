@@ -77,6 +77,7 @@ export interface ParentPublicationDto {
   result?: SyncResultDto;
   error?: string | { kind: string; [key: string]: unknown };
   policySkipped?: boolean;
+  unpublishedCommits?: number;
 }
 
 export interface GitUserPolicyDto {

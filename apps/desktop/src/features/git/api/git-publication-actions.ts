@@ -68,6 +68,7 @@ export async function refreshGitPublication(path: string): Promise<void> {
   ) {
     dto.parent.error = before.parent.error;
     dto.parent.policySkipped = before.parent.policySkipped;
+    dto.parent.unpublishedCommits = before.parent.unpublishedCommits;
     if (before.parent.result?.type === "Conflict")
       dto.parent.result = {
         type: "conflict",

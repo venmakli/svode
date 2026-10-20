@@ -146,6 +146,7 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
                 request.intent.background(),
                 true,
                 permission,
+                false,
             )
             .await;
             if let Some(result @ SyncResult::Success { .. }) = &outcome.result {
@@ -619,9 +620,17 @@ async fn every_parent_policy_preserves_local_pointer_and_existing_pointer_public
         let child_head = git(&f.child, &["rev-parse", "HEAD"]);
         let root_before = git(&f.root, &["rev-parse", "HEAD"]);
         let remote_before = git(&f.remote, &["rev-parse", "main"]);
-        let local =
-            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, true, false, Ok(()))
-                .await;
+        let local = flow::parent_step_locked(
+            &f.cli,
+            &f.child,
+            &f.root,
+            &child_head,
+            true,
+            false,
+            Ok(()),
+            false,
+        )
+        .await;
         let local = serde_json::to_value(local).unwrap();
         assert_eq!(
             local["pointer"] == "local",
@@ -638,9 +647,17 @@ async fn every_parent_policy_preserves_local_pointer_and_existing_pointer_public
             "local step must not publish"
         );
         git(&f.child, &["push", "origin", "main"]);
-        let automatic =
-            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, true, true, Ok(()))
-                .await;
+        let automatic = flow::parent_step_locked(
+            &f.cli,
+            &f.child,
+            &f.root,
+            &child_head,
+            true,
+            true,
+            Ok(()),
+            false,
+        )
+        .await;
         let automatic = serde_json::to_value(automatic).unwrap();
         assert_eq!(
             automatic["pointer"] == "published",
@@ -653,19 +670,44 @@ async fn every_parent_policy_preserves_local_pointer_and_existing_pointer_public
         );
         // Explicit local save remains authorized for every tuple. Subsequent
         // background publication of that existing pointer uses S alone.
-        flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, false, false, Ok(()))
-            .await;
-        let existing =
-            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, true, true, Ok(()))
-                .await;
+        flow::parent_step_locked(
+            &f.cli,
+            &f.child,
+            &f.root,
+            &child_head,
+            false,
+            false,
+            Ok(()),
+            false,
+        )
+        .await;
+        let existing = flow::parent_step_locked(
+            &f.cli,
+            &f.child,
+            &f.root,
+            &child_head,
+            true,
+            true,
+            Ok(()),
+            false,
+        )
+        .await;
         assert_eq!(
             serde_json::to_value(existing).unwrap()["pointer"] == "published",
             bits & 4 != 0,
             "existing pointer S gate {bits}"
         );
-        let explicit =
-            flow::parent_step_locked(&f.cli, &f.child, &f.root, &child_head, false, true, Ok(()))
-                .await;
+        let explicit = flow::parent_step_locked(
+            &f.cli,
+            &f.child,
+            &f.root,
+            &child_head,
+            false,
+            true,
+            Ok(()),
+            false,
+        )
+        .await;
         assert_eq!(
             serde_json::to_value(explicit).unwrap()["pointer"],
             "published"

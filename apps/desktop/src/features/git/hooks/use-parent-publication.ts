@@ -110,7 +110,9 @@ export function useParentPublication(spacePath: string | null) {
         ? m.git_publication_auth_action()
         : action === "resolve"
           ? m.git_publication_continue()
-          : m.git_publication_retry();
+          : publication?.parent.unpublishedCommits !== undefined
+            ? m.git_publication_sync_project()
+            : m.git_publication_retry();
   return {
     publication,
     action,

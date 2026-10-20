@@ -6,6 +6,7 @@ import { gitSyncStopTitle } from "./git-sync-stop-copy";
 export function publicationCopy(publication: GitPublicationStatus) {
   const { parent, child } = publication;
   const newer = parent.pointer === "newer";
+  const held = parent.unpublishedCommits !== undefined;
   const summary = newer
     ? m.git_publication_newer_summary()
     : parent.pointer === "published" && child === "published"
@@ -13,7 +14,9 @@ export function publicationCopy(publication: GitPublicationStatus) {
       : child === "unknown"
         ? m.git_publication_unchecked_summary()
         : child === "published"
-          ? m.git_publication_partial()
+          ? held && parent.pointer === "local"
+            ? m.git_publication_held_summary()
+            : m.git_publication_partial()
           : m.git_publication_local_summary();
   let reason: string | null = null;
   if (parent.error?.kind === "repository_access_denied")
@@ -30,6 +33,10 @@ export function publicationCopy(publication: GitPublicationStatus) {
   else if (parent.result?.type === "NoRemote")
     reason = m.git_publication_no_remote();
   else if (parent.error) reason = gitSyncErrorMessage(parent.error);
+  else if (held)
+    reason = m.git_publication_held({
+      count: String(parent.unpublishedCommits),
+    });
   else if (parent.policySkipped) reason = m.git_publication_policy();
   return {
     summary,

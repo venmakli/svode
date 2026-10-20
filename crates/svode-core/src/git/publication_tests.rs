@@ -3,6 +3,8 @@
 mod blockers_tests;
 #[path = "operation_tests.rs"]
 mod operation_tests;
+#[path = "parent_hold_tests.rs"]
+mod parent_hold_tests;
 #[path = "pointer_forward_tests.rs"]
 mod pointer_forward_tests;
 #[path = "push_rejection_tests.rs"]
@@ -287,9 +289,17 @@ async fn rejecting_parent_hook_preserves_child_success_and_pointer_retry() {
         &f.root,
         "cat >/dev/null\necho 'fixture hook declined publication' >&2\nexit 1",
     );
-    let report =
-        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
-            .await;
+    let report = crate::git::flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+        false,
+    )
+    .await;
     let report = serde_json::to_value(report).unwrap();
     assert_eq!(report["pointer"], "local");
     assert!(
@@ -302,9 +312,17 @@ async fn rejecting_parent_hook_preserves_child_success_and_pointer_retry() {
     assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
     assert_eq!(hook_count(&root_calls), 1);
     counting_hook(&f.root, "cat >/dev/null");
-    let report =
-        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
-            .await;
+    let report = crate::git::flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+        false,
+    )
+    .await;
     assert_eq!(
         serde_json::to_value(report).unwrap()["pointer"],
         "published"
@@ -940,7 +958,7 @@ async fn parent_permission_is_optional_after_child_save_and_publication() {
                 .map(|_| ());
         }
         let local = crate::git::flow::parent_step_locked(
-            &f.cli, &f.child, &f.root, &head, false, false, permission,
+            &f.cli, &f.child, &f.root, &head, false, false, permission, false,
         )
         .await;
         let local = serde_json::to_value(local).unwrap();
@@ -957,7 +975,7 @@ async fn parent_permission_is_optional_after_child_save_and_publication() {
             .await
             .map(|_| ());
         let outcome = crate::git::flow::parent_step_locked(
-            &f.cli, &f.child, &f.root, &head, false, true, permission,
+            &f.cli, &f.child, &f.root, &head, false, true, permission, false,
         )
         .await;
         assert_eq!(
@@ -1002,6 +1020,7 @@ async fn restart_remote_evidence_and_pointer_only_retry_preserve_child_and_stage
         false,
         false,
         Ok(()),
+        false,
     )
     .await;
     assert_eq!(serde_json::to_value(local).unwrap()["pointer"], "local");
@@ -1021,6 +1040,7 @@ async fn restart_remote_evidence_and_pointer_only_retry_preserve_child_and_stage
             false,
             true,
             Ok(()),
+            false,
         )
         .await;
         assert_eq!(
@@ -1049,9 +1069,17 @@ async fn late_parent_rejection_and_policy_skip_keep_child_published() {
     git(&f.child, &["push", "origin", "main"]);
     let head = git(&f.child, &["rev-parse", "HEAD"]);
     let root = git(&f.root, &["rev-parse", "HEAD"]);
-    let report =
-        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, true, true, Ok(()))
-            .await;
+    let report = crate::git::flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        true,
+        true,
+        Ok(()),
+        false,
+    )
+    .await;
     assert_eq!(serde_json::to_value(report).unwrap()["policySkipped"], true);
     assert_eq!(git(&f.root, &["rev-parse", "HEAD"]), root);
     svode_testkit::write_executable(
@@ -1059,18 +1087,34 @@ async fn late_parent_rejection_and_policy_skip_keep_child_published() {
         "#!/bin/sh\necho 'permission denied' >&2\nexit 1\n",
     )
     .unwrap();
-    let report =
-        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
-            .await;
+    let report = crate::git::flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+        false,
+    )
+    .await;
     let report = serde_json::to_value(report).unwrap();
     assert_eq!(report["pointer"], "local");
     assert!(report.get("error").is_some() || report["result"]["type"] == "authRequired");
     assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), root);
     std::fs::remove_file(f.remote.join("hooks/pre-receive")).unwrap();
-    let report =
-        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
-            .await;
+    let report = crate::git::flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+        false,
+    )
+    .await;
     assert_eq!(
         serde_json::to_value(report).unwrap()["pointer"],
         "published"
@@ -1130,9 +1174,17 @@ async fn parent_conflict_preserves_published_child_and_allows_retry_after_resolu
     commit(&f.child, "note", "published child");
     git(&f.child, &["push", "origin", "main"]);
     let head = git(&f.child, &["rev-parse", "HEAD"]);
-    let outcome =
-        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
-            .await;
+    let outcome = crate::git::flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+        false,
+    )
+    .await;
     let outcome = serde_json::to_value(outcome).unwrap();
     assert_eq!(outcome["result"]["type"], "conflict");
     assert_eq!(outcome["pointer"], "local");
@@ -1140,9 +1192,17 @@ async fn parent_conflict_preserves_published_child_and_allows_retry_after_resolu
     std::fs::write(f.root.join("note"), "resolved root").unwrap();
     git(&f.root, &["add", "note"]);
     git(&f.root, &["commit", "--no-edit"]);
-    let outcome =
-        crate::git::flow::parent_step_locked(&f.cli, &f.child, &f.root, &head, false, true, Ok(()))
-            .await;
+    let outcome = crate::git::flow::parent_step_locked(
+        &f.cli,
+        &f.child,
+        &f.root,
+        &head,
+        false,
+        true,
+        Ok(()),
+        false,
+    )
+    .await;
     assert_eq!(
         serde_json::to_value(outcome).unwrap()["pointer"],
         "published"

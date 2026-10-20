@@ -38,6 +38,8 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
     case "Success":
       if (outcome.parent?.pointer === "newer")
         toast.info(m.git_publication_newer_summary());
+      else if (outcome.parent?.unpublishedCommits !== undefined)
+        toast.info(m.git_publication_held_summary());
       else if (outcome.parent && outcome.parent.pointer !== "published")
         toast.info(m.git_publication_partial());
       break;

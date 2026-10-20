@@ -69,6 +69,8 @@ export interface ParentPublication {
   result?: SyncResult;
   error?: { kind: string; [key: string]: unknown };
   policySkipped?: boolean;
+  /** Unrelated project commits that kept the pointer local after an explicit Space sync. */
+  unpublishedCommits?: number;
 }
 
 export type GitSyncOutcome = SyncResult | { type: "Failed"; message: string };
