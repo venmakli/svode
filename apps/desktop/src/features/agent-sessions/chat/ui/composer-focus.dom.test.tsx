@@ -168,9 +168,8 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { SessionChat } = await import("./session-chat");
   const { NewSessionDraft } = await import("./new-session-draft");
-  const { readComposerDraft, sessionDraftKey, writeComposerDraft } = await import(
-    "../model/composer"
-  );
+  const { newSessionDraftKey, readComposerDraft, sessionDraftKey, writeComposerDraft } =
+    await import("../model/composer");
 
   const DRAFT = sessionDraftKey("codex:s1");
   let root: Root | null = null;
@@ -491,6 +490,10 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(prompts.length).toBe(1);
     expect(Boolean(document.querySelector("[data-session-chat-bottom]"))).toBe(true);
     expect(await fieldFocused()).toBe(true);
+    // The started send leaves nothing for the next draft to mark as not
+    // sent (DF-214).
+    expect(readComposerDraft(newSessionDraftKey("/project"))?.sending ?? null).toBeNull();
+    expect(readComposerDraft(newSessionDraftKey("/project"))?.parts ?? []).toEqual([]);
   });
 
   focusTest("during a turn a click puts the caret in the field and typing reaches the draft", async () => {
