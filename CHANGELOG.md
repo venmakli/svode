@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.0.10] - 2026-10-20
+
+### Added
+
+- **Agent chat.** Sessions of external coding agents run in a chat in the session peek or the main area through the Agent Client Protocol: a new session from a draft with the agent, model, reasoning and permission mode chosen before the first send, live turns with tool rows, plans and a running-turn marker, answers to permission requests and questions, Stop, and finished turns folded into a summary row. Existing sessions open from their native history and continue in the same session; a session another process writes to opens as a snapshot with Refresh and Copy resume command.
+- **More agents.** Codex, Claude Code, opencode, Cursor, pi, Hermes, Qwen Code, Kimi Code and Grok Build, plus custom ACP agents. Settings → Providers lists each agent with its CLI version, one state, sign-in, the explicit check and its verdict; the pinned Claude Code, Codex and pi adapters install into a device-local directory when an agent is turned on.
+- **Sessions in every Space.** One sidebar with Pinned and Now, a Sessions collection in each Space with sessions started inside and outside Svode, statuses in one vocabulary, and a peek for every fixed Collection. Native readers list Hermes sessions and Cursor CLI and IDE chats and show the approximate status of external Hermes, opencode, pi, Qwen Code and Grok Build sessions without writing to their stores.
+- **Composer.** File, page and folder badges from disk, `@` search, paste and drag and drop from the OS and the sidebar; `/` agent commands; settings and a context ring under the field; a draft that survives a window reload.
+- **Rich chat content.** Images, audio and files agents generate or read appear as tiles, also in a gallery under a finished turn; each turn lists the files it changed with their diff; links and inline-code paths open their objects; Mermaid diagrams and `$$` formulas render; a turn rail navigates long sessions.
+- **Voice input.** Dictation into the composer recognized on the device by a downloadable speech model, with a recommendation measured for the device, on macOS, Windows and Linux.
+- **Context collection.** One set of instructions, skills, plugins and MCP servers of the nine agents, the project's always and the machine's for enabled agents, with the agents that apply each item.
+- **Routines and Agent Actors over ACP.** Routines and Agent Actors of the built-in agents run in the chat when the agent's binding maps to ACP and otherwise in the managed terminal with the reason shown; Routines of every listed project run while Desktop runs, regardless of windows.
+- **Home as a workspace.** Home lists projects with their Pinned and Now, opens their objects on the right and starts a new chat in any project; Svode opens in the last view.
+- **Svode integration for every agent.** Svode tools (the shared skill, `svode` and the MCP server) install for each agent of the list from Providers or `svode integration`, with each agent's own part kept apart from the shared skill. `list_agent_actors` and `svode agent list` discover Routine executors.
+
+### Changed
+
+- Ships the accepted and frozen Stage 10 snapshot.
+- The agent runtime lives in the `svode-agents` library without Tauri; Desktop hosts it through thin commands.
+- The Sessions screen, the legacy in-app chat, its stream-json agent runner and the hidden legacy agent settings are removed; the `agent` section of `.svode/config.json` is kept as written.
+- Search opens with Cmd+K (Ctrl+K on Windows and Linux) instead of Cmd+P; Home opens with ⌘0 (Ctrl+0) instead of ⌘⇧O.
+- Main and peek top bars share one layout with breadcrumbs, object actions, view tools and Open with; header and row menus of content come from one action catalog, and deletion asks once naming what goes with the object.
+- YAML is read and written through `serde_norway`, keeping user frontmatter fields in file order.
+
+### Fixed
+
+- Git sync names the Spaces that stop a project sync and offers to publish them, moves Space pointers only forward, finishes merges only from resolved paths, cancels a stopped merge, and names the files whose edits stop a pull.
+- Page saves that fail show a Not saved indicator with recovery instead of repeated messages; Markdown comments, code, math and escaped text survive the rich editor round trip; percent-encoded links are matched and rewritten correctly; renames and moves rewrite nested relation schemas and order keys.
+- Apps blocked by Variables name the cause and start once it is fixed; a stale App process no longer stays behind a blocked restart.
+- The first send of a new session no longer leaves its text marked as not sent in the next draft.
+
+### Compatibility
+
+- The managed Codex MCP entry gains `env_vars` for the Routine caller token; sync and the desktop app start rewrite an entry written without it.
+- The headless MCP and CLI catalog has 54 tools.
+- The previous Sessions scanner cache is dropped; each agent's last good session list is saved per project instead.
+
 ## [0.0.9] - 2026-09-29
 
 ### Added

@@ -5509,7 +5509,7 @@ dependencies = [
 
 [[package]]
 name = "svode-cli"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "clap",
  "serde_json",
@@ -5574,7 +5574,7 @@ dependencies = [
 
 [[package]]
 name = "svode-desktop"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "base64 0.22.1",
  "block2",
@@ -5633,7 +5633,7 @@ dependencies = [
 
 [[package]]
 name = "svode-install"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "serde",
  "serde_json",
@@ -5656,7 +5656,7 @@ dependencies = [
 
 [[package]]
 name = "svode-mcp"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "serde",
  "serde_json",
