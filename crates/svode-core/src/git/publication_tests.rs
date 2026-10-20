@@ -1,4 +1,6 @@
 #![cfg(unix)]
+#[path = "publication_blockers_tests.rs"]
+mod blockers_tests;
 #[path = "operation_tests.rs"]
 mod operation_tests;
 #[path = "pointer_forward_tests.rs"]
@@ -130,6 +132,25 @@ fn counting_hook(repo: &Path, body: &str) -> PathBuf {
 
 fn hook_count(calls: &Path) -> usize {
     std::fs::read_to_string(calls).unwrap().lines().count()
+}
+
+fn blocked_spaces<T: std::fmt::Debug>(
+    result: Result<T, GitError>,
+) -> Vec<(String, SpaceBlockClass)> {
+    match result {
+        Err(GitError::PublicationBlocked {
+            reason: PublicationBlockReason::Spaces { spaces },
+            ..
+        }) => spaces
+            .into_iter()
+            .map(|space| (space.path, space.class))
+            .collect(),
+        other => panic!("expected blocked Spaces, got {other:?}"),
+    }
+}
+
+fn one(class: SpaceBlockClass) -> Vec<(String, SpaceBlockClass)> {
+    vec![("Пространство one".to_owned(), class)]
 }
 
 #[tokio::test]
@@ -409,13 +430,10 @@ async fn merge_cannot_hide_an_unpublished_gitlink() {
     commit(&f.root, "note", "main documentation");
     git(&f.root, &["merge", "--no-edit", "side"]);
     let before = git(&f.remote, &["rev-parse", "main"]);
-    assert!(matches!(
-        f.push().await,
-        Err(GitError::PublicationBlocked {
-            reason: PublicationBlockReason::RevisionUnavailable,
-            ..
-        })
-    ));
+    assert_eq!(
+        blocked_spaces(f.push().await),
+        one(SpaceBlockClass::LocalCommits)
+    );
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
 }
 
@@ -446,13 +464,10 @@ async fn source_proof_fetches_missing_remote_continuation_and_prunes_copied_loca
     git(&f.child, &["branch", "local-only"]);
     git(&f.child, &["tag", "local-only-tag"]);
     f.pointer();
-    assert!(matches!(
-        f.push().await,
-        Err(GitError::PublicationBlocked {
-            reason: PublicationBlockReason::RevisionUnavailable,
-            ..
-        })
-    ));
+    assert_eq!(
+        blocked_spaces(f.push().await),
+        one(SpaceBlockClass::LocalCommits)
+    );
 }
 
 #[tokio::test]
@@ -461,13 +476,10 @@ async fn child_must_be_reachable_from_project_source_and_fresh_clone_works() {
     let before = git(&f.remote, &["rev-parse", "main"]);
     commit(&f.child, "note", "new child");
     f.pointer();
-    assert!(matches!(
-        f.push().await,
-        Err(GitError::PublicationBlocked {
-            reason: PublicationBlockReason::RevisionUnavailable,
-            ..
-        })
-    ));
+    assert_eq!(
+        blocked_spaces(f.push().await),
+        one(SpaceBlockClass::LocalCommits)
+    );
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
     let other = f._temp.path().join("other.git");
     git(f._temp.path(), &["init", "--bare", other.to_str().unwrap()]);
@@ -537,13 +549,10 @@ async fn first_publish_checks_all_history_and_uninitialized_child_is_blocked() {
         &f.root,
         &["submodule", "deinit", "-f", "--", "Пространство one"],
     );
-    assert!(matches!(
-        super::push(&f.cli, &f.root, true).await,
-        Err(GitError::PublicationBlocked {
-            reason: PublicationBlockReason::UninitializedChild,
-            ..
-        })
-    ));
+    assert_eq!(
+        blocked_spaces(super::push(&f.cli, &f.root, true).await),
+        one(SpaceBlockClass::Uninitialized)
+    );
 }
 
 #[tokio::test]
@@ -647,13 +656,10 @@ async fn multiple_children_and_changed_historical_source_are_all_verified() {
         ],
     );
     git(&f.root, &["commit", "-am", "restored source"]);
-    assert!(matches!(
-        f.push().await,
-        Err(GitError::PublicationBlocked {
-            reason: PublicationBlockReason::SourceUnavailable,
-            ..
-        })
-    ));
+    assert_eq!(
+        blocked_spaces(f.push().await),
+        one(SpaceBlockClass::SourceUnavailable)
+    );
 }
 
 #[tokio::test]
@@ -823,16 +829,7 @@ async fn pulled_pointer_to_published_revision_missing_from_child_is_published() 
                 revision
             );
         } else {
-            assert!(
-                matches!(
-                    result,
-                    Err(GitError::PublicationBlocked {
-                        reason: PublicationBlockReason::RevisionUnavailable,
-                        ..
-                    })
-                ),
-                "{result:?}"
-            );
+            assert_eq!(blocked_spaces(result), one(SpaceBlockClass::Missing));
             assert_eq!(git(&f.remote, &["rev-parse", "main"]), collaborator);
         }
         assert_eq!(child_state(), before, "{published}");

@@ -285,7 +285,6 @@ impl Snapshot {
 pub fn target_changed(repo: &Path) -> GitError {
     GitError::PublicationBlocked {
         repository: repo.to_string_lossy().into_owned(),
-        child: None,
         reason: super::publication::PublicationBlockReason::TargetChanged,
     }
 }

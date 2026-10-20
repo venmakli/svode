@@ -621,7 +621,6 @@ pub async fn parent_step_locked(
         if ops::repository_head_oid(&cli, repo).await? != expected {
             return Err(GitError::PublicationBlocked {
                 repository: parent.to_string_lossy().into_owned(),
-                child: Some(repo.to_string_lossy().into_owned()),
                 reason: super::publication::PublicationBlockReason::TargetChanged,
             });
         }
@@ -757,10 +756,19 @@ async fn retry_parent_locked(
 ) -> Result<PublicationStatus, GitError> {
     validate_parent_target(cli, repo, expected, expected_parent, expected_target).await?;
     if !super::publication::head_is_published(cli, repo, expected).await? {
+        let path = crate::git::path::repo_relative_from_base(
+            &std::fs::canonicalize(expected_parent)?,
+            &std::fs::canonicalize(repo)?,
+            crate::git::path::RootMode::Reject,
+        )?;
         return Err(GitError::PublicationBlocked {
             repository: expected_parent.to_string_lossy().into_owned(),
-            child: Some(repo.to_string_lossy().into_owned()),
-            reason: super::publication::PublicationBlockReason::RevisionUnavailable,
+            reason: super::publication::PublicationBlockReason::Spaces {
+                spaces: vec![super::publication::BlockedSpace {
+                    path,
+                    class: super::publication::SpaceBlockClass::LocalCommits,
+                }],
+            },
         });
     }
     let (outcome, evidence) = parent_step_recorded(
@@ -856,14 +864,12 @@ pub async fn validate_parent_target(
     {
         return Err(GitError::PublicationBlocked {
             repository: repo.to_string_lossy().into_owned(),
-            child: None,
             reason: super::publication::PublicationBlockReason::TargetChanged,
         });
     }
     if publication_target(cli, repo, expected_parent).await? != expected_target {
         return Err(GitError::PublicationBlocked {
             repository: expected_parent.to_string_lossy().into_owned(),
-            child: None,
             reason: super::publication::PublicationBlockReason::TargetChanged,
         });
     }

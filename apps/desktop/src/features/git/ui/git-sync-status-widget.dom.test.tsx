@@ -82,8 +82,8 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
           failFetch = failed;
           const cause = gitSyncErrorMessage({
             kind: "git_publication_blocked",
-            reason: "revision_unavailable",
-            child: "develop",
+            reason: "spaces",
+            spaces: [{ path: "develop", class: "local_commits" }],
           });
           useGitStore.getState().setSyncError(path, cause);
           await dom.render(

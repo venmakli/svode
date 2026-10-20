@@ -32,7 +32,7 @@ impl LocalFacts {
         );
         let branch = branch?;
         if branch.exit_code > 1 {
-            return Err(blocked(repo, None, PublicationBlockReason::Configuration));
+            return Err(blocked(repo, PublicationBlockReason::Configuration));
         }
         let branch = branch.stdout.trim_end().to_owned();
         let (refs, config, paths) = (refs?, config?, paths?);
@@ -40,7 +40,7 @@ impl LocalFacts {
         let common = Path::new(
             paths
                 .next()
-                .ok_or_else(|| blocked(repo, None, PublicationBlockReason::Configuration))?,
+                .ok_or_else(|| blocked(repo, PublicationBlockReason::Configuration))?,
         );
         let ordinary_repository =
             !common.join("remotes").exists() && !common.join("branches").exists();
@@ -137,7 +137,7 @@ impl Snapshot {
         first: bool,
     ) -> Result<(), GitError> {
         let unchanged = if self.reusable_mapping() {
-            let changed = || blocked(repo, None, PublicationBlockReason::TargetChanged);
+            let changed = || blocked(repo, PublicationBlockReason::TargetChanged);
             let local = LocalFacts::read(cli, repo).await.map_err(|_| changed())?;
             if local != self.local {
                 return Err(changed());
@@ -159,7 +159,7 @@ impl Snapshot {
         if unchanged {
             Ok(())
         } else {
-            Err(blocked(repo, None, PublicationBlockReason::TargetChanged))
+            Err(blocked(repo, PublicationBlockReason::TargetChanged))
         }
     }
 }
@@ -215,7 +215,7 @@ pub(super) async fn snapshot(
         .refs
         .lines()
         .find_map(|line| line.strip_suffix(" HEAD"))
-        .ok_or_else(|| blocked(repo, None, PublicationBlockReason::Configuration))?
+        .ok_or_else(|| blocked(repo, PublicationBlockReason::Configuration))?
         .to_owned();
     let mut destination = None;
     let mut updates = BTreeMap::new();
@@ -224,15 +224,15 @@ pub(super) async fn snapshot(
     for line in out.stdout.lines() {
         if let Some(url) = line.strip_prefix("To ") {
             if destination.replace(url.to_owned()).is_some() {
-                return Err(blocked(repo, None, PublicationBlockReason::Configuration));
+                return Err(blocked(repo, PublicationBlockReason::Configuration));
             }
         } else if let Some((flag, rest)) = line.split_once('\t') {
             let mapping = rest.split('\t').next().unwrap_or_default();
             let (source, target) = mapping
                 .split_once(':')
-                .ok_or_else(|| blocked(repo, None, PublicationBlockReason::Configuration))?;
+                .ok_or_else(|| blocked(repo, PublicationBlockReason::Configuration))?;
             if source.is_empty() || !target.starts_with("refs/") || flag == "+" || flag == "-" {
-                return Err(blocked(repo, None, PublicationBlockReason::Configuration));
+                return Err(blocked(repo, PublicationBlockReason::Configuration));
             }
             let oid = checked(cli, repo, &["rev-parse", "--verify", source]).await?;
             sources.insert(source.into(), oid.clone());
@@ -243,10 +243,10 @@ pub(super) async fn snapshot(
         }
     }
     if !sources.values().any(|oid| oid == &head) {
-        return Err(blocked(repo, None, PublicationBlockReason::Configuration));
+        return Err(blocked(repo, PublicationBlockReason::Configuration));
     }
     let destination =
-        destination.ok_or_else(|| blocked(repo, None, PublicationBlockReason::Configuration))?;
+        destination.ok_or_else(|| blocked(repo, PublicationBlockReason::Configuration))?;
     let mut remote = "origin".to_owned();
     if !first {
         for key in [
@@ -266,7 +266,7 @@ pub(super) async fn snapshot(
     )
     .await?;
     if urls.exit_code != 0 || urls.stdout.lines().collect::<Vec<_>>() != [destination.as_str()] {
-        return Err(blocked(repo, None, PublicationBlockReason::Configuration));
+        return Err(blocked(repo, PublicationBlockReason::Configuration));
     }
     let fetch_urls = checked(cli, repo, &["remote", "get-url", "--all", &remote]).await?;
     let advertised = advertisement(cli, repo, &destination).await?;

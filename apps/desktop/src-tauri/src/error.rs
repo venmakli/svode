@@ -209,15 +209,9 @@ impl From<svode_core::git::GitError> for AppError {
                 blockers: Vec::new(),
             },
             GitError::SourceBusy { path } => Self::SourceBusy { path },
-            GitError::PublicationBlocked {
-                repository,
-                child,
-                reason,
-            } => Self::GitPublicationBlocked {
-                repository,
-                child,
-                reason,
-            },
+            GitError::PublicationBlocked { repository, reason } => {
+                Self::GitPublicationBlocked { repository, reason }
+            }
             GitError::BranchBlocked { reason } => Self::GitBranchBlocked { reason },
             GitError::PushRejected {
                 reason,
@@ -458,7 +452,6 @@ pub enum AppError {
     #[error("Project publication blocked: {reason:?}")]
     GitPublicationBlocked {
         repository: String,
-        child: Option<String>,
         reason: svode_core::git::publication::PublicationBlockReason,
     },
 
@@ -670,8 +663,8 @@ impl Serialize for AppError {
             | AppError::UnsupportedRenameTarget { path } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "path": path }).serialize(serializer)
             }
-            AppError::GitPublicationBlocked { repository, child, reason } => {
-                serde_json::json!({ "kind": self.kind(), "repository": repository, "child": child, "reason": reason }).serialize(serializer)
+            AppError::GitPublicationBlocked { repository, reason } => {
+                svode_core::git::publication::BlockedTransport { kind: self.kind(), repository, reason }.serialize(serializer)
             }
             AppError::GitBranchBlocked { reason } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
@@ -740,6 +733,56 @@ mod tests {
         assert_eq!(value["kind"], "agent_runtime");
         assert_eq!(value["code"], "turn_active");
         assert_eq!(value["message"], "a turn is already active in this session");
+    }
+
+    #[test]
+    fn publication_refusals_serialize_the_core_transport_shape() {
+        use svode_core::git::publication::{BlockedSpace, PublicationBlockReason, SpaceBlockClass};
+        let project = serde_json::to_value(AppError::from(
+            svode_core::git::GitError::PublicationBlocked {
+                repository: "/project".into(),
+                reason: PublicationBlockReason::SourceUnavailable,
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            project,
+            serde_json::json!({
+                "kind": "git_publication_blocked",
+                "repository": "/project",
+                "reason": "source_unavailable",
+            })
+        );
+        let spaces = serde_json::to_value(AppError::from(
+            svode_core::git::GitError::PublicationBlocked {
+                repository: "/project".into(),
+                reason: PublicationBlockReason::Spaces {
+                    spaces: vec![
+                        BlockedSpace {
+                            path: "compliance".into(),
+                            class: SpaceBlockClass::LocalCommits,
+                        },
+                        BlockedSpace {
+                            path: "legal".into(),
+                            class: SpaceBlockClass::Missing,
+                        },
+                    ],
+                },
+            },
+        ))
+        .unwrap();
+        assert_eq!(
+            spaces,
+            serde_json::json!({
+                "kind": "git_publication_blocked",
+                "repository": "/project",
+                "reason": "spaces",
+                "spaces": [
+                    { "path": "compliance", "class": "local_commits" },
+                    { "path": "legal", "class": "missing" },
+                ],
+            })
+        );
     }
 
     #[test]

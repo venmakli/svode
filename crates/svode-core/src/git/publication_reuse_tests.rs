@@ -4,7 +4,7 @@ fn shell(value: &Path) -> String {
     format!("'{}'", value.to_string_lossy().replace('\'', "'\\''"))
 }
 
-fn traced(f: &Fixture, injection: &str) -> PathBuf {
+pub(super) fn traced(f: &Fixture, injection: &str) -> PathBuf {
     let log = f._temp.path().join("commands");
     std::fs::write(&log, "").unwrap();
     svode_testkit::write_executable(f.cli.git_path(), format!(
@@ -13,7 +13,7 @@ fn traced(f: &Fixture, injection: &str) -> PathBuf {
     log
 }
 
-fn count(log: &Path, pattern: &str) -> usize {
+pub(super) fn count(log: &Path, pattern: &str) -> usize {
     std::fs::read_to_string(log)
         .unwrap()
         .lines()
@@ -458,13 +458,10 @@ async fn pull_merge_checks_gitlinks_introduced_by_the_new_outgoing_history() {
     git(&other, &["push", "--recurse-submodules=no"]);
     let before = git(&f.remote, &["rev-parse", "main"]);
     commit(&f.root, "note", "local content");
-    assert!(matches!(
-        crate::git::sync::sync(&f.cli, &f.root).await,
-        Err(GitError::PublicationBlocked {
-            reason: PublicationBlockReason::RevisionUnavailable,
-            ..
-        })
-    ));
+    assert_eq!(
+        blocked_spaces(crate::git::sync::sync(&f.cli, &f.root).await),
+        one(SpaceBlockClass::LocalCommits)
+    );
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
     assert_eq!(
         git(&f.root, &["rev-list", "--parents", "-n", "1", "HEAD"])

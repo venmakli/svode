@@ -16,14 +16,30 @@ export function gitSyncErrorMessage(error: unknown): string {
       : m.git_sync_access_unknown();
   const publication = toGitPublicationBlockDto(error);
   if (publication) {
-    const reason = {
-      target_changed: m.git_publication_target_changed,
-      configuration: m.git_sync_publication_configuration,
-      uninitialized_child: m.git_sync_publication_uninitialized,
-      source_unavailable: m.git_sync_publication_source_unavailable,
-      revision_unavailable: m.git_publication_revision_unavailable,
-    }[publication.reason]();
-    return publication.child ? `${publication.child}: ${reason}` : reason;
+    if (publication.reason !== "spaces")
+      return {
+        target_changed: m.git_publication_target_changed,
+        configuration: m.git_sync_publication_configuration,
+        source_unavailable: m.git_sync_publication_source_unavailable,
+        revision_unavailable: m.git_publication_revision_unavailable,
+      }[publication.reason]();
+    // Minimal summary: Spaces sharing a reason are named together by path.
+    const groups = new Map<string, string[]>();
+    for (const space of publication.spaces) {
+      const reason = {
+        local_commits: m.git_publication_revision_unavailable,
+        outside_branch: m.git_publication_revision_unavailable,
+        missing: m.git_publication_revision_unavailable,
+        unverified: m.git_publication_revision_unavailable,
+        source_unavailable: m.git_sync_publication_source_unavailable,
+        uninitialized: m.git_sync_publication_uninitialized,
+        configuration: m.git_sync_publication_configuration,
+      }[space.class]();
+      groups.set(reason, [...(groups.get(reason) ?? []), space.path]);
+    }
+    return [...groups]
+      .map(([reason, paths]) => `${paths.join(", ")}: ${reason}`)
+      .join(" ");
   }
   const pullBlock = toGitPullBlockDto(error);
   if (pullBlock)

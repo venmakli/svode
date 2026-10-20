@@ -54,7 +54,6 @@ pub enum GitError {
     #[error("Project publication blocked: {reason:?}")]
     PublicationBlocked {
         repository: String,
-        child: Option<String>,
         reason: publication::PublicationBlockReason,
     },
     #[error(
@@ -129,16 +128,11 @@ impl GitError {
 impl serde::Serialize for GitError {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            GitError::PublicationBlocked {
+            GitError::PublicationBlocked { repository, reason } => publication::BlockedTransport {
+                kind: self.kind(),
                 repository,
-                child,
                 reason,
-            } => serde_json::json!({
-                "kind": self.kind(),
-                "repository": repository,
-                "child": child,
-                "reason": reason,
-            })
+            }
             .serialize(serializer),
             GitError::BranchBlocked { reason } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
@@ -202,14 +196,36 @@ mod tests {
     fn structured_failures_keep_their_existing_transport_shape() {
         let blocked = serde_json::to_value(GitError::PublicationBlocked {
             repository: "/repo".to_string(),
-            child: Some("child".to_string()),
             reason: publication::PublicationBlockReason::TargetChanged,
         })
         .unwrap();
-        assert_eq!(blocked["kind"], "git_publication_blocked");
-        assert_eq!(blocked["repository"], "/repo");
-        assert_eq!(blocked["child"], "child");
-        assert_eq!(blocked["reason"], "target_changed");
+        assert_eq!(
+            blocked,
+            serde_json::json!({
+                "kind": "git_publication_blocked",
+                "repository": "/repo",
+                "reason": "target_changed",
+            })
+        );
+        let spaces = serde_json::to_value(GitError::PublicationBlocked {
+            repository: "/repo".to_string(),
+            reason: publication::PublicationBlockReason::Spaces {
+                spaces: vec![publication::BlockedSpace {
+                    path: "spaces/one".to_string(),
+                    class: publication::SpaceBlockClass::LocalCommits,
+                }],
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            spaces,
+            serde_json::json!({
+                "kind": "git_publication_blocked",
+                "repository": "/repo",
+                "reason": "spaces",
+                "spaces": [{ "path": "spaces/one", "class": "local_commits" }],
+            })
+        );
 
         let branch = serde_json::to_value(GitError::BranchBlocked {
             reason: branch::BranchBlockReason::RootDetached,

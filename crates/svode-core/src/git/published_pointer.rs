@@ -126,7 +126,6 @@ pub async fn commit(
     if super::ops::repository_head_oid(cli, child).await? != published {
         return Err(GitError::PublicationBlocked {
             repository: root.to_string_lossy().into_owned(),
-            child: Some(path),
             reason: super::publication::PublicationBlockReason::TargetChanged,
         });
     }
@@ -138,7 +137,6 @@ pub async fn commit(
         if !contains(cli, child, &current, published).await? {
             return Err(GitError::PublicationBlocked {
                 repository: root.to_string_lossy().into_owned(),
-                child: Some(path),
                 reason: super::publication::PublicationBlockReason::TargetChanged,
             });
         }

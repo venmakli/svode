@@ -70,8 +70,8 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       if (command === "git_sync")
         throw {
           kind: "git_publication_blocked",
-          reason: "revision_unavailable",
-          child: "develop",
+          reason: "spaces",
+          spaces: [{ path: "develop", class: "local_commits" }],
         };
       if (command === "git_fetch_status") {
         fetches++;
@@ -207,7 +207,6 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
         const reasons = new Set<string>();
         for (const reason of [
           "configuration",
-          "uninitialized_child",
           "source_unavailable",
           "revision_unavailable",
           "target_changed",
@@ -215,14 +214,44 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
           const copy = gitSyncErrorMessage({
             kind: "git_publication_blocked",
             reason,
-            child: "develop",
             stderr: "SECRET",
           });
-          expect(copy.includes("develop")).toBe(true);
           expect(copy.includes("SECRET")).toBe(false);
           reasons.add(copy);
         }
-        expect(reasons.size).toBe(5);
+        expect(reasons.size).toBe(4);
+        const classes = new Set<string>();
+        for (const spaceClass of [
+          "local_commits",
+          "outside_branch",
+          "missing",
+          "unverified",
+          "source_unavailable",
+          "uninitialized",
+          "configuration",
+        ]) {
+          const copy = gitSyncErrorMessage({
+            kind: "git_publication_blocked",
+            reason: "spaces",
+            spaces: [{ path: "develop", class: spaceClass }],
+            stderr: "SECRET",
+          });
+          expect(copy.startsWith("develop: ")).toBe(true);
+          expect(copy.includes("SECRET")).toBe(false);
+          classes.add(copy);
+        }
+        expect(classes.size).toBe(4);
+        const several = gitSyncErrorMessage({
+          kind: "git_publication_blocked",
+          reason: "spaces",
+          spaces: [
+            { path: "compliance", class: "local_commits" },
+            { path: "legal", class: "missing" },
+            { path: "ops", class: "uninitialized" },
+          ],
+        });
+        expect(several.startsWith("compliance, legal: ")).toBe(true);
+        expect(several.includes(" ops: ")).toBe(true);
         const parent = toParentPublication({
           repository: "/project",
           pointer: "local",
