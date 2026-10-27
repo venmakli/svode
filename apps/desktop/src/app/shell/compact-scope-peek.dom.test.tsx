@@ -129,16 +129,13 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   mock.module("@/features/content-actions/ui/content-delete-dialog", () => ({
     ContentDeleteDialog: () => null,
   }));
-  mock.module(
-    "@/features/collection/detail-peek/detail-peek",
-    () => ({
-      CollectionDetailPeekHost: () => null,
-      useCollectionDetailController: () => ({
-        close: async () => allowCollectionNavigation,
-        open: async () => true,
-      }),
+  mock.module("@/features/collection/detail-peek/detail-peek", () => ({
+    CollectionDetailPeekHost: () => null,
+    useCollectionDetailController: () => ({
+      close: async () => allowCollectionNavigation,
+      open: async () => true,
     }),
-  );
+  }));
   mock.module("./app-with-variables", () => ({
     AppWithVariables: function App({
       owner,
@@ -828,10 +825,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
               reason: null,
               lastKnownStatus: null,
             };
-          if (
-            !exists &&
-            (command === "read_page" || command.endsWith("facts"))
-          )
+          if (!exists && (command === "read_page" || command.endsWith("facts")))
             throw `File not found: ${path}`;
           if (command === "read_page") return page;
           if (command === "get_page_schema") return null;
@@ -1207,6 +1201,109 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       }
     }
   });
+  test("the Peek of a nested Collection closes once its folder is gone and stays when only its README is", async () => {
+    const dom = new JSDOM("<!doctype html><div id=app></div>", {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    });
+    const restore = installDomGlobals(dom);
+    let readme = true;
+    let folder = true;
+    const page: Page = {
+      path: "Tasks/Sub/README.md",
+      body: "Sub notes",
+      meta: { title: "Sub", icon: null, created: "", updated: "", extra: {} },
+    };
+    mockNativeIpc(
+      (command, args) => {
+        const path = String(args && "path" in args ? args.path : "");
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "/space",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            reason: null,
+            lastKnownStatus: null,
+          };
+        if (command === "read_page") {
+          if (!readme) throw `File not found: ${path}`;
+          return page;
+        }
+        if (command === "get_page_schema") return null;
+        if (command === "get_scope_owner_facts") {
+          if (!folder)
+            throw {
+              kind: "file_not_found",
+              message: `File not found: ${path}`,
+            };
+          return {
+            identity: "collectionDirectory",
+            ownerPath: "Tasks/Sub",
+            contentPath: "Tasks/Sub/README.md",
+            hasApp: false,
+          };
+        }
+        // Changes of the Peek owner and the like are not under test.
+        return null;
+      },
+      { shouldMockEvents: true },
+    );
+    let dismissed = 0;
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const { emit } = await import("@/platform/native/events");
+    const deleted = async (path: string) => {
+      await act(async () => {
+        await emit("file:deleted", { space: "/space", path });
+        await settle();
+      });
+    };
+    const alert = () =>
+      dom.window.document.querySelector('[data-slot="alert"]');
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <CompactScopePeek
+              path="Tasks/Sub/README.md"
+              spaceId="space"
+              spacePath="/space"
+              projectPath="/space"
+              sessionKey="peek"
+              onExpand={() => {}}
+              onClose={() => {}}
+              registerNavigationGuard={() => () => {}}
+              dismiss={() => {
+                dismissed += 1;
+              }}
+            />
+          </TooltipProvider>,
+        );
+        await settle();
+      });
+      expect(dismissed).toBe(0);
+
+      // Only its README is gone: the Peek stays.
+      readme = false;
+      await deleted("Tasks/Sub/README.md");
+      expect(dismissed).toBe(0);
+
+      // The folder is gone: the Peek closes without the resolver error.
+      folder = false;
+      await deleted("Tasks/Sub");
+      expect(dismissed).toBe(1);
+      expect(alert()?.textContent?.includes("File not found") ?? false).toBe(
+        false,
+      );
+    } finally {
+      await act(async () => root.unmount());
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
   test("peek replacement is guarded, ignores late targets and keeps canonical handoff in one session", async () => {
     const dom = new JSDOM("<!doctype html><div id=app></div>", {
       pretendToBeVisual: true,

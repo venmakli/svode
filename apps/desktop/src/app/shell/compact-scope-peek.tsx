@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Database, FileText, PanelsTopLeft } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -13,7 +13,6 @@ import type {
 import {
   ScopeOwnerFactsError,
   ScopeSurfaceErrorBoundary,
-  useScopeOwner,
   type ScopeOwnerRef,
   type ScopePeekContext,
   type ScopeSurfaceId,
@@ -22,6 +21,7 @@ import { UserEditScope } from "@/features/navigation";
 import { ChangesControl, type ChangesTarget } from "@/features/changes";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
+import { useSpaceScopeOwner } from "./hooks/use-space-scope-owner";
 import {
   ScopeSurfacePage,
   type ScopeOwnerIdentity,
@@ -35,7 +35,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
   if (pathState.input !== props.path)
     setPathState({ input: props.path, current: props.path });
   const path = pathState.input === props.path ? pathState.current : props.path;
-  const { owner, error, retry } = useScopeOwner({
+  const { owner, error, gone, retry } = useSpaceScopeOwner({
     target: {
       spaceId: props.spaceId,
       spacePath: props.spacePath,
@@ -45,6 +45,16 @@ export function CompactScopePeek(props: ScopePeekContext) {
     // One Peek session keeps its owner while a new path of it resolves.
     retainPrevious: true,
   });
+  // A Collection or App whose folder is gone closes its Peek; a Page closes
+  // it itself, and a Collection that lost only its README stays.
+  const folderOwnerGone =
+    gone &&
+    (owner?.identityKind === "collection-directory" ||
+      owner?.identityKind === "app-directory");
+  const { dismiss } = props;
+  useEffect(() => {
+    if (folderOwnerGone) dismiss();
+  }, [dismiss, folderOwnerGone]);
   const [surfaceId, setSurfaceId] = useState<ScopeSurfaceId | null>(null);
   const [viewName, setViewName] = useState<string | null>(null);
   const [calendarScope, setCalendarScope] = useState<CalendarScope | null>(
