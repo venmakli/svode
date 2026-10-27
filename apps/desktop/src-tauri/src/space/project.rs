@@ -61,6 +61,7 @@ fn create_and_register(
                 id: id.clone(),
                 path: folder_name,
                 repo,
+                extensions: Default::default(),
             });
             config::write_space_config(parent_path, &parent_config)?;
         }
@@ -229,6 +230,7 @@ pub fn import_existing_submodule_spaces(
             path: normalized,
             // For submodules, `.gitmodules` remains the source of truth.
             repo: None,
+            extensions: Default::default(),
         });
         imported += 1;
     }
@@ -452,8 +454,9 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 #[cfg(test)]
 mod tests {
     use super::{
-        has_schema_capability, import_existing_submodule_spaces, normalize_space_folder,
-        open_project_folder, space_ref_status,
+        create_space, delete_space, has_schema_capability, import_existing_submodule_spaces,
+        normalize_space_folder, open_project_folder, reconcile_space_url, remove_missing_space,
+        space_ref_status,
     };
     use crate::space::registry;
     use crate::space::scaffold;
@@ -536,6 +539,80 @@ mod tests {
     }
 
     #[test]
+    fn space_registry_writers_keep_unknown_config_keys() {
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project = project_dir.path();
+        std::fs::create_dir_all(project.join(".svode")).expect("svode dir");
+        std::fs::write(
+            project.join(".svode/config.json"),
+            serde_json::json!({
+                "name": "Root",
+                "futureRoot": "kept",
+                "assets": { "strategy": "local", "futureAssets": "kept" },
+                "spaces": [
+                    { "id": "missing", "path": "gone", "repo": null, "futureSpace": "missing" },
+                    { "id": "kept", "path": "kept", "repo": null, "futureSpace": "kept" },
+                    { "id": "deleted", "path": "deleted", "repo": null, "futureSpace": "deleted" }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("config");
+        let raw = || -> serde_json::Value {
+            serde_json::from_str(
+                &std::fs::read_to_string(project.join(".svode/config.json")).expect("config"),
+            )
+            .expect("json")
+        };
+        let entry = |value: &serde_json::Value, id: &str| {
+            value["spaces"]
+                .as_array()
+                .and_then(|entries| entries.iter().find(|entry| entry["id"] == id).cloned())
+        };
+        let assert_kept = |step: &str| {
+            let value = raw();
+            assert_eq!(value["futureRoot"], "kept", "{step}");
+            assert_eq!(value["assets"]["futureAssets"], "kept", "{step}");
+            assert_eq!(
+                entry(&value, "kept").unwrap()["futureSpace"],
+                "kept",
+                "{step}"
+            );
+            value
+        };
+
+        create_space(project, "Inline", "", "inline").expect("register inline space");
+        let value = assert_kept("registration");
+        assert_eq!(entry(&value, "missing").unwrap()["futureSpace"], "missing");
+
+        reconcile_space_url(project, "kept", Some("https://example.com/kept.git"))
+            .expect("reconcile url");
+        let value = assert_kept("url change");
+        assert_eq!(
+            entry(&value, "kept").unwrap()["repo"],
+            "https://example.com/kept.git"
+        );
+
+        import_existing_submodule_spaces(
+            project,
+            &[SubmoduleConfig {
+                path: "docs".to_string(),
+                url: Some("https://example.com/docs.git".to_string()),
+            }],
+        )
+        .expect("import submodule");
+        assert_kept("submodule import");
+
+        remove_missing_space(project, "missing").expect("remove missing");
+        let value = assert_kept("missing removal");
+        assert!(entry(&value, "missing").is_none());
+
+        delete_space(project, "deleted", false).expect("delete space");
+        let value = assert_kept("deletion");
+        assert!(entry(&value, "deleted").is_none());
+    }
+
+    #[test]
     fn open_existing_registered_folder_preserves_readme_content() {
         let config_dir = tempfile::tempdir().expect("config dir");
         let project_dir = tempfile::tempdir().expect("project dir");
@@ -574,6 +651,7 @@ mod tests {
                 id: "foo-id".to_string(),
                 path: "foo".to_string(),
                 repo: None,
+                extensions: Default::default(),
             },
         );
 

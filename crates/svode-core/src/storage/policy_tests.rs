@@ -22,6 +22,7 @@ fn lfs_config(routing: BinaryRoutingConfig) -> AssetsSpaceConfig {
         strategy: AssetsStrategy::LfsRemote,
         binary_routing: Some(routing),
         s3: None,
+        extensions: Default::default(),
     }
 }
 
@@ -247,6 +248,7 @@ fn unknown_routing_version_fails_closed_for_mutation() {
             strategy,
             binary_routing: Some(routing.clone()),
             s3: None,
+            extensions: Default::default(),
         };
         assert!(evaluate_managed_binary_route(&config, "art.psd", 1).is_err());
     }

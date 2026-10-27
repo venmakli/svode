@@ -870,6 +870,27 @@ mod tests {
         assert!(value.get("message").is_none());
     }
 
+    #[test]
+    fn dropping_legacy_shared_git_policy_keeps_unknown_config_keys() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".svode")).unwrap();
+        std::fs::write(
+            temp.path().join(".svode/config.json"),
+            r#"{"name":"Project","futureRoot":1,"git":{"autoSync":true},"agent":{"futureAgent":2}}"#,
+        )
+        .unwrap();
+
+        drop_legacy_shared_git_policy(temp.path());
+
+        let value: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(temp.path().join(".svode/config.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(value.get("git").is_none());
+        assert_eq!(value["futureRoot"], 1);
+        assert_eq!(value["agent"]["futureAgent"], 2);
+    }
+
     #[tokio::test]
     async fn conflict_marker_size_of_a_page_comes_from_its_repository() {
         let temp = tempfile::tempdir().unwrap();

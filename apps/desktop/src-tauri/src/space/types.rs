@@ -113,90 +113,14 @@ pub struct RegistryEntry {
 
 // --- Space Config (.svode/config.json) ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SpaceConfig {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default = "default_icon")]
-    pub icon: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spaces: Option<Vec<SpaceRef>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<AgentConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub defaults: Option<SpaceDefaults>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git: Option<GitSpaceConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assets: Option<AssetsSpaceConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tree: Option<TreeSpaceConfig>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct TreeSpaceConfig {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub exclude: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub include: Vec<String>,
-    #[serde(default)]
-    pub show_ignored_placeholders: bool,
-}
+// The portable config model and its write rule are owned by `svode-core`.
+pub use svode_core::space_config::{AgentConfig, SpaceConfig, SpaceDefaults, SpaceRef};
 
 // Assets configuration is owned by the storage policy in `svode-core`; the
 // Space config only embeds it.
 pub use svode_core::storage::config::{
     AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig,
 };
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitSpaceConfig {
-    /// Legacy per-user policy fields. Kept for backward-compatible parsing of
-    /// older shared `.svode/config.json` files, but ignored as effective policy.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_sync: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_commit_structural: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_commit_system: Option<bool>,
-}
-
-fn default_icon() -> String {
-    "\u{1F4C1}".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpaceRef {
-    pub id: String,
-    pub path: String,
-    pub repo: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clis: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_timeout: Option<u32>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SpaceDefaults {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<AgentConfig>,
-}
 
 // --- Local Config (.svode/local.json) ---
 
@@ -232,54 +156,6 @@ pub struct SpaceInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn space_config_accepts_optional_tree_config_shape() {
-        let config: SpaceConfig = serde_json::from_str(
-            r#"{
-                "name": "Docs",
-                "tree": {
-                    "exclude": ["node_modules", "src/generated"],
-                    "include": ["docs/**/*.md"],
-                    "showIgnoredPlaceholders": true
-                }
-            }"#,
-        )
-        .expect("deserialize config");
-
-        let tree = config.tree.expect("tree config");
-        assert_eq!(tree.exclude, vec!["node_modules", "src/generated"]);
-        assert_eq!(tree.include, vec!["docs/**/*.md"]);
-        assert!(tree.show_ignored_placeholders);
-    }
-
-    #[test]
-    fn space_config_deserializes_without_tree_config() {
-        let config: SpaceConfig =
-            serde_json::from_str(r#"{"name":"Docs"}"#).expect("deserialize config");
-
-        assert!(config.tree.is_none());
-    }
-
-    #[test]
-    fn git_config_accepts_legacy_personal_policy_fields() {
-        let config: SpaceConfig = serde_json::from_str(
-            r#"{
-                "name": "Docs",
-                "git": {
-                    "autoSync": true,
-                    "autoCommitStructural": true,
-                    "autoCommitSystem": false
-                }
-            }"#,
-        )
-        .expect("deserialize config");
-
-        let git = config.git.expect("git config");
-        assert_eq!(git.auto_sync, Some(true));
-        assert_eq!(git.auto_commit_structural, Some(true));
-        assert_eq!(git.auto_commit_system, Some(false));
-    }
 
     #[test]
     fn local_config_accepts_git_user_policy() {

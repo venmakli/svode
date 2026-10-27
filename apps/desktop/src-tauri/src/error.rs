@@ -115,6 +115,18 @@ impl From<svode_core::routines::local::LocalConfigError> for AppError {
     }
 }
 
+impl From<svode_core::space_config::SpaceConfigError> for AppError {
+    fn from(error: svode_core::space_config::SpaceConfigError) -> Self {
+        use svode_core::space_config::SpaceConfigError;
+        match error {
+            SpaceConfigError::Missing(path) => Self::FileNotFound(path),
+            SpaceConfigError::Io(error) => Self::Io(error),
+            SpaceConfigError::Serde(error) => Self::Serde(error),
+            SpaceConfigError::Storage(error) => Self::Storage(error.to_string()),
+        }
+    }
+}
+
 impl From<svode_core::index::IndexError> for AppError {
     fn from(error: svode_core::index::IndexError) -> Self {
         match error {

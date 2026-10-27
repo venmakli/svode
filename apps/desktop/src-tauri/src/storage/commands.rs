@@ -19,7 +19,9 @@ use crate::git::require_cli;
 use crate::index::IndexState;
 use crate::repo_path::{RootMode, repo_relative_from_base};
 use crate::space::config::{read_space_config, write_space_config};
-use crate::space::types::{AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
+use crate::space::types::{
+    AssetsS3Config, AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig, SpaceConfig,
+};
 use svode_core::git::autocommit::{
     AutocommitService, StructuralChange, StructuralOp, SystemCommitKind,
 };
@@ -280,7 +282,7 @@ pub async fn set_assets_strategy(
         return Err(AppError::StrategyInherited);
     }
 
-    let mut config = read_space_config(&scope.config_dir)?;
+    let config = read_space_config(&scope.config_dir)?;
     let current_strategy = config
         .assets
         .as_ref()
@@ -371,12 +373,16 @@ pub async fn set_assets_strategy(
     )
     .await?;
 
-    config.assets = Some(AssetsSpaceConfig {
-        strategy,
-        binary_routing: Some(binary_routing),
-        s3: s3_config,
-    });
-    write_space_config(&scope.config_dir, &config)?;
+    store_assets_config(
+        &scope.config_dir,
+        config,
+        AssetsSpaceConfig {
+            strategy,
+            binary_routing: Some(binary_routing),
+            s3: s3_config,
+            extensions: Default::default(),
+        },
+    )?;
     if let Some(agent_config) = next_agent_config {
         let repo = scope.repo_dir.clone();
         run_locked(&settings_state, move || {
@@ -410,6 +416,17 @@ pub async fn set_assets_strategy(
         }
     }
     Ok(result)
+}
+
+/// Replace the assets section of a storage scope's config; the shared write
+/// keeps the keys of the file this version does not know.
+fn store_assets_config(
+    config_dir: &Path,
+    mut config: SpaceConfig,
+    assets: AssetsSpaceConfig,
+) -> Result<(), AppError> {
+    config.assets = Some(assets);
+    write_space_config(config_dir, &config)
 }
 
 /// Count real files under this pool's `.assets/` directory. Used by the
@@ -559,10 +576,11 @@ mod tests {
 
     use super::{
         StrategyWarningCode, document_id_for_scope, ensure_supported_strategy_transition,
-        strategy_autocommit_blocker,
+        store_assets_config, strategy_autocommit_blocker,
     };
     use crate::AppError;
-    use crate::space::types::AssetsStrategy;
+    use crate::space::config::read_space_config;
+    use crate::space::types::{AssetsSpaceConfig, AssetsStrategy, BinaryRoutingConfig};
     use svode_core::git::autocommit::SystemCommitKind;
     use svode_core::git::cli::GitCli;
 
@@ -593,6 +611,38 @@ mod tests {
             ensure_supported_strategy_transition(AssetsStrategy::LfsRemote, AssetsStrategy::LfsS3)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stored_assets_strategy_keeps_unknown_config_keys() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(temp.path().join(".svode")).expect("svode dir");
+        std::fs::write(
+            temp.path().join(".svode/config.json"),
+            r#"{"name":"Project","futureRoot":1,"assets":{"strategy":"local","futureAssets":2}}"#,
+        )
+        .expect("config");
+        let config = read_space_config(temp.path()).expect("read config");
+
+        store_assets_config(
+            temp.path(),
+            config,
+            AssetsSpaceConfig {
+                strategy: AssetsStrategy::InGit,
+                binary_routing: Some(BinaryRoutingConfig::new_project_default()),
+                s3: None,
+                extensions: Default::default(),
+            },
+        )
+        .expect("store assets");
+
+        let value: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(temp.path().join(".svode/config.json")).expect("config"),
+        )
+        .expect("json");
+        assert_eq!(value["assets"]["strategy"], "in-git");
+        assert_eq!(value["futureRoot"], 1);
+        assert_eq!(value["assets"]["futureAssets"], 2);
     }
 
     #[test]

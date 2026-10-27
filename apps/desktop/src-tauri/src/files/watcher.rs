@@ -1107,7 +1107,8 @@ fn is_app_manifest_path(path: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::space::config::write_space_config;
-    use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+    use crate::space::types::SpaceConfig;
+    use svode_core::space_config::TreeSpaceConfig;
     use tempfile::TempDir;
 
     #[test]
@@ -1196,7 +1197,9 @@ mod tests {
                     exclude: exclude.into_iter().map(ToString::to_string).collect(),
                     include: include.into_iter().map(ToString::to_string).collect(),
                     show_ignored_placeholders: false,
+                    extensions: Default::default(),
                 }),
+                extensions: Default::default(),
             },
         )
         .expect("write config");
@@ -1854,12 +1857,14 @@ mod tests {
                     id: "child".to_string(),
                     path: "child".to_string(),
                     repo: None,
+                    extensions: Default::default(),
                 }]),
                 agent: None,
                 defaults: None,
                 git: None,
                 assets: None,
                 tree: None,
+                extensions: Default::default(),
             },
         )
         .expect("write config");

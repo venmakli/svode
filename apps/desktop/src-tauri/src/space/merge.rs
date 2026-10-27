@@ -20,6 +20,7 @@ pub fn merge_with_defaults(child: &SpaceConfig, defaults: &SpaceDefaults) -> Spa
                 .or_else(|| default_agent.system_prompt.clone()),
             max_turns: child_agent.max_turns.or(default_agent.max_turns),
             max_timeout: child_agent.max_timeout.or(default_agent.max_timeout),
+            extensions: child_agent.extensions.clone(),
         }),
         (Some(agent), None) => Some(agent.clone()),
         (None, Some(agent)) => Some(agent.clone()),
@@ -36,5 +37,6 @@ pub fn merge_with_defaults(child: &SpaceConfig, defaults: &SpaceDefaults) -> Spa
         git: child.git.clone(),
         assets: child.assets.clone(),
         tree: child.tree.clone(),
+        extensions: child.extensions.clone(),
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! The routing rules, the effective storage scope and managed import all read
 //! this model, so it lives with the storage owner rather than with a desktop
-//! DTO. Only the assets facts are parsed here; the remaining Space config
-//! fields keep their existing owner.
+//! DTO. Only the assets facts are parsed here; the whole Space config and
+//! its write rule belong to `crate::space_config`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -42,6 +42,8 @@ pub struct AssetsSpaceConfig {
     pub binary_routing: Option<BinaryRoutingConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3: Option<AssetsS3Config>,
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,6 +77,7 @@ impl AssetsSpaceConfig {
             strategy: AssetsStrategy::Local,
             binary_routing: Some(BinaryRoutingConfig::new_project_default()),
             s3: None,
+            extensions: BTreeMap::new(),
         }
     }
 }
@@ -89,6 +92,8 @@ pub struct AssetsS3Config {
     pub prefix: String,
     // NOTE: access/secret keys intentionally NOT stored here — they belong in
     // OS keychain (deferred to Phase 4.3).
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 /// Git wiring shape of a Space directory inside its Project.

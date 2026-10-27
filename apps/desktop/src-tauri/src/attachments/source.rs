@@ -758,6 +758,7 @@ mod tests {
                 git: None,
                 assets: None,
                 tree: None,
+                extensions: Default::default(),
             },
         )
         .expect("space config");
@@ -773,6 +774,7 @@ mod tests {
                 id: "child-id".into(),
                 path: "child-space".into(),
                 repo: None,
+                extensions: Default::default(),
             }]),
         );
         fs::create_dir_all(root.join("child-space")).unwrap();
@@ -1004,6 +1006,7 @@ mod tests {
                 id: "ready-id".into(),
                 path: "ready-space".into(),
                 repo: None,
+                extensions: Default::default(),
             }]),
         );
         fs::create_dir_all(temp.path().join("ready-space")).unwrap();
@@ -1024,16 +1027,19 @@ mod tests {
                     id: "inline-id".into(),
                     path: "inline".into(),
                     repo: None,
+                    extensions: Default::default(),
                 },
                 SpaceRef {
                     id: "independent-id".into(),
                     path: "independent".into(),
                     repo: None,
+                    extensions: Default::default(),
                 },
                 SpaceRef {
                     id: "submodule-id".into(),
                     path: "submodule".into(),
                     repo: Some("https://example.com/submodule.git".into()),
+                    extensions: Default::default(),
                 },
             ]),
         );
@@ -1066,6 +1072,7 @@ mod tests {
                 id: "child-id".into(),
                 path: "child-space".into(),
                 repo: None,
+                extensions: Default::default(),
             }]),
         );
         fs::create_dir_all(temp.path().join("roadmap/nested-collection")).unwrap();
@@ -1120,6 +1127,7 @@ mod tests {
                 id: "child".into(),
                 path: "child-space".into(),
                 repo: None,
+                extensions: Default::default(),
             }]),
         );
         for path in [

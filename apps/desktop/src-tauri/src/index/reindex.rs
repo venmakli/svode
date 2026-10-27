@@ -18,7 +18,8 @@ pub(crate) use svode_core::index::inventory::{markdown_projection, markdown_sour
 mod tests {
     use super::*;
     use crate::space::config::write_space_config;
-    use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+    use crate::space::types::SpaceConfig;
+    use svode_core::space_config::TreeSpaceConfig;
     use tempfile::TempDir;
 
     fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
@@ -37,7 +38,9 @@ mod tests {
                     exclude: exclude.into_iter().map(ToString::to_string).collect(),
                     include: include.into_iter().map(ToString::to_string).collect(),
                     show_ignored_placeholders: false,
+                    extensions: Default::default(),
                 }),
+                extensions: Default::default(),
             },
         )
         .expect("write config");

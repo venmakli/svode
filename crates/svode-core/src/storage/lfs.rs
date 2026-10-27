@@ -906,6 +906,7 @@ mod tests {
                 bucket: "bucket".into(),
                 region: "us-east-1".into(),
                 prefix: "project".into(),
+                extensions: Default::default(),
             }),
             ..AssetsSpaceConfig::default()
         }

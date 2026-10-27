@@ -2,11 +2,12 @@ use super::*;
 use crate::index;
 use crate::index::IndexKey;
 use crate::space::config::write_space_config;
-use crate::space::types::{SpaceConfig, TreeSpaceConfig};
+use crate::space::types::SpaceConfig;
 use sqlx::SqlitePool;
 use std::fs;
 use svode_core::content_tree::policy::TreeIgnorePolicy;
 use svode_core::content_tree::reorder_content;
+use svode_core::space_config::TreeSpaceConfig;
 use tempfile::TempDir;
 
 fn updates() -> &'static IndexUpdateState {
@@ -307,7 +308,9 @@ fn write_tree_config(tmp: &TempDir, exclude: Vec<&str>, include: Vec<&str>) {
                 exclude: exclude.into_iter().map(ToString::to_string).collect(),
                 include: include.into_iter().map(ToString::to_string).collect(),
                 show_ignored_placeholders: false,
+                extensions: Default::default(),
             }),
+            extensions: Default::default(),
         },
     )
     .expect("write config");
@@ -1335,12 +1338,14 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
                     id: "design".into(),
                     path: "spaces/design".into(),
                     repo: None,
+                    extensions: Default::default(),
                 }]),
                 agent: None,
                 defaults: None,
                 git: None,
                 assets: None,
                 tree: None,
+                extensions: Default::default(),
             },
         )
         .unwrap();

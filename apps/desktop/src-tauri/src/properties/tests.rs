@@ -1,6 +1,6 @@
 use crate::actors::ActorCatalogState;
 use crate::space::config::write_space_config;
-use crate::space::types::{SpaceConfig, SpaceRef, TreeSpaceConfig};
+use crate::space::types::{SpaceConfig, SpaceRef};
 use serde_norway::Value;
 use sqlx::SqlitePool;
 use std::fs;
@@ -11,6 +11,7 @@ use svode_core::collections::query::query_entry_rows;
 use svode_core::git::cli::GitCli;
 use svode_core::page::entry;
 use svode_core::page::frontmatter;
+use svode_core::space_config::TreeSpaceConfig;
 use tempfile::TempDir;
 
 fn unique_id_value(value: &Value) -> Option<u64> {
@@ -57,6 +58,7 @@ fn write_test_space_config(
             git: None,
             assets: None,
             tree,
+            extensions: Default::default(),
         },
     )
     .unwrap();
@@ -406,6 +408,7 @@ fn scoped_relation_update_validates_targets_in_root_and_space() {
             id: "design".to_string(),
             path: "spaces/design".to_string(),
             repo: None,
+            extensions: Default::default(),
         }]),
         None,
     );
@@ -494,6 +497,7 @@ fn cross_scope_two_way_root_to_space_materializes_and_syncs_reverse() {
             id: "design".to_string(),
             path: "spaces/design".to_string(),
             repo: None,
+            extensions: Default::default(),
         }]),
         None,
     );
@@ -595,6 +599,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
             id: "design".to_string(),
             path: "spaces/design".to_string(),
             repo: None,
+            extensions: Default::default(),
         }]),
         None,
     );
@@ -727,11 +732,13 @@ fn cross_scope_two_way_rejects_child_to_sibling_space() {
                 id: "design".to_string(),
                 path: "spaces/design".to_string(),
                 repo: None,
+                extensions: Default::default(),
             },
             SpaceRef {
                 id: "engineering".to_string(),
                 path: "spaces/engineering".to_string(),
                 repo: None,
+                extensions: Default::default(),
             },
         ]),
         None,
@@ -816,11 +823,13 @@ fn cross_scope_one_way_child_to_sibling_space_updates_without_reverse_sync() {
                 id: "design".to_string(),
                 path: "spaces/design".to_string(),
                 repo: None,
+                extensions: Default::default(),
             },
             SpaceRef {
                 id: "engineering".to_string(),
                 path: "spaces/engineering".to_string(),
                 repo: None,
+                extensions: Default::default(),
             },
         ]),
         None,
@@ -1107,6 +1116,7 @@ fn change_schema_type_to_scoped_relation_converts_against_target_space() {
             id: "design".to_string(),
             path: "spaces/design".to_string(),
             repo: None,
+            extensions: Default::default(),
         }]),
         None,
     );

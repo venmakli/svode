@@ -4,13 +4,10 @@
 //! into the `spaces` registry of the Project `.svode/config.json`.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::Path;
 
-use serde_json::Value;
-
 use crate::content_tree::ContentTreeError;
-use crate::variables::files;
+use crate::space_config::{self, SpaceConfig, SpaceConfigError};
 
 /// Result of reordering the child Spaces of a Project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,15 +19,12 @@ pub struct ChildSpaceOrderOutcome {
 
 /// Persist a new child-Space order into the Project config. An unchanged
 /// order writes nothing; a changed one keeps every registry entry and the
-/// shared config fields, and drops the legacy shared Git automation policy
-/// like every shared config write.
+/// shared config fields, and is written by the shared config write rule.
 pub fn reorder_child_spaces(
     project: &Path,
     ordered_space_ids: Vec<String>,
 ) -> Result<ChildSpaceOrderOutcome, ContentTreeError> {
-    let dir = project.join(".svode");
-    let config_path = dir.join("config.json");
-    let previous_order = registered_ids(&read_config(&config_path)?)?;
+    let previous_order = registered_ids(&space_config::read(project)?);
     if previous_order == ordered_space_ids {
         return Ok(ChildSpaceOrderOutcome {
             previous_order,
@@ -39,64 +33,48 @@ pub fn reorder_child_spaces(
         });
     }
 
-    let _guard = files::lock(&dir).map_err(storage_error)?;
-    let mut config = read_config(&config_path)?;
-    let previous_order = registered_ids(&config)?;
-    let ordered_space_ids = plan_child_space_order(&previous_order, ordered_space_ids)?;
-    let object = config
-        .as_object_mut()
-        .ok_or_else(|| ContentTreeError::Invalid("Project config is not an object".into()))?;
-    let mut by_id = match object.remove("spaces") {
-        Some(Value::Array(entries)) => entries
+    space_config::mutate(project, |config| {
+        let previous_order = registered_ids(config);
+        let ordered_space_ids = plan_child_space_order(&previous_order, ordered_space_ids)?;
+        let mut by_id = config
+            .spaces
+            .take()
+            .unwrap_or_default()
             .into_iter()
-            .filter_map(|entry| Some((entry.get("id")?.as_str()?.to_string(), entry)))
-            .collect::<HashMap<_, _>>(),
-        _ => HashMap::new(),
-    };
-    let mut reordered = Vec::with_capacity(ordered_space_ids.len());
-    for id in &ordered_space_ids {
-        reordered.push(by_id.remove(id).ok_or_else(|| unknown_child_space(id))?);
-    }
-    object.insert("spaces".into(), Value::Array(reordered));
-    object.remove("git");
-    files::write_preserving_variables(&config_path, &config).map_err(storage_error)?;
-    let changed = previous_order != ordered_space_ids;
-    Ok(ChildSpaceOrderOutcome {
-        previous_order,
-        ordered_space_ids,
-        changed,
+            .map(|entry| (entry.id.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let mut reordered = Vec::with_capacity(ordered_space_ids.len());
+        for id in &ordered_space_ids {
+            reordered.push(by_id.remove(id).ok_or_else(|| unknown_child_space(id))?);
+        }
+        config.spaces = Some(reordered);
+        let changed = previous_order != ordered_space_ids;
+        Ok(ChildSpaceOrderOutcome {
+            previous_order,
+            ordered_space_ids,
+            changed,
+        })
     })
 }
 
-fn read_config(path: &Path) -> Result<Value, ContentTreeError> {
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(ContentTreeError::FileNotFound(path.display().to_string()));
-        }
-        Err(error) => return Err(error.into()),
-    };
-    Ok(serde_json::from_str(&raw)?)
-}
-
-fn registered_ids(config: &Value) -> Result<Vec<String>, ContentTreeError> {
-    let Some(entries) = config.get("spaces").and_then(Value::as_array) else {
-        return Ok(Vec::new());
-    };
-    entries
+fn registered_ids(config: &SpaceConfig) -> Vec<String> {
+    config
+        .spaces
         .iter()
-        .map(|entry| {
-            entry
-                .get("id")
-                .and_then(Value::as_str)
-                .map(ToString::to_string)
-                .ok_or_else(|| ContentTreeError::Invalid("registered Space has no id".into()))
-        })
+        .flatten()
+        .map(|entry| entry.id.clone())
         .collect()
 }
 
-fn storage_error(error: crate::variables::Error) -> ContentTreeError {
-    ContentTreeError::Invalid(format!("Storage: {error}"))
+impl From<SpaceConfigError> for ContentTreeError {
+    fn from(error: SpaceConfigError) -> Self {
+        match error {
+            SpaceConfigError::Missing(path) => Self::FileNotFound(path),
+            SpaceConfigError::Io(error) => Self::Io(error),
+            SpaceConfigError::Serde(error) => Self::Serde(error),
+            SpaceConfigError::Storage(error) => Self::Invalid(format!("Storage: {error}")),
+        }
+    }
 }
 
 /// Validate a proposed child-Space order against the registered ids and return
@@ -154,6 +132,9 @@ fn unknown_child_space(id: &str) -> ContentTreeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::variables::files;
+    use serde_json::Value;
+    use std::fs;
 
     fn ids(values: &[&str]) -> Vec<String> {
         values.iter().map(ToString::to_string).collect()
@@ -231,6 +212,29 @@ mod tests {
         assert_eq!(config["description"], "kept");
         assert_eq!(config["variables"]["version"], 1);
         assert!(config.get("git").is_none());
+    }
+
+    #[test]
+    fn reorder_keeps_unknown_keys_of_the_config_and_its_entries() {
+        let project = project_with_children(serde_json::json!({
+            "futureRoot": { "mode": "team" },
+            "tree": { "futureTree": 1 }
+        }));
+        let mut raw = config(project.path());
+        raw["spaces"][1]["futureSpace"] = serde_json::json!("beta");
+        fs::write(
+            project.path().join(".svode/config.json"),
+            serde_json::to_string_pretty(&raw).unwrap(),
+        )
+        .unwrap();
+
+        reorder_child_spaces(project.path(), ids(&["b", "a"])).expect("reorder");
+
+        let config = config(project.path());
+        assert_eq!(config["futureRoot"]["mode"], "team");
+        assert_eq!(config["tree"]["futureTree"], 1);
+        assert_eq!(config["spaces"][0]["futureSpace"], "beta");
+        assert!(config["spaces"][1].get("futureSpace").is_none());
     }
 
     #[test]

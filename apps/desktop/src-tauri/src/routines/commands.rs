@@ -446,6 +446,7 @@ mod tests {
             git: None,
             assets: None,
             tree: None,
+            extensions: Default::default(),
         }
     }
 

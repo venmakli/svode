@@ -220,6 +220,7 @@ mod tests {
             bucket: "bucket".into(),
             region: "region".into(),
             prefix: "original/objects".into(),
+            extensions: Default::default(),
         }
     }
 

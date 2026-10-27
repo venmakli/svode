@@ -4,7 +4,6 @@ use crate::error::AppError;
 use svode_core::page::entry::EntryMeta;
 use svode_core::page::frontmatter;
 
-use super::config::write_space_config;
 use super::types::{AssetsSpaceConfig, SpaceConfig};
 
 pub const README_FILE: &str = "README.md";
@@ -81,8 +80,9 @@ fn scaffold_space_with_assets(
         git: None,
         assets,
         tree: None,
+        extensions: Default::default(),
     };
-    write_space_config(path, &sp_config)?;
+    svode_core::space_config::create(path, &sp_config)?;
 
     // Local config
     super::config::mutate_local_config(path, |_| Ok(()))?;

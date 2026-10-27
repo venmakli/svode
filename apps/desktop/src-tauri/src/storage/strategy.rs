@@ -518,6 +518,7 @@ mod tests {
             bucket: "bucket".into(),
             region: "us-east-1".into(),
             prefix: "project".into(),
+            extensions: Default::default(),
         };
         let user = "# team\n[lfs]\n\tfetchexclude = archive/**\n";
         std::fs::write(repo.join(".lfsconfig"), user)?;
@@ -593,6 +594,7 @@ mod tests {
             bucket: "bucket".into(),
             region: "us-east-1".into(),
             prefix: "project".into(),
+            extensions: Default::default(),
         };
         let block = "# svode:local:start\n.svode/local.json\n.svode/navigation.*\n.svode/write.lock\n.svode/lfs-s3-agent.json\n.svode/variables.*\n.svode/*.db*\n# svode:local:end\n";
         let legacy = "user/\n# Svode local files\n.svode/local.json\n.svode/*.db*\n# svode:lfs-s3-agent:start\n.svode/lfs-s3-agent.json\n# svode:lfs-s3-agent:end\n";

@@ -13,6 +13,7 @@ pub mod index;
 pub mod page;
 pub mod routines;
 pub mod runtime;
+pub mod space_config;
 pub mod storage;
 pub mod structure;
 pub mod system_path;

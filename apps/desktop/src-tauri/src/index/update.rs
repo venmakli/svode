@@ -447,9 +447,10 @@ mod tests {
     use super::*;
     use crate::index::ProjectSpacesCache;
     use crate::space::config::write_space_config;
-    use crate::space::types::{SpaceConfig, SpaceStatus, TreeSpaceConfig};
+    use crate::space::types::{SpaceConfig, SpaceStatus};
     use std::collections::HashMap;
     use svode_core::index::search::search_fts;
+    use svode_core::space_config::TreeSpaceConfig;
     use tempfile::TempDir;
 
     fn write_tree_config(space: &Path, exclude: &[&str], include: &[&str]) {
@@ -468,7 +469,9 @@ mod tests {
                     exclude: exclude.iter().map(|value| (*value).to_string()).collect(),
                     include: include.iter().map(|value| (*value).to_string()).collect(),
                     show_ignored_placeholders: false,
+                    extensions: Default::default(),
                 }),
+                extensions: Default::default(),
             },
         )
         .unwrap();
