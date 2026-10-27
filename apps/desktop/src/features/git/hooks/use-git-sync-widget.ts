@@ -51,7 +51,10 @@ export interface GitSyncWidget {
   autoSync: boolean;
   savingAutoSync: boolean;
   commits: GitUnpushedCommit[];
+  /** The list is being read for the shown counters. */
   loadingCommits: boolean;
+  /** The list could not be read for the shown counters. */
+  commitsFailed: boolean;
   authOpen: boolean;
   authChallenge: GitAuthChallenge | null;
   authSaving: boolean;
@@ -67,17 +70,22 @@ export interface GitSyncWidget {
   setAutoSync: (enabled: boolean) => Promise<void>;
 }
 
+/** The outgoing commits read for one remote status of the repository. */
+interface OutgoingList {
+  status: GitStatus;
+  commits: GitUnpushedCommit[];
+  failed: boolean;
+}
+
 /** Git sync of the repository at `spacePath`, which need not be the active Space. */
 export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   const parent = useParentPublication(spacePath);
   const active = useRef<object | null>(null);
   const remoteRequest = useRef(0);
-  const outgoingRequest = useRef(0);
   const configRequest = useRef(0);
   useEffect(() => {
     active.current = {};
     remoteRequest.current++;
-    outgoingRequest.current++;
     configRequest.current++;
     setHasRemote(false);
     setAutoSyncState(false);
@@ -87,9 +95,8 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     setAuthSaving(false);
     setAuthChallenge(null);
     setAuthError(null);
-    setCommits([]);
+    setOutgoingList(null);
     setCheckingRemote(false);
-    setLoadingCommits(false);
     return () => {
       active.current = null;
     };
@@ -143,8 +150,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     repository ? state.remoteStatuses[repository] : undefined,
   );
   const [checkingRemote, setCheckingRemote] = useState(false);
-  const [commits, setCommits] = useState<GitUnpushedCommit[]>([]);
-  const [loadingCommits, setLoadingCommits] = useState(false);
+  const [outgoingList, setOutgoingList] = useState<OutgoingList | null>(null);
   const [savingAutoSync, setSavingAutoSync] = useState(false);
   const [authOpen, setAuthOpenState] = useState(false);
   const [authChallenge, setAuthChallenge] = useState<GitAuthChallenge | null>(
@@ -177,7 +183,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     if (!spacePath) {
       setHasRemote(false);
       setAutoSyncState(false);
-      setCommits([]);
+      setOutgoingList(null);
       return;
     }
 
@@ -190,7 +196,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       if (config.hasRemote) {
         await refreshRemote();
       } else {
-        setCommits([]);
+        setOutgoingList(null);
       }
     } catch (err) {
       if (active.current !== identity || configRequest.current !== request)
@@ -198,7 +204,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       console.debug("git sync widget config failed:", err);
       setHasRemote(false);
       setAutoSyncState(false);
-      setCommits([]);
+      setOutgoingList(null);
     }
   }, [activeRootPath, refreshRemote, spacePath]);
 
@@ -212,22 +218,26 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
 
   useEffect(refreshStop, [refreshStop]);
 
-  const loadCommits = useCallback(async () => {
-    if (!spacePath) return;
-    const identity = active.current;
-    const request = ++outgoingRequest.current;
-    const current = () =>
-      active.current === identity && outgoingRequest.current === request;
-    await loadOutgoingCommits(
-      spacePath,
-      (value) => {
-        if (current()) setCommits(value);
+  // The list follows the counters: every new remote status of the shown
+  // repository rereads it, whichever action wrote that status.
+  useEffect(() => {
+    if (!spacePath || !open || !remoteChecked || !remoteStatus) return;
+    let current = true;
+    getGitOutgoingCommits(spacePath).then(
+      (commits) => {
+        if (current)
+          setOutgoingList({ status: remoteStatus, commits, failed: false });
       },
-      (value) => {
-        if (current()) setLoadingCommits(value);
+      (err) => {
+        console.error("git_unpushed_commits failed:", err);
+        if (current)
+          setOutgoingList({ status: remoteStatus, commits: [], failed: true });
       },
     );
-  }, [spacePath]);
+    return () => {
+      current = false;
+    };
+  }, [open, remoteChecked, remoteStatus, spacePath]);
 
   useEffect(() => {
     if (!spacePath) return;
@@ -241,9 +251,6 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       refreshStop();
       void refreshRemote();
       void refreshGitPublication(spacePath).catch(() => {});
-      if (open) {
-        void loadCommits();
-      }
     }).then((unlisten) => {
       if (cancelled) unlisten();
       else unlistenCommit = unlisten;
@@ -253,23 +260,16 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       cancelled = true;
       if (unlistenCommit) unlistenCommit();
     };
-  }, [loadCommits, open, refreshRemote, refreshStop, spacePath]);
+  }, [refreshRemote, refreshStop, spacePath]);
 
   const openDialog = useCallback(async () => {
     if (!spacePath) return;
-    const identity = active.current;
 
     setOpen(true);
     refreshStop();
     void refreshGitPublication(spacePath).catch(() => {});
-    const freshStatus = await refreshRemote();
-    if (active.current !== identity) return;
-    if (!freshStatus) {
-      setCommits([]);
-      return;
-    }
-    await loadCommits();
-  }, [loadCommits, refreshRemote, refreshStop, spacePath]);
+    await refreshRemote();
+  }, [refreshRemote, refreshStop, spacePath]);
 
   const requestAuth = useCallback((challenge: GitAuthChallenge) => {
     setAuthChallenge(challenge);
@@ -278,9 +278,8 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   }, []);
 
   const closeAfterSync = useCallback(() => {
-    outgoingRequest.current++;
     setOpen(false);
-    setCommits([]);
+    setOutgoingList(null);
   }, []);
 
   const syncNow = useCallback(async () => {
@@ -380,6 +379,8 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     () => remoteCounters(remoteStatus, remoteChecked),
     [remoteChecked, remoteStatus],
   );
+  // Until the list of the shown counters arrives, the previous one stays.
+  const listCurrent = !!outgoingList && outgoingList.status === remoteStatus;
 
   return {
     parent,
@@ -408,8 +409,9 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     syncing,
     autoSync,
     savingAutoSync,
-    commits,
-    loadingCommits,
+    commits: outgoingList?.commits ?? [],
+    loadingCommits: open && remoteChecked && !listCurrent,
+    commitsFailed: listCurrent && outgoingList?.failed === true,
     authOpen,
     authChallenge,
     authSaving,
@@ -440,20 +442,4 @@ function remoteCounters(
     incoming: status?.behind ?? 0,
     outgoing: status?.ahead ?? 0,
   };
-}
-
-async function loadOutgoingCommits(
-  spacePath: string,
-  setCommits: (commits: GitUnpushedCommit[]) => void,
-  setLoadingCommits: (loading: boolean) => void,
-): Promise<void> {
-  setLoadingCommits(true);
-  try {
-    setCommits(await getGitOutgoingCommits(spacePath));
-  } catch (err) {
-    console.error("git_unpushed_commits failed:", err);
-    setCommits([]);
-  } finally {
-    setLoadingCommits(false);
-  }
 }

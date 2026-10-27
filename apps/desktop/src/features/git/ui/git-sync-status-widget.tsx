@@ -327,13 +327,18 @@ export function GitSyncStatusWidget({
                           ? m.git_sync_remote_checking()
                           : m.git_sync_outgoing_unchecked()}
                       </p>
-                    ) : sync.loadingCommits ? (
-                      <p className="p-4 text-sm text-muted-foreground">
-                        {m.git_unpushed_loading()}
+                    ) : sync.commitsFailed ? (
+                      <p
+                        className="p-4 text-sm text-muted-foreground"
+                        data-git-outgoing-failed
+                      >
+                        {m.git_sync_outgoing_load_failed()}
                       </p>
                     ) : sync.commits.length === 0 ? (
                       <p className="p-4 text-sm text-muted-foreground">
-                        {m.git_sync_outgoing_empty()}
+                        {sync.loadingCommits && sync.outgoing !== 0
+                          ? m.git_unpushed_loading()
+                          : m.git_sync_outgoing_empty()}
                       </p>
                     ) : (
                       <ul className="divide-y">

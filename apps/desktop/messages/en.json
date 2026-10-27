@@ -2395,6 +2395,7 @@
   "git_sync_pull_blocked": "Incoming changes affect files with unsaved edits: {files}. Save or discard these edits and sync again.",
   "git_sync_remote_checking": "Checking remote status…",
   "git_sync_outgoing_unchecked": "The outgoing commit list is unavailable until remote status is checked.",
+  "git_sync_outgoing_load_failed": "Couldn't load the outgoing commits.",
   "git_sync_access_read_only": "This repository is read-only. Publishing requires write access.",
   "git_sync_access_unknown": "Verify write access to this repository in Git settings, then retry.",
   "git_push_lfs_objects_missing": "The Git provider rejected the push: LFS objects referenced by the commits are missing there ({count}).",

@@ -144,7 +144,8 @@ if (process.env.SVODE_GIT_LIFECYCLE_DOM !== "1") {
       expect(widget.parent.publication?.parent.pointer).toBe("local");
       expect(widget.parent.action).toBe("retry");
       expect(widget.remoteChecked).toBe(true);
-      expect(calls).toEqual(["git_sync"]);
+      // The open Dialog rereads its list for the new counters.
+      expect(calls).toEqual(["git_sync", "git_unpushed_commits"]);
       calls.length = 0;
       await act(async () => {
         await widget.parent.run();
@@ -162,7 +163,11 @@ if (process.env.SVODE_GIT_LIFECYCLE_DOM !== "1") {
         await widget.syncNow();
       });
       expect(widget.open).toBe(false);
-      expect(calls).toEqual(["git_sync"]);
+      // The counters may reach the list before the Dialog closes; the
+      // full success still closes it with no other request.
+      expect(calls.filter((call) => call !== "git_unpushed_commits")).toEqual([
+        "git_sync",
+      ]);
     } finally {
       await dom.render(null);
       clearNativeMocks();
