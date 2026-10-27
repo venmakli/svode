@@ -539,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn space_registry_writers_keep_unknown_config_keys() {
+    fn space_registry_writers_keep_unknown_config_keys_and_strategy() {
         let project_dir = tempfile::tempdir().expect("project dir");
         let project = project_dir.path();
         std::fs::create_dir_all(project.join(".svode")).expect("svode dir");
@@ -548,7 +548,7 @@ mod tests {
             serde_json::json!({
                 "name": "Root",
                 "futureRoot": "kept",
-                "assets": { "strategy": "local", "futureAssets": "kept" },
+                "assets": { "strategy": "lfs-future", "futureAssets": "kept" },
                 "spaces": [
                     { "id": "missing", "path": "gone", "repo": null, "futureSpace": "missing" },
                     { "id": "kept", "path": "kept", "repo": null, "futureSpace": "kept" },
@@ -573,6 +573,7 @@ mod tests {
             let value = raw();
             assert_eq!(value["futureRoot"], "kept", "{step}");
             assert_eq!(value["assets"]["futureAssets"], "kept", "{step}");
+            assert_eq!(value["assets"]["strategy"], "lfs-future", "{step}");
             assert_eq!(
                 entry(&value, "kept").unwrap()["futureSpace"],
                 "kept",

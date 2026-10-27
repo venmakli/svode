@@ -162,6 +162,23 @@ mod tests {
     }
 
     #[test]
+    fn inline_child_inherits_an_unknown_project_strategy_as_written() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let project = temp.path().join("Project");
+        std::fs::create_dir_all(project.join("child")).expect("child dir");
+        write_config(&project, "lfs-future");
+
+        let scope = child_scope(&project);
+
+        assert!(scope.inherited_from_project);
+        assert_eq!(
+            scope.config.strategy,
+            AssetsStrategy::Unknown("lfs-future".to_string())
+        );
+        assert!(crate::storage::policy::supported_strategy(&scope.config.strategy).is_err());
+    }
+
+    #[test]
     fn effective_scope_uses_repo_owned_child_assets_config() {
         let temp = tempfile::tempdir().expect("temp dir");
         let project = temp.path().join("Project");

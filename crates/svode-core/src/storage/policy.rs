@@ -98,8 +98,21 @@ pub struct LfsFilterCheck {
     pub value: String,
 }
 
-pub fn strategy_uses_lfs_policy(strategy: AssetsStrategy) -> bool {
+pub fn strategy_uses_lfs_policy(strategy: &AssetsStrategy) -> bool {
     matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3)
+}
+
+/// A strategy written by a newer Svode version fails closed: the config still
+/// reads and writes it back as is, but importing files and changing the
+/// storage strategy or its LFS rules are refused, since their outcome depends
+/// on what the strategy means.
+pub fn supported_strategy(strategy: &AssetsStrategy) -> Result<(), StoragePolicyError> {
+    match strategy {
+        AssetsStrategy::Unknown(value) => Err(StoragePolicyError::Storage(format!(
+            "assets strategy `{value}` was set by a newer Svode version; update Svode before importing files or changing storage settings"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 pub fn effective_binary_routing(config: &AssetsSpaceConfig) -> EffectiveBinaryRouting {
@@ -131,6 +144,7 @@ pub fn effective_binary_routing(config: &AssetsSpaceConfig) -> EffectiveBinaryRo
 pub fn supported_binary_routing(
     config: &AssetsSpaceConfig,
 ) -> Result<BinaryRoutingConfig, StoragePolicyError> {
+    supported_strategy(&config.strategy)?;
     match config.binary_routing.as_ref() {
         None => normalize_binary_routing(BinaryRoutingConfig {
             version: BINARY_ROUTING_VERSION,
@@ -199,6 +213,7 @@ pub fn evaluate_managed_binary_route(
         AssetsStrategy::Local => return Ok(ManagedBinaryRoute::Local),
         AssetsStrategy::InGit => return Ok(ManagedBinaryRoute::DirectGit),
         AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3 => {}
+        AssetsStrategy::Unknown(_) => unreachable!("supported_binary_routing refuses it"),
     }
     if is_protected_source(path) {
         return Ok(ManagedBinaryRoute::DirectGit);
@@ -265,7 +280,7 @@ pub fn managed_policy_current(
     strategy: AssetsStrategy,
     routing: &BinaryRoutingConfig,
 ) -> bool {
-    if !strategy_uses_lfs_policy(strategy) {
+    if !strategy_uses_lfs_policy(&strategy) {
         return !contents
             .lines()
             .any(|line| matches!(line.trim(), LFS_START | LFS_END));
@@ -432,9 +447,10 @@ pub async fn diagnose_repo_lfs_policy(
 ) -> Result<LfsPolicyDiagnostic, StoragePolicyError> {
     let routing = supported_binary_routing(config)?;
     let attributes = read_or_empty(&repo_dir.join(".gitattributes"))?;
-    let managed_policy_current = managed_policy_current(&attributes, config.strategy, &routing);
+    let managed_policy_current =
+        managed_policy_current(&attributes, config.strategy.clone(), &routing);
 
-    if !strategy_uses_lfs_policy(config.strategy) {
+    if !strategy_uses_lfs_policy(&config.strategy) {
         return Ok(LfsPolicyDiagnostic {
             managed_policy_current,
             uncovered_paths: Vec::new(),

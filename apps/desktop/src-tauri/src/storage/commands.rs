@@ -101,6 +101,7 @@ pub async fn upload_asset(
     // We only use the IndexKey from this — the asset path is computed below.
     let (key, _rel_doc) = index_state.resolve(&project, &doc_abs).await?;
     let scope = resolve_effective_storage_scope_for_key(&index_state, &project, key).await?;
+    svode_core::storage::policy::supported_strategy(&scope.config.strategy)?;
     require_repository_mutation(&app, &scope.repo_dir).await?;
     let pool = index_state.get_or_create(&scope.pool_key).await?;
     let scoped_document_id =
@@ -154,6 +155,9 @@ pub async fn list_assets(
 #[serde(rename_all = "camelCase")]
 pub struct EffectiveAssetsConfig {
     pub strategy: AssetsStrategy,
+    /// The strategy was set by a newer Svode version; Settings shows why
+    /// storage cannot be changed instead of the strategy choice.
+    pub unknown_strategy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub s3: Option<AssetsS3Config>,
     pub default_s3_prefix: String,
@@ -173,6 +177,7 @@ pub async fn get_assets_config(
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
     let binary_routing = svode_core::storage::policy::effective_binary_routing(&scope.config);
     Ok(EffectiveAssetsConfig {
+        unknown_strategy: matches!(scope.config.strategy, AssetsStrategy::Unknown(_)),
         strategy: scope.config.strategy,
         s3: scope.config.s3,
         default_s3_prefix: scope.default_s3_prefix,
@@ -182,14 +187,16 @@ pub async fn get_assets_config(
     })
 }
 
-fn is_sync_strategy(strategy: AssetsStrategy) -> bool {
+fn is_sync_strategy(strategy: &AssetsStrategy) -> bool {
     !matches!(strategy, AssetsStrategy::Local)
 }
 
 fn ensure_supported_strategy_transition(
-    current: AssetsStrategy,
-    next: AssetsStrategy,
+    current: &AssetsStrategy,
+    next: &AssetsStrategy,
 ) -> Result<(), AppError> {
+    svode_core::storage::policy::supported_strategy(current)?;
+    svode_core::storage::policy::supported_strategy(next)?;
     if current == next || !is_sync_strategy(current) {
         return Ok(());
     }
@@ -286,9 +293,9 @@ pub async fn set_assets_strategy(
     let current_strategy = config
         .assets
         .as_ref()
-        .map(|assets| assets.strategy)
+        .map(|assets| assets.strategy.clone())
         .unwrap_or_default();
-    ensure_supported_strategy_transition(current_strategy, strategy)?;
+    ensure_supported_strategy_transition(&current_strategy, &strategy)?;
     if let Some(current_assets) = config.assets.as_ref() {
         svode_core::storage::policy::supported_binary_routing(current_assets)?;
     }
@@ -366,7 +373,7 @@ pub async fn set_assets_strategy(
     let mut result = super::strategy::apply_strategy(
         &git_state,
         &scope.repo_dir,
-        strategy,
+        strategy.clone(),
         &binary_routing,
         s3_config.as_ref(),
         svode_lfs_path.as_deref(),
@@ -592,25 +599,48 @@ mod tests {
             AssetsStrategy::LfsRemote,
             AssetsStrategy::LfsS3,
         ] {
-            assert!(ensure_supported_strategy_transition(AssetsStrategy::Local, next).is_ok());
+            assert!(ensure_supported_strategy_transition(&AssetsStrategy::Local, &next).is_ok());
         }
 
         assert!(
-            ensure_supported_strategy_transition(AssetsStrategy::LfsS3, AssetsStrategy::LfsS3)
+            ensure_supported_strategy_transition(&AssetsStrategy::LfsS3, &AssetsStrategy::LfsS3)
                 .is_ok()
         );
         assert!(
-            ensure_supported_strategy_transition(AssetsStrategy::InGit, AssetsStrategy::LfsRemote)
-                .is_err()
+            ensure_supported_strategy_transition(
+                &AssetsStrategy::InGit,
+                &AssetsStrategy::LfsRemote
+            )
+            .is_err()
         );
         assert!(
-            ensure_supported_strategy_transition(AssetsStrategy::LfsRemote, AssetsStrategy::Local)
-                .is_err()
+            ensure_supported_strategy_transition(
+                &AssetsStrategy::LfsRemote,
+                &AssetsStrategy::Local
+            )
+            .is_err()
         );
         assert!(
-            ensure_supported_strategy_transition(AssetsStrategy::LfsRemote, AssetsStrategy::LfsS3)
-                .is_err()
+            ensure_supported_strategy_transition(
+                &AssetsStrategy::LfsRemote,
+                &AssetsStrategy::LfsS3
+            )
+            .is_err()
         );
+    }
+
+    #[test]
+    fn strategy_transition_guard_refuses_an_unknown_current_or_next_strategy() {
+        let unknown = AssetsStrategy::Unknown("lfs-future".into());
+        for (current, next) in [
+            (&unknown, &unknown),
+            (&unknown, &AssetsStrategy::Local),
+            (&AssetsStrategy::Local, &unknown),
+        ] {
+            let error = ensure_supported_strategy_transition(current, next)
+                .expect_err("unknown strategy refused");
+            assert!(error.to_string().contains("newer Svode version"), "{error}");
+        }
     }
 
     #[test]

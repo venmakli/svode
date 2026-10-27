@@ -216,6 +216,36 @@ fn mutate_reads_the_file_under_the_lock_and_keeps_unknown_keys() {
 }
 
 #[test]
+fn writers_keep_an_unknown_storage_strategy_as_written() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let mut fixture = future_config();
+    fixture["assets"]["strategy"] = json!("lfs-future");
+    write_raw(temp.path(), &fixture);
+
+    let mut config = known_fields_only(&read(temp.path()).expect("read"));
+    config.name = "Renamed".into();
+    write(temp.path(), &config).expect("write");
+    assert_eq!(raw(temp.path())["assets"]["strategy"], "lfs-future");
+
+    mutate(temp.path(), |config| {
+        config.spaces.as_mut().unwrap().reverse();
+        Ok::<_, SpaceConfigError>(())
+    })
+    .expect("mutate");
+    let value = raw(temp.path());
+    assert_eq!(value["assets"]["strategy"], "lfs-future");
+    assert_unknown_keys_kept(&value);
+    assert_eq!(
+        crate::storage::config::read_space_assets_config(temp.path())
+            .expect("core assets read")
+            .assets
+            .expect("assets")
+            .strategy,
+        crate::storage::config::AssetsStrategy::Unknown("lfs-future".into())
+    );
+}
+
+#[test]
 fn read_leaves_the_variables_section_to_variables() {
     let temp = tempfile::tempdir().expect("temp dir");
     write_raw(temp.path(), &future_config());

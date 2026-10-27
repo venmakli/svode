@@ -28,11 +28,11 @@ use super::scope::{
 const LFS_POINTER_PREFIX: &str = "version https://git-lfs.github.com/spec/v1";
 const LFS_POINTER_MAX_BYTES: u64 = 200;
 
-fn strategy_uses_lfs_runtime(strategy: AssetsStrategy) -> bool {
+fn strategy_uses_lfs_runtime(strategy: &AssetsStrategy) -> bool {
     matches!(strategy, AssetsStrategy::LfsRemote | AssetsStrategy::LfsS3)
 }
 
-fn strategy_supports_lfs_remote_diagnostic(strategy: AssetsStrategy) -> bool {
+fn strategy_supports_lfs_remote_diagnostic(strategy: &AssetsStrategy) -> bool {
     matches!(strategy, AssetsStrategy::LfsRemote)
 }
 
@@ -141,7 +141,7 @@ pub async fn diagnose_lfs_remote(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
-    if !strategy_supports_lfs_remote_diagnostic(scope.config.strategy) {
+    if !strategy_supports_lfs_remote_diagnostic(&scope.config.strategy) {
         reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
         return Ok(LfsRemoteDiagnostic {
             state: LfsState::NotApplicable,
@@ -381,7 +381,7 @@ pub fn maybe_auto_pull_after_sync(
                     return;
                 }
             };
-        if !strategy_uses_lfs_runtime(scope.config.strategy) {
+        if !strategy_uses_lfs_runtime(&scope.config.strategy) {
             reset_lfs_state_if_needed(&app, &state, &scope.pool_key).await;
             return;
         }
@@ -440,7 +440,7 @@ pub async fn repair_lfs(
     let project = PathBuf::from(&project_path);
     let scope =
         resolve_effective_storage_scope(&index_state, &project, space_id.as_deref()).await?;
-    if !strategy_uses_lfs_runtime(scope.config.strategy) {
+    if !strategy_uses_lfs_runtime(&scope.config.strategy) {
         reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
         return Ok(LfsState::NotApplicable);
     }
@@ -492,7 +492,7 @@ pub async fn get_lfs_state(
 
     // Only probe if the strategy is LFS-flavoured — otherwise NotApplicable
     // is correct and re-probing would be wasted work.
-    if !strategy_uses_lfs_runtime(scope.config.strategy) {
+    if !strategy_uses_lfs_runtime(&scope.config.strategy) {
         reset_lfs_state_if_needed(&app, &index_state, &scope.pool_key).await;
         return Ok(LfsState::NotApplicable);
     }
@@ -571,25 +571,25 @@ size 42\n";
 
     #[test]
     fn lfs_runtime_is_used_only_by_lfs_strategies() {
-        assert!(!strategy_uses_lfs_runtime(AssetsStrategy::Local));
-        assert!(!strategy_uses_lfs_runtime(AssetsStrategy::InGit));
-        assert!(strategy_uses_lfs_runtime(AssetsStrategy::LfsRemote));
-        assert!(strategy_uses_lfs_runtime(AssetsStrategy::LfsS3));
+        assert!(!strategy_uses_lfs_runtime(&AssetsStrategy::Local));
+        assert!(!strategy_uses_lfs_runtime(&AssetsStrategy::InGit));
+        assert!(strategy_uses_lfs_runtime(&AssetsStrategy::LfsRemote));
+        assert!(strategy_uses_lfs_runtime(&AssetsStrategy::LfsS3));
     }
 
     #[test]
     fn lfs_remote_diagnostic_is_only_for_lfs_remote_strategy() {
         assert!(!strategy_supports_lfs_remote_diagnostic(
-            AssetsStrategy::Local
+            &AssetsStrategy::Local
         ));
         assert!(!strategy_supports_lfs_remote_diagnostic(
-            AssetsStrategy::InGit
+            &AssetsStrategy::InGit
         ));
         assert!(strategy_supports_lfs_remote_diagnostic(
-            AssetsStrategy::LfsRemote
+            &AssetsStrategy::LfsRemote
         ));
         assert!(!strategy_supports_lfs_remote_diagnostic(
-            AssetsStrategy::LfsS3
+            &AssetsStrategy::LfsS3
         ));
     }
 

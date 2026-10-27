@@ -316,7 +316,7 @@ pub async fn plan_managed_import(
         source_path,
         requested_file_name,
         requires_conversion,
-        storage_strategy: scope.config.strategy,
+        storage_strategy: scope.config.strategy.clone(),
         storage_config: scope.config,
         binary_route,
         affected_paths,

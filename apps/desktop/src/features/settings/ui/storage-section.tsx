@@ -82,6 +82,8 @@ function storageStrategyDescription(strategy: AssetsStrategy) {
 export function storageSummary(settings: StorageSettings): string | null {
   if (!settings.storageConfigLoaded || settings.inheritedFromProject)
     return null;
+  if (settings.unknownStrategy)
+    return m.storage_summary_strategy({ strategy: m.storage_strategy_newer() });
   const strategy = m.storage_summary_strategy({
     strategy: storageStrategyTitle(settings.savedAssetsStrategy),
   });
@@ -91,6 +93,26 @@ export function storageSummary(settings: StorageSettings): string | null {
       ? m.storage_summary_project_applied()
       : m.storage_summary_project_differs()
   }`;
+}
+
+// A strategy set by a newer Svode version replaces the storage settings of
+// its owner and of the inline spaces that inherit it: nothing here can change
+// it, and imports are refused until Svode is updated.
+export function StorageUnknownStrategyGroup() {
+  return (
+    <SettingsGroup
+      title={m.storage_strategy_group()}
+      callout={
+        <Alert>
+          <TriangleAlert />
+          <AlertTitle>{m.storage_strategy_unknown()}</AlertTitle>
+          <AlertDescription>
+            {m.storage_strategy_unknown_hint()}
+          </AlertDescription>
+        </Alert>
+      }
+    />
+  );
 }
 
 // A space without its own repository uses the project strategy; its block
@@ -171,6 +193,8 @@ export function StorageSettingsSection({
         }
       />
     );
+  if (settings.storageConfigLoaded && settings.unknownStrategy)
+    return <StorageUnknownStrategyGroup />;
   if (settings.storageConfigLoaded && settings.inheritedFromProject)
     return (
       <StorageInheritedGroup
@@ -213,6 +237,7 @@ export function StorageSettingsSection({
 function projectSettingBlock(settings: StorageSettings): string | null {
   const saved = settings.savedAssetsStrategy;
   const project = settings.projectAssetsStrategy;
+  if (settings.projectUnknownStrategy) return m.storage_strategy_unknown_hint();
   if (settings.binaryRoutingStatus === "unsupported")
     return m.storage_lfs_rules_unsupported();
   if (saved !== "local" && !(saved === "lfs-s3" && project === "lfs-s3"))
@@ -250,7 +275,9 @@ function StorageProjectSettingGroup({
         <SettingsItem
           title={m.storage_project_setting_summary({
             name: projectName,
-            strategy: storageStrategyTitle(settings.projectAssetsStrategy),
+            strategy: settings.projectUnknownStrategy
+              ? m.storage_strategy_newer()
+              : storageStrategyTitle(settings.projectAssetsStrategy),
           })}
           description={
             applied

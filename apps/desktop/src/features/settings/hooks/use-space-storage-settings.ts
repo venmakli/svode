@@ -53,10 +53,12 @@ export interface UseSpaceStorageSettingsResult {
   testS3: () => Promise<void>;
   savedS3Config: AssetsS3Config | null;
   projectAssetsStrategy: AssetsStrategy;
+  projectUnknownStrategy: boolean;
   projectS3Config: AssetsS3Config | null;
   projectConfigStatus: StorageProjectConfigStatus;
   projectDefaultApplied: boolean;
   inheritedFromProject: boolean;
+  unknownStrategy: boolean;
   ownerSpaceId: string | null;
   binaryRoutingStatus: "legacy-preset" | "v1" | "unsupported";
   binaryRoutingVersion: number | null;
@@ -166,6 +168,7 @@ export function useSpaceStorageSettings({
     savedS3Config,
     defaultS3Prefix,
     inheritedFromProject,
+    unknownStrategy,
     ownerSpaceId,
     binaryRoutingStatus,
     binaryRoutingVersion,
@@ -193,6 +196,7 @@ export function useSpaceStorageSettings({
   const canSaveS3 = s3.canSave;
   const [projectAssetsStrategy, setProjectAssetsStrategy] =
     useState<AssetsStrategy>("local");
+  const [projectUnknownStrategy, setProjectUnknownStrategy] = useState(false);
   const [projectS3Config, setProjectS3Config] = useState<AssetsS3Config | null>(
     null,
   );
@@ -248,7 +252,10 @@ export function useSpaceStorageSettings({
     void getAssetsConfig({ projectPath, spaceId: null })
       .then((config) => {
         if (!cancelled) {
-          setProjectAssetsStrategy(config.strategy);
+          setProjectUnknownStrategy(config.unknownStrategy);
+          setProjectAssetsStrategy(
+            config.unknownStrategy ? "local" : config.strategy,
+          );
           setProjectS3Config(config.s3 ?? null);
           setProjectConfigStatus("loaded");
           projectConfigLoadedForRef.current = projectPath;
@@ -541,12 +548,14 @@ export function useSpaceStorageSettings({
   }, [applyStrategy, pendingStrategy, pendingTargetKey]);
 
   const projectDefaultApplied =
+    !projectUnknownStrategy &&
     savedAssetsStrategy === projectAssetsStrategy &&
     (projectAssetsStrategy !== "lfs-s3" ||
       (sameS3Connection(savedS3Config, projectS3Config) &&
         savedS3Config?.prefix === defaultS3Prefix));
 
   const useProjectStorageSetting = useCallback(async () => {
+    if (projectUnknownStrategy) return;
     if (projectAssetsStrategy === "lfs-s3") {
       if (savedAssetsStrategy !== "local" && savedAssetsStrategy !== "lfs-s3") {
         rejectUnsupportedMigration();
@@ -567,6 +576,7 @@ export function useSpaceStorageSettings({
     }
     await selectStrategy(projectAssetsStrategy);
   }, [
+    projectUnknownStrategy,
     projectAssetsStrategy,
     projectS3Config,
     defaultS3Prefix,
@@ -593,10 +603,12 @@ export function useSpaceStorageSettings({
     testS3: s3.test,
     savedS3Config,
     projectAssetsStrategy,
+    projectUnknownStrategy,
     projectS3Config,
     projectConfigStatus,
     projectDefaultApplied,
     inheritedFromProject,
+    unknownStrategy,
     ownerSpaceId,
     binaryRoutingStatus,
     binaryRoutingVersion,

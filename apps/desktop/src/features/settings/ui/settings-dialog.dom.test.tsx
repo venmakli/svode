@@ -205,6 +205,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         Project storage
       </button>
     ),
+    StorageUnknownStrategyGroup: () => null,
     storageSummary: (settings: { currentSpacePath: string }) =>
       `Storage of ${settings.currentSpacePath}`,
   }));

@@ -211,6 +211,32 @@ async fn managed_import_plan_rejects_unknown_binary_routing_version() {
 }
 
 #[tokio::test]
+async fn managed_import_plan_rejects_unknown_storage_strategy_before_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    write_space_config(&project, Some(r#"{ "strategy": "lfs-future" }"#));
+    fs::write(project.join("README.md"), "---\ntitle: Project\n---\n").unwrap();
+    let source = temp.path().join("photo.png");
+    fs::write(&source, b"image").unwrap();
+
+    let index = IndexRuntimeState::default();
+    let error = plan_managed_import(&index, &project, None, "README.md", &source, None)
+        .await
+        .expect_err("unknown strategy must fail closed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("`lfs-future` was set by a newer Svode version"),
+        "{error}"
+    );
+    assert!(!project.join("photo.png").exists());
+    assert!(!project.join(".gitattributes").exists());
+    assert!(!project.join(".gitignore").exists());
+}
+
+#[tokio::test]
 async fn unsupported_attachment_format_is_rejected_before_staging() {
     let temp = tempfile::tempdir().unwrap();
     let project = temp.path().join("project");

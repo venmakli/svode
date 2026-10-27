@@ -38,6 +38,7 @@ export function useSpaceStorageConfig({
     null,
   );
   const [inheritedFromProject, setInheritedFromProject] = useState(false);
+  const [unknownStrategy, setUnknownStrategy] = useState(false);
   const [ownerSpaceId, setOwnerSpaceId] = useState<string | null>(null);
   const [defaultS3Prefix, setDefaultS3Prefix] = useState("");
   const [binaryRoutingStatus, setBinaryRoutingStatus] = useState<
@@ -67,7 +68,10 @@ export function useSpaceStorageConfig({
       region: s3Region.trim(),
       prefix: s3Prefix.trim(),
     },
-    enabled: loadedTargetKey === targetKey && !inheritedFromProject,
+    enabled:
+      loadedTargetKey === targetKey &&
+      !inheritedFromProject &&
+      !unknownStrategy,
   });
   const binaryRoutingDraft = useMemo(
     () =>
@@ -93,6 +97,7 @@ export function useSpaceStorageConfig({
       });
       return {
         strategy: cfg.strategy,
+        unknownStrategy: cfg.unknownStrategy,
         s3: cfg.s3,
         defaultS3Prefix: cfg.defaultS3Prefix,
         inheritedFromProject: cfg.inheritedFromProject,
@@ -105,6 +110,7 @@ export function useSpaceStorageConfig({
       .then(
         ({
           strategy,
+          unknownStrategy,
           s3,
           defaultS3Prefix,
           inheritedFromProject,
@@ -113,8 +119,12 @@ export function useSpaceStorageConfig({
         }) => {
           if (cancelled) return;
           setLoadError(false);
-          setAssetsStrategy(strategy);
-          setSavedAssetsStrategy(strategy);
+          // A strategy of a newer Svode version is never shown or applied as
+          // one of ours; the section shows why storage cannot change instead.
+          const known = unknownStrategy ? "local" : strategy;
+          setUnknownStrategy(unknownStrategy);
+          setAssetsStrategy(known);
+          setSavedAssetsStrategy(known);
           setLoadedTargetKey(targetKey);
           setSavedS3Config(s3 ?? null);
           setDefaultS3Prefix(defaultS3Prefix);
@@ -199,6 +209,7 @@ export function useSpaceStorageConfig({
     lfsThresholdEnabled,
     lfsThresholdMegabytes,
     inheritedFromProject,
+    unknownStrategy,
     ownerSpaceId,
     s3Endpoint,
     s3Bucket,

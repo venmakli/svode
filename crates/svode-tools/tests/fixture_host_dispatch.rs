@@ -2540,6 +2540,36 @@ async fn managed_import_uses_the_shared_plan_and_host_delivery() {
     assert!(not_ready.deliveries.lock().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn import_asset_refuses_an_unknown_storage_strategy_before_writing() {
+    let fixture = write_fixture();
+    let target = root_target(&fixture);
+    let photo = fixture.project.parent().unwrap().join("photo.png");
+    fs::write(&photo, b"image").unwrap();
+    write(
+        &fixture.project.join(".svode/config.json"),
+        &json!({ "name": "Project", "assets": { "strategy": "lfs-future" } }).to_string(),
+    );
+    let host = FixtureHost::new(None);
+
+    let refused = call_tool(
+        &host,
+        Some(&target),
+        "import_asset",
+        json!({ "contentPath": "README.md", "sourcePath": photo.to_string_lossy() }),
+    )
+    .await;
+
+    assert!(refused.is_error);
+    assert!(
+        refused.content[0]
+            .text
+            .contains("`lfs-future` was set by a newer Svode version")
+    );
+    assert!(!fixture.project.join("photo.png").exists());
+    assert!(host.deliveries.lock().unwrap().is_empty());
+}
+
 const ROUTINE_TOOLS: [&str; 6] = [
     "list_routines",
     "get_routine",

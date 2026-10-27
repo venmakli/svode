@@ -69,7 +69,10 @@ pub async fn probe_readiness(
     config: &AssetsSpaceConfig,
 ) -> LfsState {
     match config.strategy {
-        AssetsStrategy::Local | AssetsStrategy::InGit => LfsState::NotApplicable,
+        // An unknown strategy gets no LFS readiness check or repair.
+        AssetsStrategy::Local | AssetsStrategy::InGit | AssetsStrategy::Unknown(_) => {
+            LfsState::NotApplicable
+        }
         AssetsStrategy::LfsS3 => {
             let Some(target) = config.s3.clone() else {
                 return LfsState::MissingCreds;
@@ -910,6 +913,29 @@ mod tests {
             }),
             ..AssetsSpaceConfig::default()
         }
+    }
+
+    #[tokio::test]
+    async fn unknown_strategy_is_not_lfs_ready_and_its_repository_is_left_alone() -> TestResult {
+        let git = GitRuntime::new();
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path();
+        if let Some(cli) = git.detected() {
+            init_repo(cli, repo).await?;
+        }
+        let git_config = std::fs::read(repo.join(".git/config")).ok();
+        let config = AssetsSpaceConfig {
+            strategy: AssetsStrategy::Unknown("lfs-future".into()),
+            ..s3_config()
+        };
+
+        assert_eq!(
+            probe_readiness(&git, repo, &config).await,
+            LfsState::NotApplicable
+        );
+        assert!(!git.lfs_ready(repo, &config).await);
+        assert_eq!(std::fs::read(repo.join(".git/config")).ok(), git_config);
+        Ok(())
     }
 
     #[tokio::test]

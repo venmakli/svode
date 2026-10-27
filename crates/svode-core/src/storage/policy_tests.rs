@@ -254,6 +254,44 @@ fn unknown_routing_version_fails_closed_for_mutation() {
     }
 }
 
+#[test]
+fn unknown_strategy_fails_closed_for_import_and_policy_mutation() {
+    let config = AssetsSpaceConfig {
+        strategy: AssetsStrategy::Unknown("lfs-future".into()),
+        ..lfs_config(legacy_routing())
+    };
+
+    for error in [
+        evaluate_managed_binary_route(&config, "art.psd", 1).expect_err("import refused"),
+        supported_binary_routing(&config).expect_err("policy mutation refused"),
+    ] {
+        assert_eq!(
+            error.to_string(),
+            "assets strategy `lfs-future` was set by a newer Svode version; update Svode before importing files or changing storage settings"
+        );
+    }
+}
+
+#[test]
+fn unknown_strategy_is_read_and_written_back_as_is() {
+    let config: AssetsSpaceConfig =
+        serde_json::from_str(r#"{ "strategy": "lfs-future" }"#).expect("config");
+
+    assert_eq!(
+        config.strategy,
+        AssetsStrategy::Unknown("lfs-future".to_string())
+    );
+    assert_eq!(
+        serde_json::to_value(&config).expect("json")["strategy"],
+        "lfs-future"
+    );
+    for known in ["local", "in-git", "lfs-remote", "lfs-s3"] {
+        let strategy = AssetsStrategy::from(known.to_string());
+        assert!(!matches!(strategy, AssetsStrategy::Unknown(_)), "{known}");
+        assert_eq!(String::from(strategy), known);
+    }
+}
+
 fn detected_git() -> Option<GitCli> {
     GitCli::detect().ok()
 }

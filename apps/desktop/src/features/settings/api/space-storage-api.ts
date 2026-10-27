@@ -55,6 +55,9 @@ export interface SetAssetsStrategyResult {
 
 export interface EffectiveAssetsConfig {
   strategy: AssetsStrategy;
+  // Set by a newer Svode version: `strategy` is not one of ours and no
+  // storage change applies.
+  unknownStrategy: boolean;
   s3?: AssetsS3Config;
   defaultS3Prefix: string;
   inheritedFromProject: boolean;

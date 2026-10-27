@@ -36,8 +36,12 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
   );
   const { createRoot } = await import("react-dom/client");
   const { setLocale } = await import("@/paraglide/runtime");
-  const { StorageInheritedGroup, StorageSettingsSection, storageSummary } =
-    await import("./storage-section");
+  const {
+    StorageInheritedGroup,
+    StorageSettingsSection,
+    StorageUnknownStrategyGroup,
+    storageSummary,
+  } = await import("./storage-section");
   setLocale("en", { reload: false });
   const document = dom.window.document;
   const noop = () => {};
@@ -130,10 +134,12 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       testS3: call("testS3"),
       savedS3Config: null,
       projectAssetsStrategy: "lfs-s3",
+      projectUnknownStrategy: false,
       projectS3Config: null,
       projectConfigStatus: "loaded",
       projectDefaultApplied: false,
       inheritedFromProject: false,
+      unknownStrategy: false,
       ownerSpaceId: null,
       binaryRoutingStatus: "v1",
       binaryRoutingVersion: 1,
@@ -671,6 +677,74 @@ if (process.env.SVODE_STORAGE_SECTION_DOM !== "1") {
       document.body.textContent?.includes("Uses the “Testov” project strategy"),
     ).toBe(true);
     expect(document.body.textContent?.includes("strategy:")).toBe(false);
+  });
+
+  test("a strategy of a newer Svode version shows why storage cannot change, not a strategy", async () => {
+    const unknownAlert = () =>
+      group("Strategy").querySelector('[data-slot="alert"]')?.textContent;
+    const expectOnlyAlert = () => {
+      expect(groups()).toEqual(["Strategy"]);
+      expect(unknownAlert()).toBe(
+        "This storage strategy was set by a newer Svode version.Update Svode before importing files or changing storage settings.",
+      );
+      expect(document.querySelector('[role="combobox"]')).toBeNull();
+      expect(document.querySelector("button")).toBeNull();
+      for (const known of ["Local", "In Git", "Git LFS"])
+        expect(document.body.textContent?.includes(known)).toBe(false);
+    };
+
+    await render(
+      storageFixture({
+        unknownStrategy: true,
+        binaryRoutingStatus: "unsupported",
+      }),
+    );
+    expectOnlyAlert();
+
+    // An inline space inheriting it shows the same state.
+    await render(
+      storageFixture({
+        isRoot: false,
+        unknownStrategy: true,
+        inheritedFromProject: true,
+      }),
+    );
+    expectOnlyAlert();
+    await act(async () => {
+      root.render(<StorageUnknownStrategyGroup />);
+      await tick();
+    });
+    expectOnlyAlert();
+
+    // A space repository cannot take over a project strategy it does not know.
+    await render(
+      storageFixture({
+        isRoot: false,
+        currentSpaceId: "docs",
+        projectUnknownStrategy: true,
+      }),
+    );
+    const setting = group("Project setting");
+    expect(
+      setting.textContent?.includes(
+        "Project “Testov”: set by a newer Svode version",
+      ),
+    ).toBe(true);
+    expect(
+      setting.textContent?.includes(
+        "Update Svode before importing files or changing storage settings.",
+      ),
+    ).toBe(true);
+    expect(buttons("Use project setting", setting)[0].disabled).toBe(true);
+
+    expect(
+      storageSummary(storageFixture({ isRoot: false, unknownStrategy: true })),
+    ).toBe("Strategy: set by a newer Svode version");
+    setLocale("ru", { reload: false });
+    expect(
+      storageSummary(storageFixture({ isRoot: false, unknownStrategy: true })),
+    ).toBe("Стратегия: задана более новой версией Svode");
+    setLocale("en", { reload: false });
   });
 
   test("S3: a Variables cause offers only its applicable actions", async () => {

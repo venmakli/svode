@@ -12,6 +12,7 @@ import {
   StorageInheritedGroup,
   StorageSettingsSection,
   StorageStrategyConfirmDialog,
+  StorageUnknownStrategyGroup,
   storageSummary,
 } from "./storage-section";
 
@@ -92,18 +93,22 @@ export function ProjectStorageSection({
               gitType={gitType}
               headingRef={headingRef}
             >
-              <StorageInheritedGroup
-                projectName={projectName}
-                strategy={
-                  project.storageConfigLoaded
-                    ? project.savedAssetsStrategy
-                    : null
-                }
-                loading={
-                  !project.storageConfigLoaded && !project.storageConfigError
-                }
-                onOpenProject={showProject}
-              />
+              {project.storageConfigLoaded && project.unknownStrategy ? (
+                <StorageUnknownStrategyGroup />
+              ) : (
+                <StorageInheritedGroup
+                  projectName={projectName}
+                  strategy={
+                    project.storageConfigLoaded
+                      ? project.savedAssetsStrategy
+                      : null
+                  }
+                  loading={
+                    !project.storageConfigLoaded && !project.storageConfigError
+                  }
+                  onOpenProject={showProject}
+                />
+              )}
             </SpaceOwnerBlock>
           );
         return (

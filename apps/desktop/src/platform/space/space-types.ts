@@ -96,6 +96,9 @@ export interface EffectiveAssetsConfigDto extends Omit<
   inheritedFromProject: boolean;
   ownerSpaceId: string | null;
   binaryRouting: EffectiveBinaryRoutingDto;
+  // The strategy was set by a newer Svode version; `strategy` then holds its
+  // value as written, outside `AssetsStrategyDto`.
+  unknownStrategy: boolean;
 }
 
 export interface SpaceRefDto {

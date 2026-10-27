@@ -201,14 +201,16 @@ pub async fn apply_strategy(
         let current = read_or_empty(&gitattributes_path)?;
         let next = rewrite_managed_lfs_attributes(
             &current,
-            policy::strategy_uses_lfs_policy(new),
+            policy::strategy_uses_lfs_policy(&new),
             binary_routing,
         );
         write_or_remove(&gitattributes_path, &next)?;
     }
 
     // --- .lfsconfig: portable lfs-s3 declaration, committed with the strategy. ---
-    if lfs_declaration::apply_lfs_declaration(space_dir, new)? == LfsDeclarationWrite::Foreign {
+    if lfs_declaration::apply_lfs_declaration(space_dir, new.clone())?
+        == LfsDeclarationWrite::Foreign
+    {
         result
             .warnings
             .push(StrategyWarning::new(StrategyWarningCode::ForeignLfsConfig));
@@ -217,7 +219,7 @@ pub async fn apply_strategy(
     // Verify positive representative paths against Git's effective attribute
     // resolution. Nested/user `.gitattributes` files can override root rules;
     // report that as a non-fatal warning without rewriting user configuration.
-    if policy::strategy_uses_lfs_policy(new) {
+    if policy::strategy_uses_lfs_policy(&new) {
         let paths = policy::representative_lfs_paths(binary_routing);
         match policy::check_lfs_filters(&cli, space_dir, &paths).await {
             Ok(checks) => {

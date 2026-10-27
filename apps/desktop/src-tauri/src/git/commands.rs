@@ -876,7 +876,7 @@ mod tests {
         std::fs::create_dir_all(temp.path().join(".svode")).unwrap();
         std::fs::write(
             temp.path().join(".svode/config.json"),
-            r#"{"name":"Project","futureRoot":1,"git":{"autoSync":true},"agent":{"futureAgent":2}}"#,
+            r#"{"name":"Project","futureRoot":1,"git":{"autoSync":true},"agent":{"futureAgent":2},"assets":{"strategy":"lfs-future"}}"#,
         )
         .unwrap();
 
@@ -889,6 +889,7 @@ mod tests {
         assert!(value.get("git").is_none());
         assert_eq!(value["futureRoot"], 1);
         assert_eq!(value["agent"]["futureAgent"], 2);
+        assert_eq!(value["assets"]["strategy"], "lfs-future");
     }
 
     #[tokio::test]

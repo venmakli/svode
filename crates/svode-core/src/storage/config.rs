@@ -23,14 +23,51 @@ pub enum StorageConfigError {
     Serde(#[from] serde_json::Error),
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(from = "String", into = "String")]
 pub enum AssetsStrategy {
     #[default]
     Local,
     InGit,
     LfsRemote,
     LfsS3,
+    /// A strategy set by a newer Svode version, kept as written. Operations
+    /// whose meaning depends on the strategy refuse it; see
+    /// `policy::supported_strategy`.
+    Unknown(String),
+}
+
+impl AssetsStrategy {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Local => "local",
+            Self::InGit => "in-git",
+            Self::LfsRemote => "lfs-remote",
+            Self::LfsS3 => "lfs-s3",
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
+impl From<String> for AssetsStrategy {
+    fn from(value: String) -> Self {
+        match value.as_str() {
+            "local" => Self::Local,
+            "in-git" => Self::InGit,
+            "lfs-remote" => Self::LfsRemote,
+            "lfs-s3" => Self::LfsS3,
+            _ => Self::Unknown(value),
+        }
+    }
+}
+
+impl From<AssetsStrategy> for String {
+    fn from(strategy: AssetsStrategy) -> Self {
+        match strategy {
+            AssetsStrategy::Unknown(value) => value,
+            known => known.as_str().to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
