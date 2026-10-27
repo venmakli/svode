@@ -7,11 +7,10 @@ pub use model::{
 };
 pub use persistence::{entry_from_source, read, read_with_git_dates, replaced_by_staged_copy};
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::content_tree;
+use crate::content_tree::{self, SpaceOrder};
 use crate::index::backlinks::{BacklinkIndex, ModifiedLinkSource};
 use crate::page::PageError;
 use crate::page::filename::{self, FilenameProjection};
@@ -34,10 +33,7 @@ pub use crate::page::frontmatter::{apply_entry_field_update, title_from_stem};
 /// Append a filename to order.json for a given directory key.
 fn order_append(space: &Path, dir_key: &str, name: &str) {
     let _ = content_tree::update_order(space, |order| {
-        order
-            .entry(dir_key.to_string())
-            .or_default()
-            .push(name.to_string());
+        order.children_mut(dir_key).push(name.to_string());
         true
     });
 }
@@ -68,7 +64,7 @@ fn order_rename_checked(
 
 fn order_insert_after(space: &Path, dir_key: &str, after_name: &str, name: &str) {
     let _ = content_tree::update_order(space, |order| {
-        let list = order.entry(dir_key.to_string()).or_default();
+        let list = order.children_mut(dir_key);
         if list.iter().any(|item| item == name) {
             return false;
         }
@@ -86,29 +82,18 @@ fn order_remove_key(space: &Path, dir_key: &str) {
 }
 
 /// Carry the order keys of a moved directory and of every directory nested in
-/// it to the new directory path. Returns whether any key moved.
-fn rebase_directory_order_keys(
-    order: &mut HashMap<String, Vec<String>>,
-    from: &str,
-    to: &str,
-) -> bool {
+/// it to the new directory path, each in the place of its old key. Returns
+/// whether any key moved.
+fn rebase_directory_order_keys(order: &mut SpaceOrder, from: &str, to: &str) -> bool {
     let source_key = from.trim_matches('/');
     let target_key = to.trim_matches('/');
     let prefix = format!("{source_key}/");
-    let moved_keys: Vec<(String, Vec<String>)> = order
-        .iter()
-        .filter(|(key, _)| *key == source_key || key.starts_with(&prefix))
-        .map(|(key, children)| {
+    order.rename_sections(|key| {
+        (key == source_key || key.starts_with(&prefix)).then(|| {
             let suffix = key.strip_prefix(source_key).unwrap_or_default();
-            (format!("{target_key}{suffix}"), children.clone())
+            format!("{target_key}{suffix}")
         })
-        .collect();
-    if moved_keys.is_empty() {
-        return false;
-    }
-    order.retain(|key, _| key != source_key && !key.starts_with(&prefix));
-    order.extend(moved_keys);
-    true
+    })
 }
 
 fn dir_key_for(parent: &Path) -> String {
@@ -1325,7 +1310,7 @@ fn update_order_after_move(
         if let Some(items) = order.get_mut(&source_parent) {
             items.retain(|item| item != source_name);
         }
-        let target_items = order.entry(target_parent).or_default();
+        let target_items = order.children_mut(&target_parent);
         *target_items = target_sibling_order.to_vec();
         target_items.push(target_name.to_string());
 
@@ -2081,7 +2066,7 @@ fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
         let deleted_key = deleted_root.trim_matches('/');
         order.remove(deleted_key);
         let child_prefix = format!("{deleted_key}/");
-        order.retain(|key, _| key == "." || key != deleted_key && !key.starts_with(&child_prefix));
+        order.retain(|key| key == "." || key != deleted_key && !key.starts_with(&child_prefix));
         true
     });
 }
@@ -2672,14 +2657,14 @@ mod tests {
         fs::write(ws.join("target/README.md"), "target").unwrap();
         fs::write(ws.join("target/a.md"), "a").unwrap();
         fs::write(ws.join("target/z.md"), "z").unwrap();
-        let mut order = std::collections::HashMap::new();
+        let mut order = std::collections::BTreeMap::new();
         order.insert(
             ".".to_string(),
             vec!["source".to_string(), "target".to_string()],
         );
         order.insert("source".to_string(), vec!["child".to_string()]);
         order.insert("source/child".to_string(), vec!["note.md".to_string()]);
-        content_tree::write_order(ws, &order).unwrap();
+        content_tree::replace_order(ws, order).unwrap();
 
         let moved = move_entry_with_project(ws, "source", "target", None, None).unwrap();
 

@@ -568,7 +568,7 @@ fn append_order(space: &Path, parent_rel: &str, name: &str) {
         parent_rel.to_string()
     };
     let _ = content_tree::update_order(space, |order| {
-        let items = order.entry(key).or_default();
+        let items = order.children_mut(&key);
         if items.iter().any(|item| item == name) {
             return false;
         }

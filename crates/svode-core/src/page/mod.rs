@@ -13,6 +13,8 @@ pub mod links;
 pub mod metadata;
 pub mod naming;
 pub mod nonce;
+#[cfg(test)]
+mod order_tests;
 mod source;
 mod target;
 pub mod templates;

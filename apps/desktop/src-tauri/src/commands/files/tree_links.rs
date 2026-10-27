@@ -11,7 +11,7 @@ pub fn read_tree_order(space: String) -> Result<HashMap<String, Vec<String>>, Ap
 pub async fn save_tree_order(
     app: AppHandle,
     space: String,
-    order: HashMap<String, Vec<String>>,
+    order: BTreeMap<String, Vec<String>>,
     project_path: Option<String>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<(), AppError> {

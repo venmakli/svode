@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::error::AppError;
@@ -22,12 +22,8 @@ pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
     svode_core::content_tree::read_order(space)
 }
 
-pub fn replace_order(space: &Path, order: HashMap<String, Vec<String>>) -> Result<bool, AppError> {
-    if svode_core::content_tree::load_order(space)? == order {
-        return Ok(false);
-    }
-    svode_core::content_tree::write_order(space, &order)?;
-    Ok(true)
+pub fn replace_order(space: &Path, order: BTreeMap<String, Vec<String>>) -> Result<bool, AppError> {
+    Ok(svode_core::content_tree::replace_order(space, order)?)
 }
 
 pub fn list_child_spaces(project_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {

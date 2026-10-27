@@ -2,11 +2,15 @@ pub mod children;
 pub mod owner;
 pub mod policy;
 
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+mod order_tests;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use self::children::{DirectoryFacts, DirectoryKind, is_regular_source};
@@ -409,25 +413,108 @@ fn title_or_fallback(
 /// Returns map: directory relative path -> ordered list of child names.
 /// Key "." means space root. An unreadable file yields the default order.
 pub fn read_order(space: &Path) -> HashMap<String, Vec<String>> {
-    load_order(space).unwrap_or_default()
+    load_order(space)
+        .map(|order| order.sections.into_iter().collect())
+        .unwrap_or_default()
+}
+
+/// The order.json of a Space laid out as its file: directory key -> ordered
+/// child names, sections in file order. Changing a list keeps its section in
+/// place, a renamed key takes the place of the old one and a removal shifts
+/// nothing. A new section goes before the first section with a greater key
+/// (byte order), or last, so the result does not depend on the order of
+/// changes and a new file is sorted by key.
+#[derive(Debug, Default)]
+pub struct SpaceOrder {
+    sections: IndexMap<String, Vec<String>>,
+}
+
+impl SpaceOrder {
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Vec<String>> {
+        self.sections.get_mut(key)
+    }
+
+    /// The children of `key`, adding an empty section by the insertion rule
+    /// when the order has none.
+    pub fn children_mut(&mut self, key: &str) -> &mut Vec<String> {
+        let index = match self.sections.get_index_of(key) {
+            Some(index) => index,
+            None => {
+                let index = self
+                    .sections
+                    .keys()
+                    .position(|existing| existing.as_str() > key)
+                    .unwrap_or(self.sections.len());
+                self.sections
+                    .shift_insert(index, key.to_string(), Vec::new());
+                index
+            }
+        };
+        &mut self.sections[index]
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<Vec<String>> {
+        self.sections.shift_remove(key)
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        self.sections.retain(|key, _| keep(key));
+    }
+
+    /// Give sections new keys in place. `rename` returns the new key of a
+    /// section, or `None` to keep it; a section already holding a new key is
+    /// replaced by the renamed one. Returns whether any key changed.
+    pub fn rename_sections(&mut self, mut rename: impl FnMut(&str) -> Option<String>) -> bool {
+        let renamed = self
+            .sections
+            .keys()
+            .map(|key| rename(key))
+            .collect::<Vec<_>>();
+        if renamed.iter().all(Option::is_none) {
+            return false;
+        }
+        let targets = renamed.iter().flatten().cloned().collect::<Vec<_>>();
+        let sections = std::mem::take(&mut self.sections);
+        self.sections = sections
+            .into_iter()
+            .zip(renamed)
+            .filter_map(|((key, children), new_key)| match new_key {
+                Some(new_key) => Some((new_key, children)),
+                None if targets.contains(&key) => None,
+                None => Some((key, children)),
+            })
+            .collect();
+        true
+    }
+
+    fn has_content(&self, content: &BTreeMap<String, Vec<String>>) -> bool {
+        self.sections.len() == content.len()
+            && content
+                .iter()
+                .all(|(key, children)| self.sections.get(key) == Some(children))
+    }
 }
 
 /// Read order.json for a write. A missing file is an empty order; an existing
 /// file that cannot be read or parsed (for example with Git conflict markers)
 /// is refused, so a default order never overwrites it.
-pub fn load_order(space: &Path) -> Result<HashMap<String, Vec<String>>, ContentTreeError> {
+fn load_order(space: &Path) -> Result<SpaceOrder, ContentTreeError> {
     let order_path = space.join(".svode").join("order.json");
     let parsed = match fs::read_to_string(&order_path) {
-        Ok(data) => serde_json::from_str::<HashMap<String, Vec<String>>>(&data)
+        Ok(data) => serde_json::from_str::<IndexMap<String, Vec<String>>>(&data)
             .map_err(|error| error.to_string()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SpaceOrder::default());
+        }
         Err(error) => Err(error.to_string()),
     };
     match parsed {
-        Ok(order) => Ok(order
-            .into_iter()
-            .map(|(key, value)| (key.replace('\\', "/"), value))
-            .collect()),
+        Ok(order) => Ok(SpaceOrder {
+            sections: order
+                .into_iter()
+                .map(|(key, value)| (key.replace('\\', "/"), value))
+                .collect(),
+        }),
         Err(error) => {
             tracing::warn!(
                 "page order file {} cannot be read, using default order: {error}",
@@ -443,7 +530,7 @@ pub fn load_order(space: &Path) -> Result<HashMap<String, Vec<String>>, ContentT
 /// the content change proceeds without updating the order.
 pub fn update_order(
     space: &Path,
-    update: impl FnOnce(&mut HashMap<String, Vec<String>>) -> bool,
+    update: impl FnOnce(&mut SpaceOrder) -> bool,
 ) -> Result<(), ContentTreeError> {
     let mut order = match load_order(space) {
         Ok(order) => order,
@@ -456,14 +543,31 @@ pub fn update_order(
     Ok(())
 }
 
-/// Persist order.json for a Space.
-pub fn write_order(
+/// Replace the whole order of a Space with `content`. Sections keep their
+/// place in the file whatever the order of `content`; the same content is a
+/// no-op without a write. Returns whether the file changed. An unreadable
+/// order file is refused.
+pub fn replace_order(
     space: &Path,
-    order: &HashMap<String, Vec<String>>,
-) -> Result<(), ContentTreeError> {
+    content: BTreeMap<String, Vec<String>>,
+) -> Result<bool, ContentTreeError> {
+    let mut order = load_order(space)?;
+    if order.has_content(&content) {
+        return Ok(false);
+    }
+    order.retain(|key| content.contains_key(key));
+    for (key, children) in content {
+        *order.children_mut(&key) = children;
+    }
+    write_order(space, &order)?;
+    Ok(true)
+}
+
+/// Persist order.json for a Space: the only writer of the file.
+fn write_order(space: &Path, order: &SpaceOrder) -> Result<(), ContentTreeError> {
     let svode_dir = space.join(".svode");
     fs::create_dir_all(&svode_dir)?;
-    let data = serde_json::to_string_pretty(order)?;
+    let data = serde_json::to_string_pretty(&order.sections)?;
     fs::write(svode_dir.join("order.json"), data)?;
     Ok(())
 }
@@ -1189,7 +1293,7 @@ pub fn reorder_content(
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut order = load_order(Path::new(space))?;
-        order.insert(parent_path.clone(), names);
+        *order.children_mut(&parent_path) = names;
         write_order(Path::new(space), &order)?;
     }
 
