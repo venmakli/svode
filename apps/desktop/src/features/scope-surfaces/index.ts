@@ -40,4 +40,5 @@ export type {
 export { knownScopeOwnerFacts } from "./model/owner-facts";
 export type { ScopeOwnerFacts, ScopeOwnerTarget } from "./model/owner-facts";
 export { useScopeOwner } from "./hooks/use-scope-owner";
+export type { ScopeOwnerStructure } from "./hooks/use-scope-owner";
 export { usePeekNavigation } from "./hooks/use-peek-navigation";

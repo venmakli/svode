@@ -20,3 +20,12 @@ export async function getScopeOwnerFacts(input: {
     hasApp: facts.hasApp,
   };
 }
+
+/** Svode found nothing at the path: no owner directory, file or README. */
+export function isScopeOwnerNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { kind?: unknown }).kind === "file_not_found"
+  );
+}

@@ -1,5 +1,5 @@
 import { FileText } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { ArtifactSurface } from "@/features/artifact/app-shell";
 import { fileChangesTarget } from "@/features/changes";
 import { PublishMainHeader } from "./main-header-contribution";
@@ -15,7 +15,6 @@ import {
   createRegisteredSpaceOwner,
   knownScopeOwnerFacts,
   ScopeOwnerFactsError,
-  useScopeOwner,
   type ScopeOwnerKey,
 } from "@/features/scope-surfaces";
 import {
@@ -27,6 +26,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
+import { useSpaceScopeOwner } from "./hooks/use-space-scope-owner";
 import { useShellStore } from "./model";
 import { ScopeSurfacePage } from "./scope-surface-page";
 import * as m from "@/paraglide/messages.js";
@@ -127,8 +127,9 @@ export function ActiveSpaceContent() {
   const {
     owner,
     error: ownerError,
+    gone: ownerGone,
     retry: retryOwner,
-  } = useScopeOwner({
+  } = useSpaceScopeOwner({
     target: ownerTarget,
     known:
       ownerTargetPath && activeNodeSnapshot
@@ -136,6 +137,15 @@ export function ActiveSpaceContent() {
         : null,
     retainPrevious: isArtifactPathRetarget,
   });
+  // A Collection or App whose folder is gone closes as a vanished Page does;
+  // a Page closes itself, and a Collection that lost only its README stays.
+  const folderOwnerGone =
+    ownerGone &&
+    (owner?.identityKind === "collection-directory" ||
+      owner?.identityKind === "app-directory");
+  useEffect(() => {
+    if (folderOwnerGone) closeActiveContent();
+  }, [closeActiveContent, folderOwnerGone]);
 
   const activeContent =
     owner?.identityKind === "collection-directory" && selectionSpaceId ? (

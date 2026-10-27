@@ -153,22 +153,32 @@ export function useFileTreeDragCommand({
       const movePlan = buildCrossParentMovePlan(tree, drag);
       editorSync.clearInitialUnsaved(movePlan.fromPath);
       editorSync.suppressPaths([movePlan.fromPath, movePlan.movePath]);
-      const newPath = await useSpaceStore
+      // The open content moves with the item before the move counts as
+      // finished, so its old path is not taken for a vanished owner.
+      const finishMove = useSpaceStore
         .getState()
-        .moveContentItem(spaceId, movePlan.movePath, movePlan.toParent);
-      if (newPath) {
-        editorSync.suppressPaths([newPath]);
-      }
+        .beginTreePathMutation(space.path);
+      let newPath: string;
+      try {
+        newPath = await useSpaceStore
+          .getState()
+          .moveContentItem(spaceId, movePlan.movePath, movePlan.toParent);
+        if (newPath) {
+          editorSync.suppressPaths([newPath]);
+        }
 
-      if (newPath && movePlan.isBareFolder) {
-        // An App or Collection without README open from this folder follows
-        // it, as a moved Page does.
-        retargetActiveContent(movePlan.fromPath, newPath, spaceId);
-      } else if (newPath) {
-        editorSync.reopenInitialPage(
-          movePlan.fromPath,
-          movedPagePath(movePlan, newPath),
-        );
+        if (newPath && movePlan.isBareFolder) {
+          // An App or Collection without README open from this folder
+          // follows it, as a moved Page does.
+          retargetActiveContent(movePlan.fromPath, newPath, spaceId);
+        } else if (newPath) {
+          editorSync.reopenInitialPage(
+            movePlan.fromPath,
+            movedPagePath(movePlan, newPath),
+          );
+        }
+      } finally {
+        finishMove();
       }
 
       await maybeUnnestEmptyOldParent({

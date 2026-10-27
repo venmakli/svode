@@ -6,7 +6,7 @@ import { emit as emitNativeEvent } from "@/platform/native/events";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import type { ScopeOwnerFacts } from "../model/owner-facts";
 import type { ScopeOwnerRef } from "../model/types";
-import { useScopeOwner } from "./use-scope-owner";
+import { useScopeOwner, type ScopeOwnerStructure } from "./use-scope-owner";
 
 const spacePath = "/space";
 
@@ -128,6 +128,118 @@ test("a late answer for the previous target is ignored and a retarget keeps the 
   }
 });
 
+test("a resolved owner that Svode no longer finds is gone once own structural operations finished; other failures and unknown targets are errors", async () => {
+  const f = await fixture();
+  try {
+    const app = {
+      identity: "appDirectory",
+      ownerPath: "tool",
+      contentPath: "tool/README.md",
+      hasApp: true,
+    };
+    f.facts.set("tool", app);
+    let finishOperation!: () => void;
+    let pending = Promise.resolve();
+    const structure = (revision: number): ScopeOwnerStructure => ({
+      revision,
+      settled: () => pending,
+    });
+    await f.render("tool", null, false, structure(0));
+    await f.settle();
+    expect(f.current()?.identityKind).toBe("app-directory");
+
+    // An own rename is still running: the old path is not confirmed gone.
+    pending = new Promise<void>((resolve) => {
+      finishOperation = resolve;
+    });
+    f.missing.add("tool");
+    await f.render("tool", null, false, structure(1));
+    await f.settle();
+    expect(f.gone()).toBe(false);
+    expect(f.error()).toBeNull();
+    expect(f.current()?.identityKind).toBe("app-directory");
+
+    // It ended and the folder is still not there: the owner is gone, and
+    // stays shown until its presentation closes.
+    await act(async () => {
+      finishOperation();
+      await f.tick();
+      await f.tick();
+    });
+    expect(f.gone()).toBe(true);
+    expect(f.error()).toBeNull();
+    expect(f.current()?.identityKind).toBe("app-directory");
+
+    // A change of the Space tree rechecks; the folder back is the owner again.
+    pending = Promise.resolve();
+    f.missing.delete("tool");
+    const reads = f.reads();
+    await f.render("tool", null, false, structure(2));
+    await f.settle();
+    expect(f.reads()).toBe(reads + 1);
+    expect(f.gone()).toBe(false);
+
+    // A failure to read is no absence.
+    f.fail = true;
+    await f.render("tool", null, false, structure(3));
+    await f.settle();
+    expect(f.gone()).toBe(false);
+    expect(f.error()?.includes("facts unavailable")).toBe(true);
+    f.fail = false;
+
+    // A target that never resolved and is not found fails to open.
+    f.missing.add("missing");
+    await f.render("missing", null, false, structure(3));
+    await f.settle();
+    expect(f.gone()).toBe(false);
+    expect(Boolean(f.error())).toBe(true);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("an owner retargeted while its operation runs is never confirmed gone at the old path", async () => {
+  const f = await fixture();
+  try {
+    f.facts.set("tool", {
+      identity: "appDirectory",
+      ownerPath: "tool",
+      contentPath: "tool/README.md",
+      hasApp: true,
+    });
+    f.facts.set("toolbox", {
+      identity: "appDirectory",
+      ownerPath: "toolbox",
+      contentPath: "toolbox/README.md",
+      hasApp: true,
+    });
+    let finishOperation!: () => void;
+    const structure: ScopeOwnerStructure = {
+      revision: 0,
+      settled: () =>
+        new Promise<void>((resolve) => {
+          finishOperation = resolve;
+        }),
+    };
+    await f.render("tool", null, false, structure);
+    await f.settle();
+    // The folder is renamed; a watcher event reaches the old path first.
+    f.missing.add("tool");
+    await f.emit("file:deleted", "tool");
+    await f.render("toolbox", null, true, structure);
+    await act(async () => {
+      finishOperation();
+      await f.tick();
+      await f.tick();
+    });
+    await f.settle();
+    expect(f.seen.some((entry) => entry.gone)).toBe(false);
+    expect(f.current()?.ownerPath).toBe("toolbox");
+  } finally {
+    await f.cleanup();
+  }
+});
+
 async function fixture() {
   const dom = new JSDOM("<!doctype html><div id=app></div>", {
     url: "http://localhost/",
@@ -135,6 +247,8 @@ async function fixture() {
   const restore = installDomGlobals(dom);
   const facts = new Map<string, unknown>();
   const delay = new Map<string, Promise<void>>();
+  // Paths Svode answers as not found.
+  const missing = new Set<string>();
   let reads = 0;
   const state = { fail: false };
   mockNativeIpc(
@@ -145,20 +259,28 @@ async function fixture() {
       const path = String((args as { path: string }).path);
       await delay.get(path);
       if (state.fail) throw new Error("facts unavailable");
+      if (missing.has(path))
+        throw { kind: "file_not_found", message: `File not found: ${path}` };
       return facts.get(path);
     },
     { shouldMockEvents: true },
   );
-  const seen: { owner: ScopeOwnerRef | null; error: string | null }[] = [];
+  const seen: {
+    owner: ScopeOwnerRef | null;
+    error: string | null;
+    gone: boolean;
+  }[] = [];
   let latest: ReturnType<typeof useScopeOwner> = {
     owner: null,
     error: null,
+    gone: false,
     retry: () => {},
   };
   function Harness(props: {
     path: string;
     known: ScopeOwnerFacts | null;
     retainPrevious: boolean;
+    structure?: ScopeOwnerStructure;
   }) {
     const result = useScopeOwner({
       target: {
@@ -169,10 +291,15 @@ async function fixture() {
       },
       known: props.known,
       retainPrevious: props.retainPrevious,
+      structure: props.structure,
     });
     useEffect(() => {
       latest = result;
-      seen.push({ owner: result.owner, error: result.error });
+      seen.push({
+        owner: result.owner,
+        error: result.error,
+        gone: result.gone,
+      });
     });
     return null;
   }
@@ -181,6 +308,7 @@ async function fixture() {
   return {
     facts,
     delay,
+    missing,
     seen,
     tick,
     set fail(value: boolean) {
@@ -189,15 +317,22 @@ async function fixture() {
     reads: () => reads,
     current: () => latest.owner,
     error: () => latest.error,
+    gone: () => latest.gone,
     retry: () => latest.retry(),
     render: async (
       path: string,
       known: ScopeOwnerFacts | null,
       retainPrevious = false,
+      structure?: ScopeOwnerStructure,
     ) => {
       await act(async () => {
         root.render(
-          <Harness path={path} known={known} retainPrevious={retainPrevious} />,
+          <Harness
+            path={path}
+            known={known}
+            retainPrevious={retainPrevious}
+            structure={structure}
+          />,
         );
       });
     },

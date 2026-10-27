@@ -120,6 +120,8 @@ export interface SpaceTreeState extends SpaceTreeDataState {
   markTreeDirty: (spaceId: string) => void;
   markTreeParentDirty: (spaceId: string, parentPath?: string | null) => void;
   beginTreePathMutation: (spacePath: string) => () => void;
+  /** Resolves once no structural operation over the Space is unfinished. */
+  treePathMutationsSettled: (spacePath: string) => Promise<void>;
   handoffTreePath: (spacePath: string, from: string, to: string) => void;
   loadExpandedPaths: (spaceId: string) => Promise<void>;
   applySidebarTreeExpansion: (
@@ -416,6 +418,7 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       get().activeRootPath === root;
   }
   const mutations = new Map<string, number>();
+  const settledWaiters = new Map<string, (() => void)[]>();
   const requests = new Map<string, object>();
   const suppressed = new Map<
     string,
@@ -1218,10 +1221,25 @@ export function createSpaceTreeState<T extends SpaceTreeStoreState>(
       return () => {
         if (finished) return;
         finished = true;
-        mutations.set(scope, (mutations.get(scope) ?? 1) - 1);
+        const remaining = (mutations.get(scope) ?? 1) - 1;
+        mutations.set(scope, remaining);
         if (id && findSpacePath(get(), id) === scope) invalidateLoads(id);
+        if (remaining > 0) return;
+        const waiters = settledWaiters.get(scope) ?? [];
+        settledWaiters.delete(scope);
+        for (const resolve of waiters) resolve();
       };
     },
+
+    treePathMutationsSettled: (scope) =>
+      (mutations.get(scope) ?? 0) > 0
+        ? new Promise<void>((resolve) => {
+            settledWaiters.set(scope, [
+              ...(settledWaiters.get(scope) ?? []),
+              resolve,
+            ]);
+          })
+        : Promise.resolve(),
 
     handoffTreePath: (scope, previous, canonical) => {
       const from = treeParentKey(previous);

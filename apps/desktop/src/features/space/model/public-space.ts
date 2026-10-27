@@ -34,6 +34,7 @@ export type SpaceTreeSyncState = Pick<
   | "loadTreeChildren"
   | "handoffTreePath"
   | "beginTreePathMutation"
+  | "treePathMutationsSettled"
   | "reloadTreeParent"
   | "reloadTreePathParent"
   | "reloadTreePathParents"
@@ -74,6 +75,7 @@ function selectTreeSyncState(state: SpaceState): SpaceTreeSyncState {
     loadTreeChildren: state.loadTreeChildren,
     handoffTreePath: state.handoffTreePath,
     beginTreePathMutation: state.beginTreePathMutation,
+    treePathMutationsSettled: state.treePathMutationsSettled,
     reloadTreeParent: state.reloadTreeParent,
     reloadTreePathParent: state.reloadTreePathParent,
     reloadTreePathParents: state.reloadTreePathParents,

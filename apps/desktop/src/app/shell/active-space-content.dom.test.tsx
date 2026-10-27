@@ -521,6 +521,85 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     }
   });
 
+  test("an App or Collection whose folder is gone closes; a Collection that lost only its README and a Page stay to their own rules", async () => {
+    const gone = new Set<string>();
+    const f = await fixture((path) => {
+      if (gone.has(path))
+        throw { kind: "file_not_found", message: `File not found: ${path}` };
+      if (path === "tool")
+        return {
+          identity: "appDirectory",
+          ownerPath: "tool",
+          contentPath: "tool/README.md",
+          hasApp: true,
+        };
+      if (path === "Note.md")
+        return {
+          identity: "pageFile",
+          ownerPath: "Note.md",
+          contentPath: "Note.md",
+          hasApp: false,
+        };
+      const ownerPath = path.replace(/\/README\.md$/, "");
+      return {
+        identity: "collectionDirectory",
+        ownerPath,
+        contentPath: `${ownerPath}/README.md`,
+        hasApp: false,
+      };
+    });
+    const { emit } = await import("@/platform/native/events");
+    const vanish = async (path: string, eventPath = path) => {
+      gone.add(path);
+      await act(async () => {
+        await emit("file:deleted", { space: spacePath, path: eventPath });
+      });
+      await f.settle();
+      await f.settle();
+    };
+    try {
+      for (const [kind, path] of [
+        ["app-directory", "tool"],
+        ["collection", "tasks"],
+      ] as const) {
+        openScopeOwner({ kind, path, spaceId: "root" });
+        await f.render();
+        await f.settle();
+        expect(Boolean(f.query("[data-scope-owner]"))).toBe(true);
+        await vanish(path);
+        expect(getActiveContentSelection().selection).toBeNull();
+      }
+
+      // Only the README of a Collection is deleted: the Collection stays.
+      openPage("notes/README.md");
+      await f.render();
+      await f.settle();
+      expect(
+        f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+      ).toBe("collection-directory:notes/README.md:collection");
+      await act(async () => {
+        await emit("file:deleted", {
+          space: spacePath,
+          path: "notes/README.md",
+        });
+      });
+      await f.settle();
+      expect(getActiveContentSelection().selection === null).toBe(false);
+      // The folder with its README is gone.
+      await vanish("notes/README.md");
+      expect(getActiveContentSelection().selection).toBeNull();
+
+      // A Page that vanished closes by its own rule, not by the resolver.
+      openPage("Note.md");
+      await f.render();
+      await f.settle();
+      await vanish("Note.md");
+      expect(getActiveContentSelection().selection === null).toBe(false);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
   test("failed facts show the error with Retry instead of a reduced owner", async () => {
     let fail = true;
     const f = await fixture(() => {

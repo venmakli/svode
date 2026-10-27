@@ -245,6 +245,81 @@ test("dragging the folder of an open App or Collection without README into anoth
   }
 });
 
+test("structural operations over a Space count as finished only after the open content moved with them", async () => {
+  // What the main area showed when the operations over the Space finished.
+  const shownWhenSettled: (string | null)[] = [];
+  const env = await environment((command, args) => {
+    if (command === "move_content") {
+      void useSpaceStoreRef
+        .current!.getState()
+        .treePathMutationsSettled(spacePath)
+        .then(() => shownWhenSettled.push(env.shown()));
+      return `${String(args.toParent)}/${String(args.from).split("/").pop()}`;
+    }
+    if (command === "rename_content") {
+      void useSpaceStoreRef
+        .current!.getState()
+        .treePathMutationsSettled(spacePath)
+        .then(() => shownWhenSettled.push(env.shown()));
+      return [];
+    }
+    if (command === "list_tree_children") return [];
+    return null;
+  });
+  const useSpaceStoreRef: {
+    current?: typeof import("../model/space-store").useSpaceStore;
+  } = {};
+  useSpaceStoreRef.current = (
+    await import("../model/space-store")
+  ).useSpaceStore;
+  const { useFileTreeDragCommand } =
+    await import("./use-file-tree-drag-command");
+  const tree = [folder("archive"), folder("tool")];
+  const drag: { commit?: ReturnType<typeof useFileTreeDragCommand> } = {};
+  function Tree() {
+    const commit = useFileTreeDragCommand({ spaceId: "root", tree });
+    useEffect(() => {
+      drag.commit = commit;
+    });
+    return null;
+  }
+  try {
+    // Nothing runs: settled at once.
+    let settled = false;
+    await useSpaceStoreRef.current
+      .getState()
+      .treePathMutationsSettled(spacePath)
+      .then(() => (settled = true));
+    expect(settled).toBe(true);
+
+    env.artifact.openScopeOwner({
+      kind: "app-directory",
+      path: "tool",
+      spaceId: "root",
+    });
+    await act(async () => {
+      env.root.render(<Tree />);
+      await turn();
+    });
+    await act(async () => {
+      await drag.commit!({
+        fromPath: "tool",
+        projection: {
+          depth: 1,
+          overPath: "archive",
+          parentPath: "archive",
+          type: "after",
+        },
+      });
+      await turn();
+    });
+    await renameFolder(env, "archive/tool", "toolbox");
+    expect(shownWhenSettled).toEqual(["archive/tool", "archive/toolbox"]);
+  } finally {
+    await env.cleanup();
+  }
+});
+
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
     document: dom.window.document,
