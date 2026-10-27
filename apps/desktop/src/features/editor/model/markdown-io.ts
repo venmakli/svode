@@ -103,6 +103,27 @@ function bareBreakNormalizationEdits(markdown: string): TextEdit[] {
   return edits;
 }
 
+const LEADING_BLANK_LINES_RE = /^(?:[ \t]*\r?\n)*/;
+
+function leadingBlankLines(text: string): string {
+  return LEADING_BLANK_LINES_RE.exec(text)?.[0] ?? "";
+}
+
+/**
+ * The body a save writes for the serialized editor value. Parsing drops the
+ * blank lines before the first block, so the ones of the source body the
+ * editor was loaded from or last written as lead the text again, byte for byte.
+ */
+export function bodyWithSourceLeadingBlankLines(
+  sourceBody: string,
+  markdown: string,
+): string {
+  return (
+    leadingBlankLines(sourceBody) +
+    markdown.slice(leadingBlankLines(markdown).length)
+  );
+}
+
 export function normalizeMarkdownForPlate(markdown: string): string {
   return applyTextEdits(markdown, bareBreakNormalizationEdits(markdown)).text;
 }

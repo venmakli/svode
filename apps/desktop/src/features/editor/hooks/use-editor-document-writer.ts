@@ -32,6 +32,7 @@ import {
   hasUnresolvedConflicts,
 } from "../conflict/parse-conflicts";
 import { useEditorStore } from "../model";
+import { bodyWithSourceLeadingBlankLines } from "../model/markdown-io";
 import {
   getDocumentBaseline,
   getDocumentCacheKey,
@@ -172,11 +173,15 @@ export function useEditorDocumentWriter({
         }
 
         const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
+        const body = bodyWithSourceLeadingBlankLines(
+          getDocumentBaseline(baselineKey(path))?.body ?? "",
+          markdown,
+        );
         const result = await retryWhileSourceBusy(() =>
           writePage({
             spacePath,
             path,
-            content: markdown,
+            content: body,
             projectPath: projectPath ?? null,
             sourceVersion,
           }),
@@ -188,7 +193,7 @@ export function useEditorDocumentWriter({
         if (result.sourceVersion) {
           setDocumentBaseline(baselineKey(path), {
             version: result.sourceVersion,
-            body: markdown,
+            body,
           });
         }
 
