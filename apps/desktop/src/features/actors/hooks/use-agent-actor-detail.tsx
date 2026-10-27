@@ -1,16 +1,18 @@
 import {
   useCallback,
   useEffect,
-  useRef,
+  useMemo,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import { LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type {
-  CollectionDetailController,
-  CollectionDetailRequest,
+import {
+  useCollectionDetailRowBinding,
+  type CollectionDetailContent,
+  type CollectionDetailController,
+  type CollectionDetailRowBinding,
 } from "@/features/collection/app-shell";
 import {
   RepositoryAccessInlineRecovery,
@@ -46,6 +48,7 @@ export function useAgentActorDetail({
   mutationPending,
   readOnly = false,
   pendingAdapter,
+  rows,
   savedRuntimeFor,
   setEditSession,
 }: {
@@ -69,54 +72,51 @@ export function useAgentActorDetail({
   mutationPending: boolean;
   readOnly?: boolean;
   pendingAdapter: AgentActorBinding["adapter"] | null;
+  /** The agents of the ready catalog; null until it is read. */
+  rows: readonly AgentActorRow[] | null;
   savedRuntimeFor(
     row: AgentActorRow,
   ): Partial<Record<AgentActorBinding["adapter"], AgentActorBindingRuntime>>;
   setEditSession: Dispatch<SetStateAction<AgentActorEditSession | null>>;
-}) {
-  const readOnlyRowRef = useRef<AgentActorRow | null>(null);
+}): CollectionDetailRowBinding<AgentActorRow> {
   const createReadOnlyDetail = useCallback(
-    (row: AgentActorRow): Omit<CollectionDetailRequest, "selection"> => {
-      readOnlyRowRef.current = row;
-      return {
-        canClose: () => {
-          if (readOnlyRowRef.current === row) readOnlyRowRef.current = null;
-          return true;
-        },
-        content: (
-          <AgentActorDetail
-            descriptors={descriptors}
-            diagnostics={diagnostics}
-            draft={createAgentActorDraft(row.ownerPath, row)}
-            editMode={false}
-            pendingAdapter={pendingAdapter}
-            runtime={savedRuntimeFor(row)}
-            onChange={() => undefined}
-            onCheck={diagnose}
-            onSave={() => undefined}
-          />
-        ),
-        description: (
-          <span className="sr-only">{m.agent_actors_detail_description()}</span>
-        ),
-        title: detailTitle(row),
-      };
-    },
+    (row: AgentActorRow): CollectionDetailContent => ({
+      content: (
+        <AgentActorDetail
+          descriptors={descriptors}
+          diagnostics={diagnostics}
+          draft={createAgentActorDraft(row.ownerPath, row)}
+          editMode={false}
+          pendingAdapter={pendingAdapter}
+          runtime={savedRuntimeFor(row)}
+          onChange={() => undefined}
+          onCheck={diagnose}
+          onSave={() => undefined}
+        />
+      ),
+      description: (
+        <span className="sr-only">{m.agent_actors_detail_description()}</span>
+      ),
+      title: detailTitle(row),
+    }),
     [descriptors, diagnose, diagnostics, pendingAdapter, savedRuntimeFor],
   );
-
-  useEffect(() => {
-    const row = readOnlyRowRef.current;
-    if (!row || editSession || !detailController) return;
-    void detailController.open({
-      ...createReadOnlyDetail(row),
-      selection: detailSelection(instanceKey, row),
-    });
-  }, [createReadOnlyDetail, detailController, editSession, instanceKey]);
+  const findRow = useMemo(
+    () =>
+      rows
+        ? (selection: { rowId: string }) =>
+            rows.find((row) => agentActorRowId(row) === selection.rowId)
+        : null,
+    [rows],
+  );
+  const detail = useCollectionDetailRowBinding({
+    controller: detailController,
+    createContent: createReadOnlyDetail,
+    findRow,
+  });
 
   useEffect(() => {
     if (!editSession || !detailController) return;
-    readOnlyRowRef.current = null;
     const selection = detailSelection(instanceKey, editSession.row);
     const session = editSession;
     const accessBlocked =
@@ -191,10 +191,7 @@ export function useAgentActorDetail({
                 accessRecovery?.close();
                 editSession.guard.dirty = false;
                 setEditSession(null);
-                void detailController.open({
-                  ...createReadOnlyDetail(editSession.row),
-                  selection,
-                });
+                void detail.open(editSession.row, selection);
               }}
             >
               {accessBlocked
@@ -234,8 +231,8 @@ export function useAgentActorDetail({
   }, [
     accessRecovery,
     applyMutation,
-    createReadOnlyDetail,
     descriptors,
+    detail,
     detailController,
     diagnose,
     diagnostics,
@@ -248,7 +245,7 @@ export function useAgentActorDetail({
     setEditSession,
   ]);
 
-  return createReadOnlyDetail;
+  return detail;
 }
 
 function detailSelection(instanceKey: string, row: AgentActorRow) {

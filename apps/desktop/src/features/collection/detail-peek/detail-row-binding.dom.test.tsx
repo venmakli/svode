@@ -131,6 +131,11 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
             </Expandable>
           ),
           description: `About ${row.name}`,
+          headerActions: (
+            <button type="button" data-owner-action>
+              Share {row.name}
+            </button>
+          ),
           title: row.name,
         }),
         findRow: rows
@@ -185,9 +190,17 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
       await settle();
     }
 
+    async function open(row: Row) {
+      await act(async () => {
+        await owner.binding!.open(row, selection);
+      });
+      await settle();
+    }
+
     return {
       activate,
       change,
+      open,
       controller: () => owner.controller!,
       guardCalls: () => guardCalls,
       unmount: async () => {
@@ -207,6 +220,15 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
     expect(doc.querySelector("[data-row-action]")?.textContent).toBe(
       "Act on Ada",
     );
+    // The owner's actions come first, the row's follow.
+    const owned = doc.querySelector("[data-owner-action]")!;
+    expect(owned.textContent).toBe("Share Ada");
+    expect(
+      Boolean(
+        owned.compareDocumentPosition(doc.querySelector("[data-row-action]")!) &
+        dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
 
     // The user expanded a block, scrolled and focused a control in the peek.
     const expand = [...doc.querySelectorAll("button")].find(
@@ -287,6 +309,42 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
       await env.controller().close();
     });
     await settle();
+    await env.unmount();
+  });
+
+  test("a detail opened outside activation follows the current state and keeps its row actions after a form", async () => {
+    const env = await setup();
+    await env.activate({ id: "ada", name: "Ada" });
+
+    // A form of the same row takes the peek; the row changes meanwhile.
+    await act(async () => {
+      await env.controller().open({
+        content: <p data-form>Editing Ada</p>,
+        description: "Form",
+        layout: "form",
+        selection,
+        title: "Edit Ada",
+      });
+    });
+    await settle();
+    await env.change([{ id: "ada", name: "Ada Lovelace" }]);
+    expect(doc.querySelector("[data-form]")?.textContent).toBe("Editing Ada");
+
+    // Cancel shows the row again from the version it was edited from: the
+    // next render shows the current one with the row actions it had.
+    await env.open({ id: "ada", name: "Ada" });
+    expect(content()).toBe("Ada Lovelace");
+    expect(doc.querySelector("[data-row-action]")?.textContent).toBe(
+      "Act on Ada Lovelace",
+    );
+
+    // Opened after the row left the set, the detail closes.
+    await env.change([]);
+    expect(peek()?.getAttribute("data-state") === "open").toBe(false);
+    await env.change([{ id: "bob", name: "Bob" }]);
+    await env.open({ id: "ada", name: "Ada" });
+    expect(peek()?.getAttribute("data-state") === "open").toBe(false);
+
     await env.unmount();
   });
 }

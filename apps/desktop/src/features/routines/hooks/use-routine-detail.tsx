@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
-import type {
-  CollectionDetailController,
-  CollectionDetailRequest,
+import {
+  useCollectionDetailRowBinding,
+  type CollectionDetailContent,
+  type CollectionDetailController,
+  type CollectionDetailRowBinding,
 } from "@/features/collection/app-shell";
 import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
@@ -33,6 +35,7 @@ export function useRoutineDetail({
   owner,
   pending,
   readOnly,
+  rows,
   onEditChange,
   setEditSession,
 }: {
@@ -52,6 +55,8 @@ export function useRoutineDetail({
   owner: RoutineOwnerInput;
   pending: boolean;
   readOnly: boolean;
+  /** The Routines of the ready catalog; null until it is read. */
+  rows: readonly RoutineRow[] | null;
   onEditChange(definition: RoutineDefinition): void;
   setEditSession(
     value:
@@ -59,46 +64,43 @@ export function useRoutineDetail({
       | null
       | ((current: RoutineEditSession | null) => RoutineEditSession | null),
   ): void;
-}) {
-  const readOnlyRowRef = useRef<RoutineRow | null>(null);
+}): CollectionDetailRowBinding<RoutineRow> {
   const createReadOnlyDetail = useCallback(
-    (row: RoutineRow): Omit<CollectionDetailRequest, "selection"> => {
-      readOnlyRowRef.current = row;
-      return {
-        canClose: () => {
-          if (readOnlyRowRef.current === row) readOnlyRowRef.current = null;
-          return true;
-        },
-        content: <RoutineDetailView executors={executors} row={row} />,
-        description: (
-          <span className="sr-only">{m.routines_detail_description()}</span>
-        ),
-        footerActions: (
-          <RoutineDetailActions
-            row={row}
-            runState={getRunState(row)}
-            onOpenSession={onOpenSession}
-            onRun={onRun}
-          />
-        ),
-        title: routineDetailTitle(row),
-      };
-    },
+    (row: RoutineRow): CollectionDetailContent => ({
+      content: <RoutineDetailView executors={executors} row={row} />,
+      description: (
+        <span className="sr-only">{m.routines_detail_description()}</span>
+      ),
+      footerActions: (
+        <RoutineDetailActions
+          row={row}
+          runState={getRunState(row)}
+          onOpenSession={onOpenSession}
+          onRun={onRun}
+        />
+      ),
+      title: routineDetailTitle(row),
+    }),
     [executors, getRunState, onOpenSession, onRun],
   );
-
-  useEffect(() => {
-    const row = readOnlyRowRef.current;
-    if (!row || editSession || !detailController) return;
-    void detailController.open({
-      ...createReadOnlyDetail(row),
-      selection: { instanceKey, presentationId: "all", rowId: row.id },
-    });
-  }, [createReadOnlyDetail, detailController, editSession, instanceKey]);
+  // A Routine without a readable id is listed as `invalid:<path>`, so its
+  // detail closes as a Routine that is gone.
+  const findRow = useMemo(
+    () =>
+      rows
+        ? (selection: { rowId: string }) =>
+            rows.find((row) => row.id === selection.rowId)
+        : null,
+    [rows],
+  );
+  const detail = useCollectionDetailRowBinding({
+    controller: detailController,
+    createContent: createReadOnlyDetail,
+    findRow,
+  });
 
   useEffect(() => {
     if (!editSession || !detailController) return;
-    readOnlyRowRef.current = null;
     const session = editSession;
     const formId = `routine-detail-${session.row.id}`;
     const selection = {
@@ -146,10 +148,7 @@ export function useRoutineDetail({
                     if (!updated) return;
                     session.guard.dirty = false;
                     setEditSession(null);
-                    await detailController.open({
-                      ...createReadOnlyDetail(updated),
-                      selection,
-                    });
+                    await detail.open(updated, selection);
                   })();
                 }}
               />
@@ -168,10 +167,7 @@ export function useRoutineDetail({
               onClick={() => {
                 session.guard.dirty = false;
                 setEditSession(null);
-                void detailController.open({
-                  ...createReadOnlyDetail(session.row),
-                  selection,
-                });
+                void detail.open(session.row, selection);
               }}
             >
               {m.routines_cancel()}
@@ -202,7 +198,7 @@ export function useRoutineDetail({
       });
   }, [
     applyUpdate,
-    createReadOnlyDetail,
+    detail,
     detailController,
     editSession,
     executors,
@@ -219,5 +215,5 @@ export function useRoutineDetail({
     setEditSession,
   ]);
 
-  return createReadOnlyDetail;
+  return detail;
 }

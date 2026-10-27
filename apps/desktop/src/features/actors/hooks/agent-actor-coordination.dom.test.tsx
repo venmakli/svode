@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 
 import type {
@@ -27,6 +28,7 @@ const actor: AgentActorRow = {
   ownerPath: "/repo",
   runtimeStatus: "unchecked",
 };
+const actorRows: readonly AgentActorRow[] = [actor];
 
 test("same-owner create and edit intents continue without an unrelated rerender", async () => {
   const dom = createDom();
@@ -174,25 +176,37 @@ test("an unsaved edit waits for the asynchronous confirm of the Tauri dialog", a
   }
 });
 
-test("an open read-only Detail receives current diagnostics without reopening after close", async () => {
+test("an open read-only Detail follows its agent, closes once it is gone and leaves an edit form alone", async () => {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
-  let latestRequest: CollectionDetailRequest | null = null;
+  let active: CollectionDetailRequest | null = null;
   let openCount = 0;
   const detailController: CollectionDetailController = {
     async close() {
+      active = null;
       return true;
     },
     async open(request) {
-      latestRequest = request;
+      active = request;
       openCount += 1;
       return true;
     },
-    async update() {
-      return false;
+    async update(shown, next) {
+      if (active !== shown) return false;
+      active = next;
+      return true;
     },
   };
+  const shown = () => active as CollectionDetailRequest | null;
+  const titleOf = (request: CollectionDetailRequest | null) =>
+    request ? renderToStaticMarkup(<>{request.title}</>) : "";
   const root = createRoot(dom.window.document.getElementById("app")!);
+  const click = async (selector: string) => {
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>(selector)!.click();
+      await nextTurn();
+    });
+  };
 
   try {
     await act(async () => {
@@ -201,35 +215,66 @@ test("an open read-only Detail receives current diagnostics without reopening af
       );
       await nextTurn();
     });
-    await act(async () => {
-      dom.window.document
-        .querySelector<HTMLButtonElement>("[data-open-read-only]")!
-        .click();
-      await nextTurn();
-    });
+    await click("[data-open-read-only]");
     expect(openCount).toBe(1);
-
-    await act(async () => {
-      dom.window.document
-        .querySelector<HTMLButtonElement>("[data-publish-diagnostic]")!
-        .click();
-      await nextTurn();
-    });
-    expect(openCount).toBe(2);
-    const refreshedRequest = latestRequest as CollectionDetailRequest | null;
-    if (!refreshedRequest) throw new Error("Expected refreshed detail request");
-    expect(refreshedRequest.selection.rowId).toBe(
+    expect(shown()?.selection.rowId).toBe(
       '["/repo","01arz3ndektsv4rrffq69g5fav"]',
     );
 
+    // A new diagnostic and an external change of the agent show in place.
+    const opened = shown();
+    await click("[data-publish-diagnostic]");
+    expect(shown() === opened).toBe(false);
+    await click("[data-rename-agent]");
+    expect(titleOf(shown()).includes("Docs Agent")).toBe(true);
+    expect(openCount).toBe(1);
+
+    // An edit form of the agent is not overwritten by its changes.
+    await click("[data-start-edit]");
+    expect(shown()?.layout).toBe("form");
+    const form = shown();
+    // The form itself rerenders with its draft; the agent's changes and its
+    // removal do not replace or close it.
+    const formTitle = titleOf(form);
+    await click("[data-rename-agent]");
+    await click("[data-publish-diagnostic]");
+    expect(shown()?.layout).toBe("form");
+    expect(titleOf(shown())).toBe(formTitle);
+    await click("[data-remove-agent]");
+    expect(shown()?.layout).toBe("form");
+    expect(titleOf(shown())).toBe(formTitle);
+    await click("[data-restore-agent]");
+
+    // Cancel shows the current version of the agent again.
+    const footer = dom.window.document.createElement("div");
+    dom.window.document.body.append(footer);
+    const footerRoot = createRoot(footer);
     await act(async () => {
-      expect(await refreshedRequest.canClose?.()).toBe(true);
-      dom.window.document
-        .querySelector<HTMLButtonElement>("[data-publish-diagnostic]")!
-        .click();
+      footerRoot.render(<>{form?.footerActions}</>);
+    });
+    await act(async () => {
+      footer.querySelector<HTMLButtonElement>("button")!.click();
       await nextTurn();
     });
-    expect(openCount).toBe(2);
+    await act(async () => footerRoot.unmount());
+    expect(shown()?.layout).toBe(undefined);
+    expect(titleOf(shown()).includes("Docs Agent 2")).toBe(true);
+
+    // A closed Detail is not reopened by later changes.
+    await act(async () => {
+      await detailController.close();
+    });
+    const opens = openCount;
+    await click("[data-publish-diagnostic]");
+    await click("[data-rename-agent]");
+    expect(shown()).toBe(null);
+    expect(openCount).toBe(opens);
+
+    // The agent leaving the catalog closes its Detail.
+    await click("[data-open-read-only]");
+    expect(shown() === null).toBe(false);
+    await click("[data-remove-agent]");
+    expect(shown()).toBe(null);
   } finally {
     await act(async () => root.unmount());
     restoreGlobals();
@@ -295,6 +340,7 @@ function DetailHarness({
     instanceKey: "actors:space:root",
     mutationPending: false,
     pendingAdapter: null,
+    rows: actorRows,
     savedRuntimeFor: () => ({}),
     setEditSession,
   });
@@ -313,33 +359,58 @@ function ReadOnlyDetailHarness({
   detailController: CollectionDetailController;
 }) {
   const [diagnostics, setDiagnostics] = useState({});
-  const createDetail = useAgentActorDetail({
+  const [rows, setRows] = useState<readonly AgentActorRow[]>([actor]);
+  const [renames, setRenames] = useState(0);
+  const [editSession, setEditSession] = useState<AgentActorEditSession | null>(
+    null,
+  );
+  const selection = {
+    instanceKey: "actors:space:root",
+    presentationId: "agents",
+    rowId: '["/repo","01arz3ndektsv4rrffq69g5fav"]',
+  };
+  const detail = useAgentActorDetail({
     applyMutation: () => undefined,
     descriptors: [],
     detailController,
     diagnose: () => undefined,
     diagnostics,
     editRuntime: {},
-    editSession: null,
+    editSession,
     instanceKey: "actors:space:root",
     mutationPending: false,
     pendingAdapter: null,
+    rows,
     savedRuntimeFor: () => ({}),
-    setEditSession: () => undefined,
+    setEditSession,
   });
+  const rename = () => {
+    const name = renames === 0 ? "Docs Agent" : `Docs Agent ${renames + 1}`;
+    setRenames(renames + 1);
+    setRows([{ ...actor, name }]);
+  };
   return (
     <>
       <button
         type="button"
         data-open-read-only
+        onClick={() => void detail.open(rows[0] ?? actor, selection)}
+      />
+      <button type="button" data-rename-agent onClick={rename} />
+      <button type="button" data-remove-agent onClick={() => setRows([])} />
+      <button
+        type="button"
+        data-restore-agent
+        onClick={() => setRows([{ ...actor, name: "Docs Agent 2" }])}
+      />
+      <button
+        type="button"
+        data-start-edit
         onClick={() =>
-          void detailController.open({
-            ...createDetail(actor),
-            selection: {
-              instanceKey: "actors:space:root",
-              presentationId: "agents",
-              rowId: '["/repo","01arz3ndektsv4rrffq69g5fav"]',
-            },
+          setEditSession({
+            draft: createAgentActorDraft(actor.ownerPath, rows[0] ?? actor),
+            guard: { dirty: false },
+            row: rows[0] ?? actor,
           })
         }
       />

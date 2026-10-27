@@ -10,10 +10,7 @@ import {
   type CollectionInstance,
   type CollectionPresentationState,
 } from "@/features/collection";
-import {
-  createCollectionDetailActivation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
+import { useCollectionDetailController } from "@/features/collection/app-shell";
 import {
   RepositoryAccessPreflightDialog,
   useRepositoryAccessPreflight,
@@ -24,6 +21,7 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
+import { useActorDetail } from "../hooks/use-actor-detail";
 import { useActorMailmapSave } from "../hooks/use-actor-mailmap-save";
 import { useActorMutation } from "../hooks/use-actor-mutation";
 import { useAgentActorsController } from "../hooks/use-agent-actors-controller";
@@ -38,7 +36,6 @@ import { ActorMutationDialog } from "./actor-mutation-dialog";
 import { showActorMutationOutcome } from "./actor-mutation-outcome";
 import {
   actorCatalogBlockingError,
-  createActorDetailRequest,
   createActorsPresentation,
 } from "./actors-presentation";
 import { createAgentActorsPresentation } from "./agent-actors-presentation";
@@ -84,8 +81,11 @@ export function ActorsSurface({
     () => (state.phase === "ready" ? state.snapshot.rows : []),
     [state],
   );
-  const catalogGeneration =
-    state.phase === "ready" ? state.snapshot.generation : 0;
+  const humanDetail = useActorDetail({
+    controller: detailController,
+    snapshot: state.phase === "ready" ? state.snapshot : null,
+    spacePath: owner.spacePath,
+  });
   const onApplied = useCallback(
     (result: AppliedActorMutationResult) => {
       replaceSnapshot(result.catalog);
@@ -101,23 +101,14 @@ export function ActorsSurface({
         (row) => row.canonicalEmail === canonicalEmail,
       );
       setFocusRowId(canonicalEmail);
-      if (!actor || !detailController) return;
-      void detailController.open({
-        ...createActorDetailRequest(actor, owner.spacePath, catalogGeneration),
-        selection: {
-          instanceKey,
-          presentationId: "humans",
-          rowId: actor.canonicalEmail,
-        },
+      if (!actor) return;
+      void humanDetail.open(actor, {
+        instanceKey,
+        presentationId: "humans",
+        rowId: actor.canonicalEmail,
       });
     },
-    [
-      catalogGeneration,
-      catalogRows,
-      detailController,
-      instanceKey,
-      owner.spacePath,
-    ],
+    [catalogRows, humanDetail, instanceKey],
   );
   const mutation = useActorMutation({
     onAccessBlocked: (continueIntent) =>
@@ -212,10 +203,7 @@ export function ActorsSurface({
       onEdit: (source) => requestMutationIntent({ kind: "edit", source }),
       onMerge: (source) => requestMutationIntent({ kind: "merge", source }),
     },
-    onActivate: createCollectionDetailActivation({
-      controller: detailController,
-      createContent: (row) =>
-        createActorDetailRequest(row, owner.spacePath, catalogGeneration),
+    onActivate: humanDetail.activation({
       instanceKey,
       presentationId: "humans",
     }),
@@ -225,9 +213,7 @@ export function ActorsSurface({
     actions: agentActors.actions,
     agents,
     inheritedVisible: agentActors.inheritedVisible,
-    onActivate: createCollectionDetailActivation({
-      controller: detailController,
-      createContent: agentActors.renderDetail,
+    onActivate: agentActors.detail.activation({
       instanceKey,
       presentationId: "agents",
     }),

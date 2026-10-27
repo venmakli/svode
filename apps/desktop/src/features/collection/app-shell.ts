@@ -4,7 +4,6 @@ export {
   CollectionDetailPeekHost,
   useCollectionDetailController,
 } from "./detail-peek/detail-peek";
-export { createCollectionDetailActivation } from "./detail-peek/detail-activation";
 export { useCollectionDetailRowBinding } from "./detail-peek/detail-row-binding";
 export type { CollectionDetailRowBinding } from "./detail-peek/detail-row-binding";
 export { CollectionDetailHeader } from "./detail-peek/detail-header";

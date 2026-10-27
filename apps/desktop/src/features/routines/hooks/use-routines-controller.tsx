@@ -5,10 +5,7 @@ import {
   type CollectionActionState,
   type CollectionInstance,
 } from "@/features/collection";
-import {
-  createCollectionDetailActivation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
+import { useCollectionDetailController } from "@/features/collection/app-shell";
 import type { ScopeOpenItem, ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
@@ -69,7 +66,7 @@ export function useRoutinesController(
     rows: state.phase === "ready" ? state.snapshot.rows : [],
   });
   const dispatch = useRoutineDispatch({ onOpenSession, owner: routineOwner });
-  const createReadOnlyDetail = useRoutineDetail({
+  const detail = useRoutineDetail({
     applyUpdate: mutations.applyUpdate,
     detailController,
     editSession: mutations.editSession,
@@ -83,6 +80,7 @@ export function useRoutinesController(
     owner: routineOwner,
     pending: mutations.pending,
     readOnly,
+    rows: state.phase === "ready" ? state.snapshot.rows : null,
     onEditChange: mutations.changeEditDraft,
     setEditSession: mutations.setEditSession,
   });
@@ -98,22 +96,13 @@ export function useRoutinesController(
     }) => {
       if (!sameRoutineOwner(createdOwner, routineOwner)) return;
       replaceSnapshot(snapshot);
-      await detailController?.open({
-        ...createReadOnlyDetail(row),
-        selection: {
-          instanceKey,
-          presentationId: "all",
-          rowId: row.id,
-        },
+      await detail.open(row, {
+        instanceKey,
+        presentationId: "all",
+        rowId: row.id,
       });
     },
-    [
-      createReadOnlyDetail,
-      detailController,
-      instanceKey,
-      replaceSnapshot,
-      routineOwner,
-    ],
+    [detail, instanceKey, replaceSnapshot, routineOwner],
   );
   // A Routine addressed by the open request opens once the catalog is read.
   useEffect(() => {
@@ -123,11 +112,12 @@ export function useRoutinesController(
       (candidate) => candidate.routineId === openItem.id,
     );
     if (!row) return;
-    void detailController?.open({
-      ...createReadOnlyDetail(row),
-      selection: { instanceKey, presentationId: "all", rowId: row.id },
+    void detail.open(row, {
+      instanceKey,
+      presentationId: "all",
+      rowId: row.id,
     });
-  }, [createReadOnlyDetail, detailController, instanceKey, openItem, state]);
+  }, [detail, instanceKey, openItem, state]);
   const create = useRoutineCreateJourney({ onApplied: onRoutineCreated });
   const createExecutorOwner = create.session?.owner ?? routineOwner;
   const useDetachedCreateExecutors = Boolean(
@@ -238,12 +228,7 @@ export function useRoutinesController(
   const presentation = createRoutinesPresentation({
     actions,
     executors: executors.state,
-    onActivate: createCollectionDetailActivation({
-      controller: detailController,
-      createContent: createReadOnlyDetail,
-      instanceKey,
-      presentationId: "all",
-    }),
+    onActivate: detail.activation({ instanceKey, presentationId: "all" }),
     state: toRoutinePresentationState(state, () => void refresh()),
   });
   const instance: CollectionInstance = {

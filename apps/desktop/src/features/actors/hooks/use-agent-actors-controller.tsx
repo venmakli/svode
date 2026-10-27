@@ -139,7 +139,7 @@ export function useAgentActorsController({
     [snapshot?.bindingRuntime],
   );
 
-  const createReadOnlyDetail = useAgentActorDetail({
+  const detail = useAgentActorDetail({
     accessRecovery: accessCoordinator.recovery,
     applyMutation,
     descriptors: snapshot?.adapterDescriptors ?? [],
@@ -152,6 +152,7 @@ export function useAgentActorsController({
     mutationPending,
     readOnly,
     pendingAdapter: catalog.pendingAdapter,
+    rows: snapshot?.rows ?? null,
     savedRuntimeFor,
     setEditSession,
   });
@@ -345,7 +346,7 @@ export function useAgentActorsController({
     },
     inheritedVisible: snapshot?.rows.some((row) => row.inherited) ?? false,
     overlays,
+    detail,
     presentationState,
-    renderDetail: createReadOnlyDetail,
   };
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act } from "react";
+import { act, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
@@ -9,7 +9,8 @@ import {
   CollectionPresentationShell,
 } from "@/features/collection";
 import {
-  createCollectionDetailActivation,
+  useCollectionDetailRowBinding,
+  type CollectionDetailController,
   type CollectionDetailRequest,
 } from "@/features/collection/app-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -56,27 +57,11 @@ test("actors rows open in the real DOM and use shared row and detail action seam
     },
     update: async () => false,
   };
-  const presentation = createActorsPresentation({
-    onActivate: createCollectionDetailActivation({
-      controller,
-      createContent: (row) => createActorDetailRequest(row, "/repo"),
-      instanceKey: "actors:space:root",
-      presentationId: "humans",
-    }),
-    state: { phase: "ready", rows: [actor] },
-  });
   const root = createRoot(dom.window.document.getElementById("app")!);
 
   try {
     await act(async () => {
-      root.render(
-        <CollectionPresentationShell
-          instanceKey="actors:space:root"
-          presentation={presentation}
-          query={EMPTY_COLLECTION_QUERY}
-          onQueryChange={() => undefined}
-        />,
-      );
+      root.render(<HumansShell controller={controller} />);
     });
 
     const row = dom.window.document.querySelector<HTMLElement>(
@@ -128,6 +113,40 @@ test("actors rows open in the real DOM and use shared row and detail action seam
     dom.window.close();
   }
 });
+
+const createHumanDetail = (row: ActorCatalogRow) =>
+  createActorDetailRequest(row, "/repo");
+
+function HumansShell({
+  controller,
+}: {
+  controller: CollectionDetailController;
+}) {
+  const detail = useCollectionDetailRowBinding({
+    controller,
+    createContent: createHumanDetail,
+    findRow: null,
+  });
+  const presentation = useMemo(
+    () =>
+      createActorsPresentation({
+        onActivate: detail.activation({
+          instanceKey: "actors:space:root",
+          presentationId: "humans",
+        }),
+        state: { phase: "ready", rows: [actor] },
+      }),
+    [detail],
+  );
+  return (
+    <CollectionPresentationShell
+      instanceKey="actors:space:root"
+      presentation={presentation}
+      query={EMPTY_COLLECTION_QUERY}
+      onQueryChange={() => undefined}
+    />
+  );
+}
 
 test("actor detail isolates year, exact-day, and continuation activity modes", async () => {
   const dom = new JSDOM(

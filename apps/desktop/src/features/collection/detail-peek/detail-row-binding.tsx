@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { CollectionActivationContext } from "../runtime/model/types";
-import { collectionDetailRequest } from "./detail-activation";
+import { collectionDetailSelectionEquals } from "./detail-controller";
 import type {
   CollectionDetailContent,
   CollectionDetailController,
@@ -26,7 +26,9 @@ export interface CollectionDetailRowBinding<Row> {
     | undefined;
   /**
    * Opens the detail of a row outside its presentation, e.g. after creating
-   * it, or shows it again in place of an editing form of the same selection.
+   * it, or shows it again in place of an editing form of the same selection
+   * with the row actions it had. The next render shows the row's version of
+   * the current ready state or closes the detail when the row is gone.
    */
   open(
     row: Row,
@@ -41,10 +43,10 @@ interface ShownRowDetail<Row> {
 }
 
 /**
- * The binding follows only the request it showed last: once anything else
- * takes the peek, such as an editing form of the same row or a file opened
- * from the detail, or the peek closes, it leaves the peek alone until it
- * opens a row again.
+ * The binding follows only the request it showed last: while anything else
+ * holds the peek, such as an editing form of the same row or a file opened
+ * from the detail, or once the peek closed, it leaves the peek alone until
+ * it opens a row again.
  */
 export function useCollectionDetailRowBinding<Row>({
   controller,
@@ -70,6 +72,9 @@ export function useCollectionDetailRowBinding<Row>({
   findRow: ((selection: CollectionDetailSelection) => Row | undefined) | null;
 }): CollectionDetailRowBinding<Row> {
   const shown = useRef<ShownRowDetail<Row> | null>(null);
+  // An open outside activation may come with the state that lists the row,
+  // e.g. after creating it: the render with that state follows it.
+  const [opened, setOpened] = useState(0);
   const { binding, request } = useMemo(() => {
     const request = (
       row: Row,
@@ -107,8 +112,16 @@ export function useCollectionDetailRowBinding<Row>({
               );
             }
           : undefined,
-      open: (row, selection, focusOptions) =>
-        show(row, selection, undefined, focusOptions),
+      open: (row, selection, focusOptions) => {
+        const previous = shown.current;
+        const rowActions =
+          previous &&
+          collectionDetailSelectionEquals(previous.request.selection, selection)
+            ? previous.rowActions
+            : undefined;
+        setOpened((count) => count + 1);
+        return show(row, selection, rowActions, focusOptions);
+      },
     };
     return { binding, request };
   }, [controller, createContent]);
@@ -120,12 +133,32 @@ export function useCollectionDetailRowBinding<Row>({
     const row = findRow(selection);
     const next =
       row === undefined ? null : request(row, selection, current.rowActions);
-    const following = next ? { ...current, request: next } : null;
-    shown.current = following;
+    // While another request holds the peek, the binding keeps the row's
+    // actions for showing it again after a form of the same row.
+    if (next) shown.current = { ...current, request: next };
     void controller.update(current.request, next).then((applied) => {
-      if (!applied && shown.current === following) shown.current = null;
+      if (applied && !next && shown.current === current) shown.current = null;
     });
-  }, [controller, findRow, request]);
+  }, [controller, findRow, opened, request]);
 
   return binding;
+}
+
+/** The owner's detail of a row; the row actions of its presentation follow the owner's. */
+function collectionDetailRequest(
+  content: CollectionDetailContent,
+  rowActions: ReactNode,
+  selection: CollectionDetailSelection,
+): CollectionDetailRequest {
+  return {
+    ...content,
+    headerActions:
+      content.headerActions || rowActions ? (
+        <>
+          {content.headerActions}
+          {rowActions}
+        </>
+      ) : undefined,
+    selection,
+  };
 }

@@ -13,10 +13,9 @@ import {
   type CollectionPresentationRuntime,
   type CollectionStateController,
 } from "@/features/collection";
-import {
-  createCollectionDetailActivation,
-  type CollectionDetailController,
-  type CollectionDetailRequest,
+import type {
+  CollectionDetailContent,
+  CollectionDetailRequest,
 } from "@/features/collection/app-shell";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 
@@ -283,16 +282,15 @@ function createProjectAggregateFixture(
         },
       ],
     },
-    onActivate: createCollectionDetailActivation({
-      controller: detail.controller,
-      createContent: (row) => ({
+    onActivate: detail.activation(
+      (row: ProjectActorRow) => ({
         content: api.renderActorDetail(row.target, row.canonicalEmail),
         description: row.repositories.join(", "),
         title: row.displayName,
       }),
       instanceKey,
-      presentationId: "project-actors",
-    }),
+      "project-actors",
+    ),
     properties: [
       provenanceField("scope", "Scope", (row) => row.scopes),
       provenanceField("repository", "Repository", (row) => row.repositoryKeys),
@@ -372,16 +370,15 @@ function createLocalFixture(): {
     repositoryAccess: "writable",
   };
   const descriptor: CollectionPresentationDescriptor<ActorRow> = {
-    onActivate: createCollectionDetailActivation({
-      controller: detail.controller,
-      createContent: (actor) => ({
+    onActivate: detail.activation(
+      (actor: ActorRow) => ({
         content: actor.repositoryAccess,
         description: "Derived repository identity",
         title: actor.displayName,
       }),
       instanceKey,
-      presentationId: "actors",
-    }),
+      "actors",
+    ),
     properties: [],
     getRowId: (actor) => actor.canonicalEmail,
     id: "actors",
@@ -415,17 +412,24 @@ function createLocalFixture(): {
   };
 }
 
+/** Records the detail an owner opens for a row of its presentation. */
 function createRecordingDetailController() {
   const requests: CollectionDetailRequest[] = [];
-  const controller: CollectionDetailController = {
-    close: async () => true,
-    open: async (request) => {
-      requests.push(request);
-      return true;
-    },
-    update: async () => false,
+  return {
+    activation:
+      <Row,>(
+        createContent: (row: Row) => CollectionDetailContent,
+        instanceKey: string,
+        presentationId: string,
+      ) =>
+      async (row: Row, context: { rowId: string }) => {
+        requests.push({
+          ...createContent(row),
+          selection: { instanceKey, presentationId, rowId: context.rowId },
+        });
+      },
+    requests,
   };
-  return { controller, requests };
 }
 
 function renderPresentation(
