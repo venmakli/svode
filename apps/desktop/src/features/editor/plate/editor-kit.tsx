@@ -50,6 +50,7 @@ import {
   serializeMarkdownWithComments,
 } from "../model/markdown-comments";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
+import { markdownParagraphRules } from "../model/markdown-paragraph";
 import {
   TRAILING_BLOCK_MARK,
   withoutServiceTrailingBlock,
@@ -103,7 +104,11 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
     .extend(({ getOptions }) => ({
       options: {
         remarkPlugins: [...getOptions().remarkPlugins, remarkMarkdownComments],
-        rules: { ...getOptions().rules, ...markdownCommentRules },
+        rules: {
+          ...getOptions().rules,
+          ...markdownParagraphRules,
+          ...markdownCommentRules,
+        },
       },
       parser: {
         deserialize: ({ data, editor }) =>

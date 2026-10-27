@@ -12,7 +12,6 @@ import {
   KEYS,
   type SlateEditor,
   type TElement,
-  TextApi,
 } from "platejs";
 
 import {
@@ -250,31 +249,6 @@ export const remarkMarkdownComments = function (this: {
 
 type ListParagraph = TElement & { indent: number; listStyleType: string };
 
-function isInlineComment(node: Descendant | undefined): boolean {
-  return (
-    !!node &&
-    ElementApi.isElement(node) &&
-    node.type === MARKDOWN_INLINE_COMMENT_KEY
-  );
-}
-
-// Slate surrounds inline elements with empty texts, and Plate writes an empty
-// paragraph text as U+200B: next to a comment that would add a character the
-// file never had.
-function withoutEmptyTextsAroundInlineComments(
-  nodes: Descendant[],
-): Descendant[] {
-  if (!nodes.some(isInlineComment)) return nodes;
-  return nodes.filter(
-    (node, index) =>
-      !(
-        TextApi.isText(node) &&
-        node.text === "" &&
-        (isInlineComment(nodes[index - 1]) || isInlineComment(nodes[index + 1]))
-      ),
-  );
-}
-
 /**
  * Plate's list serializer ends a list at any block that is not a list
  * paragraph. A block comment indented under a list item is therefore passed
@@ -306,8 +280,7 @@ function withListCommentCarriers(
     } else {
       run = null;
     }
-    const inline = withoutEmptyTextsAroundInlineComments(node.children);
-    const children = withListCommentCarriers(editor, inline);
+    const children = withListCommentCarriers(editor, node.children);
     if (children === node.children) return node;
     changed = true;
     return { ...node, children } as Descendant;
