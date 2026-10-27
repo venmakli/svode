@@ -1090,7 +1090,10 @@ mod tests {
         runtime: &AppProcessRuntime,
         predicate: impl Fn(&AppProcessSnapshot) -> bool,
     ) -> AppProcessSnapshot {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // A loaded machine can take seconds to spawn a freshly written
+        // script for the first time; failure snapshots still come from the
+        // shorter runtime timeouts of `test_config`.
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             let snapshot = state.inspect_or_launch(project, owner, runtime.clone());
             if predicate(&snapshot) {
@@ -1330,7 +1333,12 @@ mod tests {
                     .insert("PATH".into(), override_bin.to_str().unwrap().into());
             }
             let state = AppProcessState::with_probe(
-                test_config(),
+                // The setup spawns two freshly written scripts, which may
+                // outlast the short test timeout under a full test run.
+                ProcessRuntimeConfig {
+                    setup_timeout: Duration::from_secs(10),
+                    ..test_config()
+                },
                 Arc::new(AlwaysReady),
                 Arc::new(ProcessPath::fixed(Some(recovered_path.clone()))),
             );
