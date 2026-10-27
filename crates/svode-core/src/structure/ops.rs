@@ -478,19 +478,19 @@ pub fn create_folder(
     Ok(folder_path)
 }
 
-/// Resolve the requested create parent. A leaf parent is reported together with
-/// the bytes needed to restore it if the compound create later rolls back.
+/// Resolve the requested create parent directory, and whether it is a leaf
+/// Page the create materializes as that directory.
 pub(crate) fn resolved_create_parent(
     space: &str,
     requested: Option<&str>,
-) -> Result<(Option<String>, Option<(String, String, Vec<u8>)>), PageError> {
+) -> Result<(Option<String>, bool), PageError> {
     let Some(requested) = requested.map(str::trim).filter(|path| !path.is_empty()) else {
-        return Ok((None, None));
+        return Ok((None, false));
     };
     let root = Path::new(space);
     let direct = root.join(requested);
     if direct.is_dir() {
-        return Ok((Some(requested.to_string()), None));
+        return Ok((Some(requested.to_string()), false));
     }
     let leaf = if direct.is_file() {
         requested.to_string()
@@ -514,67 +514,74 @@ pub(crate) fn resolved_create_parent(
     } else {
         format!("{}/{stem}", base.to_string_lossy())
     };
-    let bytes = fs::read(root.join(&leaf))?;
-    Ok((Some(parent.clone()), Some((leaf, parent, bytes))))
+    Ok((Some(parent), true))
 }
 
-fn rollback_collection_create(
-    space: &str,
-    planned_page: &str,
-    collection_path: &str,
-    parent_conversion: Option<&(String, String, Vec<u8>)>,
-    order_before: Option<&[u8]>,
-    cause: PageError,
-) -> PageError {
-    let root = Path::new(space);
-    let mut failed = Vec::new();
-    for path in [root.join(collection_path), root.join(planned_page)] {
-        let result = if path.is_dir() {
-            fs::remove_dir_all(&path)
-        } else {
-            fs::remove_file(&path)
-        };
-        if let Err(error) = result
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            failed.push(format!("{}: {error}", path.display()));
+/// Structural history the steps of a compound create register, held back
+/// until the whole create succeeds, so a failed create records none.
+struct HeldCommits<'a> {
+    sink: &'a dyn StructuralCommitSink,
+    held: std::sync::Mutex<Vec<(PathBuf, PathBuf, StructuralChange, Vec<PathBuf>)>>,
+}
+
+impl<'a> HeldCommits<'a> {
+    fn new(sink: &'a dyn StructuralCommitSink) -> Self {
+        Self {
+            sink,
+            held: std::sync::Mutex::new(Vec::new()),
         }
     }
-    if let Some((leaf, parent, bytes)) = parent_conversion {
-        let converted = root.join(parent);
-        if let Err(error) = fs::remove_dir_all(&converted)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            failed.push(format!("{}: {error}", converted.display()));
-        }
-        if let Err(error) = fs::write(root.join(leaf), bytes) {
-            failed.push(format!("{}: {error}", root.join(leaf).display()));
-        }
-    }
-    let order = order_path(space);
-    let order_result = match order_before {
-        Some(bytes) => fs::write(&order, bytes),
-        None => match fs::remove_file(&order) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
-        },
-    };
-    if let Err(error) = order_result {
-        failed.push(format!("{}: {error}", order.display()));
-    }
-    if failed.is_empty() {
-        cause
-    } else {
-        PageError::Recovery {
-            cause: cause.to_string(),
-            paths: failed,
+
+    fn release(self) {
+        let held = self
+            .held
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for (project, space, change, paths) in held {
+            self.sink.schedule(&project, &space, change, paths);
         }
     }
+}
+
+impl StructuralCommitSink for HeldCommits<'_> {
+    fn schedule(
+        &self,
+        project: &Path,
+        space: &Path,
+        change: StructuralChange,
+        paths: Vec<PathBuf>,
+    ) {
+        self.held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((project.to_path_buf(), space.to_path_buf(), change, paths));
+    }
+
+    fn commit_now<'b>(
+        &'b self,
+        project: &'b Path,
+        space: &'b Path,
+        paths: Vec<PathBuf>,
+        message: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'b>> {
+        self.sink.commit_now(project, space, paths, message)
+    }
+}
+
+/// Mark the Collection directory and the files its conversion writes as
+/// created by this operation.
+fn track_collection_dir(snapshot: &mut SourceSnapshot, space: &str, collection_path: &str) {
+    let dir = Path::new(space).join(collection_path);
+    snapshot.track_created(dir.join("README.md"));
+    snapshot.track_created(collection_schema_path(space, collection_path));
+    snapshot.track_created_dir(dir);
 }
 
 /// Compound create: Page, folder conversion and initial schema succeed together
-/// or the Space is restored to its previous shape.
+/// or the Space is restored to its previous shape. Every step after the first
+/// write runs under one snapshot of the planned touched set; a failure
+/// restores it byte for byte and removes only the paths this create observed
+/// itself create, then brings the projection back to the restored sources.
 pub async fn create_collection<E, F, Fut, Err>(
     request: CollectionCreate,
     runtime: StructureRuntime<'_, E>,
@@ -586,7 +593,7 @@ where
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError>,
 {
-    let (parent, parent_conversion) =
+    let (parent, converts_parent) =
         resolved_create_parent(&request.space, request.parent_path.as_deref())
             .map_err(Err::from)?;
     let planned = entry::planned_collection_source(
@@ -613,12 +620,25 @@ where
     )
     .map_err(|error| Err::from(PageError::from(error)))?;
     let schema_paths = prepared_schema.paths().to_vec();
-    let order_before = fs::read(order_path(&request.space)).ok();
+    let root = Path::new(&request.space);
+    // Directories the create makes. Their files are not captured as absent:
+    // they belong to the create only once it observes itself create them.
+    let created_roots = [
+        Some(root.join(&collection_path)),
+        parent
+            .as_deref()
+            .filter(|_| converts_parent)
+            .map(|parent| root.join(parent)),
+    ];
+    let mut captured = None;
+    let captured_slot = &mut captured;
     let authorization_space = request.space.clone();
+    // The snapshot is taken from the authorized plan of the Page create,
+    // right before its first write.
     let page = crate::page::create::create_with_source_names(
         crate::page::create::PageCreate {
             space: request.space.clone(),
-            parent_path: parent,
+            parent_path: parent.clone(),
             title: planned.title,
             body: request.body,
             icon: request.icon,
@@ -640,64 +660,109 @@ where
             paths.push(PathBuf::from(&authorization_space));
             paths.sort();
             paths.dedup();
-            authorize(paths)
+            async move {
+                let authorized = authorize(paths.clone()).await?;
+                let sources = paths
+                    .into_iter()
+                    .filter(|path| {
+                        !path.is_dir()
+                            && !created_roots
+                                .iter()
+                                .flatten()
+                                .any(|created| path.starts_with(created))
+                    })
+                    .collect::<Vec<_>>();
+                let snapshot = SourceSnapshot::capture(&sources, None).map_err(Err::from)?;
+                *captured_slot = Some((snapshot, sources));
+                Ok(authorized)
+            }
         },
     )
-    .await?;
-    let actual_collection_path = page
-        .page
-        .path
-        .strip_suffix(".md")
-        .ok_or_else(|| {
-            Err::from(PageError::General(
-                "created Collection Page must be Markdown".into(),
-            ))
-        })?
-        .to_string();
-    if actual_collection_path != collection_path {
-        return Err(Err::from(rollback_collection_create(
+    .await;
+    let page = match page {
+        Ok(page) => page,
+        // The Page create restored its own touched set.
+        Err(error) => {
+            if let Some((_, sources)) = &captured {
+                republish_after_rollback(
+                    runtime,
+                    request.project.as_deref(),
+                    &request.space,
+                    sources,
+                )
+                .await;
+            }
+            return Err(error);
+        }
+    };
+    let (mut snapshot, sources) = captured.ok_or_else(|| {
+        Err::from(PageError::General(
+            "Collection create wrote without a snapshot".into(),
+        ))
+    })?;
+    snapshot.track_created(root.join(&page.page.path));
+    if converts_parent && let Some(parent) = parent.as_deref() {
+        snapshot.track_created(root.join(parent).join("README.md"));
+        snapshot.track_created_dir(root.join(parent));
+    }
+    let held = runtime.commits.map(HeldCommits::new);
+    let steps = StructureRuntime {
+        commits: held.as_ref().map(|held| held as &dyn StructuralCommitSink),
+        ..runtime
+    };
+    let applied = async {
+        if page.page.path != planned.path {
+            return Err(PageError::General(
+                "Collection create plan changed before execution".into(),
+            ));
+        }
+        #[cfg(test)]
+        crate::page::write::checkpoint("collection_page")?;
+        let conversion = match convert_to_collection_with_publication(
             &request.space,
             &page.page.path,
-            &actual_collection_path,
-            parent_conversion.as_ref(),
-            order_before.as_deref(),
-            PageError::General("Collection create plan changed before execution".into()),
-        )));
+            request.project.as_deref(),
+            steps,
+            false,
+        )
+        .await
+        {
+            Ok(conversion) => conversion,
+            Err(error) => {
+                // A directory that already has the name is not this create's.
+                if !matches!(&error, PageError::FileAlreadyExists(path) if *path == collection_path)
+                {
+                    track_collection_dir(&mut snapshot, &request.space, &collection_path);
+                }
+                return Err(error);
+            }
+        };
+        track_collection_dir(&mut snapshot, &request.space, &collection_path);
+        #[cfg(test)]
+        crate::page::write::checkpoint("collection_convert")?;
+        let schema_outcome = prepared_schema.apply().map_err(PageError::from)?;
+        #[cfg(test)]
+        crate::page::write::checkpoint("collection_schema")?;
+        Ok((conversion, schema_outcome))
     }
-    let conversion = match convert_to_collection_with_publication(
-        &request.space,
-        &page.page.path,
-        request.project.as_deref(),
-        runtime,
-        false,
-    )
-    .await
-    {
-        Ok(conversion) => conversion,
+    .await;
+    let (conversion, schema_outcome) = match applied {
+        Ok(applied) => applied,
         Err(error) => {
-            return Err(Err::from(rollback_collection_create(
+            let error = snapshot.rollback(error);
+            republish_after_rollback(
+                runtime,
+                request.project.as_deref(),
                 &request.space,
-                &page.page.path,
-                &collection_path,
-                parent_conversion.as_ref(),
-                order_before.as_deref(),
-                error,
-            )));
+                &sources,
+            )
+            .await;
+            return Err(Err::from(error));
         }
     };
-    let schema_outcome = match prepared_schema.apply() {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            return Err(Err::from(rollback_collection_create(
-                &request.space,
-                &page.page.path,
-                &collection_path,
-                parent_conversion.as_ref(),
-                order_before.as_deref(),
-                error.into(),
-            )));
-        }
-    };
+    if let Some(held) = held {
+        held.release();
+    }
     update::publish_tree_or_repair(
         runtime.index,
         runtime.updates,

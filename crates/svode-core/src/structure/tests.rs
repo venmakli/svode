@@ -1003,13 +1003,17 @@ impl super::StructuralCommitSink for GroupSink {
 }
 
 /// Source files of the tree with their bytes, without the device-local state
-/// (`.svode/local.json`, `variables.*`, `*.db*`) the index repair rewrites.
+/// (`.svode/local.json`, `write.lock`, `variables.*`, `*.db*`) the index
+/// repair and the document name lock write.
 fn source_snapshot(root: &Path) -> Vec<(String, String)> {
     tree_snapshot(root)
         .into_iter()
         .filter(|(path, _)| {
             let local = path.strip_prefix(".svode/").is_some_and(|name| {
-                name == "local.json" || name.starts_with("variables.") || name.contains(".db")
+                name == "local.json"
+                    || name == "write.lock"
+                    || name.starts_with("variables.")
+                    || name.contains(".db")
             });
             !local
         })
@@ -1591,4 +1595,255 @@ async fn collection_create_with_a_free_name_reports_no_allocation_warning() {
     assert_eq!(outcome.collection_path, "Tasks");
     assert_eq!(outcome.collection.path, "Tasks/README.md");
     assert!(outcome.collection.warnings.is_empty());
+}
+
+/// Space of `relation_target_space` plus the Collection `Sprints`, whose
+/// column `Board` is a relation when `reverse_conflict` is false and a text
+/// column otherwise (design scenario R of DF-221).
+fn collection_create_space(root: &Path, reverse_conflict: bool) {
+    relation_target_space(root);
+    let schema = if reverse_conflict {
+        "columns:\n  - { name: Board, type: text }\n"
+    } else {
+        "columns: []\n"
+    };
+    write_tree(
+        root,
+        &[
+            ("Sprints/schema.yaml", schema),
+            ("Sprints/README.md", "---\ntitle: Sprints\n---\n"),
+        ],
+    );
+}
+
+/// Create the Collection `Board` under the leaf item `Area/Tasks/Item.md`,
+/// which `Link.md` links and `Decisions/Decision.md` relates to, with a
+/// two-way relation to `Sprints`.
+async fn create_board_collection(
+    space: &str,
+    state: &IndexRuntimeState,
+    sink: &GroupSink,
+) -> Result<super::CollectionCreateOutcome, crate::page::PageError> {
+    let schema = serde_norway::from_str(
+        "columns:\n  - name: Sprint\n    type: relation\n    relation: Sprints\n    two_way: Board\nviews: []\n",
+    )
+    .unwrap();
+    super::create_collection(
+        super::CollectionCreate {
+            space: space.to_string(),
+            parent_path: Some("Area/Tasks/Item.md".into()),
+            title: "Board".into(),
+            body: Some("See [Link](../../../Link.md).\n".into()),
+            icon: None,
+            description: None,
+            cover: None,
+            schema,
+            allocate_unique_title: false,
+            project: Some(space.to_string()),
+        },
+        StructureRuntime {
+            commits: Some(sink),
+            ..runtime(state)
+        },
+        |paths| async move { Ok::<_, crate::page::PageError>(paths) },
+    )
+    .await
+}
+
+/// After a failed create the sources are those before it, nothing is
+/// registered in history and the projection follows the restored leaf.
+async fn assert_collection_create_restored(
+    root: &Path,
+    state: &IndexRuntimeState,
+    sink: &GroupSink,
+    before: &[(String, String)],
+    label: &str,
+) {
+    assert_eq!(source_snapshot(root), before, "{label}");
+    assert!(sink.take().is_empty(), "{label}");
+    let backlinks = state.backlinks_for_space_dir(root).await;
+    assert!(
+        backlinks
+            .get_backlinks("Area/Tasks/Item.md")
+            .iter()
+            .any(|link| link.source_path == "Link.md"),
+        "{label}"
+    );
+    assert!(
+        backlinks
+            .get_backlinks("Area/Tasks/Item/README.md")
+            .is_empty(),
+        "{label}"
+    );
+    let pool = state
+        .get_or_create(&IndexKey::Root(root.to_path_buf()))
+        .await
+        .unwrap();
+    let indexed = indexed_paths(&pool).await;
+    assert!(
+        indexed.contains(&"Area/Tasks/Item.md".to_string()),
+        "{label}: {indexed:?}"
+    );
+    assert!(
+        !indexed
+            .iter()
+            .any(|path| path.starts_with("Area/Tasks/Item/")),
+        "{label}: {indexed:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_step_of_a_collection_create_restores_the_sources_and_the_projection() {
+    for stage in ["collection_page", "collection_convert", "collection_schema"] {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        collection_create_space(root, false);
+        let space = root.to_str().unwrap();
+        let state = IndexRuntimeState::default();
+        state
+            .backlinks_for_space_dir(root)
+            .await
+            .build(root)
+            .unwrap();
+        let sink = GroupSink::default();
+        let before = source_snapshot(root);
+
+        crate::page::write::inject_failure(Some(stage), None);
+        let error = create_board_collection(space, &state, &sink)
+            .await
+            .unwrap_err();
+        crate::page::write::inject_failure(None, None);
+
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("injected {stage} failure")),
+            "{stage}: {error:?}"
+        );
+        assert_collection_create_restored(root, &state, &sink, &before, stage).await;
+    }
+}
+
+#[tokio::test]
+async fn a_reverse_column_conflict_restores_the_leaf_parent_its_links_and_relations() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    collection_create_space(root, true);
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    state
+        .backlinks_for_space_dir(root)
+        .await
+        .build(root)
+        .unwrap();
+    let sink = GroupSink::default();
+    let before = source_snapshot(root);
+
+    let error = create_board_collection(space, &state, &sink)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("not a relation"), "{error:?}");
+    assert_collection_create_restored(root, &state, &sink, &before, "scenario R").await;
+}
+
+#[tokio::test]
+async fn a_collection_create_with_all_steps_registers_its_history_once_it_succeeds() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    collection_create_space(root, false);
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+
+    let outcome = create_board_collection(root.to_str().unwrap(), &state, &sink)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.collection_path, "Area/Tasks/Item/Board");
+    assert!(root.join("Area/Tasks/Item/Board/schema.yaml").is_file());
+    // The parent conversion rewrote the link and the relation value that a
+    // failed create restores.
+    assert_ne!(
+        fs::read_to_string(root.join("Link.md")).unwrap(),
+        "See [Item](Area/Tasks/Item.md).\n"
+    );
+    assert_ne!(
+        fs::read_to_string(root.join("Decisions/Decision.md")).unwrap(),
+        "---\ntitle: Decision\nTask: [Item.md]\n---\n"
+    );
+    assert!(!sink.take().is_empty());
+}
+
+#[tokio::test]
+async fn a_directory_that_appears_before_the_conversion_fails_it_without_being_touched() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    crate::page::test_support::scaffold_space(&root, "Root");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let before = source_snapshot(&root);
+
+    let concurrent = root.clone();
+    crate::page::write::inject_effect(
+        "collection_page",
+        Box::new(move || write_tree(&concurrent, &[("Tasks/Mine.md", "mine\n")])),
+    );
+    let error = create_tasks_collection(root.to_str().unwrap(), None, "Tasks", false)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&error, crate::page::PageError::FileAlreadyExists(path) if path == "Tasks"),
+        "{error:?}"
+    );
+    let mut expected = before;
+    expected.extend([
+        ("Tasks".to_string(), String::new()),
+        ("Tasks/Mine.md".to_string(), "mine\n".to_string()),
+    ]);
+    expected.sort();
+    assert_eq!(source_snapshot(&root), expected);
+}
+
+#[tokio::test]
+async fn a_changed_plan_removes_only_the_page_file_the_create_wrote() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().to_path_buf();
+    crate::page::test_support::scaffold_space(&root, "Root");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let before = source_snapshot(&root);
+    let state = IndexRuntimeState::default();
+    let concurrent = root.clone();
+
+    let error = super::create_collection(
+        super::CollectionCreate {
+            space: root.to_string_lossy().into_owned(),
+            parent_path: None,
+            title: "Tasks".into(),
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            schema: crate::collections::engine::default_collection_schema(),
+            allocate_unique_title: false,
+            project: None,
+        },
+        runtime(&state),
+        |paths| async move {
+            // A directory with the planned name appears after the plan, so
+            // the Page create allocates the next free name.
+            write_tree(&concurrent, &[("Tasks/Mine.md", "mine\n")]);
+            Ok::<_, crate::page::PageError>(paths)
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains("plan changed"), "{error:?}");
+    let mut expected = before;
+    expected.extend([
+        ("Tasks".to_string(), String::new()),
+        ("Tasks/Mine.md".to_string(), "mine\n".to_string()),
+    ]);
+    expected.sort();
+    assert_eq!(source_snapshot(&root), expected);
 }

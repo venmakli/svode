@@ -1527,13 +1527,18 @@ pub fn convert_entry_to_folder(
         .ok_or_else(|| PageError::General("invalid entry filename".to_string()))?;
     let parent_abs = abs_path.parent().unwrap_or(space);
     let folder_abs = parent_abs.join(stem);
-    if folder_abs.exists() {
-        return Err(PageError::FileAlreadyExists(rel_from_abs(
-            space,
-            &folder_abs,
-        )));
+    // One atomic create: a folder that appears concurrently fails the
+    // conversion before anything is written into it.
+    match fs::create_dir(&folder_abs) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(PageError::FileAlreadyExists(rel_from_abs(
+                space,
+                &folder_abs,
+            )));
+        }
+        Err(error) => return Err(error.into()),
     }
-    fs::create_dir_all(&folder_abs)?;
     let new_abs = folder_abs.join("README.md");
     fs::rename(&abs_path, &new_abs)?;
     let new_rel = rel_from_abs(space, &new_abs);

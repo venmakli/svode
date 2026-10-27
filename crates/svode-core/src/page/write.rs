@@ -146,10 +146,12 @@ pub(crate) fn mapped_path(path: &Path, roots: Option<&(PathBuf, PathBuf)>) -> Pa
 
 /// Bytes of every file a source operation may write, keyed by the path before
 /// an optional relocation of `roots` (old, new), so a failed operation is
-/// restored as a whole. Also used by structural rename and move.
+/// restored as a whole. Also used by structural rename and move, and by
+/// Collection create, which adds the paths it observed itself create.
 pub(crate) struct SourceSnapshot {
     files: BTreeMap<PathBuf, Option<Vec<u8>>>,
     roots: Option<(PathBuf, PathBuf)>,
+    created_dirs: Vec<PathBuf>,
 }
 
 /// Whether `path` names an existing entry with exactly this name, so a
@@ -176,7 +178,24 @@ impl SourceSnapshot {
             };
             files.insert(path.clone(), bytes);
         }
-        Ok(Self { files, roots })
+        Ok(Self {
+            files,
+            roots,
+            created_dirs: Vec::new(),
+        })
+    }
+
+    /// A file the operation observed itself create: the rollback removes it.
+    pub(crate) fn track_created(&mut self, path: PathBuf) {
+        self.files.entry(path).or_insert(None);
+    }
+
+    /// A directory the operation observed itself create: the rollback removes
+    /// it once its tracked files are gone, and never removes what else it holds.
+    pub(crate) fn track_created_dir(&mut self, path: PathBuf) {
+        if !self.created_dirs.contains(&path) {
+            self.created_dirs.push(path);
+        }
     }
 
     pub(crate) fn rollback(&self, cause: PageError) -> PageError {
@@ -200,6 +219,14 @@ impl SourceSnapshot {
             };
             if restored.is_err() {
                 failed.push(path.display().to_string());
+            }
+        }
+        for dir in self.created_dirs.iter().rev() {
+            match fs::remove_dir(dir) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    failed.push(dir.display().to_string());
+                }
+                _ => {}
             }
         }
         if failed.is_empty() {
@@ -460,7 +487,30 @@ pub(crate) fn inject_failure(stage: Option<&'static str>, effect: Option<Box<dyn
 }
 
 #[cfg(test)]
+thread_local! { static STAGE_EFFECT: std::cell::RefCell<Option<(&'static str, Box<dyn FnOnce()>)>> = const { std::cell::RefCell::new(None) }; }
+
+/// Run `effect` when `checkpoint(stage)` is reached on this thread, without
+/// failing it, such as a concurrent change between two steps.
+#[cfg(test)]
+pub(crate) fn inject_effect(stage: &'static str, effect: Box<dyn FnOnce()>) {
+    STAGE_EFFECT.with(|slot| *slot.borrow_mut() = Some((stage, effect)));
+}
+
+#[cfg(test)]
 pub(crate) fn checkpoint(stage: &str) -> Result<(), PageError> {
+    let effect = STAGE_EFFECT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        match slot.take() {
+            Some((expected, effect)) if expected == stage => Some(effect),
+            other => {
+                *slot = other;
+                None
+            }
+        }
+    });
+    if let Some(effect) = effect {
+        effect();
+    }
     if FAILURE.with(|failure| *failure.borrow() == Some(stage)) {
         if let Some(effect) = FAILURE_EFFECT.with(|slot| slot.borrow_mut().take()) {
             effect();

@@ -233,6 +233,39 @@ fn rollback_failure_reports_original_cause_and_unrestored_paths() {
     }
 }
 
+#[test]
+fn rollback_removes_observed_created_paths_but_keeps_what_else_a_directory_holds() {
+    let temp = tempfile::tempdir().unwrap();
+    let kept = temp.path().join("Kept.md");
+    fs::write(&kept, "Kept").unwrap();
+    let mut snapshot = SourceSnapshot::capture(std::slice::from_ref(&kept), None).unwrap();
+    let (own, shared) = (temp.path().join("Own"), temp.path().join("Shared"));
+    for dir in [&own, &shared] {
+        fs::create_dir(dir).unwrap();
+        fs::write(dir.join("README.md"), "created").unwrap();
+        snapshot.track_created(dir.join("README.md"));
+        snapshot.track_created_dir(dir.clone());
+    }
+    fs::write(shared.join("Foreign.md"), "foreign").unwrap();
+
+    let error = snapshot.rollback(PageError::General("step failed".into()));
+
+    match error {
+        PageError::Recovery { cause, paths } => {
+            assert_eq!(cause, "step failed");
+            assert_eq!(paths, [shared.display().to_string()]);
+        }
+        error => panic!("unexpected recovery result: {error}"),
+    }
+    assert!(!own.exists());
+    assert_eq!(
+        fs::read_to_string(shared.join("Foreign.md")).unwrap(),
+        "foreign"
+    );
+    assert!(!shared.join("README.md").exists());
+    assert_eq!(fs::read_to_string(&kept).unwrap(), "Kept");
+}
+
 #[tokio::test]
 async fn root_owner_title_and_filename_collision_keep_canonical_path() {
     for path in ["README.md", "Old.md"] {
