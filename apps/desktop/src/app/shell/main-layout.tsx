@@ -74,6 +74,7 @@ import { NewSessionSidebarRow } from "./new-session-sidebar-row";
 import { AllProjectsSidebarRow } from "./all-projects-sidebar-row";
 import { useOpenSessionRoutine } from "./open-session-routine";
 import { NowSidebarSection } from "./now-sidebar-section";
+import { NowOrderTracker } from "./now-rows";
 import { HomeProjectItems } from "./home-project-items";
 import { PinnedSidebarSection } from "./pinned-sidebar-section";
 import { useKeepEditedObjects } from "./working-set";
@@ -333,6 +334,7 @@ function ShellLayoutContent({
     return (
       <>
         <ShellChrome />
+        <NowOrderTracker />
         {sidebar}
         <ShellMainInset
           mainSurface={mainSurface}
@@ -345,6 +347,7 @@ function ShellLayoutContent({
   return (
     <>
       <ShellChrome />
+      <NowOrderTracker />
       <DesktopResizableShell
         sidebarProviderRef={sidebarProviderRef}
         sidebar={sidebar}

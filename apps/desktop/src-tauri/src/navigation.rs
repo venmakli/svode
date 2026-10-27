@@ -375,15 +375,28 @@ pub fn pin(project: &Path, item: NavigationItem) -> Result<NavigationState, AppE
     })
 }
 
-/// Keeps an item in Now at the end, or refreshes the snapshot of a kept item
-/// in place. A pinned item is left pinned.
-pub fn keep(project: &Path, item: NavigationItem) -> Result<NavigationState, AppError> {
+/// Keeps an item in Now before the kept item `before`, at the end without it
+/// or when it is not kept, or refreshes the snapshot of a kept item in place.
+/// A pinned item is left pinned. `before` lets a row Now already shows keep
+/// its place among the kept items shown below it (DF-206 R5).
+pub fn keep(
+    project: &Path,
+    item: NavigationItem,
+    before: Option<NavigationKey>,
+) -> Result<NavigationState, AppError> {
     let item = normalized_item(item)?;
+    let before = before.map(NavigationKey::normalized).transpose()?;
     mutate(project, |file| {
         if position(&file.pinned, &item.key).is_none() {
             match position(&file.kept, &item.key) {
                 Some(index) => file.kept[index] = item,
-                None => file.kept.push(item),
+                None => {
+                    let place = before
+                        .as_ref()
+                        .and_then(|before| position(&file.kept, before))
+                        .unwrap_or(file.kept.len());
+                    file.kept.insert(place, item);
+                }
             }
         }
         Ok(resolved(project, file))
@@ -837,8 +850,9 @@ pub mod commands {
     pub async fn navigation_keep(
         project_path: String,
         item: NavigationItem,
+        before: Option<NavigationKey>,
     ) -> Result<NavigationState, AppError> {
-        blocking(move || super::keep(Path::new(&project_path), item)).await
+        blocking(move || super::keep(Path::new(&project_path), item, before)).await
     }
 
     #[tauri::command]
@@ -1343,8 +1357,8 @@ mod tests {
     #[test]
     fn kept_items_keep_order_and_are_never_also_pinned() {
         let project = project();
-        keep(project.path(), session("codex:a")).unwrap();
-        keep(project.path(), session("codex:b")).unwrap();
+        keep(project.path(), session("codex:a"), None).unwrap();
+        keep(project.path(), session("codex:b"), None).unwrap();
         pin(project.path(), session("codex:c")).unwrap();
         // Keeping a kept item refreshes it in place; a pinned one stays pinned.
         keep(
@@ -1353,9 +1367,10 @@ mod tests {
                 title: "Renamed".into(),
                 ..session("codex:a")
             },
+            None,
         )
         .unwrap();
-        let state = keep(project.path(), session("codex:c")).unwrap();
+        let state = keep(project.path(), session("codex:c"), None).unwrap();
         assert_eq!(kept_ids(&state), vec!["codex:a", "codex:b"]);
         assert_eq!(state.kept[0].item.title, "Renamed");
         assert_eq!(pinned_ids(&state), vec!["codex:c"]);
@@ -1368,7 +1383,7 @@ mod tests {
 
         // Unpin and close touch only their own list; a confirmed-missing
         // target leaves both.
-        keep(project.path(), session("codex:d")).unwrap();
+        keep(project.path(), session("codex:d"), None).unwrap();
         let state = unpin(project.path(), vec![session_key("codex:b")]).unwrap();
         assert_eq!(kept_ids(&state), vec!["codex:b", "codex:d"]);
         let state = unkeep(project.path(), vec![session_key("codex:c")]).unwrap();
@@ -1385,10 +1400,88 @@ mod tests {
     }
 
     #[test]
+    fn keep_with_a_place_inserts_before_that_kept_item() {
+        let project = project();
+        keep(project.path(), session("codex:a"), None).unwrap();
+        keep(project.path(), session("codex:b"), None).unwrap();
+        // A row shown above `codex:b` keeps its place.
+        let state = keep(
+            project.path(),
+            session("codex:c"),
+            Some(session_key("codex:b")),
+        )
+        .unwrap();
+        assert_eq!(kept_ids(&state), vec!["codex:a", "codex:c", "codex:b"]);
+        // A place that is not kept, or a pinned one, puts the item last.
+        pin(project.path(), session("codex:p")).unwrap();
+        keep(
+            project.path(),
+            session("codex:d"),
+            Some(session_key("codex:x")),
+        )
+        .unwrap();
+        let state = keep(
+            project.path(),
+            session("codex:e"),
+            Some(session_key("codex:p")),
+        )
+        .unwrap();
+        assert_eq!(
+            kept_ids(&state),
+            vec!["codex:a", "codex:c", "codex:b", "codex:d", "codex:e"]
+        );
+        // Keeping a kept item again refreshes it in place, whatever the place.
+        let state = keep(
+            project.path(),
+            NavigationItem {
+                title: "Renamed".into(),
+                ..session("codex:e")
+            },
+            Some(session_key("codex:a")),
+        )
+        .unwrap();
+        assert_eq!(
+            kept_ids(&state),
+            vec!["codex:a", "codex:c", "codex:b", "codex:d", "codex:e"]
+        );
+        assert_eq!(state.kept[4].item.title, "Renamed");
+        // A pinned item is not kept, with or without a place.
+        let state = keep(
+            project.path(),
+            session("codex:p"),
+            Some(session_key("codex:a")),
+        )
+        .unwrap();
+        assert_eq!(pinned_ids(&state), vec!["codex:p"]);
+        assert_eq!(kept_ids(&state).len(), 5);
+        assert_eq!(read_state(project.path()), state);
+
+        // The file keeps its format: the kept list in place order, the same keys.
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file_path(project.path())).unwrap())
+                .unwrap();
+        let mut keys = file
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(keys, ["expanded", "kept", "pinned", "version"]);
+        assert_eq!(
+            file["kept"][1],
+            serde_json::json!({
+                "key": { "kind": "session", "sessionId": "codex:c" },
+                "title": "codex:c"
+            })
+        );
+    }
+
+    #[test]
     fn retitle_refreshes_snapshots_without_adding() {
         let project = project();
         pin(project.path(), session("codex:a")).unwrap();
-        keep(project.path(), session("codex:b")).unwrap();
+        keep(project.path(), session("codex:b"), None).unwrap();
         for id in ["codex:a", "codex:b", "codex:c"] {
             retitle(
                 project.path(),
@@ -1412,8 +1505,18 @@ mod tests {
         let child = project.path().join("child");
         write(&child, "notes/plan.md", &page("Plan"));
         write(&child, "gone.md", &page("Gone"));
-        keep(project.path(), artifact(child_page("notes/plan.md"), "Old")).unwrap();
-        let state = keep(project.path(), artifact(child_page("gone.md"), "Gone")).unwrap();
+        keep(
+            project.path(),
+            artifact(child_page("notes/plan.md"), "Old"),
+            None,
+        )
+        .unwrap();
+        let state = keep(
+            project.path(),
+            artifact(child_page("gone.md"), "Gone"),
+            None,
+        )
+        .unwrap();
         assert_eq!(
             shown(&NavigationState {
                 pinned: state.kept.clone(),

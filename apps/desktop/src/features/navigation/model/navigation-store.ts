@@ -6,6 +6,7 @@ import {
   type NavigationKey,
   type NavigationResolvedItem,
 } from "./keys";
+import { nowKeepPlace } from "./now-order";
 
 /** Desktop navigation state commands the store depends on. */
 export interface NavigationStateApi {
@@ -14,9 +15,11 @@ export interface NavigationStateApi {
     projectPath: string,
     item: NavigationItem,
   ) => Promise<NavigationStateDto>;
+  /** Keeps before the kept item `before`, or last without it. */
   keep: (
     projectPath: string,
     item: NavigationItem,
+    before: NavigationKey | null,
   ) => Promise<NavigationStateDto>;
   unpin: (
     projectPath: string,
@@ -55,7 +58,10 @@ export interface NavigationStoreState {
   refresh: () => Promise<void>;
   pin: (item: NavigationItem) => Promise<void>;
   unpin: (key: NavigationKey) => Promise<void>;
-  /** Keeps the object in Now; a pinned object stays pinned. */
+  /**
+   * Keeps the object in Now; a pinned object stays pinned. A row Now shows
+   * keeps its place there, any other object comes last.
+   */
   keep: (item: NavigationItem) => Promise<void>;
   /** Removes the objects from Now. */
   unkeep: (keys: NavigationKey[]) => Promise<void>;
@@ -189,7 +195,12 @@ export function createNavigationStore(
 
       keep: (item) =>
         run(
-          (projectPath) => api.keep(projectPath, item),
+          (projectPath) =>
+            api.keep(
+              projectPath,
+              item,
+              nowKeepPlace(projectPath, item.key, get().kept),
+            ),
           [navigationKeyId(item.key)],
         ),
 

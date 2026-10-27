@@ -14,7 +14,6 @@ import {
   agentSessionNavigationKey,
   agentSessionTargetFor,
   pinnableAgentSessionItem,
-  useActiveAgentSessions,
   useSessionTerminals,
   type AgentSession,
   type AgentSessionTarget,
@@ -23,16 +22,13 @@ import {
 import {
   NavigationSidebarGroup,
   navigationKeyId,
-  useDescribedNavigationItem,
   useKeepInNow,
   useNavigationState,
 } from "@/features/navigation";
-import { useInteractionWithin } from "@/shared/hooks/use-interaction-within";
-import { useStableOrder } from "@/shared/hooks/use-stable-order";
 import { useShellStore } from "./model";
 import { useOpenSessionInMainArea } from "./agent-session-peek-host";
-import { useMainAreaObject } from "./main-area-object";
-import { composeNow, isSessionKey, type NowTemporary } from "./now-model";
+import { isSessionKey, type NowTemporary } from "./now-model";
+import { useActiveProjectNow } from "./now-rows";
 import {
   NavigationArtifactItem,
   useOpenNavigationArtifact,
@@ -46,37 +42,22 @@ interface NowSidebarSectionProps {
 }
 
 /**
- * "Now" of the main sidebar: active sessions, then the kept objects in keep
- * order, then the temporary main area object. An object pinned or shown
- * higher up is not repeated. Hidden while empty, unless session terminals
- * are open: its menu closes them.
+ * "Now" of the main sidebar: active sessions, kept objects and the
+ * temporary main area object in one list, in the order they came (DF-206).
+ * An object pinned higher up is not repeated. Hidden while empty, unless
+ * session terminals are open: its menu closes them.
  */
 export function NowSidebarSection({
   onActivateContent,
   onBeforeNavigation,
 }: NowSidebarSectionProps) {
-  const pinned = useNavigationState((state) => state.pinned);
   const kept = useNavigationState((state) => state.kept);
-  const sessions = useActiveAgentSessions();
   const mainTarget = useShellStore((state) =>
     state.mainSurface === "session" ? state.mainSessionTarget : null,
   );
-  const mainObject = useMainAreaObject();
+  const { rows, mainObject } = useActiveProjectNow();
   const mainKeyId = mainObject ? navigationKeyId(mainObject.item.key) : null;
-  const described = useDescribedNavigationItem(
-    mainObject?.kind === "artifact" ? mainObject.item : null,
-  );
-  const {
-    active: activeSessions,
-    kept: keptItems,
-    temporary,
-  } = composeNow({
-    pinned,
-    kept,
-    activeSessions: sessions,
-    mainObject,
-    described,
-  });
+  const temporary = rows.some((row) => row.kind === "temporary");
   const openArtifactItem = useOpenNavigationArtifact({
     onActivateContent,
     onBeforeNavigation,
@@ -84,25 +65,8 @@ export function NowSidebarSection({
   const openSession = useOpenSessionInMainArea();
   const { closeItem, closeAll } = useWorkingSetActions();
   const sessionTerminals = useSessionTerminals();
-  const [element, setElement] = useState<HTMLElement | null>(null);
-  const hold = useInteractionWithin(
-    element?.closest<HTMLElement>('[data-sidebar="sidebar"]') ?? element,
-  );
 
-  const activeOrder = useStableOrder(
-    activeSessions.map((session) => session.id),
-    hold,
-  );
-  const activeById = new Map(activeSessions.map((s) => [s.id, s]));
-
-  if (
-    activeSessions.length === 0 &&
-    keptItems.length === 0 &&
-    !temporary &&
-    sessionTerminals.count === 0
-  ) {
-    return null;
-  }
+  if (rows.length === 0 && sessionTerminals.count === 0) return null;
 
   const openSessionHere = (session: AgentSession) =>
     void openSession(agentSessionTargetFor(session), session, {
@@ -110,69 +74,72 @@ export function NowSidebarSection({
     });
 
   return (
-    <div ref={setElement}>
-      <NavigationSidebarGroup
-        id="now"
-        label={m.navigation_now()}
-        action={
-          <NowMenu
-            canCloseAll={kept.length > 0 || temporary !== null}
-            onCloseAll={() => void closeAll(Boolean(temporary))}
-            sessionTerminals={sessionTerminals}
-          />
-        }
-      >
-        {activeOrder.map((id) => {
-          const session = activeById.get(id);
-          if (!session) return null;
-          const item = pinnableAgentSessionItem(session);
-          return (
-            <AgentSessionNavigationItem
-              key={`active:${id}`}
-              navigationKey={agentSessionNavigationKey(session)}
-              fallbackTitle={session.title}
-              mainTarget={mainTarget}
-              onOpen={openSessionHere}
-              stepItem={item}
-              keepable
-            />
-          );
-        })}
-        {keptItems.map((item) => {
-          const id = navigationKeyId(item.key);
-          const close = () => void closeItem(item.key);
-          if (isSessionKey(item.key)) {
+    <NavigationSidebarGroup
+      id="now"
+      label={m.navigation_now()}
+      action={
+        <NowMenu
+          canCloseAll={kept.length > 0 || temporary}
+          onCloseAll={() => void closeAll(temporary)}
+          sessionTerminals={sessionTerminals}
+        />
+      }
+    >
+      {rows.map((row) => {
+        switch (row.kind) {
+          case "active": {
+            const key = agentSessionNavigationKey(row.session);
             return (
               <AgentSessionNavigationItem
-                key={id}
-                navigationKey={item.key}
-                fallbackTitle={item.title}
+                key={navigationKeyId(key)}
+                navigationKey={key}
+                fallbackTitle={row.session.title}
                 mainTarget={mainTarget}
                 onOpen={openSessionHere}
-                stepItem={item}
+                stepItem={pinnableAgentSessionItem(row.session)}
+                keepable
+              />
+            );
+          }
+          case "kept": {
+            const { item } = row;
+            const id = navigationKeyId(item.key);
+            const close = () => void closeItem(item.key);
+            if (isSessionKey(item.key)) {
+              return (
+                <AgentSessionNavigationItem
+                  key={id}
+                  navigationKey={item.key}
+                  fallbackTitle={item.title}
+                  mainTarget={mainTarget}
+                  onOpen={openSessionHere}
+                  stepItem={item}
+                  onClose={close}
+                />
+              );
+            }
+            return (
+              <NavigationArtifactItem
+                key={id}
+                item={item}
+                active={mainKeyId === id}
+                onOpen={() => void openArtifactItem(item)}
                 onClose={close}
               />
             );
           }
-          return (
-            <NavigationArtifactItem
-              key={id}
-              item={item}
-              active={mainKeyId === id}
-              onOpen={() => void openArtifactItem(item)}
-              onClose={close}
-            />
-          );
-        })}
-        {temporary && (
-          <TemporaryItem
-            temporary={temporary}
-            mainTarget={mainTarget}
-            onClose={() => void closeItem(temporary.item.key)}
-          />
-        )}
-      </NavigationSidebarGroup>
-    </div>
+          case "temporary":
+            return (
+              <TemporaryItem
+                key={`temporary:${navigationKeyId(row.temporary.item.key)}`}
+                temporary={row.temporary}
+                mainTarget={mainTarget}
+                onClose={() => void closeItem(row.temporary.item.key)}
+              />
+            );
+        }
+      })}
+    </NavigationSidebarGroup>
   );
 }
 

@@ -88,7 +88,6 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
     agentSessionNavigationKey: () => null,
     agentSessionTargetFor: () => null,
     pinnableAgentSessionItem: () => null,
-    useActiveAgentSessions: () => [],
     useSessionTerminals: () => ({
       ...terminals,
       closeAll: async () => {
@@ -108,7 +107,6 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
       </section>
     ),
     navigationKeyId: () => "",
-    useDescribedNavigationItem: () => null,
     useKeepInNow: () => ({ available: false, keep() {} }),
     useNavigationState: (selector: (state: unknown) => unknown) =>
       selector({ pinned: [], kept: [] }),
@@ -116,11 +114,10 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
   mock.module("./agent-session-peek-host", () => ({
     useOpenSessionInMainArea: () => async () => true,
   }));
-  mock.module("./main-area-object", () => ({ useMainAreaObject: () => null }));
-  mock.module("./now-model", () => ({
-    composeNow: () => ({ active: [], kept: [], temporary: null }),
-    isSessionKey: () => false,
+  mock.module("./now-rows", () => ({
+    useActiveProjectNow: () => ({ rows: [], mainObject: null }),
   }));
+  mock.module("./now-model", () => ({ isSessionKey: () => false }));
   mock.module("./navigation-sidebar-items", () => ({
     NavigationArtifactItem: () => null,
     useOpenNavigationArtifact: () => async () => {},

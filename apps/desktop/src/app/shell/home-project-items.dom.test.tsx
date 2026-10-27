@@ -295,14 +295,15 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
     sessions: [running("codex:w", "Work")],
   });
 
-  test("an inactive project lists its pins, then active sessions and kept objects, each once", async () => {
+  test("an inactive project lists its pins, then its Now in one list, each once", async () => {
     reset({ "/projects/notes": notes() });
     await render("notes");
-    // A pinned row names its pin; the mark shows in the badge slot.
+    // A pinned row names its pin; the mark shows in the badge slot. A kept
+    // session that works stays where it is kept (DF-206 R1).
     expect(rows()).toEqual([
       `roadmap.md${m.navigation_pinned_item()}`,
-      `Work${m.sessions_status_running()}`,
       "plan.md",
+      `Work${m.sessions_status_running()}`,
     ]);
     // The project is read apart from its runtime: no full catalog read.
     const names = commands.map(([command]) => command);

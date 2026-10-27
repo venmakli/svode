@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { NavigationStateDto } from "../api/navigation";
+import { recordNowOrder } from "./now-order";
 import {
   navigationKeyId,
   type NavigationItem,
@@ -58,16 +59,28 @@ function fakeApi() {
       files.set(projectPath, [...(files.get(projectPath) ?? []), item]);
       return state(projectPath);
     },
-    keep: async (projectPath, item) => {
-      calls.push(`keep:${projectPath}:${navigationKeyId(item.key)}`);
+    keep: async (projectPath, item, before) => {
+      calls.push(
+        `keep:${projectPath}:${navigationKeyId(item.key)}` +
+          (before ? `:before:${navigationKeyId(before)}` : ""),
+      );
       if (
         !listed(files, projectPath, item) &&
         !listed(keptFiles, projectPath, item)
       ) {
-        keptFiles.set(projectPath, [
-          ...(keptFiles.get(projectPath) ?? []),
-          item,
-        ]);
+        const kept = keptFiles.get(projectPath) ?? [];
+        const at = before
+          ? kept.findIndex(
+              (current) =>
+                navigationKeyId(current.key) === navigationKeyId(before),
+            )
+          : -1;
+        keptFiles.set(
+          projectPath,
+          at < 0
+            ? [...kept, item]
+            : [...kept.slice(0, at), item, ...kept.slice(at)],
+        );
       }
       return state(projectPath);
     },
@@ -298,4 +311,37 @@ test("forget drops a confirmed-missing target from pinned and kept", async () =>
 
   expect(store.getState().pinned).toEqual([]);
   expect(store.getState().kept).toEqual([]);
+});
+
+test("a row Now shows is kept in its place among the kept items (DF-206 R5)", async () => {
+  const { api } = fakeApi();
+  const store = createNavigationStore(api);
+  store.getState().setProject("/project-in-place");
+  await flush();
+  await store.getState().keep(sessionItem("codex:a"));
+  await store.getState().keep(sessionItem("codex:b"));
+  const id = (sessionId: string) =>
+    navigationKeyId({ kind: "session", sessionId });
+  // Now shows the active session `codex:s` between the two kept ones.
+  recordNowOrder("/project-in-place", [
+    { ids: [id("codex:a")] },
+    { ids: [id("codex:s")] },
+    { ids: [id("codex:b")] },
+  ]);
+
+  await store.getState().keep(sessionItem("codex:s"));
+  await store.getState().keep(sessionItem("codex:tree"));
+
+  expect(store.getState().kept.map((item) => item.title)).toEqual([
+    "codex:a",
+    "codex:s",
+    "codex:b",
+    "codex:tree",
+  ]);
+  expect(api.calls.filter((call) => call.startsWith("keep"))).toEqual([
+    `keep:/project-in-place:${id("codex:a")}`,
+    `keep:/project-in-place:${id("codex:b")}`,
+    `keep:/project-in-place:${id("codex:s")}:before:${id("codex:b")}`,
+    `keep:/project-in-place:${id("codex:tree")}`,
+  ]);
 });

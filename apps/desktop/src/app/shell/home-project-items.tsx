@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { SidebarMenuItem } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -7,7 +7,6 @@ import {
   agentSessionNavigationKey,
   agentSessionTargetFor,
   pinnableAgentSessionItem,
-  useActiveAgentSessions,
   type AgentSession,
   type AgentSessionTarget,
 } from "@/features/agent-sessions";
@@ -18,15 +17,12 @@ import {
 import {
   NavigationStoreProvider,
   navigationKeyId,
-  useDescribedNavigationItem,
   useNavigationState,
   type NavigationItem,
   type NavigationKey,
   type NavigationResolvedItem,
 } from "@/features/navigation";
 import { useSpace, type SpaceInfo } from "@/features/space";
-import { useInteractionWithin } from "@/shared/hooks/use-interaction-within";
-import { useStableOrder } from "@/shared/hooks/use-stable-order";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 import { useOpenSessionInMainArea } from "./agent-session-peek-host";
@@ -34,13 +30,13 @@ import {
   homeProjectRows,
   type HomeProjectRow,
 } from "./home-project-items-model";
-import { useMainAreaObject } from "./main-area-object";
 import { useShellStore } from "./model";
 import {
   NavigationArtifactItem,
   useOpenNavigationArtifact,
 } from "./navigation-sidebar-items";
 import { isSessionKey } from "./now-model";
+import { useActiveProjectNow, useNowRows } from "./now-rows";
 import { TemporaryItem } from "./now-sidebar-section";
 import {
   useInactiveProjectItems,
@@ -96,12 +92,7 @@ function ActiveProjectItems({
 }) {
   const loaded = useNavigationState((state) => state.loaded);
   const pinned = useNavigationState((state) => state.pinned);
-  const kept = useNavigationState((state) => state.kept);
-  const activeSessions = useActiveAgentSessions();
-  const mainObject = useMainAreaObject();
-  const described = useDescribedNavigationItem(
-    mainObject?.kind === "artifact" ? mainObject.item : null,
-  );
+  const { rows, mainObject } = useActiveProjectNow();
   const mainTarget = useShellStore((state) =>
     state.mainSurface === "session" ? state.mainSessionTarget : null,
   );
@@ -115,12 +106,7 @@ function ActiveProjectItems({
   if (!loaded) return <LoadingRows />;
   return (
     <ProjectRows
-      rows={homeProjectRows({
-        pinned,
-        kept,
-        activeSessions,
-        main: { object: mainObject, described },
-      })}
+      rows={homeProjectRows(pinned, rows)}
       mainKeyId={mainObject ? navigationKeyId(mainObject.item.key) : null}
       mainTarget={mainTarget}
       onOpenArtifact={(item) => void openArtifact(item)}
@@ -177,6 +163,13 @@ function InactiveProjectRows({
     onActivateContent,
   );
   const listed = sessions.sessions ?? [];
+  const now = useNowRows({
+    pinned,
+    kept,
+    activeSessions: sessions.active,
+    mainObject: null,
+    described: null,
+  });
   const read = loaded && sessions.sessions !== null;
   const readFailed = failed || sessions.failed;
 
@@ -186,12 +179,7 @@ function InactiveProjectRows({
   return (
     <>
       <ProjectRows
-        rows={homeProjectRows({
-          pinned,
-          kept,
-          activeSessions: sessions.active,
-          main: null,
-        })}
+        rows={homeProjectRows(pinned, now)}
         mainKeyId={null}
         mainTarget={null}
         onOpenArtifact={(item) => void open(item, null)}
@@ -238,30 +226,7 @@ function ProjectRows({
   };
   spaceName?: (key: NavigationKey) => string | null;
 }) {
-  const [element, setElement] = useState<HTMLElement | null>(null);
-  const hold = useInteractionWithin(
-    element?.closest<HTMLElement>('[data-sidebar="sidebar"]') ?? element,
-  );
-  const active = rows.flatMap((row) =>
-    row.kind === "active" ? [row.session] : [],
-  );
-  const activeOrder = useStableOrder(
-    active.map((session) => session.id),
-    hold,
-  );
-  const activeById = new Map(active.map((session) => [session.id, session]));
-  const activeRows = activeOrder.flatMap((id) => {
-    const session = activeById.get(id);
-    return session ? [{ kind: "active" as const, session }] : [];
-  });
-  // Active sessions keep their place while the pointer is in the sidebar.
-  const ordered = [
-    ...rows.filter((row) => row.kind === "pinned"),
-    ...activeRows,
-    ...rows.filter((row) => row.kind === "kept" || row.kind === "temporary"),
-  ];
-
-  if (ordered.length === 0) {
+  if (rows.length === 0) {
     return <MutedRow>{m.home_project_items_empty()}</MutedRow>;
   }
 
@@ -301,9 +266,7 @@ function ProjectRows({
 
   return (
     <>
-      {/* Locates the sidebar whose hover holds the order of active rows. */}
-      <li ref={setElement} hidden aria-hidden />
-      {ordered.map((row) => {
+      {rows.map((row) => {
         switch (row.kind) {
           case "pinned":
             return isSessionKey(row.item.key)

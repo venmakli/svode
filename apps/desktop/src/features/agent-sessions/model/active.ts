@@ -1,4 +1,4 @@
-import { isAgentTurnActive, requiresUserAction } from "./status";
+import { isAgentTurnActive } from "./status";
 import type { AgentSession } from "./types";
 
 /**
@@ -17,37 +17,14 @@ export function terminalActivityAt(session: AgentSession): string | undefined {
   return timestampMs(outputAt) >= timestampMs(inputAt) ? outputAt : inputAt;
 }
 
-/** Waiting, then working, then with an open terminal; latest activity first. */
-export function compareActiveAgentSessions(
-  left: AgentSession,
-  right: AgentSession,
-): number {
-  const priorityDelta = activePriority(right) - activePriority(left);
-  if (priorityDelta !== 0) return priorityDelta;
-
-  return activityMs(right) - activityMs(left);
-}
-
-/** The active sessions in their Now order. */
+/**
+ * The active sessions, in catalog order: where a session stands in Now is
+ * up to Now, not its status (DF-206).
+ */
 export function activeAgentSessions(
   sessions: readonly AgentSession[],
 ): AgentSession[] {
-  return sessions.filter(isActiveAgentSession).sort(compareActiveAgentSessions);
-}
-
-function activePriority(session: AgentSession): number {
-  if (requiresUserAction(session)) return 3;
-  if (isAgentTurnActive(session)) return 2;
-  if (session.runtime?.ptyId) return 1;
-  return 0;
-}
-
-function activityMs(session: AgentSession): number {
-  if (!isAgentTurnActive(session) && session.runtime?.ptyId) {
-    return timestampMs(terminalActivityAt(session) ?? session.lastActivityAt);
-  }
-
-  return timestampMs(session.lastActivityAt);
+  return sessions.filter(isActiveAgentSession);
 }
 
 function timestampMs(value: string | undefined): number {

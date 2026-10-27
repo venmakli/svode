@@ -6,6 +6,8 @@ export {
 } from "./hooks/use-navigation-state";
 export { useDescribedNavigationItem } from "./hooks/use-described-item";
 export { useKeepInNow, type KeepInNow } from "./hooks/use-keep-in-now";
+export { useNowOrder } from "./hooks/use-now-order";
+export { arrangeNowOrder, type NowOrderRow } from "./model/now-order";
 export { usePinToggle, type PinToggle } from "./hooks/use-pin-toggle";
 export {
   signalCreatedArtifact,

@@ -59,13 +59,16 @@ export function pinNavigationItem(
   });
 }
 
+/** Keeps before the kept item `before`, or last without it. */
 export function keepNavigationItem(
   projectPath: string,
   item: NavigationItemDto,
+  before: NavigationKeyDto | null,
 ): Promise<NavigationStateDto> {
   return invokeCommand<NavigationStateDto>("navigation_keep", {
     projectPath,
     item,
+    before,
   });
 }
 
