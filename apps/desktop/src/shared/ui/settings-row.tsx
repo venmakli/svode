@@ -3,7 +3,8 @@ import { ChevronRight, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 
-export function PropertySettingsSection({ label }: { label: string }) {
+/** Uppercase caption above a group of settings rows. */
+export function SettingsSection({ label }: { label: string }) {
   return (
     <div className="px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.04em] text-muted-foreground">
       {label}
@@ -11,7 +12,11 @@ export function PropertySettingsSection({ label }: { label: string }) {
   );
 }
 
-export function PropertySettingsRow({
+/**
+ * A settings row for popover panes: optional icon, label, muted value and a
+ * trailing chevron when the row is clickable. `right` replaces the chevron.
+ */
+export function SettingsRow({
   icon: Icon,
   label,
   meta,
@@ -20,7 +25,7 @@ export function PropertySettingsRow({
   disabled,
   destructive,
 }: {
-  icon: LucideIcon;
+  icon?: LucideIcon;
   label: string;
   meta?: string;
   right?: ReactNode;
@@ -42,10 +47,12 @@ export function PropertySettingsRow({
       onClick={onClick}
       disabled={disabled}
     >
-      <Icon
-        className={cn("text-muted-foreground", destructive && "text-current")}
-        data-icon="inline-start"
-      />
+      {Icon ? (
+        <Icon
+          className={cn("text-muted-foreground", destructive && "text-current")}
+          data-icon="inline-start"
+        />
+      ) : null}
       <span className="min-w-0 flex-1 truncate text-left font-medium">
         {label}
       </span>
@@ -66,5 +73,28 @@ export function PropertySettingsRow({
         />
       ) : null}
     </Button>
+  );
+}
+
+/** A read-only fact laid out on the grid of `SettingsRow`. */
+export function SettingsStaticRow({
+  icon: Icon,
+  label,
+  meta,
+}: {
+  icon: LucideIcon;
+  label: string;
+  meta: string;
+}) {
+  return (
+    <div className="flex h-8 w-full items-center gap-2.5 rounded-md border border-transparent px-2 py-1.5 text-[13px] whitespace-nowrap select-none">
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate text-left font-medium">
+        {label}
+      </span>
+      <span className="shrink-0 text-[11.5px] text-muted-foreground">
+        {meta}
+      </span>
+    </div>
   );
 }

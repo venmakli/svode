@@ -23,7 +23,7 @@ import type {
   CollectionView,
   ViewType,
 } from "@/features/collection/query/model";
-import { SettingsRow, SettingsSection } from "./settings-row";
+import { SettingsRow, SettingsSection } from "@/shared/ui/settings-row";
 import { ManageViewsPane } from "./manage-views-pane";
 import { viewType } from "../lib/utils";
 import { viewIcons } from "./view-icons";

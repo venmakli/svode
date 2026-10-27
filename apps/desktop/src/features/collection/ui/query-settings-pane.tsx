@@ -6,7 +6,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { SettingsRow } from "./settings-row";
+import { SettingsRow } from "@/shared/ui/settings-row";
 
 export function QuerySettingsPane({
   items,

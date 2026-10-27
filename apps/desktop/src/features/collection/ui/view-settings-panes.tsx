@@ -16,7 +16,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/shared/lib/utils";
 import type { CollectionView, ViewType } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
-import { SettingsRow } from "./settings-row";
+import { SettingsRow } from "@/shared/ui/settings-row";
 import { viewIcons } from "./view-icons";
 import * as m from "@/paraglide/messages.js";
 

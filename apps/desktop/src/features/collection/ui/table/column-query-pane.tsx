@@ -17,7 +17,7 @@ import {
   SortEditor,
 } from "@/features/collection/query/ui";
 import type { CollectionSchema } from "@/features/properties";
-import { SettingsRow } from "../settings-row";
+import { SettingsRow } from "@/shared/ui/settings-row";
 import * as m from "@/paraglide/messages.js";
 
 export function FieldFilterPane({

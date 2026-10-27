@@ -30,10 +30,7 @@ import type {
 import { STATUS_GROUPS } from "../../lib/utils";
 import { useOptionSettings } from "../../hooks/use-option-settings";
 import { ColorPicker } from "../color-picker";
-import {
-  PropertySettingsRow,
-  PropertySettingsSection,
-} from "../property-settings-row";
+import { SettingsRow, SettingsSection } from "@/shared/ui/settings-row";
 import { deferStateUpdate } from "./common";
 import * as m from "@/paraglide/messages.js";
 
@@ -115,7 +112,7 @@ export function OptionsPane({
           <div className="flex flex-col gap-0.5 p-1">
             {STATUS_GROUPS.map((group) => (
               <StatusGroupDropZone key={group.value} group={group.value}>
-                <PropertySettingsSection label={group.label} />
+                <SettingsSection label={group.label} />
                 {options
                   .filter((option) => option.group === group.value)
                   .map((option) => (
@@ -129,7 +126,7 @@ export function OptionsPane({
                       onSettled={clearFocusedOption}
                     />
                   ))}
-                <PropertySettingsRow
+                <SettingsRow
                   icon={Plus}
                   label={m.property_action_add_option()}
                   onClick={() => addOption(group.value)}
@@ -164,7 +161,7 @@ export function OptionsPane({
               onSettled={clearFocusedOption}
             />
           ))}
-          <PropertySettingsRow
+          <SettingsRow
             icon={Plus}
             label={m.property_action_add_option()}
             onClick={() => addOption()}

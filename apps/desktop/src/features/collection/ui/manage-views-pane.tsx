@@ -25,7 +25,7 @@ import type {
 } from "@/features/collection/query/model";
 import { handleError } from "../hooks/error-feedback";
 import { viewType } from "../lib/utils";
-import { SettingsSection } from "./settings-row";
+import { SettingsSection } from "@/shared/ui/settings-row";
 import { viewIcons } from "./view-icons";
 import * as m from "@/paraglide/messages.js";
 

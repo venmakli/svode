@@ -40,7 +40,7 @@ import {
   SettingsRow,
   SettingsSection,
   SettingsStaticRow,
-} from "../settings-row";
+} from "@/shared/ui/settings-row";
 import * as m from "@/paraglide/messages.js";
 
 export function ViewSettingsPropertiesPane({
