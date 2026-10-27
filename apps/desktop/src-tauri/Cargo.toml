@@ -80,3 +80,5 @@ gtk = "0.18"
 
 [dev-dependencies]
 svode-testkit = { path = "../../../crates/svode-testkit" }
+toml = "0.9"
+tracing-core = "0.1"

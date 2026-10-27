@@ -16,6 +16,7 @@ mod git;
 mod identity;
 mod index;
 mod installation;
+mod logging;
 #[cfg(target_os = "macos")]
 mod macos_fullscreen;
 pub mod mcp;
@@ -45,10 +46,11 @@ pub use error::AppError;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "svode_lib=debug".into()),
-        )
+        .with_env_filter(logging::env_filter(
+            std::env::var(tracing_subscriber::EnvFilter::DEFAULT_ENV)
+                .ok()
+                .as_deref(),
+        ))
         .init();
 
     tracing::info!("Starting Svode desktop app");
