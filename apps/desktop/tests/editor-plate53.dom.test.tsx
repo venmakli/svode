@@ -123,6 +123,36 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
     }
   });
 
+  for (const ending of ["> quoted", "```js\nconst a = 1;\n```"]) {
+    test(`Routine editor ending with ${ending.split("\n")[0]} changes without a trailing U+200B paragraph`, async () => {
+      const root = createRoot(document.getElementById("app")!);
+      const changes: string[] = [];
+      const source = `Intro\n\n${ending}\n`;
+      try {
+        await act(async () => {
+          root.render(
+            <TooltipProvider>
+              <ControlledMarkdownEditor
+                value={source}
+                onChange={(value) => changes.push(value)}
+              />
+            </TooltipProvider>,
+          );
+        });
+        await act(async () => {
+          mountedEditor!.tf.insertText("edited ", {
+            at: { path: [0, 0], offset: 0 },
+          });
+        });
+        expect(mountedEditor!.children.length).toBe(3);
+        expect(changes.at(-1)).toBe(`edited Intro\n\n${ending}\n`);
+        expect(changes.some((value) => value.includes("\u200b"))).toBe(false);
+      } finally {
+        await act(async () => root.unmount());
+      }
+    });
+  }
+
   test("Routine editor renders table Page pills, preserves read-only and opens portable Page target", async () => {
     const root = createRoot(document.getElementById("app")!);
     const changes: string[] = [];

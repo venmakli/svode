@@ -50,6 +50,10 @@ import {
   serializeMarkdownWithComments,
 } from "../model/markdown-comments";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
+import {
+  TRAILING_BLOCK_MARK,
+  withoutServiceTrailingBlock,
+} from "../model/trailing-block";
 import { MarkdownCommentKit } from "./markdown-comment-kit";
 import { SystemDictationPlugin } from "./system-dictation-plugin";
 import { LinkShortcutPlugin } from "./link-shortcut-plugin";
@@ -87,7 +91,14 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
     .extendApi(({ editor }) => ({
       serialize: (
         options?: Parameters<typeof serializeMarkdownWithComments>[1],
-      ) => serializeMarkdownWithComments(editor, options),
+      ) =>
+        serializeMarkdownWithComments(editor, {
+          ...options,
+          value: withoutServiceTrailingBlock(
+            editor,
+            options?.value ?? editor.children,
+          ),
+        }),
     }))
     .extend(({ getOptions }) => ({
       options: {
@@ -100,6 +111,34 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
       },
     })),
 );
+
+// The trailing paragraph carries its mark until it is split: the half after
+// the split point is a paragraph the user made.
+const ProductTrailingBlockPlugin = TrailingBlockPlugin.configure({
+  options: {
+    insert: (editor, { at, type }) => {
+      editor.tf.insertNodes(
+        editor.api.create.block({ type, [TRAILING_BLOCK_MARK]: true }, at),
+        { at },
+      );
+    },
+  },
+}).overrideEditor(({ tf: { apply } }) => ({
+  transforms: {
+    apply(operation) {
+      if (
+        operation.type === "split_node" &&
+        TRAILING_BLOCK_MARK in operation.properties
+      ) {
+        const { [TRAILING_BLOCK_MARK]: _mark, ...properties } =
+          operation.properties;
+        apply({ ...operation, properties });
+        return;
+      }
+      apply(operation);
+    },
+  },
+}));
 
 // A block comment inside a list item keeps the item's indent.
 const ProductListKit = ListKit.map((plugin) =>
@@ -149,7 +188,7 @@ export const EditorKit = [
   ...DndKit,
   ...EmojiKit,
   ...ExitBreakKit,
-  TrailingBlockPlugin,
+  ProductTrailingBlockPlugin,
   SystemDictationPlugin,
 
   ConflictPlugin,
