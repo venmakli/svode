@@ -2,7 +2,9 @@ import {
   agentSessionForNavigationKey,
   agentSessionNavigationIndex,
   agentSessionNavigationKey,
+  isAgentTurnActive,
   pinnableAgentSessionItem,
+  requiresUserAction,
   type AgentSession,
 } from "@/features/agent-sessions";
 import {
@@ -23,11 +25,19 @@ export interface NowTemporary {
 }
 
 /**
- * A row of Now: an active session that is not pinned, kept or not; a kept
- * object that is not an active session; or the temporary main area object.
+ * A row of Now: an active session that is not pinned, kept or not, and
+ * whether the main area shows it; a kept object that is not an active
+ * session; or the temporary main area object.
  */
+export type NowActiveRow = {
+  kind: "active";
+  session: AgentSession;
+  kept: NavigationItem | null;
+  main: boolean;
+};
+
 export type NowRow =
-  | { kind: "active"; session: AgentSession; kept: NavigationItem | null }
+  | NowActiveRow
   | { kind: "kept"; item: NavigationResolvedItem }
   | { kind: "temporary"; temporary: NowTemporary };
 
@@ -59,6 +69,9 @@ export function composeNow({
     (session) => agentSessionNavigationIndex([...pinned], session) < 0,
   );
   const shown = new Set<AgentSession>();
+  const main = (session: AgentSession) =>
+    mainObject?.kind === "session" &&
+    agentSessionForNavigationKey(mainObject.item.key, [session]) !== null;
   const rows = kept.flatMap((item): NowRow[] => {
     const session = isSessionKey(item.key)
       ? agentSessionForNavigationKey(item.key, active)
@@ -66,13 +79,13 @@ export function composeNow({
     if (!session) return [{ kind: "kept", item }];
     if (shown.has(session)) return [];
     shown.add(session);
-    return [{ kind: "active", session, kept: item }];
+    return [{ kind: "active", session, kept: item, main: main(session) }];
   });
   const newcomers = active
     .filter((session) => !shown.has(session))
     .sort((left, right) => activityMs(left) - activityMs(right));
   for (const session of newcomers) {
-    rows.push({ kind: "active", session, kept: null });
+    rows.push({ kind: "active", session, kept: null, main: main(session) });
   }
   const temporary = temporaryOf(
     mainObject,
@@ -85,11 +98,23 @@ export function composeNow({
   return rows;
 }
 
-/** The key ids by which the Now order knows a row through its states. */
+/**
+ * The key ids by which the Now order knows a row through its states. An
+ * active session can be hidden until it starts a turn, waits for the user,
+ * opens in the main area or is kept (DF-207 R2).
+ */
 export function nowOrderRow(row: NowRow): NowOrderRow {
   switch (row.kind) {
     case "active":
-      return sessionOrderRow(row.session, row.kept);
+      return {
+        ...sessionOrderRow(row.session, row.kept),
+        signs: [
+          isAgentTurnActive(row.session),
+          requiresUserAction(row.session),
+          row.main,
+          row.kept !== null,
+        ],
+      };
     case "kept":
       return { ids: [navigationKeyId(row.item.key)] };
     case "temporary": {

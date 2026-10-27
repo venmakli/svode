@@ -2492,6 +2492,7 @@
   "navigation_keep_failed": "Couldn't keep in Now",
   "navigation_close": "Close",
   "navigation_close_item": "Close “{title}”",
+  "navigation_close_keeps_working": "The session keeps working",
   "navigation_pin_item": "Pin “{title}”",
   "navigation_unpin_item": "Unpin “{title}”",
   "navigation_keep_item": "Keep “{title}” in Now",

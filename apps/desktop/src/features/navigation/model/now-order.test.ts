@@ -2,9 +2,13 @@ import { expect, test } from "bun:test";
 import { navigationKeyId, type NavigationItem } from "./keys";
 import {
   arrangeNowOrder,
+  hideNowRow,
+  nowHiddenOf,
   nowKeepPlace,
   nowOrderOf,
   recordNowOrder,
+  settleHiddenNowRows,
+  subscribeNowHidden,
   type NowOrderRow,
 } from "./now-order";
 
@@ -121,4 +125,79 @@ test("a shown row is kept before the nearest kept item shown below it", () => {
   // Below every kept item, or not shown: last.
   expect(nowKeepPlace(project, page("b.md").key, kept)).toBeNull();
   expect(nowKeepPlace(project, page("new.md").key, kept)).toBeNull();
+});
+
+test("a hidden row stays hidden until one of its signs turns on (DF-207 R2)", () => {
+  const signs = (
+    turn: boolean,
+    waiting = false,
+    main = false,
+    kept = false,
+  ) => [turn, waiting, main, kept];
+  const hidden = [{ ids: ["s"], signs: signs(false) }];
+  const settle = (
+    rows: NowOrderRow[],
+    marks: readonly NowOrderRow[] = hidden,
+  ) => settleHiddenNowRows(marks, rows);
+
+  // Unchanged signs, another row, a pending row continued by its link.
+  expect(
+    settle([{ ids: ["s"], signs: signs(false) }, row("x")]).hidden,
+  ).toEqual([true, false]);
+  const pending = [{ ids: ["pending"], links: ["pty"], signs: signs(false) }];
+  expect(
+    settle(
+      [{ ids: ["canonical"], links: ["pty"], signs: signs(false) }],
+      pending,
+    ).hidden,
+  ).toEqual([true]);
+  // A turn, a request to the user, the main area or a keep brings it back.
+  for (const event of [
+    signs(true),
+    signs(false, true),
+    signs(false, false, true),
+    signs(false, false, false, true),
+  ]) {
+    const settled = settle([{ ids: ["s"], signs: event }]);
+    expect(settled.hidden).toEqual([false]);
+    expect(settled.marks).toEqual([]);
+  }
+});
+
+test("a turn going on, or ending, does not bring a hidden row back; the next one does", () => {
+  let marks: readonly NowOrderRow[] = [
+    { ids: ["s"], signs: [true, false, false, false] },
+  ];
+  const see = (turn: boolean) => {
+    const settled = settleHiddenNowRows(marks, [
+      { ids: ["s"], signs: [turn, false, false, false] },
+    ]);
+    marks = settled.marks;
+    return settled.hidden[0];
+  };
+  expect(see(true)).toBe(true);
+  expect(see(false)).toBe(true);
+  expect(see(true)).toBe(false);
+});
+
+test("a hidden row that is gone or can no longer be hidden is forgotten", () => {
+  const hidden = [{ ids: ["s"], signs: [false] }];
+  expect(settleHiddenNowRows(hidden, [row("x")]).marks).toEqual([]);
+  // No longer active: the session shows as a kept or temporary row.
+  const settled = settleHiddenNowRows(hidden, [row("s")]);
+  expect(settled).toEqual({ hidden: [false], marks: [] });
+});
+
+test("rows hidden in a project stay hidden for every surface of it", () => {
+  const project = "/projects/hidden";
+  const seen: number[] = [];
+  const unsubscribe = subscribeNowHidden(() => seen.push(1));
+  hideNowRow(project, { ids: ["s"], signs: [false] });
+  hideNowRow(project, { ids: ["s", "alias"], signs: [false] });
+  unsubscribe();
+  expect(seen.length).toBe(2);
+  expect(nowHiddenOf(project)).toEqual([
+    { ids: ["s", "alias"], signs: [false] },
+  ]);
+  expect(nowHiddenOf("/projects/other")).toEqual([]);
 });

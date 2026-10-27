@@ -43,6 +43,8 @@ interface NavigationSidebarItemProps {
   keepable?: boolean;
   /** The row closes by its own button at its end, e.g. in Now. */
   onClose?: () => void;
+  /** What closing does not do, told by the tooltip of the close button. */
+  closeHint?: string;
   /** The main area object shown only until another one opens. */
   temporary?: boolean;
   /** Double click keeps a temporary row. */
@@ -63,6 +65,7 @@ export function NavigationSidebarItem({
   stepItem,
   keepable = false,
   onClose,
+  closeHint,
   temporary = false,
   onKeep,
   pinned = false,
@@ -145,16 +148,44 @@ export function NavigationSidebarItem({
         </SidebarMenuAction>
       )}
       {onClose && (
-        <SidebarMenuAction
-          type="button"
-          showOnHover
-          aria-label={m.navigation_close_item({ title })}
-          onClick={onClose}
-        >
-          <X />
-        </SidebarMenuAction>
+        <CloseAction
+          label={m.navigation_close_item({ title })}
+          hint={closeHint}
+          onClose={onClose}
+        />
       )}
     </SidebarMenuItem>
+  );
+}
+
+function CloseAction({
+  label,
+  hint,
+  onClose,
+}: {
+  label: string;
+  hint?: string;
+  onClose: () => void;
+}) {
+  const action = (
+    <SidebarMenuAction
+      type="button"
+      showOnHover
+      aria-label={label}
+      onClick={onClose}
+    >
+      <X />
+    </SidebarMenuAction>
+  );
+  if (!hint) return action;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{action}</TooltipTrigger>
+      <TooltipContent side="right" className="flex flex-col items-start gap-1">
+        <span className="font-medium">{label}</span>
+        <span>{hint}</span>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

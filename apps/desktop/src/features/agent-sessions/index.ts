@@ -34,7 +34,9 @@ export {
   agentSessionNavigationIndex,
   agentSessionNavigationKey,
   agentSessionTargetFor,
+  isAgentTurnActive,
   pinnableAgentSessionItem,
+  requiresUserAction,
 } from "./model";
 export type {
   AgentSession,

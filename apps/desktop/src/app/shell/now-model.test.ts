@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { AgentSession } from "@/features/agent-sessions";
 import {
   arrangeNowOrder,
+  settleHiddenNowRows,
   type NavigationItem,
   type NavigationResolvedItem,
   type NowOrderRow,
@@ -78,15 +79,39 @@ function label(row: NowRow) {
   }
 }
 
-/** Now as a window shows it over time: each state after the previous one. */
+/**
+ * Now as a window shows it over time, each state after the previous one, as
+ * `useNowOrder` settles hidden rows and arranges the rest; `hide` is the
+ * close button of an active session's row.
+ */
 function window() {
   let shown: NowOrderRow[] = [];
-  return (input: Partial<typeof none>) => {
-    const rows = composeNow({ ...none, ...input });
-    const order = arrangeNowOrder(shown, rows.map(nowOrderRow));
-    shown = order.map((index) => nowOrderRow(rows[index]));
-    return order.map((index) => label(rows[index]));
+  let hidden: NowOrderRow[] = [];
+  let rows: NowRow[] = [];
+  const show = (input: Partial<typeof none>) => {
+    const composed = composeNow({ ...none, ...input });
+    const order = composed.map(nowOrderRow);
+    const settled = settleHiddenNowRows(hidden, order);
+    hidden = settled.marks;
+    const visible = order.flatMap((_, index) =>
+      settled.hidden[index] ? [] : [index],
+    );
+    const arranged = arrangeNowOrder(
+      shown,
+      visible.map((index) => order[index]),
+    ).map((at) => visible[at]);
+    shown = arranged.map((index) => order[index]);
+    rows = arranged.map((index) => composed[index]);
+    return rows.map(label);
   };
+  const hide = (sessionId: string) => {
+    const row = rows.find(
+      (current) =>
+        current.kind === "active" && current.session.id === sessionId,
+    )!;
+    hidden = [...hidden, nowOrderRow(row)];
+  };
+  return Object.assign(show, { hide });
 }
 
 test("each object shows once: kept first in keep order, then active sessions", () => {
@@ -400,4 +425,134 @@ test("new rows come last before the temporary row; a leaving row moves none (R2,
     "kept:tree.md",
     "temporary:open.md",
   ]);
+});
+
+test("closing an active session of any source hides it while nothing new happens (DF-207 R2)", () => {
+  const show = window();
+  const terminal = { ptyId: "pty-free", live: true };
+  const sessions = [
+    // A free agent in a Svode terminal or a terminal panel tab.
+    session("codex:free", { runtime: terminal }),
+    // A working agent in a Svode terminal.
+    session("codex:term", {
+      status: RUNNING,
+      runtime: { ptyId: "pty-term", live: true },
+    }),
+    // A turn of the ACP runtime, an external process, a Routine launch.
+    session("qwen:acp", { status: RUNNING }),
+    session("claude:external", {
+      status: { ...RUNNING, source: "native_status_reader" },
+    }),
+    session("codex:launch:r1", {
+      status: RUNNING,
+      launchId: "r1",
+      runtime: { provisional: true, live: true },
+    }),
+    // A pending new session.
+    session("new-session:pty-new", {
+      source: "unknown",
+      runtime: { ptyId: "pty-new", live: true },
+    }),
+  ];
+  show({ activeSessions: sessions });
+  for (const current of sessions) show.hide(current.id);
+  expect(show({ activeSessions: sessions })).toEqual([]);
+
+  // Output, input, newer activity, a refreshed catalog and a turn going on.
+  const later = "2026-10-27T15:00:00Z";
+  const refreshed = sessions.map((current) => ({
+    ...current,
+    lastActivityAt: later,
+    runtime: current.runtime && {
+      ...current.runtime,
+      lastOutputAt: later,
+      lastInputAt: later,
+    },
+  }));
+  expect(show({ activeSessions: refreshed })).toEqual([]);
+  // The pending session hands its terminal to the canonical one.
+  const canonical = session("codex:new", {
+    runtime: { ptyId: "pty-new", live: true },
+  });
+  expect(
+    show({ activeSessions: [...refreshed.slice(0, 5), canonical] }),
+  ).toEqual([]);
+});
+
+test("a hidden session comes back last on a new turn, a request, the main area or a keep (R2)", () => {
+  const show = window();
+  const free = session("codex:free", {
+    runtime: { ptyId: "pty-free", live: true },
+  });
+  const working = session("codex:working", { status: RUNNING });
+  const other = session("codex:other", {
+    runtime: { ptyId: "pty-other", live: true },
+  });
+  expect(show({ activeSessions: [free, working, other] })).toEqual([
+    "active:codex:free",
+    "active:codex:working",
+    "active:codex:other",
+  ]);
+  show.hide("codex:free");
+  show.hide("codex:working");
+  expect(show({ activeSessions: [free, working, other] })).toEqual([
+    "active:codex:other",
+  ]);
+  // The free agent starts a turn; the working one waits for the user.
+  expect(
+    show({
+      activeSessions: [
+        { ...free, status: RUNNING },
+        { ...working, status: WAITING },
+        other,
+      ],
+    }),
+  ).toEqual([
+    "active:codex:other",
+    "active:codex:free",
+    "active:codex:working",
+  ]);
+
+  // Opened in the main area, or kept by a message from a peek.
+  show.hide("codex:free");
+  show.hide("codex:working");
+  expect(show({ activeSessions: [free, working, other] })).toEqual([
+    "active:codex:other",
+  ]);
+  expect(
+    show({ activeSessions: [free, working, other], mainObject: inMain(free) }),
+  ).toEqual(["active:codex:other", "active:codex:free"]);
+  expect(
+    show({
+      kept: [sessionItem("codex:working")],
+      activeSessions: [free, working, other],
+      mainObject: inMain(free),
+    }),
+  ).toEqual([
+    "active:codex:other",
+    "active:codex:free",
+    "active:codex:working",
+  ]);
+});
+
+test("a hidden kept session stays out once unkept, and leaving the active sessions forgets it (R2)", () => {
+  const show = window();
+  const kept = session("codex:kept", {
+    status: RUNNING,
+    runtime: { ptyId: "pty-kept", live: true },
+  });
+  expect(
+    show({ kept: [sessionItem("codex:kept")], activeSessions: [kept] }),
+  ).toEqual(["active:codex:kept"]);
+  // The close button unkeeps it as it hides it.
+  show.hide("codex:kept");
+  expect(show({ activeSessions: [kept] })).toEqual([]);
+  // Its terminal closes after the turn: no longer active, it leaves.
+  expect(show({ activeSessions: [] })).toEqual([]);
+  // A new terminal without a turn shows it again: it was forgotten.
+  expect(
+    show({
+      activeSessions: [{ ...kept, status: IDLE }],
+    }),
+  ).toEqual(["active:codex:kept"]);
 });

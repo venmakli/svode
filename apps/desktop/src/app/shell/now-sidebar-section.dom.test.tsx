@@ -71,8 +71,22 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
 
   let terminals = { count: 0, agentsBusy: false };
   let closedSessions = 0;
+  let nowRows: unknown[] = [];
+  const closedRows: unknown[] = [];
   mock.module("@/features/agent-sessions", () => ({
-    AgentSessionNavigationItem: () => null,
+    AgentSessionNavigationItem: (props: {
+      fallbackTitle: string;
+      onClose?: () => void;
+      closeKeepsWorking?: boolean;
+    }) => (
+      <button
+        type="button"
+        data-row={props.fallbackTitle}
+        data-closes={String(Boolean(props.onClose))}
+        data-keeps-working={String(Boolean(props.closeKeepsWorking))}
+        onClick={props.onClose}
+      />
+    ),
     CloseSessionTerminalsDialog: (props: {
       open: boolean;
       count: number;
@@ -85,7 +99,10 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
           </button>
         </div>
       ) : null,
-    agentSessionNavigationKey: () => null,
+    agentSessionNavigationKey: (session: { id: string }) => ({
+      kind: "session",
+      sessionId: session.id,
+    }),
     agentSessionTargetFor: () => null,
     pinnableAgentSessionItem: () => null,
     useSessionTerminals: () => ({
@@ -106,7 +123,8 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
         {props.children}
       </section>
     ),
-    navigationKeyId: () => "",
+    navigationKeyId: (key: { sessionId?: string } | null) =>
+      key?.sessionId ?? "",
     useKeepInNow: () => ({ available: false, keep() {} }),
     useNavigationState: (selector: (state: unknown) => unknown) =>
       selector({ pinned: [], kept: [] }),
@@ -115,7 +133,7 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
     useOpenSessionInMainArea: () => async () => true,
   }));
   mock.module("./now-rows", () => ({
-    useActiveProjectNow: () => ({ rows: [], mainObject: null }),
+    useActiveProjectNow: () => ({ rows: nowRows, mainObject: null }),
   }));
   mock.module("./now-model", () => ({ isSessionKey: () => false }));
   mock.module("./navigation-sidebar-items", () => ({
@@ -125,6 +143,9 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
   mock.module("./working-set", () => ({
     useWorkingSetActions: () => ({
       closeItem: async () => {},
+      closeActiveSession: async (row: unknown) => {
+        closedRows.push(row);
+      },
       closeAll: async () => {},
     }),
   }));
@@ -154,6 +175,24 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
     );
     return [...document.querySelectorAll<HTMLElement>("[role=menuitem]")];
   };
+
+  test("an active session's row closes from Now and says it keeps working (DF-207 R1)", async () => {
+    const row = {
+      kind: "active",
+      session: { id: "codex:w", title: "Work" },
+      kept: null,
+      main: false,
+    };
+    nowRows = [row];
+    await render();
+    const button =
+      document.querySelector<HTMLButtonElement>("[data-row='Work']")!;
+    expect(button.dataset.closes).toBe("true");
+    expect(button.dataset.keepsWorking).toBe("true");
+    await act(async () => button.click());
+    expect(closedRows).toEqual([row]);
+    nowRows = [];
+  });
 
   test("without session terminals an empty Now is hidden", async () => {
     await render();

@@ -59,8 +59,13 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     for (const listener of catalogListeners) listener();
   }
   mock.module("@/features/agent-sessions", () => ({
-    agentSessionForNavigationKey: () => null,
+    agentSessionForNavigationKey: (key: Key, sessions: Session[]) =>
+      sessions.find((session) => session.id === key.sessionId) ?? null,
     agentSessionHasId: (session: Session, id: string) => session.id === id,
+    agentSessionNavigationKey: (session: Session) => ({
+      kind: "session",
+      sessionId: session.id,
+    }),
     pinnableAgentSessionItem: (session: Session | null) =>
       session
         ? {
@@ -86,6 +91,7 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
   mock.module("@/features/navigation", () => ({
     artifactNavigationKey: () => ({ kind: "page" }),
     getNavigationState: () => ({
+      projectPath: "/project",
       pinned,
       kept,
       pendingKeyIds: new Set<string>(),
@@ -96,6 +102,9 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
         unkept.push(keys);
       },
     }),
+    hideNowRow: (projectPath: string, row: unknown) => {
+      hidden.push([projectPath, row]);
+    },
     navigationKeyId: keyId,
     subscribeUserEdits: (listener: (edit: unknown) => void) => {
       editListeners.add(listener);
@@ -103,9 +112,13 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     },
   }));
   const unkept: Key[][] = [];
+  const hidden: [string, unknown][] = [];
   const closes = { content: 0, chat: 0, guard: "ready" };
-  let mainObject: { kind: string; item: { key: Key; title: string } } | null =
-    null;
+  let mainObject: {
+    kind: string;
+    item: { key: Key; title: string };
+    session?: Session;
+  } | null = null;
   let shell = {
     mainSurface: "content",
     mainSessionDraft: null as { draftId: string } | null,
@@ -123,7 +136,10 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
   mock.module("./main-area-object", () => ({
     useMainAreaObject: () => mainObject,
   }));
-  mock.module("./now-model", () => ({ isSessionKey: () => false }));
+  mock.module("./now-model", () => ({
+    isSessionKey: (key: Key) => key.kind === "session",
+    nowOrderRow: (row: { session: Session }) => ({ ids: [row.session.id] }),
+  }));
   mock.module("./model", () => {
     const useShellStore = () => () => {};
     useShellStore.getState = () => shell;
@@ -239,6 +255,57 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     );
     await act(async () => actions!.closeMainAreaObject());
     expect([closes.content, closes.chat]).toEqual([1, 1]);
+    await act(async () => actionsRoot.unmount());
+  });
+
+  test("closing an active session's row hides it, unkept, after the guards of its display (DF-207 R2, R3)", async () => {
+    let actions: ReturnType<typeof useWorkingSetActions> | null = null;
+    function Actions() {
+      const current = useWorkingSetActions();
+      useEffect(() => {
+        actions = current;
+      });
+      return null;
+    }
+    const working = { id: "codex:w", title: "Work", source: "codex" };
+    const key = { kind: "session", sessionId: "codex:w" };
+    const row = {
+      kind: "active" as const,
+      session: working,
+      kept: { key, title: "Work" },
+      main: true,
+    };
+    mainObject = {
+      kind: "session",
+      item: { key, title: "Work" },
+      session: working,
+    };
+    shell = { mainSurface: "session", mainSessionDraft: null };
+    unkept.length = 0;
+    closes.content = 0;
+    const actionsRoot = createRoot(document.createElement("div"));
+    await act(async () => actionsRoot.render(<Actions />));
+    const close = (target: typeof row) =>
+      actions!.closeActiveSession(target as never);
+
+    // A cancelled guard changes nothing.
+    closes.guard = "blocked";
+    await act(async () => close(row));
+    expect([closes.content, hidden.length, unkept.length]).toEqual([0, 0, 0]);
+
+    closes.guard = "ready";
+    await act(async () => close(row));
+    expect(closes.content).toBe(1);
+    expect(hidden).toEqual([["/project", { ids: ["codex:w"] }]]);
+    expect(unkept).toEqual([[key]]);
+
+    // A row not shown in the main area closes without a guard.
+    mainObject = null;
+    await act(async () => actionsRoot.render(<Actions />));
+    await act(async () => close({ ...row, kept: null as never, main: false }));
+    expect(closes.content).toBe(1);
+    expect(hidden.length).toBe(2);
+    expect(unkept.length).toBe(1);
     await act(async () => actionsRoot.unmount());
   });
 }

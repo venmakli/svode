@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
   agentSessionForNavigationKey,
   agentSessionHasId,
+  agentSessionNavigationKey,
   pinnableAgentSessionItem,
   useActiveAgentSessions,
   useListedAgentSessions,
@@ -15,6 +16,7 @@ import {
 import {
   artifactNavigationKey,
   getNavigationState,
+  hideNowRow,
   navigationKeyId,
   subscribeUserEdits,
   type NavigationItem,
@@ -23,7 +25,7 @@ import {
 import { useSpace } from "@/features/space";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useMainAreaObject, type MainAreaObject } from "./main-area-object";
-import { isSessionKey } from "./now-model";
+import { isSessionKey, nowOrderRow, type NowActiveRow } from "./now-model";
 import { useShowProjectChat } from "./show-project-chat";
 import { useShellStore } from "./model";
 import { useShellView } from "./shell-view";
@@ -255,6 +257,28 @@ export function useWorkingSetActions() {
   );
 
   /**
+   * The close button of an active session's row: the row leaves Now and
+   * stays hidden until a new event of the session, which keeps working; a
+   * kept one is no longer kept, an open one closes its display after the
+   * guards (DF-207 R1–R3).
+   */
+  const closeActiveSession = useCallback(
+    async (row: NowActiveRow) => {
+      if (
+        isMainObject(agentSessionNavigationKey(row.session)) &&
+        !(await closeDisplay())
+      ) {
+        return;
+      }
+      const state = getNavigationState();
+      if (!state.projectPath) return;
+      hideNowRow(state.projectPath, nowOrderRow(row));
+      if (row.kept) await state.unkeep([row.kept.key]).catch(reportFailure);
+    },
+    [closeDisplay, isMainObject],
+  );
+
+  /**
    * "Close all": the working set leaves Now and its open object closes;
    * active sessions stay in Now as active.
    */
@@ -273,7 +297,7 @@ export function useWorkingSetActions() {
     [closeDisplay, isActiveSession, isMainObject, object],
   );
 
-  return { closeMainAreaObject, closeItem, closeAll };
+  return { closeMainAreaObject, closeItem, closeActiveSession, closeAll };
 }
 
 function sameId(left: NavigationKey, right: NavigationKey) {

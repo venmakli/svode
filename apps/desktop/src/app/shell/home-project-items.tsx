@@ -35,7 +35,7 @@ import {
   NavigationArtifactItem,
   useOpenNavigationArtifact,
 } from "./navigation-sidebar-items";
-import { isSessionKey } from "./now-model";
+import { isSessionKey, type NowActiveRow } from "./now-model";
 import { useActiveProjectNow, useNowRows } from "./now-rows";
 import { TemporaryItem } from "./now-sidebar-section";
 import {
@@ -101,7 +101,7 @@ function ActiveProjectItems({
     onBeforeNavigation,
   });
   const openSession = useOpenSessionInMainArea();
-  const { closeItem } = useWorkingSetActions();
+  const { closeItem, closeActiveSession } = useWorkingSetActions();
 
   if (!loaded) return <LoadingRows />;
   return (
@@ -116,6 +116,7 @@ function ActiveProjectItems({
         })
       }
       onClose={(key) => void closeItem(key)}
+      onCloseActive={(row) => void closeActiveSession(row)}
     />
   );
 }
@@ -145,7 +146,7 @@ function InactiveProjectItems({
 function InactiveProjectRows({
   project,
   availability,
-  items: { sessions, spaceName, sessionSpaceName, refresh, close },
+  items: { sessions, spaceName, sessionSpaceName, refresh, close, closeActive },
   onActivateContent,
 }: {
   project: SpaceInfo;
@@ -190,6 +191,7 @@ function InactiveProjectRows({
           )
         }
         onClose={close}
+        onCloseActive={closeActive}
         project={{ sessions: listed, spaceName: sessionSpaceName }}
         spaceName={(key) =>
           key.kind === "space" || isSessionKey(key)
@@ -210,6 +212,7 @@ function ProjectRows({
   onOpenArtifact,
   onOpenSession,
   onClose,
+  onCloseActive,
   project,
   spaceName,
 }: {
@@ -219,6 +222,8 @@ function ProjectRows({
   onOpenArtifact: (item: NavigationResolvedItem) => void;
   onOpenSession: (session: AgentSession) => void;
   onClose: (key: NavigationKey) => void;
+  /** Hides an active session's row until its next event (DF-207 R2). */
+  onCloseActive: (row: NowActiveRow) => void;
   /** The list and Space names of a project that is not the active one. */
   project?: {
     sessions: readonly AgentSession[];
@@ -234,7 +239,12 @@ function ProjectRows({
     key: NavigationKey,
     title: string,
     stepItem: NavigationItem | null,
-    extra: { onClose?: () => void; pinned?: boolean; keepable?: boolean } = {},
+    extra: {
+      onClose?: () => void;
+      closeKeepsWorking?: boolean;
+      pinned?: boolean;
+      keepable?: boolean;
+    } = {},
   ) => (
     <AgentSessionNavigationItem
       key={navigationKeyId(key)}
@@ -279,6 +289,8 @@ function ProjectRows({
             const key = agentSessionNavigationKey(row.session);
             return sessionRow(key, row.session.title, item, {
               keepable: true,
+              onClose: () => onCloseActive(row),
+              closeKeepsWorking: true,
             });
           }
           case "kept": {

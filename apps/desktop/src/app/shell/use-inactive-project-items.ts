@@ -8,6 +8,7 @@ import {
 } from "@/features/agent-sessions";
 import type { HomeProjectAvailability } from "@/features/home";
 import {
+  hideNowRow,
   useProjectNavigationStore,
   type NavigationKey,
   type NavigationResolvedItem,
@@ -22,7 +23,7 @@ import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useOpenSessionInMainArea } from "./agent-session-peek-host";
 import { passNavigationGuards } from "./navigation-guards";
 import { useOpenNavigationArtifact } from "./navigation-sidebar-items";
-import { isSessionKey } from "./now-model";
+import { isSessionKey, nowOrderRow, type NowActiveRow } from "./now-model";
 import * as m from "@/paraglide/messages.js";
 
 /** How often the objects of an expanded project are read while visible. */
@@ -41,6 +42,11 @@ export interface InactiveProjectItems {
   refresh: () => void;
   /** "Close" of a kept object: it leaves the project's Now. */
   close: (key: NavigationKey) => void;
+  /**
+   * "Close" of an active session: unkept, it stays out of the project's Now
+   * until its next event and keeps working (DF-207 R2).
+   */
+  closeActive: (row: NowActiveRow) => void;
 }
 
 /**
@@ -96,7 +102,24 @@ export function useInactiveProjectItems(
     [navigation],
   );
 
-  return { navigation, sessions, spaceName, sessionSpaceName, refresh, close };
+  const closeActive = useCallback(
+    (row: NowActiveRow) => {
+      const projectPath = navigation.getState().projectPath;
+      if (projectPath) hideNowRow(projectPath, nowOrderRow(row));
+      if (row.kept) close(row.kept.key);
+    },
+    [close, navigation],
+  );
+
+  return {
+    navigation,
+    sessions,
+    spaceName,
+    sessionSpaceName,
+    refresh,
+    close,
+    closeActive,
+  };
 }
 
 /** The registered Spaces of a project, read from its config. */

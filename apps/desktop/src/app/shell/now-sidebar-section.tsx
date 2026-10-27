@@ -63,7 +63,7 @@ export function NowSidebarSection({
     onBeforeNavigation,
   });
   const openSession = useOpenSessionInMainArea();
-  const { closeItem, closeAll } = useWorkingSetActions();
+  const { closeItem, closeActiveSession, closeAll } = useWorkingSetActions();
   const sessionTerminals = useSessionTerminals();
 
   if (rows.length === 0 && sessionTerminals.count === 0) return null;
@@ -98,6 +98,8 @@ export function NowSidebarSection({
                 onOpen={openSessionHere}
                 stepItem={pinnableAgentSessionItem(row.session)}
                 keepable
+                onClose={() => void closeActiveSession(row)}
+                closeKeepsWorking
               />
             );
           }

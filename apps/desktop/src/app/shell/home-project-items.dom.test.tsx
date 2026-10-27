@@ -365,6 +365,54 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
     ).toBe("/projects/notes");
   });
 
+  test("an active session of an inactive project closes from Now and keeps working (DF-207 R1, R2)", async () => {
+    reset({
+      "/projects/hiding": {
+        ...notes(),
+        sessions: [running("codex:w", "Work"), running("codex:x", "Extra")],
+      },
+    });
+    await render("hiding");
+    expect(rows()).toEqual([
+      `roadmap.md${m.navigation_pinned_item()}`,
+      "plan.md",
+      `Work${m.sessions_status_running()}`,
+      `Extra${m.sessions_status_running()}`,
+    ]);
+    const closeOf = (title: string) =>
+      document.querySelector<HTMLButtonElement>(
+        `[aria-label='${m.navigation_close_item({ title })}']`,
+      )!;
+    // The close button of a working session tells it keeps working.
+    const extra = closeOf("Extra");
+    expect(extra.dataset.state).toBe("closed");
+    expect(closeOf("plan.md").dataset.state).toBe(undefined);
+    await act(async () => extra.focus());
+    await act(settle);
+    expect(text().includes(m.navigation_close_keeps_working())).toBe(true);
+
+    commands.length = 0;
+    await act(async () => extra.click());
+    await act(async () => closeOf("Work").click());
+    await act(settle);
+    expect(rows()).toEqual([
+      `roadmap.md${m.navigation_pinned_item()}`,
+      "plan.md",
+    ]);
+    // Only the kept one is unkept; nothing else is asked of Desktop.
+    expect(commands.map(([command]) => command)).toEqual(["navigation_unkeep"]);
+    expect(commands[0][1].keys).toEqual([
+      { kind: "session", sessionId: "codex:w" },
+    ]);
+
+    // Read again, they stay hidden while nothing new happens.
+    await render("hiding");
+    expect(rows()).toEqual([
+      `roadmap.md${m.navigation_pinned_item()}`,
+      "plan.md",
+    ]);
+  });
+
   test("an empty project says so in a muted row", async () => {
     reset({ "/projects/empty": { pinned: [], kept: [], sessions: [] } });
     await render("empty");

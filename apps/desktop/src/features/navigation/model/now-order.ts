@@ -15,6 +15,13 @@ export interface NowOrderRow {
   links?: readonly string[];
   /** The temporary main area object. */
   temporary?: boolean;
+  /**
+   * Signs of a row the user may hide, such as an active session that works,
+   * waits for the user, shows in the main area or is kept: a hidden row
+   * comes back once one of them turns on (DF-207 R2). A row without signs
+   * cannot stay hidden.
+   */
+  signs?: readonly boolean[];
 }
 
 function shares(left: readonly string[], right: readonly string[]) {
@@ -22,12 +29,10 @@ function shares(left: readonly string[], right: readonly string[]) {
 }
 
 /**
- * The display order of `rows`, given in the order new rows take (DF-206):
- * a row shown before keeps its place, whatever its state became; a new row
- * comes last, before a temporary row that is last; a new temporary row is
- * last. Rows gone from `rows` drop out without moving the others.
+ * The earlier row each of `rows` continues, or -1: by a shared id first,
+ * then by a link.
  */
-export function arrangeNowOrder(
+function continuedRows(
   previous: readonly NowOrderRow[],
   rows: readonly NowOrderRow[],
 ): number[] {
@@ -51,7 +56,20 @@ export function arrangeNowOrder(
       [...row.ids, ...(row.links ?? [])],
     ),
   );
+  return place;
+}
 
+/**
+ * The display order of `rows`, given in the order new rows take (DF-206):
+ * a row shown before keeps its place, whatever its state became; a new row
+ * comes last, before a temporary row that is last; a new temporary row is
+ * last. Rows gone from `rows` drop out without moving the others.
+ */
+export function arrangeNowOrder(
+  previous: readonly NowOrderRow[],
+  rows: readonly NowOrderRow[],
+): number[] {
+  const place = continuedRows(previous, rows);
   const indexes = rows.map((_, index) => index);
   const known = indexes
     .filter((index) => place[index] >= 0)
@@ -71,12 +89,38 @@ export function arrangeNowOrder(
 }
 
 /**
- * The owner of the Now order of each project in this window: the rows as a
- * surface of the project last showed them. It outlives the sidebar and Home
- * surfaces, so the order of rows that are not kept survives switching
- * between them (DF-206 R6); it is not saved.
+ * Which of `rows` stay hidden after the rows `hidden` were hidden, and the
+ * hidden rows to remember now (DF-207 R2): a hidden row stays hidden while
+ * it has signs and none turned on since; it comes back once one does, and
+ * is forgotten once it is gone or has no signs.
+ */
+export function settleHiddenNowRows(
+  hidden: readonly NowOrderRow[],
+  rows: readonly NowOrderRow[],
+): { hidden: boolean[]; marks: NowOrderRow[] } {
+  const place = continuedRows(hidden, rows);
+  const marks: NowOrderRow[] = [];
+  const stays = rows.map((row, index) => {
+    const mark = hidden[place[index]];
+    if (!mark || !row.signs) return false;
+    const event = row.signs.some((sign, at) => sign && !mark.signs?.[at]);
+    if (event) return false;
+    marks.push(row);
+    return true;
+  });
+  return { hidden: stays, marks };
+}
+
+/**
+ * The owner of Now of each project in this window: the order of its rows as
+ * a surface of the project last showed them, and the rows the user hid. It
+ * outlives the sidebar and Home surfaces, so both survive switching between
+ * them (DF-206 R6, DF-207 R4); neither is saved.
  */
 const orders = new Map<string, readonly NowOrderRow[]>();
+const hiddenRows = new Map<string, readonly NowOrderRow[]>();
+const hiddenListeners = new Set<() => void>();
+let hiddenVersion = 0;
 
 export function nowOrderOf(projectPath: string): readonly NowOrderRow[] {
   return orders.get(projectPath) ?? [];
@@ -112,4 +156,35 @@ export function nowKeepPlace(
     }
   }
   return before?.key ?? null;
+}
+
+export function nowHiddenOf(projectPath: string): readonly NowOrderRow[] {
+  return hiddenRows.get(projectPath) ?? [];
+}
+
+/** Hides a row of Now until a new event of its signs (DF-207 R2). */
+export function hideNowRow(projectPath: string, row: NowOrderRow) {
+  const kept = nowHiddenOf(projectPath).filter(
+    (mark) => continuedRows([mark], [row])[0] < 0,
+  );
+  hiddenRows.set(projectPath, [...kept, row]);
+  hiddenVersion += 1;
+  for (const listener of hiddenListeners) listener();
+}
+
+/** Remembers the hidden rows a surface settled; its render already shows them. */
+export function recordNowHidden(
+  projectPath: string,
+  rows: readonly NowOrderRow[],
+) {
+  hiddenRows.set(projectPath, rows);
+}
+
+export function subscribeNowHidden(listener: () => void): () => void {
+  hiddenListeners.add(listener);
+  return () => hiddenListeners.delete(listener);
+}
+
+export function nowHiddenRevision(): number {
+  return hiddenVersion;
 }

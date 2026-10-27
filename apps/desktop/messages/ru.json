@@ -2492,6 +2492,7 @@
   "navigation_keep_failed": "Не удалось оставить в «Сейчас»",
   "navigation_close": "Закрыть",
   "navigation_close_item": "Закрыть «{title}»",
+  "navigation_close_keeps_working": "Сессия продолжит работу",
   "navigation_pin_item": "Закрепить «{title}»",
   "navigation_unpin_item": "Открепить «{title}»",
   "navigation_keep_item": "Оставить «{title}» в Сейчас",

@@ -1,4 +1,5 @@
 import { BotMessageSquare } from "lucide-react";
+import * as m from "@/paraglide/messages.js";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import {
   NavigationSidebarItem,
@@ -29,6 +30,8 @@ interface AgentSessionNavigationItemProps {
   /** An active or temporary session is kept in Now before pinned. */
   keepable?: boolean;
   onClose?: () => void;
+  /** Closing removes the row of a working session, which keeps working. */
+  closeKeepsWorking?: boolean;
   temporary?: boolean;
   onKeep?: () => void;
   /** A pinned session in a list that mixes it with others. */
@@ -56,6 +59,7 @@ export function AgentSessionNavigationItem({
   stepItem,
   keepable,
   onClose,
+  closeKeepsWorking,
   temporary,
   onKeep,
   pinned,
@@ -112,6 +116,9 @@ export function AgentSessionNavigationItem({
       stepItem={stepItem}
       keepable={keepable}
       onClose={onClose}
+      closeHint={
+        closeKeepsWorking ? m.navigation_close_keeps_working() : undefined
+      }
       temporary={temporary}
       onKeep={onKeep}
       pinned={pinned}

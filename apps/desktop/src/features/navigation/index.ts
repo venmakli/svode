@@ -7,7 +7,12 @@ export {
 export { useDescribedNavigationItem } from "./hooks/use-described-item";
 export { useKeepInNow, type KeepInNow } from "./hooks/use-keep-in-now";
 export { useNowOrder } from "./hooks/use-now-order";
-export { arrangeNowOrder, type NowOrderRow } from "./model/now-order";
+export {
+  arrangeNowOrder,
+  hideNowRow,
+  settleHiddenNowRows,
+  type NowOrderRow,
+} from "./model/now-order";
 export { usePinToggle, type PinToggle } from "./hooks/use-pin-toggle";
 export {
   signalCreatedArtifact,
