@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { retargetActiveContent } from "@/features/artifact";
 import type { TreeNode } from "../model/types";
 import { nestTreePage, unnestTreePage } from "../api/content-tree-actions";
 import {
@@ -159,7 +160,11 @@ export function useFileTreeDragCommand({
         editorSync.suppressPaths([newPath]);
       }
 
-      if (newPath && !movePlan.isBareFolder) {
+      if (newPath && movePlan.isBareFolder) {
+        // An App or Collection without README open from this folder follows
+        // it, as a moved Page does.
+        retargetActiveContent(movePlan.fromPath, newPath, spaceId);
+      } else if (newPath) {
         editorSync.reopenInitialPage(
           movePlan.fromPath,
           movedPagePath(movePlan, newPath),

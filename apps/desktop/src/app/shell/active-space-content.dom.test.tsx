@@ -61,10 +61,29 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     ...realSpaceShell,
     EmptyProjectState: () => <div data-empty />,
   }));
+  // Mounts of the owner surface: a retarget must keep the mounted one.
+  let scopeMounts = 0;
   mock.module("./scope-surface-page", () => ({
-    ScopeSurfacePage: ({ owner }: { owner: ScopeOwnerRef }) => {
+    ScopeSurfacePage: ({
+      owner,
+      previousOwnerKey,
+      sessionKey,
+    }: {
+      owner: ScopeOwnerRef;
+      previousOwnerKey?: string;
+      sessionKey?: string;
+    }) => {
       renders.push(`scope:${describe(owner)}`);
-      return <div data-scope-owner={describe(owner)} />;
+      useEffect(() => {
+        scopeMounts += 1;
+      }, []);
+      return (
+        <div
+          data-scope-owner={describe(owner)}
+          data-previous-owner-key={previousOwnerKey ?? ""}
+          data-session-key={sessionKey ?? ""}
+        />
+      );
     },
   }));
   mock.module("./page-scope-surface", () => ({
@@ -103,6 +122,7 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     openScopeOwner,
     closeActiveContent,
     getActiveContentSelection,
+    retargetActiveContent,
   } = await import("@/features/artifact");
 
   async function fixture(
@@ -444,6 +464,60 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       } finally {
         await f.cleanup();
       }
+    }
+  });
+
+  test("an App or Collection retargeted to its new folder keeps its mounted session and hands over its owner key", async () => {
+    const f = await fixture((path) =>
+      path === "tool" || path === "toolbox"
+        ? {
+            identity: "appDirectory",
+            ownerPath: path,
+            contentPath: `${path}/README.md`,
+            hasApp: true,
+          }
+        : {
+            identity: "collectionDirectory",
+            ownerPath: path,
+            contentPath: `${path}/README.md`,
+            hasApp: false,
+          },
+    );
+    const scope = () => f.query("[data-scope-owner]");
+    try {
+      for (const [kind, from, to, owner] of [
+        [
+          "app-directory",
+          "tool",
+          "toolbox",
+          "app-directory:toolbox/README.md:app",
+        ],
+        [
+          "collection",
+          "tasks",
+          "archive/tasks",
+          "collection-directory:archive/tasks/README.md:collection",
+        ],
+      ] as const) {
+        openScopeOwner({ kind, path: from, spaceId: "root" });
+        await f.render();
+        await f.settle();
+        const sessionKey = scope()?.getAttribute("data-session-key");
+        const mounts = scopeMounts;
+        expect(scope()?.getAttribute("data-previous-owner-key")).toBe("");
+
+        await act(async () => retargetActiveContent(from, to, "root"));
+        await f.render();
+        await f.settle();
+        expect(scope()?.getAttribute("data-scope-owner")).toBe(owner);
+        expect(scope()?.getAttribute("data-previous-owner-key")).toBe(
+          `${kind === "collection" ? "collection" : "app"}:root:${from}`,
+        );
+        expect(scope()?.getAttribute("data-session-key")).toBe(sessionKey!);
+        expect(scopeMounts).toBe(mounts);
+      }
+    } finally {
+      await f.cleanup();
     }
   });
 

@@ -106,18 +106,23 @@ export function ActiveSpaceContent() {
       : null;
   const collectionSessionKey =
     scopeOwnerRequest?.key ?? selectedPath ?? "collection";
-  const previousCollectionOwnerKey =
-    activePathRetarget &&
-    activePathRetarget.path === selectedPath &&
-    activePathRetarget.spaceId === selectionSpaceId &&
-    selectionSpaceId
-      ? (`collection:${selectionSpaceId}:${collectionOwnerPath(activePathRetarget.fromPath)}` as ScopeOwnerKey)
-      : undefined;
   const isArtifactPathRetarget = Boolean(
     activePathRetarget &&
     activePathRetarget.path === selectedPath &&
     activePathRetarget.spaceId === selectionSpaceId,
   );
+  // A Collection or App that moved with its folder keeps its session and
+  // surface under the key of its new path.
+  const retargetedOwnerPath =
+    isArtifactPathRetarget && activePathRetarget && selectionSpaceId
+      ? collectionOwnerPath(activePathRetarget.fromPath)
+      : null;
+  const previousCollectionOwnerKey = retargetedOwnerPath
+    ? (`collection:${selectionSpaceId}:${retargetedOwnerPath}` as ScopeOwnerKey)
+    : undefined;
+  const previousAppOwnerKey = retargetedOwnerPath
+    ? (`app:${selectionSpaceId}:${retargetedOwnerPath}` as ScopeOwnerKey)
+    : undefined;
   const appSessionKey = scopeOwnerRequest?.key ?? selectedPath ?? "app";
   const {
     owner,
@@ -151,6 +156,7 @@ export function ActiveSpaceContent() {
         presentation="full"
         openIntent={scopeOwnerRequest?.intent}
         openRequestKey={scopeOwnerRequest?.key}
+        previousOwnerKey={previousAppOwnerKey}
         sessionKey={appSessionKey}
       />
     ) : owner && scopeOwnerRequest && selectionSpaceId ? (

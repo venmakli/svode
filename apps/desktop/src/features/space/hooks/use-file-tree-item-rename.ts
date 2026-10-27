@@ -15,6 +15,7 @@ import {
   markEditorFilesStale,
   suppressEditorFileEvents,
 } from "@/features/editor/file-tree-sync";
+import { retargetActiveContent } from "@/features/artifact";
 import { publishPageTitleOutcome } from "@/features/page/navigation";
 import { normalizePage, publishPageFilenameWarnings } from "@/features/page";
 import {
@@ -142,6 +143,9 @@ export function useFileTreeItemRename({
         useSpaceStore
           .getState()
           .handoffTreePath(space.path, node.path, newPath);
+        // An App or Collection without README open from this folder stays
+        // open at its new path, as a renamed Page does.
+        retargetActiveContent(node.path, newPath, spaceId);
         if (modifiedFiles.length > 0) {
           markEditorFilesStale(space.path, modifiedFiles);
           // Rewritten link sources outside the folder reach an open document
