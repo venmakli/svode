@@ -1693,26 +1693,9 @@ pub enum RoutineBlockEnd {
 /// a block, whole or cut short as `end` takes it, is returned as it is
 /// (DF-224).
 pub fn strip_routine_block(text: &str, end: RoutineBlockEnd) -> &str {
-    // An owner marker cut short is not found by its whole prefix.
-    let cut_marker = (end == RoutineBlockEnd::Cut)
-        .then(|| {
-            (1..OWNER_MARKER.len())
-                .rev()
-                .find(|&len| text.ends_with(&OWNER_MARKER[..len]))
-                .map(|len| text.len() - len)
-        })
-        .flatten();
     let block = |found: RoutineBlockEnd| {
-        text.match_indices(OWNER_MARKER)
-            .map(|(start, _)| start)
-            .chain(cut_marker)
-            .find(|&start| {
-                text[..start]
-                    .chars()
-                    .next_back()
-                    .is_none_or(char::is_whitespace)
-                    && routine_block(&text[start..]) == Some(found)
-            })
+        block_starts(text, end == RoutineBlockEnd::Cut)
+            .find(|&start| routine_block(&text[start..]) == Some(found))
     };
     // A whole block is the end of the text even after a lookalike.
     block(RoutineBlockEnd::Whole)
@@ -1720,40 +1703,93 @@ pub fn strip_routine_block(text: &str, end: RoutineBlockEnd) -> &str {
         .map_or(text, |start| text[..start].trim_end())
 }
 
+/// The leftmost place in `text` where a Routine block starts that more text
+/// may still complete or that is whole, with the scan of it (DF-224).
+pub(crate) fn routine_block_start(text: &str) -> Option<(usize, RoutineBlockScan)> {
+    block_starts(text, true)
+        .find_map(|start| RoutineBlockScan::start(&text[start..]).map(|scan| (start, scan)))
+}
+
+/// Where a Routine block may start in `text`: an owner marker at its start
+/// or after whitespace, and with `cut` that marker cut short at its end.
+fn block_starts(text: &str, cut: bool) -> impl Iterator<Item = usize> + '_ {
+    let cut_marker = cut
+        .then(|| {
+            (1..OWNER_MARKER.len())
+                .rev()
+                .find(|&len| text.ends_with(&OWNER_MARKER[..len]))
+                .map(|len| text.len() - len)
+        })
+        .flatten();
+    text.match_indices(OWNER_MARKER)
+        .map(|(start, _)| start)
+        .chain(cut_marker)
+        .filter(|&start| {
+            text[..start]
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace)
+        })
+}
+
 /// What `text` is to its end, its parts separated by whitespace: a whole
 /// Routine block, one cut short, or neither.
 fn routine_block(text: &str) -> Option<RoutineBlockEnd> {
+    match block_markers(text) {
+        Ok(context) => {
+            let mut scan = ContextScan::default();
+            scan.push(&text[context..]);
+            scan.end()
+        }
+        Err(end) => end,
+    }
+}
+
+/// Longest part of a Routine block before its event context: owner and
+/// launch markers whose values are paths and ids within any system's bound.
+const MARKERS_LIMIT: usize = 16 * 1024;
+
+/// Where the event context of the block `text` starts once it opened;
+/// otherwise what `text` is: a whole block without one, one cut short, or
+/// neither.
+fn block_markers(text: &str) -> Result<usize, Option<RoutineBlockEnd>> {
     use RoutineBlockEnd::{Cut, Whole};
     let owner = |value: &str| {
         value
             .split_once(':')
             .is_some_and(|(kind, path)| !kind.is_empty() && !path.is_empty())
     };
-    let rest = match routine_marker(text, OWNER_MARKER, owner)? {
-        Some(rest) => rest.trim_start(),
-        None => return Some(Cut),
+    let within = |end| {
+        if text.len() <= MARKERS_LIMIT {
+            end
+        } else {
+            None
+        }
+    };
+    let rest = match routine_marker(text, OWNER_MARKER, owner) {
+        Some(Some(rest)) => rest.trim_start(),
+        Some(None) => return Err(within(Some(Cut))),
+        None => return Err(None),
     };
     let rest = match routine_marker(rest, LAUNCH_MARKER, |id| !id.is_empty()) {
         Some(Some(rest)) => rest.trim_start(),
-        Some(None) => return Some(Cut),
+        Some(None) => return Err(within(Some(Cut))),
         None => rest,
     };
-    let rest = rest.trim_end();
-    if rest.is_empty() {
-        return Some(Whole);
+    if rest.trim_end().is_empty() {
+        return Err(within(Some(Whole)));
     }
-    if rest.len() < EVENT_CONTEXT_OPEN.len() {
-        return EVENT_CONTEXT_OPEN.starts_with(rest).then_some(Cut);
+    match rest.strip_prefix(EVENT_CONTEXT_OPEN) {
+        Some(context) if text.len() - context.len() <= MARKERS_LIMIT => {
+            Ok(text.len() - context.len())
+        }
+        Some(_) => Err(None),
+        None => Err(within(
+            EVENT_CONTEXT_OPEN
+                .starts_with(rest.trim_end())
+                .then_some(Cut),
+        )),
     }
-    let context = rest.strip_prefix(EVENT_CONTEXT_OPEN)?;
-    let (context, found) = match context.strip_suffix(EVENT_CONTEXT_CLOSE) {
-        Some(context) => (context, Whole),
-        // Without its end a context holding the next block is no context.
-        None if context.contains(OWNER_MARKER) => return None,
-        None => (context, Cut),
-    };
-    (!context.contains(EVENT_CONTEXT_OPEN) && !context.contains(EVENT_CONTEXT_CLOSE))
-        .then_some(found)
 }
 
 /// The one-line marker `prefix<value> -->` that `text` starts with: the
@@ -1771,6 +1807,129 @@ fn routine_marker<'a>(
     match value.split_once(MARKER_END) {
         Some((value, rest)) => (!value.contains('\n') && valid(value)).then_some(Some(rest)),
         None => (!value.contains('\n')).then_some(None),
+    }
+}
+
+/// A Routine block read piece by piece as it streams in, keeping only what
+/// tells what it is: the part before its event context and what that
+/// context holds so far, not the context itself (DF-224).
+pub(crate) struct RoutineBlockScan {
+    len: usize,
+    markers: String,
+    context: Option<ContextScan>,
+}
+
+impl RoutineBlockScan {
+    /// The scan of `text` from a block start, while more text may still
+    /// complete it or it is whole.
+    pub(crate) fn start(text: &str) -> Option<Self> {
+        let mut scan = Self {
+            len: 0,
+            markers: String::new(),
+            context: None,
+        };
+        scan.push(text);
+        scan.alive().then_some(scan)
+    }
+
+    pub(crate) fn push(&mut self, more: &str) {
+        self.len += more.len();
+        match &mut self.context {
+            Some(context) => context.push(more),
+            None => {
+                self.markers.push_str(more);
+                if let Ok(start) = block_markers(&self.markers) {
+                    let mut context = ContextScan::default();
+                    context.push(&self.markers.split_off(start));
+                    self.context = Some(context);
+                }
+            }
+        }
+    }
+
+    /// Whether more text may still complete the block or it is whole.
+    pub(crate) fn alive(&self) -> bool {
+        match &self.context {
+            Some(context) => context.alive(),
+            None => block_markers(&self.markers) != Err(None),
+        }
+    }
+
+    pub(crate) fn end(&self) -> Option<RoutineBlockEnd> {
+        match &self.context {
+            Some(context) => context.end(),
+            None => block_markers(&self.markers).err().flatten(),
+        }
+    }
+
+    /// Bytes of the block read so far.
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Bytes the scan holds.
+    pub(crate) fn size(&self) -> usize {
+        self.markers.len()
+            + self
+                .context
+                .as_ref()
+                .map_or(0, |context| context.carry.len())
+    }
+}
+
+/// The event context of a block read piece by piece: whether it holds an
+/// opening tag or an owner marker, its closing tags and any text after the
+/// last one, and its last bytes, where a tag may continue.
+#[derive(Default)]
+struct ContextScan {
+    open: bool,
+    owner: bool,
+    closes: u8,
+    after_close: bool,
+    carry: String,
+}
+
+impl ContextScan {
+    const CARRY: usize = EVENT_CONTEXT_CLOSE.len() - 1;
+
+    fn push(&mut self, more: &str) {
+        let carried = self.carry.len();
+        let text = format!("{}{more}", self.carry);
+        // Only tags that end in `more`: those within the carry are counted.
+        let found = |tag: &'static str| -> Vec<usize> {
+            text.match_indices(tag)
+                .map(|(start, tag)| start + tag.len())
+                .filter(|&end| end > carried)
+                .collect()
+        };
+        self.open |= !found(EVENT_CONTEXT_OPEN).is_empty();
+        self.owner |= !found(OWNER_MARKER).is_empty();
+        let closes = found(EVENT_CONTEXT_CLOSE);
+        if let Some(&last) = closes.last() {
+            self.closes = self.closes.saturating_add(closes.len().min(2) as u8);
+            self.after_close = !text[last..].trim().is_empty();
+        } else if self.closes > 0 && !more.trim().is_empty() {
+            self.after_close = true;
+        }
+        let mut carry = text.len().saturating_sub(Self::CARRY);
+        while !text.is_char_boundary(carry) {
+            carry -= 1;
+        }
+        self.carry = text[carry..].to_string();
+    }
+
+    fn alive(&self) -> bool {
+        !self.open && (self.closes == 0 || (self.closes == 1 && !self.after_close))
+    }
+
+    /// Whole when it ends with its one closing tag; cut short without one
+    /// and without the next block in it.
+    fn end(&self) -> Option<RoutineBlockEnd> {
+        match self.closes {
+            _ if !self.alive() => None,
+            0 => (!self.owner).then_some(RoutineBlockEnd::Cut),
+            _ => Some(RoutineBlockEnd::Whole),
+        }
     }
 }
 
@@ -2182,6 +2341,55 @@ mod tests {
             ),
             "Review backlog"
         );
+    }
+
+    #[test]
+    fn a_routine_block_read_piece_by_piece_is_what_its_whole_text_is() {
+        let context = format!(r#"{{"entry":"{}"}}"#, "x".repeat(300));
+        let blocks = [
+            "<!-- svode-owner:project:. -->".to_string(),
+            "<!-- svode-owner:space:. -->\n<!-- svode-launch:a -->\n".to_string(),
+            format!(
+                "<!-- svode-owner:space:. -->\n<svode-event-context>{context}</svode-event-context>"
+            ),
+            format!(
+                "<!-- svode-owner:space:. -->\n<!-- svode-launch:a -->\n<svode-event-context>{{\"text\":\" <!-- svode-owner:a:b -->\"}}</svode-event-context>"
+            ),
+            "<!-- svode-owner:space:. -->\n<svode-event-context>a</svode-event-context> more"
+                .to_string(),
+            "<!-- svode-owner:space:. --> <svode-event-context>\n\n<!-- svode-owner:p:q -->"
+                .to_string(),
+            "<!-- svode-owner:space:. -->\nmore".to_string(),
+        ];
+        for block in &blocks {
+            for piece in [1, 2, 5, 21, 22, 64] {
+                let mut scan: Option<RoutineBlockScan> = None;
+                let mut read = 0;
+                while read < block.len() {
+                    let mut end = (read + piece).min(block.len());
+                    while !block.is_char_boundary(end) {
+                        end += 1;
+                    }
+                    match &mut scan {
+                        Some(scan) => scan.push(&block[read..end]),
+                        None => scan = RoutineBlockScan::start(&block[..end]),
+                    }
+                    read = end;
+                    let whole = routine_block(&block[..read]);
+                    match &scan {
+                        Some(scan) if scan.alive() => {
+                            assert_eq!(scan.end(), whole, "{piece} {:?}", &block[..read]);
+                            assert_eq!(scan.len(), read);
+                        }
+                        // Once no block, never one again.
+                        _ => {
+                            assert_eq!(whole, None, "{piece} {:?}", &block[..read]);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

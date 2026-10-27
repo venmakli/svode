@@ -6,7 +6,9 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::identity::IdentityNamespace;
-use crate::registry::{AdapterRuntimeRegistry, ManualRoutineLaunchInput};
+use crate::registry::{
+    AdapterRuntimeRegistry, ManualRoutineLaunchInput, RoutineBlockEnd, strip_routine_block,
+};
 
 const INSTRUCTION: &str =
     "Run the shell command ping -c 90 127.0.0.1\nand then reply with exactly one word: done";
@@ -351,4 +353,169 @@ fn a_message_with_links_shows_its_segments_without_the_block() {
             ]
         }
     );
+}
+
+/// The one user message shows `expected` within the detail bound: whole,
+/// or its head and tail with the characters between them.
+fn assert_detail_shows(projection: &Projection, expected: &str, case: &str) {
+    let users = users(projection);
+    assert_eq!(users.len(), 1, "{case}");
+    let user = users[0];
+    let DetailOutcome::Available { blocks } = projection.detail(&user.id) else {
+        panic!("{case}: no detail");
+    };
+    let [block] = blocks.as_slice() else {
+        panic!("{case}: {blocks:?}");
+    };
+    let head = match block {
+        DetailBlock::Text { text } => {
+            assert_eq!(text, expected, "{case}");
+            text
+        }
+        DetailBlock::Excerpt {
+            head,
+            omitted_chars,
+            tail,
+        } => {
+            assert!(expected.starts_with(head.as_str()), "{case}: {head:?}");
+            assert!(expected.ends_with(tail.as_str()), "{case}: {tail:?}");
+            assert_eq!(
+                head.chars().count() as u64 + omitted_chars + tail.chars().count() as u64,
+                expected.chars().count() as u64,
+                "{case}"
+            );
+            assert!(
+                head.len() + tail.len() <= projection.retention.item_detail,
+                "{case}"
+            );
+            head
+        }
+        other => panic!("{case}: {other:?}"),
+    };
+    assert_eq!(
+        user.summary,
+        normalize::bounded(head, SUMMARY_LIMIT),
+        "{case}"
+    );
+    assert_eq!(
+        user.has_detail,
+        head.len() > SUMMARY_LIMIT || matches!(block, DetailBlock::Excerpt { .. }),
+        "{case}"
+    );
+}
+
+/// `text` in chunks of `size` bytes.
+fn chunks(text: &str, size: usize) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let mut end = (start + size).min(text.len());
+        while !text.is_char_boundary(end) {
+            end += 1;
+        }
+        chunks.push(&text[start..end]);
+        start = end;
+    }
+    chunks
+}
+
+#[test]
+fn a_routine_block_beyond_the_detail_bound_is_not_shown_however_it_is_chunked() {
+    let retention = Retention {
+        item_detail: 1024,
+        ..Retention::default()
+    };
+    let long = format!("Start {} end of the task", "wörd ".repeat(700));
+    let context = format!(r#"{{"entry":"{}"}}"#, "x".repeat(6000));
+    let marked = format!(
+        r#"{{"text":" <!-- svode-owner:a:b -->","entry":"{}"}}"#,
+        "y".repeat(3000)
+    );
+    let mut cases = Vec::new();
+    for instruction in [INSTRUCTION, long.as_str()] {
+        for context in [None, Some(context.as_str()), Some(marked.as_str())] {
+            cases.push(acp_prompt(instruction, context));
+            cases.push(terminal_prompt(instruction, context));
+        }
+    }
+    for prompt in &cases {
+        let expected = strip_routine_block(prompt, RoutineBlockEnd::Whole);
+        assert!(!expected.contains("svode-owner"), "{expected:?}");
+        let mut live = projection("qwen-code", false, retention);
+        live.begin_turn("t1", prompt, Vec::new()).unwrap();
+        assert_detail_shows(&live, expected, "live");
+        assert!(live.detail_bytes <= retention.item_detail + 256);
+        for size in [1, 7, 100, 999, prompt.len()] {
+            let mut replay = projection("codex", true, retention);
+            for chunk in chunks(prompt, size) {
+                apply(&mut replay, "codex", user_chunk(chunk));
+                assert!(replay.detail_bytes <= retention.item_detail + 256, "{size}");
+            }
+            replay.end_replay();
+            assert_detail_shows(&replay, expected, &format!("chunks of {size}"));
+        }
+    }
+}
+
+#[test]
+fn a_long_message_that_only_looked_like_a_routine_block_keeps_its_end() {
+    let retention = Retention {
+        item_detail: 1024,
+        ..Retention::default()
+    };
+    let text = "word ".repeat(400);
+    for message in [
+        format!(
+            "{text}\n\n<!-- svode-owner:project:. -->\n<svode-event-context>{text}</svode-event-context> and the end"
+        ),
+        format!("{text}\n\n<!-- svode-owner:project:. -->\n{text} and the end"),
+        format!("{text}\n\n<!-- svode-owner:project:. -->\n<svode-event-context>{text}"),
+    ] {
+        for size in [1, 7, 100, 999, message.len()] {
+            let mut replay = projection("codex", true, retention);
+            for chunk in chunks(&message, size) {
+                apply(&mut replay, "codex", user_chunk(chunk));
+            }
+            replay.end_replay();
+            assert_detail_shows(&replay, &message, &format!("chunks of {size}"));
+        }
+    }
+}
+
+#[test]
+fn a_message_with_links_beyond_the_summary_bound_shows_its_segments_without_the_block() {
+    let link = json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "resource_link", "uri": "file:///p/a.md", "name": "a.md" } });
+    // The summary bound cuts the segments inside the block.
+    let text = "w".repeat(SUMMARY_LIMIT - "Look at ".len() - 20);
+    let prompt = terminal_prompt(&text, Some(r#"{"eventType":"collection.entry_created"}"#));
+    for size in [1, 13, prompt.len()] {
+        let mut replay = projection("claude-code", true, Retention::default());
+        apply(&mut replay, "claude-code", user_chunk("Look at "));
+        apply(&mut replay, "claude-code", link.clone());
+        for chunk in chunks(&prompt, size) {
+            apply(&mut replay, "claude-code", user_chunk(chunk));
+        }
+        let user = users(&replay)[0];
+        assert_eq!(
+            user.kind,
+            ItemKind::UserMessage {
+                segments: vec![
+                    MessageSegment::Text {
+                        text: "Look at ".into()
+                    },
+                    MessageSegment::Link {
+                        uri: "file:///p/a.md".into(),
+                        name: "a.md".into()
+                    },
+                    MessageSegment::Text { text: text.clone() },
+                ]
+            },
+            "chunks of {size}"
+        );
+        assert_detail_shows(
+            &replay,
+            &format!("Look at @a.md{text}"),
+            &format!("chunks of {size}"),
+        );
+    }
 }
