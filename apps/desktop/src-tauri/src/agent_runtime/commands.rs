@@ -14,7 +14,7 @@ use svode_agents::{AgentCheck, SettingValue};
 use tauri::ipc::Channel;
 use tauri::{State, Webview};
 
-use super::connections::{AgentConnections, DraftAgent, SessionOpening, SessionStart};
+use super::connections::{AgentConnections, DraftAgent, OpenIntent, SessionOpening, SessionStart};
 use super::{ActivityMessage, AgentRuntimeState};
 use crate::agent_sessions::AgentSessionsState;
 use crate::agent_sessions::chat::{chat_target, native_session_settings};
@@ -193,9 +193,11 @@ pub async fn agent_runtime_start_session(
 }
 
 /// Opens a listed session of the project in the chat (Stage 10 `04`,
-/// opening and continuing); `attach` is the user's confirmation of one
-/// attempt to attach it with the writer, and `settings` the values the
-/// user chose before it, applied before any prompt. Never sends a prompt.
+/// opening and continuing) for `intent`: reading its history, attaching
+/// it for the first send or attaching it as the user confirmed. Liveness
+/// and the open turn are read now, so a send decides on what holds when it
+/// attaches (DF-231 R2). `settings` are the values the user chose before
+/// it, applied before any prompt. Never sends a prompt.
 #[tauri::command]
 pub async fn agent_runtime_open_session(
     sessions: State<'_, AgentSessionsState>,
@@ -204,7 +206,7 @@ pub async fn agent_runtime_open_session(
     connections: State<'_, Arc<AgentConnections>>,
     project_path: String,
     session_id: String,
-    attach: bool,
+    intent: OpenIntent,
     settings: Vec<SettingValue>,
 ) -> Result<SessionOpening, AppError> {
     let sessions = sessions.inner().clone();
@@ -221,7 +223,7 @@ pub async fn agent_runtime_open_session(
         // A reading shows the values attaching would take from the session's
         // own last turn (DF-171 R2).
         Ok::<_, AppError>(target.map(|target| {
-            let native = (!attach)
+            let native = (intent == OpenIntent::Read)
                 .then(|| native_session_settings(&sessions, &target))
                 .flatten();
             (target, native)
@@ -239,7 +241,7 @@ pub async fn agent_runtime_open_session(
             &target.cwd,
             target.liveness,
             target.turn_open,
-            attach,
+            intent,
             &settings,
             native.as_ref(),
         )

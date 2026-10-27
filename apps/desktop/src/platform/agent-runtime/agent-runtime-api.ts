@@ -559,21 +559,28 @@ export type AgentSessionOpeningDto =
   | { outcome: "auth_required"; message: string };
 
 /**
- * Opens a listed session in the chat without sending a prompt; `attach` is
- * the user's confirmation of one attempt to attach it with the writer, and
- * `settings` the values it is attached with before any prompt; a value the
- * session refuses fails the opening (`setting_refused`).
+ * What opening a session in the chat is for: reading its history, attaching
+ * it for its first send, which needs a confirmation only while a turn is
+ * open, or attaching it as the user confirmed this one attempt.
+ */
+export type AgentSessionOpenIntentDto = "read" | "send" | "confirmed";
+
+/**
+ * Opens a listed session in the chat without sending a prompt for
+ * `intent`; `settings` are the values it is attached with before any
+ * prompt; a value the session refuses fails the opening
+ * (`setting_refused`).
  */
 export function openAgentSession(
   projectPath: string,
   sessionId: string,
-  attach: boolean,
+  intent: AgentSessionOpenIntentDto,
   settings: AgentSettingValueDto[],
 ): Promise<AgentSessionOpeningDto> {
   return invoke<AgentSessionOpeningDto>("agent_runtime_open_session", {
     projectPath,
     sessionId,
-    attach,
+    intent,
     settings,
   });
 }

@@ -113,6 +113,22 @@ pub enum SessionStart {
     Unavailable { reason: LaunchUnavailable },
 }
 
+/// What opening an existing session in the chat is for (Stage 10 `04`,
+/// opening and continuing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenIntent {
+    /// Show the history: read it without a writer where the agent has
+    /// evidence for it, else attach it once the user confirms.
+    Read,
+    /// Attach the session for its first send, which is itself the user's
+    /// explicit action, unless the native status tells a turn open that
+    /// another process may run (DF-231 R1, R2).
+    Send,
+    /// Attach the session: the user confirmed this one attempt.
+    Confirmed,
+}
+
 /// What opening an existing session in the chat did (Stage 10 `04`,
 /// opening and continuing).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -389,8 +405,10 @@ impl AgentConnections {
     /// history is read without a writer where the agent has evidence for
     /// it, also while another process may run a turn of it (`turn_open` by
     /// the native status, DF-177 R1), else the session is attached with the
-    /// writer. `attach` attaches it right away and is the user's
-    /// confirmation of this one attempt. `settings` is the plan the session
+    /// writer. `intent` other than reading attaches it right away; with
+    /// unknown liveness a send attaches it unless a turn is open, and a
+    /// confirmation always does (DF-231). `liveness` and `turn_open` are
+    /// read for this call. `settings` is the plan the session
     /// is attached with (DF-171 R1); reading it takes none, and a session
     /// read without a writer carries the values its `native` settings match
     /// (R2). Opening never sends a prompt, and a session a managed terminal
@@ -402,7 +420,7 @@ impl AgentConnections {
         cwd: &Path,
         liveness: ExternalLiveness,
         turn_open: bool,
-        attach: bool,
+        intent: OpenIntent,
         settings: &[SettingValue],
         native: Option<&NativeSessionSettings>,
     ) -> Result<SessionOpening, AgentRuntimeError> {
@@ -418,7 +436,7 @@ impl AgentConnections {
                 return opening(Err(error), session, liveness, turn_open);
             }
         };
-        if !attach {
+        if intent == OpenIntent::Read {
             match self
                 .runtime
                 .read_session(lease.connection(), session, cwd, liveness, turn_open)
@@ -431,10 +449,12 @@ impl AgentConnections {
                 }
             }
         }
-        let unknown = if attach {
-            UnknownLiveness::Confirmed
-        } else {
-            UnknownLiveness::NotConfirmed
+        let unknown = match intent {
+            OpenIntent::Read => UnknownLiveness::NotConfirmed,
+            // A turn another process may still run is attached only once
+            // the user confirms it.
+            OpenIntent::Send if turn_open => UnknownLiveness::NotConfirmed,
+            OpenIntent::Send | OpenIntent::Confirmed => UnknownLiveness::Confirmed,
         };
         let attached = self
             .runtime

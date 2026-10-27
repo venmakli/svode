@@ -49,10 +49,14 @@ export function useSessionComposer(
   session: AgentSessionKeyDto,
   snapshot: AgentSessionSnapshotDto | null,
   /**
-   * Attaches a session the chat only read before its first send, with the
-   * chosen values; when it did not attach, the draft stays.
+   * Attaches a session the chat only read for its first send, with the
+   * chosen values, `confirmed` while a turn is open; when it did not
+   * attach, the draft stays.
    */
-  attach?: (settings: AgentSettingValueDto[]) => Promise<AttachOutcome>,
+  attach?: (
+    settings: AgentSettingValueDto[],
+    confirmed: boolean,
+  ) => Promise<AttachOutcome>,
   /** What the session's own last turn gives attaching it (DF-171 R2). */
   sessionValues: AgentSettingValueDto[] = NO_VALUES,
 ) {
@@ -80,6 +84,10 @@ export function useSessionComposer(
     [agent, updateDraft],
   );
   const [refusal, setRefusal] = useState<SendRefusal | null>(null);
+  // The send waits for the user's confirmation of attaching the session
+  // while a turn is open (DF-231 R2).
+  const [confirmationAsked, setConfirmation] = useState(false);
+  const confirmation = confirmationAsked && !attached;
   const [answerError, setAnswerError] = useState<string | null>(null);
   const snapshotRef = useRef(snapshot);
   useEffect(() => {
@@ -126,12 +134,16 @@ export function useSessionComposer(
     return () => window.clearTimeout(timer);
   }, [accept, previousTurnId, settle, snapshot]);
 
-  const send = useCallback(async () => {
+  const send = useCallback(async (confirmed = false) => {
     if (isDraftBlank(draft.parts) || sending || running) return;
+    // Only the confirmation's own button sends, never a repeated Enter.
+    if (confirmation && !confirmed) return;
     setRefusal(null);
     if (snapshotRef.current?.writer !== "acp" && attach) {
-      const outcome = await attach(plan);
+      setConfirmation(false);
+      const outcome = await attach(plan, confirmed);
       if (!outcome.attached) {
+        if (outcome.confirm) setConfirmation(true);
         // A refused value goes back to what the session has; nothing was sent.
         const refused = outcome.refusedSetting;
         if (refused) {
@@ -168,7 +180,18 @@ export function useSessionComposer(
       // Neither a turn nor a refusal: the effect above settles it by the
       // session's state.
     }
-  }, [accept, agent, attach, draft.parts, plan, running, sending, session, updateDraft]);
+  }, [
+    accept,
+    agent,
+    attach,
+    confirmation,
+    draft.parts,
+    plan,
+    running,
+    sending,
+    session,
+    updateDraft,
+  ]);
 
   const stop = useCallback(() => {
     if (!running || cancelling) return;
@@ -206,7 +229,13 @@ export function useSessionComposer(
     cancelling,
     refusal,
     answerError,
-    send,
+    send: () => send(),
+    /** A turn is open: sending waits for the user's confirmation. */
+    confirmation,
+    /** Attaches the session as the user confirmed and sends once. */
+    confirmSend: () => send(true),
+    /** The draft stays unsent. */
+    cancelConfirmation: () => setConfirmation(false),
     stop,
     answer,
   };

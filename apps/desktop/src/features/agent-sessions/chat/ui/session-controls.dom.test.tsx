@@ -66,7 +66,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   /** How the next prompt ends. */
   let promptAnswer: () => unknown = () => "turn-2";
   /** How the next opening in the chat ends. */
-  let openAnswer: (attach: boolean) => unknown = () => ({
+  /** `attach`: an opening other than reading; `intent` says which. */
+  let openAnswer: (attach: boolean, intent: string) => unknown = () => ({
     outcome: "opened",
     session: key,
     liveness: "free",
@@ -106,7 +107,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     if (command === "agent_runtime_set_setting") return settingAnswer();
     if (command === "agent_runtime_prompt") return promptAnswer();
     if (command === "agent_runtime_open_session") {
-      return openAnswer(payload.attach as boolean);
+      return openAnswer(payload.intent !== "read", payload.intent as string);
     }
     if (command === "agent_runtime_detail") {
       return details[payload.itemId as string] ?? { outcome: "unavailable", reason: "not_provided" };
@@ -765,7 +766,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(lastCall("agent_runtime_open_session")).toEqual({
         projectPath: "/project",
         sessionId: "codex:s1",
-        attach: false,
+        intent: "read",
         settings: [],
       });
       const button = agentButton();
@@ -803,7 +804,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(lastCall("agent_runtime_open_session")).toEqual({
         projectPath: "/project",
         sessionId: "codex:s1",
-        attach: true,
+        intent: "send",
         settings: [
           { setting: "model", value: "gpt-6-sol" },
           { setting: "reasoning_effort", value: "high" },
@@ -829,6 +830,131 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         setting: "model",
         value: "gpt-6-luna",
       });
+    },
+  );
+
+  /** Opening intents and prompts the chat sent, in order. */
+  function sent() {
+    return calls
+      .filter(
+        (call) =>
+          call.command === "agent_runtime_open_session" ||
+          call.command === "agent_runtime_prompt",
+      )
+      .map((call) =>
+        call.command === "agent_runtime_prompt"
+          ? "prompt"
+          : (call.payload.intent as string),
+      );
+  }
+
+  function draftText() {
+    return readComposerDraft(sessionDraftKey("codex:s1"))?.parts;
+  }
+
+  controlsTest(
+    "with unknown liveness the first send attaches the read session and sends once, without a confirmation",
+    async () => {
+      let writer = "none";
+      snapshotFor = (session) => ({ ...snapshot(session), writer });
+      openAnswer = (attach) => {
+        if (attach) writer = "acp";
+        return { outcome: "opened", session: key, liveness: "unknown" };
+      };
+      writeComposerDraft(sessionDraftKey("codex:s1"), {
+        parts: [{ type: "text", text: "Go on" }],
+      });
+      await mount(<ReadSession />);
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(sent()).toEqual(["read", "send", "prompt"]);
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_attach_title()),
+      ).toBe(false);
+    },
+  );
+
+  controlsTest(
+    "while a turn is open the first send waits for the inline confirmation: cancel keeps the draft, confirming sends once",
+    async () => {
+      let writer = "none";
+      snapshotFor = (session) => ({ ...snapshot(session), writer });
+      openAnswer = (_, intent) => {
+        if (intent === "send") {
+          return { outcome: "confirmation_required", turnOpen: true };
+        }
+        if (intent === "confirmed") writer = "acp";
+        return { outcome: "opened", session: key, liveness: "unknown" };
+      };
+      writeComposerDraft(sessionDraftKey("codex:s1"), {
+        parts: [{ type: "text", text: "Go on" }],
+      });
+      await mount(<ReadSession />);
+      const card = () =>
+        document.querySelector(
+          `[aria-label="${m.sessions_chat_attach_title()}"]`,
+        );
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(sent()).toEqual(["read", "send"]);
+      expect(card()?.textContent?.includes(
+        m.sessions_chat_attach_turn_open_description(),
+      )).toBe(true);
+      // A repeated send does not go past the card.
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(sent()).toEqual(["read", "send"]);
+
+      await click(
+        Array.from(card()?.querySelectorAll("button") ?? []).find(
+          (button) => button.textContent === m.project_cancel(),
+        ),
+      );
+      expect(card()).toBeNull();
+      expect(draftText()).toEqual([{ type: "text", text: "Go on" }]);
+
+      await click(buttonByLabel(m.sessions_chat_send()));
+      await click(
+        Array.from(card()?.querySelectorAll("button") ?? []).find(
+          (button) => button.textContent === m.sessions_chat_attach_confirm(),
+        ),
+      );
+      expect(sent()).toEqual(["read", "send", "send", "confirmed", "prompt"]);
+      expect(card()).toBeNull();
+    },
+  );
+
+  controlsTest(
+    "a send another process refuses or the agent cannot attach sends nothing and keeps the draft",
+    async () => {
+      snapshotFor = (session) => ({ ...snapshot(session), writer: "none" });
+      openAnswer = (attach) =>
+        attach
+          ? { outcome: "external_active" }
+          : { outcome: "opened", session: key, liveness: "unknown" };
+      writeComposerDraft(sessionDraftKey("codex:s1"), {
+        parts: [{ type: "text", text: "Go on" }],
+      });
+      await mount(<ReadSession />);
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(sent()).toEqual(["read", "send"]);
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_external_writer()),
+      ).toBe(true);
+      expect(draftText()).toEqual([{ type: "text", text: "Go on" }]);
+
+      await unmountAll();
+      calls.length = 0;
+      openAnswer = (attach) =>
+        attach
+          ? { outcome: "unavailable", reason: { code: "adapter_not_installed" } }
+          : { outcome: "opened", session: key, liveness: "unknown" };
+      await mount(<ReadSession />);
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(sent()).toEqual(["read", "send"]);
+      expect(
+        document.body.textContent?.includes(
+          m.settings_agents_state_adapter_missing(),
+        ),
+      ).toBe(true);
+      expect(draftText()).toEqual([{ type: "text", text: "Go on" }]);
     },
   );
 

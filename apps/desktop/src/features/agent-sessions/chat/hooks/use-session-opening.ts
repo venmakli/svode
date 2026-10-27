@@ -48,10 +48,18 @@ export type ContinueRefusal =
   | { outcome: "setting_refused"; refusal: AgentSettingRefusalDto }
   | { outcome: "failed"; message: string };
 
-/** What attaching a read session before its first send did. */
+/**
+ * What attaching a read session before its first send did; `confirm`: a
+ * turn is open that another process may run, so attaching waits for the
+ * user's confirmation of this attempt (DF-231 R2).
+ */
 export type AttachOutcome =
   | { attached: true }
-  | { attached: false; refusedSetting: AgentSettingRefusalDto | null };
+  | {
+      attached: false;
+      refusedSetting: AgentSettingRefusalDto | null;
+      confirm: boolean;
+    };
 
 /**
  * Opening an existing session in the chat (Stage 10 `04`, opening and
@@ -71,12 +79,17 @@ export function useSessionOpening(projectPath: string | null, sessionId: string)
     async (mode: OpenMode) => {
       if (!projectPath) return;
       const own = ++generation.current;
+      // "Load history" is the user's confirmation of this attempt.
       const attach = mode === "load_history";
       if (mode === "load_history") setAttaching(true);
       else if (mode === "refresh") setRefreshing(true);
       else setOpening({ state: "opening" });
       try {
-        const outcome = await openSessionInChat(projectPath, sessionId, attach);
+        const outcome = await openSessionInChat(
+          projectPath,
+          sessionId,
+          attach ? "confirmed" : "read",
+        );
         if (own !== generation.current) return;
         setOpening((current) => opened(current, outcome));
         if (attach && outcome.outcome === "opened") {
@@ -104,25 +117,38 @@ export function useSessionOpening(projectPath: string | null, sessionId: string)
   }, [open]);
 
   /**
-   * Attaches a read session before its first send with the values chosen
-   * for it, the user's confirmation of this attempt; the chat may send once
-   * it is attached.
+   * Attaches a read session for its first send with the values chosen for
+   * it: the send itself is the user's action, and `confirmed` the
+   * confirmation an open turn asks for; the chat may send once it is
+   * attached.
    */
   const attach = useCallback(
-    async (settings: AgentSettingValueDto[]): Promise<AttachOutcome> => {
-      const notAttached = { attached: false, refusedSetting: null } as const;
+    async (
+      settings: AgentSettingValueDto[],
+      confirmed: boolean,
+    ): Promise<AttachOutcome> => {
+      const notAttached = {
+        attached: false,
+        refusedSetting: null,
+        confirm: false,
+      } as const;
       if (!projectPath) return notAttached;
       setContinueRefusal(null);
       setAttaching(true);
       let outcome: AgentSessionOpeningDto;
       try {
-        outcome = await openSessionInChat(projectPath, sessionId, true, settings);
+        outcome = await openSessionInChat(
+          projectPath,
+          sessionId,
+          confirmed ? "confirmed" : "send",
+          settings,
+        );
       } catch (error) {
         const refusal = agentSettingRefusal(error);
         if (refusal) {
           setOpening((current) => withoutRefused(current, refusal));
           setContinueRefusal({ outcome: "setting_refused", refusal });
-          return { attached: false, refusedSetting: refusal };
+          return { attached: false, refusedSetting: refusal, confirm: false };
         }
         setContinueRefusal({ outcome: "failed", message: errorMessage(error) });
         return notAttached;
@@ -144,6 +170,8 @@ export function useSessionOpening(projectPath: string | null, sessionId: string)
           setContinueRefusal(outcome);
           return notAttached;
         case "confirmation_required":
+          // The read history stays; the chat asks to confirm the send.
+          return { ...notAttached, confirm: true };
         case "unsupported":
           setOpening((current) => opened(current, outcome));
           return notAttached;

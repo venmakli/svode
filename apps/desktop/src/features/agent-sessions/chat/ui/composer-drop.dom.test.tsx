@@ -475,7 +475,11 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
           attaching: false,
           refusal: null,
           sessionValues: null,
-          attach: async () => ({ attached: false, refusedSetting: null }),
+          attach: async () => ({
+            attached: false,
+            refusedSetting: null,
+            confirm: false,
+          }),
           refresh: () => undefined,
           refreshing: false,
           onCopyResumeCommand: null,

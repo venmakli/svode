@@ -264,13 +264,6 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     await settle();
   }
 
-  async function click(element: Element) {
-    await act(async () => {
-      element.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    await settle();
-  }
-
   /** The session's turn changes, which renders the chat and its field. */
   function turnChange(
     phase: "none" | "running" | "cancelling",
@@ -395,7 +388,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(document.activeElement).toBe(elsewhere);
   });
 
-  focusTest("Connect and send leaves focus in the field of the attached session", async () => {
+  focusTest("a send that attaches a read session leaves focus in the field of the attached session", async () => {
     writer = "none";
     writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Continue" }] });
     function Read() {
@@ -433,12 +426,8 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     sidebar.focus();
     await mount(<Read />);
     await focusField();
+    // The send attaches the session itself, without a confirmation.
     await pressEnter();
-    expect(prompts.length).toBe(0);
-    const confirm = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent === m.sessions_chat_attach_confirm(),
-    )!;
-    await click(confirm);
     expect(prompts.length).toBe(1);
     expect(stored()).toBe("");
     expect(await fieldFocused()).toBe(true);

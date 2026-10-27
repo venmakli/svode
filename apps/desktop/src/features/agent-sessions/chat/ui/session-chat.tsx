@@ -24,7 +24,6 @@ import type { AttachOutcome, ContinueRefusal } from "../hooks/use-session-openin
 import { takeEscape } from "@/shared/lib/escape-key";
 import type { ScopeMark } from "../../lib";
 import { isKeyTaken } from "../../lib/session-content";
-import { isDraftBlank } from "../model/attachments";
 import type { ChatSessionState } from "../model/interface";
 import { plannedSettings, sessionControls } from "../model/session-controls";
 import { toolCallOf } from "../model/timeline";
@@ -46,8 +45,14 @@ export interface ChatContinuation {
   refusal: ContinueRefusal | null;
   /** What the session's own last turn gives attaching it (DF-171 R2). */
   sessionValues: AgentSessionValuesDto | null;
-  /** Attaches the session with the values chosen before it. */
-  attach: (settings: AgentSettingValueDto[]) => Promise<AttachOutcome>;
+  /**
+   * Attaches the session for its first send with the values chosen before
+   * it; `confirmed` while a turn is open.
+   */
+  attach: (
+    settings: AgentSettingValueDto[],
+    confirmed: boolean,
+  ) => Promise<AttachOutcome>;
   /** Reads the history again while another process writes to the session. */
   refresh: () => void;
   refreshing: boolean;
@@ -95,7 +100,6 @@ export function SessionChat({
     continuation?.sessionValues?.values,
   );
   const settings = useSessionSettings(session);
-  const [confirming, setConfirming] = useState(false);
   // When the request card replaces the field, or the field comes back,
   // focus follows only if it was in what is being replaced. This is read
   // while the replaced part is still mounted.
@@ -155,18 +159,9 @@ export function SessionChat({
     (read
       ? !externalWriter && !continuation.attaching
       : snapshot.writer === "acp" && snapshot.connection !== "closed");
-  // Only the confirmation's own button sends, never a repeated Enter.
-  const send = () => {
-    if (read && continuation.liveness === "unknown") {
-      if (!isDraftBlank(composer.draft.parts)) setConfirming(true);
-      return;
-    }
-    void composer.send();
-  };
-  const confirmSend = () => {
-    setConfirming(false);
-    void composer.send();
-  };
+  // A send attaches a read session itself; Desktop asks for a confirmation
+  // only while a turn is open (DF-231).
+  const send = () => void composer.send();
   const between = !composer.running && !pending;
   // Before the chat attaches a session it read, the values are chosen into
   // the draft and the first send attaches the session with them (DF-171
@@ -236,8 +231,11 @@ export function SessionChat({
           continuation.refusal.outcome !== "setting_refused" && (
             <ContinueRefusalLine refusal={continuation.refusal} />
           )}
-        {confirming && read && !pending && (
-          <AttachConfirmation onConfirm={confirmSend} onCancel={() => setConfirming(false)} />
+        {composer.confirmation && read && !pending && (
+          <AttachConfirmation
+            onConfirm={() => void composer.confirmSend()}
+            onCancel={composer.cancelConfirmation}
+          />
         )}
         {pending ? (
           <PendingCard
@@ -405,7 +403,10 @@ function RefusalLine({ refusal }: { refusal: SendRefusal }) {
   return <p className="text-xs break-words text-destructive">{text}</p>;
 }
 
-/** Inline confirmation of the first send after reading (C7, one attempt). */
+/**
+ * Inline confirmation of the first send after reading while a turn is
+ * open that another process may run (C7, one attempt; DF-231 R2).
+ */
 function AttachConfirmation({
   onConfirm,
   onCancel,
@@ -419,7 +420,7 @@ function AttachConfirmation({
       aria-label={m.sessions_chat_attach_title()}
       className="flex flex-col gap-2 rounded-lg border p-3 text-sm"
     >
-      <p>{m.sessions_chat_attach_description()}</p>
+      <p>{m.sessions_chat_attach_turn_open_description()}</p>
       <div className="flex flex-wrap justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel}>
           {m.project_cancel()}

@@ -14,7 +14,7 @@ use tauri::async_runtime::JoinHandle;
 
 use super::*;
 use crate::agent_runtime::connections::{
-    AgentConnections, KeepFuture, LaunchPlanner, PlanFuture, SessionOpening,
+    AgentConnections, KeepFuture, LaunchPlanner, OpenIntent, PlanFuture, SessionOpening,
 };
 use svode_agents::activity::WriterState;
 use svode_agents::identity::SessionKey;
@@ -814,6 +814,16 @@ fn calls(path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// The opening a test's `attach` flag stands for: reading, or attaching as
+/// the user confirmed.
+fn intent(attach: bool) -> OpenIntent {
+    if attach {
+        OpenIntent::Confirmed
+    } else {
+        OpenIntent::Read
+    }
+}
+
 fn opened(key: &SessionKey) -> SessionOpening {
     SessionOpening::Opened {
         session: key.clone(),
@@ -840,7 +850,7 @@ async fn opening_reads_the_history_without_a_writer_where_the_agent_has_evidence
             dir.path(),
             ExternalLiveness::Unknown,
             false,
-            false,
+            OpenIntent::Read,
             &[],
             None,
         )
@@ -883,7 +893,7 @@ async fn continuing_a_read_session_attaches_it_with_the_chosen_values_before_any
                     dir,
                     ExternalLiveness::Unknown,
                     false,
-                    attach,
+                    intent(attach),
                     &settings,
                     None,
                 )
@@ -961,7 +971,7 @@ async fn a_read_session_carries_the_values_its_last_turn_gives_attaching_it() {
             dir.path(),
             ExternalLiveness::Unknown,
             false,
-            attach,
+            intent(attach),
             &[],
             native,
         )
@@ -1021,7 +1031,7 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                false,
+                OpenIntent::Read,
                 &[],
                 None
             )
@@ -1043,7 +1053,7 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                true,
+                OpenIntent::Confirmed,
                 &[],
                 None
             )
@@ -1062,7 +1072,7 @@ async fn while_another_process_writes_a_session_the_history_is_a_snapshot_read_a
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                false,
+                OpenIntent::Read,
                 &[],
                 None
             )
@@ -1107,7 +1117,7 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                false,
+                OpenIntent::Read,
                 &[],
                 None
             )
@@ -1123,7 +1133,7 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 false,
-                true,
+                OpenIntent::Confirmed,
                 &[],
                 None
             )
@@ -1143,7 +1153,7 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                true,
+                OpenIntent::Confirmed,
                 &[],
                 None
             )
@@ -1167,7 +1177,7 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                false,
+                OpenIntent::Read,
                 &[],
                 None
             )
@@ -1175,6 +1185,76 @@ async fn without_read_only_evidence_attaching_needs_a_confirmation_of_each_attem
             .unwrap(),
         SessionOpening::ConfirmationRequired { turn_open: false }
     );
+    assert!(!calls(&log).iter().any(|method| method == "session/prompt"));
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_send_attaches_with_unknown_liveness_unless_a_turn_is_open() {
+    let runtime = runtime();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("calls");
+    let (connections, _) = owner(
+        &runtime,
+        vec![("hermes", Ok(history_agent("hermes", true, &log)))],
+    );
+    let key = SessionKey::from_acp("hermes", "h1", true);
+    let open = |liveness, turn_open, intent| {
+        connections.open_session(
+            "hermes",
+            &key,
+            dir.path(),
+            liveness,
+            turn_open,
+            intent,
+            &[],
+            None,
+        )
+    };
+
+    // Another process may run the open turn: the send waits for the
+    // user's confirmation and reaches nothing.
+    assert_eq!(
+        open(ExternalLiveness::Unknown, true, OpenIntent::Send)
+            .await
+            .unwrap(),
+        SessionOpening::ConfirmationRequired { turn_open: true }
+    );
+    assert!(runtime.subscribe(&key).is_err());
+    // Evidence of another writer refuses the send as before.
+    assert_eq!(
+        open(ExternalLiveness::ExternalActive, false, OpenIntent::Send)
+            .await
+            .unwrap(),
+        SessionOpening::ExternalActive
+    );
+    assert!(
+        !calls(&log).iter().any(|method| method == "session/load"),
+        "nothing reached the session"
+    );
+
+    // Without an open turn the send itself attaches the session.
+    assert_eq!(
+        open(ExternalLiveness::Unknown, false, OpenIntent::Send)
+            .await
+            .unwrap(),
+        opened(&key)
+    );
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
+    assert_eq!(
+        runtime.subscribe(&key).unwrap().snapshot.writer,
+        WriterState::Acp
+    );
+
+    // A confirmed attempt attaches it while a turn is open.
+    connections.release_session(&key).await.unwrap();
+    assert_eq!(
+        open(ExternalLiveness::Unknown, true, OpenIntent::Confirmed)
+            .await
+            .unwrap(),
+        opened(&key)
+    );
+    assert_eq!(runtime.writers().writer(&key), Some(Writer::Acp));
     assert!(!calls(&log).iter().any(|method| method == "session/prompt"));
     runtime.shutdown().await;
 }
@@ -1206,7 +1286,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
             dir.path(),
             liveness,
             turn_open,
-            attach,
+            intent(attach),
             &[],
             None,
         )
@@ -1222,7 +1302,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
                 dir.path(),
                 ExternalLiveness::ExternalActive,
                 true,
-                false,
+                OpenIntent::Read,
                 &[],
                 None,
             )
@@ -1285,7 +1365,7 @@ async fn while_another_process_may_run_a_turn_only_an_agent_with_evidence_loads_
                 dir.path(),
                 ExternalLiveness::Unknown,
                 true,
-                false,
+                OpenIntent::Read,
                 &[],
                 None,
             )
@@ -1358,7 +1438,7 @@ async fn an_agent_that_keeps_its_loaded_sessions_loads_one_again_only_in_another
             dir.path(),
             ExternalLiveness::Unknown,
             false,
-            attach,
+            intent(attach),
             &[],
             None,
         )
@@ -1409,7 +1489,7 @@ async fn an_agent_that_keeps_its_loaded_sessions_loads_one_again_only_in_another
                     dir.path(),
                     ExternalLiveness::Unknown,
                     false,
-                    false,
+                    OpenIntent::Read,
                     &[],
                     None,
                 )
@@ -1455,7 +1535,7 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                true,
+                OpenIntent::Confirmed,
                 &[],
                 None
             )
@@ -1472,7 +1552,7 @@ async fn a_session_a_managed_terminal_drives_is_left_to_it() {
                 dir.path(),
                 ExternalLiveness::Unknown,
                 false,
-                false,
+                OpenIntent::Read,
                 &[],
                 None,
             )

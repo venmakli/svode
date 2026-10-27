@@ -92,9 +92,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   /** Holds the session lists back, as while a session is being checked. */
   let listGate: Promise<void> | null = null;
   const commands: string[] = [];
-  /** `attach` of each opening in the chat, and what the next one answers. */
-  const openings: boolean[] = [];
-  let openingOutcome: (attach: boolean) => unknown = () => ({
+  /** The intent of each opening in the chat, and what the next one answers. */
+  const openings: string[] = [];
+  let openingOutcome: (intent: string) => unknown = () => ({
     outcome: "unsupported",
   });
   /** Writer and turn of the snapshot a chat subscription delivers. */
@@ -158,8 +158,8 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       };
     }
     if (command === "agent_runtime_open_session") {
-      openings.push(payload.attach as boolean);
-      return openingOutcome(payload.attach as boolean);
+      openings.push(payload.intent as string);
+      return openingOutcome(payload.intent as string);
     }
     if (command === "agent_runtime_subscribe") {
       const channel = payload.channel as { id: number };
@@ -463,7 +463,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   );
 
   peekTest(
-    "a session opens in the chat, which reads its history; its first send waits for the inline confirmation",
+    "a session opens in the chat, which reads its history; its first send attaches it and sends once without a confirmation",
     async () => {
       const key = { agent: "codex", namespace: "native", sessionId: "read" };
       listed = [
@@ -476,32 +476,72 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       openings.length = 0;
       commands.length = 0;
       snapshotWriter = "none";
-      openingOutcome = () => ({
-        outcome: "opened",
-        session: key,
-        liveness: "unknown",
-      });
+      openingOutcome = (intent) => {
+        if (intent !== "read") snapshotWriter = "acp";
+        return { outcome: "opened", session: key, liveness: "unknown" };
+      };
       writeComposerDraft(sessionDraftKey("codex:read"), {
         parts: [{ type: "text", text: "Continue" }],
       });
       await mountPeek("/p-read", { sessionId: "codex:read", launchId: null });
 
       // Without a Svode writer the chat is the default; opening sends nothing.
-      expect(openings).toEqual([false]);
+      expect(openings).toEqual(["read"]);
       expect(commands.includes("agent_sessions_reenter")).toBe(false);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);
 
-      // Nothing reaches the agent before the user confirms this attempt.
+      // The send itself attaches the session, then the message goes once.
       await click(buttonByLabel(m.sessions_chat_send()));
-      expect(openings).toEqual([false]);
-      expect(commands.includes("agent_runtime_prompt")).toBe(false);
+      expect(openings).toEqual(["read", "send"]);
       expect(
-        document.body.textContent?.includes(m.sessions_chat_attach_description()),
+        document.body.textContent?.includes(m.sessions_chat_attach_title()),
+      ).toBe(false);
+      expect(
+        commands.filter((command) => command === "agent_runtime_prompt"),
+      ).toEqual(["agent_runtime_prompt"]);
+    },
+  );
+
+  peekTest(
+    "a first send while a turn is open waits for the inline confirmation, which sends once",
+    async () => {
+      const key = { agent: "grok-build", namespace: "native", sessionId: "open" };
+      listed = [
+        session({
+          id: "grok-build:open",
+          source: "grok-build",
+          title: "Open",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      commands.length = 0;
+      snapshotWriter = "none";
+      openingOutcome = (intent) => {
+        if (intent === "send") {
+          return { outcome: "confirmation_required", turnOpen: true };
+        }
+        if (intent === "confirmed") snapshotWriter = "acp";
+        return { outcome: "opened", session: key, liveness: "unknown" };
+      };
+      writeComposerDraft(sessionDraftKey("grok-build:open"), {
+        parts: [{ type: "text", text: "Continue" }],
+      });
+      await mountPeek("/p-open", { sessionId: "grok-build:open", launchId: null });
+
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(openings).toEqual(["read", "send"]);
+      expect(commands.includes("agent_runtime_prompt")).toBe(false);
+      // The history stays; the card tells about the open turn.
+      expect(document.body.textContent?.includes("Earlier")).toBe(true);
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_chat_attach_turn_open_description(),
+        ),
       ).toBe(true);
 
-      snapshotWriter = "acp";
       await click(buttonByText(m.sessions_chat_attach_confirm()));
-      expect(openings).toEqual([false, true]);
+      expect(openings).toEqual(["read", "send", "confirmed"]);
       expect(
         commands.filter((command) => command === "agent_runtime_prompt"),
       ).toEqual(["agent_runtime_prompt"]);
@@ -597,7 +637,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       await mountPeek("/p-busy", { sessionId: "claude:busy", launchId: null });
 
       // The history is read; the composer gives way to the manual fallback.
-      expect(openings).toEqual([false]);
+      expect(openings).toEqual(["read"]);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);
       expect(document.body.textContent?.includes(m.sessions_chat_snapshot())).toBe(
         true,
@@ -620,7 +660,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       } finally {
         replayedMessage = "Earlier";
       }
-      expect(openings).toEqual([false, false]);
+      expect(openings).toEqual(["read", "read"]);
       expect(document.body.textContent?.includes("Later")).toBe(true);
       expect(document.body.textContent?.includes(m.sessions_chat_snapshot())).toBe(
         false,
@@ -644,13 +684,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       ];
       openings.length = 0;
       snapshotWriter = "acp";
-      openingOutcome = (attach) =>
-        attach
+      openingOutcome = (intent) =>
+        intent !== "read"
           ? { outcome: "opened", session: key, liveness: "unknown" }
           : { outcome: "confirmation_required", turnOpen: false };
       await mountPeek("/p-own", { sessionId: "hermes:own", launchId: null });
 
-      expect(openings).toEqual([false]);
+      expect(openings).toEqual(["read"]);
       expect(document.body.textContent?.includes("Earlier")).toBe(false);
       expect(
         document.body.textContent?.includes(m.sessions_chat_load_history_description()),
@@ -663,7 +703,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(Boolean(buttonByText(m.sessions_action_open_in_terminal()))).toBe(true);
 
       await click(buttonByText(m.sessions_chat_load_history()));
-      expect(openings).toEqual([false, true]);
+      expect(openings).toEqual(["read", "confirmed"]);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);
     },
   );
@@ -682,13 +722,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       ];
       openings.length = 0;
       snapshotWriter = "acp";
-      openingOutcome = (attach) =>
-        attach
+      openingOutcome = (intent) =>
+        intent !== "read"
           ? { outcome: "opened", session: key, liveness: "unknown" }
           : { outcome: "confirmation_required", turnOpen: true };
       await mountPeek("/p-turn", { sessionId: "grok-build:turn", launchId: null });
 
-      expect(openings).toEqual([false]);
+      expect(openings).toEqual(["read"]);
       expect(
         document.body.textContent?.includes(m.sessions_chat_load_history_title()),
       ).toBe(true);
@@ -703,7 +743,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
 
       // The confirmation is of this one attempt: the session is attached.
       await click(buttonByText(m.sessions_chat_load_history()));
-      expect(openings).toEqual([false, true]);
+      expect(openings).toEqual(["read", "confirmed"]);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);
     },
   );
@@ -860,7 +900,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         launchId: null,
       });
 
-      expect(openings).toEqual([false]);
+      expect(openings).toEqual(["read"]);
       await openOpenWith();
       const item = continuationItem("svode-terminal");
       expect(item?.getAttribute("aria-disabled")).toBe("true");
@@ -901,7 +941,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       // "Chat" tries the chat again.
       await openOpenWith();
       await click(continuationItem("chat"));
-      expect(openings).toEqual([false, false]);
+      expect(openings).toEqual(["read", "read"]);
     },
   );
 
