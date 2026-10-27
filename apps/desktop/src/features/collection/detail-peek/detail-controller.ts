@@ -73,13 +73,22 @@ export function createCollectionDetailControllerStore({
     }
   }
 
-  function enqueue(operation: () => Promise<boolean>): Promise<boolean> {
-    setQueuedTransitionCount(queuedTransitions + 1);
+  /**
+   * Runs transitions one after another. A quiet one, such as a new version
+   * of the shown row, does not mark the detail pending, so close stays
+   * enabled and keeps focus.
+   */
+  function enqueue(
+    operation: () => Promise<boolean>,
+    quiet = false,
+  ): Promise<boolean> {
     const result = transitionTail.then(operation, operation);
     transitionTail = result.then(
       () => undefined,
       () => undefined,
     );
+    if (quiet) return result;
+    setQueuedTransitionCount(queuedTransitions + 1);
     return result.finally(() => {
       setQueuedTransitionCount(Math.max(0, queuedTransitions - 1));
     });
@@ -198,16 +207,38 @@ export function createCollectionDetailControllerStore({
           return true;
         }
 
-        if (!(await canLeaveActiveDetail())) {
-          return false;
-        }
-
-        restoreFocus = current.focus;
-        publish({ active: null, diagnostic: null });
-        return true;
+        return closeActive(current);
       });
     },
+
+    update(shown, next) {
+      return enqueue(async () => {
+        const current = snapshot.active;
+        if (!current || current.request !== shown) {
+          return false;
+        }
+        if (!next) {
+          return closeActive(current);
+        }
+
+        const active = { focus: current.focus, request: next };
+        publish({ active, displayed: active });
+        return true;
+      }, true);
+    },
   };
+
+  async function closeActive(
+    current: CollectionDetailActiveState,
+  ): Promise<boolean> {
+    if (!(await canLeaveActiveDetail())) {
+      return false;
+    }
+
+    restoreFocus = current.focus;
+    publish({ active: null, diagnostic: null });
+    return true;
+  }
 
   return {
     controller,

@@ -42,6 +42,16 @@ export interface CollectionDetailController {
     focusOptions?: CollectionDetailFocusOptions,
   ): Promise<boolean>;
   close(selection?: CollectionDetailSelection): Promise<boolean>;
+  /**
+   * Shows `next`, a request of the same selection, in place of `shown` while
+   * `shown` is the open detail, or closes that detail when `next` is null.
+   * Once another request took its place or the detail closed, does nothing
+   * and resolves false: it never opens or switches the peek.
+   */
+  update(
+    shown: CollectionDetailRequest,
+    next: CollectionDetailRequest | null,
+  ): Promise<boolean>;
 }
 
 export type CollectionDetailContent = Omit<

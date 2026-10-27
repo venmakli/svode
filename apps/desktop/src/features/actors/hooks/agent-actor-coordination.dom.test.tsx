@@ -96,6 +96,9 @@ test("closing edit clears its session so unrelated rerenders cannot reopen it", 
       openCount += 1;
       return true;
     },
+    async update() {
+      return false;
+    },
   };
   const root = createRoot(dom.window.document.getElementById("app")!);
 
@@ -139,6 +142,9 @@ test("an unsaved edit waits for the asynchronous confirm of the Tauri dialog", a
       latestRequest = request;
       return true;
     },
+    async update() {
+      return false;
+    },
   };
   const answers = [false, true];
   const confirm = window.confirm;
@@ -149,9 +155,7 @@ test("an unsaved edit waits for the asynchronous confirm of the Tauri dialog", a
 
   try {
     await act(async () => {
-      root.render(
-        <DetailHarness detailController={detailController} dirty />,
-      );
+      root.render(<DetailHarness detailController={detailController} dirty />);
       await nextTurn();
     });
     const request = latestRequest as CollectionDetailRequest | null;
@@ -183,6 +187,9 @@ test("an open read-only Detail receives current diagnostics without reopening af
       latestRequest = request;
       openCount += 1;
       return true;
+    },
+    async update() {
+      return false;
     },
   };
   const root = createRoot(dom.window.document.getElementById("app")!);

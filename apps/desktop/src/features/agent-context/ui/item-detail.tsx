@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   CollectionDetailHeader,
   type CollectionDetailContent,
+  type CollectionDetailRowBinding,
 } from "@/features/collection/app-shell";
 import {
   CollectionPropertyPanel,
@@ -54,6 +55,8 @@ const AgentContextSkillFilesTab = lazy(async () => ({
 }));
 
 export interface AgentContextDetailOptions {
+  /** Opens a plugin's components in the same peek, following the "Context". */
+  detail: CollectionDetailRowBinding<AgentContextItem>;
   /** Opens App Settings "Providers", which manages the Svode integration. */
   onOpenProviders?: () => void;
 }
@@ -65,15 +68,12 @@ export interface AgentContextDetailOptions {
 export function createAgentContextItemDetailContent(
   item: AgentContextItem,
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[],
-  options: AgentContextDetailOptions = {},
+  options: AgentContextDetailOptions,
 ): CollectionDetailContent {
-  // A plugin's component opens in the same peek with the same parts.
-  const createContent = (component: AgentContextItem) =>
-    createAgentContextItemDetailContent(component, properties, options);
   return {
     content: (
       <AgentContextItemDetail
-        createContent={createContent}
+        detail={options.detail}
         item={item}
         onOpenProviders={options.onOpenProviders}
         properties={properties.filter((property) => property.key !== "name")}
@@ -105,13 +105,13 @@ export function createAgentContextItemDetailContent(
  * an MCP server ends with its panel.
  */
 function AgentContextItemDetail({
-  createContent,
+  detail,
   item,
   onOpenProviders,
   properties,
   tableProperties,
 }: {
-  createContent(component: AgentContextItem): CollectionDetailContent;
+  detail: CollectionDetailRowBinding<AgentContextItem>;
   item: AgentContextItem;
   onOpenProviders?: () => void;
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
@@ -157,11 +157,7 @@ function AgentContextItemDetail({
               label: m.agent_context_tab_description(),
             },
             {
-              content: pluginComponentsContent(
-                item,
-                tableProperties,
-                createContent,
-              ),
+              content: pluginComponentsContent(item, tableProperties, detail),
               id: "components",
               label: m.agent_context_tab_components(),
             },
@@ -214,7 +210,7 @@ function ItemBody({ item }: { item: AgentContextItem }) {
 function pluginComponentsContent(
   item: AgentContextItem,
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[],
-  createContent: (component: AgentContextItem) => CollectionDetailContent,
+  detail: CollectionDetailRowBinding<AgentContextItem>,
 ) {
   if (!item.plugin) return null;
   if (item.plugin.composition === "code") {
@@ -225,7 +221,7 @@ function pluginComponentsContent(
   }
   return (
     <AgentContextPluginComponentsTab
-      createContent={createContent}
+      detail={detail}
       item={item}
       properties={properties}
     />

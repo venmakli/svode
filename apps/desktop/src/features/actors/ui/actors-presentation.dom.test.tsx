@@ -54,6 +54,7 @@ test("actors rows open in the real DOM and use shared row and detail action seam
       requests.push(request);
       return true;
     },
+    update: async () => false,
   };
   const presentation = createActorsPresentation({
     onActivate: createCollectionDetailActivation({

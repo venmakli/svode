@@ -214,6 +214,112 @@ test("an update queued while a close guard asks does not reopen the closed detai
   expect(store.getSnapshot().active?.request.selection).toEqual(firstSelection);
 });
 
+test("update shows a new version in place of the shown request without guard, pending or a new focus target", async () => {
+  const store = createStore();
+  let guardCalls = 0;
+  const trigger = { focus: () => undefined, isConnected: true };
+  const shown = request(firstSelection, {
+    canClose: () => {
+      guardCalls += 1;
+      return false;
+    },
+    content: "Version 1",
+  });
+  await store.controller.open(shown, {
+    returnFocus: () => trigger as unknown as HTMLElement,
+  });
+  const focus = store.getSnapshot().active?.focus;
+  const pending: boolean[] = [];
+  const unsubscribe = store.subscribe(() => {
+    pending.push(store.getSnapshot().pending);
+  });
+
+  const next = request(firstSelection, { content: "Version 2" });
+  expect(await store.controller.update(shown, next)).toBe(true);
+  unsubscribe();
+
+  expect(guardCalls).toBe(0);
+  expect(pending.every((value) => !value)).toBe(true);
+  expect(store.getSnapshot().active?.request).toBe(next);
+  expect(store.getSnapshot().displayed?.request).toBe(next);
+  expect(store.getSnapshot().active?.focus).toBe(focus!);
+});
+
+test("update leaves a detail that another request took and never opens a closed one", async () => {
+  const store = createStore();
+  const shown = request(firstSelection);
+  await store.controller.open(shown);
+
+  // Another row took the peek.
+  await store.controller.open(request(secondSelection));
+  expect(await store.controller.update(shown, request(firstSelection))).toBe(
+    false,
+  );
+  expect(await store.controller.update(shown, null)).toBe(false);
+  expect(store.getSnapshot().active?.request.selection).toEqual(
+    secondSelection,
+  );
+
+  // A form of the same row took the peek.
+  const reader = store.getSnapshot().active!.request;
+  const form = request(secondSelection, { layout: "form" });
+  await store.controller.open(form);
+  expect(await store.controller.update(reader, null)).toBe(false);
+  expect(store.getSnapshot().active?.request).toBe(form);
+
+  // The peek closed.
+  await store.controller.close();
+  expect(await store.controller.update(form, request(secondSelection))).toBe(
+    false,
+  );
+  expect(store.getSnapshot().active).toBeNull();
+});
+
+test("update without a next version closes the shown detail with its focus return", async () => {
+  const store = createStore();
+  let fallbackFocused = false;
+  const shown = request(firstSelection);
+  await store.controller.open(shown, {
+    fallbackFocus: () =>
+      ({
+        focus: () => {
+          fallbackFocused = true;
+        },
+        isConnected: true,
+      }) as unknown as HTMLElement,
+    // The row of the disappeared detail left the table.
+    returnFocus: () =>
+      ({
+        focus: () => undefined,
+        isConnected: false,
+      }) as unknown as HTMLElement,
+  });
+
+  expect(await store.controller.update(shown, null)).toBe(true);
+  expect(store.getSnapshot().active).toBeNull();
+  expect(store.getSnapshot().diagnostic).toBeNull();
+  expect(store.focusAfterClose()).toBe(true);
+  expect(fallbackFocused).toBe(true);
+});
+
+test("an update queued before a close does not reopen the closed detail", async () => {
+  const store = createStore();
+  const answer = deferred<boolean>();
+  const shown = request(firstSelection, { canClose: () => answer.promise });
+  await store.controller.open(shown);
+
+  const closeResult = store.controller.close(firstSelection);
+  const updateResult = store.controller.update(
+    shown,
+    request(firstSelection, { content: "Version 2" }),
+  );
+  answer.resolve(true);
+
+  expect(await closeResult).toBe(true);
+  expect(await updateResult).toBe(false);
+  expect(store.getSnapshot().active).toBeNull();
+});
+
 test("an open detail joins the navigation guards; a passed guard closes it", async () => {
   const guards: (() => Promise<boolean>)[] = [];
   const store = createCollectionDetailControllerStore({

@@ -125,7 +125,11 @@ export interface CollectionPresentationDescriptor<Row> {
 
 export interface CollectionActivationContext {
   rowId: string;
-  actions?: ReactNode;
+  /**
+   * The row actions menu of the presentation for a version of the activated
+   * row, from its current actions; nothing when none is visible.
+   */
+  actions?(row: unknown): ReactNode;
   returnFocus?(): HTMLElement | null;
   fallbackFocus?(): HTMLElement | null;
 }

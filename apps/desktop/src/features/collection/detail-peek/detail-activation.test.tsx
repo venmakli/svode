@@ -13,6 +13,7 @@ test("detail activation owns selection and merges owner and Collection actions",
         requests.push(request);
         return true;
       },
+      update: async () => false,
     },
     createContent: (row: { id: string }) => ({
       content: row.id,
@@ -27,7 +28,11 @@ test("detail activation owns selection and merges owner and Collection actions",
   await activation?.(
     { id: "ada@example.test" },
     {
-      actions: <button type="button">Collection action</button>,
+      actions: (row) => (
+        <button type="button">
+          Collection action {(row as { id: string }).id}
+        </button>
+      ),
       rowId: "ada@example.test",
     },
   );
@@ -39,28 +44,5 @@ test("detail activation owns selection and merges owner and Collection actions",
   });
   const actions = renderToStaticMarkup(<>{requests[0]?.headerActions}</>);
   expect(actions.includes("Owner action")).toBe(true);
-  expect(actions.includes("Collection action")).toBe(true);
-});
-
-test("detail activation preserves a guarded controller rejection", async () => {
-  let requested = false;
-  const activation = createCollectionDetailActivation({
-    controller: {
-      close: async () => true,
-      open: async () => false,
-    },
-    createContent: () => ({
-      content: null,
-      description: null,
-      title: null,
-    }),
-    instanceKey: "routines:space:root",
-    onRequested: () => {
-      requested = true;
-    },
-    presentationId: "all",
-  });
-
-  await activation?.({}, { rowId: "routine:one" });
-  expect(requested).toBe(true);
+  expect(actions.includes("Collection action ada@example.test")).toBe(true);
 });

@@ -1,4 +1,11 @@
-import { useCallback, useId, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +28,7 @@ import { runCollectionCallback } from "../lib/interaction";
 import type {
   CollectionInteractionError,
   CollectionPresentationDescriptor,
+  CollectionRowActionDescriptor,
 } from "../model/types";
 import { CollectionPropertyControl } from "./property-renderers";
 import {
@@ -61,14 +69,7 @@ export function CollectionPresentationItem({
   const focusTargetId = useId();
   const activationEnabled = Boolean(descriptor.onActivate);
   const rowActions = useMemo(
-    () =>
-      (descriptor.rowActions ?? []).filter((action) => {
-        try {
-          return action.isVisible?.(row) ?? true;
-        } catch {
-          return true;
-        }
-      }),
+    () => visibleRowActions(descriptor.rowActions, row),
     [descriptor.rowActions, row],
   );
 
@@ -90,23 +91,34 @@ export function CollectionPresentationItem({
     [descriptor.id, instanceKey, onInteractionError, rowId],
   );
 
+  // The menu of an open detail follows its row with the actions the
+  // presentation has then.
+  const latestActions = useRef({
+    actions: descriptor.rowActions,
+    reportError,
+  });
+  useEffect(() => {
+    latestActions.current = { actions: descriptor.rowActions, reportError };
+  }, [descriptor.rowActions, reportError]);
+  const rowActionsMenu = useCallback((version: unknown) => {
+    const { actions, reportError: report } = latestActions.current;
+    const visible = visibleRowActions(actions, version);
+    return visible.length > 0 ? (
+      <CollectionRowActionsDropdownMenu
+        actions={visible}
+        row={version}
+        onRejected={(targetId, message) => report("action", targetId, message)}
+      />
+    ) : undefined;
+  }, []);
+
   const activate = useCallback(async () => {
     if (!descriptor.onActivate) return;
 
     setActivationError(null);
     const result = await runCollectionCallback(async () => {
-      const descriptorActions =
-        rowActions.length > 0 ? (
-          <CollectionRowActionsDropdownMenu
-            actions={rowActions}
-            row={row}
-            onRejected={(targetId, message) =>
-              reportError("action", targetId, message)
-            }
-          />
-        ) : undefined;
       await descriptor.onActivate?.(row, {
-        actions: descriptorActions,
+        actions: rowActionsMenu,
         fallbackFocus: activationFocusFallback,
         returnFocus: () => document.getElementById(focusTargetId),
         rowId,
@@ -123,7 +135,7 @@ export function CollectionPresentationItem({
     focusTargetId,
     reportError,
     row,
-    rowActions,
+    rowActionsMenu,
     rowId,
   ]);
 
@@ -437,4 +449,17 @@ export function CollectionPresentationItem({
       onOpen={activationEnabled ? () => void activate() : undefined}
     />
   );
+}
+
+function visibleRowActions(
+  actions: readonly CollectionRowActionDescriptor<unknown>[] | undefined,
+  row: unknown,
+) {
+  return (actions ?? []).filter((action) => {
+    try {
+      return action.isVisible?.(row) ?? true;
+    } catch {
+      return true;
+    }
+  });
 }

@@ -1,16 +1,17 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { act } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import type {
   CollectionDetailContent,
   CollectionDetailController,
+  CollectionDetailRowBinding,
 } from "@/features/collection/app-shell";
 
-import type { AgentContextItem } from "../model/types";
+import type { AgentContextItem, AgentContextSnapshot } from "../model/types";
 
 if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
   test("agent context detail peek DOM", () => {
@@ -241,14 +242,19 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       throw new Error(`Unexpected command: ${command}`);
     });
     const { TooltipProvider } = await import("@/components/ui/tooltip");
-    const { CollectionDetailPeekHost, useCollectionDetailController } =
-      await import("@/features/collection/app-shell");
+    const {
+      CollectionDetailPeekHost,
+      useCollectionDetailController,
+      useCollectionDetailRowBinding,
+    } = await import("@/features/collection/app-shell");
     const { createAgentAdapterDictionary } =
       await import("@/features/agent-adapters");
     const { createAgentContextItemDetailContent } =
       await import("./item-detail");
     const { createAgentContextItemProperties } =
       await import("./item-properties");
+    const { useAgentContextItemDetail } =
+      await import("../hooks/use-agent-context-item-detail");
     const properties = createAgentContextItemProperties({
       agents: createAgentAdapterDictionary([
         { displayName: "Codex", id: "codex" },
@@ -258,16 +264,41 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         openedProviders += 1;
       },
     });
+    const onOpenProviders = () => {
+      openedProviders += 1;
+    };
+    const createContent = (
+      item: AgentContextItem,
+      detail: CollectionDetailRowBinding<AgentContextItem>,
+    ) =>
+      createAgentContextItemDetailContent(item, properties, {
+        detail,
+        onOpenProviders,
+      });
+    const captured: { binding?: CollectionDetailRowBinding<AgentContextItem> } =
+      {};
+    /** Opens components of a plugin; the peek does not follow a source. */
+    function CaptureBinding() {
+      const binding = useCollectionDetailRowBinding({
+        controller: useCollectionDetailController(),
+        createContent,
+        findRow: null,
+      });
+      useEffect(() => {
+        captured.binding = binding;
+      }, [binding]);
+      return null;
+    }
     return {
       TooltipProvider,
+      CaptureBinding,
       CollectionDetailPeekHost,
+      onOpenProviders,
+      properties,
+      useAgentContextItemDetail,
       useCollectionDetailController,
       detail: (item: AgentContextItem) =>
-        createAgentContextItemDetailContent(item, properties, {
-          onOpenProviders: () => {
-            openedProviders += 1;
-          },
-        }),
+        createContent(item, captured.binding!),
     };
   }
 
@@ -292,6 +323,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       root.render(
         <env.TooltipProvider>
           <CaptureController />
+          <env.CaptureBinding />
           <env.CollectionDetailPeekHost />
         </env.TooltipProvider>,
       );
@@ -456,6 +488,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       root.render(
         <env.TooltipProvider>
           <CaptureController />
+          <env.CaptureBinding />
           <env.CollectionDetailPeekHost />
         </env.TooltipProvider>,
       );
@@ -632,6 +665,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       root.render(
         <env.TooltipProvider>
           <CaptureController />
+          <env.CaptureBinding />
           <env.CollectionDetailPeekHost />
         </env.TooltipProvider>,
       );
@@ -813,6 +847,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       root.render(
         <env.TooltipProvider>
           <CaptureController />
+          <env.CaptureBinding />
           <env.CollectionDetailPeekHost />
         </env.TooltipProvider>,
       );
@@ -877,6 +912,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       root.render(
         <env.TooltipProvider>
           <CaptureController />
+          <env.CaptureBinding />
           <env.CollectionDetailPeekHost />
         </env.TooltipProvider>,
       );
@@ -1034,6 +1070,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       root.render(
         <env.TooltipProvider>
           <CaptureController />
+          <env.CaptureBinding />
           <env.CollectionDetailPeekHost />
         </env.TooltipProvider>,
       );
@@ -1121,9 +1158,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     expect(doc.querySelector("[data-agent-context-item-tabs]")).toBe(null);
     expect(detail.querySelector("[data-markdown-reader]")).toBe(null);
     expect(
-      detail.textContent?.includes(
-        "Claude Code · turned off in its config",
-      ),
+      detail.textContent?.includes("Claude Code · turned off in its config"),
     ).toBe(true);
     expect(
       topBar().querySelector("[data-external-open-primary]") !== null,
@@ -1177,6 +1212,206 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     expect(doc.querySelector('[data-collection-panel-fact="scope"]')).toBe(
       null,
     );
+
+    await act(async () => {
+      root?.unmount();
+      await settle();
+    });
+  });
+
+  test("the open peek follows its item and a plugin's component through new snapshots and closes once they are gone", async () => {
+    const env = await setup();
+    const instanceKey = "agent-context:space:root";
+    const component: AgentContextItem = {
+      ...skill,
+      id: "plugin:/home/user/kit#skill:/home/user/kit/skills/review",
+      ownerPath: "/home/user/kit",
+      path: "/home/user/kit/skills/review/SKILL.md",
+    };
+    const plugin: AgentContextItem = {
+      ...skill,
+      body: "# Kit",
+      components: [component],
+      description: "Team kit",
+      id: "plugin:/home/user/kit",
+      kind: "plugin",
+      name: "kit",
+      ownerPath: "/home/user/kit",
+      path: "/home/user/kit/.claude-plugin/plugin.json",
+      plugin: {
+        composition: "declared",
+        counts: [],
+        directory: "/home/user/kit",
+        hasReadme: true,
+        manifest: null,
+      },
+      skill: null,
+    };
+    // No agent enabled finds the skill yet.
+    const unread: AgentContextItem = {
+      ...skill,
+      idleReaders: [],
+      providers: [],
+      sources: [],
+      unapplied: { kind: "not_found" },
+    };
+    const snapshotOf = (
+      items: readonly AgentContextItem[],
+    ): AgentContextSnapshot => ({
+      diagnostics: [],
+      enabledAgents: ["codex"],
+      generation: 1,
+      hasPersonalSources: false,
+      items,
+      targetPath: "/workspace",
+    });
+    const surface: {
+      detail?: ReturnType<typeof env.useAgentContextItemDetail>;
+      setSnapshot?: (snapshot: AgentContextSnapshot | null) => void;
+    } = {};
+    function Surface() {
+      const [snapshot, setSnapshot] = useState<AgentContextSnapshot | null>(
+        snapshotOf([unread, plugin]),
+      );
+      const detail = env.useAgentContextItemDetail({
+        controller: env.useCollectionDetailController(),
+        instanceKey,
+        onOpenProviders: env.onOpenProviders,
+        properties: env.properties,
+        snapshot,
+      });
+      useEffect(() => {
+        Object.assign(surface, { detail, setSnapshot });
+      }, [detail]);
+      return null;
+    }
+    let root: Root | null = null;
+    await act(async () => {
+      root = createRoot(doc.getElementById("app")!);
+      root.render(
+        <env.TooltipProvider>
+          <Surface />
+          <env.CollectionDetailPeekHost />
+        </env.TooltipProvider>,
+      );
+      await settle();
+    });
+    async function activate(item: AgentContextItem, presentationId: string) {
+      await act(async () => {
+        await surface.detail!.activation({ instanceKey, presentationId })!(
+          item,
+          {
+            rowId: item.id,
+          },
+        );
+        await settle();
+      });
+    }
+    async function refresh(snapshot: AgentContextSnapshot | null) {
+      await act(async () => {
+        surface.setSnapshot!(snapshot);
+        await settle();
+      });
+    }
+    const peekOpen = () =>
+      doc
+        .querySelector("[data-collection-detail-peek]")
+        ?.getAttribute("data-state") === "open";
+    const header = () =>
+      doc.querySelector("[data-collection-detail-header]")?.textContent;
+    const tabs = () =>
+      doc.querySelector<HTMLElement>("[data-agent-context-item-tabs]");
+
+    // Enabling an agent and a new description show in the open peek.
+    const info = () =>
+      topBar().querySelector("[data-collection-detail-info-trigger]");
+    await activate(unread, "skills");
+    expect(
+      Boolean(doc.querySelector("[data-agent-context-providers-reason]")),
+    ).toBe(true);
+    expect(info()).toBe(null);
+    await refresh(
+      snapshotOf([{ ...skill, description: "Review every change." }, plugin]),
+    );
+    expect(doc.querySelector("[data-agent-context-providers-reason]")).toBe(
+      null,
+    );
+    expect(
+      doc
+        .querySelector("[data-agent-context-providers-detail]")
+        ?.textContent?.includes("Codex"),
+    ).toBe(true);
+    expect(Boolean(info())).toBe(true);
+    expect(header()).toBe("reviewReview every change.");
+
+    // A refresh in progress or failed leaves it; the item gone closes it.
+    await refresh(null);
+    expect(header()).toBe("reviewReview every change.");
+    await refresh(snapshotOf([plugin]));
+    expect(peekOpen()).toBe(false);
+
+    // The plugin keeps its tab while it follows the "Context".
+    await activate(plugin, "plugins");
+    await act(async () => {
+      tabs()!
+        .querySelectorAll<HTMLElement>('[role="tab"]')[1]!
+        .dispatchEvent(
+          new dom.window.MouseEvent("mousedown", { bubbles: true, button: 0 }),
+        );
+      await settle();
+    });
+    expect(tabs()?.getAttribute("data-agent-context-item-tabs")).toBe(
+      "components",
+    );
+    await refresh(snapshotOf([{ ...plugin, description: "Team kit 2" }]));
+    expect(header()).toBe("kitTeam kit 2");
+    expect(tabs()?.getAttribute("data-agent-context-item-tabs")).toBe(
+      "components",
+    );
+
+    // Its component opens in the same peek and follows the plugin's list.
+    await act(async () => {
+      doc
+        .querySelector<HTMLElement>(
+          `[data-collection-row="${component.id}"] [data-collection-primary]`,
+        )!
+        .click();
+      await settle();
+    });
+    expect(header()).toBe("reviewReview project changes.");
+    await refresh(
+      snapshotOf([
+        {
+          ...plugin,
+          components: [{ ...component, description: "Review kit changes." }],
+        },
+      ]),
+    );
+    expect(header()).toBe("reviewReview kit changes.");
+    await refresh(snapshotOf([{ ...plugin, components: [] }]));
+    expect(peekOpen()).toBe(false);
+
+    // The plugin gone closes the peek of its component.
+    await activate(plugin, "all");
+    await act(async () => {
+      tabs()!
+        .querySelectorAll<HTMLElement>('[role="tab"]')[1]!
+        .dispatchEvent(
+          new dom.window.MouseEvent("mousedown", { bubbles: true, button: 0 }),
+        );
+      await settle();
+    });
+    await act(async () => {
+      doc
+        .querySelector<HTMLElement>(
+          `[data-collection-row="${component.id}"] [data-collection-primary]`,
+        )!
+        .click();
+      await settle();
+    });
+    expect(header()).toBe("reviewReview project changes.");
+    await refresh(snapshotOf([unread]));
+    expect(peekOpen()).toBe(false);
 
     await act(async () => {
       root?.unmount();

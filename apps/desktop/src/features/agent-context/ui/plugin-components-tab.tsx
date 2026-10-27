@@ -5,14 +5,11 @@ import {
   useCollectionState,
   type CollectionInstance,
 } from "@/features/collection";
-import {
-  createCollectionDetailActivation,
-  useCollectionDetailController,
-  type CollectionDetailContent,
-} from "@/features/collection/app-shell";
+import type { CollectionDetailRowBinding } from "@/features/collection/app-shell";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
+import { agentContextPluginComponentsKey } from "../model/detail-items";
 import type {
   AgentContextItem,
   AgentContextPluginComponentKind,
@@ -26,30 +23,27 @@ import { createAgentContextPresentation } from "./context-presentations";
  * is no row. A plugin whose code defines its components says so instead.
  */
 export function AgentContextPluginComponentsTab({
-  createContent,
+  detail,
   item,
   properties,
 }: {
-  createContent(component: AgentContextItem): CollectionDetailContent;
+  detail: CollectionDetailRowBinding<AgentContextItem>;
   item: AgentContextItem;
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
 }) {
-  const controller = useCollectionDetailController();
-  const instanceKey = `agent-context-plugin:${item.id}`;
+  const instanceKey = agentContextPluginComponentsKey(item.id);
   const presentation = useMemo(
     () =>
       createAgentContextPresentation({
         id: "all",
-        onActivate: createCollectionDetailActivation({
-          controller,
-          createContent,
+        onActivate: detail.activation({
           instanceKey,
           presentationId: "components",
         }),
         properties,
         state: { phase: "ready", rows: item.components },
       }),
-    [controller, createContent, instanceKey, item.components, properties],
+    [detail, instanceKey, item.components, properties],
   );
   const instance = useMemo<CollectionInstance>(
     () => ({

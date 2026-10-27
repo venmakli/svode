@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -8,14 +8,12 @@ import {
   useCollectionState,
   type CollectionInstance,
 } from "@/features/collection";
-import {
-  createCollectionDetailActivation,
-  useCollectionDetailController,
-} from "@/features/collection/app-shell";
+import { useCollectionDetailController } from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import { useAppLocale } from "@/features/settings";
 
 import { useAgentContext } from "../hooks/use-agent-context";
+import { useAgentContextItemDetail } from "../hooks/use-agent-context-item-detail";
 import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
 import { AgentContextDiagnosticsDialog } from "./agent-context-diagnostics-dialog";
 import { toAgentContextPresentationState } from "./agent-context-presentation-state";
@@ -23,15 +21,8 @@ import {
   AGENT_CONTEXT_PRESETS,
   AgentContextPresetEmpty,
   createAgentContextPresentation,
-  type AgentContextPresetId,
 } from "./context-presentations";
-import { createAgentContextItemDetailContent } from "./item-detail";
 import { createAgentContextItemProperties } from "./item-properties";
-
-interface OpenedAgentContextItem {
-  presentationId: AgentContextPresetId;
-  rowId: string;
-}
 
 export function AgentContextSurface({
   onOpenProviders,
@@ -50,9 +41,6 @@ export function AgentContextSurface({
   // language change rebuilds them.
   const { locale } = useAppLocale();
   const detailController = useCollectionDetailController();
-  const [openedItem, setOpenedItem] = useState<OpenedAgentContextItem | null>(
-    null,
-  );
   // Plugins of "All" whose components are shown, for the session.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -80,6 +68,13 @@ export function AgentContextSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- labels follow the locale
     [agents, locale, onOpenProviders],
   );
+  const detail = useAgentContextItemDetail({
+    controller: detailController,
+    instanceKey,
+    onOpenProviders,
+    properties,
+    snapshot: state.phase === "ready" ? state.snapshot : null,
+  });
   const presentations = useMemo(
     () =>
       AGENT_CONTEXT_PRESETS.map((id) =>
@@ -88,17 +83,7 @@ export function AgentContextSurface({
             ? { expansion: { expanded, onToggle: togglePlugin } }
             : {}),
           id,
-          onActivate: createCollectionDetailActivation({
-            controller: detailController,
-            createContent: (item) =>
-              createAgentContextItemDetailContent(item, properties, {
-                onOpenProviders,
-              }),
-            instanceKey,
-            onRequested: (rowId) =>
-              setOpenedItem({ presentationId: id, rowId }),
-            presentationId: id,
-          }),
+          onActivate: detail.activation({ instanceKey, presentationId: id }),
           properties,
           state: toAgentContextPresentationState(
             state,
@@ -109,7 +94,7 @@ export function AgentContextSurface({
         }),
       ),
     [
-      detailController,
+      detail,
       expanded,
       instanceKey,
       onOpenProviders,
@@ -129,27 +114,6 @@ export function AgentContextSurface({
     [instanceKey, presentations],
   );
   const collectionState = useCollectionState(instance);
-
-  useEffect(() => {
-    if (!openedItem || state.phase !== "ready" || !detailController) return;
-    if (
-      state.snapshot.items.some(
-        (item) =>
-          item.id === openedItem.rowId ||
-          item.components.some(
-            (component) => component.id === openedItem.rowId,
-          ),
-      )
-    ) {
-      return;
-    }
-
-    void detailController.close({
-      instanceKey,
-      presentationId: openedItem.presentationId,
-      rowId: openedItem.rowId,
-    });
-  }, [detailController, instanceKey, openedItem, state]);
 
   if (collectionState.phase === "blocking_error") {
     return (

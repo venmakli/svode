@@ -423,6 +423,7 @@ function createRecordingDetailController() {
       requests.push(request);
       return true;
     },
+    update: async () => false,
   };
   return { controller, requests };
 }
