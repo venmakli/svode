@@ -24,6 +24,8 @@ export function SettingsRow({
   onClick,
   disabled,
   destructive,
+  autoFocus,
+  pending,
 }: {
   icon?: LucideIcon;
   label: string;
@@ -32,6 +34,13 @@ export function SettingsRow({
   onClick?: () => void;
   disabled?: boolean;
   destructive?: boolean;
+  /** Takes focus when it mounts, as the row a pane returns to. */
+  autoFocus?: boolean;
+  /**
+   * Waits for its change: inactive and busy for assistive tech, yet it
+   * keeps focus, unlike a disabled row.
+   */
+  pending?: boolean;
 }) {
   return (
     <Button
@@ -44,8 +53,11 @@ export function SettingsRow({
         destructive &&
           "text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive",
       )}
-      onClick={onClick}
+      onClick={pending ? undefined : onClick}
       disabled={disabled}
+      autoFocus={autoFocus}
+      aria-disabled={pending || undefined}
+      aria-busy={pending || undefined}
     >
       {Icon ? (
         <Icon
@@ -82,13 +94,15 @@ export function SettingsStaticRow({
   label,
   meta,
 }: {
-  icon: LucideIcon;
+  icon?: LucideIcon;
   label: string;
   meta: string;
 }) {
   return (
     <div className="flex h-8 w-full items-center gap-2.5 rounded-md border border-transparent px-2 py-1.5 text-[13px] whitespace-nowrap select-none">
-      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      {Icon ? (
+        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      ) : null}
       <span className="min-w-0 flex-1 truncate text-left font-medium">
         {label}
       </span>

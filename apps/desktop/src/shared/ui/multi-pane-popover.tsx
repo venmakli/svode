@@ -19,6 +19,11 @@ export interface MultiPaneDefinition<TPane extends string> {
   footer?: ReactNode;
   footerSeparator?: boolean;
   notice?: ReactNode;
+  /**
+   * The content scrolls a part of itself, keeping the rest in place, as a
+   * search above its list; otherwise the whole content scrolls.
+   */
+  scrollsItself?: boolean;
 }
 
 interface MultiPanePopoverProps<TPane extends string> {
@@ -32,6 +37,9 @@ interface MultiPanePopoverProps<TPane extends string> {
   pane?: TPane;
   onPaneChange?: (pane: TPane) => void;
   align?: "start" | "center" | "end";
+  side?: "top" | "right" | "bottom" | "left";
+  /** Modal keeps its own scroll lock, so the wheel scrolls it inside a sheet. */
+  modal?: boolean;
   className?: string;
 }
 
@@ -46,6 +54,8 @@ export function MultiPanePopover<TPane extends string>({
   pane,
   onPaneChange,
   align = "end",
+  side,
+  modal,
   className,
 }: MultiPanePopoverProps<TPane>) {
   const [innerPane, setInnerPane] = useState<TPane>(initialPane ?? mainPane);
@@ -80,13 +90,14 @@ export function MultiPanePopover<TPane extends string>({
   }
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
+    <Popover open={open} onOpenChange={handleOpenChange} modal={modal}>
       {trigger ? <PopoverTrigger asChild>{trigger}</PopoverTrigger> : null}
       {!trigger && anchor ? (
         <PopoverAnchor asChild>{anchor}</PopoverAnchor>
       ) : null}
       <PopoverContent
         align={align}
+        side={side}
         className={cn(
           "flex w-80 max-h-[min(640px,var(--radix-popover-content-available-height))] flex-col gap-0 overflow-hidden !rounded-[10px] !p-0 !shadow-[0_0_0_1px_rgba(0,0,0,0.08),0_12px_32px_-8px_rgba(0,0,0,0.18),0_4px_8px_-2px_rgba(0,0,0,0.08)]",
           className,
@@ -111,7 +122,14 @@ export function MultiPanePopover<TPane extends string>({
             <Separator />
           </>
         )}
-        <div className="min-h-0 overflow-y-auto">{current?.content}</div>
+        <div
+          className={cn(
+            "min-h-0",
+            current?.scrollsItself ? "flex flex-col" : "overflow-y-auto",
+          )}
+        >
+          {current?.content}
+        </div>
         {current?.notice ? (
           <>
             <Separator />

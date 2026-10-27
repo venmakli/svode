@@ -75,6 +75,17 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   const messages: string[] = [];
   /** The detail of each timeline item by id. */
   let details: Record<string, unknown> = {};
+  /** The agents a draft offers. */
+  let chatAgents = [{ id: "codex", name: "Codex" }];
+  /** How holding a draft's agent ends. */
+  let holdAnswer: () => unknown = () => ({
+    hold: 5,
+    check: {
+      state: "ready",
+      agent: { name: "codex-acp", version: "2.1.1" },
+    },
+    session: draftSession,
+  });
 
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
@@ -100,16 +111,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     if (command === "agent_runtime_detail") {
       return details[payload.itemId as string] ?? { outcome: "unavailable", reason: "not_provided" };
     }
-    if (command === "agent_runtime_hold_draft") {
-      return {
-        hold: 5,
-        check: {
-          state: "ready",
-          agent: { name: "codex-acp", version: "2.1.1" },
-        },
-        session: draftSession,
-      };
-    }
+    if (command === "agent_runtime_hold_draft") return holdAnswer();
     if (command === "agent_runtime_start_session") {
       return {
         outcome: "started",
@@ -120,14 +122,16 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     }
     if (command === "agent_setup_chat_agents") {
       return {
-        agents: [
-          { agent: "codex", name: "Codex", offer: { state: "available" } },
-        ],
+        agents: chatAgents.map(({ id, name }) => ({
+          agent: id,
+          name,
+          offer: { state: "available" },
+        })),
         last: null,
       };
     }
     if (command === "agent_adapters_list_identities") {
-      return [{ id: "codex", displayName: "Codex" }];
+      return chatAgents.map(({ id, name }) => ({ id, displayName: name }));
     }
     if (
       command === "agent_runtime_unsubscribe" ||
@@ -175,6 +179,15 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       snapshotFor = (session) => snapshot(session);
       draftSession = draftKey;
       details = {};
+      chatAgents = [{ id: "codex", name: "Codex" }];
+      holdAnswer = () => ({
+        hold: 5,
+        check: {
+          state: "ready",
+          agent: { name: "codex-acp", version: "2.1.1" },
+        },
+        session: draftSession,
+      });
       promptAnswer = () => "turn-2";
       openAnswer = () => ({ outcome: "opened", session: key, liveness: "free" });
       messages.length = 0;
@@ -220,29 +233,44 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(contextButton()).toBe(undefined);
 
       await click(button);
-      expect(Boolean(section(m.sessions_chat_model()))).toBe(true);
-      expect(Boolean(section(m.sessions_chat_reasoning_level()))).toBe(true);
-      expect(Boolean(section("Collaboration mode"))).toBe(true);
-      // From five models the block has a search; after the first send there
-      // are no agent tabs.
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-5.6 Luna");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("Low");
+      expect(rowValue("Collaboration mode")).toBe("Default");
+      // After the first send the session's agent heads the popover, without
+      // agent tabs or the agent settings link.
+      expect(popover()?.textContent?.startsWith("Codex")).toBe(true);
+      expect(popover()?.querySelector('[role="tablist"]')).toBeNull();
       expect(
-        Boolean(
-          document.querySelector(
-            `input[aria-label="${m.sessions_chat_model_search()}"]`,
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        document.querySelector(
-          `[aria-label="${m.sessions_chat_agent_tabs()}"]`,
-        ),
-      ).toBeNull();
+        popover()?.textContent?.includes(m.sessions_chat_agent_settings()),
+      ).toBe(false);
 
-      await click(optionByText("GPT-6 Sol"));
+      let confirm: (value: unknown) => void = () => undefined;
+      settingAnswer = () => new Promise((resolve) => (confirm = resolve));
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Sol");
       expect(lastCall("agent_runtime_set_setting")?.value).toEqual({
         setting: "model",
         value: "gpt-6-sol",
       });
+      // Back on the main screen the row waits for the agent and keeps its
+      // value until the agent's settings say otherwise.
+      const spinner = () =>
+        settingRow(m.sessions_chat_model())?.querySelector(".animate-spin");
+      expect(spinner() === null).toBe(false);
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-5.6 Luna");
+      // Inactive for assistive tech while it waits, and it does not open.
+      const waiting = settingRow(m.sessions_chat_model())!;
+      expect(waiting.getAttribute("aria-disabled")).toBe("true");
+      expect(waiting.getAttribute("aria-busy")).toBe("true");
+      await click(waiting);
+      await pressKey(waiting, "Enter");
+      expect(popover()?.querySelector('[data-slot="command-item"]')).toBeNull();
+      await act(async () => confirm(null));
+      await settle();
+      expect(spinner()).toBe(null);
+      expect(
+        settingRow(m.sessions_chat_model())?.hasAttribute("aria-disabled"),
+      ).toBe(false);
+      settingAnswer = () => null;
       // Accepted by the call, not shown before the agent's settings say so.
       expect(agentButton().textContent?.includes("GPT-5.6 Luna")).toBe(true);
       await deliver("s1", {
@@ -261,7 +289,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
           message: "setting model=gpt-5.5 was refused",
         };
       };
-      await click(optionByText("GPT-5.5"));
+      await chooseValue(m.sessions_chat_model(), "GPT-5.5");
       expect(
         document.body.textContent?.includes(
           m.sessions_chat_setting_refused({
@@ -299,7 +327,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
           m.sessions_chat_model_not_declared(),
         ),
       ).toBe(true);
-      expect(section(m.sessions_chat_reasoning_level())).toBe(undefined);
+      expect(settingRow(m.sessions_chat_reasoning_level())).toBe(undefined);
       expect(
         document.querySelector(
           `[aria-label^="${m.sessions_chat_mode_choose({ mode: "" })}"]`,
@@ -337,7 +365,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
           ),
         ),
       ).toBe(true);
-      await click(optionByText("GPT-6 Sol"));
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Sol");
       expect(lastCall("agent_runtime_set_setting")).toEqual({
         session: draftKey,
         value: { setting: "model", value: "gpt-6-sol" },
@@ -743,9 +771,10 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       const button = agentButton();
       expect(button.disabled).toBe(false);
       await click(button);
+      await click(settingRow(m.sessions_chat_model()));
       expect(optionByText("GPT-6 Sol")?.getAttribute("data-disabled")).toBe("false");
       await click(optionByText("GPT-6 Sol"));
-      await click(optionByText("High"));
+      await chooseValue(m.sessions_chat_reasoning_level(), "High");
       await openMenu(
         buttonByLabel(m.sessions_chat_mode_choose({ mode: "Read Only" })),
       );
@@ -795,7 +824,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         null,
       );
       await click(agentButton());
-      await click(optionByText("GPT-6 Luna"));
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Luna");
       expect(lastCall("agent_runtime_set_setting")?.value).toEqual({
         setting: "model",
         value: "gpt-6-luna",
@@ -913,7 +942,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
           m.sessions_chat_model_session_unavailable({ model: "GPT-6 Luna" }),
         ),
       ).toBe(false);
-      await click(optionByText("Low"));
+      await chooseValue(m.sessions_chat_reasoning_level(), "Low");
       expect(agentButton().textContent?.includes("Low")).toBe(true);
 
       // A value of the session the agent refuses is left out, and the
@@ -947,11 +976,11 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       // The button shows the agent's model, which the turn runs on.
       expect(agentButton().textContent?.includes("GPT-5.6 Luna")).toBe(true);
       await click(agentButton());
-      expect(
-        section(m.sessions_chat_model())?.textContent?.includes(
-          m.sessions_chat_model_session_unavailable({ model: "6 Astra" }),
-        ),
-      ).toBe(true);
+      // A note under the model row.
+      const note = settingRow(m.sessions_chat_model())?.nextElementSibling;
+      expect(note?.textContent).toBe(
+        m.sessions_chat_model_session_unavailable({ model: "6 Astra" }),
+      );
       await click(buttonByLabel(m.sessions_chat_send()));
       expect(lastCall("agent_runtime_open_session")?.settings).toEqual([
         { setting: "reasoning_effort", value: "high" },
@@ -960,9 +989,9 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         { type: "text", text: "Go on" },
       ]);
       // Attached, the line is gone with the session's own values.
-      if (!section(m.sessions_chat_model())) await click(agentButton());
+      if (!settingRow(m.sessions_chat_model())) await click(agentButton());
       expect(
-        section(m.sessions_chat_model())?.textContent?.includes(
+        popover()?.textContent?.includes(
           m.sessions_chat_model_session_unavailable({ model: "6 Astra" }),
         ),
       ).toBe(false);
@@ -986,6 +1015,22 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(document.body.textContent?.includes(m.sessions_chat_external_writer())).toBe(
         true,
       );
+    },
+  );
+
+  controlsTest(
+    "while the runtime does not drive the session its rows show the values and open no screens",
+    async () => {
+      snapshotFor = (session) => ({ ...snapshot(session), connection: "closed" });
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scope={null} />,
+      );
+      await click(agentButton());
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-5.6 Luna");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("Low");
+      expect(settingRow(m.sessions_chat_model())?.tagName).toBe("DIV");
+      await click(settingRow(m.sessions_chat_model()));
+      expect(popover()?.querySelector('[data-slot="command-item"]')).toBeNull();
     },
   );
 
@@ -1261,6 +1306,262 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     },
   );
 
+  /** Six models with long descriptions, six reasoning levels and two two-valued settings. */
+  function richSettings(current: { model?: string } = {}) {
+    const long =
+      "Latest workhorse model for coding and everyday reasoning across long sessions with tools";
+    return [
+      ...settings().filter((setting) => setting.category === "mode"),
+      {
+        id: "model",
+        name: "Model",
+        description: null,
+        category: "model",
+        currentValue: current.model ?? "m4",
+        options: ["m1", "m2", "m3", "m4", "m5", "m6"].map((value, index) => ({
+          value,
+          name: `Model ${index + 1}`,
+          description: index === 3 ? long : `Model number ${index + 1}`,
+        })),
+      },
+      {
+        id: "reasoning_effort",
+        name: "Reasoning effort",
+        description: null,
+        category: "thought_level",
+        currentValue: "high",
+        options: ["minimal", "low", "medium", "high", "xhigh", "max"].map(
+          (value) => ({ value, name: value.toUpperCase(), description: null }),
+        ),
+      },
+      {
+        id: "collaboration_mode",
+        name: "Collaboration mode",
+        description: null,
+        category: "other",
+        currentValue: "default",
+        options: [
+          { value: "default", name: "Default", description: null },
+          { value: "plan", name: "Plan", description: "Plans before it acts" },
+        ],
+      },
+      {
+        id: "fast_mode",
+        name: "Fast mode",
+        description: null,
+        category: "other",
+        currentValue: "off",
+        options: [
+          { value: "off", name: "Off", description: null },
+          { value: "on", name: "On", description: null },
+        ],
+      },
+    ];
+  }
+
+  controlsTest(
+    "the agent popover shows a row of each setting with its value and opens its values on a screen of their own",
+    async () => {
+      snapshotFor = (session) => ({
+        ...snapshot(session),
+        settings: richSettings(),
+      });
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scope={null} />,
+      );
+      await click(agentButton());
+      // The main screen: rows with values, no lists or segments.
+      expect(rowValue(m.sessions_chat_model())).toBe("Model 4");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("HIGH");
+      expect(rowValue("Collaboration mode")).toBe("Default");
+      expect(rowValue("Fast mode")).toBe("Off");
+      expect(popover()?.querySelector('[data-slot="command-item"]')).toBeNull();
+      expect(
+        popover()?.querySelector('[data-slot="toggle-group-item"]'),
+      ).toBeNull();
+      // The permission mode stays under the field.
+      expect(settingRow("Mode")).toBe(undefined);
+
+      await click(settingRow(m.sessions_chat_model()));
+      const search = popover()?.querySelector<HTMLInputElement>(
+        `input[aria-label="${m.sessions_chat_model_search()}"]`,
+      );
+      expect(document.activeElement === search).toBe(true);
+      const items = () =>
+        Array.from(
+          popover()?.querySelectorAll<HTMLElement>(
+            '[data-slot="command-item"]',
+          ) ?? [],
+        );
+      expect(items().length).toBe(6);
+      // The full description, not cut short.
+      const described = optionByText("Model 4")!;
+      const description = described.querySelector("span > span + span");
+      expect(description?.textContent).toBe(
+        "Latest workhorse model for coding and everyday reasoning across long sessions with tools",
+      );
+      expect(description?.className.includes("truncate")).toBe(false);
+      // One check, on the confirmed value, where the highlight starts.
+      expect(
+        items()
+          .filter((item) => item.dataset.checked === "true")
+          .map((item) => item.dataset.value),
+      ).toEqual(["m4"]);
+      expect(
+        items()
+          .filter((item) => item.dataset.selected === "true")
+          .map((item) => item.dataset.value),
+      ).toEqual(["m4"]);
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          "value",
+        )!.set!;
+        setter.call(search, "number 6");
+        search!.dispatchEvent(new window.Event("input", { bubbles: true }));
+      });
+      await settle();
+      expect(items().map((item) => item.dataset.value)).toEqual(["m6"]);
+
+      // Choosing a value changes it once and returns to the main screen,
+      // with focus on the row.
+      await click(optionByText("Model 6"));
+      expect(
+        calls
+          .filter((call) => call.command === "agent_runtime_set_setting")
+          .map((call) => call.payload.value),
+      ).toEqual([{ setting: "model", value: "m6" }]);
+      expect(Boolean(settingRow(m.sessions_chat_reasoning_level()))).toBe(true);
+      expect(
+        document.activeElement === settingRow(m.sessions_chat_model()),
+      ).toBe(true);
+      await deliver("s1", {
+        change: "settings",
+        value: richSettings({ model: "m6" }),
+      });
+      expect(rowValue(m.sessions_chat_model())).toBe("Model 6");
+
+      // The confirmed value sends nothing.
+      calls.length = 0;
+      await chooseValue(m.sessions_chat_model(), "Model 6");
+      expect(lastCall("agent_runtime_set_setting")).toBe(undefined);
+      expect(Boolean(settingRow(m.sessions_chat_reasoning_level()))).toBe(true);
+
+      // Reasoning of six levels: no search, the list takes the keys.
+      await click(settingRow(m.sessions_chat_reasoning_level()));
+      expect(
+        popover()?.querySelector(
+          `input[aria-label="${m.sessions_chat_model_search()}"]`,
+        ),
+      ).toBeNull();
+      expect(items().length).toBe(6);
+      expect(document.activeElement?.hasAttribute("cmdk-root")).toBe(true);
+      await pressKey(document.activeElement, "ArrowDown");
+      expect(
+        items()
+          .filter((item) => item.dataset.selected === "true")
+          .map((item) => item.dataset.value),
+      ).toEqual(["xhigh"]);
+      await pressKey(document.activeElement, "Enter");
+      expect(lastCall("agent_runtime_set_setting")?.value).toEqual({
+        setting: "reasoning_effort",
+        value: "xhigh",
+      });
+
+      // A two-valued setting is a row and a screen too; back returns.
+      await click(settingRow("Fast mode"));
+      expect(items().map((item) => item.textContent)).toEqual(["Off", "On"]);
+      await click(
+        Array.from(popover()?.querySelectorAll("button") ?? []).find(
+          (button) => button.textContent === "Back",
+        ),
+      );
+      expect(document.activeElement === settingRow("Fast mode")).toBe(true);
+    },
+  );
+
+  controlsTest(
+    "a draft's agents are tabs: arrows move between them and Enter chooses one",
+    async () => {
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude", name: "Claude Code" },
+      ];
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      await click(agentButton());
+      const tabs = () =>
+        Array.from(
+          popover()?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+        );
+      expect(tabs().map((tab) => tab.getAttribute("aria-label"))).toEqual([
+        "Codex",
+        "Claude Code",
+      ]);
+      expect(tabs().map((tab) => tab.getAttribute("aria-selected"))).toEqual([
+        "true",
+        "false",
+      ]);
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-5.6 Luna");
+      expect(
+        popover()?.textContent?.includes(m.sessions_chat_agent_settings()),
+      ).toBe(true);
+      calls.length = 0;
+      await act(async () => tabs()[0].focus());
+      await pressKey(tabs()[0], "ArrowRight");
+      expect(document.activeElement === tabs()[1]).toBe(true);
+      expect(tabs()[1].getAttribute("aria-selected")).toBe("false");
+      expect(lastCall("agent_runtime_hold_draft")).toBe(undefined);
+      await pressKey(tabs()[1], "Enter");
+      expect(tabs()[1].getAttribute("aria-selected")).toBe("true");
+      expect(lastCall("agent_runtime_hold_draft")?.agent).toBe("claude");
+    },
+  );
+
+  controlsTest(
+    "while the agent starts its rows are a skeleton, and an agent that needs a sign-in shows its recovery",
+    async () => {
+      let ready: (value: unknown) => void = () => undefined;
+      holdAnswer = () => new Promise((resolve) => (ready = resolve));
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      await click(agentButton());
+      expect(popover()?.querySelector('[aria-busy="true"]') === null).toBe(
+        false,
+      );
+      expect(settingRow(m.sessions_chat_model())).toBe(undefined);
+      await act(async () =>
+        ready({
+          hold: 5,
+          check: { state: "auth_required", methods: [] },
+          session: null,
+        }),
+      );
+      await settle();
+      expect(
+        popover()?.textContent?.includes(m.settings_agents_state_sign_in()),
+      ).toBe(true);
+      const actions = Array.from(
+        popover()?.querySelectorAll("button") ?? [],
+      ).map((button) => button.textContent);
+      expect(actions.includes(m.settings_agents_action_sign_in())).toBe(true);
+      expect(actions.includes(m.sessions_chat_agent_open_settings())).toBe(
+        true,
+      );
+      expect(settingRow(m.sessions_chat_model())).toBe(undefined);
+    },
+  );
+
   /** The emoji or icon class next to a Space name under the composer. */
   function scopeMarkIcon(root: ParentNode, name: string) {
     const label = Array.from(root.querySelectorAll("span.truncate")).find(
@@ -1303,18 +1604,42 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     );
   }
 
-  function section(label: string) {
-    return Array.from(document.querySelectorAll("section")).find(
-      (element) => element.getAttribute("aria-label") === label,
+  function popover() {
+    return document.querySelector<HTMLElement>('[data-slot="popover-content"]');
+  }
+
+  /** The row of a setting on the main screen of the agent popover. */
+  function settingRow(label: string) {
+    return Array.from(
+      popover()?.querySelectorAll<HTMLElement>("button, div") ?? [],
+    ).find(
+      (element) =>
+        element.querySelector(":scope > span.flex-1")?.textContent === label,
     );
   }
 
+  function rowValue(label: string) {
+    return (
+      settingRow(label)?.querySelector(":scope > span.shrink-0")?.textContent ??
+      null
+    );
+  }
+
+  /** Opens the screen of a setting and chooses a value there. */
+  async function chooseValue(label: string, option: string) {
+    await click(settingRow(label));
+    await click(optionByText(option));
+  }
+
+  /** A value on a setting's screen by its name. */
   function optionByText(text: string) {
     return Array.from(
-      document.querySelectorAll(
-        '[data-slot="command-item"], [data-slot="toggle-group-item"]',
-      ),
-    ).find((element) => element.textContent?.trim() === text);
+      document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'),
+    ).find(
+      (element) =>
+        element.querySelector("span > span")?.textContent === text ||
+        element.textContent?.trim() === text,
+    );
   }
 
   function buttonByLabel(label: string) {
