@@ -265,6 +265,12 @@ const fixtures = {
   },
 };
 
+/**
+ * The file Git 2.55.0 writes for the same merge of CRLF files, or in a
+ * working copy with `core.autocrlf=true`: every line ends in CRLF.
+ */
+const crlf = (source: string) => source.replaceAll("\n", "\r\n");
+
 function conflictSides(value: Descendant[]) {
   return value
     .filter((node) => (node as { type?: string }).type === "conflict")
@@ -278,8 +284,13 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
   const { createPlateEditor } = await import("platejs/react");
   const { EditorKit } = await import("../plate/editor-kit");
   const { deserializeWithConflicts } = await import("./parse-conflicts");
+  const { DEFAULT_CONFLICT_MARKER_SIZE } = await import("./conflict-markers");
   const load = (source: string) =>
-    deserializeWithConflicts(createPlateEditor({ plugins: EditorKit }), source);
+    deserializeWithConflicts(
+      createPlateEditor({ plugins: EditorKit }),
+      source,
+      DEFAULT_CONFLICT_MARKER_SIZE,
+    );
 
   const expectedSides = {
     oneLine: [{ ours: "Status: local edit", theirs: "Status: remote edit" }],
@@ -316,6 +327,23 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     ]);
   });
 
+  test("CRLF conflicts give the sides of LF conflicts without `\\r` at their edges", () => {
+    for (const styles of Object.values(fixtures)) {
+      for (const source of Object.values(styles)) {
+        const sides = conflictSides(load(crlf(source)));
+        expect(sides.length > 0).toBe(true);
+        expect(
+          sides.map(({ ours, theirs }) => ({
+            ours: ours.replaceAll("\r\n", "\n"),
+            theirs: theirs.replaceAll("\r\n", "\n"),
+          })),
+        ).toEqual(conflictSides(load(source)));
+        for (const side of sides.flatMap(({ ours, theirs }) => [ours, theirs]))
+          expect(/^\r|\r$/.test(side)).toBe(false);
+      }
+    }
+  });
+
   test("conflict choice in an isolated DOM process", () => {
     const child = spawnSync(
       process.execPath,
@@ -329,7 +357,7 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  test("choosing a side of a zdiff3 conflict writes only that side to Markdown", async () => {
+  test("choosing a side of a zdiff3 conflict in LF and CRLF writes only that side to Markdown", async () => {
     const { createTestDom } = await import("@/shared/testing/dom");
     const dom = await createTestDom();
     // Plate's selection and DOM plugins need these beyond the shared set.
@@ -359,19 +387,27 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     const { EditorKit } = await import("../plate/editor-kit");
     const { deserializeWithConflicts, hasUnresolvedConflicts } =
       await import("./parse-conflicts");
+    const { DEFAULT_CONFLICT_MARKER_SIZE } = await import("./conflict-markers");
     try {
-      for (const [index, side] of ["local", "remote"].entries()) {
+      for (const [index, side, source] of [
+        [0, "local", fixtures.oneLine.zdiff3],
+        [1, "remote", fixtures.oneLine.zdiff3],
+        [0, "local", crlf(fixtures.oneLine.zdiff3)],
+        [1, "remote", crlf(fixtures.oneLine.zdiff3)],
+      ] as const) {
         const editor = createPlateEditor({
           plugins: EditorKit,
           value: (instance) =>
             deserializeWithConflicts(
               instance,
-              fixtures.oneLine.zdiff3,
+              source,
+              DEFAULT_CONFLICT_MARKER_SIZE,
             ) as Value,
         });
+        expect(hasUnresolvedConflicts(editor.children)).toBe(true);
         await dom.render(
           <TooltipProvider>
-            <Plate key={side} editor={editor}>
+            <Plate key={`${side}-${source.length}`} editor={editor}>
               <PlateContent />
             </Plate>
           </TooltipProvider>,

@@ -63,7 +63,7 @@ function harness({
       if (state.readFails) throw new Error("unreadable");
       return state.disk;
     },
-    loadSource: (_path, loaded) => {
+    loadSource: async (_path, loaded) => {
       state.loaded.push(loaded);
       state.baseline = {
         version: loaded.source_version!,

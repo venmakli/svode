@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { act, useEffect } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
-import { NodeApi, type Descendant } from "platejs";
+import { NodeApi, type Descendant, type TElement } from "platejs";
 import { createPlateEditor, type PlateEditor } from "platejs/react";
 import type { Page, PageSourceConflict } from "@/features/page";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { createTestDom } from "@/shared/testing/dom";
+import type { ConflictElement } from "../conflict/parse-conflicts";
+import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
 import { EditorKit } from "../plate/editor-kit";
 import { useEditorDocumentWriter } from "./use-editor-document-writer";
@@ -26,10 +28,11 @@ function page(path: string, body: string, version: string): Page {
   };
 }
 
-async function harness(path: string, body: string) {
+async function harness(path: string, body: string, markerSize = 7) {
   const dom = await createTestDom();
   const disk = { body, version: "v1" };
   const writes: WriteCall[] = [];
+  const markerSizeReads: string[] = [];
   const conflicts: (PageSourceConflict | null)[] = [];
   let reads = 0;
   mockNativeIpc((command, args) => {
@@ -50,6 +53,10 @@ async function harness(path: string, body: string) {
       return { write_nonce: `n${writes.length}`, source_version: disk.version };
     }
     if (command === "git_status") return { files: [] };
+    if (command === "git_conflict_marker_size") {
+      markerSizeReads.push(input.path);
+      return markerSize;
+    }
     return null;
   });
 
@@ -110,6 +117,7 @@ async function harness(path: string, body: string) {
     writes,
     conflicts,
     disk,
+    markerSizeReads,
     reads: () => reads,
     /** Marks the edited value as a draft whose autosave is not due yet. */
     holdDraft: () => {
@@ -257,6 +265,61 @@ test("a draft written over a changed source keeps the leading blank lines it was
       },
     ]);
     expect(view.conflicts.at(-1)).toBeNull();
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a reloaded CRLF source parses blocks with the marker size of its path and blocks the save until a side is chosen", async () => {
+  const path = "pages/crlf-conflict.md";
+  const view = await harness(path, "Plain\r\n\r\nText\r\n", 10);
+  try {
+    // A body without a line opening a block does not ask Git.
+    expect(view.markerSizeReads).toEqual([]);
+
+    view.disk.body = [
+      "# Plan",
+      "",
+      "<<<<<<<<<< HEAD",
+      "Status: local edit",
+      "=======",
+      "|||||||||| base",
+      "Status: draft",
+      "==========",
+      "Status: remote edit",
+      ">>>>>>>>>> other",
+      "",
+      "Footer",
+      "",
+    ].join("\r\n");
+    view.disk.version = "v-merge";
+    await view.reconcile();
+    expect(view.markerSizeReads).toEqual([path]);
+    const index = view.editor.children.findIndex(
+      (node) => (node as TElement).type === "conflict",
+    );
+    const conflict = view.editor.children[index] as unknown as ConflictElement;
+    expect([conflict.ours, conflict.theirs]).toEqual([
+      "Status: local edit\r\n=======",
+      "Status: remote edit",
+    ]);
+
+    await view.save();
+    expect(view.writes).toEqual([]);
+
+    // Accepting "theirs" the way the conflict block does.
+    view.editor.tf.removeNodes({ at: [index] });
+    view.editor.tf.insertNodes(
+      deserializeEditorMarkdownInsertion(
+        view.editor,
+        conflict.theirs.trim() + "\n",
+      ) as never,
+      { at: [index] },
+    );
+    await view.save();
+    expect(view.writes.map((write) => write.content)).toEqual([
+      "# Plan\n\nStatus: remote edit\n\nFooter\n",
+    ]);
   } finally {
     await view.cleanup();
   }

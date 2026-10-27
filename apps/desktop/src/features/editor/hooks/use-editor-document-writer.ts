@@ -27,6 +27,7 @@ import {
   type GitSaveScopeTreeNode,
 } from "@/features/git/editor";
 
+import { readConflictMarkerSize } from "../api/conflict-marker-api";
 import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,
@@ -218,12 +219,17 @@ export function useEditorDocumentWriter({
   );
 
   const loadSource = useCallback(
-    (path: string, page: Page) => {
+    async (path: string, page: Page) => {
       if (!editor) return;
+      const markerSize = await readConflictMarkerSize(
+        spacePath,
+        path,
+        page.body,
+      );
       isLoadingRef.current = true;
       try {
         const loadedValue = loadEditorValue(
-          deserializeWithConflicts(editor, page.body),
+          deserializeWithConflicts(editor, page.body, markerSize),
         );
         setCachedDocumentValue(spacePath, path, loadedValue);
         if (page.source_version) {
@@ -422,7 +428,7 @@ export function useEditorDocumentWriter({
     await sourceWriteChainRef.current;
     const path = currentPathRef.current;
     if (path && editor && spacePath)
-      loadSource(path, await readPage({ spacePath, path }));
+      await loadSource(path, await readPage({ spacePath, path }));
     // Closes an open source conflict: its draft is what is discarded.
     sourceSync.dispose();
     autoSavePausedRef.current = false;

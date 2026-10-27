@@ -17,7 +17,7 @@ export interface SourceSyncHost {
   /** A fresh read of the source with its version. */
   readSource(path: string): Promise<Page>;
   /** Replaces the editor value and baseline with the source. */
-  loadSource(path: string, page: Page): void;
+  loadSource(path: string, page: Page): Promise<void>;
   /** Adopts the metadata of a source whose body is still the edited baseline. */
   adoptMetadata(page: Page): void;
   /** Writes the current editor text as the body, from `sourceVersion`. */
@@ -141,7 +141,8 @@ export function createSourceSync(host: SourceSyncHost) {
     try {
       const page = await host.readSource(conflict.path);
       if (open !== conflict) return;
-      host.loadSource(conflict.path, page);
+      await host.loadSource(conflict.path, page);
+      if (open !== conflict) return;
       close("loaded");
     } catch {
       if (open !== conflict) return;
@@ -179,7 +180,7 @@ export function createSourceSync(host: SourceSyncHost) {
     if (reason === "external") {
       if (version && baseline?.version === version) return "current";
       if (!host.hasDraft(path)) {
-        host.loadSource(path, page);
+        await host.loadSource(path, page);
         return "reloaded";
       }
     }

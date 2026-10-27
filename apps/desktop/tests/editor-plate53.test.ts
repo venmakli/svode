@@ -7,13 +7,17 @@ import { createPlateEditor } from "platejs/react";
 import { EditorKit } from "../src/features/editor/plate/editor-kit";
 import { PageLinkElement } from "../src/features/editor/ui/page-link-element";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
+import { DEFAULT_CONFLICT_MARKER_SIZE } from "../src/features/editor/conflict/conflict-markers";
 import { deserializeEditorMarkdownInsertion } from "../src/features/editor/model/markdown-io";
 import { loadProgrammaticEditorValue } from "../src/features/editor/model/programmatic-editor-load";
 import { insertBlock, setBlockType } from "../src/components/editor/transforms";
 
 function editorFor(source = "") {
   const editor = createPlateEditor({ plugins: EditorKit });
-  loadProgrammaticEditorValue(editor, deserializeWithConflicts(editor, source));
+  loadProgrammaticEditorValue(
+    editor,
+    deserializeWithConflicts(editor, source, DEFAULT_CONFLICT_MARKER_SIZE),
+  );
   return editor;
 }
 function serialize(editor: ReturnType<typeof editorFor>) {
@@ -65,7 +69,7 @@ for (const cell of cells) {
       expect(saved).toContain("tail edited");
       loadProgrammaticEditorValue(
         editor,
-        deserializeWithConflicts(editor, saved),
+        deserializeWithConflicts(editor, saved, DEFAULT_CONFLICT_MARKER_SIZE),
       );
       expect(editor.operations).toEqual([]);
       expect(editor.history.undos).toEqual([]);
@@ -162,7 +166,10 @@ test("product image caption edits preserve title and portable URL over reopen", 
       '![Авторская подпись](./assets/picture.png "Explicit title")\n',
     ),
   ).toBe(true);
-  loadProgrammaticEditorValue(editor, deserializeWithConflicts(editor, saved));
+  loadProgrammaticEditorValue(
+    editor,
+    deserializeWithConflicts(editor, saved, DEFAULT_CONFLICT_MARKER_SIZE),
+  );
   expect(editor.children[0].url).toBe("./assets/picture.png");
   expect(editor.children[0].title).toBe("Explicit title");
   expect(editor.children[0].caption).toEqual([{ text: "Авторская подпись" }]);
@@ -220,7 +227,7 @@ test("eight table links and eight outside links survive the shared acceptance fi
     const saved = serialize(editor);
     loadProgrammaticEditorValue(
       editor,
-      deserializeWithConflicts(editor, saved),
+      deserializeWithConflicts(editor, saved, DEFAULT_CONFLICT_MARKER_SIZE),
     );
     editor.tf.normalize({ force: true });
     expect(links(editor)).toEqual(expected);
@@ -235,7 +242,11 @@ test("product reload clears previous operations, marks, selection and undo histo
   expect(editor.history.undos.length).toBeGreaterThan(0);
   loadProgrammaticEditorValue(
     editor,
-    deserializeWithConflicts(editor, "fresh document"),
+    deserializeWithConflicts(
+      editor,
+      "fresh document",
+      DEFAULT_CONFLICT_MARKER_SIZE,
+    ),
   );
   expect(editor.operations).toEqual([]);
   expect(editor.history.undos).toEqual([]);

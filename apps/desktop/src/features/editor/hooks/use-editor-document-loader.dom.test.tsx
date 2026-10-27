@@ -7,6 +7,7 @@ import { createPlateEditor } from "platejs/react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import type { Page } from "@/features/page";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
+import type { ConflictElement } from "../conflict/parse-conflicts";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
 import { useEditorDocumentLoader } from "./use-editor-document-loader";
 import { useEditorLinkValidation } from "./use-editor-link-validation";
@@ -38,7 +39,7 @@ function textOf(nodes: Descendant[]): string {
     .join("");
 }
 
-async function harness(disk: Map<string, Page>) {
+async function harness(disk: Map<string, Page>, markerSize = 7) {
   const dom = new JSDOM("<!doctype html><div id=app></div>", {
     url: "http://localhost/",
   });
@@ -48,8 +49,13 @@ async function harness(disk: Map<string, Page>) {
   const reads: string[] = [];
   const validations: string[] = [];
   const heldReads = new Map<string, () => void>();
+  const markerSizeReads: string[] = [];
   mockNativeIpc(async (command, args) => {
     const path = String((args as { path: string }).path);
+    if (command === "git_conflict_marker_size") {
+      markerSizeReads.push(path);
+      return markerSize;
+    }
     if (command === "validate_links") {
       validations.push(path);
       return [
@@ -148,6 +154,14 @@ async function harness(disk: Map<string, Page>) {
 
   return {
     reads,
+    markerSizeReads,
+    conflicts: () =>
+      (editor.children as Descendant[])
+        .filter((node) => (node as { type?: string }).type === "conflict")
+        .map((node) => {
+          const { ours, theirs } = node as unknown as ConflictElement;
+          return { ours, theirs };
+        }),
     loading,
     validations,
     keys,
@@ -350,6 +364,67 @@ test("without a provided Page the reopened document compares the read version", 
     expect(await view.open(path, null)).toBe("Script body");
     expect(view.reads).toEqual([path]);
     expectValidated(view, path);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("every load path parses conflict blocks with the marker size of the path", async () => {
+  const path = "notes/conflicted.md";
+  const other = "notes/other-conflicted.md";
+  const links = `[Gone](${BROKEN}) and [Kept](${WORKING})`;
+  const conflicted = (ours: string) =>
+    [
+      links,
+      "",
+      "<<<<<<<<<< HEAD",
+      ours,
+      "=======",
+      "==========",
+      "theirs",
+      ">>>>>>>>>> other",
+      "",
+    ].join("\r\n");
+  const first = page(path, conflicted("first"), "v1");
+  const plain = "notes/plain.md";
+  const disk = new Map([
+    [path, first],
+    [other, page(other, conflicted("other"), "v1")],
+    [plain, page(plain, `${links}\n\n> quote\n`, "v1")],
+  ]);
+  const view = await harness(disk, 10);
+  try {
+    // initial-page
+    await view.open(path, first);
+    expect(view.conflicts()).toEqual([
+      { ours: "first\r\n=======", theirs: "theirs" },
+    ]);
+    expect(view.markerSizeReads).toEqual([path]);
+    expectValidated(view, path);
+    await view.leave();
+
+    // cache-meta-read of a newer source version
+    disk.set(path, page(path, conflicted("second"), "v2"));
+    await view.open(path, null);
+    expect(view.reads).toEqual([path]);
+    expect(view.conflicts()).toEqual([
+      { ours: "second\r\n=======", theirs: "theirs" },
+    ]);
+    expect(view.markerSizeReads).toEqual([path, path]);
+    await view.leave();
+
+    // read-page
+    await view.open(other, null);
+    expect(view.conflicts()).toEqual([
+      { ours: "other\r\n=======", theirs: "theirs" },
+    ]);
+    expect(view.markerSizeReads).toEqual([path, path, other]);
+    await view.leave();
+
+    // Without a line opening a block Git is not asked.
+    await view.open(plain, null);
+    expect(view.conflicts()).toEqual([]);
+    expect(view.markerSizeReads).toEqual([path, path, other]);
   } finally {
     await view.cleanup();
   }

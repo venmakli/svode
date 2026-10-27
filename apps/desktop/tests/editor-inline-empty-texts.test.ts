@@ -4,13 +4,17 @@ import { NodeApi, type TElement } from "platejs";
 import { createPlateEditor } from "platejs/react";
 import { EditorKit } from "../src/features/editor/plate/editor-kit";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
+import { DEFAULT_CONFLICT_MARKER_SIZE } from "../src/features/editor/conflict/conflict-markers";
 import { loadProgrammaticEditorValue } from "../src/features/editor/model/programmatic-editor-load";
 
 const ZWSP = "\u200b";
 
 function editorFor(source: string) {
   const editor = createPlateEditor({ plugins: EditorKit });
-  loadProgrammaticEditorValue(editor, deserializeWithConflicts(editor, source));
+  loadProgrammaticEditorValue(
+    editor,
+    deserializeWithConflicts(editor, source, DEFAULT_CONFLICT_MARKER_SIZE),
+  );
   return editor;
 }
 function serialize(editor: ReturnType<typeof editorFor>) {

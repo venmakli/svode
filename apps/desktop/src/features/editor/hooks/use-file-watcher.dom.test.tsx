@@ -89,7 +89,7 @@ test("a creation of the open document's path reconciles it like a change", async
       state.reads += 1;
       return state.disk;
     },
-    loadSource: (_path, page) => {
+    loadSource: async (_path, page) => {
       state.shown = page.body;
       state.baseline = { version: page.source_version!, body: page.body };
     },

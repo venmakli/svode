@@ -3,6 +3,7 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import { NodeApi, type TElement } from "platejs";
 import { createPlateEditor } from "platejs/react";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
+import { DEFAULT_CONFLICT_MARKER_SIZE } from "../src/features/editor/conflict/conflict-markers";
 import { pageLinkPath } from "../src/features/editor/lib/page-link-utils";
 import { loadProgrammaticEditorValue } from "../src/features/editor/model/programmatic-editor-load";
 import { EditorKit } from "../src/features/editor/plate/editor-kit";
@@ -11,7 +12,10 @@ type Editor = ReturnType<typeof createPlateEditor>;
 
 function editorFor(source: string): Editor {
   const editor = createPlateEditor({ plugins: EditorKit });
-  loadProgrammaticEditorValue(editor, deserializeWithConflicts(editor, source));
+  loadProgrammaticEditorValue(
+    editor,
+    deserializeWithConflicts(editor, source, DEFAULT_CONFLICT_MARKER_SIZE),
+  );
   return editor;
 }
 

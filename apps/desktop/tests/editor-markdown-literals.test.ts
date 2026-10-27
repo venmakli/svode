@@ -5,6 +5,7 @@ import { createPlateEditor } from "platejs/react";
 import { deserializeImportedMarkdown } from "../src/components/ui/import-toolbar-button";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
 import type { ConflictElement } from "../src/features/editor/conflict/parse-conflicts";
+import { DEFAULT_CONFLICT_MARKER_SIZE } from "../src/features/editor/conflict/conflict-markers";
 import {
   MARKDOWN_COMMENT_KEY,
   MARKDOWN_INLINE_COMMENT_KEY,
@@ -23,7 +24,10 @@ type Editor = ReturnType<typeof createPlateEditor>;
 
 function editorFor(source = ""): Editor {
   const editor = createPlateEditor({ plugins: EditorKit });
-  loadProgrammaticEditorValue(editor, deserializeWithConflicts(editor, source));
+  loadProgrammaticEditorValue(
+    editor,
+    deserializeWithConflicts(editor, source, DEFAULT_CONFLICT_MARKER_SIZE),
+  );
   return editor;
 }
 
@@ -135,7 +139,7 @@ test("R4 Page load and watcher reload keep code and escaped text", () => {
   const editor = editorFor("Old text\n");
   loadProgrammaticEditorValue(
     editor,
-    deserializeWithConflicts(editor, pathSource),
+    deserializeWithConflicts(editor, pathSource, DEFAULT_CONFLICT_MARKER_SIZE),
   );
   expect(save(editor)).toBe(pathSource);
 });

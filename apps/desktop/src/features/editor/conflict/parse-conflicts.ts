@@ -1,6 +1,7 @@
 import type { Descendant, TElement } from "platejs";
 import type { PlateEditor } from "platejs/react";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
+import { findConflictBlocks } from "./conflict-markers";
 
 /**
  * A conflict element in the Plate tree.
@@ -16,26 +17,17 @@ export interface ConflictElement extends TElement {
   children: [{ text: "" }];
 }
 
-// Matches a full conflict region. The `\n?` before `=======`/`>>>>>>>`
-// allows empty "ours" / "theirs" sections (one side deleted the whole block),
-// which git still writes as `<<<<<<<\n=======\n...` or `...\n=======\n>>>>>>>`.
-// The optional non-capturing group skips the base section that the `diff3` and
-// `zdiff3` conflict styles write between "ours" and `=======`, starting at a
-// line-leading `|||||||` marker, so neither side picks it up.
-const CONFLICT_RE =
-  /<{7} [^\n]*\n([\s\S]*?)\n?(?:(?<=\n)\|{7}(?: [^\n]*)?\n[\s\S]*?\n?)?={7}\n([\s\S]*?)\n?>{7} [^\n]*(\n|$)/g;
-
 /**
- * Split raw markdown on git conflict markers and deserialize each non-conflict
- * segment via the Plate Markdown plugin. Conflict segments become custom
- * `conflict` elements with `ours` / `theirs` stored as raw markdown strings.
+ * Split raw markdown on the Git conflict blocks of markers of `markerSize` and
+ * deserialize each non-conflict segment via the Plate Markdown plugin.
+ * Conflict blocks become custom `conflict` elements with `ours` / `theirs`
+ * stored as raw markdown strings. Text keeps its line endings.
  */
 export function deserializeWithConflicts(
   editor: PlateEditor,
   body: string,
+  markerSize: number,
 ): Descendant[] {
-  CONFLICT_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
   let cursor = 0;
   const result: Descendant[] = [];
 
@@ -44,17 +36,16 @@ export function deserializeWithConflicts(
     result.push(...deserializeEditorMarkdownSegment(editor, segment));
   };
 
-  while ((match = CONFLICT_RE.exec(body)) !== null) {
-    const before = body.slice(cursor, match.index);
-    deserializeSegment(before);
+  for (const block of findConflictBlocks(body, markerSize)) {
+    deserializeSegment(body.slice(cursor, block.start));
     const conflict: ConflictElement = {
       type: "conflict",
-      ours: match[1],
-      theirs: match[2],
+      ours: block.ours,
+      theirs: block.theirs,
       children: [{ text: "" }],
     };
     result.push(conflict as unknown as Descendant);
-    cursor = match.index + match[0].length;
+    cursor = block.end;
   }
 
   deserializeSegment(body.slice(cursor));

@@ -14,6 +14,7 @@ import { MediaKit } from "../src/components/editor/plugins/media-kit";
 import { TableKit } from "../src/components/editor/plugins/table-kit";
 import { deserializeImportedMarkdown } from "../src/components/ui/import-toolbar-button";
 import { deserializeWithConflicts } from "../src/features/editor/conflict/parse-conflicts";
+import { DEFAULT_CONFLICT_MARKER_SIZE } from "../src/features/editor/conflict/conflict-markers";
 import { loadProgrammaticEditorValue } from "../src/features/editor/model/programmatic-editor-load";
 import {
   deserializeEditorMarkdownInsertion,
@@ -95,7 +96,7 @@ test("table inline links survive programmatic normalization and two round trips"
   for (let round = 0; round < 3; round += 1) {
     loadProgrammaticEditorValue(
       editor,
-      deserializeWithConflicts(editor, source),
+      deserializeWithConflicts(editor, source, DEFAULT_CONFLICT_MARKER_SIZE),
     );
     editor.tf.normalize({ force: true });
     expect(JSON.stringify(editor.children)).toContain('"url":"page.md"');
@@ -171,7 +172,11 @@ function validateStructure(nodes: Descendant[]) {
 
 test("document load markdown boundary keeps GFM tables with bare br structurally valid", () => {
   const editor = createMarkdownEditor();
-  const value = deserializeWithConflicts(editor, fixtures.gfmTableBareBr);
+  const value = deserializeWithConflicts(
+    editor,
+    fixtures.gfmTableBareBr,
+    DEFAULT_CONFLICT_MARKER_SIZE,
+  );
   const result = validateStructure(value);
 
   expect(value.length).toBeGreaterThan(0);
@@ -181,7 +186,11 @@ test("document load markdown boundary keeps GFM tables with bare br structurally
 
 test("empty document load returns a paragraph-like block", () => {
   const editor = createMarkdownEditor();
-  const value = deserializeWithConflicts(editor, "");
+  const value = deserializeWithConflicts(
+    editor,
+    "",
+    DEFAULT_CONFLICT_MARKER_SIZE,
+  );
 
   expect(value).toEqual([{ type: "p", children: [{ text: "" }] }]);
 });
@@ -227,7 +236,11 @@ test("real-world markdown fixtures remain crash-free under structural validation
   ];
 
   for (const markdown of cases) {
-    const value = deserializeWithConflicts(editor, markdown);
+    const value = deserializeWithConflicts(
+      editor,
+      markdown,
+      DEFAULT_CONFLICT_MARKER_SIZE,
+    );
     expect(validateStructure(value).errors).toEqual([]);
   }
 });
@@ -242,7 +255,11 @@ test("read-time br normalization preserves code literals", () => {
 
 test("stable markdown serializer style uses hyphen bullets", () => {
   const editor = createMarkdownEditor();
-  const value = deserializeWithConflicts(editor, "* item\n* second\n");
+  const value = deserializeWithConflicts(
+    editor,
+    "* item\n* second\n",
+    DEFAULT_CONFLICT_MARKER_SIZE,
+  );
   editor.tf.setValue(value as never);
 
   expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
@@ -260,7 +277,7 @@ test("read-time normalization is pure and does not rewrite the source file", asy
     const source = await readFile(path, "utf8");
     expect(normalizeMarkdownForPlate(source)).toContain("<br />");
 
-    deserializeWithConflicts(editor, source);
+    deserializeWithConflicts(editor, source, DEFAULT_CONFLICT_MARKER_SIZE);
 
     expect(await readFile(path, "utf8")).toBe(fixtures.gfmTableBareBr);
   } finally {

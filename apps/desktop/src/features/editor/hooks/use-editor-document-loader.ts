@@ -7,6 +7,7 @@ import type { Page, PageMeta } from "@/features/page";
 import { readPage } from "@/features/page/page-api";
 import { logTiming, nowMs } from "@/shared/lib/performance";
 
+import { readConflictMarkerSize } from "../api/conflict-marker-api";
 import { deserializeWithConflicts } from "../conflict/parse-conflicts";
 import { useEditorStore } from "../model";
 import {
@@ -281,10 +282,10 @@ export function useEditorDocumentLoader({
       });
     };
 
-    const openSourcePage = (page: Page) => {
+    const openSourcePage = (page: Page, markerSize: number) => {
       applyLoadedPage(page);
       adoptPageBaseline(currentCacheKey, page);
-      const value = deserializeWithConflicts(editor, page.body);
+      const value = deserializeWithConflicts(editor, page.body, markerSize);
       const loadedValue = loadEditorValue(value);
       setCachedDocumentValue(spacePath, currentDocument, loadedValue);
       clearUnsaved(spacePath, currentDocument);
@@ -307,7 +308,13 @@ export function useEditorDocumentLoader({
           if (sequence !== loadSeqRef.current) return;
           if (page && page.source_version !== cachedBaseline.version) {
             source = "read-page";
-            openSourcePage(page);
+            const markerSize = await readConflictMarkerSize(
+              spacePath,
+              currentDocument,
+              page.body,
+            );
+            if (sequence !== loadSeqRef.current) return;
+            openSourcePage(page, markerSize);
             finish("ok", false, source);
             return;
           }
@@ -335,7 +342,13 @@ export function useEditorDocumentLoader({
             initialForDocument ??
             (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
-          openSourcePage(page);
+          const markerSize = await readConflictMarkerSize(
+            spacePath,
+            currentDocument,
+            page.body,
+          );
+          if (sequence !== loadSeqRef.current) return;
+          openSourcePage(page, markerSize);
           finish("ok", false, source);
         } catch (err) {
           if (sequence !== loadSeqRef.current) return;
