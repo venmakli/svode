@@ -115,6 +115,10 @@ export function useEditorDocumentLoader({
   const [loadedDocumentKey, setLoadedDocumentKey] = useState<string | null>(
     null,
   );
+  const [completedLoad, setCompletedLoad] = useState<{
+    key: string;
+    sequence: number;
+  } | null>(null);
 
   useEffect(() => {
     initialPageRef.current = initialPage;
@@ -268,7 +272,7 @@ export function useEditorDocumentLoader({
       if (sequence !== loadSeqRef.current) return;
       isLoadingRef.current = false;
       setDocumentLoading(false);
-      if (status === "ok") setLoadedDocumentKey(currentCacheKey);
+      if (status === "ok") setCompletedLoad({ key: currentCacheKey, sequence });
       logTiming("doc.open.editor", startedAt, {
         spaceId: currentDocumentSpaceId ?? null,
         cachedBody: usedCachedBody,
@@ -359,6 +363,21 @@ export function useEditorDocumentLoader({
     currentPathRef,
     isLoadingRef,
   ]);
+
+  // A completed load sets its key only after the reset of its run has
+  // rendered, so a load that completes synchronously from the cache still
+  // changes the key and starts link validation, even for the same document.
+  useEffect(() => {
+    if (!completedLoad || loadedDocumentKey !== null) return;
+    queueMicrotask(() => {
+      setCompletedLoad((current) =>
+        current === completedLoad ? null : current,
+      );
+      if (completedLoad.sequence === loadSeqRef.current) {
+        setLoadedDocumentKey(completedLoad.key);
+      }
+    });
+  }, [completedLoad, loadedDocumentKey]);
 
   useEffect(() => {
     bodyOnlyMetaRef.current = bodyOnlyMeta;
