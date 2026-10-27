@@ -69,8 +69,7 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
     }),
   });
 
-  let terminals = { count: 0, agentsBusy: false };
-  let closedSessions = 0;
+  const closedAll: unknown[] = [];
   let nowRows: unknown[] = [];
   const closedRows: unknown[] = [];
   mock.module("@/features/agent-sessions", () => ({
@@ -87,30 +86,12 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
         onClick={props.onClose}
       />
     ),
-    CloseSessionTerminalsDialog: (props: {
-      open: boolean;
-      count: number;
-      onConfirm: () => void;
-    }) =>
-      props.open ? (
-        <div data-confirm={props.count}>
-          <button type="button" onClick={props.onConfirm}>
-            confirm
-          </button>
-        </div>
-      ) : null,
     agentSessionNavigationKey: (session: { id: string }) => ({
       kind: "session",
       sessionId: session.id,
     }),
     agentSessionTargetFor: () => null,
     pinnableAgentSessionItem: () => null,
-    useSessionTerminals: () => ({
-      ...terminals,
-      closeAll: async () => {
-        closedSessions += 1;
-      },
-    }),
   }));
   mock.module("@/features/navigation", () => ({
     NavigationSidebarGroup: (props: {
@@ -146,36 +127,30 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
       closeActiveSession: async (row: unknown) => {
         closedRows.push(row);
       },
-      closeAll: async () => {},
+      closeAll: async (rows: unknown) => {
+        closedAll.push(rows);
+      },
     }),
   }));
 
   const { SidebarProvider } = await import("@/components/ui/sidebar");
+  const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { NowSidebarSection } = await import("./now-sidebar-section");
+  const m = await import("@/paraglide/messages.js");
   const root = createRoot(document.getElementById("app")!);
   const render = () =>
     act(async () =>
       root.render(
-        <SidebarProvider>
-          <NowSidebarSection
-            onActivateContent={() => {}}
-            onBeforeNavigation={async () => true}
-          />
-        </SidebarProvider>,
+        <TooltipProvider>
+          <SidebarProvider>
+            <NowSidebarSection
+              onActivateContent={() => {}}
+              onBeforeNavigation={async () => true}
+            />
+          </SidebarProvider>
+        </TooltipProvider>,
       ),
     );
-  const openMenu = async () => {
-    const trigger = document.querySelector<HTMLButtonElement>(
-      "[aria-label='Now actions']",
-    )!;
-    await act(async () =>
-      trigger.dispatchEvent(
-        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
-      ),
-    );
-    return [...document.querySelectorAll<HTMLElement>("[role=menuitem]")];
-  };
-
   test("an active session's row closes from Now and says it keeps working (DF-207 R1)", async () => {
     const row = {
       kind: "active",
@@ -194,34 +169,31 @@ if (process.env.SVODE_NOW_SECTION_DOM !== "1") {
     nowRows = [];
   });
 
-  test("without session terminals an empty Now is hidden", async () => {
+  test("an empty Now is hidden", async () => {
     await render();
     expect(document.querySelector("[data-group]")).toBeNull();
   });
 
-  test("open session terminals keep the Now menu and close without a confirm while agents rest", async () => {
-    terminals = { count: 2, agentsBusy: false };
+  test("Close all of the header closes every row at once, without a menu or a confirm (DF-207 R5)", async () => {
+    nowRows = [
+      {
+        kind: "active",
+        session: { id: "codex:w", title: "Work" },
+        kept: null,
+        main: false,
+      },
+    ];
     await render();
-    expect(document.querySelector("[data-group]") === null).toBe(false);
-    const [closeAll, closeSessions] = await openMenu();
-    expect(closeAll.getAttribute("aria-disabled")).toBe("true");
-    expect(closeSessions.textContent).toBe("Close sessions (2)");
-    expect(closeSessions.dataset.variant).toBe("destructive");
-    await act(async () => closeSessions.click());
-    expect(closedSessions).toBe(1);
-    expect(document.querySelector("[data-confirm]")).toBeNull();
-  });
-
-  test("a working or waiting agent needs a confirm naming the count", async () => {
-    terminals = { count: 3, agentsBusy: true };
+    const closeAll = document.querySelector<HTMLButtonElement>(
+      `[aria-label='${m.navigation_close_all_now()}']`,
+    )!;
+    expect(document.querySelector("[aria-haspopup]")).toBeNull();
+    await act(async () => closeAll.click());
+    expect(closedAll).toEqual([nowRows]);
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+    nowRows = [];
     await render();
-    const [, closeSessions] = await openMenu();
-    await act(async () => closeSessions.click());
-    expect(closedSessions).toBe(1);
-    const confirm = document.querySelector<HTMLElement>("[data-confirm]")!;
-    expect(confirm.dataset.confirm).toBe("3");
-    await act(async () => confirm.querySelector("button")!.click());
-    expect(closedSessions).toBe(2);
+    expect(document.querySelector("[data-group]")).toBeNull();
     root.unmount();
   });
 }

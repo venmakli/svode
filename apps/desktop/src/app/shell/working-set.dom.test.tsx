@@ -308,4 +308,63 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     expect(unkept.length).toBe(1);
     await act(async () => actionsRoot.unmount());
   });
+
+  test("Close all hides every active session and unkeeps every kept object after one guard (DF-207 R5)", async () => {
+    let actions: ReturnType<typeof useWorkingSetActions> | null = null;
+    function Actions() {
+      const current = useWorkingSetActions();
+      useEffect(() => {
+        actions = current;
+      });
+      return null;
+    }
+    const page = { key: { kind: "page", sessionId: "plan" }, title: "Plan" };
+    const workKey = { kind: "session", sessionId: "codex:w" };
+    const work = { id: "codex:w", title: "Work", source: "codex" };
+    const free = { id: "codex:f", title: "Free", source: "codex" };
+    const pinnedKey = { kind: "session", sessionId: "codex:p" };
+    pinned = [{ key: pinnedKey, title: "Pinned" }];
+    kept.length = 0;
+    kept.push(page, { key: workKey, title: "Work" });
+    const rows = [
+      { kind: "kept" as const, item: page },
+      {
+        kind: "active" as const,
+        session: work,
+        kept: { key: workKey, title: "Work" },
+        main: false,
+      },
+      { kind: "active" as const, session: free, kept: null, main: false },
+    ];
+    mainObject = { kind: "artifact", item: page };
+    shell = { mainSurface: "content", mainSessionDraft: null };
+    hidden.length = 0;
+    unkept.length = 0;
+    closes.content = 0;
+    const actionsRoot = createRoot(document.createElement("div"));
+    await act(async () => actionsRoot.render(<Actions />));
+
+    // The open kept page needs the guard; a cancelled one changes nothing.
+    closes.guard = "blocked";
+    await act(async () => actions!.closeAll(rows as never));
+    expect([closes.content, hidden.length, unkept.length]).toEqual([0, 0, 0]);
+
+    closes.guard = "ready";
+    await act(async () => actions!.closeAll(rows as never));
+    expect(closes.content).toBe(1);
+    expect(hidden).toEqual([
+      ["/project", { ids: ["codex:w"] }],
+      ["/project", { ids: ["codex:f"] }],
+    ]);
+    // Every kept object, and not the pinned session.
+    expect(unkept).toEqual([[page.key, workKey]]);
+
+    // Without an open row, nothing passes the guard.
+    mainObject = null;
+    await act(async () => actionsRoot.render(<Actions />));
+    await act(async () => actions!.closeAll(rows.slice(1) as never));
+    expect(closes.content).toBe(1);
+    pinned = [];
+    await act(async () => actionsRoot.unmount());
+  });
 }

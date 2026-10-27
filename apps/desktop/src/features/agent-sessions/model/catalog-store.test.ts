@@ -1,9 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  createAgentSessionCatalogStore,
-  sessionTerminalAgentsBusy,
-  sessionTerminalPtyIds,
-} from "./catalog-store";
+import { createAgentSessionCatalogStore } from "./catalog-store";
 import { agentSessionTerminalFollow } from "./terminal-follow";
 import type { AgentSessionScopeGroup } from "./types";
 import {
@@ -160,7 +156,7 @@ test("closing a recognized new-session terminal removes the session runtime", as
     "codex:started",
   ]);
   expect(state.sessions[0]?.runtime?.ptyId).toBe(undefined);
-  expect(sessionTerminalPtyIds(state).size).toBe(0);
+  expect(state.reentryResults).toEqual({});
 });
 
 test("a new-session terminal stays pending while its registration fails", async () => {
@@ -247,7 +243,9 @@ test("re-entry result and session terminal belong to the catalog, not a screen",
   expect(state.sessions[0]?.runtime?.ptyId).toBe("pty-resume-codex:history");
   expect(state.sessions[0]?.runtime?.live).toBe(true);
 
-  await store.getState().closeAllTerminals();
+  await store
+    .getState()
+    .closeTerminal("codex:history", "pty-resume-codex:history");
   expect(api.calls.includes("close:pty-resume-codex:history")).toBe(true);
   expect(store.getState().reentryResults).toEqual({});
   expect(store.getState().sessions[0]?.runtime?.ptyId).toBe(undefined);
@@ -374,54 +372,6 @@ test("loading a target reads a list that started after the request", async () =>
   ]);
 });
 
-test("session terminals count each PTY once and leave shell tabs out", async () => {
-  const api = fakeCatalogApi();
-  const history = listedSession({ id: "codex:history" });
-  // A terminal panel tab the read-model recognizes as an agent session.
-  const panelTab = listedSession({
-    id: "claude:panel",
-    runtime: { ptyId: "pty-panel", live: true },
-  });
-  api.listed = [history, panelTab];
-  const store = createAgentSessionCatalogStore(api);
-  store.getState().setProject("/project");
-  await store.getState().load();
-  await store.getState().reenter(history);
-  await store.getState().openNewSessionTerminal(rootScope, "New session");
-  await flushPromises();
-
-  expect([...sessionTerminalPtyIds(store.getState())].sort()).toEqual([
-    "pty-1",
-    "pty-panel",
-    "pty-resume-codex:history",
-  ]);
-  expect(sessionTerminalAgentsBusy(store.getState())).toBe(false);
-
-  api.listed = [
-    history,
-    {
-      ...panelTab,
-      status: {
-        state: "running",
-        source: "native_status_reader",
-        confidence: "approximate",
-      },
-    },
-  ];
-  await store.getState().load({ force: true });
-  expect(sessionTerminalAgentsBusy(store.getState())).toBe(true);
-
-  // A closed PTY is no longer reported as the runtime of its session.
-  api.listed = [history, { ...panelTab, runtime: undefined }];
-  await store.getState().closeAllTerminals();
-  expect(sessionTerminalPtyIds(store.getState()).size).toBe(0);
-  expect(api.calls.filter((call) => call.startsWith("close:")).sort()).toEqual([
-    "close:pty-1",
-    "close:pty-panel",
-    "close:pty-resume-codex:history",
-  ]);
-});
-
 test("a hot status that takes a terminal without naming its new session keeps it until the full list it starts", async () => {
   const api = fakeCatalogApi();
   const old = listedSession({ id: "claude:old", source: "claude" });
@@ -434,7 +384,9 @@ test("a hot status that takes a terminal without naming its new session keeps it
   store.subscribe((state, previous) => {
     const follow = agentSessionTerminalFollow(previous, state);
     if (follow) {
-      followed.push(follow({ sessionId: "claude:old", launchId: null })?.sessionId);
+      followed.push(
+        follow({ sessionId: "claude:old", launchId: null })?.sessionId,
+      );
     }
   });
 
@@ -457,7 +409,11 @@ test("a hot status that takes a terminal without naming its new session keeps it
 
   releaseList();
   await flushPromises();
-  expect(api.calls).toEqual(["list:/project", "hot:claude:old", "list:/project"]);
+  expect(api.calls).toEqual([
+    "list:/project",
+    "hot:claude:old",
+    "list:/project",
+  ]);
   expect(runtimeOf("claude:old")).toBe(undefined);
   expect(runtimeOf("claude:new")?.ptyId).toBe("pty-1");
   expect(followed).toEqual(["claude:new"]);
@@ -498,8 +454,6 @@ test("a re-entry terminal the read-model lists at another session leaves the res
     ["claude:history", undefined],
     ["claude:new", ptyId],
   ]);
-  expect([...sessionTerminalPtyIds(state)]).toEqual([ptyId]);
-  expect(sessionTerminalAgentsBusy(state)).toBe(true);
 });
 
 test("a live terminal a full list shows at no session stays with its last session until a list names the new one", async () => {
@@ -514,7 +468,9 @@ test("a live terminal a full list shows at no session stays with its last sessio
   store.subscribe((state, previous) => {
     const follow = agentSessionTerminalFollow(previous, state);
     if (follow) {
-      followed.push(follow({ sessionId: "claude:s1", launchId: null })?.sessionId);
+      followed.push(
+        follow({ sessionId: "claude:s1", launchId: null })?.sessionId,
+      );
     }
   });
   const runtimeOf = (id: string) =>

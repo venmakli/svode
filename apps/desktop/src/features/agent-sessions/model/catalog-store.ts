@@ -12,7 +12,6 @@ import {
   pendingSessionId,
   type PendingAgentSessionTerminal,
 } from "./pending";
-import { isAgentTurnActive } from "./status";
 import { resolveAgentSessionId, type AgentSessionTarget } from "./target";
 import { liveTerminalPtyId } from "./terminal-follow";
 import type { AgentSession, AgentSessionScopeGroup } from "./types";
@@ -104,7 +103,6 @@ export interface AgentSessionCatalogState {
     title: string,
   ) => Promise<string | null>;
   closeTerminal: (sessionId: string, ptyId: string) => Promise<void>;
-  closeAllTerminals: () => Promise<void>;
   /** Forgets a session terminal whose process has exited. */
   releaseTerminal: (ptyId: string) => void;
   observeSession: (sessionId: string) => () => void;
@@ -123,7 +121,6 @@ type CatalogData = Omit<
   | "reenter"
   | "openNewSessionTerminal"
   | "closeTerminal"
-  | "closeAllTerminals"
   | "releaseTerminal"
   | "observeSession"
   | "requestFastRefresh"
@@ -288,39 +285,6 @@ function withoutMovedReentryTerminals(
     }),
   );
   return moved ? kept : reentryResults;
-}
-
-/**
- * PTYs of the project's session terminals, each once: a session's terminal,
- * its re-entry, a pending new session and a terminal panel tab the catalog
- * recognizes as an agent session. Shell tabs are not among them.
- */
-export function sessionTerminalPtyIds(
-  state: Pick<AgentSessionCatalogState, "sessions" | "reentryResults">,
-): Set<string> {
-  const ptyIds = new Set<string>();
-  state.sessions.forEach((session) => {
-    if (session.runtime?.ptyId) ptyIds.add(session.runtime.ptyId);
-  });
-  Object.values(state.reentryResults).forEach((result) => {
-    if (result.ptyId) ptyIds.add(result.ptyId);
-  });
-  return ptyIds;
-}
-
-/**
- * Whether an agent works or waits for the user in one of the session
- * terminals, so closing them all interrupts it.
- */
-export function sessionTerminalAgentsBusy(
-  state: Pick<AgentSessionCatalogState, "sessions" | "reentryResults">,
-): boolean {
-  return state.sessions.some(
-    (session) =>
-      Boolean(
-        session.runtime?.ptyId ?? state.reentryResults[session.id]?.ptyId,
-      ) && isAgentTurnActive(session),
-  );
 }
 
 /**
@@ -703,37 +667,6 @@ export function createAgentSessionCatalogStore(
           ),
         });
         await load();
-      },
-
-      closeAllTerminals: async () => {
-        const ptyIds = sessionTerminalPtyIds(get());
-        if (ptyIds.size === 0) return;
-
-        const results = await Promise.allSettled(
-          Array.from(ptyIds, async (ptyId) => {
-            await api.closeTerminal(ptyId);
-            return ptyId;
-          }),
-        );
-        const closed = new Set(
-          results
-            .filter(
-              (result): result is PromiseFulfilledResult<string> =>
-                result.status === "fulfilled",
-            )
-            .map((result) => result.value),
-        );
-
-        if (closed.size > 0) {
-          forgetTerminals(closed);
-          await load();
-        }
-
-        const failed = results.find(
-          (result): result is PromiseRejectedResult =>
-            result.status === "rejected",
-        );
-        if (failed) throw failed.reason;
       },
 
       releaseTerminal: (ptyId) => {

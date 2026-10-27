@@ -8,20 +8,17 @@ export {
   useListedAgentSessions,
   useResolvedAgentSession,
   useSavedProjectSessions,
-  useSessionTerminals,
   useNewSessionTarget,
   useOpenNewSession,
   type AgentSessionSpace,
   type NewSessionOpening,
   type SavedProjectSessions,
-  type SessionTerminals,
 } from "./hooks";
 export {
   AgentSessionDraftMainSurface,
   AgentSessionMainSurface,
   AgentSessionNavigationItem,
   AgentSessionPeek,
-  CloseSessionTerminalsDialog,
   NewSessionSidebarItem,
   AgentSessionsSurface,
 } from "./ui";

@@ -27,7 +27,3 @@ export {
   type SavedProjectSessions,
 } from "./use-saved-project-sessions";
 export { useExternalTerminalApp } from "./use-external-terminal-app";
-export {
-  useSessionTerminals,
-  type SessionTerminals,
-} from "./use-session-terminals";

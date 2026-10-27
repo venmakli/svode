@@ -25,7 +25,12 @@ import {
 import { useSpace } from "@/features/space";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useMainAreaObject, type MainAreaObject } from "./main-area-object";
-import { isSessionKey, nowOrderRow, type NowActiveRow } from "./now-model";
+import {
+  isSessionKey,
+  nowOrderRow,
+  type NowActiveRow,
+  type NowRow,
+} from "./now-model";
 import { useShowProjectChat } from "./show-project-chat";
 import { useShellStore } from "./model";
 import { useShellView } from "./shell-view";
@@ -279,22 +284,34 @@ export function useWorkingSetActions() {
   );
 
   /**
-   * "Close all": the working set leaves Now and its open object closes;
-   * active sessions stay in Now as active.
+   * "Close all" of Now: every row leaves it as its close button does, after
+   * one guard of the main area when it shows one of them; pinned objects
+   * stay (DF-207 R5).
    */
   const closeAll = useCallback(
-    async (temporary: boolean) => {
-      const openKept =
-        object !== null &&
-        !isActiveSession(object.item.key) &&
-        getNavigationState().kept.some((item) => isMainObject(item.key));
-      if ((temporary || openKept) && !(await closeDisplay())) return;
+    async (rows: readonly NowRow[]) => {
+      const open = rows.some((row) => {
+        switch (row.kind) {
+          case "active":
+            return row.main;
+          case "kept":
+            return isMainObject(row.item.key);
+          case "temporary":
+            return true;
+        }
+      });
+      if (open && !(await closeDisplay())) return;
       const state = getNavigationState();
+      if (!state.projectPath) return;
+      for (const row of rows) {
+        if (row.kind === "active")
+          hideNowRow(state.projectPath, nowOrderRow(row));
+      }
       await state
         .unkeep(state.kept.map((item) => item.key))
         .catch(reportFailure);
     },
-    [closeDisplay, isActiveSession, isMainObject, object],
+    [closeDisplay, isMainObject],
   );
 
   return { closeMainAreaObject, closeItem, closeActiveSession, closeAll };
