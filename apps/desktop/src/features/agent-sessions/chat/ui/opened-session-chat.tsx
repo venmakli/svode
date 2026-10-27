@@ -22,6 +22,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useAgentSessionCatalog } from "../../hooks/use-agent-session-catalog";
+import type { ScopeMark } from "../../lib";
 import { signInAgent, type AgentSessionKeyDto } from "../api/chat";
 import type { ComposerFocusRequest } from "../hooks/use-composer-focus";
 import { useSessionOpening } from "../hooks/use-session-opening";
@@ -43,7 +44,7 @@ const CUSTOM_PREFIX = "custom-";
 export function OpenedSessionChat({
   sessionId,
   agent,
-  scopeLabel,
+  scope,
   canOpenInTerminal,
   focusRequest = null,
   onOpenInTerminal,
@@ -56,7 +57,7 @@ export function OpenedSessionChat({
   /** Catalogue id of the session. */
   sessionId: string;
   agent: string;
-  scopeLabel: string | null;
+  scope: ScopeMark | null;
   /** The agent continues the session in its terminal. */
   canOpenInTerminal: boolean;
   /** The opener asks for focus in the composer, as a row of the sidebar. */
@@ -101,7 +102,7 @@ export function OpenedSessionChat({
       <SessionChat
         sessionId={sessionId}
         session={state.session}
-        scopeLabel={scopeLabel}
+        scope={scope}
         epoch={state.epoch}
         focusRequest={focusRequest !== lapsed ? focusRequest : null}
         continuation={{

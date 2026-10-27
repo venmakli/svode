@@ -22,6 +22,7 @@ import {
 } from "../hooks/use-session-composer";
 import type { AttachOutcome, ContinueRefusal } from "../hooks/use-session-opening";
 import { takeEscape } from "@/shared/lib/escape-key";
+import type { ScopeMark } from "../../lib";
 import { isKeyTaken } from "../../lib/session-content";
 import { isDraftBlank } from "../model/attachments";
 import type { ChatSessionState } from "../model/interface";
@@ -32,6 +33,7 @@ import { ChatDropSurface } from "./chat-drop-surface";
 import { ChatTimeline } from "./chat-timeline";
 import { Composer } from "./composer";
 import { PendingCard } from "./pending-card";
+import { ScopeLabel } from "./scope-mark";
 import { ContextIndicator, ModeSelect, SettingRefusalLine } from "./session-controls";
 import * as m from "@/paraglide/messages.js";
 
@@ -61,7 +63,7 @@ export interface ChatContinuation {
 export function SessionChat({
   sessionId,
   session,
-  scopeLabel,
+  scope,
   epoch = 0,
   continuation,
   focusRequest = null,
@@ -72,7 +74,7 @@ export function SessionChat({
   sessionId: string;
   session: AgentSessionKeyDto;
   /** The Space the session works in; it does not change. */
-  scopeLabel: string | null;
+  scope: ScopeMark | null;
   /** A new value follows the session anew, as after it was attached again. */
   epoch?: number;
   /** Present for a session opened in the chat rather than created there. */
@@ -293,7 +295,7 @@ export function SessionChat({
           </div>
         )}
         <ComposerFooter>
-          {scopeLabel && <span className="truncate">{scopeLabel}</span>}
+          {scope && <ScopeLabel mark={scope} />}
           <div className="ms-auto flex min-w-0 items-center gap-1">
             {mode && (
               <ModeSelect

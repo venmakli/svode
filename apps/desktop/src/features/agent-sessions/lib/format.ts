@@ -1,8 +1,11 @@
 import { getLocale } from "@/paraglide/runtime.js";
 import {
+  isAgentSessionInScope,
   requiresUserAction,
   terminalActivityAt,
   type AgentSession,
+  type AgentSessionScopeGroup,
+  type DraftSpaceChoice,
 } from "../model";
 
 const MINUTE_MS = 60_000;
@@ -54,6 +57,59 @@ export function scopeLabel(
   }
 
   return rootName ?? pathBasename(session.projectPath) ?? "Project";
+}
+
+/**
+ * The Space or project the row under a chat's composer shows: the same
+ * icon and name in a new session's draft and in the session (DF-230).
+ */
+export interface ScopeMark {
+  kind: "project" | "space";
+  name: string;
+  /** Emoji of the Space or project; without it the kind's icon. */
+  icon: string | null;
+}
+
+/** The mark of a session's scope; an unresolved Space keeps its kind. */
+export function sessionScopeMark(
+  session: AgentSession,
+  scopes: readonly AgentSessionScopeGroup[],
+  rootName: string | null,
+  spaceNames: Map<string, string>,
+): ScopeMark {
+  const name = scopeLabel(session, rootName, spaceNames);
+  const inSpace =
+    session.scopeKind === "space" &&
+    Boolean(session.spaceId ?? session.spacePath);
+  const scope = scopes.find((candidate) =>
+    isAgentSessionInScope(session, candidate),
+  );
+  return {
+    kind: inSpace ? "space" : "project",
+    name,
+    icon: scope?.icon || null,
+  };
+}
+
+/**
+ * The mark of a draft's Space: its choice, or, before the choices load or
+ * after the Space left them, the kind by the project root and the last
+ * segment of the path, as `scopeLabel` names it.
+ */
+export function draftScopeMark(
+  spacePath: string,
+  choices: readonly DraftSpaceChoice[],
+  rootPath: string | null,
+): ScopeMark {
+  const choice = choices.find((candidate) => candidate.path === spacePath);
+  if (choice) {
+    return { kind: choice.kind, name: choice.name, icon: choice.icon || null };
+  }
+  return {
+    kind: spacePath === rootPath ? "project" : "space",
+    name: pathBasename(spacePath) ?? spacePath,
+    icon: null,
+  };
 }
 
 export function sessionTimeLabel(session: AgentSession): string {

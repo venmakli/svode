@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Box, Check, ChevronDown, FolderClosed } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { AgentSignInDialog } from "@/features/settings/agent-sign-in";
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 import { useAgentSessionScopes } from "../../hooks/use-agent-session-scopes";
+import { draftScopeMark } from "../../lib";
 import type {
   AgentSessionScopeGroup,
   DraftSpaceChoice,
@@ -32,6 +33,7 @@ import {
 } from "./agent-button";
 import { ChatDropSurface } from "./chat-drop-surface";
 import { Composer } from "./composer";
+import { ScopeIcon, ScopeMarkContent } from "./scope-mark";
 import { ComposerFooter } from "./session-chat";
 import {
   ContextIndicator,
@@ -186,6 +188,9 @@ export function NewSessionDraft({
           <SpaceSelect
             choices={spaceChoices?.choices ?? scopes.map(scopeChoice)}
             spacePath={draft.spacePath}
+            rootPath={
+              scopes.find((scope) => scope.kind === "project")?.path ?? null
+            }
             disabled={draft.sending}
             onChoose={(path) => {
               if (!spaceChoices) {
@@ -314,15 +319,17 @@ function scopeChoice(scope: AgentSessionScopeGroup): DraftSpaceChoice {
 function SpaceSelect({
   choices,
   spacePath,
+  rootPath,
   disabled,
   onChoose,
 }: {
   choices: DraftSpaceChoice[];
   spacePath: string;
+  /** The project root, which names the kind of a Space not in `choices`. */
+  rootPath: string | null;
   disabled: boolean;
   onChoose: (path: string) => void;
 }) {
-  const current = choices.find((choice) => choice.path === spacePath);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -333,8 +340,9 @@ function SpaceSelect({
           className="-ms-1.5 max-w-64 text-muted-foreground"
           aria-label={m.sessions_chat_space_choose()}
         >
-          {current && <ChoiceIcon choice={current} />}
-          <span className="truncate">{current?.name ?? spacePath}</span>
+          <ScopeMarkContent
+            mark={draftScopeMark(spacePath, choices, rootPath)}
+          />
           <ChevronDown />
         </Button>
       </DropdownMenuTrigger>
@@ -349,7 +357,7 @@ function SpaceSelect({
             disabled={choice.unavailable !== null}
             onSelect={() => onChoose(choice.path)}
           >
-            <ChoiceIcon choice={choice} />
+            <ScopeIcon mark={choice} />
             <span className="min-w-0 flex-1 truncate">{choice.name}</span>
             {choice.unavailable && (
               <span className="shrink-0 text-xs text-muted-foreground">
@@ -362,15 +370,4 @@ function SpaceSelect({
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
-
-function ChoiceIcon({ choice }: { choice: DraftSpaceChoice }) {
-  if (choice.icon) {
-    return (
-      <span className="flex size-4 items-center justify-center text-sm leading-none">
-        {choice.icon}
-      </span>
-    );
-  }
-  return choice.kind === "project" ? <Box /> : <FolderClosed />;
 }

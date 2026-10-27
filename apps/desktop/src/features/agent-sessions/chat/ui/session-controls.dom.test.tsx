@@ -205,7 +205,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     "a setting shows the agent's value only once it confirms it, and a refusal keeps it",
     async () => {
       await mount(
-        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+        <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />,
       );
       const button = agentButton();
       expect(button.textContent?.includes("GPT-5.6 Luna")).toBe(true);
@@ -290,7 +290,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     async () => {
       snapshotFor = (session) => ({ ...snapshot(session), settings: [] });
       await mount(
-        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+        <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />,
       );
       expect(agentButton().textContent?.includes("Codex")).toBe(true);
       await click(agentButton());
@@ -419,7 +419,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         ],
       });
       await mount(
-        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+        <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />,
       );
       await openMenu(buttonByLabel(m.sessions_chat_attach()));
       expect(Boolean(menuItem(m.sessions_chat_attach_command()))).toBe(true);
@@ -449,7 +449,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
               <SessionChat
                 sessionId="codex:s1"
                 session={key}
-                scopeLabel="Project"
+                scope={{ kind: "project", name: "Project", icon: null }}
               />
             </div>
           </SheetContent>
@@ -485,7 +485,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       };
       await mount(
         <>
-          <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />
+          <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />
           <Sheet open={false} modal={false}>
             <SheetContent forceMount onEscapeKeyDown={keepLayerOpenOnEscape}>
               <SheetTitle>Terminal</SheetTitle>
@@ -558,7 +558,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         };
       };
       await mount(
-        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+        <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />,
       );
       const card = document.querySelector<HTMLElement>(
         `[aria-label="${m.sessions_chat_request_permission()}"]`,
@@ -609,7 +609,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
     "Page or project file in the + menu opens the search, which keeps focus",
     async () => {
       await mount(
-        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+        <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />,
       );
       // A click on + takes focus from the field, which jsdom does not do.
       const attach = buttonByLabel(m.sessions_chat_attach());
@@ -638,7 +638,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         });
       write("First");
       await mount(
-        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+        <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />,
       );
       await click(buttonByLabel(m.sessions_chat_send()));
       expect(lastCall("agent_runtime_prompt")?.prompt).toEqual([
@@ -666,7 +666,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       }
       write("Second");
       await mount(
-        <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />,
+        <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />,
       );
       await click(buttonByLabel(m.sessions_chat_send()));
       expect(messages).toEqual(["codex:s1"]);
@@ -694,7 +694,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       <SessionChat
         sessionId="codex:s1"
         session={state.session}
-        scopeLabel="Project"
+        scope={{ kind: "project", name: "Project", icon: null }}
         epoch={state.epoch}
         continuation={{
           liveness: state.liveness,
@@ -1170,6 +1170,113 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       });
     },
   );
+
+  controlsTest(
+    "the row under a session's composer shows its Space or project with the draft's icon, also under a request card",
+    async () => {
+      await mount(
+        <>
+          <SessionChat
+            sessionId="codex:s1"
+            session={key}
+            scope={{ kind: "space", name: "Ideas", icon: "💡" }}
+          />
+          <SessionChat
+            sessionId="codex:s2"
+            session={{ ...key, sessionId: "s2" }}
+            scope={{ kind: "space", name: "Notes", icon: null }}
+          />
+          <SessionChat
+            sessionId="codex:s3"
+            session={{ ...key, sessionId: "s3" }}
+            scope={{ kind: "project", name: "Project", icon: null }}
+          />
+        </>,
+      );
+      expect(scopeMarkIcon(document, "Ideas")).toBe("💡");
+      expect(scopeMarkIcon(document, "Notes")).toBe("lucide-folder-closed");
+      expect(scopeMarkIcon(document, "Project")).toBe("lucide-box");
+      // The label offers no choice.
+      expect(buttonByLabel(m.sessions_chat_space_choose())).toBe(undefined);
+
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+      snapshotFor = (session) => ({
+        ...snapshot(session),
+        turn: { ...snapshot(session).turn, turnId: "t1", phase: "running" },
+        pending: {
+          id: "perm-1",
+          kind: "permission",
+          title: "Run it",
+          toolCallId: null,
+          options: [{ id: "allow", label: "Yes", kind: "allow_once" }],
+          fields: [],
+          state: "pending",
+        },
+      });
+      await mount(
+        <SessionChat
+          sessionId="codex:s1"
+          session={key}
+          scope={{ kind: "space", name: "Ideas", icon: "💡" }}
+        />,
+      );
+      expect(
+        document.querySelector(
+          `[aria-label="${m.sessions_chat_request_permission()}"]`,
+        ) === null,
+      ).toBe(false);
+      expect(scopeMarkIcon(document, "Ideas")).toBe("💡");
+    },
+  );
+
+  controlsTest(
+    "a draft whose Space is not among its choices shows the kind's icon and the last segment of the path",
+    async () => {
+      await mount(
+        <NewSessionDraft
+          spacePath="/project/notes/ideas"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      const inProject = buttonByLabel(m.sessions_chat_space_choose())!;
+      expect(scopeMarkIcon(inProject, "ideas")).toBe("lucide-folder-closed");
+
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+      // Home before its projects load: the active project's root.
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          spaceChoices={{ choices: [], choose: async () => false }}
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      const onHome = buttonByLabel(m.sessions_chat_space_choose())!;
+      expect(scopeMarkIcon(onHome, "project")).toBe("lucide-box");
+    },
+  );
+
+  /** The emoji or icon class next to a Space name under the composer. */
+  function scopeMarkIcon(root: ParentNode, name: string) {
+    const label = Array.from(root.querySelectorAll("span.truncate")).find(
+      (element) => element.textContent === name,
+    );
+    const icon = label?.previousElementSibling;
+    if (!icon) return null;
+    if (icon.tagName.toLowerCase() === "svg") {
+      return (
+        Array.from(icon.classList).find((name) =>
+          ["lucide-box", "lucide-folder-closed"].includes(name),
+        ) ?? null
+      );
+    }
+    return icon.textContent;
+  }
 
   function lastCall(command: string) {
     return calls.filter((call) => call.command === command).at(-1)?.payload;

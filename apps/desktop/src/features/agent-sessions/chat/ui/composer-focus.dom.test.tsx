@@ -326,7 +326,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     return { promise, resolve };
   }
 
-  const chat = () => <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />;
+  const chat = () => <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />;
 
   focusTest("after an accepted send the empty field keeps focus and takes typing", async () => {
     writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });
@@ -405,7 +405,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
         <SessionChat
           sessionId="codex:s1"
           session={key}
-          scopeLabel="Project"
+          scope={{ kind: "project", name: "Project", icon: null }}
           epoch={epoch}
           continuation={{
             liveness: "unknown",
@@ -477,7 +477,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
             <SessionChat
               sessionId={started}
               session={{ ...key, sessionId: "s2" }}
-              scopeLabel="Project"
+              scope={{ kind: "project", name: "Project", icon: null }}
             />
           ) : null}
         </div>

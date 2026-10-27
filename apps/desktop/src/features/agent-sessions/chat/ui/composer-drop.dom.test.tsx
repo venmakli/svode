@@ -156,7 +156,7 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
   }
 
   const chat = () => (
-    <SessionChat sessionId="codex:s1" session={key} scopeLabel="Project" />
+    <SessionChat sessionId="codex:s1" session={key} scope={{ kind: "project", name: "Project", icon: null }} />
   );
 
   function field() {
@@ -469,7 +469,7 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
       <SessionChat
         sessionId="codex:s1"
         session={key}
-        scopeLabel="Project"
+        scope={{ kind: "project", name: "Project", icon: null }}
         continuation={{
           liveness: "external_active",
           attaching: false,

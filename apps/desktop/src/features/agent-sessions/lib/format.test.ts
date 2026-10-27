@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
-import { sessionTimeLabel } from "./format";
-import type { AgentSession } from "../model";
+import { draftScopeMark, sessionScopeMark, sessionTimeLabel } from "./format";
+import { buildAgentSessionScopes, type AgentSession } from "../model";
 
 const now = Date.parse("2026-07-04T14:00:00Z");
 
@@ -86,4 +86,95 @@ test("session time label localizes compact units for Russian", async () => {
     Date.now = originalNow;
     await setLocale(originalLocale, { reload: false });
   }
+});
+
+test("a session's scope mark has the Space's or project's emoji, otherwise its kind", () => {
+  const scopes = buildAgentSessionScopes({
+    activeRootIcon: "🚀",
+    activeRootId: "root",
+    activeRootName: "Astra",
+    activeRootPath: "/repo",
+    spaces: [
+      {
+        id: "ideas",
+        name: "Ideas",
+        icon: "💡",
+        path: "/repo/ideas",
+        status: "ready",
+      },
+      {
+        id: "notes",
+        name: "Notes",
+        icon: "",
+        path: "/repo/notes",
+        status: "ready",
+      },
+    ],
+  });
+  const names = new Map([
+    ["ideas", "Ideas"],
+    ["notes", "Notes"],
+  ]);
+  const inSpace = (spaceId: string | undefined, spacePath: string) => ({
+    ...session(isoBefore(0)),
+    scopeKind: "space" as const,
+    spaceId,
+    spacePath,
+  });
+
+  expect(
+    sessionScopeMark(session(isoBefore(0)), scopes, "Astra", names),
+  ).toEqual({
+    kind: "project",
+    name: "Astra",
+    icon: "🚀",
+  });
+  expect(
+    sessionScopeMark(inSpace("ideas", "/repo/ideas"), scopes, "Astra", names),
+  ).toEqual({ kind: "space", name: "Ideas", icon: "💡" });
+  expect(
+    sessionScopeMark(inSpace("notes", "/repo/notes"), scopes, "Astra", names),
+  ).toEqual({ kind: "space", name: "Notes", icon: null });
+  // A Space no longer in the list keeps its kind and the last path segment.
+  expect(
+    sessionScopeMark(
+      inSpace(undefined, "/repo/old/drafts"),
+      scopes,
+      "Astra",
+      names,
+    ),
+  ).toEqual({ kind: "space", name: "drafts", icon: null });
+  expect(sessionScopeMark(session(isoBefore(0)), [], null, new Map())).toEqual({
+    kind: "project",
+    name: "repo",
+    icon: null,
+  });
+});
+
+test("a draft's scope mark is its choice, otherwise the kind by the project root", () => {
+  const choices = [
+    {
+      path: "/repo/ideas",
+      name: "Ideas",
+      icon: "💡",
+      kind: "space" as const,
+      unavailable: null,
+    },
+  ];
+
+  expect(draftScopeMark("/repo/ideas", choices, "/repo")).toEqual({
+    kind: "space",
+    name: "Ideas",
+    icon: "💡",
+  });
+  expect(draftScopeMark("/repo/notes/", choices, "/repo")).toEqual({
+    kind: "space",
+    name: "notes",
+    icon: null,
+  });
+  expect(draftScopeMark("/repo", [], "/repo")).toEqual({
+    kind: "project",
+    name: "repo",
+    icon: null,
+  });
 });
