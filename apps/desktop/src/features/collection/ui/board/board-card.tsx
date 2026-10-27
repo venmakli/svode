@@ -33,7 +33,7 @@ export function SortableBoardCard(props: BoardCardProps) {
       entryPath: props.card.entry.path,
       groupKey: props.card.groupKey,
     },
-    disabled: props.readOnly || props.disabledReorder,
+    disabled: props.readOnly,
   });
 
   return (

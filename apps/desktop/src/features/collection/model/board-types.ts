@@ -77,7 +77,6 @@ export interface BoardCardProps {
   cardFields: string[];
   customColumns: Column[];
   nestedCollectionPaths: Set<string>;
-  disabledReorder: boolean;
   active: boolean;
   overlay?: boolean;
   spacePath: string;

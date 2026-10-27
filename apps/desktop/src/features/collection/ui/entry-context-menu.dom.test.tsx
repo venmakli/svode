@@ -189,7 +189,6 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
           nestedCollectionPaths={
             new Set(nested ? [entry.path.replace(/\/README\.md$/, "")] : [])
           }
-          disabledReorder
           active={false}
           spacePath="/space"
           actors={[]}

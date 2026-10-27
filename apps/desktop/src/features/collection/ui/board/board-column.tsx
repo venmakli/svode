@@ -3,6 +3,7 @@ import { useDroppable } from "@dnd-kit/core";
 import {
   SortableContext,
   verticalListSortingStrategy,
+  type SortingStrategy,
 } from "@dnd-kit/sortable";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,12 +14,16 @@ import { SortableBoardCard } from "./board-card";
 import type { BoardCardModel, BoardCardProps, BoardColumnGroup } from "./types";
 import * as m from "@/paraglide/messages.js";
 
+// An explicit sort owns the order inside a column, so cards keep their places.
+const keepPlacesStrategy: SortingStrategy = () => null;
+
 export function BoardColumn({
   group,
   cards,
   count,
   activeEntryPath,
   overGroupKey,
+  hasSort,
   draftOpen,
   draftAsFolder,
   readOnly,
@@ -33,6 +38,7 @@ export function BoardColumn({
   count: number;
   activeEntryPath: string | null;
   overGroupKey: string | null;
+  hasSort: boolean;
   draftOpen: boolean;
   draftAsFolder: boolean;
   readOnly: boolean;
@@ -47,7 +53,10 @@ export function BoardColumn({
     id: `column:${group.key}`,
     data: { type: "column", groupKey: group.key },
   });
-  const highlighted = isOver || overGroupKey === group.key;
+  // With an explicit sort a drop in the source column changes nothing.
+  const dropLocked =
+    hasSort && cards.some((card) => card.entry.path === activeEntryPath);
+  const highlighted = !dropLocked && (isOver || overGroupKey === group.key);
   const collapsible = Boolean(group.collapsedByDefault);
 
   return (
@@ -107,7 +116,9 @@ export function BoardColumn({
           <div className="flex min-h-24 flex-col gap-1.5 px-0.5 pb-1 pt-0.5">
             <SortableContext
               items={cards.map((card) => card.entry.path)}
-              strategy={verticalListSortingStrategy}
+              strategy={
+                hasSort ? keepPlacesStrategy : verticalListSortingStrategy
+              }
             >
               {cards.map((card) => (
                 <SortableBoardCard

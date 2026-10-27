@@ -196,6 +196,7 @@ export function BoardView(props: BoardViewProps) {
                   count={groupEntries.length}
                   activeEntryPath={runtime.activeModel?.entry.path ?? null}
                   overGroupKey={runtime.overGroupKey}
+                  hasSort={runtime.hasSort}
                   draftOpen={runtime.draftGroupKey === column.key}
                   draftAsFolder={runtime.draftAsFolder}
                   readOnly={readOnly}
@@ -219,7 +220,6 @@ export function BoardView(props: BoardViewProps) {
                     cardFields: runtime.cardFields,
                     customColumns: runtime.customColumns,
                     nestedCollectionPaths: runtime.nestedCollectionPaths,
-                    disabledReorder: readOnly || runtime.hasSort,
                     overlay: false,
                     spacePath,
                     projectPath,
@@ -254,7 +254,6 @@ export function BoardView(props: BoardViewProps) {
             cardFields={runtime.cardFields}
             customColumns={runtime.customColumns}
             nestedCollectionPaths={runtime.nestedCollectionPaths}
-            disabledReorder={readOnly || runtime.hasSort}
             active
             overlay
             spacePath={spacePath}
