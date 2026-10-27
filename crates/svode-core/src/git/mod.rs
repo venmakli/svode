@@ -9,6 +9,7 @@ pub mod host;
 #[cfg(test)]
 mod local_policy_tests;
 pub mod local_repair;
+pub mod markers;
 pub mod operations;
 pub mod ops;
 pub mod path;

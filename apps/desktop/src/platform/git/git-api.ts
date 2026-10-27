@@ -149,6 +149,18 @@ export function continueGitResolve(input: {
   return invokeCommand<SyncResultDto>("git_resolve_continue", input);
 }
 
+/**
+ * Size of the conflict markers Git writes for the Page at `path`: its
+ * `conflict-marker-size` attribute, otherwise 7. Spawns Git, so call it only
+ * for a body with a line starting with a run of `<` and a space.
+ */
+export function getGitConflictMarkerSize(input: {
+  spacePath: string;
+  path: string;
+}): Promise<number> {
+  return invokeCommand<number>("git_conflict_marker_size", input);
+}
+
 /** Abandon the merge a sync stopped in; returns the status after it. */
 export function abortGitMerge(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_merge_abort", { spacePath });

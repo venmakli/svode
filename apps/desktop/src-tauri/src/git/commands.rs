@@ -17,7 +17,7 @@ use svode_core::git::operations::SharedError;
 use svode_core::git::ops::{GitStatus, UnpushedCommit};
 use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use svode_core::git::save::save;
-use svode_core::git::{flow, ops, sync};
+use svode_core::git::{flow, markers, ops, sync};
 use svode_core::system_path;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
@@ -630,6 +630,29 @@ pub async fn git_conflict_files(
     Ok(sync::conflict_files(state.cli()?, &path).await?)
 }
 
+/// Size of the conflict markers Git writes for a Page, for the editor's marker
+/// parse. Without Git no attribute can set it, so it is Git's default.
+#[tauri::command]
+pub async fn git_conflict_marker_size(
+    state: State<'_, GitState>,
+    space_path: String,
+    path: String,
+) -> Result<usize, AppError> {
+    conflict_marker_size(&state, &space_path, &path).await
+}
+
+async fn conflict_marker_size(
+    state: &GitState,
+    space_path: &str,
+    path: &str,
+) -> Result<usize, AppError> {
+    let target = svode_core::page::resolve_page_target(Path::new(space_path), path)?;
+    let Some(cli) = state.detected() else {
+        return Ok(markers::DEFAULT_MARKER_SIZE);
+    };
+    Ok(markers::marker_size(cli, &target.absolute).await?)
+}
+
 #[tauri::command]
 pub async fn git_resolve_continue(
     app: AppHandle,
@@ -845,6 +868,47 @@ mod tests {
         assert_eq!(value["accessStatus"], "unknown");
         assert_eq!(value["accessReason"], "mutation_plan_changed");
         assert!(value.get("message").is_none());
+    }
+
+    #[tokio::test]
+    async fn conflict_marker_size_of_a_page_comes_from_its_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let space = temp.path().join("space");
+        std::fs::create_dir_all(space.join("docs")).unwrap();
+        std::fs::write(space.join("docs/plan.md"), "<<<<<<<<<< HEAD\n").unwrap();
+        std::fs::write(
+            space.join(".gitattributes"),
+            "*.md conflict-marker-size=10\n",
+        )
+        .unwrap();
+        let output = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&space)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let space_path = space.to_str().unwrap();
+
+        let size = conflict_marker_size(&GitState::new(), space_path, "docs/plan.md")
+            .await
+            .unwrap();
+        assert_eq!(size, 10);
+        // Without Git no attribute can apply.
+        let size = conflict_marker_size(&GitState::without_cli(), space_path, "docs/plan.md")
+            .await
+            .unwrap();
+        assert_eq!(size, markers::DEFAULT_MARKER_SIZE);
+        // The Page path is resolved like a Page read.
+        assert!(
+            conflict_marker_size(&GitState::new(), space_path, "../outside.md")
+                .await
+                .is_err()
+        );
+        assert!(
+            conflict_marker_size(&GitState::new(), space_path, "docs/missing.md")
+                .await
+                .is_err()
+        );
     }
 }
 

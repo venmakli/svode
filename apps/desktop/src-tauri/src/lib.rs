@@ -416,6 +416,7 @@ pub fn run() {
             git::commands::git_retry_parent,
             git::commands::git_save_http_credentials,
             git::commands::git_conflict_files,
+            git::commands::git_conflict_marker_size,
             git::commands::git_resolve_continue,
             git::commands::git_merge_abort,
             git::commands::git_get_remote,

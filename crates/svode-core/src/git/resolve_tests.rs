@@ -60,6 +60,12 @@ struct MergeFixture {
 
 impl MergeFixture {
     async fn conflicted() -> Self {
+        Self::conflicted_with_attributes("").await
+    }
+
+    /// Git attributes of `local` apply to the merge, as a checked-in
+    /// `.gitattributes` would.
+    async fn conflicted_with_attributes(attributes: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let seed = temp.path().join("seed");
         init(&seed);
@@ -110,6 +116,7 @@ impl MergeFixture {
         git(&local, &["commit", "-am", "ours"]);
         write(&local, "notes.md", "unsaved notes\n");
         write(&local, "stray.md", "stray\n");
+        write(&local, ".git/info/attributes", attributes);
 
         let cli = test_cli(temp.path());
         let result = sync(&cli, &local).await.unwrap();
@@ -268,4 +275,88 @@ async fn conflicts_without_a_merge_never_commit() {
     assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head);
     assert!(git(&repo, &["ls-files", "--unmerged"]).is_empty());
     assert!(!super::ops::status(&cli, &repo).await.unwrap().has_conflicts);
+}
+
+#[tokio::test]
+async fn markers_of_the_path_marker_size_refuse_resolution_under_any_line_endings() {
+    for size in [10, 3] {
+        let f = MergeFixture::conflicted_with_attributes(&format!(
+            "*.md conflict-marker-size={size}\n"
+        ))
+        .await;
+        // Git wrote markers of the configured size.
+        let merged = std::fs::read_to_string(f.local.join("plan.md")).unwrap();
+        assert!(
+            merged.starts_with(&format!("# Plan\n\n{} HEAD\n", "<".repeat(size))),
+            "{merged:?}"
+        );
+        let index = git(&f.local, &["ls-files", "--stage"]);
+        for ending in ["\n", "\r\n"] {
+            for marker in [
+                format!("{} HEAD", "<".repeat(size)),
+                "|".repeat(size),
+                format!("{} base", "|".repeat(size)),
+                format!("{} theirs", ">".repeat(size)),
+            ] {
+                write(
+                    &f.local,
+                    "plan.md",
+                    &["# Plan", "", "our line", &marker, "their line", ""].join(ending),
+                );
+                let refused = f.resolve(&["plan.md"]).await;
+                assert!(
+                    matches!(refused, Err(GitError::Conflict(_))),
+                    "{size} {ending:?} {marker:?}: {refused:?}"
+                );
+                assert_eq!(git(&f.local, &["ls-files", "--stage"]), index);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn crlf_file_with_default_markers_is_not_resolved() {
+    let f = MergeFixture::conflicted().await;
+    let index = git(&f.local, &["ls-files", "--stage"]);
+    for marker in ["<<<<<<< HEAD", "|||||||", "||||||| base", ">>>>>>> theirs"] {
+        write(
+            &f.local,
+            "plan.md",
+            &format!("# Plan\r\n\r\nour line\r\n{marker}\r\ntheir line\r\n"),
+        );
+        let refused = f.resolve(&["plan.md"]).await;
+        assert!(
+            matches!(refused, Err(GitError::Conflict(_))),
+            "{marker:?}: {refused:?}"
+        );
+        assert_eq!(git(&f.local, &["ls-files", "--stage"]), index);
+    }
+}
+
+#[tokio::test]
+async fn marker_like_lines_of_another_size_and_lone_separators_resolve() {
+    for (attributes, content) in [
+        (
+            "*.md conflict-marker-size=10\n",
+            "# Plan\r\n<<<<<<< a\r\n||||||| b\r\n|||||||\r\n=======\r\n==========\r\n>>>>>>> c\r\n",
+        ),
+        (
+            "*.md conflict-marker-size=3\n",
+            "# Plan\n<<<<<<< a\n||||||| b\n===\n>>>>>>> c\n> quote\n",
+        ),
+        (
+            "",
+            "# Plan\n<<<<<<<<<< a\n<<<<<<<x\n|||||||| b\n=======\n>>>>>> c\n",
+        ),
+    ] {
+        let f = MergeFixture::conflicted_with_attributes(attributes).await;
+        write(&f.local, "plan.md", content);
+        let result = f.resolve(&["plan.md"]).await.unwrap();
+        assert!(
+            matches!(&result, SyncResult::Conflict { files } if !files.contains(&"plan.md".to_string())),
+            "{attributes:?}: {result:?}"
+        );
+        let staged = lines(git(&f.local, &["diff", "--cached", "--name-only"]));
+        assert!(staged.contains(&"plan.md".to_string()), "{staged:?}");
+    }
 }

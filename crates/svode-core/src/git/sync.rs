@@ -699,7 +699,7 @@ pub async fn resolve_and_continue(
         if unmerged.stdout.is_empty() {
             continue;
         }
-        if has_conflict_markers(&space_dir.join(&path))? {
+        if has_conflict_markers(cli, &space_dir.join(&path)).await? {
             return Err(GitError::Conflict(format!(
                 "Conflict markers remain in {path}"
             )));
@@ -759,18 +759,15 @@ pub async fn resolve_and_continue(
     })
 }
 
-/// A line starting with a Git conflict marker; a lone `=======` is valid Markdown.
-fn has_conflict_markers(file: &Path) -> Result<bool, GitError> {
+/// A Git conflict marker line of the size Git writes for `file`.
+async fn has_conflict_markers(cli: &GitCli, file: &Path) -> Result<bool, GitError> {
     let content = match std::fs::read(file) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    Ok(content.split(|byte| *byte == b'\n').any(|line| {
-        [b"<<<<<<< ", b"||||||| ", b">>>>>>> "]
-            .iter()
-            .any(|marker| line.starts_with(*marker))
-    }))
+    let size = super::markers::marker_size(cli, file).await?;
+    Ok(super::markers::has_marker_lines(&content, size))
 }
 
 /// Abort current merge.
