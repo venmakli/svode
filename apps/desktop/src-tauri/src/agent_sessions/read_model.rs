@@ -4158,4 +4158,161 @@ mod tests {
             SessionStatus::unknown()
         );
     }
+
+    const PLAIN_TITLE: &str = "  Keep <!-- note --> as is  ";
+
+    /// Listed titles of Routine launches, as the agent's list or native store
+    /// gives them: the instruction with the Routine block, whole or cut short
+    /// by the title bound (DF-224 R2), and titles without the block.
+    const ROUTINE_TITLES: [(&str, &str); 7] = [
+        (
+            "t-whole",
+            "Run the shell command ping and reply done\n\n<!-- svode-owner:project:. -->",
+        ),
+        (
+            "t-launch",
+            "Review backlog <!-- svode-owner:space:docs --> <!-- svode-launch:launch-1 --> <svode-event-context>{\"event\":1}</svode-event-context>",
+        ),
+        (
+            "t-cut",
+            "Run the shell command ping -c 90 127.0.0.1 and then reply with exactly one word: done <!-- svode-owner:project:",
+        ),
+        ("t-cut-mid", "Summarize the notes <!-- svode-ow"),
+        ("t-only", "<!-- svode-owner:project:. -->"),
+        ("t-plain", PLAIN_TITLE),
+        (
+            "t-inside",
+            "Explain <!-- svode-owner:project:. --> markers in docs",
+        ),
+    ];
+
+    /// `plain` is the title without the block as its source gives it.
+    fn expect_routine_titles_shown(result: &AgentSessionsListResult, prefix: &str, plain: &str) {
+        use crate::agent_sessions::native_status::short_id;
+        use crate::agent_sessions::types::AgentSessionTitleSource;
+
+        let session = |id: &str| by_id(result, &format!("{prefix}{id}"));
+        let shown = |id: &str| (session(id).title.clone(), session(id).title_source);
+        let cli = |title: &str| (title.to_string(), AgentSessionTitleSource::CliTitle);
+        assert_eq!(
+            shown("t-whole"),
+            cli("Run the shell command ping and reply done")
+        );
+        assert_eq!(shown("t-launch"), cli("Review backlog"));
+        assert_eq!(
+            shown("t-cut"),
+            cli(
+                "Run the shell command ping -c 90 127.0.0.1 and then reply with exactly one word: done"
+            )
+        );
+        assert_eq!(shown("t-cut-mid"), cli("Summarize the notes"));
+        assert_eq!(
+            shown("t-only"),
+            (
+                short_id(&session("t-only").source_session_id),
+                AgentSessionTitleSource::SessionId
+            ),
+            "a title of the block only leaves the session untitled"
+        );
+        assert_eq!(shown("t-plain"), cli(plain));
+        assert_eq!(
+            shown("t-inside"),
+            cli("Explain <!-- svode-owner:project:. --> markers in docs")
+        );
+    }
+
+    fn listed_titled(
+        agent: &str,
+        native: bool,
+        cwd: &Path,
+        title: Option<&str>,
+        id: &str,
+    ) -> ListedSession {
+        ListedSession {
+            key: SessionKey::from_acp(agent, id, native),
+            cwd: cwd.to_path_buf(),
+            title: title.map(str::to_string),
+            updated_at: LISTED_AT.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn listed_titles_show_without_the_routine_block_also_after_a_restart() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home.clone());
+        let listed = SessionList {
+            sessions: ROUTINE_TITLES
+                .iter()
+                .map(|(id, title)| listed_titled("codex", true, &project, Some(*title), id))
+                .collect(),
+            ..Default::default()
+        };
+        state.acp_lists.apply("codex", Ok(listed), 3);
+        expect_routine_titles_shown(&list(&state, &project), "codex:", PLAIN_TITLE);
+
+        // The last good list saved on disk keeps the listed titles.
+        let restarted = AgentSessionsState::with_home(home);
+        let saved = list(&restarted, &project);
+        assert_eq!(saved.cache.mode, AgentSessionsCacheMode::StaleSnapshot);
+        expect_routine_titles_shown(&saved, "codex:", PLAIN_TITLE);
+    }
+
+    #[test]
+    fn runtime_titles_show_without_the_routine_block() {
+        use crate::agent_sessions::native_status::short_id;
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        // Listed without a title, the runtime title is laid over it.
+        let listed = SessionList {
+            sessions: ROUTINE_TITLES
+                .iter()
+                .map(|(id, _)| {
+                    listed_titled("codex", true, &project, None, &format!("listed-{id}"))
+                })
+                .collect(),
+            ..Default::default()
+        };
+        state.acp_lists.apply("codex", Ok(listed), 3);
+        let runtime = ROUTINE_TITLES
+            .iter()
+            .flat_map(|(id, title)| {
+                ["listed-", "new-"].map(|prefix| RuntimeSession {
+                    title: Some(title.to_string()),
+                    ..runtime_session("codex", &format!("{prefix}{id}"), true, &project)
+                })
+            })
+            .collect();
+
+        let result = list_with_runtime(&state, &project, runtime);
+
+        // Only the runtime knows the session so far.
+        expect_routine_titles_shown(&result, "codex:new-", PLAIN_TITLE);
+        let overlaid = |id: &str| by_id(&result, &format!("codex:listed-{id}")).title.clone();
+        assert_eq!(overlaid("t-launch"), "Review backlog");
+        assert_eq!(overlaid("t-cut-mid"), "Summarize the notes");
+        assert_eq!(overlaid("t-only"), short_id("listed-t-only"));
+        assert_eq!(overlaid("t-plain"), PLAIN_TITLE);
+    }
+
+    #[test]
+    fn native_catalogue_titles_show_without_the_routine_block() {
+        use crate::agent_sessions::native_catalog::cursor_chats::tests::{chat, folder_of, meta};
+
+        let (_temp, home, project) = project_dirs();
+        let root = home.join(".cursor");
+        for (id, title) in ROUTINE_TITLES {
+            chat(
+                &root,
+                &folder_of(&project),
+                id,
+                meta(&project, Some(title)),
+                true,
+            );
+        }
+        let state = AgentSessionsState::with_home(home);
+        read_native_catalog(&state, AgentAdapterKind::Cursor);
+
+        // The native store's title is trimmed when read, as before.
+        expect_routine_titles_shown(&list(&state, &project), "cursor:", PLAIN_TITLE.trim());
+    }
 }

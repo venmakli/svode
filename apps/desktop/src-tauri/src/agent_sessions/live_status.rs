@@ -10,6 +10,7 @@ use super::types::{
 use crate::terminal::{AgentTerminalStatusEvidence, AgentTerminalSurface};
 use svode_agents::catalog::{ListedSession, RuntimeSession};
 use svode_agents::identity::{IdentityNamespace, SessionKey};
+use svode_agents::registry::{RoutineBlockEnd, strip_routine_block};
 use svode_agents::status::{
     SessionState, SessionStatus, StatusConfidence, StatusSource, StopReason,
 };
@@ -17,6 +18,21 @@ use svode_agents::writer::ExternalLiveness;
 use svode_core::agent_adapters::AgentId;
 
 pub(super) const SOURCE_LOG_ACTIVE_STALE_AFTER_SECS: i64 = 6 * 60 * 60;
+
+/// The title a session shows from a listed or runtime title: without the
+/// block a Routine launch appends to its instruction, also when the title cut
+/// it short (DF-224 R2). A title without the block stays as it is; `None`
+/// leaves the session untitled.
+fn shown_title(title: Option<&str>) -> Option<String> {
+    let title = title?;
+    let stripped = strip_routine_block(title, RoutineBlockEnd::Cut);
+    let shown = if stripped.len() == title.len() {
+        title
+    } else {
+        stripped.trim()
+    };
+    (!shown.is_empty()).then(|| shown.to_string())
+}
 
 /// What Svode knows about an agent process outside it writing to the
 /// session. Only fresh native evidence of a turn that tells of another
@@ -214,7 +230,7 @@ pub(super) fn map_listed(
     let listed_namespace = listed.key.namespace;
     let native = listed_namespace == IdentityNamespace::Native;
     let source_session_id = listed.key.session_id;
-    let (title, title_source) = match listed.title.filter(|title| !title.is_empty()) {
+    let (title, title_source) = match shown_title(listed.title.as_deref()) {
         Some(title) => (title, AgentSessionTitleSource::CliTitle),
         None => (
             short_id(&source_session_id),
@@ -521,9 +537,9 @@ pub(super) fn overlay_runtime(session: &mut AgentSession, runtime: &RuntimeSessi
     session.status_reason = Some(RUNTIME_STATUS_REASON.to_string());
     session.waiting_since = None;
     if session.title_source == AgentSessionTitleSource::SessionId
-        && let Some(title) = &runtime.title
+        && let Some(title) = shown_title(runtime.title.as_deref())
     {
-        session.title = title.clone();
+        session.title = title;
         session.title_source = AgentSessionTitleSource::CliTitle;
     }
     if let Some(turn_at) = runtime.last_turn_at.map(rfc3339)
@@ -547,8 +563,8 @@ pub(super) fn map_runtime_session(
 ) -> AgentSession {
     let native = runtime.key.namespace == IdentityNamespace::Native;
     let source_session_id = runtime.key.session_id.clone();
-    let (title, title_source) = match &runtime.title {
-        Some(title) => (title.clone(), AgentSessionTitleSource::CliTitle),
+    let (title, title_source) = match shown_title(runtime.title.as_deref()) {
+        Some(title) => (title, AgentSessionTitleSource::CliTitle),
         None => (
             short_id(&source_session_id),
             AgentSessionTitleSource::SessionId,
