@@ -57,6 +57,9 @@ async fn git_rename_suggestion(
             space_dir,
             &[
                 "log",
+                // Paths of the target Space, also when it is a folder of an
+                // enclosing repository.
+                "--relative",
                 "--diff-filter=R",
                 "--name-status",
                 "-z",
@@ -163,7 +166,161 @@ fn levenshtein(a: &str, b: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_git_rename_suggestion_z;
+    use std::path::Path;
+    use std::process::Command;
+
+    use super::{LinkFixSuggestion, parse_git_rename_suggestion_z, suggestions};
+    use svode_core::git::cli::GitCli;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "user.name", "Fixture"]);
+        git(dir, &["config", "user.email", "fixture@example.test"]);
+    }
+
+    fn write(dir: &Path, path: &str, body: &str) {
+        let file = dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+
+    /// Commits `renames` (old → new, relative to `repo`) after committing the old files.
+    fn commit_renames(repo: &Path, renames: &[(&str, &str)]) {
+        for (old, _) in renames {
+            write(repo, old, &format!("# {old}\n"));
+        }
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-q", "-m", "add"]);
+        for (old, new) in renames {
+            if let Some(parent) = Path::new(new).parent() {
+                std::fs::create_dir_all(repo.join(parent)).unwrap();
+            }
+            git(repo, &["mv", "--", old, new]);
+        }
+        git(repo, &["commit", "-q", "-m", "rename"]);
+    }
+
+    async fn suggested(space: &Path, broken: &str) -> Vec<(String, String)> {
+        let cli = GitCli::detect().expect("git CLI");
+        suggestions(Some(&cli), space, broken)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|LinkFixSuggestion { path, reason, .. }| (path, reason))
+            .collect()
+    }
+
+    fn renamed(path: &str) -> (String, String) {
+        (path.to_string(), "renamed 0 days ago".to_string())
+    }
+
+    #[tokio::test]
+    async fn rename_suggestions_use_paths_of_the_target_space() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init(&project);
+        commit_renames(
+            &project,
+            &[
+                ("root-old.md", "root-new.md"),
+                ("inline/old.md", "inline/new.md"),
+                ("inline/sub/deep-old.md", "inline/sub/deep-new.md"),
+                ("inline/старое имя.md", "inline/новое имя.md"),
+            ],
+        );
+        let inline = project.join("inline");
+
+        // Inline Space: a folder of the project repository.
+        let found = suggested(&inline, "old.md").await;
+        assert_eq!(found[0], renamed("new.md"));
+        assert_eq!(
+            found.iter().filter(|(path, _)| path == "new.md").count(),
+            1,
+            "{found:?}"
+        );
+        assert_eq!(
+            suggested(&inline, "sub/deep-old.md").await[0],
+            renamed("sub/deep-new.md")
+        );
+        assert_eq!(
+            suggested(&inline, "старое имя.md").await[0],
+            renamed("новое имя.md")
+        );
+        assert!(
+            !suggested(&inline, "root-old.md")
+                .await
+                .iter()
+                .any(|(_, reason)| reason.starts_with("renamed")),
+        );
+
+        // Root Space: as before, and a rename in the inline Space is not its path.
+        assert_eq!(
+            suggested(&project, "root-old.md").await[0],
+            renamed("root-new.md")
+        );
+        assert!(
+            !suggested(&project, "old.md")
+                .await
+                .iter()
+                .any(|(_, reason)| reason.starts_with("renamed")),
+        );
+    }
+
+    #[tokio::test]
+    async fn rename_suggestions_of_spaces_with_their_own_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        init(&project);
+        write(&project, "readme.md", "# Project\n");
+        git(&project, &["add", "-A"]);
+        git(&project, &["commit", "-q", "-m", "project"]);
+
+        // Independent Space: its own repository inside the project folder.
+        let independent = project.join("independent");
+        init(&independent);
+        commit_renames(&independent, &[("docs/old.md", "docs/new.md")]);
+        assert_eq!(
+            suggested(&independent, "docs/old.md").await[0],
+            renamed("docs/new.md")
+        );
+
+        // Submodule Space.
+        let source = temp.path().join("source");
+        init(&source);
+        commit_renames(&source, &[("old.md", "new.md")]);
+        git(
+            &project,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                source.to_str().unwrap(),
+                "module",
+            ],
+        );
+        assert_eq!(
+            suggested(&project.join("module"), "old.md").await[0],
+            renamed("new.md")
+        );
+    }
 
     #[test]
     fn parses_git_rename_suggestion_z_with_spaces_and_cyrillic() {
