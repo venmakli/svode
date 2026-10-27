@@ -23,6 +23,7 @@ use crate::activity::{
 use crate::changes::ToolPaths;
 use crate::identity::SessionKey;
 use crate::interaction::InteractionAnswer;
+use crate::registry::{RoutineBlockEnd, strip_routine_block};
 use crate::runtime::Retention;
 use crate::status::{SessionState, SessionStatus, StopReason};
 
@@ -110,6 +111,13 @@ pub(crate) struct Projection {
     cwd: PathBuf,
     /// Item that chunks without a `messageId` extend, with its role.
     open_message: Option<(MessageRole, String)>,
+    /// Segments of user messages with links or images as the agent sent
+    /// them; their items show them without the Routine block (DF-224).
+    user_segments: HashMap<String, Vec<MessageSegment>>,
+    /// A replayed user message whose text so far is only the start of a
+    /// Routine block; shown when another item comes or the replay ends
+    /// unless the whole block leaves nothing to show (DF-224).
+    held_user: Option<ActivityItem>,
     next_local_id: u64,
     retention: Retention,
     /// Detail bytes of every open session of the process.
@@ -170,6 +178,8 @@ impl Projection {
             tool_paths: HashMap::new(),
             cwd,
             open_message: None,
+            user_segments: HashMap::new(),
+            held_user: None,
             next_local_id: 0,
             retention,
             process_detail,
@@ -194,6 +204,7 @@ impl Projection {
 
     /// The agent answered `session/load`: the replay is complete.
     pub(crate) fn end_replay(&mut self) {
+        self.show_held_user(None);
         self.replay = None;
         self.open_message = None;
     }
@@ -228,13 +239,8 @@ impl Projection {
         self.open_message = None;
         self.turn_started = Some(Instant::now());
         self.set_turn(Some(turn_id.to_string()), TurnPhase::Running, None);
-        self.put_text_item(
-            format!("user:{turn_id}"),
-            ItemKind::UserMessage {
-                segments: bounded_segments(segments),
-            },
-            text.to_string(),
-        );
+        let block = excerpt(text.to_string(), self.retention.item_detail);
+        self.put_user_message(format!("user:{turn_id}"), bounded_segments(segments), block);
         Some(())
     }
 
@@ -475,6 +481,11 @@ impl Projection {
 
     pub(crate) fn detail(&self, item_id: &str) -> DetailOutcome {
         match self.details.get(item_id) {
+            Some(Detail::Blocks(blocks, _)) if self.is_user_message(item_id) => {
+                DetailOutcome::Available {
+                    blocks: blocks.iter().map(without_routine_block).collect(),
+                }
+            }
             Some(Detail::Blocks(blocks, _)) => DetailOutcome::Available {
                 blocks: blocks.clone(),
             },
@@ -637,7 +648,10 @@ impl Projection {
             MessageRole::User | MessageRole::Reasoning => self.retention.item_detail,
         };
         let block = extend_text(known, text, limit);
-        self.put_text_block(id, kind, block);
+        match kind {
+            ItemKind::UserMessage { segments } => self.put_user_message(id, segments, block),
+            kind => self.put_text_block(id, kind, block),
+        }
     }
 
     /// The segments of user message `id` with the next chunk, `text` or its
@@ -650,13 +664,7 @@ impl Projection {
         text: &str,
         chunk: Vec<MessageSegment>,
     ) -> Vec<MessageSegment> {
-        let mut segments = match self.snapshot.items.iter().find(|item| item.id == id) {
-            Some(ActivityItem {
-                kind: ItemKind::UserMessage { segments },
-                ..
-            }) => segments.clone(),
-            _ => Vec::new(),
-        };
+        let mut segments = self.user_segments.get(id).cloned().unwrap_or_default();
         if chunk.is_empty() {
             if !segments.is_empty() {
                 segments.push(MessageSegment::Text {
@@ -891,15 +899,70 @@ impl Projection {
     /// Puts a text item whose detail `block` — text or its excerpt — is
     /// already bounded.
     fn put_text_block(&mut self, id: String, kind: ItemKind, block: DetailBlock) {
-        let (head, excerpted) = match &block {
+        let item = self.text_item(id, kind, &block);
+        let size = block_size(&block);
+        self.set_detail(&item.id, Detail::Blocks(vec![block], size));
+        self.upsert(item);
+    }
+
+    /// Puts user message `id` from its `segments` and bounded text `block`
+    /// as the agent sent them, which later chunks extend. The item shows
+    /// them without the block a Routine launch appends to its instruction,
+    /// and a message with nothing else is not shown (DF-224).
+    fn put_user_message(&mut self, id: String, segments: Vec<MessageSegment>, block: DetailBlock) {
+        self.show_held_user(Some(&id));
+        let kind = ItemKind::UserMessage {
+            segments: segments_without_routine_block(&segments),
+        };
+        let text = without_routine_block(&block);
+        let stripped = text != block;
+        let item = self.text_item(id, kind, &text);
+        let shown = self.snapshot.items.iter().any(|known| known.id == item.id);
+        let empty = stripped
+            && item.summary.is_empty()
+            && matches!(&item.kind, ItemKind::UserMessage { segments } if segments.is_empty());
+        // Later chunks may complete the block: a chunked replay shows no
+        // part of it meanwhile.
+        let block_start = self.replay.is_some()
+            && !shown
+            && segments.is_empty()
+            && matches!(&block, DetailBlock::Text { text }
+                if strip_routine_block(text, RoutineBlockEnd::Cut).is_empty());
+        if segments.is_empty() {
+            self.user_segments.remove(&item.id);
+        } else {
+            self.user_segments.insert(item.id.clone(), segments);
+        }
+        let size = block_size(&block);
+        self.set_detail(&item.id, Detail::Blocks(vec![block], size));
+        self.held_user = None;
+        if block_start && !empty {
+            self.held_user = Some(item);
+        } else if !empty || shown {
+            self.upsert(item);
+        }
+    }
+
+    /// Shows the held user message unless it is `except`, which is still
+    /// growing: any other item ends it.
+    fn show_held_user(&mut self, except: Option<&str>) {
+        if let Some(held) = self
+            .held_user
+            .take_if(|held| except != Some(held.id.as_str()))
+        {
+            self.upsert(held);
+        }
+    }
+
+    /// The item of text `block` with its summary.
+    fn text_item(&self, id: String, kind: ItemKind, block: &DetailBlock) -> ActivityItem {
+        let (head, excerpted) = match block {
             DetailBlock::Text { text } => (text.as_str(), false),
             DetailBlock::Excerpt { head, .. } => (head.as_str(), true),
             DetailBlock::Diff { .. } | DetailBlock::Terminal { .. } => ("", false),
         };
         let has_detail = excerpted || head.len() > SUMMARY_LIMIT;
         let summary = normalize::bounded(head, SUMMARY_LIMIT);
-        let size = block_size(&block);
-        self.set_detail(&id, Detail::Blocks(vec![block], size));
         let turn_id = self
             .snapshot
             .items
@@ -907,14 +970,14 @@ impl Projection {
             .find(|item| item.id == id)
             .map(|item| item.turn_id.clone())
             .unwrap_or_else(|| self.current_turn());
-        self.upsert(ActivityItem {
+        ActivityItem {
             id,
             turn_id,
             kind,
             status: None,
             summary,
             has_detail,
-        });
+        }
     }
 
     fn store_detail(&mut self, id: &str, blocks: Vec<DetailBlock>) {
@@ -933,6 +996,13 @@ impl Projection {
         old
     }
 
+    fn is_user_message(&self, id: &str) -> bool {
+        self.snapshot
+            .items
+            .iter()
+            .any(|item| item.id == id && matches!(item.kind, ItemKind::UserMessage { .. }))
+    }
+
     fn track_detail(&mut self, bytes: usize) {
         self.detail_bytes += bytes;
         self.process_detail.fetch_add(bytes, Ordering::Relaxed);
@@ -944,6 +1014,7 @@ impl Projection {
     }
 
     fn upsert(&mut self, item: ActivityItem) {
+        self.show_held_user(Some(&item.id));
         let old = self
             .snapshot
             .items
@@ -996,6 +1067,7 @@ impl Projection {
                 self.untrack_detail(detail.size());
             }
             self.take_media(id);
+            self.user_segments.remove(id);
             self.tool_media.remove(id);
             self.tool_paths.remove(id);
         }
@@ -1139,6 +1211,39 @@ fn bounded_segments(segments: Vec<MessageSegment>) -> Vec<MessageSegment> {
         }
     }
     bounded
+}
+
+/// A user message text `block` without the Routine block at its end; an
+/// excerpt holds that end in its tail (DF-224).
+fn without_routine_block(block: &DetailBlock) -> DetailBlock {
+    match block {
+        DetailBlock::Text { text } => DetailBlock::Text {
+            text: strip_routine_block(text, RoutineBlockEnd::Whole).to_string(),
+        },
+        DetailBlock::Excerpt {
+            head,
+            omitted_chars,
+            tail,
+        } => DetailBlock::Excerpt {
+            head: head.clone(),
+            omitted_chars: *omitted_chars,
+            tail: strip_routine_block(tail, RoutineBlockEnd::Whole).to_string(),
+        },
+        other => other.clone(),
+    }
+}
+
+/// User message `segments` without the Routine block at the end of their
+/// last text (DF-224).
+fn segments_without_routine_block(segments: &[MessageSegment]) -> Vec<MessageSegment> {
+    let mut shown = segments.to_vec();
+    if let Some(MessageSegment::Text { text }) = shown.last_mut() {
+        *text = strip_routine_block(text, RoutineBlockEnd::Whole).to_string();
+        if text.is_empty() {
+            shown.pop();
+        }
+    }
+    shown
 }
 
 fn segment_size(segment: &MessageSegment) -> usize {
@@ -1332,6 +1437,10 @@ fn block_size(block: &DetailBlock) -> usize {
 #[cfg(test)]
 #[path = "projection_stream_tests.rs"]
 mod stream_tests;
+
+#[cfg(test)]
+#[path = "projection_routine_tests.rs"]
+mod routine_tests;
 
 #[cfg(test)]
 mod tests {

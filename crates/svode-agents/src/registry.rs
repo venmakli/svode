@@ -1650,24 +1650,128 @@ fn manual_routine_prompt(input: &ManualRoutineLaunchInput) -> String {
     routine_prompt(input, true)
 }
 
+const OWNER_MARKER: &str = "<!-- svode-owner:";
+const LAUNCH_MARKER: &str = "<!-- svode-launch:";
+const MARKER_END: &str = " -->";
+const EVENT_CONTEXT_OPEN: &str = "<svode-event-context>";
+const EVENT_CONTEXT_CLOSE: &str = "</svode-event-context>";
+
 fn routine_prompt(input: &ManualRoutineLaunchInput, launch_marker: bool) -> String {
     let mut prompt = input.instruction.trim().to_string();
     if !prompt.is_empty() {
         prompt.push_str("\n\n");
     }
     prompt.push_str(&format!(
-        "<!-- svode-owner:{}:{} -->",
+        "{OWNER_MARKER}{}:{}{MARKER_END}",
         input.owner_kind, input.owner_path
     ));
     if launch_marker {
-        prompt.push_str(&format!("\n<!-- svode-launch:{} -->", input.launch_id));
+        prompt.push_str(&format!("\n{LAUNCH_MARKER}{}{MARKER_END}", input.launch_id));
     }
     if let Some(context) = input.event_context.as_deref() {
-        prompt.push_str("\n<svode-event-context>");
+        prompt.push('\n');
+        prompt.push_str(EVENT_CONTEXT_OPEN);
         prompt.push_str(context);
-        prompt.push_str("</svode-event-context>");
+        prompt.push_str(EVENT_CONTEXT_CLOSE);
     }
     prompt
+}
+
+/// The end of a text [`strip_routine_block`] takes for a Routine block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutineBlockEnd {
+    /// Only a whole block.
+    Whole,
+    /// A whole block or its start, cut short where the text ends.
+    Cut,
+}
+
+/// `text` without the block a Routine launch appends to its instruction
+/// ([`AdapterRuntimeRegistry::acp_routine_prompt`] and the terminal launch
+/// prompt) — the owner marker, then the optional launch marker and event
+/// context — and the whitespace before it. Text that does not end with such
+/// a block, whole or cut short as `end` takes it, is returned as it is
+/// (DF-224).
+pub fn strip_routine_block(text: &str, end: RoutineBlockEnd) -> &str {
+    // An owner marker cut short is not found by its whole prefix.
+    let cut_marker = (end == RoutineBlockEnd::Cut)
+        .then(|| {
+            (1..OWNER_MARKER.len())
+                .rev()
+                .find(|&len| text.ends_with(&OWNER_MARKER[..len]))
+                .map(|len| text.len() - len)
+        })
+        .flatten();
+    let block = |found: RoutineBlockEnd| {
+        text.match_indices(OWNER_MARKER)
+            .map(|(start, _)| start)
+            .chain(cut_marker)
+            .find(|&start| {
+                text[..start]
+                    .chars()
+                    .next_back()
+                    .is_none_or(char::is_whitespace)
+                    && routine_block(&text[start..]) == Some(found)
+            })
+    };
+    // A whole block is the end of the text even after a lookalike.
+    block(RoutineBlockEnd::Whole)
+        .or_else(|| (end == RoutineBlockEnd::Cut).then(|| block(end)).flatten())
+        .map_or(text, |start| text[..start].trim_end())
+}
+
+/// What `text` is to its end, its parts separated by whitespace: a whole
+/// Routine block, one cut short, or neither.
+fn routine_block(text: &str) -> Option<RoutineBlockEnd> {
+    use RoutineBlockEnd::{Cut, Whole};
+    let owner = |value: &str| {
+        value
+            .split_once(':')
+            .is_some_and(|(kind, path)| !kind.is_empty() && !path.is_empty())
+    };
+    let rest = match routine_marker(text, OWNER_MARKER, owner)? {
+        Some(rest) => rest.trim_start(),
+        None => return Some(Cut),
+    };
+    let rest = match routine_marker(rest, LAUNCH_MARKER, |id| !id.is_empty()) {
+        Some(Some(rest)) => rest.trim_start(),
+        Some(None) => return Some(Cut),
+        None => rest,
+    };
+    let rest = rest.trim_end();
+    if rest.is_empty() {
+        return Some(Whole);
+    }
+    if rest.len() < EVENT_CONTEXT_OPEN.len() {
+        return EVENT_CONTEXT_OPEN.starts_with(rest).then_some(Cut);
+    }
+    let context = rest.strip_prefix(EVENT_CONTEXT_OPEN)?;
+    let (context, found) = match context.strip_suffix(EVENT_CONTEXT_CLOSE) {
+        Some(context) => (context, Whole),
+        // Without its end a context holding the next block is no context.
+        None if context.contains(OWNER_MARKER) => return None,
+        None => (context, Cut),
+    };
+    (!context.contains(EVENT_CONTEXT_OPEN) && !context.contains(EVENT_CONTEXT_CLOSE))
+        .then_some(found)
+}
+
+/// The one-line marker `prefix<value> -->` that `text` starts with: the
+/// text after it when `valid` accepts its value, `None` inside when `text`
+/// ends before the marker does, and outside when there is no such marker.
+fn routine_marker<'a>(
+    text: &'a str,
+    prefix: &str,
+    valid: impl Fn(&str) -> bool,
+) -> Option<Option<&'a str>> {
+    if text.len() < prefix.len() {
+        return (!text.is_empty() && prefix.starts_with(text)).then_some(None);
+    }
+    let value = text.strip_prefix(prefix)?;
+    match value.split_once(MARKER_END) {
+        Some((value, rest)) => (!value.contains('\n') && valid(value)).then_some(Some(rest)),
+        None => (!value.contains('\n')).then_some(None),
+    }
 }
 
 fn new_uuid_v4() -> String {
@@ -2008,6 +2112,120 @@ mod tests {
         assert!(prompt.contains("<svode-event-context>{"));
         assert!(prompt.contains("\"entryPath\":\"tasks/item.md\""));
         assert!(prompt.ends_with("</svode-event-context>"));
+    }
+
+    #[test]
+    fn stripping_the_routine_block_from_a_routine_prompt_gives_the_trimmed_instruction() {
+        let instructions = [
+            "",
+            "  Review backlog  ",
+            "Review backlog\n\n- open items\n- stale items\n",
+            "Explain <!-- svode-owner:space:. --> and <!-- svode-launch:x --> markers",
+            "Ends with a marker\n<!-- svode-owner:project:notes -->",
+            "Ends with a block\n\n<!-- svode-owner:space:. -->\n<!-- svode-launch:old -->",
+            "Ends with <svode-event-context>{}</svode-event-context>",
+            "<!-- svode-owner:space:. --> <svode-event-context>",
+        ];
+        let contexts = [
+            None,
+            Some(r#"{"eventType":"collection.entry_created","entryPath":"tasks/a.md"}"#),
+            Some(r#"{"text":"line\n<!-- svode-owner:space:. -->"}"#),
+        ];
+        for instruction in instructions {
+            for (owner_kind, owner_path) in [("project", "."), ("collection", "tasks/sub dir")] {
+                for context in contexts {
+                    let input = ManualRoutineLaunchInput {
+                        instruction: instruction.into(),
+                        launch_id: "01jz-launch".into(),
+                        owner_kind: owner_kind.into(),
+                        owner_path: owner_path.into(),
+                        event_context: context.map(str::to_string),
+                    };
+                    for prompt in [
+                        manual_routine_prompt(&input),
+                        AdapterRuntimeRegistry.acp_routine_prompt(&input),
+                    ] {
+                        for end in [RoutineBlockEnd::Whole, RoutineBlockEnd::Cut] {
+                            assert_eq!(
+                                strip_routine_block(&prompt, end),
+                                instruction.trim(),
+                                "{end:?} {prompt:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn text_without_a_whole_routine_block_at_its_end_is_unchanged() {
+        for text in [
+            "",
+            "Review backlog",
+            "Review <!-- svode-owner:space:. --> later",
+            "Review backlog\n\n<!-- svode-owner:space:. -->\nmore",
+            "Review backlog\n\n<!-- svode-owner:space:. -->\n<!-- svode-launch:a",
+            "Review backlog\n\n<!-- svode-owner:space:. -->\n<svode-event-context>{}",
+            "Review backlog\n\n<!-- svode-owner:proj",
+            "Review backlog\n\n<!-- svode-owner:space -->",
+            "Review backlog\n\n<!-- svode-launch:a -->",
+            "Review backlog<!-- svode-owner:space:. -->",
+        ] {
+            assert_eq!(strip_routine_block(text, RoutineBlockEnd::Whole), text);
+        }
+        // The block an agent's replay ends with a line break is still whole.
+        assert_eq!(
+            strip_routine_block(
+                "Review backlog\r\n\r\n<!-- svode-owner:space:. -->\r\n",
+                RoutineBlockEnd::Whole
+            ),
+            "Review backlog"
+        );
+    }
+
+    #[test]
+    fn a_routine_block_cut_short_anywhere_is_stripped_only_as_cut() {
+        let prompt = manual_routine_prompt(&ManualRoutineLaunchInput {
+            instruction: "Review backlog".into(),
+            launch_id: "launch-one".into(),
+            owner_kind: "space".into(),
+            owner_path: ".".into(),
+            event_context: Some(r#"{"eventType":"collection.entry_created"}"#.into()),
+        });
+        let block = prompt.find(OWNER_MARKER).unwrap();
+        for end in block + 1..prompt.len() {
+            let cut = &prompt[..end];
+            assert_eq!(
+                strip_routine_block(cut, RoutineBlockEnd::Cut),
+                "Review backlog",
+                "{cut:?}"
+            );
+            assert_eq!(
+                strip_routine_block(cut, RoutineBlockEnd::Whole),
+                // Whole up to the owner or launch marker, cut after it.
+                if routine_block(&cut[block..]) == Some(RoutineBlockEnd::Whole) {
+                    "Review backlog"
+                } else {
+                    cut
+                },
+                "{cut:?}"
+            );
+        }
+        for text in [
+            "Review backlog <",
+            "Review backlog\n<!-- svode-launch:a",
+            "Review backlog\n\n<!-- svode-owner:space:. -->\nmore",
+            "Review backlog\n\n<!-- svode-owner:space\n",
+            "Review backlog<!-- svode-owner:sp",
+        ] {
+            let expected = if text.ends_with(" <") {
+                "Review backlog"
+            } else {
+                text
+            };
+            assert_eq!(strip_routine_block(text, RoutineBlockEnd::Cut), expected);
+        }
     }
 
     #[test]

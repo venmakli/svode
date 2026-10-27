@@ -4880,6 +4880,44 @@ async fn a_prompt_linking_a_missing_file_is_refused_without_a_prompt_or_a_turn()
 }
 
 #[tokio::test]
+async fn a_routine_prompt_reaches_the_agent_whole_and_its_message_shows_the_instruction() {
+    let runtime = AgentRuntime::default();
+    let (_id, key, mut agent) = session(&runtime).await;
+    let prompt = crate::registry::AdapterRuntimeRegistry.acp_routine_prompt(
+        &crate::registry::ManualRoutineLaunchInput {
+            instruction: "Review backlog".into(),
+            launch_id: "launch-one".into(),
+            owner_kind: "project".into(),
+            owner_path: ".".into(),
+            event_context: Some(r#"{"eventType":"collection.entry_created"}"#.into()),
+        },
+    );
+    let turn = runtime
+        .prompt(&key, &[PromptPart::text(prompt.clone())])
+        .unwrap();
+    let sent = agent.expect("session/prompt").await;
+    assert_eq!(
+        sent["params"]["prompt"],
+        json!([{ "type": "text", "text": prompt }])
+    );
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    let message = snapshot
+        .items
+        .iter()
+        .find(|item| item.id == format!("user:{turn}"))
+        .unwrap();
+    assert_eq!(message.summary, "Review backlog");
+    assert_eq!(
+        runtime.detail(&key, &message.id),
+        DetailOutcome::Available {
+            blocks: vec![DetailBlock::Text {
+                text: "Review backlog".into()
+            }]
+        }
+    );
+}
+
+#[tokio::test]
 async fn a_prompt_links_a_directory_by_its_uri_ending_with_a_slash() {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("notes");
