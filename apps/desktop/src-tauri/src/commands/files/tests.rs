@@ -91,6 +91,56 @@ async fn collection_create_is_one_structural_action_under_a_leaf_parent() {
 }
 
 #[tokio::test]
+async fn collection_create_with_a_unique_title_skips_a_folder_of_the_same_name() {
+    let tmp = TempDir::new().unwrap();
+    crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();
+    std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("untitled")).unwrap();
+    std::fs::write(tmp.path().join("untitled/Note.md"), "Kept\n").unwrap();
+    let root = tmp.path().to_string_lossy().into_owned();
+    let outcome = crate::structure::create_collection(
+        crate::structure::CollectionCreate {
+            space: root,
+            parent_path: None,
+            title: "Untitled".into(),
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            schema: engine::default_collection_schema(),
+            allocate_unique_title: true,
+            project: None,
+        },
+        &IndexState::new(),
+        updates(),
+        None,
+        |paths| async move { Ok(paths) },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.collection_path, "Untitled-1");
+    assert_eq!(outcome.collection.meta.title, "Untitled");
+    assert!(
+        outcome
+            .collection
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == "filename_collision_allocated")
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("untitled/Note.md")).unwrap(),
+        "Kept\n"
+    );
+    let siblings = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|item| item.unwrap().file_name().to_string_lossy().to_lowercase())
+        .filter(|name| name == "untitled")
+        .count();
+    assert_eq!(siblings, 1);
+}
+
+#[tokio::test]
 async fn collection_create_rejects_invalid_schema_before_source_effects() {
     let tmp = TempDir::new().unwrap();
     crate::space::scaffold::scaffold_space(tmp.path(), "Test", "", "").unwrap();

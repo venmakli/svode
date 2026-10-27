@@ -589,12 +589,11 @@ where
     let (parent, parent_conversion) =
         resolved_create_parent(&request.space, request.parent_path.as_deref())
             .map_err(Err::from)?;
-    let planned = entry::planned_source_create(
+    let planned = entry::planned_collection_source(
         &request.space,
         parent.as_deref(),
         &request.title,
         request.allocate_unique_title,
-        false,
     )
     .map_err(Err::from)?;
     let collection_path = planned
@@ -616,7 +615,7 @@ where
     let schema_paths = prepared_schema.paths().to_vec();
     let order_before = fs::read(order_path(&request.space)).ok();
     let authorization_space = request.space.clone();
-    let page = crate::page::create::create(
+    let page = crate::page::create::create_with_source_names(
         crate::page::create::PageCreate {
             space: request.space.clone(),
             parent_path: parent,
@@ -632,6 +631,7 @@ where
             project: request.project.clone(),
             publish_projection: false,
         },
+        entry::SourceNames::FileAndDirectory,
         runtime.index,
         runtime.updates,
         runtime.git_dates,
@@ -724,9 +724,20 @@ where
         ))),
         changed_paths.clone(),
     );
+    // Name allocation warnings of the written Page describe the Collection
+    // that the conversion made of it.
+    let mut collection = conversion.entry;
+    collection
+        .warnings
+        .extend(page.page.warnings.into_iter().map(|mut warning| {
+            if warning.path.as_deref() == Some(page.page.path.as_str()) {
+                warning.path = Some(conversion.readme_path.clone());
+            }
+            warning
+        }));
     Ok(CollectionCreateOutcome {
         collection_path,
-        collection: conversion.entry,
+        collection,
         schema: schema_outcome.value,
         changed_paths,
     })

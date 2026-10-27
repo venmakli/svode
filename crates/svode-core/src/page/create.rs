@@ -139,12 +139,39 @@ where
     Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
     Err: From<PageError>,
 {
+    create_with_source_names(
+        request,
+        entry::SourceNames::File,
+        state,
+        updates,
+        git_dates,
+        authorize,
+    )
+    .await
+}
+
+/// [`create`] whose source filename also keeps the other `names` free.
+pub(crate) async fn create_with_source_names<E, F, Fut, Err>(
+    request: PageCreate,
+    names: entry::SourceNames,
+    state: &IndexRuntimeState,
+    updates: &IndexUpdateState,
+    git_dates: Option<&E>,
+    authorize: F,
+) -> Result<PageCreateOutcome, Err>
+where
+    E: GitDateExecutor,
+    F: FnOnce(Vec<PathBuf>) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<PathBuf>, Err>>,
+    Err: From<PageError>,
+{
     // Authorization runs before any source change; its failure is returned
     // to the caller exactly as the caller produced it.
     let mut denied = None;
     let denied_slot = &mut denied;
     let result = create_page(
         request,
+        names,
         state,
         updates,
         git_dates,
@@ -164,6 +191,7 @@ where
 
 async fn create_page<E, F, Fut>(
     request: PageCreate,
+    names: entry::SourceNames,
     state: &IndexRuntimeState,
     updates: &IndexUpdateState,
     git_dates: Option<&E>,
@@ -317,6 +345,7 @@ where
                 &request.title,
                 request.allocate_unique_title,
                 request.as_readme,
+                names,
             )?;
             snapshot.track_created(Path::new(&request.space).join(&created.path));
             checkpoint("create")?;

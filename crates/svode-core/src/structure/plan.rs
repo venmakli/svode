@@ -121,13 +121,8 @@ pub fn collection_create_schema_paths(
     project_path: Option<&str>,
 ) -> Result<Vec<PathBuf>, PageError> {
     let (parent, _) = super::ops::resolved_create_parent(space, parent_path)?;
-    let planned = entry::planned_source_create(
-        space,
-        parent.as_deref(),
-        title,
-        allocate_unique_title,
-        false,
-    )?;
+    let planned =
+        entry::planned_collection_source(space, parent.as_deref(), title, allocate_unique_title)?;
     let collection_path = planned
         .path
         .strip_suffix(".md")

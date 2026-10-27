@@ -127,13 +127,15 @@ pub(crate) async fn create_collection(
         Err(error) => return failure(error).map_err(|error| space_relative_busy(&space, error)),
     };
     let changed_paths = relative_changed_paths(&space, &outcome.changed_paths);
+    let warnings = outcome.collection.warnings.clone();
     Ok(ToolCallResult::ok(
         format!("Created collection {}.", outcome.collection_path),
         json!({
             "collectionPath": outcome.collection_path,
             "collection": outcome.collection,
             "schema": outcome.schema,
-            "changedPaths": changed_paths
+            "changedPaths": changed_paths,
+            "warnings": warnings
         }),
     ))
 }

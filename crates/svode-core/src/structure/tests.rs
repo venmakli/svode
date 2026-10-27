@@ -1397,3 +1397,198 @@ async fn a_read_only_source_fails_the_operation_without_a_false_recovery() {
         assert!(sink.take().is_empty(), "{read_only}");
     }
 }
+
+async fn create_tasks_collection(
+    space: &str,
+    parent_path: Option<&str>,
+    title: &str,
+    allocate_unique_title: bool,
+) -> Result<super::CollectionCreateOutcome, crate::page::PageError> {
+    let state = IndexRuntimeState::default();
+    super::create_collection(
+        super::CollectionCreate {
+            space: space.to_string(),
+            parent_path: parent_path.map(str::to_string),
+            title: title.to_string(),
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            schema: crate::collections::engine::default_collection_schema(),
+            allocate_unique_title,
+            project: None,
+        },
+        runtime(&state),
+        |paths| async move { Ok::<_, crate::page::PageError>(paths) },
+    )
+    .await
+}
+
+/// Files and directories of `prefix` with their bytes.
+fn subtree_snapshot(root: &Path, prefix: &str) -> Vec<(String, Vec<u8>)> {
+    tree_snapshot(root)
+        .into_iter()
+        .filter(|(path, _)| path == prefix || path.starts_with(&format!("{prefix}/")))
+        .collect()
+}
+
+/// Names of the direct children of `parent` that portably match `name`.
+fn portable_neighbors(parent: &Path, name: &str) -> Vec<String> {
+    let key = crate::page::filename::portable_component_key(name);
+    let mut names = fs::read_dir(parent)
+        .unwrap()
+        .map(|item| item.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|component| crate::page::filename::portable_component_key(component) == key)
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn collection_create_takes_a_suffix_when_a_neighbor_has_its_portable_name() {
+    // (neighbor files, parent, neighbor path)
+    let cases: [(&[(&str, &str)], Option<&str>, &str); 5] = [
+        (
+            &[("tasks/Ship.md", "---\ntitle: Ship\n---\n")],
+            None,
+            "tasks",
+        ),
+        (
+            &[("Tasks/Ship.md", "---\ntitle: Ship\n---\n")],
+            None,
+            "Tasks",
+        ),
+        (
+            &[
+                ("tasks/README.md", "---\ntitle: Backlog\n---\nOwner\n"),
+                ("tasks/Ship.md", "---\ntitle: Ship\n---\n"),
+            ],
+            None,
+            "tasks",
+        ),
+        (
+            &[("tasks", "plain file without extension\n")],
+            None,
+            "tasks",
+        ),
+        (
+            &[("projects/tasks/Ship.md", "---\ntitle: Ship\n---\n")],
+            Some("projects"),
+            "projects/tasks",
+        ),
+    ];
+    for (files, parent, neighbor) in cases {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        crate::page::test_support::scaffold_space(root, "Root");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        write_tree(root, files);
+        let neighbor_name = neighbor.rsplit('/').next().unwrap();
+        let mut order = std::collections::BTreeMap::from([(
+            parent.unwrap_or(".").to_string(),
+            vec![neighbor_name.to_string()],
+        )]);
+        if root.join(neighbor).is_dir() {
+            order.insert(neighbor.to_string(), vec!["Ship.md".to_string()]);
+        }
+        crate::content_tree::replace_order(root, order).unwrap();
+        let neighbor_before = subtree_snapshot(root, neighbor);
+        let neighbor_order = crate::content_tree::read_order(root).get(neighbor).cloned();
+
+        let outcome = create_tasks_collection(root.to_str().unwrap(), parent, "Tasks", false)
+            .await
+            .unwrap_or_else(|error| panic!("{neighbor}: {error:?}"));
+
+        let expected = match parent {
+            Some(parent) => format!("{parent}/Tasks-1"),
+            None => "Tasks-1".to_string(),
+        };
+        assert_eq!(outcome.collection_path, expected, "{neighbor}");
+        assert_eq!(outcome.collection.path, format!("{expected}/README.md"));
+        assert_eq!(outcome.collection.meta.title, "Tasks", "{neighbor}");
+        assert!(root.join(&expected).join("schema.yaml").is_file());
+        assert!(
+            outcome.collection.warnings.iter().any(|warning| {
+                warning.kind == "filename_collision_allocated"
+                    && warning.path.as_deref() == Some(outcome.collection.path.as_str())
+            }),
+            "{neighbor}: {:?}",
+            outcome.collection.warnings
+        );
+        assert_eq!(
+            subtree_snapshot(root, neighbor),
+            neighbor_before,
+            "{neighbor}"
+        );
+        assert_eq!(
+            crate::content_tree::read_order(root).get(neighbor).cloned(),
+            neighbor_order,
+            "{neighbor}"
+        );
+        let parent_dir = parent.map_or(root.to_path_buf(), |parent| root.join(parent));
+        assert_eq!(
+            portable_neighbors(&parent_dir, "Tasks"),
+            vec![neighbor_name.to_string()],
+            "{neighbor}: no second name that differs only in case"
+        );
+    }
+}
+
+#[tokio::test]
+async fn collection_create_keeps_the_title_conflict_and_the_page_file_suffix() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    crate::page::test_support::scaffold_space(root, "Root");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    write_tree(
+        root,
+        &[
+            ("tasks/README.md", "---\ntitle: tasks\n---\n"),
+            ("Notes.md", "---\ntitle: Other\n---\n"),
+        ],
+    );
+    let space = root.to_str().unwrap();
+    let before = source_snapshot(root);
+
+    let conflict = create_tasks_collection(space, None, "Tasks", false)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(conflict, crate::page::PageError::DocumentNameConflict(_)),
+        "{conflict:?}"
+    );
+    assert_eq!(source_snapshot(root), before);
+
+    let outcome = create_tasks_collection(space, None, "Notes", false)
+        .await
+        .unwrap();
+    assert_eq!(outcome.collection_path, "Notes-1");
+    assert_eq!(outcome.collection.meta.title, "Notes");
+    assert!(
+        outcome
+            .collection
+            .warnings
+            .iter()
+            .any(|warning| warning.kind == "filename_collision_allocated")
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("Notes.md")).unwrap(),
+        "---\ntitle: Other\n---\n"
+    );
+}
+
+#[tokio::test]
+async fn collection_create_with_a_free_name_reports_no_allocation_warning() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    crate::page::test_support::scaffold_space(root, "Root");
+    fs::create_dir_all(root.join(".git")).unwrap();
+
+    let outcome = create_tasks_collection(root.to_str().unwrap(), None, "Tasks", false)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.collection_path, "Tasks");
+    assert_eq!(outcome.collection.path, "Tasks/README.md");
+    assert!(outcome.collection.warnings.is_empty());
+}

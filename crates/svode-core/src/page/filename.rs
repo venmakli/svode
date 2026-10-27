@@ -190,11 +190,30 @@ pub fn allocate_available_path(
     projection: &FilenameProjection,
     extension: Option<&str>,
 ) -> Result<(PathBuf, FilenameProjection), PageError> {
+    let candidate = allocate_available_stem(parent, projection, &[extension])?;
+    let component = component_name(&candidate.stem, extension);
+    Ok((parent.join(component), candidate))
+}
+
+/// Allocate the first numeric suffix whose stem is portably free in `parent`
+/// in every component form, for a source that takes several names in turn.
+pub fn allocate_available_stem(
+    parent: &Path,
+    projection: &FilenameProjection,
+    extensions: &[Option<&str>],
+) -> Result<FilenameProjection, PageError> {
     for suffix in 0..=10_000 {
         let candidate = projection.with_numeric_suffix(suffix);
-        let component = component_name(&candidate.stem, extension);
-        if !component_conflicts_portably(parent, &component, None)? {
-            return Ok((parent.join(component), candidate));
+        let mut free = true;
+        for extension in extensions {
+            let component = component_name(&candidate.stem, *extension);
+            if component_conflicts_portably(parent, &component, None)? {
+                free = false;
+                break;
+            }
+        }
+        if free {
+            return Ok(candidate);
         }
     }
     Err(PageError::FileAlreadyExists(
@@ -339,5 +358,20 @@ mod tests {
 
         let (path, _) = allocate_available_path(tmp.path(), &project("name"), Some("md")).unwrap();
         assert_eq!(path.file_name().unwrap().to_string_lossy(), "name-1.md");
+    }
+
+    #[test]
+    fn stem_allocation_keeps_every_component_form_portably_free() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join("tasks")).unwrap();
+        fs::write(tmp.path().join("Tasks-1.md"), "").unwrap();
+        fs::write(tmp.path().join("TASKS-2"), "").unwrap();
+
+        let stem =
+            allocate_available_stem(tmp.path(), &project("Tasks"), &[Some("md"), None]).unwrap();
+        assert_eq!(stem.stem, "Tasks-3");
+
+        let (path, _) = allocate_available_path(tmp.path(), &project("Tasks"), Some("md")).unwrap();
+        assert_eq!(path.file_name().unwrap().to_string_lossy(), "Tasks.md");
     }
 }

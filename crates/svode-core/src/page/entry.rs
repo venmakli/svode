@@ -263,8 +263,14 @@ pub fn create_with_options(
     allocate_unique_title: bool,
     as_readme: bool,
 ) -> Result<Entry, PageError> {
-    let created =
-        create_source_with_options(space, parent_path, title, allocate_unique_title, as_readme)?;
+    let created = create_source_with_options(
+        space,
+        parent_path,
+        title,
+        allocate_unique_title,
+        as_readme,
+        SourceNames::File,
+    )?;
     let mut metadata = created.meta.clone();
     crate::collections::engine::apply_schema_defaults_for_path(
         space,
@@ -307,6 +313,7 @@ pub fn create_source_with_options(
     title: &str,
     allocate_unique_title: bool,
     as_readme: bool,
+    names: SourceNames,
 ) -> Result<Entry, PageError> {
     crate::page::naming::with_document_name_lock(space, || {
         create_source_with_options_inner(
@@ -315,8 +322,38 @@ pub fn create_source_with_options(
             title,
             allocate_unique_title,
             as_readme,
+            names,
         )
     })
+}
+
+/// Names a new Page source keeps free in its parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceNames {
+    /// The Markdown file `<stem>.md`.
+    File,
+    /// `<stem>.md` and the directory `<stem>` the source becomes right after
+    /// it is written, as the Page of a new Collection.
+    FileAndDirectory,
+}
+
+impl SourceNames {
+    fn extensions(self) -> &'static [Option<&'static str>] {
+        match self {
+            Self::File => &[Some("md")],
+            Self::FileAndDirectory => &[Some("md"), None],
+        }
+    }
+}
+
+fn allocate_source_path(
+    parent_abs: &Path,
+    projection: &FilenameProjection,
+    names: SourceNames,
+) -> Result<(PathBuf, FilenameProjection), PageError> {
+    let allocated = filename::allocate_available_stem(parent_abs, projection, names.extensions())?;
+    let component = filename::component_name(&allocated.stem, Some("md"));
+    Ok((parent_abs.join(component), allocated))
 }
 
 #[derive(Debug, Clone)]
@@ -325,25 +362,20 @@ pub struct PlannedSourceCreate {
     pub path: String,
 }
 
-pub fn planned_source_create(
+/// Plan the Page source a Collection create writes before it converts the
+/// source into a directory of the same stem: both names stay free.
+pub fn planned_collection_source(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
     allocate_unique_title: bool,
-    as_readme: bool,
 ) -> Result<PlannedSourceCreate, PageError> {
     let parent_path = parent_path
         .map(str::trim)
         .filter(|parent| !parent.is_empty());
-    let initial_scope_path = if as_readme {
-        parent_path
-            .map(|parent| format!("{parent}/README.md"))
-            .unwrap_or_else(|| "README.md".to_string())
-    } else {
-        parent_path
-            .map(|parent| format!("{parent}/.svode-name-probe.md"))
-            .unwrap_or_else(|| ".svode-name-probe.md".to_string())
-    };
+    let initial_scope_path = parent_path
+        .map(|parent| format!("{parent}/.svode-name-probe.md"))
+        .unwrap_or_else(|| ".svode-name-probe.md".to_string());
     let title = if allocate_unique_title {
         crate::page::naming::allocate_document_title(Path::new(space), &initial_scope_path, title)?
     } else {
@@ -355,18 +387,12 @@ pub fn planned_source_create(
         title.to_string()
     };
     let projection = filename::project(&title);
-    let path = if as_readme {
-        parent_path
-            .map(|parent| format!("{parent}/README.md"))
-            .unwrap_or_else(|| "README.md".to_string())
-    } else {
-        let parent_abs = parent_path
-            .map(|parent| resolve(space, parent))
-            .unwrap_or_else(|| PathBuf::from(space));
-        let (abs_path, _) =
-            filename::allocate_available_path(&parent_abs, &projection, Some("md"))?;
-        rel_from_abs(Path::new(space), &abs_path)
-    };
+    let parent_abs = parent_path
+        .map(|parent| resolve(space, parent))
+        .unwrap_or_else(|| PathBuf::from(space));
+    let (abs_path, _) =
+        allocate_source_path(&parent_abs, &projection, SourceNames::FileAndDirectory)?;
+    let path = rel_from_abs(Path::new(space), &abs_path);
     Ok(PlannedSourceCreate { title, path })
 }
 
@@ -376,6 +402,7 @@ fn create_source_with_options_inner(
     title: &str,
     allocate_unique_title: bool,
     as_readme: bool,
+    names: SourceNames,
 ) -> Result<Entry, PageError> {
     let parent_path = parent_path
         .map(str::trim)
@@ -414,8 +441,7 @@ fn create_source_with_options_inner(
         let parent_abs = parent_path
             .map(|parent| resolve(space, parent))
             .unwrap_or_else(|| PathBuf::from(space));
-        let (abs_path, applied_projection) =
-            filename::allocate_available_path(&parent_abs, &projection, Some("md"))?;
+        let (abs_path, applied_projection) = allocate_source_path(&parent_abs, &projection, names)?;
         let rel_path = rel_from_abs(Path::new(space), &abs_path);
         (rel_path, abs_path, Some(applied_projection))
     };
@@ -2848,7 +2874,9 @@ mod tests {
 
         // Filename warnings are produced while the source name is allocated, so the
         // assertion uses the source create that returns them instead of a fresh read.
-        let created = create_source_with_options(&space, None, "A/B", false, false).unwrap();
+        let created =
+            create_source_with_options(&space, None, "A/B", false, false, SourceNames::File)
+                .unwrap();
 
         assert_eq!(created.path, "A-B-1.md");
         assert!(created.warnings.iter().any(|warning| {

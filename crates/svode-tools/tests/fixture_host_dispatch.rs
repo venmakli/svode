@@ -2209,6 +2209,24 @@ async fn collection_create_is_one_action_without_an_empty_collection_on_invalid_
     assert_eq!(nested["collectionPath"], "leaf/Inside");
     assert_eq!(nested["schema"]["views"], json!([]));
 
+    write(&fixture.project.join("drafts/Ship.md"), "Ship body\n");
+    let suffixed = call_tool(
+        &host,
+        Some(&target),
+        "create_collection",
+        json!({ "parentPath": "", "title": "Drafts" }),
+    )
+    .await;
+    let suffixed = structured(&suffixed);
+    assert_eq!(suffixed["collectionPath"], "Drafts-1");
+    assert_eq!(suffixed["collection"]["meta"]["title"], "Drafts");
+    assert_eq!(
+        suffixed["warnings"][0]["kind"],
+        "filename_collision_allocated"
+    );
+    assert_eq!(suffixed["warnings"][0]["path"], "Drafts-1/README.md");
+    assert_eq!(read(&fixture, "drafts/Ship.md"), "Ship body\n");
+
     let invalid = call_tool(
         &host,
         Some(&target),
