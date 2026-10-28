@@ -79,6 +79,82 @@ test("a sidebar deletion of a folder closes its open Page without a message", as
   }
 });
 
+test("a sidebar deletion of an open directory Page closes it without a message though the watcher reports nothing", async () => {
+  const dom = new JSDOM("<!doctype html><div id=app></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restore = installDomGlobals(dom);
+  const shown: unknown[] = [];
+  const saved = { error: toast.error, warning: toast.warning };
+  toast.error = ((message: unknown) => shown.push(message)) as never;
+  toast.warning = ((message: unknown) => shown.push(message)) as never;
+  const spacePath = `/sidebar-delete-directory-${Math.random()}`;
+  let exists = true;
+  mockNativeIpc(
+    async (command, args) => {
+      const input = (args ?? {}) as Record<string, unknown>;
+      if (command === "read_page") {
+        if (!exists) throw `File not found: ${String(input.path)}`;
+        return {
+          path: input.path,
+          body: "",
+          meta: { title: "Kit", icon: null, created: "", updated: "" },
+        };
+      }
+      if (command === "delete_content") {
+        // Svode moves the directory away before removing it: the watcher
+        // reports no event for it.
+        exists = false;
+        return null;
+      }
+      return null;
+    },
+    { shouldMockEvents: true },
+  );
+  const { createRoot } = await import("react-dom/client");
+  const { deleteTreeItem } = await import("./content-tree-actions");
+  const { PageDetailProvider } = await import("@/features/page/scope-surface");
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  let gone = 0;
+  try {
+    await act(async () => {
+      root.render(
+        <PageDetailProvider
+          spacePath={spacePath}
+          spaceId="root"
+          readmePath="kit/README.md"
+          ownerPath="kit"
+          target="page"
+          onOpenPath={() => {}}
+          onPageGone={() => (gone += 1)}
+        >
+          {null}
+        </PageDetailProvider>,
+      );
+      await turn();
+      await turn();
+    });
+    await act(async () => {
+      await deleteTreeItem({
+        spacePath,
+        path: "kit/README.md",
+        projectPath: null,
+      });
+      await turn();
+      await turn();
+    });
+    expect(gone).toBe(1);
+    expect(shown).toEqual([]);
+  } finally {
+    await act(async () => root.unmount());
+    Object.assign(toast, saved);
+    clearNativeMocks();
+    restore();
+    dom.window.close();
+  }
+});
+
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
     document: dom.window.document,

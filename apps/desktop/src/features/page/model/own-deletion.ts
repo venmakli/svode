@@ -48,12 +48,21 @@ export async function trackOwnContentDeletion<T>(
 
 /**
  * Watches the Page file at `path` for deletions of this Desktop: the watcher
- * may report the file gone while such a deletion runs or after it finished.
+ * may report the file gone while such a deletion runs or after it finished,
+ * or not at all. A deletion moves its root away before removing it, and the
+ * watcher reports no event for a directory moved away, so `onDeleted` tells
+ * when one that removes the Page has finished.
  */
-export function watchOwnPageDeletion(spacePath: string, path: string) {
+export function watchOwnPageDeletion(
+  spacePath: string,
+  path: string,
+  onDeleted?: () => void,
+) {
   let finished = false;
   const listener = (deletion: OwnDeletion) => {
-    if (removesPage(deletion, spacePath, path)) finished = true;
+    if (!removesPage(deletion, spacePath, path)) return;
+    finished = true;
+    onDeleted?.();
   };
   finishedListeners.add(listener);
   return {

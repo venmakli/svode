@@ -59,7 +59,11 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     let appliedPageRead = 0;
     let lastSchemaRead = 0;
     let appliedSchemaRead = 0;
-    const ownDeletion = watchOwnPageDeletion(spacePath, path);
+    // An own deletion of a directory Page reaches no watcher event, so its
+    // end checks the Page as an event would.
+    const ownDeletion = watchOwnPageDeletion(spacePath, path, () => {
+      void refreshPage().catch(warn);
+    });
 
     const refreshPage = async (confirmingGone = false): Promise<void> => {
       const read = ++lastPageRead;
