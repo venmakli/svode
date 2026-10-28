@@ -259,8 +259,8 @@ async function fixture() {
       const path = String((args as { path: string }).path);
       await delay.get(path);
       if (state.fail) throw new Error("facts unavailable");
-      if (missing.has(path))
-        throw { kind: "file_not_found", message: `File not found: ${path}` };
+      // Svode's `file_not_found` arrives as its bare message.
+      if (missing.has(path)) throw `File not found: ${path}`;
       return facts.get(path);
     },
     { shouldMockEvents: true },

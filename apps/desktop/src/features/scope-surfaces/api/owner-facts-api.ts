@@ -21,11 +21,11 @@ export async function getScopeOwnerFacts(input: {
   };
 }
 
-/** Svode found nothing at the path: no owner directory, file or README. */
+/**
+ * Svode found nothing at the path: no owner directory, file or README. Its
+ * `file_not_found` error reaches the frontend as the bare message
+ * "File not found: <path>", not as an object with its kind.
+ */
 export function isScopeOwnerNotFound(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    (error as { kind?: unknown }).kind === "file_not_found"
-  );
+  return typeof error === "string" && error.startsWith("File not found: ");
 }

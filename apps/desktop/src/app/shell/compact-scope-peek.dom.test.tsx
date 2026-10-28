@@ -1233,11 +1233,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
         }
         if (command === "get_page_schema") return null;
         if (command === "get_scope_owner_facts") {
-          if (!folder)
-            throw {
-              kind: "file_not_found",
-              message: `File not found: ${path}`,
-            };
+          // Svode's `file_not_found` arrives as its bare message.
+          if (!folder) throw `File not found: ${path}`;
           return {
             identity: "collectionDirectory",
             ownerPath: "Tasks/Sub",
@@ -1289,9 +1286,11 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       await deleted("Tasks/Sub/README.md");
       expect(dismissed).toBe(0);
 
-      // The folder is gone: the Peek closes without the resolver error.
+      // The folder is removed outside Svode, `rm -r` reports its files: the
+      // Peek closes without the resolver error.
       folder = false;
-      await deleted("Tasks/Sub");
+      await deleted("Tasks/Sub/s1.md");
+      await deleted("Tasks/Sub/README.md");
       expect(dismissed).toBe(1);
       expect(alert()?.textContent?.includes("File not found") ?? false).toBe(
         false,

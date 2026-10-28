@@ -524,8 +524,15 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
   test("an App or Collection whose folder is gone closes; a Collection that lost only its README and a Page stay to their own rules", async () => {
     const gone = new Set<string>();
     const f = await fixture((path) => {
-      if (gone.has(path))
-        throw { kind: "file_not_found", message: `File not found: ${path}` };
+      // Svode's `file_not_found` arrives as its bare message.
+      if (gone.has(path)) throw `File not found: ${path}`;
+      if (path === "kit/README.md")
+        return {
+          identity: "appDirectory",
+          ownerPath: "kit",
+          contentPath: "kit/README.md",
+          hasApp: true,
+        };
       if (path === "tool")
         return {
           identity: "appDirectory",
@@ -587,6 +594,16 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       expect(getActiveContentSelection().selection === null).toBe(false);
       // The folder with its README is gone.
       await vanish("notes/README.md");
+      expect(getActiveContentSelection().selection).toBeNull();
+
+      // An App with README opened from the sidebar as its README.
+      openPage("kit/README.md");
+      await f.render();
+      await f.settle();
+      expect(
+        f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+      ).toBe("app-directory:kit/README.md:app");
+      await vanish("kit/README.md", "kit");
       expect(getActiveContentSelection().selection).toBeNull();
 
       // A Page that vanished closes by its own rule, not by the resolver.
