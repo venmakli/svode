@@ -125,6 +125,16 @@ export function useListedAgentSessions(): ListedAgentSession[] | null {
 }
 
 /**
+ * The project whose session list the catalog has read, or null before the
+ * first read after a project switch.
+ */
+export function useAgentSessionsReadProject(): string | null {
+  return useStore(agentSessionCatalog, (state) =>
+    state.result ? state.projectPath : null,
+  );
+}
+
+/**
  * The active sessions of the project in their Now order, pending new
  * sessions included.
  */

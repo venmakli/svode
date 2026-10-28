@@ -5,6 +5,7 @@ export {
   useAgentSessionCatalogLifecycle,
   useAgentSessionChangesTarget,
   useAgentSessionSpace,
+  useAgentSessionsReadProject,
   useListedAgentSessions,
   useResolvedAgentSession,
   useSavedProjectSessions,

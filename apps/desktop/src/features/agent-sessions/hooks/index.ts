@@ -3,6 +3,7 @@ export {
   useActiveAgentSessions,
   useAgentSessionCatalog,
   useAgentSessionCatalogLifecycle,
+  useAgentSessionsReadProject,
   useListedAgentSessions,
   subscribeAgentSessionTerminalFollow,
 } from "./use-agent-session-catalog";

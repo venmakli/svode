@@ -99,6 +99,8 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
   let data: Record<string, ProjectData> = {};
   let failReads = false;
   let failSessions = false;
+  /** A session read in flight until it is released. */
+  let sessionsHeld: Promise<void> = Promise.resolve();
   const commands: [string, Record<string, unknown>][] = [];
   const stateOf = (path: string) => ({
     pinned: data[path].pinned,
@@ -131,6 +133,7 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
           }
           case "agent_sessions_list_saved":
             if (failReads || failSessions) throw new Error("unreadable");
+            await sessionsHeld;
             return {
               status: "ok",
               generatedAt: "",
@@ -410,6 +413,59 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
     expect(rows()).toEqual([
       `roadmap.md${m.navigation_pinned_item()}`,
       "plan.md",
+    ]);
+  });
+
+  test("a project's hidden rows and order of Now survive its rows mounting again before its sessions are read (DF-207 R4, DF-206 R6)", async () => {
+    const early = {
+      ...running("codex:e", "Early"),
+      lastActivityAt: "2026-10-06T09:00:00Z",
+    };
+    reset({
+      "/projects/remount": {
+        pinned: [],
+        kept: [page("plan.md")],
+        sessions: [running("codex:l", "Late")],
+      },
+    });
+    await render("remount");
+    // A session that came later, though active earlier, comes last.
+    data["/projects/remount"].sessions = [
+      running("codex:l", "Late"),
+      early,
+      running("codex:h", "Hidden"),
+    ];
+    await act(async () => window.dispatchEvent(new window.Event("focus")));
+    await act(settle);
+    expect(rows()).toEqual([
+      "plan.md",
+      `Late${m.sessions_status_running()}`,
+      `Early${m.sessions_status_running()}`,
+      `Hidden${m.sessions_status_running()}`,
+    ]);
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          `[aria-label='${m.navigation_close_item({ title: "Hidden" })}']`,
+        )!
+        .click(),
+    );
+    await act(settle);
+
+    // The rows mount again, as when the project becomes inactive, and its
+    // sessions are read only after its navigation state.
+    let release = () => {};
+    sessionsHeld = new Promise((resolve) => {
+      release = resolve;
+    });
+    await render("remount");
+    release();
+    sessionsHeld = Promise.resolve();
+    await act(settle);
+    expect(rows()).toEqual([
+      "plan.md",
+      `Late${m.sessions_status_running()}`,
+      `Early${m.sessions_status_running()}`,
     ]);
   });
 

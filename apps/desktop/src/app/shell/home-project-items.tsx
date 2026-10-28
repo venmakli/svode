@@ -164,13 +164,16 @@ function InactiveProjectRows({
     onActivateContent,
   );
   const listed = sessions.sessions ?? [];
-  const now = useNowRows({
-    pinned,
-    kept,
-    activeSessions: sessions.active,
-    mainObject: null,
-    described: null,
-  });
+  const now = useNowRows(
+    {
+      pinned,
+      kept,
+      activeSessions: sessions.active,
+      mainObject: null,
+      described: null,
+    },
+    sessions.sessions !== null,
+  );
   const read = loaded && sessions.sessions !== null;
   const readFailed = failed || sessions.failed;
 

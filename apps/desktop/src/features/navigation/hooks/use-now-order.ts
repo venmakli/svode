@@ -16,11 +16,14 @@ import {
  * `rows`, which are given in the order new rows take; rows the user hid
  * stay out until a new event brings them back. The order and the hidden
  * rows are recorded for the project in this window, so every surface of
- * the project shows Now alike (DF-206, DF-207).
+ * the project shows Now alike (DF-206, DF-207). Rows read only in part,
+ * such as before the project's sessions are read, are shown by the record
+ * without changing it: a row missing from them has not left Now.
  */
 export function useNowOrder(
   projectPath: string | null,
   rows: readonly NowOrderRow[],
+  complete: boolean,
 ): number[] {
   useSyncExternalStore(subscribeNowHidden, nowHiddenRevision);
   const settled = projectPath
@@ -37,7 +40,7 @@ export function useNowOrder(
     : visible;
   const shown = order.map((index) => rows[index]);
   useLayoutEffect(() => {
-    if (!projectPath || !settled) return;
+    if (!projectPath || !settled || !complete) return;
     recordNowOrder(projectPath, shown);
     recordNowHidden(projectPath, settled.marks);
   });
