@@ -4117,6 +4117,168 @@ async fn shutdown_ends_the_agents_with_their_descendants() {
     assert_tree_ended(tree).await;
 }
 
+/// An agent that leaves a `sleep` running in its process group, without
+/// its pipes, writes `<agent pid> <sleep pid>` to `$SVODE_TREE`, answers
+/// `initialize` and then runs `then` (DF-218).
+#[cfg(unix)]
+fn tree_agent_then(pids: &Path, then: &str) -> AcpLaunch {
+    let script = format!(
+        r#"sleep 600 </dev/null >/dev/null 2>&1 & echo "$$ $!" > "$SVODE_TREE"
+IFS= read -r line; id=${{line#'{{"id":'}}; id=${{id%%,*}}
+printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":1,"agentCapabilities":{{"sessionCapabilities":{{"list":{{}}}}}},"agentInfo":{{"name":"sh","version":"1"}}}}}}\n' "$id"
+{then}"#
+    );
+    AcpLaunch {
+        args: vec!["-c".into(), script],
+        ..tree_agent(pids)
+    }
+}
+
+/// Waits until the connection is `closed`.
+#[cfg(unix)]
+async fn closed(runtime: &AgentRuntime, id: ConnectionId) {
+    for _ in 0..250 {
+        if runtime.connection_status(id).unwrap().state == ConnectionState::Closed {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the connection does not close");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_agent_that_exits_is_waited_for_and_its_descendants_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::default();
+    let lease = runtime
+        .acquire(tree_agent_then(&pids, "exit 0"))
+        .await
+        .unwrap();
+    let tree = tree_pids(&pids).await;
+    // The lease still holds the connection: its end is the agent's own.
+    closed(&runtime, lease.connection()).await;
+    assert_tree_ended(tree).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_agent_that_stops_reading_is_ended_with_its_descendants() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        list: ListBounds {
+            timeout: Duration::from_millis(200),
+            ..ListBounds::default()
+        },
+        ..RuntimeConfig::default()
+    });
+    let lease = runtime
+        .acquire(tree_agent_then(&pids, "exec 0<&-; wait"))
+        .await
+        .unwrap();
+    let id = lease.connection();
+    let tree = tree_pids(&pids).await;
+    // Its output stays open; the write into its closed input fails, and the
+    // next request finds the connection gone.
+    assert_eq!(
+        runtime.list_sessions(id).await.unwrap_err(),
+        AgentRuntimeError::Timeout
+    );
+    assert_eq!(
+        runtime.list_sessions(id).await.unwrap_err(),
+        AgentRuntimeError::ConnectionClosed
+    );
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Closed
+    );
+    assert_tree_ended(tree).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn closed_connections_keep_their_state_but_no_process_tasks_or_pipes() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        connection_idle: Duration::from_millis(60),
+        request_timeout: Duration::from_millis(500),
+        ..RuntimeConfig::default()
+    });
+    let crashing = AcpLaunch {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), "echo 'adapter crashed' >&2; exit 3".into()],
+        cwd: std::env::temp_dir(),
+        ..launch()
+    };
+    let mut ids = Vec::new();
+    for cycle in 0..3 {
+        // Idle after the boundary that needed it is gone.
+        let lease = runtime
+            .acquire(tree_agent(&dir.path().join(format!("idle-{cycle}"))))
+            .await
+            .unwrap();
+        ids.push(lease.connection());
+        drop(lease);
+        closed(&runtime, ids[ids.len() - 1]).await;
+        // A check.
+        assert!(matches!(
+            runtime.check(sh_agent(&[])).await,
+            AgentCheck::Ready { .. }
+        ));
+        // The agent's own exit.
+        let lease = runtime
+            .acquire(tree_agent_then(
+                &dir.path().join(format!("exit-{cycle}")),
+                "exit 0",
+            ))
+            .await
+            .unwrap();
+        ids.push(lease.connection());
+        closed(&runtime, lease.connection()).await;
+        // An explicit close.
+        let lease = runtime.acquire(sh_agent(&[])).await.unwrap();
+        ids.push(lease.connection());
+        runtime.close_connection(lease.connection()).await.unwrap();
+        // A failed start keeps its reason.
+        let AgentCheck::FailedToStart { message } = runtime.check(crashing.clone()).await else {
+            panic!("the agent fails to start");
+        };
+        assert!(message.contains("adapter crashed"), "{message}");
+    }
+
+    let connections: Vec<_> = runtime
+        .inner
+        .connections
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    assert_eq!(connections.len(), 15);
+    for connection in &connections {
+        assert!(!connection.is_open());
+        assert!(connection.process.lock().await.is_none());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // The I/O tasks end once aborted, the stderr reader at EOF.
+        while !(connection.rpc.released() && Arc::strong_count(&connection.stderr) == 1) {
+            assert!(
+                Instant::now() < deadline,
+                "a closed connection of {} holds its pipes",
+                connection.agent
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    // What a closed connection reports stays.
+    for id in ids {
+        let status = runtime.connection_status(id).unwrap();
+        assert_eq!(status.state, ConnectionState::Closed);
+        assert_eq!(status.agent.unwrap().name.as_deref(), Some("sh"));
+    }
+}
+
 /// Claude Code `ExitPlanMode` in the shape `claude-agent-acp` 0.85.0 sends
 /// to a client that is not AIR (`permissions/presentation.js`,
 /// `tool-calls/reporters/interaction.js`, `permissions/options/tools.js`): the

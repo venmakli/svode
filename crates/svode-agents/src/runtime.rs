@@ -330,8 +330,8 @@ struct Connection {
     rpc: Arc<RpcClient>,
     state: Mutex<ConnectionState>,
     info: Mutex<Option<AgentInfo>>,
-    /// The agent process with its descendants.
-    process: Mutex<Option<ProcessTree>>,
+    /// The agent process with its descendants until the connection closes.
+    process: tokio::sync::Mutex<Option<ProcessTree>>,
     stderr: Arc<Mutex<Vec<u8>>>,
     /// Sessions by the agent's ACP session id.
     sessions: Mutex<HashMap<String, Arc<Session>>>,
@@ -473,7 +473,7 @@ impl AgentRuntime {
             rpc,
             state: Mutex::new(ConnectionState::Starting),
             info: Mutex::new(None),
-            process: Mutex::new(process),
+            process: tokio::sync::Mutex::new(process),
             stderr: Arc::new(Mutex::new(Vec::new())),
             sessions: Mutex::new(HashMap::new()),
             holds: AtomicUsize::new(0),
@@ -1824,7 +1824,7 @@ impl Connection {
                 Err(AgentRuntimeError::Timeout)
             }
             Err(RpcError::Closed) => {
-                self.close();
+                self.terminate().await;
                 Err(AgentRuntimeError::ConnectionClosed)
             }
         }
@@ -1864,13 +1864,17 @@ impl Connection {
             .is_some_and(|info| info.capabilities.close_session)
     }
 
-    /// Ends the agent process with its descendants and closes the
-    /// connection.
+    /// Ends the agent process with its descendants, waits for it and
+    /// closes the connection, on every path to `closed` (DF-218 R2, R3).
+    /// The closed connection keeps its state, agent info and stderr tail but
+    /// no process, I/O tasks or pipes: the tree's end brings stderr to EOF.
+    /// A second caller waits until the first has ended the tree.
     async fn terminate(&self) {
-        let process = self.process.lock().unwrap().take();
-        if let Some(process) = process {
+        let mut process = self.process.lock().await;
+        if let Some(process) = process.take() {
             process.kill().await;
         }
+        self.rpc.close();
         self.close();
     }
 
@@ -1977,8 +1981,9 @@ async fn dispatch(connection: Weak<Connection>, mut incoming: mpsc::UnboundedRec
             }
         }
     }
+    // The agent's output ended: whatever is left of its tree ends too.
     if let Some(connection) = connection.upgrade() {
-        connection.close();
+        connection.terminate().await;
     }
 }
 

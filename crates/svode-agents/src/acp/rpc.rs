@@ -10,6 +10,7 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::AbortHandle;
 
 /// A replay can be one large update; anything longer is a broken peer.
 const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
@@ -55,11 +56,14 @@ pub(crate) struct RpcClient {
     /// `None` once the peer is gone: new requests fail as closed.
     waiters: Arc<Waiters>,
     next_id: AtomicU64,
+    /// The reader and writer tasks, which hold the peer's output and input.
+    tasks: [AbortHandle; 2],
 }
 
 impl RpcClient {
     /// Starts the reader and writer tasks. The incoming channel closes when
-    /// the peer's output ends; every in-flight request then fails as closed.
+    /// the peer's output ends or the client closes; every in-flight request
+    /// then fails as closed.
     pub(crate) fn start<R, W>(
         reader: R,
         writer: W,
@@ -71,14 +75,9 @@ impl RpcClient {
         let (outgoing, mut outgoing_rx) = mpsc::unbounded_channel::<String>();
         let (incoming_tx, incoming_rx) = mpsc::unbounded_channel();
         let waiters: Arc<Waiters> = Arc::new(Mutex::new(Some(HashMap::new())));
-        let client = Arc::new(Self {
-            outgoing,
-            incoming: incoming_tx.downgrade(),
-            waiters: waiters.clone(),
-            next_id: AtomicU64::new(1),
-        });
+        let incoming = incoming_tx.downgrade();
 
-        tokio::spawn(async move {
+        let writer = tokio::spawn(async move {
             let mut writer = writer;
             while let Some(line) = outgoing_rx.recv().await {
                 if writer.write_all(line.as_bytes()).await.is_err()
@@ -90,31 +89,38 @@ impl RpcClient {
             }
         });
 
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(reader);
-            let mut line = Vec::new();
-            loop {
-                line.clear();
-                let read = (&mut reader)
-                    .take(MAX_LINE_BYTES as u64 + 1)
-                    .read_until(b'\n', &mut line)
-                    .await;
-                match read {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) if line.len() > MAX_LINE_BYTES => break,
-                    Ok(_) => {}
+        let reader = tokio::spawn({
+            let waiters = waiters.clone();
+            async move {
+                let mut reader = BufReader::new(reader);
+                let mut line = Vec::new();
+                loop {
+                    line.clear();
+                    let read = (&mut reader)
+                        .take(MAX_LINE_BYTES as u64 + 1)
+                        .read_until(b'\n', &mut line)
+                        .await;
+                    match read {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) if line.len() > MAX_LINE_BYTES => break,
+                        Ok(_) => {}
+                    }
+                    let Ok(message) = serde_json::from_slice::<Message>(&line) else {
+                        continue;
+                    };
+                    route(message, &waiters, &incoming_tx);
                 }
-                let Ok(message) = serde_json::from_slice::<Message>(&line) else {
-                    continue;
-                };
-                route(message, &waiters, &incoming_tx);
-            }
-            let pending = waiters.lock().unwrap().take();
-            for (_, waiter) in pending.into_iter().flatten() {
-                let _ = waiter.send(Err(RpcError::Closed));
+                fail_pending(&waiters);
             }
         });
 
+        let client = Arc::new(Self {
+            outgoing,
+            incoming,
+            waiters,
+            next_id: AtomicU64::new(1),
+            tasks: [reader.abort_handle(), writer.abort_handle()],
+        });
         (client, incoming_rx)
     }
 
@@ -183,10 +189,37 @@ impl RpcClient {
         let _ = self.outgoing.send(line.to_string());
     }
 
+    /// Ends the reader and writer tasks, so the peer's input and output are
+    /// released and the incoming channel closes; every in-flight request
+    /// fails as closed.
+    pub(crate) fn close(&self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+        fail_pending(&self.waiters);
+    }
+
+    /// Whether both tasks have ended and with them the peer's input and
+    /// output.
+    #[cfg(test)]
+    pub(crate) fn released(&self) -> bool {
+        self.outgoing.is_closed()
+            && self.incoming.upgrade().is_none()
+            && Arc::strong_count(&self.waiters) == 1
+    }
+
     fn forget(&self, id: u64) {
         if let Some(waiters) = self.waiters.lock().unwrap().as_mut() {
             waiters.remove(&id);
         }
+    }
+}
+
+/// The peer is gone: new requests fail as closed, and so do those in flight.
+fn fail_pending(waiters: &Waiters) {
+    let pending = waiters.lock().unwrap().take();
+    for (_, waiter) in pending.into_iter().flatten() {
+        let _ = waiter.send(Err(RpcError::Closed));
     }
 }
 

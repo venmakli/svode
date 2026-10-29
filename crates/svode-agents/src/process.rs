@@ -333,6 +333,57 @@ pub(crate) mod tests {
         }
     }
 
+    /// A shell that leaves a `sleep` running without its pipes and exits,
+    /// with the pid of the `sleep`; the root is not waited for yet.
+    #[cfg(unix)]
+    async fn exited_root_with_descendant() -> (ProcessTree, Vec<u32>) {
+        use tokio::io::AsyncReadExt;
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "sleep 600 </dev/null >/dev/null 2>&1 & echo $!"])
+            .stdout(Stdio::piped());
+        let mut tree = ProcessTree::spawn(&mut command).unwrap();
+        let mut output = String::new();
+        // EOF: the shell has exited.
+        let mut stdout = tree.child().stdout.take().unwrap();
+        stdout.read_to_string(&mut output).await.unwrap();
+        (tree, vec![output.trim().parse().unwrap()])
+    }
+
+    /// A shell that starts a `ping` of its own and exits, with the pid of
+    /// the `ping` left in the Job.
+    #[cfg(windows)]
+    async fn exited_root_with_descendant() -> (ProcessTree, Vec<u32>) {
+        let mut command = Command::new("cmd");
+        command
+            .args(["/d", "/c", "start /b ping -n 600 127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null());
+        let mut tree = ProcessTree::spawn(&mut command).unwrap();
+        let root = tree.child().id().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let processes = tree.job.processes();
+            if !processes.is_empty() && !processes.contains(&root) {
+                return (tree, processes);
+            }
+            assert!(Instant::now() < deadline, "the shell exits after its ping");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn killing_a_tree_whose_root_exited_ends_its_descendants_and_waits_for_the_root() {
+        let (mut tree, descendants) = exited_root_with_descendant().await;
+        let root = tree.child().id().unwrap();
+        tree.kill().await;
+        assert!(!exists(root));
+        for pid in descendants {
+            assert!(ends(pid).await, "process {pid} of the tree still runs");
+        }
+    }
+
     #[tokio::test]
     async fn killing_a_tree_ends_its_descendants_and_waits_for_the_root() {
         let (mut tree, descendants) = tree_with_descendant().await;
