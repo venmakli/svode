@@ -28,11 +28,7 @@ import {
 } from "@/features/properties";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
 import type { AgentSessionsListResult } from "../api";
-import {
-  agentSessionLastActivityAt,
-  compareAgentSessionsByDefault,
-  type AgentSession,
-} from "../model";
+import { compareAgentSessionsByDefault, type AgentSession } from "../model";
 import { ExternalTerminalIcon } from "./external-terminal-icon";
 import {
   STATUS_OPTIONS,
@@ -151,7 +147,7 @@ export function createAgentSessionsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "agent-sessions",
-      getValue: agentSessionLastActivityAt,
+      getValue: (session) => session.lastActivityAt,
       key: "last-activity",
       label: m.sessions_field_last_activity(),
       standard: { display: "medium", type: "date" },

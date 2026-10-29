@@ -88,6 +88,42 @@ test("session time label localizes compact units for Russian", async () => {
   }
 });
 
+test("session time label follows turns, not an open terminal, and waiting shows how long (DF-216)", async () => {
+  const originalNow = Date.now;
+  const originalLocale = getLocale();
+  Date.now = () => now;
+
+  try {
+    await setLocale("en", { reload: false });
+
+    const withTerminal: AgentSession = {
+      ...session(isoBefore(3 * 60 * 60_000)),
+      runtime: {
+        ptyId: "pty-1",
+        live: true,
+        lastOutputAt: isoBefore(0),
+        lastInputAt: isoBefore(0),
+      },
+    };
+    expect(sessionTimeLabel(withTerminal)).toBe("3h");
+
+    const waiting: AgentSession = {
+      ...withTerminal,
+      status: {
+        state: "requires_action",
+        request: "permission",
+        source: "native_status_reader",
+        confidence: "approximate",
+      },
+      waitingSince: isoBefore(10 * 60_000),
+    };
+    expect(sessionTimeLabel(waiting)).toBe("10m");
+  } finally {
+    Date.now = originalNow;
+    await setLocale(originalLocale, { reload: false });
+  }
+});
+
 test("a session's scope mark has the Space's or project's emoji, otherwise its kind", () => {
   const scopes = buildAgentSessionScopes({
     activeRootIcon: "🚀",

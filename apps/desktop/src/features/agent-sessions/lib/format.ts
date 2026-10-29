@@ -2,7 +2,6 @@ import { getLocale } from "@/paraglide/runtime.js";
 import {
   isAgentSessionInScope,
   requiresUserAction,
-  terminalActivityAt,
   type AgentSession,
   type AgentSessionScopeGroup,
   type DraftSpaceChoice,
@@ -115,12 +114,6 @@ export function draftScopeMark(
 export function sessionTimeLabel(session: AgentSession): string {
   if (requiresUserAction(session)) {
     return shortRelativeTime(session.waitingSince ?? session.lastActivityAt);
-  }
-
-  if (session.runtime?.ptyId) {
-    return shortRelativeTime(
-      terminalActivityAt(session) ?? session.lastActivityAt,
-    );
   }
 
   return shortRelativeTime(session.lastActivityAt);

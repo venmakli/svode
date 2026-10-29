@@ -1,12 +1,5 @@
-import { terminalActivityAt } from "./active";
 import { isAgentTurnActive, requiresUserAction } from "./status";
 import type { AgentSession } from "./types";
-
-/** Last activity as the collection shows it: terminal activity while one is open. */
-export function agentSessionLastActivityAt(session: AgentSession): string {
-  if (!session.runtime?.ptyId) return session.lastActivityAt;
-  return terminalActivityAt(session) ?? session.lastActivityAt;
-}
 
 /** Default collection order: waiting, then working, then by last activity. */
 export function compareAgentSessionsByDefault(
@@ -15,8 +8,7 @@ export function compareAgentSessionsByDefault(
 ): number {
   return (
     workPriority(left) - workPriority(right) ||
-    timestampMs(agentSessionLastActivityAt(right)) -
-      timestampMs(agentSessionLastActivityAt(left)) ||
+    timestampMs(right.lastActivityAt) - timestampMs(left.lastActivityAt) ||
     left.id.localeCompare(right.id)
   );
 }

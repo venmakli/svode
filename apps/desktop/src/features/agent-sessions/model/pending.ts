@@ -30,11 +30,7 @@ export function buildPendingAgentSession(
     titleSource: "session-id",
     status: { state: "unknown", source: "none", confidence: "approximate" },
     statusReason: "new managed shell waiting for a CLI agent session",
-    runtime: {
-      ptyId: pending.ptyId,
-      live: true,
-      lastInputAt: pending.createdAt,
-    },
+    runtime: { ptyId: pending.ptyId, live: true },
     scopeKind: pending.scope.kind,
     scopeStatus: pending.scope.status,
     scopeConfidence: "exact",

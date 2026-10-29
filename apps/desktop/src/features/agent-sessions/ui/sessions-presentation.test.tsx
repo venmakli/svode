@@ -232,11 +232,12 @@ test("default order is waiting, then working, then last activity", () => {
     rows,
   });
 
+  // An open terminal does not move a session: only its turns do (DF-216).
   expect(ordered.rows.map((row) => row.id)).toEqual([
     "codex:waiting",
     "claude-code:working",
-    "codex:terminal",
     "codex:done",
+    "codex:terminal",
   ]);
 });
 
@@ -269,12 +270,18 @@ test("filters, sorts and search use status, agent and last activity", () => {
   });
 
   expect(byStatus.rows.map((row) => row.id)).toEqual(["claude-code:working"]);
-  // An open terminal counts its own activity, not the session log.
+  // An open terminal's output does not count: the session log does (DF-216).
   expect(byAgent.rows.map((row) => row.id)).toEqual([
+    "codex:terminal",
     "codex:waiting",
     "codex:done",
-    "codex:terminal",
   ]);
+  const lastActivity = presentation.properties.find(
+    (property) => property.key === "last-activity",
+  );
+  expect(lastActivity?.getValue(withTerminal)).toBe(
+    withTerminal.lastActivityAt,
+  );
   expect(searched.rows.map((row) => row.id)).toEqual(["claude-code:working"]);
   expect(searchedStatus.rows.map((row) => row.id)).toEqual(["codex:waiting"]);
 });
