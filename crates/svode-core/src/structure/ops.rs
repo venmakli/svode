@@ -1077,21 +1077,22 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
     })?;
 
     let (collection_path, readme_path, converted, source_moved) = if metadata.is_dir() {
-        let readme_path = format!("{old_path}/README.md");
         let schema_path = collection_schema_path(space, &old_path);
-        if schema_path.exists() {
+        if entry::name_taken_portably(&schema_path, None)? {
             return Err(PageError::FileAlreadyExists(rel_changed_path(
                 space,
                 &schema_path,
             )));
         }
-        if source_abs.join("README.md").exists() {
+        if let Some(readme_name) = entry::dir_readme_name(&source_abs) {
+            let readme_path = format!("{old_path}/{readme_name}");
             let collection_path =
                 entry::convert_entry_to_nested_collection(Path::new(space), &readme_path)?;
             let converted = entry::read(space, &readme_path)?;
             (collection_path, readme_path, converted, false)
         } else {
             let converted = entry::convert_bare_folder_to_collection(Path::new(space), &old_path)?;
+            let readme_path = format!("{old_path}/README.md");
             (old_path.clone(), readme_path, converted, false)
         }
     } else if metadata.is_file() {
@@ -1100,7 +1101,10 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
-        if is_readme && parent_schema.as_ref().is_some_and(|schema| schema.exists()) {
+        if is_readme
+            && let Some(schema) = parent_schema.as_ref()
+            && entry::name_taken_portably(schema, None)?
+        {
             return Err(PageError::General(format!(
                 "{old_path} is already a collection README.md; convert_to_collection cannot convert an existing collection"
             )));

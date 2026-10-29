@@ -435,7 +435,7 @@ fn create_source_with_options_inner(
             .map(|parent| format!("{parent}/README.md"))
             .unwrap_or_else(|| "README.md".to_string());
         let abs_path = resolve(space, &rel_path);
-        if abs_path.exists() {
+        if name_taken_portably(&abs_path, None)? {
             return Err(PageError::FileAlreadyExists(rel_path));
         }
         (rel_path, abs_path, None)
@@ -1624,17 +1624,18 @@ fn folder_child_counts(folder: &Path) -> Result<(usize, usize), PageError> {
 }
 
 fn dir_has_readme(dir: &Path) -> bool {
+    dir_readme_name(dir).is_some()
+}
+
+/// The file name of the folder README in any case, as the tree finds it.
+pub(crate) fn dir_readme_name(dir: &Path) -> Option<String> {
     fs::read_dir(dir)
         .ok()
         .into_iter()
         .flat_map(|items| items.filter_map(Result::ok))
-        .any(|item| {
-            item.path().is_file()
-                && item
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
-        })
+        .filter(|item| item.path().is_file())
+        .filter_map(|item| item.file_name().into_string().ok())
+        .find(|name| name.eq_ignore_ascii_case("README.md"))
 }
 
 /// Turn a folder Page that holds nothing but itself into a leaf. Returns the
@@ -1739,7 +1740,7 @@ pub fn convert_entry_to_nested_collection(
         .map(|parent| parent.to_string_lossy().replace('\\', "/"))
         .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?;
     let schema_abs = space.join(&folder_rel).join("schema.yaml");
-    if schema_abs.exists() {
+    if name_taken_portably(&schema_abs, None)? {
         return Err(PageError::FileAlreadyExists(rel_from_abs(
             space,
             &schema_abs,
@@ -1772,13 +1773,13 @@ fn convert_bare_folder_to_collection_inner(
     }
     let readme_abs = folder_abs.join("README.md");
     let schema_abs = folder_abs.join("schema.yaml");
-    if readme_abs.exists() {
+    if name_taken_portably(&readme_abs, None)? {
         return Err(PageError::FileAlreadyExists(rel_from_abs(
             space,
             &readme_abs,
         )));
     }
-    if schema_abs.exists() {
+    if name_taken_portably(&schema_abs, None)? {
         return Err(PageError::FileAlreadyExists(rel_from_abs(
             space,
             &schema_abs,
