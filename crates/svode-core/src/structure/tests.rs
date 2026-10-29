@@ -1406,6 +1406,137 @@ async fn a_read_only_source_fails_the_operation_without_a_false_recovery() {
     }
 }
 
+/// Create the Page `Sub` under the leaf item `Area/Tasks/Item.md`.
+async fn create_page_under_leaf(
+    space: &str,
+    state: &IndexRuntimeState,
+) -> Result<crate::page::create::PageCreateOutcome, crate::page::PageError> {
+    crate::page::create::create(
+        crate::page::create::PageCreate {
+            space: space.to_string(),
+            parent_path: Some("Area/Tasks/Item.md".into()),
+            title: "Sub Page".into(),
+            body: None,
+            icon: None,
+            description: None,
+            cover: None,
+            properties: None,
+            contextual_defaults: false,
+            allocate_unique_title: false,
+            as_readme: false,
+            project: Some(space.to_string()),
+            publish_projection: true,
+        },
+        state,
+        update_state(),
+        None::<&SystemGitDateExecutor>,
+        |paths| async move { Ok::<_, crate::page::PageError>(paths) },
+    )
+    .await
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_read_only_relation_source_fails_a_create_under_a_leaf_without_a_false_recovery() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // (Collection create, the conversion fails to move the leaf back)
+    for (collection, file_return_fails) in [(false, false), (true, false), (false, true)] {
+        let label = format!("collection {collection}, file return fails {file_return_fails}");
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        collection_create_space(root, false);
+        let space = root.to_str().unwrap();
+        let state = IndexRuntimeState::default();
+        let sink = GroupSink::default();
+        let decision = root.join("Decisions/Decision.md");
+        fs::set_permissions(&decision, fs::Permissions::from_mode(0o444)).unwrap();
+        let before = source_snapshot(root);
+
+        if file_return_fails {
+            crate::page::write::inject_failure(Some("relations_return"), None);
+        }
+        let error = if collection {
+            create_board_collection(space, &state, &sink)
+                .await
+                .map(|_| ())
+                .unwrap_err()
+        } else {
+            create_page_under_leaf(space, &state)
+                .await
+                .map(|_| ())
+                .unwrap_err()
+        };
+        crate::page::write::inject_failure(None, None);
+        fs::set_permissions(&decision, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(
+            !matches!(error, crate::page::PageError::Recovery { .. })
+                && error.to_string().contains("Permission denied"),
+            "{label}: {error:?}"
+        );
+        assert_eq!(source_snapshot(root), before, "{label}");
+        assert!(root.join("Area/Tasks/Item.md").is_file(), "{label}");
+        assert!(!root.join("Area/Tasks/Item").exists(), "{label}");
+        assert!(sink.take().is_empty(), "{label}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_leaf_turned_into_a_folder_reports_the_paths_it_could_not_move_back() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (nesting, file_return_fails) in [(false, false), (false, true), (true, false), (true, true)]
+    {
+        let label = format!("nesting {nesting}, file return fails {file_return_fails}");
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        relation_target_space(root);
+        let space = root.to_str().unwrap();
+        let state = IndexRuntimeState::default();
+        let decision = root.join("Decisions/Decision.md");
+        fs::set_permissions(&decision, fs::Permissions::from_mode(0o444)).unwrap();
+        let before = source_snapshot(root);
+
+        if file_return_fails {
+            crate::page::write::inject_failure(Some("relations_return"), None);
+        }
+        let result = if nesting {
+            super::nest(space, "Area/Tasks/Item.md", None, runtime(&state))
+                .await
+                .map(|_| ())
+        } else {
+            super::convert_to_folder(space, "Area/Tasks/Item.md", None, runtime(&state))
+                .await
+                .map(|_| ())
+        };
+        crate::page::write::inject_failure(None, None);
+        fs::set_permissions(&decision, fs::Permissions::from_mode(0o644)).unwrap();
+
+        match result.expect_err(&label) {
+            crate::page::PageError::Recovery { cause, paths } if file_return_fails => {
+                assert!(cause.contains("Permission denied"), "{label}: {cause}");
+                assert_eq!(
+                    paths,
+                    vec![
+                        "Area/Tasks/Item.md".to_string(),
+                        "Area/Tasks/Item/README.md".to_string(),
+                        "Area/Tasks/Item".to_string(),
+                    ],
+                    "{label}"
+                );
+            }
+            crate::page::PageError::Io(io) if !file_return_fails => {
+                assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied, "{label}");
+                assert_eq!(source_snapshot(root), before, "{label}");
+                assert!(!root.join("Area/Tasks/Item").exists(), "{label}");
+            }
+            error => panic!("{label}: {error:?}"),
+        }
+    }
+}
+
 async fn create_tasks_collection(
     space: &str,
     parent_path: Option<&str>,

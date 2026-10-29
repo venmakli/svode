@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -10,6 +8,7 @@ use crate::index::update::IndexUpdateState;
 use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
 use crate::page::entry::{self, EntryWarning};
+use crate::page::write::SourceSnapshot;
 
 pub struct PageCreate {
     pub space: String,
@@ -30,97 +29,6 @@ pub struct PageCreate {
 pub struct PageCreateOutcome {
     pub page: entry::Entry,
     pub changed_paths: Vec<PathBuf>,
-}
-
-struct SourceSnapshot {
-    files: BTreeMap<PathBuf, Option<Vec<u8>>>,
-    created_dirs: Vec<PathBuf>,
-}
-
-impl SourceSnapshot {
-    fn capture(paths: impl IntoIterator<Item = PathBuf>) -> Result<Self, PageError> {
-        let mut files = BTreeMap::new();
-        for path in paths {
-            if path.is_dir() {
-                continue;
-            }
-            let bytes = match fs::read(&path) {
-                Ok(bytes) => Some(bytes),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            files.insert(path, bytes);
-        }
-        Ok(Self {
-            files,
-            created_dirs: Vec::new(),
-        })
-    }
-
-    fn track_created(&mut self, path: PathBuf) {
-        self.files.entry(path).or_insert(None);
-    }
-
-    fn track_created_dir(&mut self, path: PathBuf) {
-        if !self.created_dirs.contains(&path) {
-            self.created_dirs.push(path);
-        }
-    }
-
-    fn rollback(&self, cause: PageError) -> PageError {
-        let mut failed = Vec::new();
-        for (path, original) in self.files.iter().rev() {
-            let restored = match original {
-                Some(bytes) => {
-                    if let Some(parent) = path.parent() {
-                        if let Err(error) = fs::create_dir_all(parent) {
-                            failed.push(format!("{}: {error}", parent.display()));
-                            continue;
-                        }
-                    }
-                    fs::write(path, bytes)
-                }
-                None => match fs::remove_file(path) {
-                    Ok(()) => Ok(()),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(error) => Err(error),
-                },
-            };
-            if let Err(error) = restored {
-                failed.push(format!("{}: {error}", path.display()));
-            }
-        }
-        for path in self.created_dirs.iter().rev() {
-            match fs::remove_dir(path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => failed.push(format!("{}: {error}", path.display())),
-            }
-        }
-        if failed.is_empty() {
-            cause
-        } else {
-            PageError::Recovery {
-                cause: cause.to_string(),
-                paths: failed,
-            }
-        }
-    }
-
-    fn changes(&self) -> Result<Vec<PathBuf>, PageError> {
-        let mut changed = Vec::new();
-        for (path, before) in &self.files {
-            let after = match fs::read(path) {
-                Ok(bytes) => Some(bytes),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            if &after != before {
-                changed.push(path.clone());
-            }
-        }
-        Ok(changed)
-    }
 }
 
 /// Create a Page with its initial metadata, schema defaults/counters and
@@ -309,7 +217,11 @@ where
     planned_paths.sort();
     planned_paths.dedup();
     let authorized = authorize(planned_paths.clone()).await?;
-    let mut snapshot = SourceSnapshot::capture(planned_paths)?;
+    let sources = planned_paths
+        .into_iter()
+        .filter(|path| !path.is_dir())
+        .collect::<Vec<_>>();
+    let mut snapshot = SourceSnapshot::capture(&sources, None)?;
     let backlinks = if parent_conversion.is_some() {
         let backlinks = state
             .backlinks_for_space_dir(Path::new(&request.space))
@@ -326,11 +238,24 @@ where
         authorized,
         async {
             if let Some((old, new_parent)) = parent_conversion.as_ref() {
-                let converted = entry::convert_entry_to_folder(
-                    Path::new(&request.space),
-                    old,
-                    backlinks.as_deref(),
-                )?;
+                let root = Path::new(&request.space);
+                let converted =
+                    match entry::convert_entry_to_folder(root, old, backlinks.as_deref()) {
+                        Ok(converted) => converted,
+                        Err(error) => {
+                            // A directory that already has the name is not this create's.
+                            if !matches!(error, PageError::FileAlreadyExists(_)) {
+                                snapshot.track_created_dir(root.join(new_parent));
+                            }
+                            // The snapshot holds the leaf, its README path and the folder,
+                            // so its rollback restores what the conversion left changed
+                            // and reports only what stays changed.
+                            return Err(match error {
+                                PageError::Recovery { cause, .. } => PageError::General(cause),
+                                error => error,
+                            });
+                        }
+                    };
                 if converted.path != format!("{new_parent}/README.md") {
                     return Err(PageError::General(
                         "parent Page conversion returned an unexpected path".into(),
@@ -561,6 +486,7 @@ mod tests {
     use crate::page::dates::SystemGitDateExecutor;
     use crate::page::test_support::{scaffold_space, update_state};
     use serde_json::json;
+    use std::fs;
 
     fn request(root: &Path) -> PageCreate {
         fs::create_dir_all(root.join(".git")).unwrap();
@@ -745,6 +671,39 @@ mod tests {
             fs::read_to_string(temp.path().join("Parent.md")).unwrap(),
             original
         );
+        assert!(!temp.path().join("Parent").exists());
+    }
+
+    #[tokio::test]
+    async fn unrestorable_leaf_fails_the_create_with_only_its_path() {
+        let temp = tempfile::tempdir().unwrap();
+        scaffold_space(temp.path(), "Test");
+        let leaf = temp.path().join("Parent.md");
+        fs::write(&leaf, "---\ntitle: Parent\n---\nParent body").unwrap();
+        let mut input = request(temp.path());
+        input.parent_path = Some("Parent.md".into());
+        let occupied = leaf.clone();
+        crate::page::write::inject_effect(
+            "body",
+            Box::new(move || fs::create_dir(&occupied).unwrap()),
+        );
+        FAILURE.with(|failure| *failure.borrow_mut() = Some("body"));
+        let result = create(
+            input,
+            &IndexRuntimeState::default(),
+            update_state(),
+            None::<&SystemGitDateExecutor>,
+            |paths| async move { Ok::<_, PageError>(paths) },
+        )
+        .await;
+        FAILURE.with(|failure| *failure.borrow_mut() = None);
+        match result.err() {
+            Some(PageError::Recovery { cause, paths }) => {
+                assert!(cause.contains("injected body failure"), "{cause}");
+                assert_eq!(paths, vec![leaf.display().to_string()]);
+            }
+            other => panic!("expected recovery, got {other:?}"),
+        }
         assert!(!temp.path().join("Parent").exists());
     }
 

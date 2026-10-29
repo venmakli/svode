@@ -203,10 +203,45 @@ fn rewrite_relations_after_fs_move_with_project(
         )
     };
     if let Err(error) = result {
+        #[cfg(test)]
+        if crate::page::write::checkpoint("relations_return").is_err() {
+            return Err(error.into());
+        }
         let _ = fs::rename(new_abs, old_abs);
         return Err(error.into());
     }
     Ok(())
+}
+
+/// Finishes undoing a leaf moved into its new `folder` as `readme` after a
+/// later step failed: the relation rewrite moved the file back, so the
+/// folder is removed. Returns `cause`, or the recovery failure naming the
+/// paths left changed.
+fn undo_leaf_to_folder(
+    space: &Path,
+    leaf: &Path,
+    readme: &Path,
+    folder: &Path,
+    cause: PageError,
+) -> PageError {
+    let mut failed = Vec::new();
+    if readme.exists() || !leaf.exists() {
+        failed.extend([rel_from_abs(space, leaf), rel_from_abs(space, readme)]);
+    }
+    match fs::remove_dir(folder) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            failed.push(rel_from_abs(space, folder));
+        }
+        _ => {}
+    }
+    if failed.is_empty() {
+        cause
+    } else {
+        PageError::Recovery {
+            cause: cause.to_string(),
+            paths: failed,
+        }
+    }
 }
 
 fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), PageError> {
@@ -1403,8 +1438,9 @@ pub fn nest_entry(
         .to_string();
     if let Err(error) = rewrite_relations_after_fs_move(space, path, &new_rel, &abs_path, &new_abs)
     {
-        let _ = fs::remove_dir(&folder);
-        return Err(error);
+        return Err(undo_leaf_to_folder(
+            space, &abs_path, &new_abs, &folder, error,
+        ));
     }
 
     // Update backlinks
@@ -1549,8 +1585,13 @@ pub fn convert_entry_to_folder(
     let new_rel = rel_from_abs(space, &new_abs);
     if let Err(error) = rewrite_relations_after_fs_move(space, &path, &new_rel, &abs_path, &new_abs)
     {
-        let _ = fs::remove_dir(&folder_abs);
-        return Err(error);
+        return Err(undo_leaf_to_folder(
+            space,
+            &abs_path,
+            &new_abs,
+            &folder_abs,
+            error,
+        ));
     }
 
     let parent_rel = Path::new(&path).parent().unwrap_or(Path::new(""));
