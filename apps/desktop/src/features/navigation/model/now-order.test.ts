@@ -2,13 +2,15 @@ import { expect, test } from "bun:test";
 import { navigationKeyId, type NavigationItem } from "./keys";
 import {
   arrangeNowOrder,
+  continuesStayingNowRows,
+  dropNowRow,
   hideNowRow,
   nowHiddenOf,
   nowKeepPlace,
   nowOrderOf,
   recordNowOrder,
   settleHiddenNowRows,
-  subscribeNowHidden,
+  subscribeNow,
   type NowOrderRow,
 } from "./now-order";
 
@@ -191,7 +193,7 @@ test("a hidden row that is gone or can no longer be hidden is forgotten", () => 
 test("rows hidden in a project stay hidden for every surface of it", () => {
   const project = "/projects/hidden";
   const seen: number[] = [];
-  const unsubscribe = subscribeNowHidden(() => seen.push(1));
+  const unsubscribe = subscribeNow(() => seen.push(1));
   hideNowRow(project, { ids: ["s"], signs: [false] });
   hideNowRow(project, { ids: ["s", "alias"], signs: [false] });
   unsubscribe();
@@ -200,4 +202,38 @@ test("rows hidden in a project stay hidden for every surface of it", () => {
     { ids: ["s", "alias"], signs: [false] },
   ]);
   expect(nowHiddenOf("/projects/other")).toEqual([]);
+});
+
+test("a row continues a staying row by a shared id or link (DF-210 R1)", () => {
+  const previous = [
+    row("active", { stays: true, links: ["pty"] }),
+    row("kept"),
+    row("ended", { stays: true }),
+  ];
+  expect(
+    continuesStayingNowRows(previous, [
+      row("active"),
+      row("canonical", { links: ["pty"] }),
+      row("kept"),
+      row("ended"),
+      row("new"),
+    ]),
+  ).toEqual([true, false, false, true, false]);
+  expect(continuesStayingNowRows([row("a")], [row("a")])).toEqual([false]);
+});
+
+test("a dropped row leaves the order of its project for every surface", () => {
+  const project = "/projects/dropped";
+  recordNowOrder(project, [
+    row("a"),
+    row("b", { ids: ["b", "alias"] }),
+    row("c"),
+  ]);
+  const seen: number[] = [];
+  const unsubscribe = subscribeNow(() => seen.push(1));
+  dropNowRow(project, row("alias"));
+  dropNowRow(project, row("missing"));
+  unsubscribe();
+  expect(seen.length).toBe(1);
+  expect(nowOrderOf(project).map((entry) => entry.ids[0])).toEqual(["a", "c"]);
 });

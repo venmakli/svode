@@ -64,6 +64,8 @@ const none = {
   pinned: [] as NavigationItem[],
   kept: [] as NavigationResolvedItem[],
   activeSessions: [] as AgentSession[],
+  sessions: [] as AgentSession[],
+  shown: [] as NowOrderRow[],
   mainObject: null as MainAreaObject | null,
   described: null as NavigationResolvedItem | null,
 };
@@ -82,14 +84,20 @@ function label(row: NowRow) {
 /**
  * Now as a window shows it over time, each state after the previous one, as
  * `useNowOrder` settles hidden rows and arranges the rest; `hide` is the
- * close button of an active session's row.
+ * close button of an active session's row, `keeps` the items the ended rows
+ * shown last are kept by. The listed sessions default to the active ones.
  */
 function window() {
   let shown: NowOrderRow[] = [];
   let hidden: NowOrderRow[] = [];
   let rows: NowRow[] = [];
   const show = (input: Partial<typeof none>) => {
-    const composed = composeNow({ ...none, ...input });
+    const composed = composeNow({
+      ...none,
+      sessions: input.activeSessions ?? [],
+      ...input,
+      shown,
+    });
     const order = composed.map(nowOrderRow);
     const settled = settleHiddenNowRows(hidden, order);
     hidden = settled.marks;
@@ -111,7 +119,8 @@ function window() {
     )!;
     hidden = [...hidden, nowOrderRow(row)];
   };
-  return Object.assign(show, { hide });
+  const keeps = () => shown.flatMap((row) => (row.keep ? [row.keep] : []));
+  return Object.assign(show, { hide, keeps });
 }
 
 test("each object shows once: kept first in keep order, then active sessions", () => {
@@ -199,7 +208,7 @@ test("the main area artifact is temporary until it is pinned or kept", () => {
   ).toEqual([]);
 });
 
-test("a session in the main area is temporary once it stops being active", () => {
+test("a session in the main area that Now did not show active is temporary", () => {
   const done = session("codex:done");
   expect(composeNow({ ...none, mainObject: inMain(done) })).toEqual([
     {
@@ -315,13 +324,15 @@ test("temporary, active and kept states of one row keep its place (R3)", () => {
   expect(
     show({ activeSessions: [working, a, n], mainObject: inMain(working) }),
   ).toEqual(["active:codex:a", "active:codex:t", "active:codex:n"]);
-  // Its work ends while the main area shows it: temporary in its place.
-  expect(show({ activeSessions: [a, n], mainObject: inMain(t) })).toEqual([
-    "active:codex:a",
-    "temporary:codex:t",
-    "active:codex:n",
-  ]);
-  // Kept by a double click: still in place.
+  // Its work ends while the main area shows it: kept in its place.
+  expect(
+    show({
+      activeSessions: [a, n],
+      sessions: [t, a, n],
+      mainObject: inMain(t),
+    }),
+  ).toEqual(["active:codex:a", "kept:codex:t", "active:codex:n"]);
+  // The keep lands: still in place.
   expect(
     show({
       kept: [sessionItem("codex:t")],
@@ -411,11 +422,12 @@ test("new rows come last before the temporary row; a leaving row moves none (R2,
     "kept:tree.md",
     "temporary:open.md",
   ]);
-  // A session that stops being active leaves; the rest keep their order.
+  // A session that is pinned leaves; the rest keep their order.
   expect(
     show({
+      pinned: [sessionItem("codex:a")],
       kept: [page("k.md"), page("tree.md")],
-      activeSessions: [n],
+      activeSessions: [n, a],
       mainObject,
       described,
     }),
@@ -547,12 +559,199 @@ test("a hidden kept session stays out once unkept, and leaving the active sessio
   // The close button unkeeps it as it hides it.
   show.hide("codex:kept");
   expect(show({ activeSessions: [kept] })).toEqual([]);
-  // Its terminal closes after the turn: no longer active, it leaves.
-  expect(show({ activeSessions: [] })).toEqual([]);
+  // Its terminal closes after the turn: no longer active, it leaves unkept.
+  expect(
+    show({ activeSessions: [], sessions: [{ ...kept, status: IDLE }] }),
+  ).toEqual([]);
+  expect(show.keeps()).toEqual([]);
   // A new terminal without a turn shows it again: it was forgotten.
   expect(
     show({
       activeSessions: [{ ...kept, status: IDLE }],
     }),
   ).toEqual(["active:codex:kept"]);
+});
+
+test("an active session of any source stays kept in its place once it ends (DF-210 R1)", () => {
+  const show = window();
+  const turn = session("qwen:turn", { status: RUNNING });
+  const terminal = session("codex:terminal", {
+    runtime: { ptyId: "pty-terminal", live: true },
+  });
+  const external = session("claude:external", { status: RUNNING });
+  const other = session("codex:other", { status: RUNNING });
+  const all = [turn, terminal, external, other];
+  expect(show({ kept: [page("k.md")], activeSessions: all })).toEqual([
+    "kept:k.md",
+    "active:qwen:turn",
+    "active:codex:terminal",
+    "active:claude:external",
+    "active:codex:other",
+  ]);
+
+  // The turn ends, the terminal closes, the external turn ends.
+  const ended = [
+    { ...turn, status: IDLE },
+    { ...terminal, runtime: undefined },
+    { ...external, status: IDLE },
+  ];
+  const listed = [...ended, other];
+  const order = [
+    "kept:k.md",
+    "kept:qwen:turn",
+    "kept:codex:terminal",
+    "kept:claude:external",
+    "active:codex:other",
+  ];
+  expect(
+    show({ kept: [page("k.md")], activeSessions: [other], sessions: listed }),
+  ).toEqual(order);
+  expect(show.keeps()).toEqual(
+    ended.map((current) => ({
+      key: { kind: "session", sessionId: current.id },
+      title: current.id,
+    })),
+  );
+  // Until the keeps land the rows stay, then they show as kept items.
+  expect(
+    show({ kept: [page("k.md")], activeSessions: [other], sessions: listed }),
+  ).toEqual(order);
+  const keptNow = [
+    page("k.md"),
+    sessionItem("codex:terminal"),
+    sessionItem("qwen:turn"),
+    sessionItem("claude:external"),
+  ];
+  expect(
+    show({ kept: keptNow, activeSessions: [other], sessions: listed }),
+  ).toEqual(order);
+  expect(show.keeps()).toEqual([]);
+  // Closing a kept row that ended unkeeps it for good.
+  expect(
+    show({
+      kept: keptNow.filter((item) => item.title !== "qwen:turn"),
+      activeSessions: [other],
+      sessions: listed,
+    }),
+  ).toEqual([
+    "kept:k.md",
+    "kept:codex:terminal",
+    "kept:claude:external",
+    "active:codex:other",
+  ]);
+  expect(show.keeps()).toEqual([]);
+});
+
+test("a session in the main area that ends is kept in its place, not temporary (R1)", () => {
+  const show = window();
+  const a = session("codex:a", { status: RUNNING });
+  const free = session("codex:free", {
+    runtime: { ptyId: "pty-free", live: true },
+  });
+  expect(show({ activeSessions: [free, a], mainObject: inMain(free) })).toEqual(
+    ["active:codex:free", "active:codex:a"],
+  );
+  // Its terminal closes without a message.
+  const closed = { ...free, runtime: undefined };
+  expect(
+    show({
+      activeSessions: [a],
+      sessions: [closed, a],
+      mainObject: inMain(closed),
+    }),
+  ).toEqual(["kept:codex:free", "active:codex:a"]);
+  expect(show.keeps()).toEqual([
+    { key: { kind: "session", sessionId: "codex:free" }, title: "codex:free" },
+  ]);
+});
+
+test("a hidden, pinned, pending or unlisted session that ends is not kept (R2)", () => {
+  const show = window();
+  const hidden = session("codex:hidden", { status: RUNNING });
+  const pinned = session("codex:pinned", { status: RUNNING });
+  const pending = session("new-session:pty-new", {
+    source: "unknown",
+    runtime: { ptyId: "pty-new", live: true },
+  });
+  const gone = session("codex:gone", { status: RUNNING });
+  const other = session("codex:other", { status: RUNNING });
+  show({
+    pinned: [sessionItem("codex:pinned")],
+    activeSessions: [hidden, pinned, pending, gone, other],
+  });
+  show.hide("codex:hidden");
+  expect(
+    show({
+      pinned: [sessionItem("codex:pinned")],
+      activeSessions: [hidden, pinned, pending, gone, other],
+    }),
+  ).toEqual([
+    "active:new-session:pty-new",
+    "active:codex:gone",
+    "active:codex:other",
+  ]);
+  // Each ends; the pending one without a canonical record, the gone one is
+  // no longer listed.
+  expect(
+    show({
+      pinned: [sessionItem("codex:pinned")],
+      activeSessions: [other],
+      sessions: [
+        { ...hidden, status: IDLE },
+        { ...pinned, status: IDLE },
+        { ...pending, runtime: undefined },
+        other,
+      ],
+    }),
+  ).toEqual(["active:codex:other"]);
+  expect(show.keeps()).toEqual([]);
+  // The hidden one stays out once a new turn of it ended too.
+  expect(
+    show({
+      pinned: [sessionItem("codex:pinned")],
+      activeSessions: [other],
+      sessions: [{ ...hidden, status: IDLE }, other],
+    }),
+  ).toEqual(["active:codex:other"]);
+});
+
+test("a pending session that ends after its canonical record is kept by the canonical key (R2)", () => {
+  const show = window();
+  const pending = session("new-session:pty-1", {
+    source: "unknown",
+    runtime: { ptyId: "pty-1", live: true },
+  });
+  const other = session("codex:other", { status: RUNNING });
+  show({ activeSessions: [pending, other] });
+  const canonical = session("codex:new", {
+    runtime: { ptyId: "pty-1", live: true },
+  });
+  expect(show({ activeSessions: [canonical, other] })).toEqual([
+    "active:codex:new",
+    "active:codex:other",
+  ]);
+  expect(
+    show({
+      activeSessions: [other],
+      sessions: [{ ...canonical, runtime: undefined }, other],
+    }),
+  ).toEqual(["kept:codex:new", "active:codex:other"]);
+  expect(show.keeps()).toEqual([
+    { key: { kind: "session", sessionId: "codex:new" }, title: "codex:new" },
+  ]);
+});
+
+test("a kept session that ends stays kept with no new keep (R1)", () => {
+  const show = window();
+  const a = session("codex:a", { status: RUNNING });
+  const b = session("codex:b", { status: RUNNING });
+  show({ kept: [sessionItem("codex:a")], activeSessions: [a, b] });
+  expect(
+    show({
+      kept: [sessionItem("codex:a")],
+      activeSessions: [b],
+      sessions: [{ ...a, status: IDLE }, b],
+    }),
+  ).toEqual(["kept:codex:a", "active:codex:b"]);
+  expect(show.keeps()).toEqual([]);
 });

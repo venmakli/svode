@@ -23,6 +23,8 @@ test("pins come first, then Now in its order, each object once", () => {
     pinned,
     kept: [page("plan.md")],
     activeSessions: [working],
+    sessions: [working],
+    shown: [],
     mainObject: null,
     described: null,
   });

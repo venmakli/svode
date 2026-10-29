@@ -123,6 +123,24 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
                 ),
             );
             return stateOf(path);
+          case "navigation_keep": {
+            const item = args.item as Item;
+            const before = args.before as Item["key"] | null;
+            const at = before
+              ? data[path].kept.findIndex(
+                  (kept) => JSON.stringify(kept.key) === JSON.stringify(before),
+                )
+              : -1;
+            data[path].kept =
+              at < 0
+                ? [...data[path].kept, item]
+                : [
+                    ...data[path].kept.slice(0, at),
+                    item,
+                    ...data[path].kept.slice(at),
+                  ];
+            return stateOf(path);
+          }
           case "navigation_pin": {
             const item = args.item as Item;
             data[path].kept = data[path].kept.filter(
@@ -466,6 +484,71 @@ if (process.env.SVODE_HOME_PROJECT_ITEMS_DOM !== "1") {
       "plan.md",
       `Late${m.sessions_status_running()}`,
       `Early${m.sessions_status_running()}`,
+    ]);
+  });
+
+  test("a session of an inactive project that ends stays kept in its place; a closed one does not (DF-210 R1, R2)", async () => {
+    const ended = (id: string, title: string) => ({
+      ...running(id, title),
+      status: {
+        state: "idle",
+        stopReason: "end_turn",
+        source: "native_status_reader",
+        confidence: "approximate",
+      },
+    });
+    reset({
+      "/projects/ending": {
+        pinned: [],
+        kept: [page("plan.md")],
+        sessions: [running("codex:w", "Work"), running("codex:x", "Extra")],
+      },
+    });
+    await render("ending");
+    // An object kept from the tree comes after the active sessions.
+    data["/projects/ending"].kept = [page("plan.md"), page("below.md")];
+    const readAgain = async () => {
+      await act(async () => window.dispatchEvent(new window.Event("focus")));
+      await act(settle);
+    };
+    await readAgain();
+    expect(rows()).toEqual([
+      "plan.md",
+      `Work${m.sessions_status_running()}`,
+      `Extra${m.sessions_status_running()}`,
+      "below.md",
+    ]);
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>(
+          `[aria-label='${m.navigation_close_item({ title: "Extra" })}']`,
+        )!
+        .click(),
+    );
+    await act(settle);
+
+    commands.length = 0;
+    data["/projects/ending"].sessions = [
+      ended("codex:w", "Work"),
+      ended("codex:x", "Extra"),
+    ];
+    await readAgain();
+    const keeps = commands.filter(([command]) => command === "navigation_keep");
+    expect(keeps.map(([, args]) => [args.item, args.before])).toEqual([
+      [
+        { key: { kind: "session", sessionId: "codex:w" }, title: "Work" },
+        page("below.md").key,
+      ],
+    ]);
+    expect(rows()).toEqual([
+      "plan.md",
+      `Work${m.sessions_status_done()}`,
+      "below.md",
+    ]);
+    expect(data["/projects/ending"].kept.map((item) => item.title)).toEqual([
+      "plan.md",
+      "Work",
+      "below.md",
     ]);
   });
 

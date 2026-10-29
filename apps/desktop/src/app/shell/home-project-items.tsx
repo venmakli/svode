@@ -169,6 +169,7 @@ function InactiveProjectRows({
       pinned,
       kept,
       activeSessions: sessions.active,
+      sessions: listed,
       mainObject: null,
       described: null,
     },

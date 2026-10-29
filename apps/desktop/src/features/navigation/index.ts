@@ -9,7 +9,9 @@ export { useKeepInNow, type KeepInNow } from "./hooks/use-keep-in-now";
 export { useNowOrder } from "./hooks/use-now-order";
 export {
   arrangeNowOrder,
+  continuesStayingNowRows,
   hideNowRow,
+  nowOrderOf,
   settleHiddenNowRows,
   type NowOrderRow,
 } from "./model/now-order";
