@@ -382,6 +382,9 @@ pub struct CollectionSchema {
     pub system_fields: Option<SystemFields>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub templates: Option<TemplatesConfig>,
+    /// Pages below the direct children of the root are items too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nested_items: bool,
     #[serde(default)]
     pub columns: Vec<Column>,
     #[serde(default)]

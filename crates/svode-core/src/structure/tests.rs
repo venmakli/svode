@@ -1022,15 +1022,19 @@ fn source_snapshot(root: &Path) -> Vec<(String, String)> {
 }
 
 /// Inline Project Space: the bare folder `Area` holds the Collection
-/// `Area/Tasks`, whose item `Item.md` is a relation target of `Decisions` and
-/// the link target of `Link.md`; `Area/Tasks/Sub` is an empty folder.
+/// `Area/Tasks` with `nested_items`, whose item `Item.md` is a relation target
+/// of `Decisions` and the link target of `Link.md`; `Area/Tasks/Sub` is an
+/// empty folder.
 fn relation_target_space(root: &Path) {
     crate::page::test_support::scaffold_space(root, "Root");
     fs::create_dir_all(root.join(".git")).unwrap();
     write_tree(
         root,
         &[
-            ("Area/Tasks/schema.yaml", "columns: []\n"),
+            (
+                "Area/Tasks/schema.yaml",
+                "nested_items: true\ncolumns: []\n",
+            ),
             ("Area/Tasks/README.md", "---\ntitle: Tasks\n---\n"),
             (
                 "Area/Tasks/Item.md",

@@ -67,7 +67,11 @@ use super::IndexError;
 ///
 /// Bumped to 19 in Stage 10 DF-154: rebuilds link rows (`knowledge_links`,
 /// `broken_links`) with percent-decoded link paths.
-pub const SCHEMA_VERSION: i64 = 19;
+///
+/// Bumped to 20 in Stage 11 DF-205: rebuilds Collection membership so Pages
+/// below the direct children of a Collection root without `nested_items` stop
+/// being its items.
+pub const SCHEMA_VERSION: i64 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaStatus {

@@ -935,7 +935,7 @@ fn copy_rewrite_updates_internal_relation_values_in_same_collection() {
     fs::create_dir_all(space.join("tasks/folder-copy")).unwrap();
     fs::write(
         space.join("tasks/schema.yaml"),
-        "columns:\n  - name: Related\n    type: relation\n    relation: tasks\nviews: []\n",
+        "nested_items: true\ncolumns:\n  - name: Related\n    type: relation\n    relation: tasks\nviews: []\n",
     )
     .unwrap();
     fs::write(
@@ -979,7 +979,7 @@ fn move_rewrite_updates_descendant_relation_values_in_same_collection() {
     fs::create_dir_all(space.join("tasks/folder/sub")).unwrap();
     fs::write(
         space.join("tasks/schema.yaml"),
-        "columns:\n  - name: Related\n    type: relation\n    relation: tasks\nviews: []\n",
+        "nested_items: true\ncolumns:\n  - name: Related\n    type: relation\n    relation: tasks\nviews: []\n",
     )
     .unwrap();
     fs::write(

@@ -124,42 +124,24 @@ pub fn resolve_markdown_identity_for_path(
     }))
 }
 
+/// The Collection a Markdown source belongs to: a folder README with its own
+/// `schema.yaml` stands for that Collection, any other source for the
+/// Collection it is an item of.
 fn collection_root_for_markdown(space: &Path, path: &str) -> Option<PathBuf> {
-    let path = Path::new(path);
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf);
-    let is_readme = path
+    let path_ref = Path::new(path);
+    let is_readme = path_ref
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
     if is_readme
-        && let Some(owner) = parent.as_ref()
-        && space.join(owner).join("schema.yaml").is_file()
-    {
-        return Some(owner.clone());
-    }
-    let mut candidate = if is_readme {
-        parent
-            .and_then(|owner| owner.parent().map(Path::to_path_buf))
-            .unwrap_or_default()
-    } else {
-        parent.unwrap_or_default()
-    };
-    loop {
-        if space.join(&candidate).join("schema.yaml").is_file() {
-            return Some(candidate);
-        }
-        if candidate.as_os_str().is_empty() {
-            return None;
-        }
-        candidate = candidate
+        && let Some(owner) = path_ref
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
+        && space.join(owner).join("schema.yaml").is_file()
+    {
+        return Some(owner.to_path_buf());
     }
+    crate::collections::schema::find_collection_root(space, path)
 }
 
 fn relative_display(path: &Path) -> String {

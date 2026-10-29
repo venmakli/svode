@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use super::CollectionError;
-use super::schema::{find_collection_root, normalize_rel_path};
+use super::schema::{find_collection_root_by_location, normalize_rel_path};
 use super::traversal::{collection_markdown_files, is_collection_traversal_ignored};
 use crate::content_tree::child_folder_names;
 use crate::content_tree::policy::TreeIgnorePolicy;
@@ -76,9 +76,11 @@ fn collect_collections(
                 .replace('\\', "/");
             let title = collection_title(&path, &name);
             let row_count = collection_markdown_files(&space.to_string_lossy(), &rel)?.len();
-            let nested =
-                find_collection_root(space, &format!("{}/README.md", normalize_rel_path(&rel)))
-                    .is_some();
+            let nested = find_collection_root_by_location(
+                space,
+                &format!("{}/README.md", normalize_rel_path(&rel)),
+            )
+            .is_some();
             out.push(CollectionInfo {
                 path: rel.clone(),
                 title,

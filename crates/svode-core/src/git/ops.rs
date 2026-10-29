@@ -780,9 +780,8 @@ fn staged_changes_touch_sensitive_collection(
     repo_dir: &Path,
     records: &[NameStatusRecord],
 ) -> bool {
-    let repo = repo_dir.to_string_lossy();
     records.iter().any(|record| {
-        crate::collections::engine::resolve_collection_schema_result(&repo, &record.path)
+        crate::collections::schema::resolve_collection_schema_by_location(repo_dir, &record.path)
             .ok()
             .flatten()
             .is_some_and(|(schema, _)| {
@@ -2123,6 +2122,15 @@ mod tests {
         assert!(staged_changes_touch_sensitive_collection(
             tmp.path(),
             &records
+        ));
+        // A Page below an item is no item without `nested_items`, but it
+        // still lies inside the sensitive Collection.
+        assert!(staged_changes_touch_sensitive_collection(
+            tmp.path(),
+            &[NameStatusRecord {
+                status: 'M',
+                path: "contacts/ivan-petrov/notes.md".to_string(),
+            }]
         ));
         assert_eq!(
             sensitive_commit_message(&records),

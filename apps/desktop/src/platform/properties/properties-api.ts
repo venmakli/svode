@@ -78,6 +78,7 @@ export interface CollectionSchemaDto {
     title?: { label?: string | null } | null;
   } | null;
   templates?: { default?: string | null; order?: string[] | null } | null;
+  nested_items?: boolean;
   columns: ColumnDto[];
   views?: unknown[];
 }

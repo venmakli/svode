@@ -913,6 +913,7 @@ pub fn default_collection_schema() -> CollectionSchema {
     CollectionSchema {
         system_fields: None,
         templates: None,
+        nested_items: false,
         columns: Vec::new(),
         views: vec![View::Table {
             name: "Все".to_string(),

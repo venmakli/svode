@@ -703,4 +703,50 @@ mod tests {
             .unwrap();
         assert_eq!(broken, vec!["Nope Here.md".to_string()]);
     }
+
+    #[tokio::test]
+    async fn df_205_index_of_the_previous_schema_is_rebuilt_with_direct_child_membership() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        std::fs::create_dir_all(project.join("tasks/b")).unwrap();
+        std::fs::write(project.join("tasks/schema.yaml"), "columns: []\n").unwrap();
+        for (path, title) in [("tasks/b/README.md", "B"), ("tasks/b/note.md", "Note")] {
+            std::fs::write(project.join(path), format!("---\ntitle: {title}\n---\n")).unwrap();
+        }
+        let key = IndexKey::Root(project.to_path_buf());
+        let state = IndexState::default();
+        repair_root(&state, project).await;
+        // Leave the membership row the previous version wrote for the Page
+        // below the item `b`.
+        let pool = state.get_or_create(&key).await.unwrap();
+        sqlx::query(
+            "UPDATE entries SET in_collection = 1, collection_root_path = 'tasks' \
+             WHERE file_path = 'tasks/b/note.md'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE schema_version SET version = ?")
+            .bind(crate::index::db::SCHEMA_VERSION - 1)
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.close_project(project).await;
+
+        let state = IndexState::default();
+        let pool = state.get_or_create(&key).await.unwrap();
+        IndexUpdateState::new(Arc::new(RoutineStoreState::new()))
+            .reconcile_space(&state, &key, None::<&SystemGitDateExecutor>)
+            .await
+            .unwrap();
+
+        let members: Vec<String> = sqlx::query_scalar(
+            "SELECT file_path FROM entries WHERE in_collection = 1 ORDER BY file_path",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(members, vec!["tasks/b/README.md".to_string()]);
+    }
 }

@@ -102,13 +102,13 @@ pub fn entry_history_name(path: &str) -> String {
         .to_string()
 }
 
-/// Entries of a Collection with sensitive columns never expose their filename
-/// in history.
+/// Pages inside a Collection with sensitive columns never expose their
+/// filename in history, whether or not they are its items.
 pub fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
-    engine::schema_response(space, path)
+    crate::collections::schema::resolve_collection_schema_by_location(Path::new(space), path)
         .ok()
         .flatten()
-        .is_some_and(|response| engine::schema_has_sensitive_columns(&response.schema))
+        .is_some_and(|(schema, _)| engine::schema_has_sensitive_columns(&schema))
 }
 
 pub fn entry_commit_name(space: &str, path: &str) -> String {

@@ -2,6 +2,8 @@ pub mod engine;
 pub mod entries;
 pub mod knowledge_projection;
 pub mod list;
+#[cfg(test)]
+mod membership_tests;
 pub mod model;
 pub mod query;
 pub mod relation_read;

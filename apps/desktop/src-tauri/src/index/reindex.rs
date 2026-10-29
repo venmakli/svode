@@ -412,7 +412,11 @@ mod tests {
             vec!["roadmap.md", "notes", "archive", "nested"],
             vec![],
         );
-        std::fs::write(root.join("schema.yaml"), "columns: []\nviews: []\n").unwrap();
+        std::fs::write(
+            root.join("schema.yaml"),
+            "nested_items: true\ncolumns: []\nviews: []\n",
+        )
+        .unwrap();
         std::fs::write(root.join("README.md"), "# Root owner").unwrap();
         std::fs::write(root.join("roadmap.md"), "# Roadmap").unwrap();
         std::fs::create_dir_all(root.join("notes")).unwrap();

@@ -548,7 +548,10 @@ async fn a_refused_commit_returns_the_chain_and_a_retry_commits_it() {
 #[tokio::test]
 async fn a_scoped_save_after_a_structural_rename_or_move_leaves_a_clean_status() {
     let fixture = Fixture::new(&[
-        ("Area/Tasks/schema.yaml", "columns: []\n"),
+        (
+            "Area/Tasks/schema.yaml",
+            "nested_items: true\ncolumns: []\n",
+        ),
         ("Area/Tasks/README.md", "---\ntitle: Tasks\n---\n"),
         ("Area/Tasks/Item.md", "---\ntitle: Item\n---\nItem\n"),
         ("Area/Tasks/Sub/Other.md", "---\ntitle: Other\n---\n"),

@@ -3369,3 +3369,67 @@ async fn agent_actor_diagnostics_keep_readable_agents_and_name_no_device_path() 
     let routines = call("list_routines", json!({ "spaceId": "nowhere" })).await;
     assert_eq!(error_code(&unknown), error_code(&routines));
 }
+
+#[tokio::test]
+async fn deep_pages_of_a_collection_take_page_tools_unless_nested_items_is_set() {
+    let fixture = write_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+    let root = fixture.project.as_path();
+    write(
+        &root.join("tasks/b/README.md"),
+        "---\ntitle: B\nStatus: Todo\n---\n",
+    );
+    write(
+        &root.join("tasks/b/note.md"),
+        "---\ntitle: Note\n---\nNote body\n",
+    );
+
+    let schema = call(
+        "get_collection_schema",
+        json!({ "collectionPath": "tasks" }),
+    )
+    .await;
+    assert!(structured(&schema)["schema"].get("nested_items").is_none());
+
+    let page = call("read_page", json!({ "path": "tasks/b/note.md" })).await;
+    assert_eq!(structured(&page)["page"]["body"], "Note body\n");
+    let written = call(
+        "write_page",
+        json!({
+            "path": "tasks/b/note.md",
+            "content": "Edited\n",
+            "sourceVersion": version(root, "tasks/b/note.md")
+        }),
+    )
+    .await;
+    assert_eq!(changed(structured(&written)), ["tasks/b/note.md"]);
+    let item = call("read_collection_item", json!({ "path": "tasks/b/note.md" })).await;
+    assert_eq!(error_code(&item), "NOT_A_COLLECTION_ITEM");
+
+    let created = call(
+        "create_page",
+        json!({ "parentPath": "tasks/b", "title": "Spec" }),
+    )
+    .await;
+    assert_eq!(structured(&created)["path"], "tasks/b/Spec.md");
+    assert_eq!(read(&fixture, "tasks/b/Spec.md"), "---\ntitle: Spec\n---\n");
+
+    let schema_path = root.join("tasks/schema.yaml");
+    let flagged = format!(
+        "nested_items: true\n{}",
+        read(&fixture, "tasks/schema.yaml")
+    );
+    fs::write(&schema_path, flagged).unwrap();
+    let schema = call(
+        "get_collection_schema",
+        json!({ "collectionPath": "tasks" }),
+    )
+    .await;
+    assert_eq!(structured(&schema)["schema"]["nested_items"], true);
+    let item = call("read_collection_item", json!({ "path": "tasks/b/note.md" })).await;
+    assert_eq!(structured(&item)["item"]["body"], "Edited\n");
+    let page = call("read_page", json!({ "path": "tasks/b/note.md" })).await;
+    assert_eq!(error_code(&page), "NOT_A_STANDALONE_PAGE");
+}

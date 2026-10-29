@@ -116,7 +116,7 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
     fs::create_dir_all(space.join("archive")).unwrap();
     fs::write(
         space.join("schema.yaml"),
-        "columns:\n  - name: Priority\n    type: text\nviews: []\n",
+        "nested_items: true\ncolumns:\n  - name: Priority\n    type: text\nviews: []\n",
     )
     .unwrap();
     fs::write(
