@@ -157,6 +157,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   );
   const { keepLayerOpenOnEscape } = await import("@/shared/lib/escape-key");
   const { NewSessionDraft } = await import("./new-session-draft");
+  const { AgentModelButton } = await import("./agent-button");
   const { AgentSessionDraftMainSurface } = await import(
     "../../ui/session-main-surface"
   );
@@ -1800,6 +1801,182 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   );
 
   controlsTest(
+    "an opened draft popover gives focus to the chosen agent, arrows move it without a choice, and a setting's row takes it back",
+    async () => {
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude", name: "Claude Code" },
+      ];
+      let ready: (value: unknown) => void = () => undefined;
+      holdAnswer = () => new Promise((resolve) => (ready = resolve));
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      // While the agent starts, its rows are a skeleton.
+      await click(agentButton());
+      expect(popover()?.querySelector('[aria-busy="true"]') === null).toBe(
+        false,
+      );
+      expect(document.activeElement === agentTabs()[0]).toBe(true);
+      await act(async () =>
+        ready({
+          hold: 5,
+          check: {
+            state: "ready",
+            agent: { name: "codex-acp", version: "2.1.1" },
+          },
+          session: draftSession,
+        }),
+      );
+      await settle();
+      await pressKey(document.activeElement, "Escape");
+      expect(popover()).toBe(null);
+
+      await click(agentButton());
+      expect(Boolean(settingRow(m.sessions_chat_model()))).toBe(true);
+      expect(document.activeElement === agentTabs()[0]).toBe(true);
+      expect(agentTabs()[0].tabIndex).toBe(0);
+      calls.length = 0;
+      await pressKey(agentTabs()[0], "ArrowRight");
+      expect(document.activeElement === agentTabs()[1]).toBe(true);
+      expect(agentTabs()[1].getAttribute("aria-selected")).toBe("false");
+      expect(lastCall("agent_runtime_hold_draft")).toBe(undefined);
+
+      // Back from a setting's screen its row has focus, not the agent.
+      await click(settingRow(m.sessions_chat_model()));
+      await click(
+        Array.from(popover()?.querySelectorAll("button") ?? []).find(
+          (button) => button.textContent === "Back",
+        ),
+      );
+      expect(
+        document.activeElement === settingRow(m.sessions_chat_model()),
+      ).toBe(true);
+    },
+  );
+
+  controlsTest(
+    "with more agents than fit, the opened draft popover gives focus to the chosen agent, under more to its button",
+    async () => {
+      chatAgents = Array.from({ length: 9 }, (_, index) => ({
+        id: `agent-${index + 1}`,
+        name: `Agent ${index + 1}`,
+      }));
+      // Tabs of 40px in a row of 200: three tabs fit beside "more".
+      const restore = stubWidths(40, 200);
+      try {
+        await mount(
+          <NewSessionDraft
+            spacePath="/project"
+            onStarted={() => undefined}
+            onOpenAgentSettings={() => undefined}
+          />,
+        );
+        for (let opening = 0; opening < 2; opening += 1) {
+          await click(agentButton());
+          expect(agentTabs().length).toBe(3);
+          expect(Boolean(buttonByLabel(m.sessions_chat_agent_more()))).toBe(
+            true,
+          );
+          expect(document.activeElement === agentTabs()[0]).toBe(true);
+          await pressKey(document.activeElement, "Escape");
+          expect(popover()).toBe(null);
+        }
+
+        await click(agentButton());
+        await click(buttonByLabel(m.sessions_chat_agent_more()));
+        await click(
+          Array.from(document.querySelectorAll('[role="tab"]')).find((tab) =>
+            tab.textContent?.includes("Agent 9"),
+          ),
+        );
+        expect(popover()).toBe(null);
+        expect(lastCall("agent_runtime_hold_draft")?.agent).toBe("agent-9");
+
+        // The chosen agent stands with its name in place of "more".
+        await click(agentButton());
+        const focused = document.activeElement;
+        expect(popover()?.contains(focused)).toBe(true);
+        expect(focused?.getAttribute("role")).toBe(null);
+        expect(focused?.textContent?.endsWith("Agent 9")).toBe(true);
+        expect(buttonByLabel(m.sessions_chat_agent_more())).toBe(undefined);
+      } finally {
+        restore();
+      }
+    },
+  );
+
+  controlsTest(
+    "without a chosen agent the opened popover gives focus to the first tab, with more agents than fit too",
+    async () => {
+      chatAgents = Array.from({ length: 9 }, (_, index) => ({
+        id: `agent-${index + 1}`,
+        name: `Agent ${index + 1}`,
+      }));
+      const button = (
+        <AgentModelButton
+          agent={null}
+          draft={{
+            agents: chatAgents.map(({ id, name }) => ({
+              agent: id,
+              name,
+              offer: { state: "available" },
+            })),
+            onChoose: () => undefined,
+            readiness: { state: "idle" },
+            recovery: {
+              onSignIn: null,
+              onOpenSettings: () => undefined,
+              onRetry: () => undefined,
+            },
+            settingsAfterSend: false,
+          }}
+          settings={null}
+          canChange={false}
+          changing={null}
+          onChange={() => undefined}
+        />
+      );
+      await mount(button);
+      await click(agentButton());
+      expect(agentTabs().length).toBe(9);
+      expect(document.activeElement === agentTabs()[0]).toBe(true);
+
+      await unmountAll();
+      const restore = stubWidths(40, 200);
+      try {
+        await mount(button);
+        await click(agentButton());
+        expect(agentTabs().length).toBe(3);
+        expect(document.activeElement === agentTabs()[0]).toBe(true);
+      } finally {
+        restore();
+      }
+    },
+  );
+
+  controlsTest(
+    "after the first send the opened popover gives focus to its first row",
+    async () => {
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scope={null} />,
+      );
+      for (let opening = 0; opening < 2; opening += 1) {
+        await click(agentButton());
+        expect(
+          document.activeElement === settingRow(m.sessions_chat_model()),
+        ).toBe(true);
+        await pressKey(document.activeElement, "Escape");
+        expect(popover()).toBe(null);
+      }
+    },
+  );
+
+  controlsTest(
     "a click in the field closes the agent popover and gives the field focus at once, a click elsewhere only closes it",
     async () => {
       const check = async () => {
@@ -1971,6 +2148,13 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
 
   function popover() {
     return document.querySelector<HTMLElement>('[data-slot="popover-content"]');
+  }
+
+  /** The agent tabs of the open popover. */
+  function agentTabs() {
+    return Array.from(
+      popover()?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+    );
   }
 
   /** The row of a setting on the main screen of the agent popover. */

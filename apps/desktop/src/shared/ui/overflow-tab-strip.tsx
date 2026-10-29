@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type Ref,
 } from "react";
 import { ChevronDown, MoreHorizontal } from "lucide-react";
 import {
@@ -47,6 +48,11 @@ interface OverflowTabStripProps<Value extends string> {
   labelActiveOnly?: boolean;
   /** Activation of the tabs listed under the overflow control. */
   overflowActivationMode?: "automatic" | "manual";
+  /**
+   * Once its tabs are laid out after mounting, the strip takes focus: the
+   * active tab or the control standing for it, without one the first tab.
+   */
+  autoFocus?: boolean;
   /** Content after the tabs, such as an add button. */
   trailing?: ReactNode;
   /** Width the tabs leave free for `trailing`. */
@@ -89,11 +95,14 @@ export function OverflowTabStrip<Value extends string>({
   listLabel,
   labelActiveOnly = false,
   overflowActivationMode,
+  autoFocus = false,
   trailing,
   trailingWidth = 0,
   className,
 }: OverflowTabStripProps<Value>) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const focusTargetRef = useRef<HTMLButtonElement | null>(null);
+  const focusPendingRef = useRef(autoFocus);
   const tabMeasureRefs = useRef<Array<HTMLDivElement | null>>([]);
   const moreMeasureRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<TabStripLayout>(defaultLayout);
@@ -154,7 +163,7 @@ export function OverflowTabStrip<Value extends string>({
       availableWithoutOverflow - moreWidth,
     );
 
-    if (activeIndex >= 0 && activeIndex < prefixWithMoreCount) {
+    if (activeIndex < prefixWithMoreCount) {
       setNextLayout(setLayout, {
         visibleCount: prefixWithMoreCount,
         activeAsDropdown: false,
@@ -182,6 +191,14 @@ export function OverflowTabStrip<Value extends string>({
     updateVisibleTabs();
   }, [updateVisibleTabs]);
 
+  useLayoutEffect(() => {
+    // The first render has no tabs: they show once measured.
+    if (!focusPendingRef.current) return;
+    if (layout.visibleCount === 0 && !layout.hasOverflow) return;
+    focusPendingRef.current = false;
+    focusTargetRef.current?.focus();
+  }, [layout]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === "undefined") return;
@@ -194,6 +211,10 @@ export function OverflowTabStrip<Value extends string>({
   const visibleTabs = tabs.slice(0, layout.visibleCount);
   const hiddenTabs = tabs.slice(layout.visibleCount);
   const shouldShowOverflowControl = layout.hasOverflow && tabs.length > 0;
+  // Without a visible tab to take focus, the overflow control takes it.
+  const focusTab = activeTab
+    ? visibleTabs.find((tab) => tab === activeTab)
+    : visibleTabs[0];
 
   return (
     <div
@@ -210,6 +231,7 @@ export function OverflowTabStrip<Value extends string>({
         {visibleTabs.map((tab) => (
           <StripTab
             key={tab.value}
+            ref={tab === focusTab ? focusTargetRef : undefined}
             tab={tab}
             label={showsLabel(tab)}
             onChoose={onTabChoose}
@@ -220,6 +242,7 @@ export function OverflowTabStrip<Value extends string>({
             <PopoverTrigger asChild>
               {layout.activeAsDropdown && activeTab ? (
                 <button
+                  ref={focusTab ? undefined : focusTargetRef}
                   type="button"
                   className={cn(
                     overflowTriggerClassName,
@@ -232,6 +255,7 @@ export function OverflowTabStrip<Value extends string>({
                 </button>
               ) : (
                 <button
+                  ref={focusTab ? undefined : focusTargetRef}
                   type="button"
                   aria-label={moreLabel}
                   className={overflowTriggerClassName}
@@ -299,10 +323,12 @@ export function OverflowTabStrip<Value extends string>({
 }
 
 function StripTab<Value extends string>({
+  ref,
   tab,
   label,
   onChoose,
 }: {
+  ref?: Ref<HTMLButtonElement>;
   tab: OverflowTab<Value>;
   label: boolean;
   onChoose?: (value: Value) => void;
@@ -310,7 +336,7 @@ function StripTab<Value extends string>({
   const handlers = chooseHandlers(tab.value, onChoose);
   if (label) {
     return (
-      <TabsTrigger value={tab.value} {...handlers}>
+      <TabsTrigger ref={ref} value={tab.value} {...handlers}>
         {tab.icon}
         {tab.label}
       </TabsTrigger>
@@ -322,7 +348,12 @@ function StripTab<Value extends string>({
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="inline-flex h-full">
-          <TabsTrigger value={tab.value} aria-label={tab.label} {...handlers}>
+          <TabsTrigger
+            ref={ref}
+            value={tab.value}
+            aria-label={tab.label}
+            {...handlers}
+          >
             {tab.icon}
           </TabsTrigger>
         </span>

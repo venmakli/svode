@@ -275,6 +275,9 @@ export function AgentModelButton({
                 <AgentTabs
                   agent={agent}
                   draft={choice}
+                  // The opened popover starts on the agent; back from a
+                  // setting's screen its row takes focus instead (DF-261).
+                  autoFocus={returnTo === null}
                   onChosen={() => close(true)}
                 >
                   {rows}
@@ -335,11 +338,14 @@ export function AgentModelButton({
 function AgentTabs({
   agent,
   draft,
+  autoFocus,
   onChosen,
   children,
 }: {
   agent: string | null;
   draft: DraftAgentChoice;
+  /** The chosen agent takes focus once the tabs show. */
+  autoFocus: boolean;
   onChosen: () => void;
   /** The rows of the chosen agent. */
   children: ReactNode;
@@ -369,6 +375,7 @@ function AgentTabs({
           moreLabel={m.sessions_chat_agent_more()}
           labelActiveOnly
           overflowActivationMode="manual"
+          autoFocus={autoFocus}
           listLabel={m.sessions_chat_agent_tabs()}
           className="flex-1 justify-start"
         />
