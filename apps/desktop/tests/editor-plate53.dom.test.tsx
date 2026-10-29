@@ -123,6 +123,40 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
     }
   });
 
+  test("Routine editor keeps soft line breaks when neighbouring text changes", async () => {
+    const root = createRoot(document.getElementById("app")!);
+    const changes: string[] = [];
+    const source =
+      "Step one\nstill one [link](x.md)\nafter\n\n- item\n  more\n";
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ControlledMarkdownEditor
+              value={source}
+              onChange={(value) => changes.push(value)}
+            />
+          </TooltipProvider>,
+        );
+      });
+      const paragraph = document.querySelector(
+        "[data-slate-editor] [data-slate-node=element]",
+      );
+      // A soft line break shows as a line break, as before.
+      expect(paragraph?.textContent).toStartWith("Step one\nstill one");
+      expect(paragraph?.textContent).toEndWith("\nafter");
+      expect(changes).toEqual([]);
+      await act(async () => {
+        mountedEditor!.tf.insertText("First ", {
+          at: { path: [0, 0], offset: 0 },
+        });
+      });
+      expect(changes.at(-1)).toBe(source.replace("Step", "First Step"));
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   for (const ending of ["> quoted", "```js\nconst a = 1;\n```"]) {
     test(`Routine editor ending with ${ending.split("\n")[0]} changes without a trailing U+200B paragraph`, async () => {
       const root = createRoot(document.getElementById("app")!);

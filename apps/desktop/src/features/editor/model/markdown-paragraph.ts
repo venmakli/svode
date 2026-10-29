@@ -1,10 +1,18 @@
 import {
+  convertNodesSerialize,
   type DeserializeMdOptions,
   defaultRules,
   getDeserializerByKey,
   type MdRules,
 } from "@platejs/markdown";
 import { type Descendant, type TElement, type TText, TextApi } from "platejs";
+
+import {
+  isSoftLineBreak,
+  LINE_BREAK_TYPE,
+  withEdgeSoftLineBreaksHard,
+  withHardLineBreakNodes,
+} from "./markdown-line-breaks";
 
 /**
  * U+200B is how the Markdown keeps an empty paragraph. Plate writes every
@@ -36,9 +44,10 @@ function deserializeParagraph(
       ...options.rules,
       text: {
         deserialize: (...args) => {
-          const leaf = text(...args) as TText;
-          if (leaf.text === ZWSP) zwspTexts.add(leaf);
-          return leaf;
+          const leaves = [text(...args)].flat() as TText[];
+          for (const leaf of leaves)
+            if (leaf.text === ZWSP) zwspTexts.add(leaf);
+          return leaves as unknown as TText;
         },
       },
     },
@@ -53,15 +62,33 @@ function deserializeParagraph(
   return result;
 }
 
+type SerializeOptions = Parameters<NonNullable<typeof paragraph.serialize>>[1];
+type MdastParagraph = ReturnType<NonNullable<typeof paragraph.serialize>>;
+
+// Plate's paragraph serializer, except that a soft line break is written as
+// a line ending instead of a `break`.
+function serializeParagraph(node: TElement, options: SerializeOptions) {
+  const children = node.children.every(isEmptyText)
+    ? node.children
+    : withEdgeSoftLineBreaksHard(node.children.filter((c) => !isEmptyText(c)));
+  if (!children.some(isSoftLineBreak)) {
+    return paragraph.serialize!({ ...node, children }, options);
+  }
+  const encoded = withHardLineBreakNodes(children);
+  const converted = convertNodesSerialize(encoded, options);
+  // A `\` ends no line at the end of a paragraph.
+  if ((encoded.at(-1) as TElement).type === LINE_BREAK_TYPE) {
+    converted[converted.length - 1] = {
+      type: "html",
+      value: "\n<br />",
+    } as (typeof converted)[number];
+  }
+  return { type: "paragraph", children: converted } as MdastParagraph;
+}
+
 export const markdownParagraphRules: MdRules = {
   p: {
     deserialize: deserializeParagraph,
-    serialize: (node, options) =>
-      paragraph.serialize!(
-        node.children.every(isEmptyText)
-          ? node
-          : { ...node, children: node.children.filter((c) => !isEmptyText(c)) },
-        options,
-      ),
+    serialize: serializeParagraph,
   },
 };

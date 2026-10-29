@@ -50,6 +50,11 @@ import {
   serializeMarkdownWithComments,
 } from "../model/markdown-comments";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
+import {
+  markdownLineBreakRules,
+  remarkBreakLineEndings,
+  withListLineBreaks,
+} from "../model/markdown-line-breaks";
 import { markdownParagraphRules } from "../model/markdown-paragraph";
 import {
   TRAILING_BLOCK_MARK,
@@ -58,6 +63,7 @@ import {
 import { MarkdownCommentKit } from "./markdown-comment-kit";
 import { SystemDictationPlugin } from "./system-dictation-plugin";
 import { LinkShortcutPlugin } from "./link-shortcut-plugin";
+import { SoftLineBreakPlugin } from "./soft-line-break-plugin";
 import { PageLinkElement } from "../ui/page-link-element";
 import { PageLinkInputElement } from "../ui/page-link-input-element";
 import { FloatingToolbar } from "@/components/ui/floating-toolbar";
@@ -95,17 +101,25 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
       ) =>
         serializeMarkdownWithComments(editor, {
           ...options,
-          value: withoutServiceTrailingBlock(
+          value: withListLineBreaks(
             editor,
-            options?.value ?? editor.children,
+            withoutServiceTrailingBlock(
+              editor,
+              options?.value ?? editor.children,
+            ),
           ),
         }),
     }))
     .extend(({ getOptions }) => ({
       options: {
-        remarkPlugins: [...getOptions().remarkPlugins, remarkMarkdownComments],
+        remarkPlugins: [
+          ...getOptions().remarkPlugins,
+          remarkMarkdownComments,
+          remarkBreakLineEndings,
+        ],
         rules: {
           ...getOptions().rules,
+          ...markdownLineBreakRules,
           ...markdownParagraphRules,
           ...markdownCommentRules,
         },
@@ -194,6 +208,7 @@ export const EditorKit = [
   ...EmojiKit,
   ...ExitBreakKit,
   ProductTrailingBlockPlugin,
+  SoftLineBreakPlugin,
   SystemDictationPlugin,
 
   ConflictPlugin,
