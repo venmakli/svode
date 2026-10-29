@@ -229,13 +229,20 @@ impl CodexTailState {
                 "task_complete" => {
                     self.turn_open = false;
                     self.open_calls.clear();
+                    // A failed turn is told only by the `error` of its
+                    // completion; its text stays out of the status (C8).
+                    let (stop_reason, reason) = if turn_failed(payload) {
+                        (StopReason::Error, "codex task failed")
+                    } else {
+                        (StopReason::EndTurn, "codex task complete")
+                    };
                     self.set_state(
                         SessionState::Idle {
-                            stop_reason: Some(StopReason::EndTurn),
+                            stop_reason: Some(stop_reason),
                         },
                         None,
                         observed_at,
-                        "codex task complete",
+                        reason,
                     );
                 }
                 "turn_aborted" => {
@@ -371,6 +378,12 @@ fn earliest_timestamp(
         (None, Some(next)) => Some(next),
         (current, None) => current,
     }
+}
+
+fn turn_failed(task_complete: &Value) -> bool {
+    task_complete
+        .get("error")
+        .is_some_and(|error| !error.is_null())
 }
 
 fn is_codex_tool_call(payload: &Value) -> bool {
@@ -781,6 +794,110 @@ mod tests {
             status.expect("status").state,
             SessionState::Idle {
                 stop_reason: Some(StopReason::EndTurn)
+            }
+        );
+    }
+
+    /// Rollouts of `codex exec` against a mock provider that answered 400,
+    /// ran out of retries on 500 and closed the stream (DF-226).
+    const FAILED_ROLLOUTS: [(&str, &str); 3] = [
+        (
+            "400",
+            include_str!("fixtures/codex-rollout-error-400.jsonl"),
+        ),
+        (
+            "500",
+            include_str!("fixtures/codex-rollout-error-500.jsonl"),
+        ),
+        (
+            "disconnect",
+            include_str!("fixtures/codex-rollout-error-disconnect.jsonl"),
+        ),
+    ];
+
+    fn task_complete(error: Option<Value>) -> Value {
+        let mut payload = serde_json::json!({
+            "type": "task_complete",
+            "turn_id": "turn-1",
+            "last_agent_message": null
+        });
+        if let Some(error) = error {
+            payload["error"] = error;
+        }
+        serde_json::json!({
+            "type": "event_msg",
+            "timestamp": "2026-10-01T21:41:00Z",
+            "payload": payload
+        })
+    }
+
+    #[test]
+    fn a_turn_completed_with_an_error_is_idle_with_an_error_and_without_its_text() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        for (case, rollout) in FAILED_ROLLOUTS {
+            let path = temp.path().join(format!("rollout-{case}.jsonl"));
+            write(&path, rollout);
+            let completion: Value = rollout
+                .lines()
+                .next_back()
+                .and_then(|line| serde_json::from_str(line).ok())
+                .expect("last record");
+            let message = completion["payload"]["error"]["message"]
+                .as_str()
+                .expect("error message");
+
+            let status = read(&path).0.expect("status");
+
+            assert_eq!(
+                status.state,
+                SessionState::Idle {
+                    stop_reason: Some(StopReason::Error)
+                },
+                "{case}"
+            );
+            assert!(!format!("{status:?}").contains(message), "{case}");
+
+            write(
+                &path,
+                &format!(
+                    "{rollout}{}\n",
+                    serde_json::json!({
+                        "type": "event_msg",
+                        "timestamp": "2026-10-29T11:20:00Z",
+                        "payload": { "type": "task_started", "turn_id": "turn-2" }
+                    })
+                ),
+            );
+            let next_turn = read(&path).0.expect("status");
+            assert_eq!(next_turn.state, SessionState::Running, "{case}");
+        }
+    }
+
+    #[test]
+    fn a_turn_completed_without_an_error_ends_its_turn() {
+        for completion in [task_complete(None), task_complete(Some(Value::Null))] {
+            let status = tail_status(&[task_started(), completion.clone()]);
+            assert_eq!(
+                status.state,
+                SessionState::Idle {
+                    stop_reason: Some(StopReason::EndTurn)
+                },
+                "{completion}"
+            );
+        }
+
+        let aborted = tail_status(&[
+            task_started(),
+            serde_json::json!({
+                "type": "event_msg",
+                "timestamp": "2026-10-01T21:41:00Z",
+                "payload": { "type": "turn_aborted", "reason": "interrupted" }
+            }),
+        ]);
+        assert_eq!(
+            aborted.state,
+            SessionState::Idle {
+                stop_reason: Some(StopReason::Cancelled)
             }
         );
     }

@@ -1363,6 +1363,65 @@ mod tests {
         assert_eq!(missing.skipped_sessions, 1);
     }
 
+    /// DF-226 R1: a Codex turn the API failed is an error in the list, the
+    /// hot status and the saved list, and its text reaches none of them.
+    #[test]
+    fn a_failed_codex_turn_is_an_error_in_every_read_without_its_text() {
+        let (_temp, home, project) = project_dirs();
+        let id = codex_id(12);
+        let session_id = format!("codex:{id}");
+        let state = AgentSessionsState::with_home(home.clone());
+        listed_codex(
+            &state,
+            &home,
+            &project,
+            &id,
+            vec![task_started(&recent_source_log_timestamp())],
+        );
+        assert_eq!(
+            list(&state, &project).sessions[0].status.state,
+            SessionState::Running
+        );
+
+        append_rollout_row(
+            &home,
+            &id,
+            serde_json::json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "last_agent_message": null,
+                    "error": {"message": "SECRET_API_ERROR", "codex_error_info": "other"}
+                },
+                "timestamp": recent_source_log_timestamp()
+            }),
+        );
+        let failed = idle(Some(StopReason::Error));
+        let hot_read = hot(&state, &project, &session_id);
+        assert_eq!(hot_read.sessions[0].status.state, failed);
+        let listed = list(&state, &project);
+        let session = by_id(&listed, &session_id);
+        assert_eq!(session.status.state, failed);
+        assert_eq!(session.status.source, StatusSource::NativeStatusReader);
+        let saved = list_saved(&AgentSessionsState::with_home(home), &project);
+        assert_eq!(by_id(&saved, &session_id).status.state, failed);
+
+        for dto in [
+            serde_json::to_string(&hot_read),
+            serde_json::to_string(&listed),
+            serde_json::to_string(&saved),
+        ] {
+            assert!(!dto.expect("serialize dto").contains("SECRET"));
+        }
+        for (path, contents) in files_of(&project) {
+            assert!(
+                !contents.windows(6).any(|window| window == b"SECRET"),
+                "{}",
+                path.display()
+            );
+        }
+    }
+
     /// A turn before the agent moves its listed time with service records,
     /// as on a load to read the session, and one session worked on between.
     const TURN_AT: &str = "2026-09-30T09:00:00Z";
