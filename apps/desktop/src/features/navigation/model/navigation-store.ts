@@ -63,6 +63,14 @@ export interface NavigationStoreState {
    * keeps its place there, any other object comes last.
    */
   keep: (item: NavigationItem) => Promise<void>;
+  /**
+   * Keeps a row that ended in its place, unless a fresh read shows its
+   * object pinned or kept by any of `ids` (DF-210 R1): Desktop may have
+   * kept it since this window read the state, as at a Routine launch, and
+   * a keep from a window would make that row forget its Routine or keep
+   * the session twice (R4).
+   */
+  keepEnded: (item: NavigationItem, ids: readonly string[]) => Promise<void>;
   /** Removes the objects from Now. */
   unkeep: (keys: NavigationKey[]) => Promise<void>;
   /** Drops targets whose absence a successful read of their source confirmed. */
@@ -201,6 +209,24 @@ export function createNavigationStore(
               item,
               nowKeepPlace(projectPath, item.key, get().kept),
             ),
+          [navigationKeyId(item.key)],
+        ),
+
+      keepEnded: (item, ids) =>
+        run(
+          async (projectPath) => {
+            const state = await api.read(projectPath);
+            const listed = [...state.pinned, ...state.kept].some((current) =>
+              ids.includes(navigationKeyId(current.key)),
+            );
+            return listed
+              ? state
+              : api.keep(
+                  projectPath,
+                  item,
+                  nowKeepPlace(projectPath, item.key, state.kept),
+                );
+          },
           [navigationKeyId(item.key)],
         ),
 

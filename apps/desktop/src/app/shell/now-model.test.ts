@@ -755,3 +755,36 @@ test("a kept session that ends stays kept with no new keep (R1)", () => {
   ).toEqual(["kept:codex:a", "active:codex:b"]);
   expect(show.keeps()).toEqual([]);
 });
+
+test("the next launch of a Routine takes the place of the row of its previous launch (DF-210 R4)", () => {
+  const show = window();
+  const launched = (id: string): NavigationResolvedItem => ({
+    ...sessionItem(id),
+    routine: { ownerKind: "project", ownerPath: ".", routineId: "daily" },
+  });
+  const first = session("codex:r1", { status: RUNNING });
+  const other = session("codex:c", { status: RUNNING });
+  const next = session("codex:r2", { status: RUNNING });
+  expect(
+    show({
+      kept: [page("b.md"), launched("codex:r1")],
+      activeSessions: [first],
+    }),
+  ).toEqual(["kept:b.md", "active:codex:r1"]);
+  expect(
+    show({
+      kept: [page("b.md"), launched("codex:r1")],
+      activeSessions: [other],
+      sessions: [first, other],
+    }),
+  ).toEqual(["kept:b.md", "kept:codex:r1", "active:codex:c"]);
+  // Desktop kept the next launch in place of the previous one.
+  expect(
+    show({
+      kept: [page("b.md"), launched("codex:r2")],
+      activeSessions: [other, next],
+      sessions: [first, other, next],
+    }),
+  ).toEqual(["kept:b.md", "active:codex:r2", "active:codex:c"]);
+  expect(show.keeps()).toEqual([]);
+});

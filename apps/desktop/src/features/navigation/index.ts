@@ -25,6 +25,7 @@ export {
   artifactNavigationKey,
   navigationKeyId,
   navigationKeyPath,
+  navigationRoutineId,
   sameNavigationKey,
   spaceNavigationKey,
   type NavigationArtifactKind,

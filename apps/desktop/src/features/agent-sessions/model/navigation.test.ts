@@ -6,6 +6,7 @@ import {
   agentSessionNavigationIndex,
   agentSessionNavigationKey,
   confirmedMissingAgentSessionKeys,
+  goneAgentSessionKeys,
   retitledAgentSessionItems,
 } from "./navigation";
 import { listResult, listedSession } from "./testing/catalog";
@@ -182,4 +183,16 @@ test("a key saved with another link of a conversation addresses its record", () 
     agentSessionNavigationIndex([{ key: tipKey, title: "Chat" }], chain),
   ).toBe(0);
   expect(confirmedMissingAgentSessionKeys(result, [tipKey])).toEqual([]);
+});
+
+test("a session is gone once two lists in a row confirm it missing (DF-210 R3)", () => {
+  const launch: NavigationKey = { kind: "sessionLaunch", launchId: "l1" };
+  const old: NavigationKey = { kind: "session", sessionId: "codex:old" };
+  // A list read before Desktop kept the launch does not show it.
+  const first = goneAgentSessionKeys(new Set(), [launch, old]);
+  expect(first.gone).toEqual([]);
+  // The next list shows the launch; the old session is still missing.
+  const second = goneAgentSessionKeys(first.missing, [old]);
+  expect(second.gone).toEqual([old]);
+  expect(goneAgentSessionKeys(second.missing, []).gone).toEqual([]);
 });

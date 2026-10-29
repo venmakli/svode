@@ -45,10 +45,17 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     id: string;
     title: string;
     source: string;
+    launchId?: string;
   }
   interface Key {
     kind: string;
     sessionId?: string;
+    launchId?: string;
+  }
+  interface Item {
+    key: Key;
+    title: string;
+    routine?: { ownerKind: string; ownerPath: string; routineId: string };
   }
 
   /** The catalogue as the read-model lists it. */
@@ -62,6 +69,12 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     agentSessionForNavigationKey: (key: Key, sessions: Session[]) =>
       sessions.find((session) => session.id === key.sessionId) ?? null,
     agentSessionHasId: (session: Session, id: string) => session.id === id,
+    agentSessionNavigationIndex: (items: Item[], session: Session) =>
+      items.findIndex(
+        ({ key }) =>
+          key.sessionId === session.id ||
+          (key.launchId !== undefined && key.launchId === session.launchId),
+      ),
     agentSessionNavigationKey: (session: Session) => ({
       kind: "session",
       sessionId: session.id,
@@ -84,10 +97,13 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
       ),
   }));
 
-  const kept: { key: Key; title: string }[] = [];
-  let pinned: { key: Key; title: string }[] = [];
+  const kept: Item[] = [];
+  let pinned: Item[] = [];
+  /** Every keep, as Desktop gets it. */
+  const keeps: Item[] = [];
   const editListeners = new Set<(edit: unknown) => void>();
-  const keyId = (key: Key) => JSON.stringify([key.kind, key.sessionId]);
+  const keyId = (key: Key) =>
+    JSON.stringify([key.kind, key.sessionId ?? key.launchId]);
   mock.module("@/features/navigation", () => ({
     artifactNavigationKey: () => ({ kind: "page" }),
     getNavigationState: () => ({
@@ -95,8 +111,14 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
       pinned,
       kept,
       pendingKeyIds: new Set<string>(),
-      keep: async (item: { key: Key; title: string }) => {
-        kept.push(item);
+      // A kept item is kept again in place, as Desktop does.
+      keep: async (item: Item) => {
+        keeps.push(item);
+        const at = kept.findIndex(
+          (current) => keyId(current.key) === keyId(item.key),
+        );
+        if (at < 0) kept.push(item);
+        else kept[at] = item;
       },
       unkeep: async (keys: Key[]) => {
         unkept.push(keys);
@@ -202,6 +224,35 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     kept.push({ key: { kind: "session", sessionId: "codex:a" }, title: "A" });
     await message("codex:a");
     expect(keptIds()).toEqual(["codex:a"]);
+  });
+
+  test("a message forgets the Routine of a row its launch kept, in place (DF-210 R5)", async () => {
+    kept.length = 0;
+    keeps.length = 0;
+    await act(async () =>
+      setListed([
+        ...listed,
+        { id: "codex:r", title: "Daily now", source: "codex", launchId: "l1" },
+      ]),
+    );
+    kept.push(
+      { key: { kind: "session", sessionId: "codex:b" }, title: "B" },
+      {
+        key: { kind: "sessionLaunch", launchId: "l1" },
+        title: "Daily",
+        routine: { ownerKind: "project", ownerPath: ".", routineId: "daily" },
+      },
+    );
+    await message("codex:r");
+    expect(keeps).toEqual([
+      { key: { kind: "sessionLaunch", launchId: "l1" }, title: "Daily now" },
+    ]);
+    expect(kept.map((item) => item.routine)).toEqual([undefined, undefined]);
+    // Kept without the Routine, it does not change by a message any more,
+    // whichever key it is kept by.
+    await message("codex:r");
+    expect(keeps.length).toBe(1);
+    expect(kept.length).toBe(2);
   });
 
   test("an edit without a main area artifact keeps nothing", async () => {

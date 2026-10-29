@@ -18,6 +18,7 @@ use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, require_repository_mutation_paths};
 use crate::index::IndexState;
 use crate::index::update::IndexUpdateState;
+use crate::navigation::{self, NavigationItem, NavigationKey, NavigationRoutine};
 use crate::process::path_env::ProcessPath;
 use crate::project_sessions::ProjectSessions;
 use crate::terminal::{AgentTerminalSpawn, TerminalManager, quote_agent_shell_command};
@@ -540,6 +541,19 @@ pub(super) async fn dispatch_routine(
                     .await;
                 match started {
                     Ok(result) => {
+                        if let RoutineDispatchResult::Started {
+                            agent_session_id,
+                            source_session_id,
+                            ..
+                        }
+                        | RoutineDispatchResult::Failed {
+                            agent_session_id,
+                            source_session_id,
+                            ..
+                        } = &result
+                        {
+                            run.keep_session(agent_session_id, source_session_id.as_deref());
+                        }
                         super::emit_owner_invalidation(app, &owner);
                         return Ok(result);
                     }
@@ -585,6 +599,7 @@ pub(super) async fn dispatch_routine(
                 ),
             )
             .await?;
+            run.keep_session(&agent_session_id, None);
             record_terminal_outcome(
                 &pool,
                 &routine_run_id,
@@ -631,6 +646,37 @@ struct RunContext<'a> {
 }
 
 impl RunContext<'_> {
+    /// Keeps the session of this run in Now of its Project, in the row of
+    /// the Routine's previous launch (DF-210 R3, R4). The previous launch is
+    /// not running, or this one would not start; its session still works
+    /// while a Svode terminal shows it.
+    fn keep_session(&self, agent_session_id: &str, source_session_id: Option<&str>) {
+        let (item, routine) = launched_session(
+            self.owner,
+            self.routine_id,
+            self.launch_id,
+            self.name,
+            agent_session_id,
+            source_session_id,
+        );
+        let live = self
+            .terminal_manager
+            .list_agent_surfaces()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|surface| surface.live)
+            .collect::<Vec<_>>();
+        navigation::routine_launched(self.app, &self.owner.project_path, item, routine, |key| {
+            live.iter().any(|surface| match key {
+                NavigationKey::Session { session_id } => &surface.agent_session_id == session_id,
+                NavigationKey::SessionLaunch { launch_id } => {
+                    surface.launch_id.as_ref() == Some(launch_id)
+                }
+                _ => false,
+            })
+        });
+    }
+
     fn new_run<'b>(
         &'b self,
         source: &'b str,
@@ -653,6 +699,41 @@ impl RunContext<'_> {
             launch,
         }
     }
+}
+
+/// The Now item of the session a launch of the Routine recorded, keyed by its
+/// catalog id or, until the source reports one, by the launch id, and the
+/// Routine it remembers (DF-210 R3).
+fn launched_session(
+    owner: &ResolvedRoutineOwner,
+    routine_id: &str,
+    launch_id: &str,
+    name: &str,
+    agent_session_id: &str,
+    source_session_id: Option<&str>,
+) -> (NavigationItem, NavigationRoutine) {
+    let key = match source_session_id {
+        Some(_) => NavigationKey::Session {
+            session_id: agent_session_id.to_string(),
+        },
+        None => NavigationKey::SessionLaunch {
+            launch_id: launch_id.to_string(),
+        },
+    };
+    let item = NavigationItem {
+        key,
+        title: name.to_string(),
+        icon: None,
+        routine: None,
+    };
+    let routine = NavigationRoutine {
+        space_id: (owner.project_path != owner.space_path)
+            .then(|| owner.descriptor.space_id.clone()),
+        owner_kind: owner.descriptor.kind,
+        owner_path: owner.descriptor.owner_path.clone(),
+        routine_id: routine_id.to_string(),
+    };
+    (item, routine)
 }
 
 /// The agent CLI of the binding in a managed terminal, with why the launch
@@ -744,6 +825,8 @@ async fn start_terminal(
     .map_err(|refusal| AppError::from(svode_agents::AgentRuntimeError::WriterRefused { refusal }));
     let spawned = claim
         .and_then(|claim| terminal_manager.spawn_agent_shell_session(app.clone(), spawn, claim));
+    // The run is recorded, whether its terminal started or not.
+    run.keep_session(&agent_session_id, launch.source_session_id.as_deref());
     let terminal = match spawned {
         Ok(terminal) => terminal,
         Err(error) => {
@@ -902,4 +985,90 @@ fn routine_owner_kind_name(kind: RoutineOwnerKind) -> &'static str {
 
 fn new_runtime_id() -> String {
     ulid::Ulid::new().to_string().to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use svode_core::routines::model::RoutineOwnerInputKind;
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// A launch keeps its session in the navigation state of the Project
+    /// itself, with no window involved (DF-210 R3).
+    #[test]
+    fn a_launch_keeps_its_session_in_now_of_its_project() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        write(
+            &root.join(".svode/config.json"),
+            r#"{"name":"Project","spaces":[{"id":"child-id","path":"child"}]}"#,
+        );
+        write(
+            &root.join("child/.svode/config.json"),
+            r#"{"name":"Child"}"#,
+        );
+        let project_owner = service::resolve_owner(
+            &root,
+            &root,
+            "root",
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )
+        .unwrap();
+        let space_owner = service::resolve_owner(
+            &root,
+            &root.join("child"),
+            "child-id",
+            ".",
+            RoutineOwnerInputKind::RegisteredSpace,
+        )
+        .unwrap();
+
+        // A terminal launch the source has not named yet is kept by its launch.
+        let (item, routine) = launched_session(
+            &project_owner,
+            "daily",
+            "launch-1",
+            "Daily",
+            "codex:launch:launch-1",
+            None,
+        );
+        assert_eq!(
+            item.key,
+            NavigationKey::SessionLaunch {
+                launch_id: "launch-1".into()
+            }
+        );
+        assert_eq!(item.title, "Daily");
+        assert_eq!(routine.space_id, None);
+        navigation::keep_launched(&root, item, routine, |_| false).unwrap();
+
+        // A named session, such as an ACP launch, by its catalog id.
+        let (item, routine) = launched_session(
+            &space_owner,
+            "daily",
+            "launch-2",
+            "Daily",
+            "claude:s2",
+            Some("s2"),
+        );
+        assert_eq!(
+            item.key,
+            NavigationKey::Session {
+                session_id: "claude:s2".into()
+            }
+        );
+        assert_eq!(routine.space_id.as_deref(), Some("child-id"));
+        assert_eq!(routine.owner_kind, RoutineOwnerKind::Space);
+        navigation::keep_launched(&root, item, routine, |_| false).unwrap();
+
+        // The same Routine id of another owner has a row of its own.
+        let kept = navigation::read_state(&root).kept;
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().all(|kept| kept.item.routine.is_some()));
+    }
 }

@@ -21,14 +21,24 @@ export interface NavigationItemDto {
   icon?: string;
 }
 
+/** A Routine by its owner and id; no `spaceId` is the Project root. */
+export interface NavigationRoutineDto {
+  spaceId?: string;
+  ownerKind: "project" | "space" | "collection";
+  ownerPath: string;
+  routineId: string;
+}
+
 /**
  * A pinned or kept item as resolved by Desktop. `available` is absent for
  * sessions, which the session catalog resolves; `openPath` is the path an
- * available artifact opens by.
+ * available artifact opens by; `routine` is the Routine whose launch kept a
+ * session, which only Desktop records.
  */
 export interface NavigationResolvedItemDto extends NavigationItemDto {
   available?: boolean;
   openPath?: string;
+  routine?: NavigationRoutineDto;
 }
 
 export interface NavigationStateDto {

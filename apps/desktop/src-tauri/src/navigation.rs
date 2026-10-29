@@ -11,6 +11,10 @@
 //! An object is pinned or kept, never both: pinning a kept object moves it to
 //! the pinned list.
 //!
+//! A session a Routine launch kept remembers that Routine, so the next launch
+//! takes its row (DF-210 R3, R4). Only that launch records the memory: a keep
+//! or pin from a window drops it, a snapshot refresh keeps it (R5).
+//!
 //! Every read resolves the pinned and kept artifacts and Spaces against their
 //! source:
 //! an available target refreshes its display snapshot, an unreadable source
@@ -24,6 +28,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use svode_core::content_tree::{self, TreeChildKind, TreeLoadError};
 use svode_core::page::SpaceReadiness;
+use svode_core::routines::model::RoutineOwnerKind;
 use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
@@ -197,6 +202,21 @@ pub struct NavigationItem {
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// The Routine whose launch kept this session in Now (DF-210 R3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine: Option<NavigationRoutine>,
+}
+
+/// A Routine by its owner and id, as a kept session remembers it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationRoutine {
+    /// The registered Space of the owner; none for the Project root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_id: Option<String>,
+    pub owner_kind: RoutineOwnerKind,
+    pub owner_path: String,
+    pub routine_id: String,
 }
 
 /// A pinned or kept item as the frontend sees it.
@@ -342,9 +362,11 @@ pub fn read_state(project: &Path) -> NavigationState {
     })
 }
 
+/// An item as a window gives it: only a Routine launch records a Routine.
 fn normalized_item(item: NavigationItem) -> Result<NavigationItem, AppError> {
     Ok(NavigationItem {
         key: item.key.normalized()?,
+        routine: None,
         ..item
     })
 }
@@ -433,16 +455,57 @@ pub fn forget(project: &Path, keys: Vec<NavigationKey>) -> Result<NavigationStat
 }
 
 /// Refreshes the display snapshot of a pinned or kept item, such as the
-/// current title of a session; an item in neither list is not added.
+/// current title of a session; an item in neither list is not added. A kept
+/// session keeps the Routine it remembers.
 pub fn retitle(project: &Path, item: NavigationItem) -> Result<NavigationState, AppError> {
     let item = normalized_item(item)?;
     mutate(project, |file| {
         for items in [&mut file.pinned, &mut file.kept] {
             if let Some(index) = position(items, &item.key) {
-                items[index] = item.clone();
+                items[index] = NavigationItem {
+                    routine: items[index].routine.take(),
+                    ..item.clone()
+                };
             }
         }
         Ok(resolved(project, file))
+    })
+}
+
+/// Keeps the session of a Routine launch in Now, remembering the Routine
+/// (DF-210 R3): in the place of the row of its previous launch when that row
+/// still remembers it and its session is not `active` (R4), otherwise last,
+/// and then that earlier row stops standing for the Routine, so the Routine
+/// has one row. Returns whether the state changed.
+pub fn keep_launched(
+    project: &Path,
+    item: NavigationItem,
+    routine: NavigationRoutine,
+    active: impl Fn(&NavigationKey) -> bool,
+) -> Result<bool, AppError> {
+    let item = NavigationItem {
+        routine: Some(routine),
+        ..normalized_item(item)?
+    };
+    mutate(project, |file| {
+        let before = file.clone();
+        if position(&file.pinned, &item.key).is_none() {
+            let previous = file
+                .kept
+                .iter()
+                .position(|kept| kept.routine == item.routine);
+            match previous {
+                // A launch is a new session: its key is not kept yet.
+                Some(index) if !active(&file.kept[index].key) => file.kept[index] = item,
+                _ => {
+                    if let Some(index) = previous {
+                        file.kept[index].routine = None;
+                    }
+                    file.kept.push(item);
+                }
+            }
+        }
+        Ok(*file != before)
     })
 }
 
@@ -773,6 +836,18 @@ pub fn artifact_removed(app: &AppHandle, space: &str) {
     notify(app, refresh(Path::new(space)));
 }
 
+/// Keeps the session of a Routine launch in Now of its Project, whether a
+/// window shows the Project or not (DF-210 R3), and tells the windows.
+pub fn routine_launched(
+    app: &AppHandle,
+    project: &Path,
+    item: NavigationItem,
+    routine: NavigationRoutine,
+    active: impl Fn(&NavigationKey) -> bool,
+) {
+    notify(app, keep_launched(project, item, routine, active));
+}
+
 /// Project and registered Space id (`None` for the Project root) of a Space
 /// directory.
 fn space_target(space: &Path) -> Result<(PathBuf, Option<String>), AppError> {
@@ -941,6 +1016,7 @@ mod tests {
             },
             title: id.to_string(),
             icon: None,
+            routine: None,
         }
     }
 
@@ -970,6 +1046,7 @@ mod tests {
             key,
             title: title.into(),
             icon: None,
+            routine: None,
         }
     }
 
@@ -1039,6 +1116,7 @@ mod tests {
                 key: child_page("/notes\\plan/README.md"),
                 title: "Plan".into(),
                 icon: Some("📄".into()),
+                routine: None,
             },
         )
         .unwrap();
@@ -1053,6 +1131,7 @@ mod tests {
                     },
                     title: "Outside".into(),
                     icon: None,
+                    routine: None,
                 },
             )
             .is_err()
@@ -1576,5 +1655,234 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         assert!(pin(temp.path(), session("codex:a")).is_err());
         assert!(!temp.path().join(".svode").exists());
+    }
+
+    fn routine(id: &str) -> NavigationRoutine {
+        NavigationRoutine {
+            space_id: Some("child-id".into()),
+            owner_kind: RoutineOwnerKind::Collection,
+            owner_path: "tasks".into(),
+            routine_id: id.into(),
+        }
+    }
+
+    /// A launch of the Routine `id` while the sessions `active` work.
+    fn launched(project: &Path, session_id: &str, id: &str, active: &[&str]) -> NavigationState {
+        keep_launched(project, session(session_id), routine(id), |key| {
+            active.iter().any(|active| key == &session_key(active))
+        })
+        .unwrap();
+        read_state(project)
+    }
+
+    /// Kept session ids with the Routine each remembers.
+    fn kept_routines(state: &NavigationState) -> Vec<(String, Option<String>)> {
+        kept_ids(state)
+            .into_iter()
+            .zip(&state.kept)
+            .map(|(id, kept)| {
+                (
+                    id,
+                    kept.item
+                        .routine
+                        .as_ref()
+                        .map(|routine| routine.routine_id.clone()),
+                )
+            })
+            .collect()
+    }
+
+    fn remembers(pairs: &[(&str, Option<&str>)]) -> Vec<(String, Option<String>)> {
+        pairs
+            .iter()
+            .map(|(id, routine)| (id.to_string(), routine.map(str::to_string)))
+            .collect()
+    }
+
+    #[test]
+    fn a_routine_launch_takes_the_row_of_its_previous_launch() {
+        let project = project();
+        keep(project.path(), session("codex:a"), None).unwrap();
+        // The first launch comes last and remembers its Routine (DF-210 R3).
+        let state = launched(project.path(), "codex:r1", "daily", &[]);
+        assert_eq!(
+            kept_routines(&state),
+            remembers(&[("codex:a", None), ("codex:r1", Some("daily"))])
+        );
+        keep(project.path(), session("codex:b"), None).unwrap();
+        // The next one takes its place; the earlier session leaves Now (R4).
+        let state = launched(project.path(), "codex:r2", "daily", &[]);
+        assert_eq!(
+            kept_routines(&state),
+            remembers(&[
+                ("codex:a", None),
+                ("codex:r2", Some("daily")),
+                ("codex:b", None),
+            ])
+        );
+        // Another Routine, or one of another owner, has a row of its own.
+        let state = launched(project.path(), "codex:w1", "weekly", &[]);
+        assert_eq!(
+            kept_ids(&state),
+            ["codex:a", "codex:r2", "codex:b", "codex:w1"]
+        );
+        keep_launched(
+            project.path(),
+            session("codex:o1"),
+            NavigationRoutine {
+                owner_path: "other".into(),
+                ..routine("daily")
+            },
+            |_| false,
+        )
+        .unwrap();
+        let state = read_state(project.path());
+        assert_eq!(
+            kept_ids(&state),
+            ["codex:a", "codex:r2", "codex:b", "codex:w1", "codex:o1"]
+        );
+        // Survives a reread and shows the Routine to the windows.
+        assert_eq!(state.kept[1].item.routine, Some(routine("daily")));
+    }
+
+    #[test]
+    fn a_routine_launch_comes_last_while_its_previous_session_works() {
+        let project = project();
+        launched(project.path(), "codex:r1", "daily", &[]);
+        keep(project.path(), session("codex:b"), None).unwrap();
+        // The previous session works: the new row comes last, and the Routine
+        // keeps one row (R4).
+        let state = launched(project.path(), "codex:r2", "daily", &["codex:r1"]);
+        assert_eq!(
+            kept_routines(&state),
+            remembers(&[
+                ("codex:r1", None),
+                ("codex:b", None),
+                ("codex:r2", Some("daily")),
+            ])
+        );
+        let state = launched(project.path(), "codex:r3", "daily", &[]);
+        assert_eq!(kept_ids(&state), ["codex:r1", "codex:b", "codex:r3"]);
+        // A closed row is not replaced: the next launch comes last.
+        unkeep(project.path(), vec![session_key("codex:r3")]).unwrap();
+        let state = launched(project.path(), "codex:r4", "daily", &[]);
+        assert_eq!(kept_ids(&state), ["codex:r1", "codex:b", "codex:r4"]);
+    }
+
+    #[test]
+    fn a_keep_or_pin_from_a_window_forgets_the_routine_and_a_retitle_does_not() {
+        let project = project();
+        launched(project.path(), "codex:r1", "daily", &[]);
+        // A snapshot refresh keeps the memory (R5).
+        retitle(
+            project.path(),
+            NavigationItem {
+                title: "Morning".into(),
+                ..session("codex:r1")
+            },
+        )
+        .unwrap();
+        let state = launched(project.path(), "codex:r2", "daily", &[]);
+        assert_eq!(kept_ids(&state), ["codex:r2"]);
+
+        // A keep from a window, e.g. on a message, drops it even when the
+        // item it gives carries one: the next launch comes last.
+        let state = keep(
+            project.path(),
+            NavigationItem {
+                title: "Morning".into(),
+                routine: Some(routine("daily")),
+                ..session("codex:r2")
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(kept_routines(&state), remembers(&[("codex:r2", None)]));
+        assert_eq!(state.kept[0].item.title, "Morning");
+        let state = launched(project.path(), "codex:r3", "daily", &[]);
+        assert_eq!(kept_ids(&state), ["codex:r2", "codex:r3"]);
+
+        // A pinned session is not replaced and does not come back by an unpin.
+        let state = pin(
+            project.path(),
+            NavigationItem {
+                routine: Some(routine("daily")),
+                ..session("codex:r3")
+            },
+        )
+        .unwrap();
+        assert_eq!(state.pinned[0].item.routine, None);
+        let state = launched(project.path(), "codex:r4", "daily", &[]);
+        assert_eq!(kept_ids(&state), ["codex:r2", "codex:r4"]);
+        assert_eq!(pinned_ids(&state), ["codex:r3"]);
+    }
+
+    #[test]
+    fn the_routine_is_an_optional_field_of_a_kept_session() {
+        let project = project();
+        // A file of an earlier version reads as before.
+        std::fs::write(
+            file_path(project.path()),
+            serde_json::json!({
+                "version": VERSION,
+                "kept": [{ "key": { "kind": "sessionLaunch", "launchId": "l1" }, "title": "Old" }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        keep_launched(
+            project.path(),
+            NavigationItem {
+                key: NavigationKey::SessionLaunch {
+                    launch_id: "l2".into(),
+                },
+                ..session("Daily")
+            },
+            routine("daily"),
+            |_| false,
+        )
+        .unwrap();
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file_path(project.path())).unwrap())
+                .unwrap();
+        let mut keys = file
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.sort();
+        assert_eq!(keys, ["expanded", "kept", "pinned", "version"]);
+        assert_eq!(
+            file["kept"],
+            serde_json::json!([
+                { "key": { "kind": "sessionLaunch", "launchId": "l1" }, "title": "Old" },
+                {
+                    "key": { "kind": "sessionLaunch", "launchId": "l2" },
+                    "title": "Daily",
+                    "routine": {
+                        "spaceId": "child-id",
+                        "ownerKind": "collection",
+                        "ownerPath": "tasks",
+                        "routineId": "daily"
+                    }
+                }
+            ])
+        );
+        // An unchanged launch writes nothing and reports no change.
+        assert!(
+            !keep_launched(
+                project.path(),
+                NavigationItem {
+                    key: NavigationKey::SessionLaunch {
+                        launch_id: "l2".into(),
+                    },
+                    ..session("Daily")
+                },
+                routine("daily"),
+                |_| false,
+            )
+            .unwrap()
+        );
     }
 }

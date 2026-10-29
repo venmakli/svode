@@ -21,6 +21,7 @@ import {
   agentSessionTerminalFollow,
   confirmedMissingAgentSessionKeys,
   createAgentSessionCatalogStore,
+  goneAgentSessionKeys,
   retitledAgentSessionItems,
   startAgentSessionCatalogRefresh,
   type AgentSession,
@@ -73,32 +74,34 @@ export function useAgentSessionCatalogLifecycle(projectPath: string | null) {
     );
   }, [projectPath]);
 
-  // A full list that confirms a session is gone removes it from navigation;
-  // a listed session keeps its current title as the last known one.
-  useEffect(
-    () =>
-      agentSessionCatalog.subscribe((state, previous) => {
-        if (!state.result || state.listedAt === previous.listedAt) return;
-        const navigation = getNavigationState();
-        if (navigation.projectPath !== state.projectPath) return;
-        const items = [...navigation.pinned, ...navigation.kept];
-        void navigation.forget(
-          confirmedMissingAgentSessionKeys(
-            state.result,
-            items.map((item) => item.key),
-          ),
-        );
-        for (const item of retitledAgentSessionItems(
-          items,
-          state.result.sessions,
-        )) {
-          navigation.retitle(item).catch((error: unknown) => {
-            console.error("Failed to update a session title:", error);
-          });
-        }
-      }),
-    [],
-  );
+  // Two full lists in a row that confirm a session is gone remove it from
+  // navigation; a listed session keeps its current title as the last known one.
+  useEffect(() => {
+    let missing: ReadonlySet<string> = new Set();
+    return agentSessionCatalog.subscribe((state, previous) => {
+      if (!state.result || state.listedAt === previous.listedAt) return;
+      const navigation = getNavigationState();
+      if (navigation.projectPath !== state.projectPath) return;
+      const items = [...navigation.pinned, ...navigation.kept];
+      const confirmed = goneAgentSessionKeys(
+        missing,
+        confirmedMissingAgentSessionKeys(
+          state.result,
+          items.map((item) => item.key),
+        ),
+      );
+      missing = confirmed.missing;
+      void navigation.forget(confirmed.gone);
+      for (const item of retitledAgentSessionItems(
+        items,
+        state.result.sessions,
+      )) {
+        navigation.retitle(item).catch((error: unknown) => {
+          console.error("Failed to update a session title:", error);
+        });
+      }
+    });
+  }, []);
 
   // An exited session terminal is no longer live for any consumer.
   useEffect(

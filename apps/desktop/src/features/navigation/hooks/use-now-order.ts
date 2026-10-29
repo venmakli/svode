@@ -34,7 +34,7 @@ export function useNowOrder(
   complete: boolean,
 ): number[] {
   useSyncExternalStore(subscribeNow, nowRevision);
-  const keep = useNavigationState((state) => state.keep);
+  const keep = useNavigationState((state) => state.keepEnded);
   const settled = projectPath
     ? settleHiddenNowRows(nowHiddenOf(projectPath), rows)
     : null;
@@ -73,14 +73,14 @@ const keeping = new Set<string>();
 function keepEndedRow(
   projectPath: string,
   row: NowOrderRow,
-  keep: NavigationStoreState["keep"],
+  keep: NavigationStoreState["keepEnded"],
 ) {
   const item = row.keep;
   if (!item) return;
   const id = JSON.stringify([projectPath, navigationKeyId(item.key)]);
   if (keeping.has(id)) return;
   keeping.add(id);
-  keep(item)
+  keep(item, row.ids)
     .catch((error: unknown) => {
       dropNowRow(projectPath, row);
       toast.error(m.navigation_keep_failed(), {

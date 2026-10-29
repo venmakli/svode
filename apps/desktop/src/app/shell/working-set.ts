@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import {
   agentSessionForNavigationKey,
   agentSessionHasId,
+  agentSessionNavigationIndex,
   agentSessionNavigationKey,
   pinnableAgentSessionItem,
   useActiveAgentSessions,
@@ -58,6 +59,10 @@ function reportFailure(error: unknown) {
 
 function keepItem(item: NavigationItem) {
   if (isListed(item.key)) return;
+  keep(item);
+}
+
+function keep(item: NavigationItem) {
   getNavigationState()
     .keep(item)
     .catch((error: unknown) => {
@@ -65,6 +70,23 @@ function keepItem(item: NavigationItem) {
         description: getNativeErrorMessage(error),
       });
     });
+}
+
+/**
+ * Keeps a session whose message the runtime accepted; false while it has
+ * no identity to keep. A kept one stays as it is, by whichever key it is
+ * kept, except that a row a Routine launch kept is kept again in its place
+ * without the Routine, so the next launch does not take it (DF-210 R5).
+ */
+function keepMessagedSession(session: AgentSession | null): boolean {
+  const item = pinnableAgentSessionItem(session);
+  if (!session || !item) return false;
+  const kept = getNavigationState().kept;
+  const index = agentSessionNavigationIndex([...kept], session);
+  if (index < 0) keepItem(item);
+  else if (kept[index].routine)
+    keep({ key: kept[index].key, title: item.title });
+  return true;
 }
 
 /** The catalogue session of an accepted message, once listed. */
@@ -110,11 +132,13 @@ export function useKeepEditedObjects() {
           return;
         }
         if (edit.kind === "message") {
-          const item = pinnableAgentSessionItem(
-            messagedSession(edit.sessionId, listedRef.current),
-          );
-          if (item) keepItem(item);
-          else messaged.current.add(edit.sessionId);
+          if (
+            !keepMessagedSession(
+              messagedSession(edit.sessionId, listedRef.current),
+            )
+          ) {
+            messaged.current.add(edit.sessionId);
+          }
           return;
         }
         const id = navigationKeyId(
@@ -138,12 +162,10 @@ export function useKeepEditedObjects() {
   // A messaged session follows its canonical record into Now.
   useEffect(() => {
     for (const sessionId of messaged.current) {
-      const item = pinnableAgentSessionItem(
-        messagedSession(sessionId, listedSessions),
-      );
-      if (!item) continue;
+      if (!keepMessagedSession(messagedSession(sessionId, listedSessions))) {
+        continue;
+      }
       messaged.current.delete(sessionId);
-      keepItem(item);
     }
   }, [listedSessions]);
 

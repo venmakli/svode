@@ -1,4 +1,8 @@
-import type { NavigationItem, NavigationKey } from "@/features/navigation";
+import {
+  navigationKeyId,
+  type NavigationItem,
+  type NavigationKey,
+} from "@/features/navigation";
 import type { AgentSessionsListResult } from "../api";
 import { isPendingSessionId } from "./pending";
 import { agentSessionHasId } from "./target";
@@ -108,6 +112,22 @@ export function confirmedMissingAgentSessionKeys(
     }
     return false;
   });
+}
+
+/**
+ * The keys confirmed missing by a list that the list before confirmed
+ * missing too, with the ids of all confirmed now. A session Desktop kept
+ * while a list was being read, such as that of a Routine launch (DF-210
+ * R3), is missing from that list without being gone.
+ */
+export function goneAgentSessionKeys(
+  missingBefore: ReadonlySet<string>,
+  missing: readonly NavigationKey[],
+): { gone: NavigationKey[]; missing: Set<string> } {
+  return {
+    gone: missing.filter((key) => missingBefore.has(navigationKeyId(key))),
+    missing: new Set(missing.map(navigationKeyId)),
+  };
 }
 
 /**

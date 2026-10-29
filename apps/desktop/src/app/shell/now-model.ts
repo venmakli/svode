@@ -10,6 +10,7 @@ import {
 import {
   continuesStayingNowRows,
   navigationKeyId,
+  navigationRoutineId,
   type NavigationItem,
   type NavigationKey,
   type NavigationResolvedItem,
@@ -34,13 +35,13 @@ export interface NowTemporary {
 export type NowActiveRow = {
   kind: "active";
   session: AgentSession;
-  kept: NavigationItem | null;
+  kept: NavigationResolvedItem | null;
   main: boolean;
 };
 
 export type NowRow =
   | NowActiveRow
-  | { kind: "kept"; item: NavigationResolvedItem; ended?: boolean }
+  | { kind: "kept"; item: NavigationResolvedItem; ended?: AgentSession }
   | { kind: "temporary"; temporary: NowTemporary };
 
 export function isSessionKey(key: NavigationKey) {
@@ -101,7 +102,7 @@ export function composeNow({
   });
   for (const session of ended) {
     const item = pinnableAgentSessionItem(session);
-    if (item) rows.push({ kind: "kept", item, ended: true });
+    if (item) rows.push({ kind: "kept", item, ended: session });
   }
   const newcomers = active
     .filter((session) => !placed.has(session))
@@ -157,7 +158,8 @@ export function endedNowSessions({
  * The key ids by which the Now order knows a row through its states. An
  * active session can be hidden until it starts a turn, waits for the user,
  * opens in the main area or is kept (DF-207 R2); one not kept stays kept in
- * its place once it ends (DF-210 R1).
+ * its place once it ends (DF-210 R1). A row kept by a Routine launch is also
+ * known by the Routine, so the next launch takes its place (R4).
  */
 export function nowOrderRow(row: NowRow): NowOrderRow {
   switch (row.kind) {
@@ -175,11 +177,11 @@ export function nowOrderRow(row: NowRow): NowOrderRow {
     case "kept":
       return row.ended
         ? {
-            ids: [navigationKeyId(row.item.key)],
+            ...sessionOrderRow(row.ended, null),
             stays: true,
             keep: { key: row.item.key, title: row.item.title },
           }
-        : { ids: [navigationKeyId(row.item.key)] };
+        : { ids: keptIds(row.item) };
     case "temporary": {
       const { item, session } = row.temporary;
       const order = session
@@ -190,13 +192,19 @@ export function nowOrderRow(row: NowRow): NowOrderRow {
   }
 }
 
+/** A kept row is one row by its key and the Routine that kept it. */
+function keptIds(item: NavigationResolvedItem): string[] {
+  const routine = navigationRoutineId(item);
+  return [navigationKeyId(item.key), ...(routine ? [routine] : [])];
+}
+
 /**
- * A session row is one row by any of its ids and by the key it is kept by;
+ * A session row is one row by any of its ids and by the item it is kept by;
  * a pending session continues as the canonical one its terminal hands to.
  */
 function sessionOrderRow(
   session: AgentSession,
-  kept: NavigationItem | null,
+  kept: NavigationResolvedItem | null,
 ): NowOrderRow {
   const keys: NavigationKey[] = [
     agentSessionNavigationKey(session),
@@ -207,11 +215,15 @@ function sessionOrderRow(
     ...(session.launchId
       ? [{ kind: "sessionLaunch", launchId: session.launchId } as const]
       : []),
-    ...(kept ? [kept.key] : []),
   ];
   const ptyId = session.runtime?.ptyId;
   return {
-    ids: [...new Set(keys.map(navigationKeyId))],
+    ids: [
+      ...new Set([
+        ...keys.map(navigationKeyId),
+        ...(kept ? keptIds(kept) : []),
+      ]),
+    ],
     links: ptyId ? [JSON.stringify(["pty", ptyId])] : [],
   };
 }

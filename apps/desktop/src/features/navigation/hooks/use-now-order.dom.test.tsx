@@ -88,7 +88,11 @@ function keepingStore(project: string, fail: boolean) {
   };
   const store = createNavigationStore(api);
   store.getState().setProject(project);
-  return { store, keeps };
+  /** Desktop keeps an item, e.g. at a Routine launch, without the store reading it. */
+  const keptByDesktop = (item: NavigationResolvedItem) => {
+    kept = [...kept, item];
+  };
+  return { store, keeps, keptByDesktop };
 }
 
 test("an ended row is kept once in its place, whichever surface shows it (DF-210 R1)", async () => {
@@ -177,6 +181,43 @@ test("an ended row whose keep fails leaves Now", async () => {
     expect(keeps).toEqual(["codex:a before end"]);
     expect(nowOrderOf(project)).toEqual([]);
     expect(shown.at(-1)).toBe(0);
+  } finally {
+    await dom.dispose();
+  }
+});
+
+test("an ended row Desktop kept since the last read is not kept again (DF-210 R4)", async () => {
+  const dom = await createTestDom();
+  const project = "/projects/ended-launched";
+  const { store, keeps, keptByDesktop } = keepingStore(project, false);
+  const launch: NavigationResolvedItem = {
+    key: { kind: "sessionLaunch", launchId: "l1" },
+    title: "Daily",
+    routine: { ownerKind: "project", ownerPath: ".", routineId: "daily" },
+  };
+  const item: NavigationItem = {
+    key: { kind: "session", sessionId: "codex:r1" },
+    title: "Daily",
+  };
+  // The row of the session knows it by its canonical id and its launch.
+  const ids = [navigationKeyId(item.key), navigationKeyId(launch.key)];
+  function Now({ rows }: { rows: NowOrderRow[] }) {
+    useNowOrder(project, rows, true);
+    return null;
+  }
+  const surface = (rows: NowOrderRow[]) => (
+    <NavigationStoreProvider store={store}>
+      <Now rows={rows} />
+    </NavigationStoreProvider>
+  );
+  try {
+    await act(() => store.getState().refresh());
+    await dom.render(surface([{ ids, stays: true }]));
+    keptByDesktop(launch);
+    await dom.render(surface([{ ids, stays: true, keep: item }]));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(keeps).toEqual([]);
+    expect(store.getState().kept).toEqual([launch]);
   } finally {
     await dom.dispose();
   }

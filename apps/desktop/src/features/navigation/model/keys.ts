@@ -35,6 +35,25 @@ export function sameNavigationKey(a: NavigationKey, b: NavigationKey): boolean {
 }
 
 /**
+ * Identity string of the Routine whose launch kept the item, or null: the
+ * next launch of the Routine takes the row of the previous one (DF-210 R4).
+ */
+export function navigationRoutineId(
+  item: NavigationResolvedItem,
+): string | null {
+  const routine = item.routine;
+  return routine
+    ? JSON.stringify([
+        "routine",
+        routine.spaceId ?? null,
+        routine.ownerKind,
+        routine.ownerPath,
+        routine.routineId,
+      ])
+    : null;
+}
+
+/**
  * The key path of an artifact: a folder Page, Collection or App is its
  * folder, whether addressed by the directory or its README.
  */
