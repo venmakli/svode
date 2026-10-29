@@ -522,6 +522,11 @@ pub(crate) fn resolved_create_parent(
     } else {
         format!("{}/{stem}", base.to_string_lossy())
     };
+    // The leaf parent becomes a directory of this name: a sibling that takes
+    // it portably refuses the create before its first write.
+    if entry::name_taken_portably(&root.join(&parent), None)? {
+        return Err(PageError::FileAlreadyExists(parent));
+    }
     Ok((Some(parent), true))
 }
 

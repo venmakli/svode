@@ -26,6 +26,7 @@ use crate::index::backlinks;
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::IndexUpdateState;
 use crate::page::PageError;
+use crate::page::entry;
 use crate::page::filename;
 use crate::page::identity::{
     ContentOwnerKind, SemanticIdentity, SourceShape, resolve_markdown_identity_for_path,
@@ -244,7 +245,7 @@ pub async fn plan_managed_import(
 
     if requires_conversion {
         let prospective_owner = space_path.join(&owner_path);
-        if fs::symlink_metadata(&prospective_owner).is_ok() {
+        if entry::name_taken_portably(&prospective_owner, None)? {
             return Err(PageError::FileAlreadyExists(owner_path.clone()));
         }
     } else {

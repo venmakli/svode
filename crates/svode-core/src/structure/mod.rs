@@ -4,6 +4,8 @@ pub mod commit;
 pub mod naming;
 pub mod ops;
 pub mod plan;
+#[cfg(test)]
+mod portable_name_tests;
 mod rename_target;
 pub mod spaces;
 #[cfg(test)]

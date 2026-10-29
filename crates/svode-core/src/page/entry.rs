@@ -498,7 +498,7 @@ pub fn create_folder(
 
     let abs_path = resolve(space, &rel_path);
 
-    if abs_path.exists() {
+    if name_taken_portably(&abs_path, None)? {
         return Err(PageError::FileAlreadyExists(rel_path));
     }
 
@@ -1252,7 +1252,7 @@ pub fn move_entry_with_project(
 
     let abs_to = space.join(&new_rel);
 
-    if abs_to.exists() {
+    if name_taken_portably(&abs_to, None)? {
         return Err(PageError::FileAlreadyExists(new_rel));
     }
     let relation_plan = crate::collections::engine::relation_move_mutation_paths_with_project(
@@ -1384,7 +1384,7 @@ pub fn nest_entry(
     let parent = abs_path.parent().unwrap_or(space);
     let folder = parent.join(stem);
 
-    if folder.exists() {
+    if name_taken_portably(&folder, None)? {
         return Err(PageError::FileAlreadyExists(
             folder.to_string_lossy().to_string(),
         ));
@@ -1460,7 +1460,7 @@ pub fn unnest_entry(
         .ok_or_else(|| PageError::General("no parent for folder".to_string()))?;
     let new_abs = parent_dir.join(format!("{}.md", folder_name));
 
-    if new_abs.exists() {
+    if name_taken_portably(&new_abs, None)? {
         return Err(PageError::FileAlreadyExists(
             new_abs.to_string_lossy().to_string(),
         ));
@@ -1526,6 +1526,12 @@ pub fn convert_entry_to_folder(
         .ok_or_else(|| PageError::General("invalid entry filename".to_string()))?;
     let parent_abs = abs_path.parent().unwrap_or(space);
     let folder_abs = parent_abs.join(stem);
+    if name_taken_portably(&folder_abs, None)? {
+        return Err(PageError::FileAlreadyExists(rel_from_abs(
+            space,
+            &folder_abs,
+        )));
+    }
     // One atomic create: a folder that appears concurrently fails the
     // conversion before anything is written into it.
     match fs::create_dir(&folder_abs) {
@@ -1671,7 +1677,7 @@ pub fn convert_entry_to_leaf(
         .parent()
         .ok_or_else(|| PageError::General("folder has no parent".to_string()))?;
     let leaf_abs = parent_abs.join(format!("{folder_name}.md"));
-    if leaf_abs.exists() {
+    if name_taken_portably(&leaf_abs, None)? {
         return Err(PageError::FileAlreadyExists(rel_from_abs(space, &leaf_abs)));
     }
     fs::rename(&readme_abs, &leaf_abs)?;
@@ -2084,7 +2090,7 @@ pub fn rename_with_project(
         return Err(PageError::FileNotFound(from.to_string()));
     }
 
-    if from == to || name_taken_by_another_entry(&abs_from, &abs_to)? {
+    if from == to || name_taken_portably(&abs_to, Some(&abs_from))? {
         return Err(PageError::FileAlreadyExists(to.to_string()));
     }
     let relation_plan = crate::collections::engine::relation_move_mutation_paths_with_project(
@@ -2143,15 +2149,19 @@ pub fn rename_with_project(
 }
 
 /// Whether the target name is taken in its parent by an entry other than the
-/// source, compared portably: a case-only or normalization-only rename of
-/// the source itself stays free on any file system.
-fn name_taken_by_another_entry(abs_from: &Path, abs_to: &Path) -> Result<bool, PageError> {
+/// source, compared portably, so an operation that creates or moves a named
+/// item gives the same result on every file system. A case-only or
+/// normalization-only rename of the source itself stays free.
+pub(crate) fn name_taken_portably(
+    abs_to: &Path,
+    abs_from: Option<&Path>,
+) -> Result<bool, PageError> {
     let (Some(parent), Some(name)) = (abs_to.parent(), abs_to.file_name()) else {
         return Ok(abs_to.exists());
     };
     let source = abs_from
-        .file_name()
-        .filter(|_| abs_from.parent() == Some(parent))
+        .filter(|abs_from| abs_from.parent() == Some(parent))
+        .and_then(Path::file_name)
         .map(|name| name.to_string_lossy());
     filename::component_conflicts_portably(parent, &name.to_string_lossy(), source.as_deref())
 }
