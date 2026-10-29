@@ -275,6 +275,7 @@ fn relation_value_shape_normalizes_unique_many_and_rejects_dot_segments() {
         prefix: None,
         next: None,
         multiple: None,
+        unknown_keys: Default::default(),
     };
     let value: Value = serde_norway::from_str("[a.md, a.md, folder/README.md]").unwrap();
     let normalized = validate_relation_value_shape(&column, &value).unwrap();
@@ -505,6 +506,7 @@ views: []
         op: FilterOp::Eq,
         value: Some(Value::String("ISSUE-2".into())),
         values: None,
+        unknown_keys: Default::default(),
     };
     validate_filter_op(&schema, &display_filter).unwrap();
     normalize_filter_values_for_query(&schema, &mut display_filter).unwrap();
@@ -576,6 +578,7 @@ views: []
         op: FilterOp::Contains,
         value: Some(Value::String("me@example.com".into())),
         values: None,
+        unknown_keys: Default::default(),
     }];
     let rows = query_entry_rows(&pool, &schema, "tasks", &filters, &[], None, None)
         .await
@@ -586,6 +589,7 @@ views: []
     let sort = vec![Sort {
         field: "Key".into(),
         desc: false,
+        unknown_keys: Default::default(),
     }];
     let rows = query_entry_rows(&pool, &schema, "tasks", &[], &sort, None, None)
         .await
@@ -596,6 +600,7 @@ views: []
     let sort = vec![Sort {
         field: "Reviewers".into(),
         desc: false,
+        unknown_keys: Default::default(),
     }];
     let rows = query_entry_rows(&pool, &schema, "tasks", &[], &sort, None, None)
         .await
@@ -732,17 +737,20 @@ views: []
             op: FilterOp::GroupEq,
             value: Some(Value::String("in_progress".into())),
             values: None,
+            unknown_keys: Default::default(),
         },
         Filter {
             field: "Tags".into(),
             op: FilterOp::Contains,
             value: Some(Value::String("Feature".into())),
             values: None,
+            unknown_keys: Default::default(),
         },
     ];
     let sort = vec![Sort {
         field: "Priority".into(),
         desc: false,
+        unknown_keys: Default::default(),
     }];
     let rows = query_entry_rows(&pool, &schema, "tasks", &filters, &sort, None, None)
         .await
@@ -755,6 +763,7 @@ views: []
         op: FilterOp::Eq,
         value: Some(Value::String("2026-01-15".into())),
         values: None,
+        unknown_keys: Default::default(),
     }];
     let rows = query_entry_rows(&pool, &schema, "tasks", &date_eq, &[], None, None)
         .await
@@ -767,10 +776,12 @@ views: []
         op: FilterOp::Before,
         value: Some(Value::String("2026-01-06".into())),
         values: None,
+        unknown_keys: Default::default(),
     }];
     let title_sort = vec![Sort {
         field: "title".into(),
         desc: false,
+        unknown_keys: Default::default(),
     }];
     let rows = query_entry_rows(
         &pool,
@@ -791,6 +802,7 @@ views: []
         op: FilterOp::After,
         value: Some(Value::String("2026-01-31".into())),
         values: None,
+        unknown_keys: Default::default(),
     }];
     let rows = query_entry_rows(&pool, &schema, "tasks", &date_after, &[], None, None)
         .await
@@ -871,10 +883,12 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
                 op,
                 value: Some(Value::Bool(value)),
                 values: None,
+                unknown_keys: Default::default(),
             }],
             &[Sort {
                 field: "title".into(),
                 desc: false,
+                unknown_keys: Default::default(),
             }],
             None,
             None,
@@ -900,10 +914,12 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
                 Sort {
                     field: "Active".into(),
                     desc,
+                    unknown_keys: Default::default(),
                 },
                 Sort {
                     field: "title".into(),
                     desc: false,
+                    unknown_keys: Default::default(),
                 },
             ],
             None,

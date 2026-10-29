@@ -1,6 +1,6 @@
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_norway::Value;
+use serde_norway::{Mapping, Value};
 
 use crate::page::ColorName;
 
@@ -35,10 +35,58 @@ pub enum RelationLimit {
     One,
 }
 
+/// Target of a relation column outside its own Space. Unknown keys of the
+/// object form stay with the scope, so a root scope that has them is written
+/// as an object.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelationScope {
-    Root,
-    Space { id: String },
+    Root { unknown_keys: Mapping },
+    Space { id: String, unknown_keys: Mapping },
+}
+
+impl RelationScope {
+    pub fn root() -> Self {
+        Self::Root {
+            unknown_keys: Mapping::new(),
+        }
+    }
+
+    pub fn space(id: impl Into<String>) -> Self {
+        Self::Space {
+            id: id.into(),
+            unknown_keys: Mapping::new(),
+        }
+    }
+
+    pub fn unknown_keys(&self) -> &Mapping {
+        match self {
+            Self::Root { unknown_keys } | Self::Space { unknown_keys, .. } => unknown_keys,
+        }
+    }
+
+    fn unknown_keys_mut(&mut self) -> &mut Mapping {
+        match self {
+            Self::Root { unknown_keys } | Self::Space { unknown_keys, .. } => unknown_keys,
+        }
+    }
+
+    /// Whether both scopes name the same target; unknown keys do not change it.
+    pub fn same_target(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Root { .. }, Self::Root { .. }) => true,
+            (Self::Space { id: left, .. }, Self::Space { id: right, .. }) => left == right,
+            _ => false,
+        }
+    }
+
+    /// [`Self::same_target`] over optional scopes, where `None` is the own Space.
+    pub fn same_optional_target(left: Option<&Self>, right: Option<&Self>) -> bool {
+        match (left, right) {
+            (Some(left), Some(right)) => left.same_target(right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Serialize for RelationScope {
@@ -47,11 +95,24 @@ impl Serialize for RelationScope {
         S: Serializer,
     {
         match self {
-            RelationScope::Root => serializer.serialize_str("root"),
-            RelationScope::Space { id } => {
-                let mut map = serializer.serialize_map(Some(2))?;
+            RelationScope::Root { unknown_keys } if unknown_keys.is_empty() => {
+                serializer.serialize_str("root")
+            }
+            RelationScope::Root { unknown_keys } => {
+                let mut map = serializer.serialize_map(Some(1 + unknown_keys.len()))?;
+                map.serialize_entry("type", "root")?;
+                for (key, value) in unknown_keys {
+                    map.serialize_entry(key, value)?;
+                }
+                map.end()
+            }
+            RelationScope::Space { id, unknown_keys } => {
+                let mut map = serializer.serialize_map(Some(2 + unknown_keys.len()))?;
                 map.serialize_entry("type", "space")?;
                 map.serialize_entry("id", id)?;
+                for (key, value) in unknown_keys {
+                    map.serialize_entry(key, value)?;
+                }
                 map.end()
             }
         }
@@ -65,24 +126,31 @@ impl<'de> Deserialize<'de> for RelationScope {
     {
         let value = Value::deserialize(deserializer)?;
         match value {
-            Value::String(value) if value == "root" => Ok(Self::Root),
-            Value::Mapping(mapping) => {
+            Value::String(value) if value == "root" => Ok(Self::root()),
+            Value::Mapping(mut mapping) => {
                 let type_ = mapping
-                    .get("type")
-                    .and_then(Value::as_str)
+                    .remove("type")
+                    .and_then(|type_| type_.as_str().map(ToOwned::to_owned))
                     .ok_or_else(|| serde::de::Error::custom("relation_scope.type is required"))?;
-                match type_ {
-                    "root" => Ok(Self::Root),
+                match type_.as_str() {
+                    "root" => Ok(Self::Root {
+                        unknown_keys: mapping,
+                    }),
                     "space" => {
                         let id = mapping
-                            .get("id")
+                            .remove("id")
+                            .as_ref()
                             .and_then(Value::as_str)
                             .map(str::trim)
                             .filter(|id| !id.is_empty())
+                            .map(ToOwned::to_owned)
                             .ok_or_else(|| {
                                 serde::de::Error::custom("relation_scope.id is required")
                             })?;
-                        Ok(Self::Space { id: id.to_string() })
+                        Ok(Self::Space {
+                            id,
+                            unknown_keys: mapping,
+                        })
                     }
                     other => Err(serde::de::Error::custom(format!(
                         "unsupported relation_scope.type '{other}'"
@@ -113,6 +181,8 @@ pub struct PropertyOption {
     pub icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<StatusGroup>,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }
 
 impl<'de> Deserialize<'de> for PropertyOption {
@@ -129,6 +199,8 @@ impl<'de> Deserialize<'de> for PropertyOption {
             icon: Option<String>,
             #[serde(default)]
             group: Option<StatusGroup>,
+            #[serde(flatten)]
+            unknown_keys: Mapping,
         }
 
         let value = Value::deserialize(deserializer)?;
@@ -138,6 +210,7 @@ impl<'de> Deserialize<'de> for PropertyOption {
                 color: None,
                 icon: None,
                 group: None,
+                unknown_keys: Mapping::new(),
             }),
             Value::Mapping(_) => {
                 let object: PropertyOptionObject =
@@ -147,6 +220,7 @@ impl<'de> Deserialize<'de> for PropertyOption {
                     color: object.color,
                     icon: object.icon,
                     group: object.group,
+                    unknown_keys: object.unknown_keys,
                 })
             }
             _ => Err(serde::de::Error::custom(
@@ -193,29 +267,34 @@ pub struct Column {
     pub next: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multiple: Option<bool>,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct SystemFieldOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct SystemFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<SystemFieldOverride>,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct TemplatesConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<Vec<String>>,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,7 +323,6 @@ pub enum FilterOp {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Filter {
     pub field: String,
     pub op: FilterOp,
@@ -252,14 +330,17 @@ pub struct Filter {
     pub value: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub values: Option<Vec<Value>>,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Sort {
     pub field: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub desc: bool,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -279,6 +360,8 @@ pub enum View {
         visible_fields: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         show_nested: Option<bool>,
+        #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+        unknown_keys: Mapping,
     },
     Board {
         name: String,
@@ -290,6 +373,8 @@ pub enum View {
         filter: Vec<Filter>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         sort: Vec<Sort>,
+        #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+        unknown_keys: Mapping,
     },
     Calendar {
         name: String,
@@ -303,6 +388,8 @@ pub enum View {
         card_fields: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filter: Vec<Filter>,
+        #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+        unknown_keys: Mapping,
     },
     List {
         name: String,
@@ -314,6 +401,8 @@ pub enum View {
         sort: Vec<Sort>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filter: Vec<Filter>,
+        #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+        unknown_keys: Mapping,
     },
     Gallery {
         name: String,
@@ -331,6 +420,8 @@ pub enum View {
         sort: Vec<Sort>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         filter: Vec<Filter>,
+        #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+        unknown_keys: Mapping,
     },
 }
 
@@ -374,8 +465,172 @@ impl View {
             View::Calendar { .. } => &[],
         }
     }
+
+    pub fn unknown_keys(&self) -> &Mapping {
+        match self {
+            View::Table { unknown_keys, .. }
+            | View::Board { unknown_keys, .. }
+            | View::Calendar { unknown_keys, .. }
+            | View::List { unknown_keys, .. }
+            | View::Gallery { unknown_keys, .. } => unknown_keys,
+        }
+    }
+
+    fn unknown_keys_mut(&mut self) -> &mut Mapping {
+        match self {
+            View::Table { unknown_keys, .. }
+            | View::Board { unknown_keys, .. }
+            | View::Calendar { unknown_keys, .. }
+            | View::List { unknown_keys, .. }
+            | View::Gallery { unknown_keys, .. } => unknown_keys,
+        }
+    }
+
+    fn filters_and_sorts_mut(&mut self) -> (&mut Vec<Filter>, Option<&mut Vec<Sort>>) {
+        match self {
+            View::Table { filter, sort, .. }
+            | View::Board { filter, sort, .. }
+            | View::List { filter, sort, .. }
+            | View::Gallery { filter, sort, .. } => (filter, Some(sort)),
+            View::Calendar { filter, .. } => (filter, None),
+        }
+    }
+
+    /// Drops the unknown keys of the view, its filters and sorts.
+    pub fn discard_unknown_keys(&mut self) {
+        self.unknown_keys_mut().clear();
+        let (filters, sorts) = self.filters_and_sorts_mut();
+        filters
+            .iter_mut()
+            .for_each(|filter| filter.unknown_keys.clear());
+        sorts
+            .into_iter()
+            .flatten()
+            .for_each(|sort| sort.unknown_keys.clear());
+    }
+
+    /// Gives this view, built from operation input, the unknown keys of the
+    /// stored `previous` view: its own keys, except the ones this view now
+    /// sets as known fields, and those of each filter and sort it keeps
+    /// unchanged. Keys of the input are dropped.
+    pub fn keep_unknown_keys_of(&mut self, previous: &View) {
+        self.discard_unknown_keys();
+        let known = serde_norway::to_value(&*self)
+            .ok()
+            .and_then(|value| value.as_mapping().cloned())
+            .unwrap_or_default();
+        let mut unknown_keys = previous.unknown_keys().clone();
+        unknown_keys.retain(|key, _| !known.contains_key(key));
+        *self.unknown_keys_mut() = unknown_keys;
+        let (filters, sorts) = self.filters_and_sorts_mut();
+        keep_unknown_keys_of_unchanged(filters, previous.filters(), |filter| {
+            &mut filter.unknown_keys
+        });
+        if let Some(sorts) = sorts {
+            keep_unknown_keys_of_unchanged(sorts, previous.sorts(), |sort| &mut sort.unknown_keys);
+        }
+    }
 }
 
+/// Each item of `items` that equals, apart from unknown keys, a not yet
+/// matched item of `previous` takes that item's unknown keys.
+fn keep_unknown_keys_of_unchanged<T: Clone + PartialEq>(
+    items: &mut [T],
+    previous: &[T],
+    unknown_keys: impl Fn(&mut T) -> &mut Mapping,
+) {
+    let mut unmatched = previous.to_vec();
+    for item in items {
+        let position = unmatched.iter_mut().position(|candidate| {
+            let keys = std::mem::take(unknown_keys(candidate));
+            let same = candidate == item;
+            *unknown_keys(candidate) = keys;
+            same
+        });
+        if let Some(position) = position {
+            let mut matched = unmatched.remove(position);
+            *unknown_keys(item) = std::mem::take(unknown_keys(&mut matched));
+        }
+    }
+}
+
+impl PropertyOption {
+    /// Gives each option the unknown keys of the stored option with the same
+    /// name; keys of the input are dropped.
+    pub fn keep_unknown_keys_of(options: &mut [PropertyOption], previous: &[PropertyOption]) {
+        for option in options {
+            option.unknown_keys = previous
+                .iter()
+                .find(|stored| stored.name == option.name)
+                .map(|stored| stored.unknown_keys.clone())
+                .unwrap_or_default();
+        }
+    }
+}
+
+impl Column {
+    /// Drops the unknown keys of the column, its options and relation scope.
+    pub fn discard_unknown_keys(&mut self) {
+        self.unknown_keys.clear();
+        for option in self.options.iter_mut().flatten() {
+            option.unknown_keys.clear();
+        }
+        if let Some(scope) = self.relation_scope.as_mut() {
+            scope.unknown_keys_mut().clear();
+        }
+    }
+
+    /// Sets the relation scope from operation input: the scope keeps the
+    /// unknown keys of the stored scope when it names the same target.
+    pub fn set_relation_scope(&mut self, mut scope: Option<RelationScope>) {
+        if let Some(scope) = scope.as_mut() {
+            *scope.unknown_keys_mut() = self
+                .relation_scope
+                .as_ref()
+                .filter(|stored| stored.same_target(scope))
+                .map(|stored| stored.unknown_keys().clone())
+                .unwrap_or_default();
+        }
+        self.relation_scope = scope;
+    }
+
+    /// Sets the options from operation input: see
+    /// [`PropertyOption::keep_unknown_keys_of`].
+    pub fn set_options(&mut self, mut options: Option<Vec<PropertyOption>>) {
+        if let Some(options) = options.as_mut() {
+            PropertyOption::keep_unknown_keys_of(
+                options,
+                self.options.as_deref().unwrap_or_default(),
+            );
+        }
+        self.options = options;
+    }
+}
+
+impl CollectionSchema {
+    /// Drops every unknown key of a schema built from operation input.
+    pub fn discard_unknown_keys(&mut self) {
+        self.unknown_keys.clear();
+        if let Some(system_fields) = self.system_fields.as_mut() {
+            system_fields.unknown_keys.clear();
+            if let Some(title) = system_fields.title.as_mut() {
+                title.unknown_keys.clear();
+            }
+        }
+        if let Some(templates) = self.templates.as_mut() {
+            templates.unknown_keys.clear();
+        }
+        self.columns
+            .iter_mut()
+            .for_each(Column::discard_unknown_keys);
+        self.views.iter_mut().for_each(View::discard_unknown_keys);
+    }
+}
+
+/// The `schema.yaml` format. Every object keeps the keys this version does
+/// not know in `unknown_keys` and writes them back after its known keys, so a
+/// write by an older Svode keeps what a newer one added. Operation input
+/// never brings unknown keys into the file: the operations drop them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CollectionSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -389,4 +644,6 @@ pub struct CollectionSchema {
     pub columns: Vec<Column>,
     #[serde(default)]
     pub views: Vec<View>,
+    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    pub unknown_keys: Mapping,
 }

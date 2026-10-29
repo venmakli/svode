@@ -1850,6 +1850,45 @@ async fn select_columns_are_added_without_options() {
 }
 
 #[tokio::test]
+async fn collection_schema_keeps_keys_of_a_newer_svode_version() {
+    let fixture = index_fixture();
+    let host = FixtureHost::new(None);
+    let target = root_target(&fixture);
+    write(
+        &fixture.project.join("tasks/schema.yaml"),
+        "x_root: { mode: strict }\ncolumns:\n  - name: Status\n    type: text\n    x_column: 7\nviews:\n  - type: table\n    name: Table\n    x_view: [a, b]\n",
+    );
+
+    let schema = call_tool(
+        &host,
+        Some(&target),
+        "get_collection_schema",
+        json!({ "collectionPath": "tasks" }),
+    )
+    .await;
+    let schema = &structured(&schema)["schema"];
+    assert_eq!(schema["x_root"], json!({ "mode": "strict" }));
+    assert_eq!(schema["columns"][0]["x_column"], 7);
+    assert_eq!(schema["views"][0]["x_view"], json!(["a", "b"]));
+
+    let added = call_tool(
+        &host,
+        Some(&target),
+        "add_collection_column",
+        json!({
+            "collectionPath": "tasks",
+            "column": { "name": "Extra", "type": "text", "x_input": "dropped" }
+        }),
+    )
+    .await;
+    assert!(!added.is_error);
+    assert_eq!(
+        read(&fixture, "tasks/schema.yaml"),
+        "columns:\n- name: Status\n  type: text\n  x_column: 7\n- name: Extra\n  type: text\nviews:\n- type: table\n  name: Table\n  visible_fields:\n  - title\n  x_view:\n  - a\n  - b\nx_root:\n  mode: strict\n"
+    );
+}
+
+#[tokio::test]
 async fn integrity_git_status_and_actors_read_through_the_host_runtime() {
     let fixture = index_fixture();
     let host = FixtureHost::new(None);

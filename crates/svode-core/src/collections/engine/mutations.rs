@@ -112,6 +112,7 @@ pub fn prepare_initial_collection_schema(
     mut schema: CollectionSchema,
     project_path: Option<&str>,
 ) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
+    schema.discard_unknown_keys();
     normalize_schema(&mut schema);
     validate_schema(&schema)?;
     validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;
@@ -621,6 +622,7 @@ mod tests {
             sort: Vec::new(),
             visible_fields: vec!["title".to_string()],
             show_nested: None,
+            unknown_keys: Default::default(),
         }
     }
 

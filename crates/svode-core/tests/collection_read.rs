@@ -186,6 +186,7 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
         op: FilterOp::Eq,
         value: Some(Value::String("Owner".into())),
         values: None,
+        unknown_keys: Default::default(),
     }];
     assert!(
         query_entry_rows(&pool, &schema, ".", &owner_filter, &[], None, None)
@@ -197,6 +198,7 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
     let title_sort = vec![Sort {
         field: "title".into(),
         desc: false,
+        unknown_keys: Default::default(),
     }];
     let sorted = query_entry_rows(&pool, &schema, ".", &[], &title_sort, None, None)
         .await

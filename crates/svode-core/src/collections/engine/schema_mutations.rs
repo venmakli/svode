@@ -1,4 +1,5 @@
 use super::*;
+use crate::collections::schema_validation::prune_system_fields;
 
 #[allow(dead_code)]
 pub fn add_schema_column(
@@ -15,6 +16,7 @@ pub fn add_schema_column_with_project(
     mut column: Column,
     project_path: Option<&str>,
 ) -> Result<CollectionSchema, CollectionError> {
+    column.discard_unknown_keys();
     if column.type_ == PropertyType::Status && column.options.is_none() {
         column.options = Some(default_status_options());
     }
@@ -399,7 +401,10 @@ pub fn update_schema_column_with_project(
             && (new_column.type_ != PropertyType::Relation
                 || new_column.two_way != old_column.two_way
                 || new_column.relation != old_column.relation
-                || new_column.relation_scope != old_column.relation_scope)
+                || !RelationScope::same_optional_target(
+                    new_column.relation_scope.as_ref(),
+                    old_column.relation_scope.as_ref(),
+                ))
         {
             detach_two_way_relation_with_project(space, project_path, &old_column, true)?;
         }
@@ -551,8 +556,9 @@ pub fn add_option(
     space: &str,
     collection_path: &str,
     column_name: &str,
-    option: PropertyOption,
+    mut option: PropertyOption,
 ) -> Result<CollectionSchema, CollectionError> {
+    option.unknown_keys.clear();
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -855,20 +861,15 @@ pub fn update_system_field_label(
                 .title
                 .get_or_insert_with(SystemFieldOverride::default)
                 .label = Some(label);
-        } else if let Some(system_fields) = schema.system_fields.as_mut() {
-            if let Some(title) = system_fields.title.as_mut() {
+        } else {
+            if let Some(title) = schema
+                .system_fields
+                .as_mut()
+                .and_then(|system_fields| system_fields.title.as_mut())
+            {
                 title.label = None;
             }
-            if system_fields
-                .title
-                .as_ref()
-                .is_some_and(|title| title.label.is_none())
-            {
-                system_fields.title = None;
-            }
-            if system_fields.title.is_none() {
-                schema.system_fields = None;
-            }
+            prune_system_fields(&mut schema);
         }
         write_schema(space, collection_path, &schema)?;
         Ok(schema)
@@ -921,7 +922,9 @@ pub fn default_collection_schema() -> CollectionSchema {
             sort: Vec::new(),
             visible_fields: vec!["title".to_string()],
             show_nested: None,
+            unknown_keys: Mapping::new(),
         }],
+        unknown_keys: Mapping::new(),
     }
 }
 
@@ -938,6 +941,7 @@ pub fn add_view(
     mut view: View,
     position: Option<usize>,
 ) -> Result<CollectionSchema, CollectionError> {
+    view.discard_unknown_keys();
     let schema_path = collection_dir(space, collection_path).join(SCHEMA_FILE);
     with_rollback(vec![schema_path], || {
         let mut schema = read_schema_or_default(space, collection_path)?;
@@ -1015,6 +1019,7 @@ pub fn update_view(
         let mut view: View = serde_norway::from_value(raw)
             .map_err(|e| schema_error(format!("invalid view patch: {e}")))?;
         normalize_view_for_schema(&schema, &mut view);
+        view.keep_unknown_keys_of(&schema.views[pos]);
         schema.views[pos] = view;
         write_schema(space, collection_path, &schema)?;
         Ok(schema)
@@ -1166,10 +1171,10 @@ fn normalize_column_for_new_type(
     match column.type_ {
         PropertyType::Status => {
             if let Some(options) = strategy.and_then(|value| value.get("options")).cloned() {
-                column.options = Some(
+                column.set_options(Some(
                     serde_norway::from_value(options)
                         .map_err(|e| schema_error(format!("invalid status options: {e}")))?,
-                );
+                ));
             } else if let Some(groups) = strategy.and_then(|value| value.get("groups")) {
                 apply_status_groups(column, groups)?;
             } else if column.options.is_none() {
@@ -1211,14 +1216,14 @@ fn normalize_column_for_new_type(
                 column.relation = relation.as_str().map(ToOwned::to_owned);
             }
             if let Some(scope) = strategy.and_then(|value| value.get("relation_scope")) {
-                column.relation_scope = if scope.is_null() {
+                column.set_relation_scope(if scope.is_null() {
                     None
                 } else {
                     Some(
                         serde_norway::from_value(scope.clone())
                             .map_err(|e| schema_error(format!("invalid relation_scope: {e}")))?,
                     )
-                };
+                });
             }
             if let Some(limit) = strategy.and_then(|value| value.get("limit")) {
                 column.limit = if limit.is_null() {
@@ -1338,6 +1343,7 @@ fn convert_value_collecting_options(
                 color: None,
                 icon: None,
                 group: None,
+                unknown_keys: Mapping::new(),
             });
         }
         Some(Value::String(name.to_string()))
@@ -1817,13 +1823,13 @@ fn apply_column_patch(column: &mut Column, patch: Value) -> Result<(), Collectio
         column.range_by_default = nullable_from_mapping(mapping, "range_by_default")?;
     }
     if mapping.contains_key("options") {
-        column.options = nullable_from_mapping(mapping, "options")?;
+        column.set_options(nullable_from_mapping(mapping, "options")?);
     }
     if mapping.contains_key("relation") {
         column.relation = nullable_from_mapping(mapping, "relation")?;
     }
     if mapping.contains_key("relation_scope") {
-        column.relation_scope = nullable_from_mapping(mapping, "relation_scope")?;
+        column.set_relation_scope(nullable_from_mapping(mapping, "relation_scope")?);
     }
     if mapping.contains_key("limit") {
         column.limit = nullable_from_mapping(mapping, "limit")?;

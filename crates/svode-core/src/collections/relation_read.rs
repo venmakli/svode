@@ -379,11 +379,11 @@ pub fn relation_target_space_path(
 ) -> Result<Option<String>, CollectionError> {
     match scope {
         None => Ok(Some(space.to_string())),
-        Some(RelationScope::Root) => Ok(project_path
+        Some(RelationScope::Root { .. }) => Ok(project_path
             .map(str::trim)
             .filter(|path| !path.is_empty())
             .map(ToOwned::to_owned)),
-        Some(RelationScope::Space { id }) => {
+        Some(RelationScope::Space { id, .. }) => {
             let project = project_path
                 .map(str::trim)
                 .filter(|path| !path.is_empty())
@@ -448,12 +448,12 @@ pub fn space_scope_from_project(
         return Ok(None);
     };
     if same_fs_path(space, project) {
-        return Ok(Some(RelationScope::Root));
+        return Ok(Some(RelationScope::root()));
     }
     for reference in read_relation_space_refs(Path::new(project))? {
         let candidate = Path::new(project).join(&reference.path);
         if same_fs_path(space, &candidate.to_string_lossy()) {
-            return Ok(Some(RelationScope::Space { id: reference.id }));
+            return Ok(Some(RelationScope::space(reference.id)));
         }
     }
     Ok(None)
@@ -469,8 +469,7 @@ pub fn reverse_relation_scope_for_target(
         return Ok(None);
     }
     match space_scope_from_project(space, project_path)? {
-        Some(RelationScope::Root) => Ok(Some(RelationScope::Root)),
-        Some(RelationScope::Space { id }) => Ok(Some(RelationScope::Space { id })),
+        Some(scope) => Ok(Some(scope)),
         None => Err(schema_error(
             "source space is not registered in project; cannot create cross-scope two-way relation",
         )),
@@ -518,7 +517,10 @@ pub fn ensure_compatible_reverse_with_scope(
             reverse.name, relation, current_collection
         )));
     }
-    if reverse.relation_scope.as_ref() != expected_relation_scope {
+    if !RelationScope::same_optional_target(
+        reverse.relation_scope.as_ref(),
+        expected_relation_scope,
+    ) {
         return Err(schema_error(format!(
             "reverse column '{}' points to a different relation scope",
             reverse.name
@@ -684,7 +686,10 @@ fn compatible_reverse_choices(
         if candidate.type_ != PropertyType::Relation {
             continue;
         }
-        if candidate.relation_scope.as_ref() != expected_relation_scope {
+        if !RelationScope::same_optional_target(
+            candidate.relation_scope.as_ref(),
+            expected_relation_scope,
+        ) {
             continue;
         }
         if candidate.limit == Some(RelationLimit::One) {

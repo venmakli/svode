@@ -125,24 +125,20 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), CollectionError>
 }
 
 pub fn normalize_schema(schema: &mut CollectionSchema) {
-    if let Some(system_fields) = schema.system_fields.as_mut() {
-        if let Some(title) = system_fields.title.as_mut() {
-            title.label = title.label.take().and_then(|label| {
-                let trimmed = label.trim().to_string();
-                (!trimmed.is_empty()).then_some(trimmed)
-            });
-        }
-        if system_fields
-            .title
-            .as_ref()
-            .is_some_and(|title| title.label.is_none())
-        {
-            system_fields.title = None;
-        }
-        if system_fields.title.is_none() {
-            schema.system_fields = None;
-        }
+    // Legacy key of old versions: dropped from the model, so the next write
+    // removes it from the file.
+    schema.unknown_keys.remove("document");
+    if let Some(title) = schema
+        .system_fields
+        .as_mut()
+        .and_then(|system_fields| system_fields.title.as_mut())
+    {
+        title.label = title.label.take().and_then(|label| {
+            let trimmed = label.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        });
     }
+    prune_system_fields(schema);
     if let Some(templates) = schema.templates.as_mut() {
         templates.default = templates.default.take().and_then(|default| {
             let trimmed = default.trim().to_string();
@@ -154,7 +150,10 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
                 templates.order = None;
             }
         }
-        if templates.default.is_none() && templates.order.is_none() {
+        if templates.default.is_none()
+            && templates.order.is_none()
+            && templates.unknown_keys.is_empty()
+        {
             schema.templates = None;
         }
     }
@@ -188,6 +187,24 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
     let autopick_date = autopick_calendar_date_field(schema);
     for view in &mut schema.views {
         normalize_view(view, autopick_board.as_deref(), autopick_date.as_deref());
+    }
+}
+
+/// Removes the title override without a label and `system_fields` without
+/// an override, unless they hold unknown keys.
+pub(super) fn prune_system_fields(schema: &mut CollectionSchema) {
+    let Some(system_fields) = schema.system_fields.as_mut() else {
+        return;
+    };
+    if system_fields
+        .title
+        .as_ref()
+        .is_some_and(|title| title.label.is_none() && title.unknown_keys.is_empty())
+    {
+        system_fields.title = None;
+    }
+    if system_fields.title.is_none() && system_fields.unknown_keys.is_empty() {
+        schema.system_fields = None;
     }
 }
 

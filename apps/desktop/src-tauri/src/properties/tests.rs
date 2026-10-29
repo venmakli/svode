@@ -38,6 +38,7 @@ fn test_column(name: &str, type_: PropertyType) -> Column {
         prefix: None,
         next: None,
         multiple: None,
+        unknown_keys: Default::default(),
     }
 }
 
@@ -380,12 +381,13 @@ views: []
 "#;
     let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
     validate_schema(&schema).unwrap();
-    assert_eq!(schema.columns[0].relation_scope, Some(RelationScope::Root));
+    assert_eq!(
+        schema.columns[0].relation_scope,
+        Some(RelationScope::root())
+    );
     assert_eq!(
         schema.columns[1].relation_scope,
-        Some(RelationScope::Space {
-            id: "design".to_string()
-        })
+        Some(RelationScope::space("design"))
     );
 
     let serialized = serde_norway::to_string(&schema).unwrap();
@@ -521,9 +523,7 @@ fn cross_scope_two_way_root_to_space_materializes_and_syncs_reverse() {
 
     let mut column = test_column("Decision", PropertyType::Relation);
     column.relation = Some("decisions".to_string());
-    column.relation_scope = Some(RelationScope::Space {
-        id: "design".to_string(),
-    });
+    column.relation_scope = Some(RelationScope::space("design"));
     column.two_way = Some("Tasks".to_string());
     add_schema_column_with_project(
         root.to_str().unwrap(),
@@ -540,7 +540,7 @@ fn cross_scope_two_way_root_to_space_materializes_and_syncs_reverse() {
         .find(|column| column.name == "Tasks")
         .unwrap();
     assert_eq!(reverse.relation.as_deref(), Some("tasks"));
-    assert_eq!(reverse.relation_scope, Some(RelationScope::Root));
+    assert_eq!(reverse.relation_scope, Some(RelationScope::root()));
     assert_eq!(reverse.two_way.as_deref(), Some("Decision"));
 
     update_relation_entry_field(
@@ -623,7 +623,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
 
     let mut column = test_column("Task", PropertyType::Relation);
     column.relation = Some("tasks".to_string());
-    column.relation_scope = Some(RelationScope::Root);
+    column.relation_scope = Some(RelationScope::root());
     column.two_way = Some("Decisions".to_string());
     add_schema_column_with_project(
         child.to_str().unwrap(),
@@ -640,12 +640,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
         .find(|column| column.name == "Decisions")
         .unwrap();
     assert_eq!(reverse.relation.as_deref(), Some("decisions"));
-    assert_eq!(
-        reverse.relation_scope,
-        Some(RelationScope::Space {
-            id: "design".to_string()
-        })
-    );
+    assert_eq!(reverse.relation_scope, Some(RelationScope::space("design")));
     assert_eq!(reverse.two_way.as_deref(), Some("Task"));
 
     update_relation_entry_field(
@@ -758,9 +753,7 @@ fn cross_scope_two_way_rejects_child_to_sibling_space() {
 
     let mut column = test_column("Engineering task", PropertyType::Relation);
     column.relation = Some("tasks".to_string());
-    column.relation_scope = Some(RelationScope::Space {
-        id: "engineering".to_string(),
-    });
+    column.relation_scope = Some(RelationScope::space("engineering"));
     column.two_way = Some("Decisions".to_string());
 
     let error = add_schema_column_with_project(
@@ -859,9 +852,7 @@ fn cross_scope_one_way_child_to_sibling_space_updates_without_reverse_sync() {
 
     let mut column = test_column("Engineering task", PropertyType::Relation);
     column.relation = Some("tasks".to_string());
-    column.relation_scope = Some(RelationScope::Space {
-        id: "engineering".to_string(),
-    });
+    column.relation_scope = Some(RelationScope::space("engineering"));
     add_schema_column_with_project(
         design.to_str().unwrap(),
         "decisions",
@@ -1152,7 +1143,10 @@ fn change_schema_type_to_scoped_relation_converts_against_target_space() {
 
     assert_eq!(schema.columns[0].type_, PropertyType::Relation);
     assert_eq!(schema.columns[0].relation.as_deref(), Some("tasks"));
-    assert_eq!(schema.columns[0].relation_scope, Some(RelationScope::Root));
+    assert_eq!(
+        schema.columns[0].relation_scope,
+        Some(RelationScope::root())
+    );
     assert!(warnings.is_empty());
 
     let raw = fs::read_to_string(child.join("decisions/decision-1.md")).unwrap();
@@ -1200,6 +1194,7 @@ fn two_way_relation_rejects_limit_one_reverse_column() {
         prefix: None,
         next: None,
         multiple: None,
+        unknown_keys: Default::default(),
     };
 
     assert!(add_schema_column(space.to_str().unwrap(), "tasks", column).is_err());
@@ -1595,6 +1590,7 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
         op: FilterOp::Eq,
         value: Some(Value::String("@me".into())),
         values: None,
+        unknown_keys: Default::default(),
     }];
     let cli = GitCli::detect().unwrap();
     let catalog = ActorCatalogState::new();
@@ -1667,6 +1663,7 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
         op: FilterOp::Eq,
         value: Some(Value::String(" Explicit@Example.Test ".into())),
         values: None,
+        unknown_keys: Default::default(),
     }];
     let resolved =
         resolve_query_filters(&catalog, Some(&cli), not_a_repo.path(), &schema, &explicit)
@@ -1749,6 +1746,7 @@ fn date_range_must_be_homogeneous() {
         prefix: None,
         next: None,
         multiple: None,
+        unknown_keys: Default::default(),
     };
     let ok: Value = serde_norway::from_str("start: 2026-04-20\nend: 2026-04-22\n").unwrap();
     validate_property_value(&column, &ok).unwrap();

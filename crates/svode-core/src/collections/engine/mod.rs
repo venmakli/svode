@@ -194,24 +194,28 @@ pub fn default_status_options() -> Vec<PropertyOption> {
             color: Some(ColorName::Gray),
             icon: None,
             group: Some(StatusGroup::Todo),
+            unknown_keys: Mapping::new(),
         },
         PropertyOption {
             name: "Todo".into(),
             color: Some(ColorName::Blue),
             icon: None,
             group: Some(StatusGroup::Todo),
+            unknown_keys: Mapping::new(),
         },
         PropertyOption {
             name: "In progress".into(),
             color: Some(ColorName::Yellow),
             icon: None,
             group: Some(StatusGroup::InProgress),
+            unknown_keys: Mapping::new(),
         },
         PropertyOption {
             name: "Done".into(),
             color: Some(ColorName::Green),
             icon: None,
             group: Some(StatusGroup::Done),
+            unknown_keys: Mapping::new(),
         },
     ]
 }
@@ -272,15 +276,17 @@ fn normalize_relation_scope(
     scope: Option<RelationScope>,
 ) -> Result<Option<RelationScope>, CollectionError> {
     match scope {
-        Some(RelationScope::Root) => Ok(Some(RelationScope::Root)),
-        Some(RelationScope::Space { id }) => {
+        Some(RelationScope::Space { id, unknown_keys }) => {
             let id = id.trim();
             if id.is_empty() {
                 return Err(schema_error("relation_scope.id cannot be empty"));
             }
-            Ok(Some(RelationScope::Space { id: id.to_string() }))
+            Ok(Some(RelationScope::Space {
+                id: id.to_string(),
+                unknown_keys,
+            }))
         }
-        None => Ok(None),
+        scope => Ok(scope),
     }
 }
 
@@ -294,12 +300,14 @@ fn validate_physical_two_way_relation_scope(
     }
     let Some(RelationScope::Space {
         id: target_space_id,
+        ..
     }) = column.relation_scope.as_ref()
     else {
         return Ok(());
     };
     if let Some(RelationScope::Space {
         id: source_space_id,
+        ..
     }) = space_scope_from_project(space, project_path)?
     {
         if source_space_id != *target_space_id {
@@ -749,6 +757,7 @@ fn ensure_two_way_schema_and_values_with_project(
             prefix: None,
             next: None,
             multiple: None,
+            unknown_keys: Mapping::new(),
         });
     }
     write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
@@ -2953,6 +2962,7 @@ fn create_two_way_reverse_column(
         prefix: None,
         next: None,
         multiple: None,
+        unknown_keys: Mapping::new(),
     });
     write_schema_with_project(space, collection_path, &schema, project_path)?;
     write_schema_with_project(&target_space, &relation, &reverse_schema, project_path)?;
@@ -3150,6 +3160,7 @@ fn infer_column(field: &str, value: &Value) -> Column {
         prefix: None,
         next: None,
         multiple: None,
+        unknown_keys: Mapping::new(),
     };
 
     if column.type_ == PropertyType::MultiSelect {
@@ -3164,6 +3175,7 @@ fn infer_column(field: &str, value: &Value) -> Column {
                     color: None,
                     icon: None,
                     group: None,
+                    unknown_keys: Mapping::new(),
                 })
                 .collect();
             if !options.is_empty() {
@@ -3212,3 +3224,6 @@ fn infer_type(value: &Value) -> PropertyType {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod unknown_keys_tests;

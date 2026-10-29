@@ -446,6 +446,7 @@ fn push_status_group_filter(
         },
         value: None,
         values: Some(option_names),
+        unknown_keys: Default::default(),
     };
     push_in_filter(
         query,

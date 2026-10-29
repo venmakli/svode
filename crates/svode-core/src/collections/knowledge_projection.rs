@@ -80,8 +80,8 @@ pub fn project_entry_relations(
         };
         let target_scope = match column.relation_scope.as_ref() {
             None => "current".to_string(),
-            Some(RelationScope::Root) => "root".to_string(),
-            Some(RelationScope::Space { id }) => format!("space:{id}"),
+            Some(RelationScope::Root { .. }) => "root".to_string(),
+            Some(RelationScope::Space { id, .. }) => format!("space:{id}"),
         };
         let Some(value) = values.get(&column.name) else {
             continue;
