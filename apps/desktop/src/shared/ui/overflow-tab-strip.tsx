@@ -7,6 +7,11 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronDown, MoreHorizontal } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
@@ -45,7 +50,6 @@ interface OverflowTabStripProps<Value extends string> {
 const OUTER_GAP = 8;
 const TABS_LIST_PADDING = 6;
 const ACTIVE_DROPDOWN_EXTRA_WIDTH = 22;
-const OVERFLOW_PANEL_WIDTH = 224;
 const tabShapeClassName =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 text-sm font-medium whitespace-nowrap [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 const overflowTriggerClassName =
@@ -66,7 +70,8 @@ const defaultLayout: TabStripLayout = {
 /**
  * One row of tabs inside a `Tabs` root of the caller. Tabs that do not fit
  * move under a "more" control at the end; when the active tab is among
- * them, it takes the place of that control.
+ * them, it takes the place of that control. The list of those tabs opens
+ * in a popover of its own, so a container that clips does not cut it.
  */
 export function OverflowTabStrip<Value extends string>({
   tabs,
@@ -85,7 +90,6 @@ export function OverflowTabStrip<Value extends string>({
   const moreMeasureRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<TabStripLayout>(defaultLayout);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [panelLeft, setPanelLeft] = useState(0);
 
   const showsLabel = useCallback(
     (tab: OverflowTab<Value>) => !labelActiveOnly || tab.value === value,
@@ -167,36 +171,10 @@ export function OverflowTabStrip<Value extends string>({
     return () => observer.disconnect();
   }, [updateVisibleTabs]);
 
-  useEffect(() => {
-    if (!moreOpen) return;
-    function handleDocumentMouseDown(event: MouseEvent) {
-      const container = containerRef.current;
-      if (!container || !(event.target instanceof Node)) return;
-      if (container.contains(event.target)) return;
-      setMoreOpen(false);
-    }
-    document.addEventListener("mousedown", handleDocumentMouseDown, true);
-    return () =>
-      document.removeEventListener("mousedown", handleDocumentMouseDown, true);
-  }, [moreOpen]);
-
   const activeTab = tabs.find((tab) => tab.value === value) ?? null;
   const visibleTabs = tabs.slice(0, layout.visibleCount);
   const hiddenTabs = tabs.slice(layout.visibleCount);
   const shouldShowOverflowControl = layout.hasOverflow && tabs.length > 0;
-
-  const toggleOverflowPanel = useCallback((trigger: HTMLElement) => {
-    const container = containerRef.current;
-    if (container) {
-      const containerRect = container.getBoundingClientRect();
-      const triggerRect = trigger.getBoundingClientRect();
-      const maxLeft = Math.max(0, containerRect.width - OVERFLOW_PANEL_WIDTH);
-      setPanelLeft(
-        Math.max(0, Math.min(triggerRect.left - containerRect.left, maxLeft)),
-      );
-    }
-    setMoreOpen((open) => !open);
-  }, []);
 
   return (
     <div
@@ -213,72 +191,63 @@ export function OverflowTabStrip<Value extends string>({
         {visibleTabs.map((tab) => (
           <StripTab key={tab.value} tab={tab} label={showsLabel(tab)} />
         ))}
-        {layout.activeAsDropdown && activeTab ? (
-          <button
-            type="button"
-            aria-expanded={moreOpen}
-            className={cn(
-              overflowTriggerClassName,
-              "bg-background text-foreground shadow-sm",
-            )}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              toggleOverflowPanel(event.currentTarget);
-            }}
-          >
-            {activeTab.icon}
-            {activeTab.label}
-            <ChevronDown />
-          </button>
-        ) : shouldShowOverflowControl ? (
-          <button
-            type="button"
-            aria-label={moreLabel}
-            aria-expanded={moreOpen}
-            className={overflowTriggerClassName}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              toggleOverflowPanel(event.currentTarget);
-            }}
-          >
-            <MoreHorizontal />
-          </button>
+        {shouldShowOverflowControl ? (
+          <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+            <PopoverTrigger asChild>
+              {layout.activeAsDropdown && activeTab ? (
+                <button
+                  type="button"
+                  className={cn(
+                    overflowTriggerClassName,
+                    "bg-background text-foreground shadow-sm",
+                  )}
+                >
+                  {activeTab.icon}
+                  {activeTab.label}
+                  <ChevronDown />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  aria-label={moreLabel}
+                  className={overflowTriggerClassName}
+                >
+                  <MoreHorizontal />
+                </button>
+              )}
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              sideOffset={4}
+              className="w-56 gap-0 rounded-xl bg-muted p-[3px] text-muted-foreground"
+            >
+              <Tabs
+                value={value}
+                onValueChange={(next) => {
+                  onValueChange(next as Value);
+                  setMoreOpen(false);
+                }}
+                orientation="vertical"
+                activationMode={overflowActivationMode}
+                className="gap-0"
+              >
+                <TabsList className="h-auto w-full items-stretch rounded-lg bg-transparent p-0">
+                  {hiddenTabs.map((tab) => (
+                    <TabsTrigger
+                      key={tab.value}
+                      value={tab.value}
+                      className="h-8 justify-start px-2.5"
+                    >
+                      {tab.icon}
+                      {tab.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </PopoverContent>
+          </Popover>
         ) : null}
       </TabsList>
-      {moreOpen ? (
-        <div
-          className="absolute top-[calc(100%+4px)] z-50 w-56 rounded-xl bg-muted p-[3px] text-muted-foreground shadow-md ring-1 ring-foreground/10"
-          style={{ left: panelLeft }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Tabs
-            value={value}
-            onValueChange={(next) => {
-              onValueChange(next as Value);
-              setMoreOpen(false);
-            }}
-            orientation="vertical"
-            activationMode={overflowActivationMode}
-            className="gap-0"
-          >
-            <TabsList className="h-auto w-full items-stretch rounded-lg bg-transparent p-0">
-              {hiddenTabs.map((tab) => (
-                <TabsTrigger
-                  key={tab.value}
-                  value={tab.value}
-                  className="h-8 justify-start px-2.5"
-                >
-                  {tab.icon}
-                  {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </div>
-      ) : null}
       {trailing}
       <div
         aria-hidden
