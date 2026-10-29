@@ -823,6 +823,43 @@ mod tests {
         assert_eq!(session.title, "Review backlog");
     }
 
+    /// DF-216 R3: terminal output and input are no turns, so a launch the
+    /// agent has not listed yet keeps its creation time in the list and in hot
+    /// status while its TUI draws and takes keystrokes.
+    #[test]
+    fn a_provisional_launch_keeps_its_creation_time_over_terminal_output_and_input() {
+        let (_temp, home, project) = project_dirs();
+        let state = AgentSessionsState::with_home(home);
+        let mut provisional = surface(
+            "pty-routine",
+            AgentAdapterKind::Codex.id(),
+            "launch:launch-123",
+            None,
+        );
+        provisional.agent_session_id = "codex:launch:launch-123".to_string();
+        provisional.launch_id = Some("launch-123".to_string());
+        provisional.shell_cwd = project.to_string_lossy().into_owned();
+        provisional.last_output_at = Some("2026-07-04T10:01:00Z".to_string());
+        provisional.last_input_at = Some("2026-07-04T10:02:00Z".to_string());
+
+        let result = list_with(&state, &project, vec![provisional.clone()]);
+        let hot = hot_status(
+            &state,
+            project.to_string_lossy().into_owned(),
+            vec!["codex:launch:launch-123".to_string()],
+            vec![provisional],
+            Vec::new(),
+        )
+        .expect("hot status");
+
+        let session = by_id(&result, "codex:launch:launch-123");
+        assert!(session.runtime.as_ref().expect("runtime").provisional);
+        assert_eq!(session.last_activity_at, "2026-07-04T10:00:00Z");
+        assert_eq!(session.started_at.as_deref(), Some("2026-07-04T10:00:00Z"));
+        assert_eq!(hot.sessions.len(), 1);
+        assert_eq!(hot.sessions[0].last_activity_at, "2026-07-04T10:00:00Z");
+    }
+
     /// Condition 1 of `02`: a Codex terminal launch meets its listed session
     /// by the launch marker the reader takes from the first user turn.
     #[test]
@@ -854,12 +891,21 @@ mod tests {
         provisional.launch_id = Some("launch-one".to_string());
         provisional.routine_run_id = Some("run-one".to_string());
         provisional.shell_cwd = project.to_string_lossy().into_owned();
+        provisional.last_output_at = Some("2026-10-01T10:00:00Z".to_string());
+        provisional.last_input_at = Some("2026-10-01T10:00:05Z".to_string());
+        let listed_time = by_id(&list(&state, &project), &format!("codex:{id}"))
+            .last_activity_at
+            .clone();
 
         let result = list_with(&state, &project, vec![provisional]);
 
         assert_eq!(result.sessions.len(), 1);
         let session = &result.sessions[0];
         assert_eq!(session.id, format!("codex:{id}"));
+        assert_eq!(
+            session.last_activity_at, listed_time,
+            "once listed, the session time follows its turns, not the terminal"
+        );
         assert_eq!(session.launch_id.as_deref(), Some("launch-one"));
         assert_eq!(session.routine_run_id.as_deref(), Some("run-one"));
         assert_eq!(

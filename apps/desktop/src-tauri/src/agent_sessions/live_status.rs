@@ -464,16 +464,6 @@ pub(super) fn map_provisional_surface(
             None,
         ),
     };
-    let last_activity_at = surface
-        .last_input_at
-        .as_deref()
-        .into_iter()
-        .chain(surface.last_output_at.as_deref())
-        .chain(Some(surface.created_at.as_str()))
-        .max()
-        .unwrap_or(surface.created_at.as_str())
-        .to_string();
-
     AgentSession {
         id: surface.agent_session_id.clone(),
         launch_id: surface.launch_id.clone(),
@@ -509,7 +499,9 @@ pub(super) fn map_provisional_surface(
         scope_confidence: scope.confidence,
         cwd: scope.cwd,
         started_at: Some(surface.created_at.clone()),
-        last_activity_at,
+        // Terminal output and input are no turns: a launch the agent has not
+        // listed yet keeps its creation time until its listed turns take over.
+        last_activity_at: surface.created_at.clone(),
         waiting_since,
         resume_command: None,
         capabilities: AgentSessionCapabilities {
