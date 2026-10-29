@@ -1,4 +1,5 @@
 mod model;
+mod page_dir;
 mod persistence;
 
 pub use model::{
@@ -16,6 +17,7 @@ use crate::page::PageError;
 use crate::page::filename::{self, FilenameProjection};
 use crate::page::frontmatter;
 
+use page_dir::{PageDirContents, RemovedPageDir};
 use persistence::{
     apply_runtime_metadata, fallback_title_for_path, meta_for_file_without_frontmatter,
     refresh_markdown_copy_metadata,
@@ -1414,14 +1416,15 @@ pub fn nest_entry(
     Ok(new_rel)
 }
 
-/// Unnest an entry: convert `foo/readme.md` → `foo.md` when the folder has no
-/// other children. Returns the new relative path (e.g. "foo.md").
+/// Unnest an entry: convert `foo/readme.md` → `foo.md` when the folder holds
+/// nothing but the Page. Returns the new relative path (e.g. "foo.md") and
+/// the service files removed with the folder.
 /// If the folder still has children, returns an error.
 pub fn unnest_entry(
     space: &Path,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<String, PageError> {
+) -> Result<(String, Vec<String>), PageError> {
     let abs_path = space.join(path);
 
     if !abs_path.exists() {
@@ -1440,20 +1443,11 @@ pub fn unnest_entry(
         .parent()
         .ok_or_else(|| PageError::General("no parent directory".to_string()))?;
 
-    // Check that the folder has no other children
-    let siblings: Vec<_> = fs::read_dir(folder)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let name = e.file_name();
-            let s = name.to_string_lossy();
-            !s.eq_ignore_ascii_case("readme.md") && !s.starts_with('.')
-        })
-        .collect();
-
-    if !siblings.is_empty() {
-        return Err(PageError::General(
-            "Folder still has children, cannot unnest".to_string(),
-        ));
+    let still_has_children =
+        || PageError::General("Folder still has children, cannot unnest".to_string());
+    let contents = PageDirContents::read(folder)?;
+    if contents.is_blocked() {
+        return Err(still_has_children());
     }
 
     // Move readme.md → folder_name.md at the parent level
@@ -1472,9 +1466,16 @@ pub fn unnest_entry(
         ));
     }
 
-    // Move the file out, then remove the empty folder
+    // Move the file out, then remove the folder with its service files
     fs::rename(&abs_path, &new_abs)?;
-    let _ = fs::remove_dir(folder); // remove empty dir
+    let (removed, removal) = RemovedPageDir::remove(folder, &contents.service_files);
+    if let Err(error) = removal {
+        let cause = match PageDirContents::read(folder) {
+            Ok(contents) if contents.is_blocked() => still_has_children(),
+            _ => error,
+        };
+        return Err(removed.restore(space, &new_abs, &abs_path, cause));
+    }
 
     let new_rel = new_abs
         .strip_prefix(space)
@@ -1486,9 +1487,7 @@ pub fn unnest_entry(
         path,
         &new_rel,
     ) {
-        let _ = fs::create_dir_all(folder);
-        let _ = fs::rename(&new_abs, &abs_path);
-        return Err(error.into());
+        return Err(removed.restore(space, &new_abs, &abs_path, error.into()));
     }
 
     // Update backlinks
@@ -1497,7 +1496,7 @@ pub fn unnest_entry(
         let _ = index.update_file(space, &new_rel);
     }
 
-    Ok(new_rel)
+    Ok((new_rel, removed.removed_files(space)))
 }
 
 pub fn convert_entry_to_folder(
@@ -1615,34 +1614,7 @@ pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, 
 }
 
 fn folder_child_counts(folder: &Path) -> Result<(usize, usize), PageError> {
-    let mut subpage_count = 0;
-    let mut other_file_count = 0;
-
-    for item in fs::read_dir(folder)? {
-        let item = item?;
-        let name = item.file_name().to_string_lossy().to_string();
-        if name.starts_with('.')
-            || name.eq_ignore_ascii_case("README.md")
-            || name.eq_ignore_ascii_case("schema.yaml")
-        {
-            continue;
-        }
-
-        let path = item.path();
-        if path.is_dir() {
-            if dir_has_readme(&path) {
-                subpage_count += 1;
-            } else {
-                other_file_count += 1;
-            }
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
-            subpage_count += 1;
-        } else {
-            other_file_count += 1;
-        }
-    }
-
-    Ok((subpage_count, other_file_count))
+    Ok(PageDirContents::read(folder)?.counts())
 }
 
 fn dir_has_readme(dir: &Path) -> bool {
@@ -1659,11 +1631,13 @@ fn dir_has_readme(dir: &Path) -> bool {
         })
 }
 
+/// Turn a folder Page that holds nothing but itself into a leaf. Returns the
+/// leaf and the service files removed with the folder.
 pub fn convert_entry_to_leaf(
     space: &Path,
     entry_path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<Entry, PageError> {
+) -> Result<(Entry, Vec<String>), PageError> {
     let path = normalize_entry_path_arg(space, entry_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
@@ -1684,29 +1658,9 @@ pub fn convert_entry_to_leaf(
         ));
     }
 
-    let mut entries = Vec::new();
-    let mut folders = Vec::new();
-    let mut other = Vec::new();
-    for item in fs::read_dir(folder_abs)? {
-        let item = item?;
-        let name = item.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || name.eq_ignore_ascii_case("README.md") {
-            continue;
-        }
-        let item_path = item.path();
-        if item_path.is_dir() {
-            folders.push(name);
-        } else if item_path.extension().and_then(|ext| ext.to_str()) == Some("md") {
-            entries.push(name);
-        } else {
-            other.push(name);
-        }
-    }
-    if !entries.is_empty() || !folders.is_empty() || !other.is_empty() {
-        return Err(PageError::General(format!(
-            "EntryNotEmpty {{ entries: {:?}, folders: {:?}, other: {:?} }}",
-            entries, folders, other
-        )));
+    let contents = PageDirContents::read(folder_abs)?;
+    if contents.is_blocked() {
+        return Err(contents.not_empty_error());
     }
 
     let folder_name = folder_abs
@@ -1721,16 +1675,21 @@ pub fn convert_entry_to_leaf(
         return Err(PageError::FileAlreadyExists(rel_from_abs(space, &leaf_abs)));
     }
     fs::rename(&readme_abs, &leaf_abs)?;
-    let _ = fs::remove_dir_all(folder_abs);
+    let (removed, removal) = RemovedPageDir::remove(folder_abs, &contents.service_files);
+    if let Err(error) = removal {
+        let cause = match PageDirContents::read(folder_abs) {
+            Ok(contents) if contents.is_blocked() => contents.not_empty_error(),
+            _ => error,
+        };
+        return Err(removed.restore(space, &leaf_abs, &readme_abs, cause));
+    }
     let new_rel = rel_from_abs(space, &leaf_abs);
     if let Err(error) = crate::collections::engine::rewrite_relation_paths_for_move(
         &space.to_string_lossy(),
         &path,
         &new_rel,
     ) {
-        let _ = fs::create_dir_all(folder_abs);
-        let _ = fs::rename(&leaf_abs, &readme_abs);
-        return Err(error.into());
+        return Err(removed.restore(space, &leaf_abs, &readme_abs, error.into()));
     }
 
     let parent_rel = Path::new(&path)
@@ -1750,7 +1709,8 @@ pub fn convert_entry_to_leaf(
         let _ = index.update_links_on_rename(space, &path, &new_rel, None);
         let _ = index.update_file(space, &new_rel);
     }
-    read(&space.to_string_lossy(), &new_rel)
+    let entry = read(&space.to_string_lossy(), &new_rel)?;
+    Ok((entry, removed.removed_files(space)))
 }
 
 pub fn convert_entry_to_nested_collection(

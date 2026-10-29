@@ -16,9 +16,9 @@ pub use naming::{
     grouped_abs_paths_by_space, order_path, root_path_for_head,
 };
 pub use ops::{
-    CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, DeleteOutcome,
-    StructureRuntime, convert_to_collection, convert_to_folder, convert_to_leaf, create_collection,
-    create_folder, delete, duplicate, move_entry, nest, rename, unnest,
+    CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, ConvertToLeafOutcome,
+    DeleteOutcome, StructureRuntime, convert_to_collection, convert_to_folder, convert_to_leaf,
+    create_collection, create_folder, delete, duplicate, move_entry, nest, rename, unnest,
 };
 pub use plan::{
     backlink_mutation_paths, collection_create_schema_paths, delete_mutation_paths,

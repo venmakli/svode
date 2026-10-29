@@ -538,7 +538,7 @@ async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let entry = entry::convert_entry_to_leaf(space, "Topic/README.md", None).unwrap();
+    let (entry, _) = entry::convert_entry_to_leaf(space, "Topic/README.md", None).unwrap();
     crate::index::update::publish_paths_or_repair(
         &state,
         updates(),

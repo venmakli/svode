@@ -1851,3 +1851,46 @@ async fn a_changed_plan_removes_only_the_page_file_the_create_wrote() {
     expected.sort();
     assert_eq!(source_snapshot(&root), expected);
 }
+
+#[tokio::test]
+async fn service_files_removed_with_a_folder_page_join_its_structural_commit() {
+    for unnest in [false, true] {
+        let tmp = TempDir::new().unwrap();
+        crate::page::test_support::scaffold_space(tmp.path(), "Root");
+        write_tree(
+            tmp.path(),
+            &[
+                ("Doc/README.md", "---\ntitle: Doc\n---\n"),
+                ("Doc/.gitkeep", ""),
+            ],
+        );
+        let space = tmp.path().to_str().unwrap();
+        let state = IndexRuntimeState::default();
+        let sink = RecordingSink::default();
+        let runtime = StructureRuntime {
+            commits: Some(&sink),
+            ..runtime(&state)
+        };
+
+        if unnest {
+            super::unnest(space, "Doc/README.md", Some(space), runtime)
+                .await
+                .unwrap();
+        } else {
+            let outcome = super::convert_to_leaf(space, "Doc/README.md", Some(space), runtime)
+                .await
+                .unwrap();
+            assert_eq!(outcome.entry.path, "Doc.md");
+            assert_eq!(outcome.removed_paths, vec![tmp.path().join("Doc/.gitkeep")]);
+        }
+
+        assert!(!tmp.path().join("Doc").exists(), "unnest: {unnest}");
+        assert!(
+            sink.0
+                .lock()
+                .unwrap()
+                .contains(&tmp.path().join("Doc/.gitkeep")),
+            "unnest: {unnest}"
+        );
+    }
+}

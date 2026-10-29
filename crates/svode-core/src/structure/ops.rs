@@ -71,6 +71,14 @@ pub struct ConvertToCollectionOutcome {
     pub entry: Entry,
 }
 
+/// A folder Page turned into a leaf, with the service files removed together
+/// with its directory.
+#[derive(Debug, Clone)]
+pub struct ConvertToLeafOutcome {
+    pub entry: Entry,
+    pub removed_paths: Vec<PathBuf>,
+}
+
 pub struct CollectionCreate {
     pub space: String,
     pub parent_path: Option<String>,
@@ -933,13 +941,13 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
     file_path: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
-) -> Result<Entry, PageError> {
+) -> Result<ConvertToLeafOutcome, PageError> {
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, file_path, false).await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
-    let converted = entry::convert_entry_to_leaf(
+    let (converted, removed_files) = entry::convert_entry_to_leaf(
         Path::new(space),
         file_path,
         if project_aware {
@@ -1014,6 +1022,10 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
         "convert_to_leaf",
     )
     .await;
+    let removed_paths = removed_files
+        .iter()
+        .map(|path| abs_entry_path(space, path))
+        .collect::<Vec<_>>();
     schedule_structural_paths(
         runtime.commits,
         project_path,
@@ -1024,10 +1036,15 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
             [
                 abs_entry_path(space, &old_readme),
                 abs_entry_path(space, &converted.path),
-            ],
+            ]
+            .into_iter()
+            .chain(removed_paths.iter().cloned()),
         ),
     );
-    Ok(converted)
+    Ok(ConvertToLeafOutcome {
+        entry: converted,
+        removed_paths,
+    })
 }
 
 pub async fn convert_to_collection<E: GitDateExecutor>(
@@ -1589,8 +1606,11 @@ async fn reshape<E: GitDateExecutor>(
         .filter(|path| !path.is_empty())
         .is_none()
         .then_some(&*backlinks);
-    let new_path = if nesting {
-        entry::nest_entry(Path::new(space), path, local_backlinks)?
+    let (new_path, removed_files) = if nesting {
+        (
+            entry::nest_entry(Path::new(space), path, local_backlinks)?,
+            Vec::new(),
+        )
     } else {
         entry::unnest_entry(Path::new(space), path, local_backlinks)?
     };
@@ -1652,7 +1672,9 @@ async fn reshape<E: GitDateExecutor>(
             [
                 abs_entry_path(space, path),
                 abs_entry_path(space, &new_path),
-            ],
+            ]
+            .into_iter()
+            .chain(removed_files.iter().map(|file| abs_entry_path(space, file))),
         ),
     );
     Ok(new_path)

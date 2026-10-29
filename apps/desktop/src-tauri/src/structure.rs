@@ -221,7 +221,8 @@ pub async fn convert_to_leaf(
         project_path,
         runtime(state, updates, cli.as_ref(), sink.as_ref()),
     )
-    .await?)
+    .await?
+    .entry)
 }
 
 pub async fn convert_to_collection(

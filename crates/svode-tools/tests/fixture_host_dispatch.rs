@@ -1946,6 +1946,7 @@ fn structure_fixture() -> Fixture {
         ("archive/a.md", "---\ntitle: A\n---\n"),
         ("archive/b.md", "---\ntitle: B\n---\n"),
         ("solo/README.md", "---\ntitle: Solo\n---\nSolo body\n"),
+        ("solo/.gitkeep", ""),
         (
             "tasks/schema.yaml",
             "columns:\n  - name: Sprint\n    type: relation\n    relation: sprints\nviews: []\n",
@@ -2082,6 +2083,9 @@ async fn structural_actions_keep_link_relation_order_and_conversion_effects() {
     let leaf = structured(&leaf);
     assert_eq!(leaf["newPath"], "solo.md");
     assert_eq!(leaf["page"]["path"], "solo.md");
+    assert!(changed(leaf).contains(&"solo/.gitkeep".to_string()));
+    assert!(strings(&leaf["affectedProjectPaths"]).contains(&"solo/.gitkeep".to_string()));
+    assert!(!fixture.project.join("solo").exists());
     assert!(read(&fixture, "solo.md").contains("Solo body"));
 
     let collection = call_tool(

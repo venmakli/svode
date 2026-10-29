@@ -467,7 +467,7 @@ pub(crate) async fn convert_page_to_leaf(
     )
     .await?;
     let authorized = authorize(host, &space, planned).await?;
-    let (page, changes) = within_authorized(
+    let (converted, mut changes) = within_authorized(
         authorized,
         observe_structural_change(&space, project, async {
             Ok(Box::pin(structure::convert_to_leaf(
@@ -481,6 +481,8 @@ pub(crate) async fn convert_page_to_leaf(
     )
     .await
     .map_err(|error| space_relative_busy(&space, error))?;
+    changes.include(&space, project, &converted.removed_paths);
+    let page = converted.entry;
     let mut result = structural_operation_result(
         "Converted directory-backed Page to leaf Page",
         &path,
@@ -498,6 +500,18 @@ pub(crate) async fn convert_page_to_leaf(
 struct StructuralChanges {
     space: Vec<String>,
     project: Vec<String>,
+}
+
+impl StructuralChanges {
+    /// Adds files the action changed that are not structural sources, such as
+    /// the service files removed with a folder Page.
+    fn include(&mut self, space: &str, project: &str, paths: &[PathBuf]) {
+        for (changed, root) in [(&mut self.space, space), (&mut self.project, project)] {
+            changed.extend(relative_changed_paths(root, paths));
+            changed.sort();
+            changed.dedup();
+        }
+    }
 }
 
 /// Runs a structural action and reports the structural sources whose content
