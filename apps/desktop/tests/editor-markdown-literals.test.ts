@@ -97,7 +97,7 @@ test("an escaped opener does not swallow the comment after it", () => {
 
 test("CRLF fenced code keeps its characters", () => {
   const editor = editorFor("```html\r\n<input disabled>\r\n<br>\r\n```\r\n");
-  // Plate itself splits code lines at `\n` only; the HTML stays as written.
+  // The boundary reads CRLF as LF; the HTML stays as written.
   const saved = save(editor);
   expect(saved).toContain("<input disabled>");
   expect(saved).toContain("<br>");

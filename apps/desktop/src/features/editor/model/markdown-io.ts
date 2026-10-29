@@ -124,6 +124,16 @@ export function bodyWithSourceLeadingBlankLines(
   );
 }
 
+const CRLF_RE = /\r\n/g;
+
+// CRLF ends a line like LF. Plate splits text and code values at LF only, so
+// the CR would stay in the editor value and be written back. The boundary
+// reads the text with LF endings as its source, which comments and literals
+// are restored from as well.
+function withLfLineEndings(markdown: string): string {
+  return markdown.replace(CRLF_RE, "\n");
+}
+
 export function normalizeMarkdownForPlate(markdown: string): string {
   return applyTextEdits(markdown, bareBreakNormalizationEdits(markdown)).text;
 }
@@ -144,8 +154,9 @@ function plateInputFor(
 
 export function deserializeEditorMarkdownSegment(
   editor: PlateEditor,
-  markdown: string,
+  segment: string,
 ): Descendant[] {
+  const markdown = withLfLineEndings(segment);
   const markdownApi = editor.getApi(MarkdownPlugin).markdown;
   const remarkPlugins = editor.getOptions(MarkdownPlugin).remarkPlugins ?? [];
   const deserialize = (plateInput: MappedText, onError?: () => void) =>
@@ -181,7 +192,7 @@ export function deserializeEditorMarkdownInsertion(
   const nodes = deserializeEditorMarkdownSegment(editor, markdown);
   if (nodes.length > 0) return nodes;
 
-  const fallbackText = markdown.trimEnd();
+  const fallbackText = withLfLineEndings(markdown).trimEnd();
   return fallbackText
     ? ([{ type: "p", children: [{ text: fallbackText }] }] as Descendant[])
     : [emptyParagraph()];
