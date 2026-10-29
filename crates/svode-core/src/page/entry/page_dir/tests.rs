@@ -70,7 +70,6 @@ const BLOCKING: &[(&[(&str, &[u8])], &[&str], &[&str])] = &[
         &[],
     ),
     (&[("Doc/.gitkeep", b"keep")], &[], &[".gitkeep"]),
-    (&[("Doc/.DS_Store", b"finder")], &[], &[".DS_Store"]),
     (&[("Doc/Thumbs.db", b"thumbs")], &[], &["Thumbs.db"]),
     (
         &[("Doc/desktop.ini", b"[.ShellClassInfo]")],
@@ -149,6 +148,49 @@ fn an_empty_gitkeep_goes_with_the_directory_on_unnest() {
     assert_eq!(path, "Doc.md");
     assert_eq!(removed, vec!["Doc/.gitkeep".to_string()]);
     assert!(!tmp.path().join("Doc").exists());
+}
+
+#[test]
+fn finder_view_settings_go_with_the_directory_with_an_empty_gitkeep() {
+    for unnest in [false, true] {
+        let tmp = space_with_doc(&[("Doc/.gitkeep", b""), ("Doc/.DS_Store", b"finder")]);
+
+        let mut removed = if unnest {
+            unnest_entry(tmp.path(), "Doc/README.md", None).unwrap().1
+        } else {
+            convert_entry_to_leaf(tmp.path(), "Doc/README.md", None)
+                .unwrap()
+                .1
+        };
+
+        removed.sort();
+        assert_eq!(
+            removed,
+            vec!["Doc/.DS_Store", "Doc/.gitkeep"],
+            "unnest: {unnest}"
+        );
+        assert!(!tmp.path().join("Doc").exists(), "unnest: {unnest}");
+        assert!(tmp.path().join("Doc.md").is_file(), "unnest: {unnest}");
+    }
+}
+
+#[test]
+fn finder_view_settings_are_restored_when_the_conversion_rolls_back() {
+    let tmp = space_with_doc(&[("Doc/.DS_Store", b"finder")]);
+    let before = snapshot(tmp.path());
+    let late = tmp.path().join("Doc/late.txt");
+    crate::page::write::inject_effect(
+        "page_dir_remove",
+        Box::new(move || fs::write(late, "late").unwrap()),
+    );
+
+    let error = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
+
+    assert!(not_empty(&error, &[], &["late.txt"]), "{error}");
+    let mut expected = before;
+    expected.push(("Doc/late.txt".to_string(), Some(b"late".to_vec())));
+    expected.sort();
+    assert_eq!(snapshot(tmp.path()), expected);
 }
 
 #[test]
@@ -240,7 +282,7 @@ fn the_page_detail_counts_hidden_items_but_not_service_files() {
     assert_eq!(state.subpage_count, 1);
     assert_eq!(state.other_file_count, 2);
 
-    let only_service = space_with_doc(&[("Doc/.gitkeep", b"")]);
+    let only_service = space_with_doc(&[("Doc/.gitkeep", b""), ("Doc/.DS_Store", b"finder")]);
     let state = entry_detail_state(only_service.path(), "Doc").unwrap();
     assert_eq!((state.subpage_count, state.other_file_count), (0, 0));
 }

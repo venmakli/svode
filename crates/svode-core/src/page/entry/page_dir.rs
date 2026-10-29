@@ -104,13 +104,15 @@ impl PageDirContents {
 }
 
 /// A service file of a folder Page: the empty `.gitkeep` Svode writes to keep
-/// an empty folder in Git.
+/// an empty folder in Git, and the `.DS_Store` view settings Finder writes
+/// and recreates by itself.
 fn is_service_file(name: &str, item: &fs::DirEntry) -> Result<bool, PageError> {
     if !item.file_type()?.is_file() {
         return Ok(false);
     }
     Ok(match name {
         ".gitkeep" => item.metadata()?.len() == 0,
+        ".DS_Store" => true,
         _ => false,
     })
 }
