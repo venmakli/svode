@@ -45,6 +45,7 @@ import { MentionElement } from "@/components/ui/mention-node";
 import { ConflictPlugin } from "../conflict/conflict-plugin";
 import {
   MARKDOWN_COMMENT_KEY,
+  MARKDOWN_LINK_DEFINITION_KEY,
   markdownCommentRules,
   remarkMarkdownComments,
   serializeMarkdownWithComments,
@@ -161,7 +162,8 @@ const ProductTrailingBlockPlugin = TrailingBlockPlugin.configure({
   },
 }));
 
-// A block comment inside a list item keeps the item's indent.
+// A block comment or link definition inside a list item keeps the item's
+// indent.
 const ProductListKit = ListKit.map((plugin) =>
   plugin.key === KEYS.indent
     ? plugin.extend(({ plugin: { inject } }) => ({
@@ -169,6 +171,7 @@ const ProductListKit = ListKit.map((plugin) =>
           targetPlugins: [
             ...(inject.targetPlugins ?? []),
             MARKDOWN_COMMENT_KEY,
+            MARKDOWN_LINK_DEFINITION_KEY,
           ],
         },
       }))

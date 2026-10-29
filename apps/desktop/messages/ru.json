@@ -159,6 +159,8 @@
   "editor_placeholder_body": "Начните писать или введите / для команд",
   "editor_markdown_comment": "Комментарий",
   "editor_markdown_comment_name": "Комментарий: {text}",
+  "editor_markdown_link_definition": "Определение ссылки",
+  "editor_markdown_link_definition_name": "Определение ссылки: {text}",
   "editor_add_cover": "Добавить обложку",
   "editor_change_cover": "Изменить обложку",
   "editor_reposition_cover": "Позиция",

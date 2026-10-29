@@ -159,6 +159,8 @@
   "editor_placeholder_body": "Start writing or type / for commands",
   "editor_markdown_comment": "Comment",
   "editor_markdown_comment_name": "Comment: {text}",
+  "editor_markdown_link_definition": "Link definition",
+  "editor_markdown_link_definition_name": "Link definition: {text}",
   "editor_add_cover": "Add cover",
   "editor_change_cover": "Change cover",
   "editor_reposition_cover": "Reposition",

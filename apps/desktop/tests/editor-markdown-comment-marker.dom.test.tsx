@@ -322,11 +322,95 @@ if (process.env.SVODE_COMMENT_MARKER_DOM !== "1") {
     }
   });
 
-  test("Page TOC lists headings without comment markers", async () => {
+  test("link definition markers show their label, icon, text and accessible name", async () => {
+    const source = [
+      "- [lead]: https://lead.dev",
+      "- two",
+      "",
+      "Para",
+      "",
+      '[ref]: https://example.com "Title"',
+      "[x]:",
+      "  https://x.dev",
+      "",
+      "<!-- note -->",
+      "",
+    ].join("\n");
+    const changes: string[] = [];
+    const root = await mountRoutineEditor(source, changes);
+    try {
+      const definitionName = (text: string) =>
+        m.editor_markdown_link_definition_name({ text });
+      const block = marker(
+        definitionName('[ref]: https://example.com "Title"'),
+      )!;
+      expect(block.tagName).toBe("DIV");
+      expect(block.getAttribute("contenteditable")).toBe("false");
+      expect(block.textContent).toBe(
+        `${m.editor_markdown_link_definition()}[ref]: https://example.com "Title"`,
+      );
+      expect(Boolean(block.querySelector("svg.lucide-link"))).toBe(true);
+
+      const multiline = marker(definitionName("[x]:\n  https://x.dev"))!;
+      expect(multiline.textContent).toBe(
+        `${m.editor_markdown_link_definition()}[x]:`,
+      );
+
+      const lead = marker(definitionName("[lead]: https://lead.dev"))!;
+      expect(lead.tagName).toBe("SPAN");
+      expect(Boolean(lead.closest("li"))).toBe(true);
+      expect(Boolean(lead.querySelector("svg.lucide-link"))).toBe(true);
+
+      // The comment marker keeps its own label and icon.
+      const comment = marker(named("note"))!;
+      expect(comment.textContent).toBe(`${m.editor_markdown_comment()}note`);
+      expect(Boolean(comment.querySelector("svg.lucide-link"))).toBe(false);
+
+      await act(async () => {
+        multiline.dispatchEvent(
+          new window.PointerEvent("pointermove", {
+            bubbles: true,
+            pointerType: "mouse",
+          }),
+        );
+      });
+      await settle();
+      const content = document.querySelector("[data-slot=tooltip-content]");
+      expect(content?.textContent?.includes("[x]:\n  https://x.dev")).toBe(
+        true,
+      );
+      expect(changes.length).toBe(0);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  test("Backspace removes a link definition marker whole and Undo brings it back", async () => {
+    const source =
+      "Before\n\n[a]: https://a.dev\n[b]: https://b.dev\n\nAfter\n";
+    const changes: string[] = [];
+    const root = await mountRoutineEditor(source, changes);
+    try {
+      const editor = mountedEditor!;
+      await placeCaret({ path: [3, 0], offset: 0 });
+      await press("Backspace");
+      expect(JSON.stringify(editor.selection?.anchor.path)).toBe("[2,0]");
+      expect(changes.length).toBe(0);
+      await press("Backspace");
+      expect(changes.at(-1)).toBe("Before\n\n[a]: https://a.dev\n\nAfter\n");
+
+      await press("z", { ctrlKey: true });
+      expect(changes.at(-1)).toBe(source);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  test("Page TOC lists headings without comment or link definition markers", async () => {
     const meta = { title: "Goal" } as never;
     const page = {
       meta,
-      body: "## Focus <!-- hidden -->\n\n<!-- block note -->\n\nFirst.\n\n## Key Results\n\nSecond.\n",
+      body: "## Focus <!-- hidden -->\n\n<!-- block note -->\n\nFirst.\n\n## Key Results\n\nSecond.\n\n[ref]: https://example.com\n",
       path: "goal.md",
       source_version: "v1",
     };
@@ -357,6 +441,15 @@ if (process.env.SVODE_COMMENT_MARKER_DOM !== "1") {
       await settle();
       expect(Boolean(marker(named("hidden")))).toBe(true);
       expect(Boolean(marker(named("block note")))).toBe(true);
+      expect(
+        Boolean(
+          marker(
+            m.editor_markdown_link_definition_name({
+              text: "[ref]: https://example.com",
+            }),
+          ),
+        ),
+      ).toBe(true);
       await act(async () => {
         document
           .querySelector("nav")!

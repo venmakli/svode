@@ -24,13 +24,17 @@ import {
 } from "./markdown-source";
 
 /**
- * Markdown comments (`<!-- … -->`, `{/* … *\/}`, `[//]: # …`) are kept in the
- * editor value as void elements holding their exact source text, and written
- * back unchanged.
+ * Markdown comments (`<!-- … -->`, `{/* … *\/}`, `[//]: # …`) and link
+ * definitions (`[label]: destination "title"`) are kept in the editor value as
+ * void elements holding their exact source text, and written back unchanged.
  */
 
 export const MARKDOWN_COMMENT_KEY = "markdown_comment";
 export const MARKDOWN_INLINE_COMMENT_KEY = "markdown_comment_inline";
+export const MARKDOWN_LINK_DEFINITION_KEY = "markdown_link_definition";
+/** A link definition that opens a list item, inside the item paragraph. */
+export const MARKDOWN_INLINE_LINK_DEFINITION_KEY =
+  "markdown_link_definition_inline";
 
 export interface MarkdownCommentElement extends TElement {
   type: typeof MARKDOWN_COMMENT_KEY | typeof MARKDOWN_INLINE_COMMENT_KEY;
@@ -40,14 +44,37 @@ export interface MarkdownCommentElement extends TElement {
   indent?: number;
 }
 
+export interface MarkdownLinkDefinitionElement extends TElement {
+  type:
+    | typeof MARKDOWN_LINK_DEFINITION_KEY
+    | typeof MARKDOWN_INLINE_LINK_DEFINITION_KEY;
+  /**
+   * Source text of the definition, as written in the file, without the
+   * prefixes of the containers around it.
+   */
+  raw: string;
+  children: [{ text: "" }];
+  indent?: number;
+}
+
+type MarkerElement = MarkdownCommentElement | MarkdownLinkDefinitionElement;
+
 interface CommentSource {
   raw: string;
+  /** A link definition rather than a comment. */
+  linkDefinition: boolean;
   /** The comment opens a list item, where Plate keeps only a paragraph. */
   leadsListItem: boolean;
 }
 
 const COMMENT_DATA = "svodeMarkdownComment";
 const BLOCK_COMMENT_DATA = "svodeBlockComment";
+const LINK_DEFINITION_DATA = "svodeLinkDefinition";
+
+const BLOCK_MARKER_KEYS = new Set<string>([
+  MARKDOWN_COMMENT_KEY,
+  MARKDOWN_LINK_DEFINITION_KEY,
+]);
 
 function isCommentOnlyExpression(node: MdastNode): boolean {
   const program = node.data?.estree as
@@ -64,28 +91,33 @@ function isComment(node: MdastNode): boolean {
   );
 }
 
-/** Attaches the source text to every comment in Plate's parse. */
+/**
+ * Attaches the source text to every comment and link definition in Plate's
+ * parse.
+ */
 export const annotateMarkdownComment: MarkdownSourceAnnotator = (
   node,
   ancestors,
   view,
 ) => {
-  if (!isComment(node)) return;
+  const linkDefinition = node.type === "definition" && !isComment(node);
+  if (!linkDefinition && !isComment(node)) return;
   const raw = view.innerText(node, ancestors);
   if (raw === null) return;
   const parent = ancestors.at(-1);
   const comment: CommentSource = {
     raw,
+    linkDefinition,
     leadsListItem: parent?.type === "listItem" && parent.children?.[0] === node,
   };
   node.data = { ...node.data, [COMMENT_DATA]: comment };
 };
 
-function commentElement(
-  type: MarkdownCommentElement["type"],
+function markerElement(
+  type: MarkerElement["type"],
   raw: string,
-): MarkdownCommentElement {
-  return { type, raw, children: [{ text: "" }] };
+): MarkerElement {
+  return { type, raw, children: [{ text: "" }] } as MarkerElement;
 }
 
 function deserializeComment(block: boolean) {
@@ -98,35 +130,49 @@ function deserializeComment(block: boolean) {
       COMMENT_DATA
     ] as CommentSource | undefined;
     if (!comment) return [];
-    if (!block) return commentElement(MARKDOWN_INLINE_COMMENT_KEY, comment.raw);
-    if (!comment.leadsListItem) {
-      return commentElement(MARKDOWN_COMMENT_KEY, comment.raw);
-    }
+    const [blockType, inlineType] = comment.linkDefinition
+      ? ([
+          MARKDOWN_LINK_DEFINITION_KEY,
+          MARKDOWN_INLINE_LINK_DEFINITION_KEY,
+        ] as const)
+      : ([MARKDOWN_COMMENT_KEY, MARKDOWN_INLINE_COMMENT_KEY] as const);
+    if (!block) return markerElement(inlineType, comment.raw);
+    if (!comment.leadsListItem) return markerElement(blockType, comment.raw);
     // Plate turns the first block of a list item into the item paragraph.
     return {
       type: options.editor ? getPluginType(options.editor, KEYS.p) : KEYS.p,
-      children: [commentElement(MARKDOWN_INLINE_COMMENT_KEY, comment.raw)],
+      children: [markerElement(inlineType, comment.raw)],
     };
   };
 }
+
+const serializeBlockMarker = (node: MarkerElement) => ({
+  type: "html",
+  value: node.raw,
+  data: {
+    [BLOCK_COMMENT_DATA]: true,
+    ...(node.type === MARKDOWN_LINK_DEFINITION_KEY && {
+      [LINK_DEFINITION_DATA]: true,
+    }),
+  },
+});
+
+const serializeInlineMarker = (node: MarkerElement) => ({
+  type: "html",
+  value: node.raw,
+  ...(node.type === MARKDOWN_INLINE_LINK_DEFINITION_KEY && {
+    data: { [LINK_DEFINITION_DATA]: true },
+  }),
+});
 
 export const markdownCommentRules: MdRules = {
   definition: { deserialize: deserializeComment(true) },
   mdxFlowExpression: { deserialize: deserializeComment(true) },
   mdxTextExpression: { deserialize: deserializeComment(false) },
-  [MARKDOWN_COMMENT_KEY]: {
-    serialize: (node: MarkdownCommentElement) => ({
-      type: "html",
-      value: node.raw,
-      data: { [BLOCK_COMMENT_DATA]: true },
-    }),
-  },
-  [MARKDOWN_INLINE_COMMENT_KEY]: {
-    serialize: (node: MarkdownCommentElement) => ({
-      type: "html",
-      value: node.raw,
-    }),
-  },
+  [MARKDOWN_COMMENT_KEY]: { serialize: serializeBlockMarker },
+  [MARKDOWN_INLINE_COMMENT_KEY]: { serialize: serializeInlineMarker },
+  [MARKDOWN_LINK_DEFINITION_KEY]: { serialize: serializeBlockMarker },
+  [MARKDOWN_INLINE_LINK_DEFINITION_KEY]: { serialize: serializeInlineMarker },
 };
 
 // Node types `mdast-util-phrasing` treats as phrasing, as the default
@@ -230,6 +276,22 @@ function joinCommentDefinition(left: MdastNode, right: MdastNode) {
     : undefined;
 }
 
+// A link definition that opens a list item is the only content of the item
+// paragraph.
+function isLinkDefinition(node: MdastNode): boolean {
+  if (node.type === "html") return node.data?.[LINK_DEFINITION_DATA] === true;
+  return (
+    node.type === "paragraph" &&
+    node.children?.length === 1 &&
+    isLinkDefinition(node.children[0])
+  );
+}
+
+// Consecutive link definitions are written as one group.
+function joinLinkDefinitions(left: MdastNode, right: MdastNode) {
+  return isLinkDefinition(left) && isLinkDefinition(right) ? 0 : undefined;
+}
+
 type RemarkPlugin = NonNullable<DeserializeMdOptions["remarkPlugins"]>[number];
 
 /**
@@ -243,7 +305,8 @@ export const remarkMarkdownComments = function (this: {
   const data = this.data() as { toMarkdownExtensions?: unknown[] };
   (data.toMarkdownExtensions ??= []).push({
     handlers: { root: rootHandler },
-    join: [joinCommentDefinition],
+    // Joins run last to first.
+    join: [joinCommentDefinition, joinLinkDefinitions],
   });
 } as unknown as RemarkPlugin;
 
@@ -269,7 +332,7 @@ function withListCommentCarriers(
       run ??= new Map();
       for (const key of run.keys()) if (key > indent) run.delete(key);
       run.set(indent, String((node as ListParagraph).listStyleType));
-    } else if (node.type === MARKDOWN_COMMENT_KEY && indent > 1 && run) {
+    } else if (BLOCK_MARKER_KEYS.has(node.type) && indent > 1 && run) {
       changed = true;
       return {
         type: paragraphType,
