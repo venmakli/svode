@@ -480,6 +480,17 @@ impl AdapterRuntimeRegistry {
         DraftSessionEvidence { session, evidence }
     }
 
+    /// Whether Svode declares to the agent in `initialize` the
+    /// `sessionFailure` capability of the JetBrains AIR extension, so that a
+    /// turn's terminal error comes typed in the prompt answer (DF-226 R2).
+    /// Design 2026-10-29, codex-acp 2.1.1 with a mock provider: without it
+    /// the error comes as agent text and the turn ends `end_turn`; with it
+    /// the answer carries the error in `_meta.jetbrains.air.sessionFailure`
+    /// and the text is not sent.
+    pub fn reports_session_failure(&self, adapter: AgentAdapterKind) -> bool {
+        adapter == AgentAdapterKind::Codex
+    }
+
     /// Launch plan of the agent's ACP entrypoint for the user's executable:
     /// its own command, or the installed adapter run by the user's Node.js
     /// (`adapter_run`). `None` for an agent without an entrypoint, or for an

@@ -569,10 +569,30 @@ fn item_status(status: Option<&str>) -> ItemStatus {
     }
 }
 
-pub(crate) fn stop_reason(response: Value) -> Result<StopReason, String> {
+/// How the prompt answer ends the turn, with the error text it shows. A
+/// terminal error the agent typed (JetBrains AIR `sessionFailure` of
+/// severity `error`) ends it `error` with its title, whatever the stop
+/// reason; a warning or retry leaves the stop reason in charge.
+pub(crate) fn prompt_outcome(response: Value) -> Result<(StopReason, Option<String>), String> {
     let response: wire::PromptResponse =
         serde_json::from_value(response).map_err(|error| error.to_string())?;
-    Ok(match response.stop_reason.as_str() {
+    let failure = response
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.pointer("/jetbrains/air/sessionFailure"))
+        .filter(|failure| failure["severity"] == "error");
+    if let Some(failure) = failure {
+        let title = failure["title"]
+            .as_str()
+            .filter(|title| !title.trim().is_empty())
+            .map(str::to_string);
+        return Ok((StopReason::Error, title));
+    }
+    Ok((stop_reason(&response.stop_reason)?, None))
+}
+
+fn stop_reason(reason: &str) -> Result<StopReason, String> {
+    Ok(match reason {
         "end_turn" => StopReason::EndTurn,
         "max_tokens" => StopReason::MaxTokens,
         "max_turn_requests" => StopReason::MaxTurnRequests,
@@ -1072,6 +1092,44 @@ mod tests {
                 "Run the tests"
             );
         }
+    }
+
+    #[test]
+    fn a_typed_terminal_error_ends_the_turn_whatever_its_stop_reason() {
+        let answer = |failure: Value| {
+            prompt_outcome(json!({
+                "stopReason": "end_turn",
+                "_meta": { "jetbrains": { "air": { "version": 1, "sessionFailure": failure } } }
+            }))
+        };
+        assert_eq!(
+            answer(
+                json!({ "severity": "error", "title": "model not supported", "actions": ["retry"] })
+            ),
+            Ok((StopReason::Error, Some("model not supported".into())))
+        );
+        assert_eq!(
+            answer(json!({ "severity": "error", "title": " " })),
+            Ok((StopReason::Error, None)),
+            "an error without text still ends the turn"
+        );
+        for kept in [
+            json!({ "severity": "warning", "title": "Reconnecting... 1/5", "willRetry": true }),
+            json!({ "severity": "info", "title": "note" }),
+            json!("error"),
+            json!(null),
+        ] {
+            assert_eq!(
+                answer(kept.clone()),
+                Ok((StopReason::EndTurn, None)),
+                "{kept}"
+            );
+        }
+        assert_eq!(
+            prompt_outcome(json!({ "stopReason": "cancelled", "_meta": { "quota": {} } })),
+            Ok((StopReason::Cancelled, None))
+        );
+        assert!(prompt_outcome(json!({ "stopReason": "later" })).is_err());
     }
 
     #[test]

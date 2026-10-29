@@ -38,6 +38,7 @@ use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
 use crate::process::{self, ProcessTree};
 use crate::projection::Projection;
 use crate::prompt::{self, PromptPart};
+use crate::registry::AdapterRuntimeRegistry;
 use crate::status::{InteractionKind, StopReason};
 use crate::turns::{TurnBoundary, TurnEnded, TurnMark, TurnObserver};
 use crate::writer::{
@@ -1767,8 +1768,8 @@ impl AgentRuntime {
                     .call(acp::SESSION_PROMPT, request, None)
                     .await
                 {
-                    Ok(response) => match normalize::stop_reason(response) {
-                        Ok(reason) => (reason, None),
+                    Ok(response) => match normalize::prompt_outcome(response) {
+                        Ok(outcome) => outcome,
                         Err(message) => {
                             session.connection.set_state(ConnectionState::Degraded);
                             (StopReason::Error, Some(message))
@@ -1992,8 +1993,15 @@ impl AgentRuntime {
     }
 
     async fn initialize(&self, connection: &Connection) -> Result<(), AgentRuntimeError> {
+        let session_failure = connection
+            .adapter()
+            .is_some_and(|adapter| AdapterRuntimeRegistry.reports_session_failure(adapter));
         let response = connection
-            .call(acp::INITIALIZE, acp::initialize_request(), self.timeout())
+            .call(
+                acp::INITIALIZE,
+                acp::initialize_request(session_failure),
+                self.timeout(),
+            )
             .await?;
         let info = acp::agent_info(response).map_err(|message| {
             connection.set_state(ConnectionState::Degraded);

@@ -157,6 +157,8 @@ pub(crate) struct SessionInfo {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PromptResponse {
     pub stop_reason: String,
+    #[serde(rename = "_meta")]
+    pub meta: Option<Value>,
 }
 
 #[derive(Deserialize)]

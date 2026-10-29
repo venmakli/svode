@@ -39,8 +39,10 @@ pub(crate) const ELICITATION_CREATE: &str = "elicitation/create";
 
 /// Svode advertises no client file system or terminal: the agent works with
 /// its own tools. It asks the user form questions, never opens agent URLs.
-pub(crate) fn initialize_request() -> Value {
-    json!({
+/// With `session_failure` it also declares the one JetBrains AIR capability
+/// it reads: a turn's terminal error typed in the prompt answer.
+pub(crate) fn initialize_request(session_failure: bool) -> Value {
+    let mut request = json!({
         "protocolVersion": wire::PROTOCOL_VERSION,
         "clientCapabilities": {
             "fs": { "readTextFile": false, "writeTextFile": false },
@@ -48,7 +50,12 @@ pub(crate) fn initialize_request() -> Value {
             "elicitation": { "form": {} }
         },
         "clientInfo": { "name": "svode", "title": "Svode", "version": env!("CARGO_PKG_VERSION") }
-    })
+    });
+    if session_failure {
+        request["clientCapabilities"]["_meta"] =
+            json!({ "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } } });
+    }
+    request
 }
 
 pub(crate) fn agent_info(response: Value) -> Result<AgentInfo, String> {

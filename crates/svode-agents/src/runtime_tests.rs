@@ -5778,3 +5778,277 @@ async fn a_cancel_while_the_host_prepares_ends_the_turn_without_the_prompt() {
 
 #[path = "runtime_drafts_tests.rs"]
 mod drafts;
+
+/// A recorded ACP log: what the client sent and what the agent answered.
+fn recorded_log(name: &str) -> Vec<(bool, Value)> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let entry: Value = serde_json::from_str(line).unwrap();
+            (entry["dir"] == "out", entry["msg"].clone())
+        })
+        .collect()
+}
+
+/// Plays `log` as the agent: each message the client sent must come with
+/// the recorded method, and each recorded answer goes back under the id of
+/// the request it answers. Returns what the client sent.
+async fn play(agent: &mut ScriptedAgent, log: &[(bool, Value)]) -> Vec<Value> {
+    let mut received = Vec::new();
+    for (sent, message) in log {
+        if *sent {
+            received.push(agent.expect(message["method"].as_str().unwrap()).await);
+            continue;
+        }
+        let mut message = message.clone();
+        if message.get("id").is_some() {
+            message["id"] = received.last().unwrap()["id"].clone();
+        }
+        agent.send(message).await;
+    }
+    received
+}
+
+fn codex() -> AcpLaunch {
+    AcpLaunch {
+        agent: "codex".into(),
+        ..launch()
+    }
+}
+
+#[tokio::test]
+async fn only_codex_is_asked_for_typed_turn_errors() {
+    for (agent, declared) in [
+        ("codex", true),
+        ("claude-code", false),
+        ("opencode", false),
+        ("scripted", false),
+    ] {
+        let runtime = AgentRuntime::default();
+        let (id, mut scripted) = attached_with(
+            &runtime,
+            &AcpLaunch {
+                agent: agent.into(),
+                ..launch()
+            },
+        );
+        let (_, initialize) = tokio::join!(
+            async {
+                runtime
+                    .new_session(id, Path::new("/project"), &[])
+                    .await
+                    .unwrap()
+            },
+            async {
+                let initialize = scripted.expect("initialize").await;
+                scripted
+                    .reply(
+                        &initialize,
+                        json!({ "protocolVersion": 1, "agentCapabilities": {} }),
+                    )
+                    .await;
+                let new_session = scripted.expect("session/new").await;
+                scripted
+                    .reply(&new_session, json!({ "sessionId": "s1" }))
+                    .await;
+                initialize
+            }
+        );
+        let capabilities = &initialize["params"]["clientCapabilities"];
+        let expected = declared.then(
+            || json!({ "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } } }),
+        );
+        assert_eq!(capabilities.get("_meta"), expected.as_ref(), "{agent}");
+        assert_eq!(
+            capabilities["elicitation"],
+            json!({ "form": {} }),
+            "{agent}"
+        );
+    }
+}
+
+/// DF-226: codex-acp 2.1.1 with a mock provider answering 400, recorded
+/// with the `sessionFailure` capability declared.
+#[tokio::test]
+async fn a_codex_turn_the_provider_refuses_ends_error_with_its_one_error_item() {
+    let log = recorded_log("df226/codex-session-failure.jsonl");
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &codex());
+    let (key, received) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        play(&mut agent, &log[..5])
+    );
+    assert_eq!(
+        received[0]["params"]["clientCapabilities"], log[0].1["params"]["clientCapabilities"],
+        "Svode declares what the recording declared"
+    );
+
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    let turn = runtime.prompt(&key, &[PromptPart::text("say hi")]).unwrap();
+    play(&mut agent, &log[5..]).await;
+    follow(&mut subscription, idle).await;
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(
+        snapshot.turn.status,
+        SessionStatus::runtime(SessionState::Idle {
+            stop_reason: Some(StopReason::Error)
+        })
+    );
+    let items: Vec<_> = snapshot
+        .items
+        .iter()
+        .filter(|item| item.turn_id.as_deref() == Some(turn.as_str()))
+        .collect();
+    let errors: Vec<_> = items
+        .iter()
+        .filter(|item| item.kind == ItemKind::Error)
+        .collect();
+    assert_eq!(errors.len(), 1, "{items:?}");
+    assert_eq!(
+        errors[0].summary,
+        r#"{"error": {"message": "The 'x' model is not supported", "type": "invalid_request_error", "code": "model_not_supported"}}"#
+    );
+    assert!(
+        !items
+            .iter()
+            .any(|item| matches!(item.kind, ItemKind::AgentMessage { .. })),
+        "the warning before the error is no agent text: {items:?}"
+    );
+    assert!(items.iter().any(|item| matches!(
+        item.kind,
+        ItemKind::TurnOutcome {
+            reason: StopReason::Error,
+            ..
+        }
+    )));
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Ready,
+        "a typed turn error is no protocol fault"
+    );
+}
+
+#[tokio::test]
+async fn a_typed_warning_or_retry_leaves_the_turn_to_its_stop_reason() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &codex());
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        agent.open_session()
+    );
+    let warning = json!({ "jetbrains": { "air": { "version": 1, "sessionFailure": {
+        "id": "s1:notice:1", "revision": 1, "category": "service", "severity": "warning",
+        "title": "Reconnecting... 1/5", "actions": [], "willRetry": true
+    } } } });
+
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    let turn = runtime.prompt(&key, &[PromptPart::text("say hi")]).unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    agent
+        .update(
+            "s1",
+            json!({ "sessionUpdate": "session_info_update", "_meta": warning }),
+        )
+        .await;
+    agent
+        .update("s1", json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "hi" } }))
+        .await;
+    agent
+        .reply(
+            &prompt,
+            json!({ "stopReason": "end_turn", "_meta": warning }),
+        )
+        .await;
+    follow(&mut subscription, idle).await;
+
+    let snapshot = runtime.subscribe(&key).unwrap().snapshot;
+    assert_eq!(
+        snapshot.turn.status,
+        SessionStatus::runtime(SessionState::Idle {
+            stop_reason: Some(StopReason::EndTurn)
+        })
+    );
+    let items: Vec<_> = snapshot
+        .items
+        .iter()
+        .filter(|item| item.turn_id.as_deref() == Some(turn.as_str()))
+        .collect();
+    assert!(!items.iter().any(|item| item.kind == ItemKind::Error));
+    assert!(
+        items
+            .iter()
+            .any(|item| matches!(item.kind, ItemKind::AgentMessage { .. }) && item.summary == "hi")
+    );
+
+    // An answer without the extension ends the turn by its stop reason.
+    let next = runtime.prompt(&key, &[PromptPart::text("again")]).unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    agent
+        .reply(
+            &prompt,
+            json!({ "stopReason": "end_turn", "_meta": { "quota": {} } }),
+        )
+        .await;
+    follow(&mut subscription, |snapshot| {
+        idle(snapshot) && snapshot.turn.turn_id.as_deref() == Some(next.as_str())
+    })
+    .await;
+    assert_eq!(
+        subscription.snapshot.turn.status,
+        SessionStatus::runtime(SessionState::Idle {
+            stop_reason: Some(StopReason::EndTurn)
+        })
+    );
+}
+
+#[tokio::test]
+async fn the_title_of_a_typed_turn_error_is_bounded_like_agent_text() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached_with(&runtime, &codex());
+    let (key, ()) = tokio::join!(
+        async {
+            runtime
+                .new_session(id, Path::new("/project"), &[])
+                .await
+                .unwrap()
+        },
+        agent.open_session()
+    );
+    let title = "ошибка ".repeat(2_000);
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, &[PromptPart::text("say hi")]).unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    agent
+        .reply(
+            &prompt,
+            json!({ "stopReason": "end_turn", "_meta": { "jetbrains": { "air": { "version": 1,
+                "sessionFailure": { "severity": "error", "title": title, "actions": ["retry"] } } } } }),
+        )
+        .await;
+    follow(&mut subscription, idle).await;
+
+    let error = subscription
+        .snapshot
+        .items
+        .iter()
+        .find(|item| item.kind == ItemKind::Error)
+        .unwrap();
+    assert!(error.summary.len() <= 4 * 1024);
+    assert!(title.starts_with(&error.summary));
+    assert!(error.has_detail);
+}
