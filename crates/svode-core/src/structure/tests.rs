@@ -1785,9 +1785,10 @@ async fn create_board_collection(
     .await
 }
 
-/// After a failed create the sources are those before it, nothing is
-/// registered in history and the projection follows the restored leaf.
-async fn assert_collection_create_restored(
+/// After a failed create or conversion the sources are those before it,
+/// nothing is registered in history and the projection follows the restored
+/// leaf `Area/Tasks/Item.md`.
+async fn assert_leaf_restored(
     root: &Path,
     state: &IndexRuntimeState,
     sink: &GroupSink,
@@ -1855,7 +1856,7 @@ async fn a_failed_step_of_a_collection_create_restores_the_sources_and_the_proje
                 .contains(&format!("injected {stage} failure")),
             "{stage}: {error:?}"
         );
-        assert_collection_create_restored(root, &state, &sink, &before, stage).await;
+        assert_leaf_restored(root, &state, &sink, &before, stage).await;
     }
 }
 
@@ -1879,7 +1880,7 @@ async fn a_reverse_column_conflict_restores_the_leaf_parent_its_links_and_relati
         .unwrap_err();
 
     assert!(error.to_string().contains("not a relation"), "{error:?}");
-    assert_collection_create_restored(root, &state, &sink, &before, "scenario R").await;
+    assert_leaf_restored(root, &state, &sink, &before, "scenario R").await;
 }
 
 #[tokio::test]
@@ -1906,6 +1907,156 @@ async fn a_collection_create_with_all_steps_registers_its_history_once_it_succee
         fs::read_to_string(root.join("Decisions/Decision.md")).unwrap(),
         "---\ntitle: Decision\nTask: [Item.md]\n---\n"
     );
+    assert!(!sink.take().is_empty());
+}
+
+/// Turn the leaf item `Area/Tasks/Item.md` into a Collection.
+async fn convert_item_to_collection(
+    space: &str,
+    project: bool,
+    state: &IndexRuntimeState,
+    sink: &GroupSink,
+) -> Result<super::ConvertToCollectionOutcome, crate::page::PageError> {
+    super::convert_to_collection(
+        space,
+        "Area/Tasks/Item.md",
+        project.then_some(space),
+        StructureRuntime {
+            commits: Some(sink),
+            ..runtime(state)
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_failed_step_of_a_leaf_conversion_to_a_collection_restores_the_sources_and_the_projection()
+ {
+    for project in [true, false] {
+        for stage in ["convert_folder", "convert_schema", "convert_publish"] {
+            let label = format!("project {project}, {stage}");
+            let tmp = TempDir::new().unwrap();
+            let root = tmp.path();
+            relation_target_space(root);
+            let space = root.to_str().unwrap();
+            let state = IndexRuntimeState::default();
+            state
+                .backlinks_for_space_dir(root)
+                .await
+                .build(root)
+                .unwrap();
+            let sink = GroupSink::default();
+            let before = source_snapshot(root);
+
+            crate::page::write::inject_failure(Some(stage), None);
+            let error = convert_item_to_collection(space, project, &state, &sink)
+                .await
+                .unwrap_err();
+            crate::page::write::inject_failure(None, None);
+
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("injected {stage} failure")),
+                "{label}: {error:?}"
+            );
+            assert!(!root.join("Area/Tasks/Item").exists(), "{label}");
+            assert_leaf_restored(root, &state, &sink, &before, &label).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_read_only_relation_source_fails_a_leaf_conversion_to_a_collection_without_a_change() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (project, file_return_fails) in [(true, false), (false, false), (true, true)] {
+        let label = format!("project {project}, file return fails {file_return_fails}");
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        relation_target_space(root);
+        let space = root.to_str().unwrap();
+        let state = IndexRuntimeState::default();
+        let sink = GroupSink::default();
+        let decision = root.join("Decisions/Decision.md");
+        fs::set_permissions(&decision, fs::Permissions::from_mode(0o444)).unwrap();
+        let before = source_snapshot(root);
+
+        // The conversion skips moving the leaf back: the rollback of the
+        // Collection conversion moves it.
+        if file_return_fails {
+            crate::page::write::inject_failure(Some("relations_return"), None);
+        }
+        let error = convert_item_to_collection(space, project, &state, &sink)
+            .await
+            .unwrap_err();
+        crate::page::write::inject_failure(None, None);
+        fs::set_permissions(&decision, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(
+            !matches!(error, crate::page::PageError::Recovery { .. })
+                && error.to_string().contains("Permission denied"),
+            "{label}: {error:?}"
+        );
+        assert_eq!(source_snapshot(root), before, "{label}");
+        assert!(!root.join("Area/Tasks/Item").exists(), "{label}");
+        assert!(sink.take().is_empty(), "{label}");
+    }
+}
+
+#[tokio::test]
+async fn an_unrestorable_leaf_fails_its_conversion_to_a_collection_with_only_its_paths() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    relation_target_space(root);
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+    let leaf = root.join("Area/Tasks/Item.md");
+
+    // A file that takes the leaf's name keeps its README from moving back.
+    let blocker = leaf.clone();
+    crate::page::write::inject_failure(
+        Some("convert_schema"),
+        Some(Box::new(move || fs::write(&blocker, "other\n").unwrap())),
+    );
+    let error = convert_item_to_collection(space, true, &state, &sink)
+        .await
+        .unwrap_err();
+    crate::page::write::inject_failure(None, None);
+
+    match error {
+        crate::page::PageError::Recovery { cause, paths } => {
+            assert!(cause.contains("injected convert_schema failure"), "{cause}");
+            assert_eq!(
+                paths,
+                vec![
+                    root.join("Area/Tasks/Item").display().to_string(),
+                    root.join("Area/Tasks/Item/README.md").display().to_string(),
+                ]
+            );
+        }
+        error => panic!("expected recovery, got {error:?}"),
+    }
+    assert!(sink.take().is_empty());
+}
+
+#[tokio::test]
+async fn a_leaf_conversion_to_a_collection_registers_its_history_once_it_succeeds() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    relation_target_space(root);
+    let state = IndexRuntimeState::default();
+    let sink = GroupSink::default();
+
+    let outcome = convert_item_to_collection(root.to_str().unwrap(), true, &state, &sink)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.collection_path, "Area/Tasks/Item");
+    assert!(root.join("Area/Tasks/Item/schema.yaml").is_file());
+    assert!(!root.join("Area/Tasks/Item.md").exists());
     assert!(!sink.take().is_empty());
 }
 

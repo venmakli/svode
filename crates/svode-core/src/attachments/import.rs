@@ -3,9 +3,9 @@
 //! a portable name, and materialize the repository routing rule for it.
 //!
 //! The operation owns validation, the planned touched-set, the canonical
-//! content handoff and the staged cleanup. The host supplies the shared
-//! runtime handles, the Git LFS readiness evidence and the delivery of the
-//! resulting invalidation.
+//! content handoff, the staged cleanup and the rollback of a failed import.
+//! The host supplies the shared runtime handles, the Git LFS readiness
+//! evidence and the delivery of the resulting invalidation.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
@@ -31,10 +31,12 @@ use crate::page::filename;
 use crate::page::identity::{
     ContentOwnerKind, SemanticIdentity, SourceShape, resolve_markdown_identity_for_path,
 };
+use crate::page::write::SourceSnapshot;
 use crate::storage::config::{AssetsSpaceConfig, AssetsStrategy};
 use crate::storage::managed_route::apply_managed_import_route;
 use crate::storage::policy::{self, ManagedBinaryRoute};
 use crate::storage::scope::resolve_assets_scope_for_key;
+use crate::structure::ops::{HeldCommits, republish_after_rollback};
 use crate::structure::{self, StructuralCommitSink, StructureRuntime};
 
 use super::format::{classify_binary_path, mime_for};
@@ -379,40 +381,79 @@ pub async fn execute_managed_import(
             PageError::Storage(format!("managed import copy task failed: {error}"))
         })??;
 
+    // Every step from the first write on runs under one snapshot of the
+    // authorized plan; a leaf Page relocates into its folder.
+    let space = revalidated.space_path.to_string_lossy().into_owned();
+    let project = revalidated.project_path.to_string_lossy().into_owned();
+    let owner_abs = revalidated.space_path.join(&revalidated.owner_path);
+    let sources = revalidated
+        .affected_paths
+        .iter()
+        .filter(|path| !path.is_dir())
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut snapshot = SourceSnapshot::capture(
+        &sources,
+        revalidated.requires_conversion.then(|| {
+            (
+                revalidated.space_path.join(&revalidated.content_path),
+                revalidated
+                    .space_path
+                    .join(&revalidated.canonical_content_path),
+            )
+        }),
+    )?;
+    let held = runtime.commits.map(HeldCommits::new);
+    let steps = StructureRuntime {
+        commits: held.as_ref().map(|held| held as &dyn StructuralCommitSink),
+        ..runtime.structure()
+    };
     let mutation = async {
         if revalidated.requires_conversion {
-            structure::convert_to_folder(
-                &revalidated.space_path.to_string_lossy(),
+            if let Err(error) = structure::convert_to_folder(
+                &space,
                 &revalidated.content_path,
-                Some(&revalidated.project_path.to_string_lossy()),
-                runtime.structure(),
+                Some(&project),
+                steps,
             )
-            .await?;
+            .await
+            {
+                // A directory that already has the name is not this import's.
+                if !matches!(error, PageError::FileAlreadyExists(_)) {
+                    snapshot.track_created_dir(owner_abs.clone());
+                }
+                // The snapshot holds the leaf, its README and the folder, so
+                // its rollback reports only what stays changed.
+                return Err(match error {
+                    PageError::Recovery { cause, .. } => PageError::General(cause),
+                    error => error,
+                });
+            }
+            snapshot.track_created_dir(owner_abs.clone());
+            #[cfg(test)]
+            crate::page::write::checkpoint("import_convert")?;
         }
 
-        let owner_abs = revalidated.space_path.join(&revalidated.owner_path);
         let (attachment_abs, file_name) =
             publish_staged_copy(&temp_path, &owner_abs, &revalidated.requested_file_name)?;
+        snapshot.track_created(attachment_abs.clone());
+        #[cfg(test)]
+        crate::page::write::checkpoint("import_publish")?;
         let repository_attachment_path = repo_relative_from_base(
             &revalidated.repository_path,
             &attachment_abs,
             RootMode::Reject,
         )?;
-        let policy_paths = match apply_managed_import_route(
+        let policy_paths = apply_managed_import_route(
             runtime.repository,
             runtime.cli,
             &revalidated.repository_path,
             revalidated.binary_route,
             &repository_attachment_path,
         )
-        .await
-        {
-            Ok(paths) => paths,
-            Err(error) => {
-                let _ = fs::remove_file(&attachment_abs);
-                return Err(error.into());
-            }
-        };
+        .await?;
+        #[cfg(test)]
+        crate::page::write::checkpoint("import_route")?;
         let metadata = fs::metadata(&attachment_abs)?;
         let attachment_path =
             repo_relative_from_base(&revalidated.space_path, &attachment_abs, RootMode::Reject)?;
@@ -429,7 +470,7 @@ pub async fn execute_managed_import(
             .unwrap_or_default()
             .to_ascii_lowercase();
 
-        if let Some(commits) = runtime.commits {
+        if let Some(commits) = steps.commits {
             let mut commit_paths = policy_paths.clone();
             if revalidated.storage_strategy != AssetsStrategy::Local {
                 commit_paths.push(attachment_abs.clone());
@@ -476,7 +517,23 @@ pub async fn execute_managed_import(
     if temp_path.exists() {
         let _ = fs::remove_file(&temp_path);
     }
-    mutation
+    match mutation {
+        Ok(result) => {
+            if let Some(held) = held {
+                held.release();
+            }
+            Ok(result)
+        }
+        Err(error) => {
+            let wrote = snapshot.relocated();
+            let error = snapshot.rollback(error);
+            if wrote {
+                republish_after_rollback(runtime.structure(), Some(&project), &space, &sources)
+                    .await;
+            }
+            Err(error)
+        }
+    }
 }
 
 fn eligible_import_identity(identity: SemanticIdentity) -> bool {

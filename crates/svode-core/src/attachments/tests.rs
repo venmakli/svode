@@ -296,3 +296,215 @@ fn requested_name_is_reprojected_from_a_basename() {
     assert!(super::normalize_requested_file_name("..").is_err());
     assert!(super::normalize_requested_file_name("/").is_err());
 }
+
+/// Records how many structural history registrations reached it.
+#[derive(Default)]
+struct CountingSink(std::sync::Mutex<usize>);
+
+impl crate::structure::StructuralCommitSink for CountingSink {
+    fn schedule(
+        &self,
+        _: &Path,
+        _: &Path,
+        _: crate::git::pending::StructuralChange,
+        _: Vec<std::path::PathBuf>,
+    ) {
+        *self.0.lock().unwrap() += 1;
+    }
+
+    fn commit_now<'a>(
+        &'a self,
+        _: &'a Path,
+        _: &'a Path,
+        _: Vec<std::path::PathBuf>,
+        _: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        *self.0.lock().unwrap() += 1;
+        Box::pin(async {})
+    }
+}
+
+/// In-git Project whose leaf item `Area/Tasks/Item.md` is the relation target
+/// of `Decisions/Decision.md` and the link target of `Link.md`.
+fn leaf_import_project(project: &Path) {
+    crate::page::test_support::scaffold_space(project, "Project");
+    write_space_config(project, Some(r#"{ "strategy": "in-git" }"#));
+    for (path, contents) in [
+        (
+            "Area/Tasks/schema.yaml",
+            "nested_items: true\ncolumns: []\n",
+        ),
+        ("Area/Tasks/README.md", "---\ntitle: Tasks\n---\n"),
+        (
+            "Area/Tasks/Item.md",
+            "---\ntitle: Item\n---\nSee [Decision](../../Decisions/Decision.md).\n",
+        ),
+        (
+            "Decisions/schema.yaml",
+            "columns:\n  - name: Task\n    type: relation\n    relation: Area/Tasks\n",
+        ),
+        ("Decisions/README.md", "---\ntitle: Decisions\n---\n"),
+        (
+            "Decisions/Decision.md",
+            "---\ntitle: Decision\nTask: [Item.md]\n---\n",
+        ),
+        ("Link.md", "See [Item](Area/Tasks/Item.md).\n"),
+        (
+            ".svode/order.json",
+            r#"{".":["Area","Decisions","Link.md"],"Area/Tasks":["Item.md"]}"#,
+        ),
+    ] {
+        let path = project.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+}
+
+/// Files and directories of the tree with their bytes, without the
+/// device-local state the index repair and the name lock write.
+fn project_sources(root: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let rel = path.strip_prefix(root).unwrap().display().to_string();
+            if path.is_dir() {
+                files.push((rel, Vec::new()));
+                dirs.push(path);
+            } else if !rel.strip_prefix(".svode/").is_some_and(|name| {
+                name == "local.json"
+                    || name == "write.lock"
+                    || name.starts_with("variables.")
+                    || name.contains(".db")
+            }) {
+                files.push((rel, fs::read(&path).unwrap()));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+#[tokio::test]
+async fn a_failed_step_of_an_import_into_a_leaf_restores_the_sources_and_the_projection() {
+    let cli = GitCli::detect().ok();
+    // (injected stage, Git available): without Git the route itself fails.
+    for (stage, git) in [
+        (Some("import_convert"), true),
+        (Some("import_publish"), true),
+        (None, false),
+        (Some("import_route"), true),
+    ] {
+        let label = format!("{stage:?}, git {git}");
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        leaf_import_project(&project);
+        let project = fs::canonicalize(&project).unwrap();
+        let source = temp.path().join("photo.png");
+        fs::write(&source, b"image").unwrap();
+        let index = IndexRuntimeState::default();
+        index
+            .backlinks_for_space_dir(&project)
+            .await
+            .build(&project)
+            .unwrap();
+        let repository = GitRepositoryState::new();
+        let sink = CountingSink::default();
+        let import = ImportRuntime {
+            cli: if git { cli.as_ref() } else { None },
+            commits: Some(&sink),
+            ..runtime(&index, &repository)
+        };
+        let plan = plan_managed_import(&index, &project, None, "Area/Tasks/Item.md", &source, None)
+            .await
+            .unwrap();
+        assert!(plan.requires_conversion, "{label}");
+        let before = project_sources(&project);
+
+        crate::page::write::inject_failure(stage, None);
+        let error = execute_managed_import(import, MutationOrigin::Desktop, plan)
+            .await
+            .expect_err(&label);
+        crate::page::write::inject_failure(None, None);
+
+        if let Some(stage) = stage {
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("injected {stage} failure")),
+                "{label}: {error}"
+            );
+        } else {
+            assert!(
+                !matches!(error, crate::page::PageError::Recovery { .. }),
+                "{label}: {error}"
+            );
+        }
+        assert_eq!(project_sources(&project), before, "{label}");
+        assert_eq!(*sink.0.lock().unwrap(), 0, "{label}");
+        let backlinks = index.backlinks_for_space_dir(&project).await;
+        assert!(
+            backlinks
+                .get_backlinks("Area/Tasks/Item.md")
+                .iter()
+                .any(|link| link.source_path == "Link.md"),
+            "{label}"
+        );
+        assert!(
+            backlinks
+                .get_backlinks("Area/Tasks/Item/README.md")
+                .is_empty(),
+            "{label}"
+        );
+        let pool = index
+            .get_or_create(&crate::index::IndexKey::Root(project.clone()))
+            .await
+            .unwrap();
+        let indexed =
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(
+            indexed.contains(&"Area/Tasks/Item.md".to_string()),
+            "{label}: {indexed:?}"
+        );
+        assert!(
+            !indexed
+                .iter()
+                .any(|path| path.starts_with("Area/Tasks/Item/")),
+            "{label}: {indexed:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_import_into_a_leaf_registers_its_history_once_it_succeeds() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    leaf_import_project(&project);
+    let source = temp.path().join("photo.png");
+    fs::write(&source, b"image").unwrap();
+    let index = IndexRuntimeState::default();
+    let repository = GitRepositoryState::new();
+    let cli = GitCli::detect().ok();
+    let sink = CountingSink::default();
+    let import = ImportRuntime {
+        cli: cli.as_ref(),
+        commits: Some(&sink),
+        ..runtime(&index, &repository)
+    };
+    let plan = plan_managed_import(&index, &project, None, "Area/Tasks/Item.md", &source, None)
+        .await
+        .unwrap();
+
+    let result = execute_managed_import(import, MutationOrigin::Desktop, plan)
+        .await
+        .unwrap();
+
+    assert_eq!(result.content_path, "Area/Tasks/Item/README.md");
+    assert!(project.join("Area/Tasks/Item/photo.png").is_file());
+    assert!(!project.join("Area/Tasks/Item.md").exists());
+    assert!(*sink.0.lock().unwrap() > 0);
+}

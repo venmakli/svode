@@ -4,8 +4,8 @@
 //! Each operation authorizes its touched-set, changes the source, rewrites the
 //! links and relations it invalidates, republishes the derived projection and
 //! hands the resulting history to the commit sink. The compound Collection
-//! create, rename and move roll back; the other intents keep their existing
-//! partial outcomes.
+//! create, the conversion of a leaf into a Collection, rename and move roll
+//! back; the other intents keep their existing partial outcomes.
 
 use std::collections::HashMap;
 use std::fs;
@@ -530,22 +530,22 @@ pub(crate) fn resolved_create_parent(
     Ok((Some(parent), true))
 }
 
-/// Structural history the steps of a compound create register, held back
-/// until the whole create succeeds, so a failed create records none.
-struct HeldCommits<'a> {
+/// Structural history the steps of a compound operation register, held back
+/// until the whole operation succeeds, so a failed one records none.
+pub(crate) struct HeldCommits<'a> {
     sink: &'a dyn StructuralCommitSink,
     held: std::sync::Mutex<Vec<(PathBuf, PathBuf, StructuralChange, Vec<PathBuf>)>>,
 }
 
 impl<'a> HeldCommits<'a> {
-    fn new(sink: &'a dyn StructuralCommitSink) -> Self {
+    pub(crate) fn new(sink: &'a dyn StructuralCommitSink) -> Self {
         Self {
             sink,
             held: std::sync::Mutex::new(Vec::new()),
         }
     }
 
-    fn release(self) {
+    pub(crate) fn release(self) {
         let held = self
             .held
             .into_inner()
@@ -1052,13 +1052,80 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
     })
 }
 
+/// Make a Collection of `path` in place. A leaf first becomes a folder Page:
+/// every step from that conversion on runs under one snapshot of the touched
+/// set of its relocation, so a failed step restores the sources byte for
+/// byte, brings the projection back to them and registers no history.
 pub async fn convert_to_collection<E: GitDateExecutor>(
     space: &str,
     path: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
 ) -> Result<ConvertToCollectionOutcome, PageError> {
-    convert_to_collection_with_publication(space, path, project_path, runtime, true).await
+    let old_path = normalize_repo_relative(path, RootMode::Reject)?;
+    let source = Path::new(space).join(&old_path);
+    let leaf_folder = old_path.strip_suffix(".md").filter(|_| {
+        source.is_file()
+            && !source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+    });
+    let Some(folder) = leaf_folder else {
+        return convert_to_collection_with_publication(
+            space,
+            &old_path,
+            project_path,
+            runtime,
+            true,
+        )
+        .await;
+    };
+    let backlinks = runtime
+        .index
+        .backlinks_for_space_dir(Path::new(space))
+        .await;
+    let (mut snapshot, captured) = move_snapshot(
+        runtime.index,
+        &backlinks,
+        space,
+        project_path,
+        &old_path,
+        &format!("{folder}/README.md"),
+    )
+    .await?;
+    let held = runtime.commits.map(HeldCommits::new);
+    let steps = StructureRuntime {
+        commits: held.as_ref().map(|held| held as &dyn StructuralCommitSink),
+        ..runtime
+    };
+    match convert_to_collection_with_publication(space, &old_path, project_path, steps, true).await
+    {
+        Ok(outcome) => {
+            if let Some(held) = held {
+                held.release();
+            }
+            Ok(outcome)
+        }
+        Err(error) => {
+            // A directory that already has the name is not this conversion's.
+            if !matches!(&error, PageError::FileAlreadyExists(path) if *path == folder) {
+                snapshot.track_created_dir(Path::new(space).join(folder));
+            }
+            // The snapshot holds the leaf, its README and the folder, so its
+            // rollback reports only what stays changed.
+            let error = match error {
+                PageError::Recovery { cause, .. } => PageError::General(cause),
+                error => error,
+            };
+            let wrote = snapshot.relocated();
+            let error = snapshot.rollback(error);
+            if wrote {
+                republish_after_rollback(runtime, project_path, space, &captured).await;
+            }
+            Err(error)
+        }
+    }
 }
 
 async fn convert_to_collection_with_publication<E: GitDateExecutor>(
@@ -1127,6 +1194,8 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
                 operation,
             )
             .await?;
+            #[cfg(test)]
+            crate::page::write::checkpoint("convert_folder")?;
             let readme_path = converted.path.clone();
             let collection_path = Path::new(&readme_path)
                 .parent()
@@ -1135,6 +1204,8 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
                     PageError::General("converted entry has no collection folder".to_string())
                 })?;
             entry::convert_entry_to_nested_collection(Path::new(space), &readme_path)?;
+            #[cfg(test)]
+            crate::page::write::checkpoint("convert_schema")?;
             let converted = entry::read(space, &readme_path)?;
             (collection_path, readme_path, converted, true)
         }
@@ -1156,6 +1227,8 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
         )
         .await;
     }
+    #[cfg(test)]
+    crate::page::write::checkpoint("convert_publish")?;
     if runtime.commits.is_some() {
         let mut paths = vec![
             abs_entry_path(space, &readme_path),
@@ -1260,7 +1333,8 @@ fn moved_tree_sources(path: &Path) -> Result<Vec<PathBuf>, PageError> {
     Ok(files)
 }
 
-/// Snapshot of every file a rename or move of `from` to `to` may write, taken
+/// Snapshot of every file a rename or move of `from` to `to`, or the
+/// conversion of the leaf `from` into the folder Page `to`, may write, taken
 /// before its first write: the files of its authorization plan (the
 /// directories it authorizes hold no source of their own), the sidebar
 /// order, the moved tree, the schemas of the destination Collections that
@@ -1555,7 +1629,7 @@ async fn move_sources<E: GitDateExecutor>(
 
 /// Bring the derived projection back to the restored sources: the owning
 /// Space is repaired, the restored sources of other Spaces republished.
-async fn republish_after_rollback<E: GitDateExecutor>(
+pub(crate) async fn republish_after_rollback<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
     project_path: Option<&str>,
     space: &str,
