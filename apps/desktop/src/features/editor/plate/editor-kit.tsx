@@ -55,6 +55,7 @@ import {
   remarkBreakLineEndings,
   withListLineBreaks,
 } from "../model/markdown-line-breaks";
+import { markdownLinkRules } from "../model/markdown-link";
 import { markdownParagraphRules } from "../model/markdown-paragraph";
 import {
   TRAILING_BLOCK_MARK,
@@ -120,6 +121,7 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
         rules: {
           ...getOptions().rules,
           ...markdownLineBreakRules,
+          ...markdownLinkRules,
           ...markdownParagraphRules,
           ...markdownCommentRules,
         },
