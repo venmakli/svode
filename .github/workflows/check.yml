@@ -166,6 +166,10 @@ jobs:
       # The other tests of the agent runtime still assume Unix paths.
       - name: Native stores and identities of the agent descriptions
         run: cargo test -p svode-agents -- identity::tests registry::tests::an_agent_without_a_description registry::tests::cursor_lists registry::tests::grok_build_declares registry::tests::hermes_lists registry::tests::opencode_declares registry::tests::qwen_code_runs_its_acp_flag
+      # The process tree of an agent connection in a Job Object (DF-218):
+      # killing or dropping it ends the agent with the processes it started.
+      - name: Agent process tree
+        run: cargo test -p svode-agents -- process::tests
       - name: Native session reader tests
         run: cargo test -p svode-desktop --lib -- agent_sessions::native_status agent_sessions::native_catalog agent_sessions::read_model agent_sessions::live_status
       # The local paths of the chat of Stage 10 `08` on Windows: drive paths

@@ -15,7 +15,6 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 use svode_core::agent_adapters::AgentAdapterKind;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
-use tokio::process::Child;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 
@@ -35,7 +34,7 @@ use crate::catalog::{
 use crate::error::{AgentRuntimeError, SettingRefusal};
 use crate::identity::SessionKey;
 use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
-use crate::process;
+use crate::process::{self, ProcessTree};
 use crate::projection::Projection;
 use crate::prompt::{self, PromptPart};
 use crate::status::{InteractionKind, StopReason};
@@ -331,7 +330,8 @@ struct Connection {
     rpc: Arc<RpcClient>,
     state: Mutex<ConnectionState>,
     info: Mutex<Option<AgentInfo>>,
-    child: Mutex<Option<Child>>,
+    /// The agent process with its descendants.
+    process: Mutex<Option<ProcessTree>>,
     stderr: Arc<Mutex<Vec<u8>>>,
     /// Sessions by the agent's ACP session id.
     sessions: Mutex<HashMap<String, Arc<Session>>>,
@@ -413,16 +413,16 @@ impl AgentRuntime {
             .current_dir(&launch.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        process::hide_window(&mut command);
-        let mut child = command.spawn().map_err(|error| AgentRuntimeError::Spawn {
-            message: error.to_string(),
-        })?;
+            .stderr(Stdio::piped());
+        let mut tree =
+            ProcessTree::spawn(&mut command).map_err(|error| AgentRuntimeError::Spawn {
+                message: error.to_string(),
+            })?;
+        let child = tree.child();
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
-        let id = self.attach(&launch, stdout, stdin, Some(child));
+        let id = self.attach(&launch, stdout, stdin, Some(tree));
         let connection = self.connection(id)?;
         let mut stderr_task = tokio::spawn(collect_stderr(stderr, connection.stderr.clone()));
         if let Err(error) = self.initialize(&connection).await {
@@ -450,7 +450,7 @@ impl AgentRuntime {
         launch: &AcpLaunch,
         reader: R,
         writer: W,
-        child: Option<Child>,
+        process: Option<ProcessTree>,
     ) -> ConnectionId
     where
         R: AsyncRead + Unpin + Send + 'static,
@@ -473,7 +473,7 @@ impl AgentRuntime {
             rpc,
             state: Mutex::new(ConnectionState::Starting),
             info: Mutex::new(None),
-            child: Mutex::new(child),
+            process: Mutex::new(process),
             stderr: Arc::new(Mutex::new(Vec::new())),
             sessions: Mutex::new(HashMap::new()),
             holds: AtomicUsize::new(0),
@@ -1864,11 +1864,12 @@ impl Connection {
             .is_some_and(|info| info.capabilities.close_session)
     }
 
-    /// Ends the agent process and closes the connection.
+    /// Ends the agent process with its descendants and closes the
+    /// connection.
     async fn terminate(&self) {
-        let child = self.child.lock().unwrap().take();
-        if let Some(mut child) = child {
-            let _ = child.kill().await;
+        let process = self.process.lock().unwrap().take();
+        if let Some(process) = process {
+            process.kill().await;
         }
         self.close();
     }

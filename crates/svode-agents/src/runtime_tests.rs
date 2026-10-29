@@ -4000,6 +4000,123 @@ async fn a_failed_start_is_a_check_outcome_and_leaves_no_process() {
     );
 }
 
+/// `sh_agent` that first leaves a `sleep` running in its process group and
+/// writes `<agent pid> <sleep pid>` to `$SVODE_TREE` (DF-218).
+#[cfg(unix)]
+fn tree_agent(pids: &Path) -> AcpLaunch {
+    let mut launch = sh_agent(&[("SVODE_TREE", pids.to_str().unwrap())]);
+    launch.args[1] = format!(
+        "sleep 600 & echo \"$$ $!\" > \"$SVODE_TREE\"\n{}",
+        launch.args[1]
+    );
+    launch
+}
+
+/// The agent and descendant pids a `tree_agent` wrote.
+#[cfg(unix)]
+async fn tree_pids(pids: &Path) -> (u32, u32) {
+    for _ in 0..250 {
+        if let Ok(text) = std::fs::read_to_string(pids)
+            && let Some((agent, descendant)) = text.trim().split_once(' ')
+        {
+            return (agent.parse().unwrap(), descendant.parse().unwrap());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the agent writes its pids");
+}
+
+/// The agent is reaped by its connection, not left a zombie, and its
+/// descendant ends with it.
+#[cfg(unix)]
+async fn assert_tree_ended((agent, descendant): (u32, u32)) {
+    assert!(
+        !process::tests::exists(agent),
+        "the agent was not waited for"
+    );
+    assert!(
+        process::tests::ends(descendant).await,
+        "the descendant of the agent still runs"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_idle_connection_ends_the_agent_with_its_descendants() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        connection_idle: Duration::from_millis(60),
+        ..RuntimeConfig::default()
+    });
+    let lease = runtime.acquire(tree_agent(&pids)).await.unwrap();
+    let id = lease.connection();
+    let tree = tree_pids(&pids).await;
+    assert!(process::tests::exists(tree.0) && process::tests::exists(tree.1));
+
+    drop(lease);
+    for _ in 0..250 {
+        if runtime.connection_status(id).unwrap().state == ConnectionState::Closed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        runtime.connection_status(id).unwrap().state,
+        ConnectionState::Closed
+    );
+    assert_tree_ended(tree).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_check_ends_the_agent_it_started_with_its_descendants() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::default();
+    assert!(matches!(
+        runtime.check(tree_agent(&pids)).await,
+        AgentCheck::Ready { .. }
+    ));
+    assert_tree_ended(tree_pids(&pids).await).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_failed_initialize_ends_the_agent_with_its_descendants() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::new(RuntimeConfig {
+        request_timeout: Duration::from_millis(200),
+        ..RuntimeConfig::default()
+    });
+    let hung = AcpLaunch {
+        args: vec![
+            "-c".into(),
+            "sleep 600 & echo \"$$ $!\" > \"$SVODE_TREE\"; cat > /dev/null".into(),
+        ],
+        ..tree_agent(&pids)
+    };
+    let error = runtime.acquire(hung).await.unwrap_err();
+    assert!(
+        matches!(error, AgentRuntimeError::Initialize { .. }),
+        "{error:?}"
+    );
+    assert_tree_ended(tree_pids(&pids).await).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_ends_the_agents_with_their_descendants() {
+    let dir = tempfile::tempdir().unwrap();
+    let pids = dir.path().join("pids");
+    let runtime = AgentRuntime::default();
+    let _lease = runtime.acquire(tree_agent(&pids)).await.unwrap();
+    let tree = tree_pids(&pids).await;
+    runtime.shutdown().await;
+    assert_tree_ended(tree).await;
+}
+
 /// Claude Code `ExitPlanMode` in the shape `claude-agent-acp` 0.85.0 sends
 /// to a client that is not AIR (`permissions/presentation.js`,
 /// `tool-calls/reporters/interaction.js`, `permissions/options/tools.js`): the
