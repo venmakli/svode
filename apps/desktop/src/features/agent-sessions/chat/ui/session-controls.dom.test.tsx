@@ -1625,13 +1625,22 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
         Array.from(
           popover()?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
         );
-      expect(tabs().map((tab) => tab.getAttribute("aria-label"))).toEqual([
-        "Codex",
-        "Claude Code",
-      ]);
+      // The chosen agent names itself in the tab, another one by its label.
+      expect(
+        tabs().map(
+          (tab) => tab.getAttribute("aria-label") ?? tab.textContent?.trim(),
+        ),
+      ).toEqual(["Codex", "Claude Code"]);
+      expect(tabs()[0].textContent?.includes("Codex")).toBe(true);
+      expect(tabs()[1].textContent?.includes("Claude Code")).toBe(false);
       expect(tabs().map((tab) => tab.getAttribute("aria-selected"))).toEqual([
         "true",
         "false",
+      ]);
+      // The tooltip of a tab does not replace its active state.
+      expect(tabs().map((tab) => tab.getAttribute("data-state"))).toEqual([
+        "active",
+        "inactive",
       ]);
       expect(rowValue(m.sessions_chat_model())).toBe("GPT-5.6 Luna");
       expect(
@@ -1645,6 +1654,12 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(lastCall("agent_runtime_hold_draft")).toBe(undefined);
       await pressKey(tabs()[1], "Enter");
       expect(tabs()[1].getAttribute("aria-selected")).toBe("true");
+      expect(tabs().map((tab) => tab.getAttribute("data-state"))).toEqual([
+        "inactive",
+        "active",
+      ]);
+      expect(tabs()[1].textContent?.includes("Claude Code")).toBe(true);
+      expect(tabs()[0].textContent?.includes("Codex")).toBe(false);
       expect(lastCall("agent_runtime_hold_draft")?.agent).toBe("claude");
     },
   );

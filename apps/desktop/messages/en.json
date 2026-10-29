@@ -2505,6 +2505,7 @@
   "sessions_chat_agent_retry": "Retry",
   "sessions_chat_agent_settings": "Configure agents…",
   "sessions_chat_agent_tabs": "Agents",
+  "sessions_chat_agent_more": "More agents",
   "sessions_chat_composer_label": "Message to the agent",
   "sessions_chat_detail_agent_terminal": "Agent terminal: shown for reference only",
   "sessions_chat_detail_error": "Could not load the details: {message}",

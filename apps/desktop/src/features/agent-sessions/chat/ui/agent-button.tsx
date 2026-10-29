@@ -1,5 +1,5 @@
 import { ChevronDown, Loader2, RotateCw, Settings2 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AgentIcon,
   useAgentAdapterDictionary,
@@ -13,14 +13,10 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { InputGroupButton } from "@/components/ui/input-group";
 import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
+import { OverflowTabStrip } from "@/shared/ui/overflow-tab-strip";
 import { SettingsRow, SettingsStaticRow } from "@/shared/ui/settings-row";
 import type { AgentLaunchUnavailableDto } from "../api/chat";
 import type { ChatAgent } from "../model/agents";
@@ -192,6 +188,9 @@ export function AgentModelButton({
       modal
       side="top"
       align="start"
+      // One height for every screen: a long list of values scrolls inside
+      // instead of stretching the popover to the window.
+      className="max-h-[min(420px,var(--radix-popover-content-available-height))]"
       open={open}
       onOpenChange={(next) => {
         if (next) {
@@ -284,7 +283,9 @@ export function AgentModelButton({
 
 /**
  * The agents of a draft as tabs: arrows move between them, a click, Enter
- * or Space chooses one, which starts it (`04`, C1).
+ * or Space chooses one, which starts it (`04`, C1). Another agent shows its
+ * icon, the chosen one its icon and name; agents that do not fit wait under
+ * "more", as the views of a Collection do.
  */
 function AgentTabs({
   agent,
@@ -296,6 +297,15 @@ function AgentTabs({
   /** The rows of the chosen agent. */
   children: ReactNode;
 }) {
+  const tabs = useMemo(
+    () =>
+      draft.agents.map((candidate) => ({
+        value: candidate.agent,
+        label: candidate.name,
+        icon: <AgentIcon agent={candidate.agent} />,
+      })),
+    [draft.agents],
+  );
   return (
     <Tabs
       value={agent ?? ""}
@@ -303,25 +313,17 @@ function AgentTabs({
       activationMode="manual"
       className="gap-1"
     >
-      <TabsList
-        aria-label={m.sessions_chat_agent_tabs()}
-        className="m-1 h-auto flex-wrap justify-start group-data-horizontal/tabs:h-auto"
-      >
-        {draft.agents.map((candidate) => (
-          <Tooltip key={candidate.agent}>
-            <TooltipTrigger asChild>
-              <TabsTrigger
-                value={candidate.agent}
-                aria-label={candidate.name}
-                className="h-7 flex-none px-2"
-              >
-                <AgentIcon agent={candidate.agent} />
-              </TabsTrigger>
-            </TooltipTrigger>
-            <TooltipContent>{candidate.name}</TooltipContent>
-          </Tooltip>
-        ))}
-      </TabsList>
+      <div className="flex px-1 pt-1">
+        <OverflowTabStrip
+          tabs={tabs}
+          value={agent ?? ""}
+          onValueChange={draft.onChoose}
+          moreLabel={m.sessions_chat_agent_more()}
+          labelActiveOnly
+          overflowActivationMode="manual"
+          listLabel={m.sessions_chat_agent_tabs()}
+        />
+      </div>
       {agent && (
         // The rows follow the tabs in the tab order without a stop of
         // their own.

@@ -2505,6 +2505,7 @@
   "sessions_chat_agent_retry": "Повторить",
   "sessions_chat_agent_settings": "Настроить агентов…",
   "sessions_chat_agent_tabs": "Агенты",
+  "sessions_chat_agent_more": "Ещё агенты",
   "sessions_chat_composer_label": "Сообщение агенту",
   "sessions_chat_detail_agent_terminal": "Терминал агента: только для просмотра",
   "sessions_chat_detail_error": "Не удалось загрузить подробности: {message}",
