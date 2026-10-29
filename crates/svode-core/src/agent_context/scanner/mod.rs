@@ -141,9 +141,8 @@ pub fn discover(
         &adapters,
         global_agents,
         environment,
-        &grok.switched_off,
+        &grok,
     ));
-    grok::apply_ignore(&mut result.skills, &grok);
     result.append(plugins::discover(
         &places,
         &adapters,

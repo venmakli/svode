@@ -4,17 +4,18 @@ use std::io::{Read, Take};
 use std::path::{Path, PathBuf};
 
 use crate::agent_adapters::{
-    AgentAdapterKind, AgentSourcePolicy, FlatSkills, SkillKey, SkillLayout, SkillPlace,
-    SkillPrecedence, SourceRegistryEnvironment, SourceSwitch,
+    AgentAdapterKind, AgentSourcePolicy, FlatSkills, SkillFallbackName, SkillKey, SkillLayout,
+    SkillPlace, SkillPrecedence, SourceRegistryEnvironment, SourceSwitch,
 };
 
 use super::super::model::{
     DiagnosticSeverity, InstructionOwner, InstructionOwnerKind, MarkdownPreview,
-    SkillDiscoveryAlias, SkillDiscoveryKind, SkillLinkKind, SkillMetadataLeaf, SkillMetadataValue,
-    SkillRow, SkillScope, SkillValidationStatus, SourceHealth, SourceResolution, SourceSupport,
+    SkillDiscoveryAlias, SkillDiscoveryKind, SkillLinkKind, SkillManifestField, SkillMetadataLeaf,
+    SkillMetadataValue, SkillRejection, SkillRow, SkillScope, SkillValidationStatus, SourceHealth,
+    SourceResolution, SourceSupport,
 };
 use super::io::{diagnostic, path_string};
-use super::{DiscoveryResult, TargetPlaces};
+use super::{DiscoveryResult, TargetPlaces, grok};
 
 const MAX_ROOT_ENTRIES: usize = 512;
 /// Folders of skills followed below one root.
@@ -36,10 +37,17 @@ const MAX_SKILL_BYTES: usize = 256 * 1024;
 const CLAUDE_SYNCED_SKILLS_DIR: &str = "synced";
 const CLAUDE_PLUGIN_MANIFEST: &str = ".claude-plugin/plugin.json";
 
+/// A skill file read without required fields: which agents load it is
+/// their rule's decision.
 #[derive(Debug, Clone)]
 struct ParsedSkill {
-    name: String,
-    description: String,
+    name: Option<String>,
+    /// The name the skill's place gives it: its folder, or a flat file
+    /// without `.md`.
+    place_name: String,
+    description: Option<String>,
+    /// What the file lacks of the frontmatter, `name` and `description`.
+    absent: Vec<SkillManifestField>,
     license: Option<String>,
     compatibility: Option<String>,
     metadata: Option<BTreeMap<String, SkillMetadataValue>>,
@@ -53,6 +61,25 @@ struct ParsedSkill {
 struct SkillFailure {
     code: &'static str,
     message: String,
+}
+
+impl ParsedSkill {
+    /// The name an agent knows the skill by `entry` under: `name`, else its
+    /// rule's fallback.
+    fn agent_name(&self, fallback: SkillFallbackName, entry: &Path, flat: bool) -> String {
+        if let Some(name) = &self.name {
+            return name.clone();
+        }
+        let named = match fallback {
+            SkillFallbackName::Folder if flat => entry.parent().and_then(Path::file_name),
+            SkillFallbackName::Folder => entry.file_name(),
+            SkillFallbackName::FileStem => entry.file_stem(),
+        };
+        named.map_or_else(
+            || self.place_name.clone(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -76,9 +103,13 @@ struct CanonicalOwnerBoundary {
     owner: InstructionOwner,
 }
 
-/// A path by which an agent registers a skill, in the agent's order.
+/// A path by which an agent registers a skill it loads, in the agent's
+/// order.
 struct Registration {
     agent: AgentAdapterKind,
+    scope: SkillScope,
+    /// The name the agent knows the skill under.
+    name: String,
     canonical: PathBuf,
     path: String,
     root: String,
@@ -103,8 +134,9 @@ pub(super) fn discover(
     adapters: &[AgentSourcePolicy],
     global_agents: &[AgentAdapterKind],
     environment: &SourceRegistryEnvironment,
-    grok_off: &BTreeSet<SourceSwitch>,
+    grok: &grok::Config,
 ) -> DiscoveryResult {
+    let grok_off = &grok.switched_off;
     let mut result = DiscoveryResult::default();
     let switched_off = adapters
         .iter()
@@ -194,9 +226,32 @@ pub(super) fn discover(
         })
         .map(|adapter| adapter.id)
         .collect::<BTreeSet<_>>();
-    apply_personal_shadowing(&mut rows, &personal_shadows_project);
+    apply_personal_shadowing(&mut rows, &personal_shadows_project, &registrations);
     apply_registration_precedence(&mut rows, adapters, &registrations);
-    for row in rows.values_mut() {
+    let mut skills = rows.into_values().collect::<Vec<_>>();
+    grok::apply_ignore(&mut skills, grok);
+    // A skill no agent that finds it loads is no row: each of them reports
+    // what the file lacks (DF-208 R2).
+    skills.retain(|row| {
+        if row
+            .aliases
+            .iter()
+            .any(|alias| row.missing_for(alias.adapter_id).is_empty())
+        {
+            return true;
+        }
+        for alias in &row.aliases {
+            let manifest = if row.path == row.canonical_path {
+                PathBuf::from(&alias.path)
+            } else {
+                Path::new(&alias.path).join("SKILL.md")
+            };
+            let (code, message) = rejection_failure(&manifest, row.missing_for(alias.adapter_id));
+            push_failure(&mut result, alias.adapter_id, &manifest, code, message);
+        }
+        false
+    });
+    for row in &mut skills {
         row.aliases.sort_by(|left, right| {
             left.adapter_id
                 .cmp(&right.adapter_id)
@@ -220,7 +275,7 @@ pub(super) fn discover(
                 });
         }
     }
-    result.skills = rows.into_values().collect();
+    result.skills = skills;
     result
 }
 
@@ -686,8 +741,11 @@ impl Scan<'_> {
                 return;
             }
         };
+        let flat = canonical_entry.is_file();
+        let rule = root.adapter.capabilities.skills.frontmatter_rule(flat);
+        let name = parsed.agent_name(rule.fallback_name, entry, flat);
         let folder = entry.file_name().and_then(|name| name.to_str());
-        if root.excluded_names.contains(&parsed.name)
+        if root.excluded_names.contains(&name)
             || folder.is_some_and(|folder| root.excluded_folders.iter().any(|name| name == folder))
         {
             return;
@@ -721,47 +779,36 @@ impl Scan<'_> {
             superseded_by: None,
             link_kind,
         };
-        self.registrations.push(Registration {
-            agent: root.adapter.id,
-            canonical: canonical_entry.clone(),
-            path: alias.path.clone(),
-            root: alias.root.clone(),
-            nearness: root.nearness,
-        });
-        if let Some(row) = self.rows.get_mut(&canonical_entry) {
-            row.aliases.push(alias);
-            return;
+        let missing = rule.missing(&parsed.absent);
+        // An agent that does not load the skill takes no part in its
+        // precedence.
+        if missing.is_empty() {
+            self.registrations.push(Registration {
+                agent: root.adapter.id,
+                scope: root.scope,
+                name,
+                canonical: canonical_entry.clone(),
+                path: alias.path.clone(),
+                root: alias.root.clone(),
+                nearness: root.nearness,
+            });
         }
-        let validation = if parsed.warnings.is_empty() {
-            SkillValidationStatus::Valid
-        } else {
-            SkillValidationStatus::Warning
-        };
-        self.rows.insert(
-            canonical_entry.clone(),
-            SkillRow {
-                id: format!("skill:{}", path_string(&canonical_entry)),
-                name: parsed.name,
-                description: parsed.description,
-                path: path_string(&parsed.manifest_path),
-                canonical_path: path_string(&canonical_entry),
-                owner,
-                license: parsed.license,
-                compatibility: parsed.compatibility,
-                metadata: parsed.metadata,
-                allowed_tools: parsed.allowed_tools,
-                validation,
-                health: if parsed.warnings.is_empty() {
-                    SourceHealth::Normal
-                } else {
-                    SourceHealth::Degraded
-                },
-                health_reasons: parsed.warnings.clone(),
-                warnings: parsed.warnings,
-                preview: parsed.preview,
-                aliases: vec![alias],
-            },
-        );
+        let row = self
+            .rows
+            .entry(canonical_entry.clone())
+            .or_insert_with(|| skill_row(parsed, &canonical_entry, owner));
+        row.aliases.push(alias);
+        if !missing.is_empty()
+            && row
+                .rejections
+                .iter()
+                .all(|rejection| rejection.agent != root.adapter.id)
+        {
+            row.rejections.push(SkillRejection {
+                agent: root.adapter.id,
+                missing,
+            });
+        }
     }
 }
 
@@ -826,19 +873,60 @@ fn canonical_skill_owner(
 }
 
 /// A skill a plugin brings: its row without discovery paths, which are the
-/// plugin's. A failure is a diagnostic code and message.
+/// plugin's, and without rejections, which the agents of the plugin decide.
+/// A failure is a diagnostic code and message.
 pub(super) fn plugin_skill(
     canonical_entry: &Path,
     owner: &InstructionOwner,
 ) -> Result<SkillRow, (&'static str, String)> {
     let parsed = parse_skill(canonical_entry).map_err(|failure| (failure.code, failure.message))?;
-    Ok(SkillRow {
+    Ok(skill_row(parsed, canonical_entry, owner.clone()))
+}
+
+/// The diagnostic of a skill whose file lacks what an agent requires.
+pub(super) fn rejection_failure(
+    manifest: &Path,
+    missing: &[SkillManifestField],
+) -> (&'static str, String) {
+    let fields = missing
+        .iter()
+        .filter(|field| **field != SkillManifestField::Frontmatter)
+        .collect::<Vec<_>>();
+    let Some(first) = fields.first() else {
+        return (
+            "skill_frontmatter_missing",
+            format!("Skill {} has no YAML frontmatter", manifest.display()),
+        );
+    };
+    let code = match first {
+        SkillManifestField::Name => "skill_name_missing",
+        _ => "skill_description_missing",
+    };
+    let names = fields
+        .iter()
+        .map(|field| match field {
+            SkillManifestField::Name => "name",
+            _ => "description",
+        })
+        .collect::<Vec<_>>();
+    (
+        code,
+        format!(
+            "Skill {} is missing required {}",
+            manifest.display(),
+            names.join(" and ")
+        ),
+    )
+}
+
+fn skill_row(parsed: ParsedSkill, canonical_entry: &Path, owner: InstructionOwner) -> SkillRow {
+    SkillRow {
         id: format!("skill:{}", path_string(canonical_entry)),
-        name: parsed.name,
+        name: parsed.name.unwrap_or(parsed.place_name),
         description: parsed.description,
         path: path_string(&parsed.manifest_path),
         canonical_path: path_string(canonical_entry),
-        owner: owner.clone(),
+        owner,
         license: parsed.license,
         compatibility: parsed.compatibility,
         metadata: parsed.metadata,
@@ -857,7 +945,9 @@ pub(super) fn plugin_skill(
         warnings: parsed.warnings,
         preview: parsed.preview,
         aliases: Vec::new(),
-    })
+        absent: parsed.absent,
+        rejections: Vec::new(),
+    }
 }
 
 fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
@@ -898,80 +988,108 @@ fn parse_skill(canonical_entry: &Path) -> Result<ParsedSkill, SkillFailure> {
             ),
         });
     }
-    let directory_name = canonical_entry.file_name().and_then(|value| value.to_str());
+    let directory_name = canonical_entry
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
     parse_manifest(
         &canonical_manifest,
         &manifest_path,
-        directory_name.map(|name| {
-            (
-                name,
-                "Skill name does not match its canonical directory name",
-            )
-        }),
+        directory_name,
+        "Skill name does not match its canonical directory name",
     )
 }
 
 /// A plain `*.md` file that an agent takes as a skill: its frontmatter is
 /// read like `SKILL.md`, and its name should match the file name.
 fn parse_flat_skill(canonical_file: &Path) -> Result<ParsedSkill, SkillFailure> {
-    let file_name = canonical_file.file_stem().and_then(|value| value.to_str());
+    let file_name = canonical_file
+        .file_stem()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
     parse_manifest(
         canonical_file,
         canonical_file,
-        file_name.map(|name| (name, "Skill name does not match its file name")),
+        file_name,
+        "Skill name does not match its file name",
     )
 }
 
-/// `expected_name` is the name the skill's place gives it, with the warning
-/// when the frontmatter differs.
+/// `place_name` is the name the skill's place gives it, with the warning
+/// when `name` of the frontmatter differs. No field is required here; the
+/// rules of the agents decide on what is absent (DF-208 R1), while a broken
+/// frontmatter or a field of another type fails for every agent (R8).
 fn parse_manifest(
     canonical_manifest: &Path,
     manifest_path: &Path,
-    expected_name: Option<(&str, &str)>,
+    place_name: String,
+    name_warning: &str,
 ) -> Result<ParsedSkill, SkillFailure> {
     let raw = read_bounded_stable(canonical_manifest)?;
     let (frontmatter, body) = split_frontmatter(&raw)?;
-    let document: serde_norway::Value =
-        serde_norway::from_str(frontmatter).map_err(|error| SkillFailure {
+    let document = match frontmatter.filter(|text| !text.trim().is_empty()) {
+        Some(text) => serde_norway::from_str(text).map_err(|error| SkillFailure {
             code: "skill_frontmatter_parse",
             message: format!(
                 "Could not parse {} frontmatter: {error}",
                 manifest_path.display()
             ),
-        })?;
-    let mapping = document.as_mapping().ok_or_else(|| SkillFailure {
-        code: "skill_frontmatter_mapping",
-        message: format!(
-            "Skill frontmatter must be a mapping: {}",
-            manifest_path.display()
-        ),
-    })?;
-    let name = required_string(mapping, "name", manifest_path)?;
-    let description = required_string(mapping, "description", manifest_path)?;
+        })?,
+        None => serde_norway::Value::Null,
+    };
+    let empty = serde_norway::Mapping::new();
+    let mapping = match &document {
+        serde_norway::Value::Null => None,
+        document => Some(document.as_mapping().ok_or_else(|| SkillFailure {
+            code: "skill_frontmatter_mapping",
+            message: format!(
+                "Skill frontmatter must be a mapping: {}",
+                manifest_path.display()
+            ),
+        })?),
+    };
+    let mut absent = Vec::new();
+    if mapping.is_none() {
+        absent.push(SkillManifestField::Frontmatter);
+    }
+    let mapping = mapping.unwrap_or(&empty);
+    let name = present_string(mapping, "name", manifest_path)?;
+    let description = present_string(mapping, "description", manifest_path)?;
+    if name.is_none() {
+        absent.push(SkillManifestField::Name);
+    }
+    if description.is_none() {
+        absent.push(SkillManifestField::Description);
+    }
     let mut warnings = Vec::new();
-    let trimmed_name = name.trim().to_string();
-    let trimmed_description = description.trim().to_string();
-    if trimmed_name != name {
-        warnings.push("Skill name contains surrounding whitespace".to_string());
-    }
-    if !valid_skill_name(&trimmed_name) {
-        warnings.push(
-            "Skill name does not follow the lowercase letters, digits, and hyphens convention"
-                .to_string(),
-        );
-    }
-    if let Some((expected, warning)) = expected_name
-        && expected != trimmed_name
-    {
-        warnings.push(warning.to_string());
-    }
-    if trimmed_description != description {
-        warnings.push("Skill description contains surrounding whitespace".to_string());
-    }
-    if trimmed_description.chars().count() > 1024 {
-        warnings
-            .push("Skill description exceeds the 1024-character compatibility limit".to_string());
-    }
+    let name = name.map(|name| {
+        let trimmed = name.trim().to_string();
+        if trimmed != name {
+            warnings.push("Skill name contains surrounding whitespace".to_string());
+        }
+        if !valid_skill_name(&trimmed) {
+            warnings.push(
+                "Skill name does not follow the lowercase letters, digits, and hyphens convention"
+                    .to_string(),
+            );
+        }
+        if trimmed != place_name {
+            warnings.push(name_warning.to_string());
+        }
+        trimmed
+    });
+    let description = description.map(|description| {
+        let trimmed = description.trim().to_string();
+        if trimmed != description {
+            warnings.push("Skill description contains surrounding whitespace".to_string());
+        }
+        if trimmed.chars().count() > 1024 {
+            warnings.push(
+                "Skill description exceeds the 1024-character compatibility limit".to_string(),
+            );
+        }
+        trimmed
+    });
     let license = optional_string(mapping, "license", &mut warnings);
     let compatibility = optional_string(mapping, "compatibility", &mut warnings);
     if compatibility
@@ -984,8 +1102,10 @@ fn parse_manifest(
     let metadata = optional_metadata(mapping, &mut warnings);
     let allowed_tools = optional_string(mapping, "allowed-tools", &mut warnings);
     Ok(ParsedSkill {
-        name: trimmed_name,
-        description: trimmed_description,
+        name,
+        place_name,
+        description,
+        absent,
         license,
         compatibility,
         metadata,
@@ -1066,12 +1186,15 @@ fn read_bounded_stable(path: &Path) -> Result<String, SkillFailure> {
     unreachable!("bounded retry loop returns")
 }
 
-fn split_frontmatter(raw: &str) -> Result<(&str, &str), SkillFailure> {
+/// The frontmatter and the body; a file that does not begin with `---` has
+/// no frontmatter and is all body.
+fn split_frontmatter(raw: &str) -> Result<(Option<&str>, &str), SkillFailure> {
     let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
-    let Some(first_newline) = raw.find('\n') else {
-        return Err(frontmatter_failure());
-    };
+    let first_newline = raw.find('\n').unwrap_or(raw.len());
     if raw[..first_newline].trim_end_matches('\r') != "---" {
+        return Ok((None, raw));
+    }
+    if first_newline == raw.len() {
         return Err(frontmatter_failure());
     }
     let frontmatter_start = first_newline + 1;
@@ -1087,7 +1210,10 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), SkillFailure> {
             } else {
                 line_end
             };
-            return Ok((&raw[frontmatter_start..line_start], &raw[body_start..]));
+            return Ok((
+                Some(&raw[frontmatter_start..line_start]),
+                &raw[body_start..],
+            ));
         }
         if line_end == raw.len() {
             return Err(frontmatter_failure());
@@ -1103,19 +1229,15 @@ fn frontmatter_failure() -> SkillFailure {
     }
 }
 
-fn required_string(
+/// `name` or `description`: `None` when absent or blank, a failure when it
+/// is no string.
+fn present_string(
     mapping: &serde_norway::Mapping,
     key: &'static str,
     path: &Path,
-) -> Result<String, SkillFailure> {
+) -> Result<Option<String>, SkillFailure> {
     let Some(value) = mapping.get(key) else {
-        return Err(SkillFailure {
-            code: match key {
-                "name" => "skill_name_missing",
-                _ => "skill_description_missing",
-            },
-            message: format!("Skill {} is missing required {key}", path.display()),
-        });
+        return Ok(None);
     };
     let Some(value) = value.as_str() else {
         return Err(SkillFailure {
@@ -1127,15 +1249,9 @@ fn required_string(
         });
     };
     if value.trim().is_empty() {
-        return Err(SkillFailure {
-            code: match key {
-                "name" => "skill_name_invalid",
-                _ => "skill_description_invalid",
-            },
-            message: format!("Skill {} has an empty {key}", path.display()),
-        });
+        return Ok(None);
     }
-    Ok(value.to_string())
+    Ok(Some(value.to_string()))
 }
 
 fn optional_string(
@@ -1240,26 +1356,34 @@ fn valid_skill_name(name: &str) -> bool {
         && !name.contains("--")
 }
 
+/// A personal skill shadows a project skill the agent knows under the same
+/// name.
 fn apply_personal_shadowing(
     rows: &mut BTreeMap<PathBuf, SkillRow>,
     adapters: &BTreeSet<AgentAdapterKind>,
+    registrations: &[Registration],
 ) {
     let mut personal_names = BTreeMap::new();
-    for row in rows.values() {
-        for alias in &row.aliases {
-            if adapters.contains(&alias.adapter_id) && alias.scope == SkillScope::Personal {
-                personal_names
-                    .entry((alias.adapter_id, row.name.clone()))
-                    .or_insert_with(|| alias.path.clone());
-            }
+    for registration in registrations {
+        if adapters.contains(&registration.agent) && registration.scope == SkillScope::Personal {
+            personal_names
+                .entry((registration.agent, registration.name.as_str()))
+                .or_insert_with(|| registration.path.clone());
         }
     }
-    for row in rows.values_mut() {
+    for registration in registrations {
+        if registration.scope != SkillScope::Project {
+            continue;
+        }
+        let Some(personal) = personal_names.get(&(registration.agent, registration.name.as_str()))
+        else {
+            continue;
+        };
+        let Some(row) = rows.get_mut(&registration.canonical) else {
+            continue;
+        };
         for alias in &mut row.aliases {
-            if alias.scope != SkillScope::Project {
-                continue;
-            }
-            if let Some(personal) = personal_names.get(&(alias.adapter_id, row.name.clone())) {
+            if alias.adapter_id == registration.agent && alias.path == registration.path {
                 alias.resolution = SourceResolution::Superseded;
                 alias.superseded_by = Some(personal.clone());
             }
@@ -1328,8 +1452,8 @@ fn apply_registration_precedence(
 fn skill_key(key: SkillKey, row: &SkillRow, registration: &Registration) -> String {
     let path = registration.path.as_str();
     match key {
-        SkillKey::Name => row.name.clone(),
-        SkillKey::NameIgnoringCase => row.name.to_lowercase(),
+        SkillKey::Name => registration.name.clone(),
+        SkillKey::NameIgnoringCase => registration.name.to_lowercase(),
         SkillKey::PathId => {
             let path = Path::new(path);
             let id = if row.path == row.canonical_path {
@@ -1449,11 +1573,11 @@ mod tests {
         write_skill(&root, "missing-description", "missing-description", None);
         let invalid = root.join("invalid");
         fs::create_dir_all(&invalid).unwrap();
-        fs::write(invalid.join("SKILL.md"), "not frontmatter").unwrap();
+        fs::write(invalid.join("SKILL.md"), "---\nname: invalid\n").unwrap();
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
 
-        assert_eq!(snapshot.skills.len(), 2);
+        assert_eq!(snapshot.skills.len(), 3);
         assert!(
             snapshot.skills.iter().any(|row| {
                 row.name == "valid" && row.validation == SkillValidationStatus::Valid
@@ -1482,18 +1606,30 @@ mod tests {
             .unwrap();
         assert_eq!(warning.health, SourceHealth::Degraded);
         assert_eq!(warning.health_reasons, warning.warnings);
+        // Agents of `.agents/skills` that need no description load it.
+        let undescribed = snapshot
+            .skills
+            .iter()
+            .find(|row| row.name == "missing-description")
+            .unwrap();
+        assert_eq!(undescribed.description, None);
+        assert_eq!(undescribed.health, SourceHealth::Normal);
+        assert_eq!(
+            undescribed.missing_for(AgentAdapterKind::Codex),
+            [SkillManifestField::Description]
+        );
+        assert!(undescribed.missing_for(AgentAdapterKind::Cursor).is_empty());
         assert!(
             snapshot
                 .diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.code == "skill_description_missing")
+                .all(|diagnostic| diagnostic.code != "skill_description_missing")
         );
-        assert!(
-            snapshot
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "skill_frontmatter_missing")
-        );
+        // An unclosed frontmatter fails for every agent.
+        assert!(snapshot.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "skill_frontmatter_missing"
+                && diagnostic.message == "Skill manifest must begin with closed YAML frontmatter"
+        }));
     }
 
     #[test]
@@ -1928,7 +2064,7 @@ mod tests {
         let payload = snapshot
             .skills
             .iter()
-            .find(|row| row.description == "Svode payload")
+            .find(|row| row.description.as_deref() == Some("Svode payload"))
             .expect("payload skill row");
         assert!(payload.canonical_path.contains("runtimes/desktop-1"));
         assert_eq!(
@@ -1947,7 +2083,7 @@ mod tests {
         let project_svode = snapshot
             .skills
             .iter()
-            .find(|row| row.description == "Project")
+            .find(|row| row.description.as_deref() == Some("Project"))
             .expect("project skill row");
         assert!(
             codex_and_claude(project_svode)
@@ -2231,38 +2367,287 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_file_without_frontmatter_is_a_diagnostic_only_where_an_agent_takes_it() {
+    fn a_flat_file_without_frontmatter_is_a_skill_of_the_agents_that_take_it() {
         let fixture = AgentsFixture::new();
         let root = fixture.home().join("work/repo/.agents/skills");
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("README.md"), "# Not a skill\n").unwrap();
 
         let discovery = fixture.discover("", &[]);
-        assert!(discovery.skills.is_empty());
-        let readme = discovery
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| {
-                diagnostic
-                    .path
-                    .as_deref()
-                    .is_some_and(|path| path.ends_with("README.md"))
-            })
-            .map(|diagnostic| (diagnostic.adapter_id, diagnostic.code.as_str()))
-            .collect::<Vec<_>>();
-        assert!(readme.contains(&(
-            Some(AgentAdapterKind::Opencode),
-            "skill_frontmatter_missing"
-        )));
-        assert!(readme.contains(&(
-            Some(AgentAdapterKind::KimiCode),
-            "skill_frontmatter_missing"
-        )));
+        assert_eq!(discovery.skills.len(), 1);
+        let readme = &discovery.skills[0];
+        assert_eq!(readme.name, "README");
+        assert!(readme.rejections.is_empty());
         // Agents that take only skill folders ignore it.
-        assert!(readme.iter().all(|(agent, _)| matches!(
-            agent,
-            Some(AgentAdapterKind::Opencode | AgentAdapterKind::KimiCode)
-        )));
+        let agents = readme
+            .aliases
+            .iter()
+            .map(|alias| alias.adapter_id)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            agents,
+            BTreeSet::from([AgentAdapterKind::Opencode, AgentAdapterKind::KimiCode])
+        );
+        assert!(discovery.diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .path
+                .as_deref()
+                .is_some_and(|path| path.ends_with("README.md"))
+        }));
+    }
+
+    /// A skill file of DF-208: `name` and `description` absent one at a
+    /// time, then the whole frontmatter.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Incomplete {
+        NoDescription,
+        NoName,
+        NoFrontmatter,
+        EmptyFrontmatter,
+    }
+
+    impl Incomplete {
+        const ALL: [Self; 4] = [
+            Self::NoDescription,
+            Self::NoName,
+            Self::NoFrontmatter,
+            Self::EmptyFrontmatter,
+        ];
+
+        fn slug(self) -> &'static str {
+            match self {
+                Self::NoDescription => "no-description",
+                Self::NoName => "no-name",
+                Self::NoFrontmatter => "no-frontmatter",
+                Self::EmptyFrontmatter => "empty-frontmatter",
+            }
+        }
+
+        fn text(self, name: &str) -> String {
+            match self {
+                Self::NoDescription => format!("---\nname: {name}\n---\n# {name}\n"),
+                Self::NoName => format!("---\ndescription: {name} skill\n---\n# {name}\n"),
+                Self::NoFrontmatter => format!("# {name}\n"),
+                Self::EmptyFrontmatter => format!("---\n---\n# {name}\n"),
+            }
+        }
+
+        fn code(self) -> &'static str {
+            match self {
+                Self::NoDescription => "skill_description_missing",
+                Self::NoName => "skill_name_missing",
+                Self::NoFrontmatter | Self::EmptyFrontmatter => "skill_frontmatter_missing",
+            }
+        }
+    }
+
+    #[test]
+    fn every_agent_loads_a_skill_with_incomplete_frontmatter_by_its_own_rule() {
+        use AgentAdapterKind::*;
+        // DF-208 evidence: whether the agent loads the skill, by form.
+        let loads = |agent, flat: bool, case| match agent {
+            ClaudeCode | Opencode | Cursor | GrokBuild | Hermes => true,
+            Codex | Pi => case == Incomplete::NoName,
+            QwenCode => false,
+            KimiCode => flat,
+        };
+        for agent in AgentAdapterKind::ALL {
+            let fixture = AgentsFixture::new();
+            let environment = &fixture.environment;
+            let (root, flat_files) = match agent {
+                Codex => (environment.codex_home.join("skills"), false),
+                ClaudeCode => (environment.claude_config_dir.join("skills"), false),
+                Opencode => (environment.opencode_config_dir.join("skills"), true),
+                Pi => (environment.pi_agent_dir.join("skills"), true),
+                QwenCode => (environment.qwen_home.join("skills"), false),
+                KimiCode => (environment.kimi_code_home.join("skills"), true),
+                Cursor => (fixture.home().join(".cursor/skills"), false),
+                GrokBuild => (environment.grok_home.join("skills"), false),
+                Hermes => (environment.hermes_home.join("skills"), false),
+            };
+            for case in Incomplete::ALL {
+                let folder = root.join(case.slug());
+                fs::create_dir_all(&folder).unwrap();
+                fs::write(folder.join("SKILL.md"), case.text(case.slug())).unwrap();
+                if flat_files {
+                    let name = format!("flat-{}", case.slug());
+                    fs::write(root.join(format!("{name}.md")), case.text(&name)).unwrap();
+                }
+            }
+
+            let discovery = fixture.discover("", &[agent]);
+            for case in Incomplete::ALL {
+                let mut forms = vec![(false, case.slug().to_string(), root.join(case.slug()))];
+                if flat_files {
+                    let name = format!("flat-{}", case.slug());
+                    forms.push((true, name.clone(), root.join(format!("{name}.md"))));
+                }
+                for (flat, name, path) in forms {
+                    let row = discovery.skills.iter().find(|row| {
+                        row.aliases
+                            .iter()
+                            .any(|alias| Path::new(&alias.path) == path)
+                    });
+                    let manifest = if flat {
+                        path.clone()
+                    } else {
+                        path.join("SKILL.md")
+                    };
+                    let reported = discovery.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.adapter_id == Some(agent)
+                            && diagnostic.code == case.code()
+                            && diagnostic.path.as_deref() == Some(path_string(&manifest).as_str())
+                    });
+                    if loads(agent, flat, case) {
+                        let row = row.unwrap_or_else(|| panic!("{agent:?} {case:?} flat={flat}"));
+                        // Without `name` the row is its folder or file.
+                        assert_eq!(row.name, name, "{agent:?} {case:?}");
+                        assert!(row.rejections.is_empty(), "{agent:?} {case:?}");
+                        assert!(!reported, "{agent:?} {case:?} flat={flat}");
+                    } else {
+                        assert!(row.is_none(), "{agent:?} {case:?} flat={flat}");
+                        assert!(reported, "{agent:?} {case:?} flat={flat}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_agent_compares_a_skill_without_name_by_the_name_it_gives_it() {
+        use SourceResolution::{Included, Superseded};
+        let fixture = AgentsFixture::new();
+        let write = |relative: &str, text: &str| {
+            let path = fixture.home().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        // pi names a flat skill without `name` by its skills folder.
+        write(
+            "work/repo/.pi/skills/first.md",
+            "---\ndescription: First\n---\n",
+        );
+        write(
+            "work/repo/.pi/skills/second.md",
+            "---\ndescription: Second\n---\n",
+        );
+        // Kimi Code names a flat one by its file, ignoring case.
+        write("work/repo/.kimi-code/skills/Quick.md", "# Quick\n");
+        write("work/repo/.agents/skills/quick.md", "# quick\n");
+        // Grok Build names a folder without `name` by the folder.
+        write(
+            "work/repo/.grok/skills/tool/SKILL.md",
+            "---\ndescription: Grok tool\n---\n",
+        );
+        fixture.skill("work/repo/.agents/skills/tool", "tool");
+        // Claude Code too: a personal folder shadows the project skill.
+        write(".claude/skills/review/SKILL.md", "# Personal review\n");
+        fixture.skill("work/repo/.claude/skills/review", "review");
+
+        let discovery = fixture.discover("", &[AgentAdapterKind::Pi, AgentAdapterKind::ClaudeCode]);
+
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::Pi),
+            found(&[
+                ("work/repo/.agents/skills/tool", Included),
+                ("work/repo/.pi/skills/first.md", Included),
+                ("work/repo/.pi/skills/second.md", Superseded),
+            ])
+        );
+        // The rows keep their own names.
+        assert!(discovery.skills.iter().any(|row| row.name == "second"));
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::KimiCode),
+            found(&[
+                ("work/repo/.agents/skills/quick.md", Superseded),
+                ("work/repo/.agents/skills/tool", Included),
+                ("work/repo/.kimi-code/skills/Quick.md", Included),
+            ])
+        );
+        let grok = fixture.found_by(&discovery, AgentAdapterKind::GrokBuild);
+        assert!(grok.contains(&("work/repo/.grok/skills/tool".to_string(), Included)));
+        assert!(grok.contains(&("work/repo/.agents/skills/tool".to_string(), Superseded)));
+        let claude = fixture.found_by(&discovery, AgentAdapterKind::ClaudeCode);
+        assert!(claude.contains(&(".claude/skills/review".to_string(), Included)));
+        assert!(claude.contains(&("work/repo/.claude/skills/review".to_string(), Superseded)));
+    }
+
+    #[test]
+    fn an_agent_that_does_not_load_a_skill_takes_no_part_in_its_precedence() {
+        use SourceResolution::Included;
+        let fixture = AgentsFixture::new();
+        let write = |relative: &str, text: &str| {
+            let path = fixture.home().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        // Qwen Code skips the project skill without `description`, which
+        // other agents load, and takes its personal one of the same name.
+        write(
+            "work/repo/.agents/skills/review/SKILL.md",
+            "---\nname: review\n---\n",
+        );
+        fixture.skill(".qwen/skills/review", "review");
+
+        let discovery = fixture.discover("", &[AgentAdapterKind::QwenCode]);
+
+        assert_eq!(
+            fixture.found_by(&discovery, AgentAdapterKind::QwenCode),
+            found(&[
+                (".qwen/skills/review", Included),
+                ("work/repo/.agents/skills/review", Included),
+            ])
+        );
+        let project = discovery
+            .skills
+            .iter()
+            .find(|row| row.path.contains("work/repo/.agents"))
+            .unwrap();
+        assert_eq!(
+            project.missing_for(AgentAdapterKind::QwenCode),
+            [SkillManifestField::Description]
+        );
+        assert!(project.missing_for(AgentAdapterKind::Cursor).is_empty());
+    }
+
+    #[test]
+    fn a_broken_frontmatter_fails_for_every_agent_as_before() {
+        let fixture = AgentsFixture::new();
+        let root = fixture.home().join("work/repo/.agents/skills");
+        for (folder, text) in [
+            ("unclosed", "---\nname: unclosed\n"),
+            ("null-name", "---\nname:\ndescription: Null name\n---\n"),
+            ("number", "---\nname: number\ndescription: 7\n---\n"),
+            ("yaml", "---\nname: [\n---\n"),
+            ("scalar", "---\njust text\n---\n"),
+        ] {
+            fs::create_dir_all(root.join(folder)).unwrap();
+            fs::write(root.join(folder).join("SKILL.md"), text).unwrap();
+        }
+
+        let discovery = fixture.discover("", &[]);
+
+        assert!(discovery.skills.is_empty());
+        for (folder, code) in [
+            ("unclosed", "skill_frontmatter_missing"),
+            ("null-name", "skill_name_invalid"),
+            ("number", "skill_description_invalid"),
+            ("yaml", "skill_frontmatter_parse"),
+            ("scalar", "skill_frontmatter_mapping"),
+        ] {
+            let path = path_string(&root.join(folder).join("SKILL.md"));
+            let agents = discovery
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.code == code && diagnostic.path.as_deref() == Some(path.as_str())
+                })
+                .filter_map(|diagnostic| diagnostic.adapter_id)
+                .collect::<BTreeSet<_>>();
+            // Lenient agents report it too.
+            assert!(agents.contains(&AgentAdapterKind::Cursor), "{folder}");
+            assert!(agents.contains(&AgentAdapterKind::Codex), "{folder}");
+        }
     }
 
     #[test]

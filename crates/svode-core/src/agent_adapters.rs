@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_context::model::SkillDiscoveryKind;
+use crate::agent_context::model::{SkillDiscoveryKind, SkillManifestField};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SourceRegistryError {
@@ -497,11 +497,73 @@ pub struct SkillRootRule {
     pub switch: Option<SourceSwitch>,
 }
 
+/// The name an agent gives a skill whose frontmatter has no `name`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillFallbackName {
+    /// The folder that holds the file: the skill folder of `SKILL.md`, the
+    /// folder a flat file lies in.
+    Folder,
+    /// The file name without `.md`.
+    FileStem,
+}
+
+/// What an agent requires of a skill file before it loads the skill, and
+/// the name it gives a skill without `name` (DF-208 R1). An absent key, an
+/// empty or blank string and an empty frontmatter count as absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFrontmatterRule {
+    pub frontmatter: bool,
+    pub name: bool,
+    pub description: bool,
+    pub fallback_name: SkillFallbackName,
+}
+
+impl SkillFrontmatterRule {
+    /// Loads a skill whatever its frontmatter holds; names it by its folder.
+    pub const LENIENT: Self = Self {
+        frontmatter: false,
+        name: false,
+        description: false,
+        fallback_name: SkillFallbackName::Folder,
+    };
+
+    /// What the rule requires of a file that lacks `absent`; empty when the
+    /// agent loads it.
+    pub fn missing(&self, absent: &[SkillManifestField]) -> Vec<SkillManifestField> {
+        if self.frontmatter && absent.contains(&SkillManifestField::Frontmatter) {
+            return vec![SkillManifestField::Frontmatter];
+        }
+        [
+            (self.name, SkillManifestField::Name),
+            (self.description, SkillManifestField::Description),
+        ]
+        .into_iter()
+        .filter(|(required, field)| *required && absent.contains(field))
+        .map(|(_, field)| field)
+        .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDiscoveryCapability {
     pub precedence: SkillPrecedence,
     pub roots: Vec<SkillRootRule>,
+    /// The rule for a skill folder with `SKILL.md`, also of a plugin.
+    pub folder_rule: SkillFrontmatterRule,
+    /// The rule for a flat `*.md` skill of an agent that takes them.
+    pub flat_rule: Option<SkillFrontmatterRule>,
+}
+
+impl SkillDiscoveryCapability {
+    pub fn frontmatter_rule(&self, flat: bool) -> SkillFrontmatterRule {
+        match self.flat_rule {
+            Some(rule) if flat => rule,
+            _ => self.folder_rule,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -984,6 +1046,15 @@ impl AgentAdapterRegistry {
                     InstructionDiscoveryPolicy::CodexAgents,
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::Coexist,
+                        // Codex 0.159: no `description` or no frontmatter, no skill; a skill
+                        // without `name` is its folder.
+                        folder_rule: SkillFrontmatterRule {
+                            frontmatter: true,
+                            name: false,
+                            description: true,
+                            fallback_name: SkillFallbackName::Folder,
+                        },
+                        flat_rule: None,
                         roots: vec![
                             walk(SkillDiscoveryKind::CodexProject, ".agents/skills"),
                             walk(SkillDiscoveryKind::CodexProjectConfig, ".codex/skills"),
@@ -1004,6 +1075,9 @@ impl AgentAdapterRegistry {
                 InstructionDiscoveryPolicy::ClaudeMemory,
                 SkillDiscoveryCapability {
                     precedence: SkillPrecedence::ClaudePersonalShadowsProject,
+                    // Claude Code 2.1.312: every field is optional.
+                    folder_rule: SkillFrontmatterRule::LENIENT,
+                    flat_rule: None,
                     roots: vec![
                         walk_skills(
                             SkillDiscoveryKind::ClaudeProject,
@@ -1083,6 +1157,15 @@ impl AgentAdapterRegistry {
                     }),
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::LastWins(SkillKey::PathId),
+                        // opencode 2.0.22: every field is optional; a skill without `name` is its
+                        // id from the path.
+                        folder_rule: SkillFrontmatterRule::LENIENT,
+                        flat_rule: Some(SkillFrontmatterRule {
+                            frontmatter: false,
+                            name: false,
+                            description: false,
+                            fallback_name: SkillFallbackName::FileStem,
+                        }),
                         roots,
                     },
                 )
@@ -1141,6 +1224,20 @@ impl AgentAdapterRegistry {
                     }),
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::FirstWins(SkillKey::Name),
+                        // pi 1.0.0: no `description` or no frontmatter, no skill; a flat one
+                        // without `name` is the folder it lies in.
+                        folder_rule: SkillFrontmatterRule {
+                            frontmatter: true,
+                            name: false,
+                            description: true,
+                            fallback_name: SkillFallbackName::Folder,
+                        },
+                        flat_rule: Some(SkillFrontmatterRule {
+                            frontmatter: true,
+                            name: false,
+                            description: true,
+                            fallback_name: SkillFallbackName::Folder,
+                        }),
                         roots: vec![
                             skill_root(
                                 SkillPlace::Walk {
@@ -1213,6 +1310,14 @@ impl AgentAdapterRegistry {
                     }),
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::FirstWins(SkillKey::Name),
+                        // Qwen Code 0.24.7: frontmatter, `name` and `description` are required.
+                        folder_rule: SkillFrontmatterRule {
+                            frontmatter: true,
+                            name: true,
+                            description: true,
+                            fallback_name: SkillFallbackName::Folder,
+                        },
+                        flat_rule: None,
                         roots: vec![
                             walk_skills(
                                 SkillDiscoveryKind::ProjectRoot,
@@ -1287,6 +1392,20 @@ impl AgentAdapterRegistry {
                     }),
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::FirstWins(SkillKey::NameIgnoringCase),
+                        // Kimi Code 2.1.1: a folder needs frontmatter, `name` and `description`; a
+                        // flat file needs none and is named by its file.
+                        folder_rule: SkillFrontmatterRule {
+                            frontmatter: true,
+                            name: true,
+                            description: true,
+                            fallback_name: SkillFallbackName::Folder,
+                        },
+                        flat_rule: Some(SkillFrontmatterRule {
+                            frontmatter: false,
+                            name: false,
+                            description: false,
+                            fallback_name: SkillFallbackName::FileStem,
+                        }),
                         roots: vec![
                             skill_root(
                                 SkillPlace::Walk {
@@ -1367,6 +1486,9 @@ impl AgentAdapterRegistry {
                     }),
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::FirstWins(SkillKey::RootParentPath),
+                        // Cursor 2026.10.01: every field is optional; the skill is its folder.
+                        folder_rule: SkillFrontmatterRule::LENIENT,
+                        flat_rule: None,
                         roots,
                     },
                 )
@@ -1461,6 +1583,9 @@ impl AgentAdapterRegistry {
                     }),
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::NearestFirstWins(SkillKey::Name),
+                        // Grok Build 1.0.46: every field is optional.
+                        folder_rule: SkillFrontmatterRule::LENIENT,
+                        flat_rule: None,
                         roots: vec![
                             walk_root(".grok", &[], None),
                             walk_root(".agents", &[], None),
@@ -1550,6 +1675,9 @@ impl AgentAdapterRegistry {
                     }),
                     SkillDiscoveryCapability {
                         precedence: SkillPrecedence::FirstWins(SkillKey::Name),
+                        // Hermes 2026.9.24: every field is optional.
+                        folder_rule: SkillFrontmatterRule::LENIENT,
+                        flat_rule: None,
                         roots: vec![
                             skill_root(
                                 SkillPlace::Walk {
@@ -2514,6 +2642,56 @@ mod tests {
             policies.iter().map(|policy| policy.id).collect::<Vec<_>>(),
             AgentAdapterKind::ALL
         );
+    }
+
+    #[test]
+    fn each_agent_requires_the_frontmatter_its_evidence_shows() {
+        use AgentAdapterKind::*;
+        use SkillManifestField::{Description, Frontmatter, Name};
+        let environment = SourceRegistryEnvironment::for_tests(PathBuf::from("/home/test"));
+        let no_frontmatter = [Frontmatter, Name, Description];
+        // DF-208: what each agent misses in a file without `description`,
+        // without `name` and without frontmatter, by form.
+        let expected: [(AgentAdapterKind, bool, [&[SkillManifestField]; 3]); 12] = [
+            (ClaudeCode, false, [&[], &[], &[]]),
+            (Codex, false, [&[Description], &[], &[Frontmatter]]),
+            (Opencode, false, [&[], &[], &[]]),
+            (Opencode, true, [&[], &[], &[]]),
+            (Cursor, false, [&[], &[], &[]]),
+            (GrokBuild, false, [&[], &[], &[]]),
+            (QwenCode, false, [&[Description], &[Name], &[Frontmatter]]),
+            (KimiCode, false, [&[Description], &[Name], &[Frontmatter]]),
+            (KimiCode, true, [&[], &[], &[]]),
+            (Hermes, false, [&[], &[], &[]]),
+            (Pi, false, [&[Description], &[], &[Frontmatter]]),
+            (Pi, true, [&[Description], &[], &[Frontmatter]]),
+        ];
+        for (agent, flat, [description, name, frontmatter]) in expected {
+            let policy = AgentAdapterRegistry
+                .source_policy(agent, &environment)
+                .unwrap();
+            let rule = policy.capabilities.skills.frontmatter_rule(flat);
+            assert_eq!(
+                rule.missing(&[Description]),
+                description,
+                "{agent:?} {flat}"
+            );
+            assert_eq!(rule.missing(&[Name]), name, "{agent:?} {flat}");
+            assert_eq!(
+                rule.missing(&no_frontmatter),
+                frontmatter,
+                "{agent:?} {flat}"
+            );
+            assert_eq!(
+                rule.fallback_name,
+                if flat && matches!(agent, Opencode | KimiCode) {
+                    SkillFallbackName::FileStem
+                } else {
+                    SkillFallbackName::Folder
+                },
+                "{agent:?} {flat}"
+            );
+        }
     }
 
     #[cfg(unix)]

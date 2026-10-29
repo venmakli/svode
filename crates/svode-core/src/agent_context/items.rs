@@ -14,12 +14,13 @@ use super::model::{
     AgentContextDiscovery, AgentContextSnapshotContent, ContextItem, ContextItemKind,
     ContextItemReader, ContextItemSource, ContextLocation, ContextLocationKind, ContextMcpFacts,
     ContextPluginFacts, ContextSkillFacts, InstructionReference, InstructionRow, MarkdownPreview,
-    McpServerRow, PluginRow, PluginSwitch, SkillRow, SourceHealth, SourceLinkKind,
-    SourceResolution, SourceSupport, UnappliedReason,
+    McpServerRow, PluginRow, PluginSwitch, SkillManifestField, SkillRejection, SkillRow,
+    SourceHealth, SourceLinkKind, SourceResolution, SourceSupport, UnappliedReason,
 };
 use super::scanner::skill_files;
 
 /// How one agent finds an item by one path.
+#[derive(Clone)]
 struct Finding {
     agent: AgentAdapterKind,
     path: String,
@@ -31,6 +32,8 @@ struct Finding {
     disabled: bool,
     /// The agent keeps the plugin's switch outside the device's files.
     unverified: bool,
+    /// What the agent requires of a skill file and this one lacks.
+    missing: Vec<SkillManifestField>,
 }
 
 pub(super) fn snapshot(
@@ -152,6 +155,7 @@ fn instruction_items(
                     superseded_by: superseded_by(row.resolution, &row.superseded_by),
                     disabled: false,
                     unverified: false,
+                    missing: Vec::new(),
                 })
                 .collect::<Vec<_>>();
             let (health, health_reasons) =
@@ -202,6 +206,7 @@ fn skill_item(
             superseded_by: superseded_by(alias.resolution, &alias.superseded_by),
             disabled: false,
             unverified: false,
+            missing: row.missing_for(alias.adapter_id).to_vec(),
         })
         .collect();
     item(skill_facts(row, row.id.clone(), places), findings, enabled)
@@ -213,7 +218,7 @@ fn skill_facts(row: &SkillRow, id: String, places: &Places) -> ItemFacts {
         id,
         kind: ContextItemKind::Skill,
         name: row.name.clone(),
-        description: Some(row.description.clone()),
+        description: row.description.clone(),
         location: places.location(canonical.parent().unwrap_or(canonical)),
         modified_at: modified_at(Path::new(&row.path)),
         path: row.path.clone(),
@@ -255,6 +260,7 @@ fn plugin_item(
             superseded_by: finding.superseded_by.clone(),
             disabled: finding.switch == PluginSwitch::Off,
             unverified: finding.switch == PluginSwitch::Unverified,
+            missing: Vec::new(),
         })
         .collect::<Vec<_>>();
     let directory = Path::new(&row.directory);
@@ -286,7 +292,7 @@ fn plugin_item(
             icon: row.icon.clone(),
             managed_by_svode,
         },
-        findings,
+        findings.clone(),
         enabled,
     );
     let nested = |mut component: ContextItem| {
@@ -298,12 +304,24 @@ fn plugin_item(
         component.managed_by_svode = managed_by_svode;
         component
     };
+    // A skill takes the plugin's findings, without the agents that do not
+    // load it as providers (DF-208 R7).
     let mut components = row
         .skills
         .iter()
         .map(|skill| {
             let id = format!("{}#{}", row.id, skill.id);
-            nested(item(skill_facts(skill, id, places), Vec::new(), enabled))
+            let findings = findings
+                .iter()
+                .map(|finding| Finding {
+                    missing: skill.missing_for(finding.agent).to_vec(),
+                    ..finding.clone()
+                })
+                .collect();
+            let mut component = item(skill_facts(skill, id, places), findings, enabled);
+            component.location = location.clone();
+            component.managed_by_svode = managed_by_svode;
+            component
         })
         .collect::<Vec<_>>();
     components.extend(row.instructions.iter().map(|instruction| {
@@ -392,6 +410,7 @@ fn mcp_item(
             superseded_by: finding.superseded_by.clone(),
             disabled: finding.disabled,
             unverified: false,
+            missing: Vec::new(),
         })
         .collect();
     let path = Path::new(&row.path);
@@ -460,28 +479,58 @@ fn item(
         .iter()
         .map(|finding| finding.agent)
         .collect::<BTreeSet<_>>();
+    let mut rejections = Vec::<SkillRejection>::new();
+    for finding in &findings {
+        if !finding.missing.is_empty()
+            && rejections
+                .iter()
+                .all(|rejection| rejection.agent != finding.agent)
+        {
+            rejections.push(SkillRejection {
+                agent: finding.agent,
+                missing: finding.missing.clone(),
+            });
+        }
+    }
+    rejections.sort_by_key(|rejection| rejection.agent);
     let enabled_findings = findings
         .into_iter()
         .filter(|finding| enabled.contains(&finding.agent))
         .collect::<Vec<_>>();
     let providers = enabled_findings
         .iter()
-        .filter(|finding| finding.superseded_by.is_none() && !finding.disabled)
+        .filter(|finding| {
+            finding.superseded_by.is_none() && !finding.disabled && finding.missing.is_empty()
+        })
         .map(|finding| finding.agent)
         .collect::<BTreeSet<_>>();
     let idle_readers = readers
         .into_iter()
         .filter(|agent| !enabled.contains(agent))
         .collect();
+    // Agents that do not load a skill explain an empty value only when no
+    // enabled agent that finds it does.
+    let loading = enabled_findings
+        .iter()
+        .filter(|finding| finding.missing.is_empty())
+        .collect::<Vec<_>>();
     let unapplied = if !providers.is_empty() {
         None
     } else if enabled_findings.is_empty() {
         Some(UnappliedReason::NotFound)
-    } else if enabled_findings.iter().any(|finding| finding.disabled) {
+    } else if loading.is_empty() {
+        Some(UnappliedReason::Rejected {
+            by: rejections
+                .iter()
+                .filter(|rejection| enabled.contains(&rejection.agent))
+                .cloned()
+                .collect(),
+        })
+    } else if loading.iter().any(|finding| finding.disabled) {
         Some(UnappliedReason::Disabled)
     } else {
         Some(UnappliedReason::Superseded {
-            by: enabled_findings
+            by: loading
                 .iter()
                 .filter_map(|finding| finding.superseded_by.clone())
                 .filter(|by| !by.is_empty())
@@ -511,6 +560,7 @@ fn item(
                 superseded_by: finding.superseded_by,
                 disabled: finding.disabled,
                 unverified: finding.unverified,
+                missing: finding.missing,
             });
         }
     }
@@ -527,11 +577,18 @@ fn item(
         owner_root: facts.owner_root,
         location: facts.location,
         modified_at: facts.modified_at,
-        health: facts.health,
+        // A skill an agent that finds it does not load has problems; why is
+        // in its rejections (DF-208 R4).
+        health: if rejections.is_empty() {
+            facts.health
+        } else {
+            SourceHealth::Degraded
+        },
         health_reasons: facts.health_reasons,
         providers: providers.into_iter().collect(),
         unapplied,
         idle_readers,
+        rejections,
         sources: sources.into_values().collect(),
         preview: facts.preview,
         references: facts.references,
@@ -841,6 +898,7 @@ mod tests {
                 superseded_by: Some(by),
                 disabled: false,
                 unverified: false,
+                missing: Vec::new(),
             }]
         );
     }
@@ -1063,6 +1121,237 @@ mod tests {
         assert_eq!(by_path(&with_pi, &shared).providers, vec![Pi]);
     }
 
+    fn rejected(agent: AgentAdapterKind, missing: &[SkillManifestField]) -> SkillRejection {
+        SkillRejection {
+            agent,
+            missing: missing.to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_skill_some_finding_agents_do_not_load_has_problems_and_no_such_providers() {
+        use AgentAdapterKind::{KimiCode, Pi, QwenCode};
+        use SkillManifestField::Description;
+        let fixture = Fixture::new();
+        let manifest = fixture.write(
+            fixture.project.path(),
+            ".agents/skills/nodesc/SKILL.md",
+            "---\nname: nodesc\n---\n# nodesc\n",
+        );
+
+        let scanned = scan(
+            fixture.project.path(),
+            fixture.project.path(),
+            &fixture.environment,
+            &[CODEX],
+        )
+        .unwrap();
+        let item = by_path(&scanned.items, &manifest);
+        assert_eq!(item.name, "nodesc");
+        assert_eq!(item.description, None);
+        assert!(item.providers.is_empty());
+        let codex = rejected(CODEX, &[Description]);
+        assert_eq!(
+            item.unapplied,
+            Some(UnappliedReason::Rejected {
+                by: vec![codex.clone()]
+            })
+        );
+        assert_eq!(item.sources[0].readers[0].missing, vec![Description]);
+        assert_eq!(
+            item.rejections,
+            vec![
+                codex,
+                rejected(Pi, &[Description]),
+                rejected(QwenCode, &[Description]),
+                rejected(KimiCode, &[Description]),
+            ]
+        );
+        // Agents off in Svode that do not load it stay its readers.
+        assert!(item.idle_readers.contains(&QwenCode));
+        assert!(item.idle_readers.contains(&CURSOR));
+        assert_eq!(item.health, SourceHealth::Degraded);
+        assert!(item.health_reasons.is_empty());
+        // The row explains itself; the feature-wide set does not repeat it.
+        assert!(scanned.diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .path
+                .as_deref()
+                .is_some_and(|path| path.contains("nodesc"))
+        }));
+
+        let items = fixture.items(&[CODEX, CURSOR]);
+        let item = by_path(&items, &manifest);
+        assert_eq!(item.providers, vec![CURSOR]);
+        assert_eq!(item.unapplied, None);
+        let readers = item.sources[0]
+            .readers
+            .iter()
+            .map(|reader| (reader.agent, reader.missing.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(readers, vec![(CODEX, vec![Description]), (CURSOR, vec![])]);
+
+        // One no finding agent loads is no item but a diagnostic of each.
+        let qwen = fixture.write(
+            fixture.project.path(),
+            ".qwen/skills/unnamed/SKILL.md",
+            "---\ndescription: Unnamed\n---\n",
+        );
+        let scanned = scan(
+            fixture.project.path(),
+            fixture.project.path(),
+            &fixture.environment,
+            &[QwenCode],
+        )
+        .unwrap();
+        assert!(
+            scanned
+                .items
+                .iter()
+                .all(|item| item.path != path_string(&qwen))
+        );
+        assert!(scanned.diagnostics.iter().any(|diagnostic| {
+            diagnostic.adapter_id == Some(QwenCode)
+                && diagnostic.code == "skill_name_missing"
+                && diagnostic.path.as_deref() == Some(path_string(&qwen).as_str())
+        }));
+    }
+
+    #[test]
+    fn a_skill_every_finding_agent_loads_is_a_normal_row_without_a_description() {
+        let fixture = Fixture::new();
+        let manifest = fixture.write(
+            fixture.project.path(),
+            ".claude/skills/bare/SKILL.md",
+            "# Bare\nbody\n",
+        );
+
+        let items = fixture.items(&[CLAUDE, CURSOR]);
+
+        let item = by_path(&items, &manifest);
+        assert_eq!(item.name, "bare");
+        assert_eq!(item.description, None);
+        assert_eq!(item.providers, vec![CLAUDE, CURSOR]);
+        assert!(item.rejections.is_empty());
+        assert_eq!(item.health, SourceHealth::Normal);
+        assert_eq!(item.preview.markdown, "# Bare\nbody\n");
+    }
+
+    #[test]
+    fn a_plugin_skill_leaves_out_the_plugin_agents_that_do_not_load_it() {
+        use SkillManifestField::Description;
+        let fixture = Fixture::new();
+        let directory = fixture.project.path().join("kit");
+        let skill = |name: &str, description: Option<&str>| {
+            let canonical = directory.join("skills").join(name);
+            SkillRow {
+                id: format!("skill:{}", path_string(&canonical)),
+                name: name.to_string(),
+                description: description.map(str::to_string),
+                path: path_string(&canonical.join("SKILL.md")),
+                canonical_path: path_string(&canonical),
+                owner: super::super::model::InstructionOwner {
+                    kind: super::super::model::InstructionOwnerKind::TargetSpace,
+                    root: path_string(&directory),
+                },
+                license: None,
+                compatibility: None,
+                metadata: None,
+                allowed_tools: None,
+                validation: super::super::model::SkillValidationStatus::Valid,
+                health: SourceHealth::Normal,
+                health_reasons: Vec::new(),
+                warnings: Vec::new(),
+                preview: empty_preview(),
+                aliases: Vec::new(),
+                absent: if description.is_some() {
+                    Vec::new()
+                } else {
+                    vec![Description]
+                },
+                rejections: if description.is_some() {
+                    Vec::new()
+                } else {
+                    vec![rejected(CODEX, &[Description])]
+                },
+            }
+        };
+        let finding = |agent| super::super::model::PluginFinding {
+            adapter_id: agent,
+            scope: super::super::model::SkillScope::Project,
+            path: path_string(&directory),
+            link_kind: SourceLinkKind::Direct,
+            switch: PluginSwitch::On,
+            superseded_by: None,
+        };
+        let project = path_string(fixture.project.path());
+        let discovery = AgentContextDiscovery {
+            project_root: project.clone(),
+            target_root: project.clone(),
+            repository_root: project,
+            instructions: Vec::new(),
+            skills: Vec::new(),
+            plugins: vec![PluginRow {
+                id: format!("plugin:{}", path_string(&directory)),
+                name: "kit".to_string(),
+                description: None,
+                path: path_string(&directory.join("plugin.json")),
+                directory: path_string(&directory),
+                place: path_string(fixture.project.path()),
+                owner_root: path_string(&directory),
+                composition: super::super::model::PluginComposition::Declared,
+                manifest: None,
+                icon: None,
+                readme: None,
+                skills: vec![skill("described", Some("Described")), skill("bare", None)],
+                instructions: Vec::new(),
+                mcp_servers: Vec::new(),
+                counts: Vec::new(),
+                health: SourceHealth::Normal,
+                health_reasons: Vec::new(),
+                findings: vec![finding(CODEX), finding(CLAUDE)],
+            }],
+            mcp_servers: Vec::new(),
+            diagnostics: Vec::new(),
+            observed_project_paths: Vec::new(),
+            observed_personal_paths: Vec::new(),
+        };
+
+        let both = snapshot(discovery.clone(), &fixture.environment, &[CODEX, CLAUDE]);
+        let kit = &both.items[0];
+        assert_eq!(kit.providers, vec![CODEX, CLAUDE]);
+        assert_eq!(kit.health, SourceHealth::Normal);
+        let [described, bare] = &kit.components[..] else {
+            panic!("{:#?}", kit.components);
+        };
+        assert_eq!(described.providers, vec![CODEX, CLAUDE]);
+        assert_eq!(described.health, SourceHealth::Normal);
+        assert_eq!(bare.providers, vec![CLAUDE]);
+        assert_eq!(bare.description, None);
+        assert_eq!(bare.health, SourceHealth::Degraded);
+        assert_eq!(bare.rejections, vec![rejected(CODEX, &[Description])]);
+        assert_eq!(bare.location, kit.location);
+        assert_eq!(
+            bare.sources[0]
+                .readers
+                .iter()
+                .map(|reader| (reader.agent, reader.missing.clone()))
+                .collect::<Vec<_>>(),
+            vec![(CODEX, vec![Description]), (CLAUDE, vec![])]
+        );
+
+        let codex = snapshot(discovery, &fixture.environment, &[CODEX]);
+        let bare = &codex.items[0].components[1];
+        assert!(bare.providers.is_empty());
+        assert_eq!(
+            bare.unapplied,
+            Some(UnappliedReason::Rejected {
+                by: vec![rejected(CODEX, &[Description])]
+            })
+        );
+        assert_eq!(bare.idle_readers, vec![CLAUDE]);
+    }
+
     #[test]
     fn a_flat_skill_lies_in_its_skills_folder() {
         let fixture = Fixture::new();
@@ -1106,12 +1395,14 @@ mod tests {
                     superseded_by: None,
                     disabled: false,
                     unverified: false,
+                    missing: Vec::new(),
                 },
                 ContextItemReader {
                     agent: CLAUDE,
                     superseded_by: Some(path_string(&claude)),
                     disabled: false,
                     unverified: false,
+                    missing: Vec::new(),
                 },
             ]
         );

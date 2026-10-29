@@ -184,12 +184,33 @@ pub struct SkillDiscoveryAlias {
     pub link_kind: SkillLinkKind,
 }
 
+/// A part of a skill file's frontmatter an agent may require before it loads
+/// the skill. An absent frontmatter lacks its fields too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillManifestField {
+    Frontmatter,
+    Name,
+    Description,
+}
+
+/// An agent that finds a skill and does not load it: the file lacks what
+/// the agent's rule requires.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRejection {
+    pub agent: AgentAdapterKind,
+    pub missing: Vec<SkillManifestField>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillRow {
     pub id: String,
+    /// `name` of the frontmatter, else the skill folder or the flat file
+    /// without `.md`.
     pub name: String,
-    pub description: String,
+    pub description: Option<String>,
     pub path: String,
     pub canonical_path: String,
     pub owner: InstructionOwner,
@@ -203,6 +224,21 @@ pub struct SkillRow {
     pub warnings: Vec<String>,
     pub preview: MarkdownPreview,
     pub aliases: Vec<SkillDiscoveryAlias>,
+    /// What the file lacks of the frontmatter, `name` and `description`.
+    pub absent: Vec<SkillManifestField>,
+    /// The agents that find the skill and do not load it, one per agent.
+    pub rejections: Vec<SkillRejection>,
+}
+
+impl SkillRow {
+    /// What `agent` requires and the file lacks; empty when it loads the
+    /// skill.
+    pub fn missing_for(&self, agent: AgentAdapterKind) -> &[SkillManifestField] {
+        self.rejections
+            .iter()
+            .find(|rejection| rejection.agent == agent)
+            .map_or(&[], |rejection| rejection.missing.as_slice())
+    }
 }
 
 /// A `metadata` value of `SKILL.md`: a scalar as text, a list of scalars, or
@@ -466,6 +502,10 @@ pub struct ContextItemReader {
     /// The agent keeps whether the plugin is on outside the device's files.
     #[serde(default)]
     pub unverified: bool,
+    /// What the agent requires of a skill file and this one lacks: the
+    /// agent does not load the skill.
+    #[serde(default)]
+    pub missing: Vec<SkillManifestField>,
 }
 
 /// A path by which enabled agents find an item, with a link's target.
@@ -488,6 +528,8 @@ pub enum UnappliedReason {
     Superseded { by: Vec<String> },
     /// Enabled agents that find it have it off in their config.
     Disabled,
+    /// Every enabled agent that finds the skill does not load it.
+    Rejected { by: Vec<SkillRejection> },
 }
 
 /// Facts of a skill: its folder and the optional frontmatter of `SKILL.md`.
@@ -541,6 +583,10 @@ pub struct ContextItem {
     pub unapplied: Option<UnappliedReason>,
     /// Agents off in Svode that read the item by their policy.
     pub idle_readers: Vec<AgentAdapterKind>,
+    /// The agents, enabled or off in Svode, that find the skill and do not
+    /// load it; they are no providers.
+    #[serde(default)]
+    pub rejections: Vec<SkillRejection>,
     pub sources: Vec<ContextItemSource>,
     pub preview: MarkdownPreview,
     pub references: Vec<InstructionReference>,

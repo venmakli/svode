@@ -203,10 +203,14 @@ fn normalize_project_snapshot(
         else {
             continue;
         };
+        // A path of an agent that does not load the skill is no input.
+        let loaded = |alias: &&SkillDiscoveryAlias| {
+            in_knowledge(alias) && skill.missing_for(alias.adapter_id).is_empty()
+        };
         let project_aliases = skill
             .aliases
             .iter()
-            .filter(|alias| in_knowledge(alias))
+            .filter(loaded)
             .filter_map(|alias| {
                 safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
             })
@@ -237,7 +241,7 @@ fn normalize_project_snapshot(
             references: BTreeSet::new(),
             truncated: skill.preview.truncated,
         });
-        for alias in skill.aliases.iter().filter(|alias| in_knowledge(alias)) {
+        for alias in skill.aliases.iter().filter(loaded) {
             if let Some(path) =
                 safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
             {

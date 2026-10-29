@@ -143,6 +143,7 @@ mod tests {
             providers: Vec::new(),
             unapplied: None,
             idle_readers: Vec::new(),
+            rejections: Vec::new(),
             sources: Vec::new(),
             preview: MarkdownPreview {
                 markdown: String::new(),

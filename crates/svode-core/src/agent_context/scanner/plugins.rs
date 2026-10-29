@@ -3,7 +3,7 @@
 //! each agent that finds it has it on by its own config.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,13 +14,14 @@ use crate::agent_adapters::{
 };
 
 use super::super::model::{
-    InstructionOwner, InstructionOwnerKind, PluginFinding, PluginRow, PluginSwitch, SkillScope,
-    SourceHealth, SourceLinkKind,
+    InstructionOwner, InstructionOwnerKind, PluginFinding, PluginRow, PluginSwitch, SkillRejection,
+    SkillScope, SourceHealth, SourceLinkKind,
 };
 use super::io::{diagnostic, path_string};
 use super::plugin_folder::{self, FolderRule, PluginFolder};
 use super::{
     DiscoveryResult, TargetPlaces, claude, codex, cursor, grok, hermes, kimi, opencode, pi, qwen,
+    skills,
 };
 
 /// A path by which an agent finds a plugin.
@@ -165,7 +166,11 @@ pub(super) fn discover(
     result.plugins = plugins
         .into_values()
         .flatten()
-        .map(|collected| collected.row)
+        .map(|collected| {
+            let mut row = collected.row;
+            apply_skill_rules(&mut row, adapters, &mut result);
+            row
+        })
         .collect();
     result.plugins.sort_by(|left, right| {
         left.name
@@ -519,6 +524,55 @@ fn resolve(
         SourceLinkKind::Direct
     };
     Some((canonical, link_kind))
+}
+
+/// A skill of a plugin is its component for the agents of the plugin that
+/// load it (DF-208 R7). One that no agent of the plugin loads is a failure
+/// of the plugin, reported for each of them.
+fn apply_skill_rules(
+    row: &mut PluginRow,
+    adapters: &[AgentSourcePolicy],
+    result: &mut DiscoveryResult,
+) {
+    let agents = row
+        .findings
+        .iter()
+        .map(|finding| finding.adapter_id)
+        .collect::<BTreeSet<_>>();
+    let mut kept = Vec::new();
+    for mut skill in std::mem::take(&mut row.skills) {
+        skill.rejections = adapters
+            .iter()
+            .filter(|adapter| agents.contains(&adapter.id))
+            .filter_map(|adapter| {
+                let missing = adapter
+                    .capabilities
+                    .skills
+                    .folder_rule
+                    .missing(&skill.absent);
+                (!missing.is_empty()).then_some(SkillRejection {
+                    agent: adapter.id,
+                    missing,
+                })
+            })
+            .collect();
+        if skill.rejections.len() < agents.len() {
+            kept.push(skill);
+            continue;
+        }
+        let manifest = PathBuf::from(&skill.path);
+        for rejection in &skill.rejections {
+            let (code, message) = skills::rejection_failure(&manifest, &rejection.missing);
+            if !row.health_reasons.contains(&message) {
+                row.health_reasons.push(message.clone());
+            }
+            result
+                .diagnostics
+                .push(diagnostic(&manifest, Some(rejection.agent), code, message));
+        }
+        row.health = SourceHealth::Degraded;
+    }
+    row.skills = kept;
 }
 
 fn read_plugin(
@@ -1113,6 +1167,61 @@ mod tests {
             plugin(&items, "unused").unapplied,
             Some(UnappliedReason::Disabled)
         );
+    }
+
+    #[test]
+    fn a_plugin_skill_no_agent_of_the_plugin_loads_stays_a_failure_of_the_plugin() {
+        let fixture = Fixture::new();
+        let root = fixture
+            .home()
+            .join(".codex/plugins/cache/local-market/drive/1.0.0");
+        fixture.write(
+            &root.join(".codex-plugin/plugin.json"),
+            r#"{"name":"drive","skills":"./skills/"}"#,
+        );
+        fixture.skill(&root.join("skills"), "listed");
+        fixture.write(
+            &root.join("skills/unlisted/SKILL.md"),
+            "---\nname: unlisted\n---\n# unlisted\n",
+        );
+        fixture.write(
+            &fixture.home().join(".codex/config.toml"),
+            "[plugins.\"drive@local-market\"]\nenabled = true\n",
+        );
+        let kit = fixture.project.path().join(".claude/skills/kit");
+        fixture.write(&kit.join(".claude-plugin/plugin.json"), r#"{"name":"kit"}"#);
+        fixture.write(&kit.join("skills/bare/SKILL.md"), "# Bare\n");
+
+        let items = fixture.items(&[Codex, ClaudeCode]);
+
+        // Codex needs a description: the skill is no component.
+        let drive = plugin(&items, "drive");
+        assert_eq!(
+            component_names(drive),
+            vec![(ContextItemKind::Skill, "listed")]
+        );
+        assert_eq!(
+            drive.health,
+            crate::agent_context::model::SourceHealth::Degraded
+        );
+        assert!(
+            drive
+                .health_reasons
+                .iter()
+                .any(|reason| reason.ends_with("is missing required description"))
+        );
+        assert!(
+            fixture
+                .diagnostics(&[Codex])
+                .iter()
+                .any(|diagnostic| diagnostic.starts_with("skill_description_missing"))
+        );
+        // Claude Code loads a skill without frontmatter.
+        let kit = plugin(&items, "kit");
+        assert_eq!(component_names(kit), vec![(ContextItemKind::Skill, "bare")]);
+        assert_eq!(kit.components[0].providers, vec![ClaudeCode]);
+        assert_eq!(kit.components[0].description, None);
+        assert!(kit.components[0].rejections.is_empty());
     }
 
     #[test]
