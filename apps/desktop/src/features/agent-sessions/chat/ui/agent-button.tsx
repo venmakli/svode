@@ -322,6 +322,7 @@ function AgentTabs({
           labelActiveOnly
           overflowActivationMode="manual"
           listLabel={m.sessions_chat_agent_tabs()}
+          className="flex-1 justify-start"
         />
       </div>
       {agent && (

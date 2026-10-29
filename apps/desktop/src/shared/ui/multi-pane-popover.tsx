@@ -105,7 +105,7 @@ export function MultiPanePopover<TPane extends string>({
       >
         {activePane === mainPane ? null : (
           <>
-            <div className="flex h-10 items-center gap-1 px-2">
+            <div className="flex h-10 shrink-0 items-center gap-1 px-2">
               <Button
                 type="button"
                 variant="ghost"
@@ -133,7 +133,7 @@ export function MultiPanePopover<TPane extends string>({
         {current?.notice ? (
           <>
             <Separator />
-            <div className="px-3 py-2 text-xs text-muted-foreground">
+            <div className="shrink-0 px-3 py-2 text-xs text-muted-foreground">
               {current.notice}
             </div>
           </>
@@ -141,7 +141,7 @@ export function MultiPanePopover<TPane extends string>({
         {current?.footer ? (
           <>
             {current.footerSeparator === false ? null : <Separator />}
-            <div className="p-1">{current.footer}</div>
+            <div className="shrink-0 p-1">{current.footer}</div>
           </>
         ) : null}
       </PopoverContent>

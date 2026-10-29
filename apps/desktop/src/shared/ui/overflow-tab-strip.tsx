@@ -96,6 +96,8 @@ export function OverflowTabStrip<Value extends string>({
     [labelActiveOnly, value],
   );
 
+  const hasTrailing = trailing != null;
+
   const updateVisibleTabs = useCallback(() => {
     const container = containerRef.current;
     if (!container || tabs.length === 0) {
@@ -118,7 +120,9 @@ export function OverflowTabStrip<Value extends string>({
     const moreWidth = moreMeasureRef.current?.offsetWidth ?? 28;
     const totalTabsWidth = tabWidths.reduce((sum, width) => sum + width, 0);
     const availableWithoutOverflow =
-      container.clientWidth - trailingWidth - OUTER_GAP - TABS_LIST_PADDING;
+      container.clientWidth -
+      (hasTrailing ? trailingWidth + OUTER_GAP : 0) -
+      TABS_LIST_PADDING;
 
     if (totalTabsWidth <= availableWithoutOverflow) {
       setNextLayout(setLayout, {
@@ -157,7 +161,7 @@ export function OverflowTabStrip<Value extends string>({
       activeAsDropdown: activeIndex >= 0,
       hasOverflow: true,
     });
-  }, [tabs, trailingWidth, value]);
+  }, [hasTrailing, tabs, trailingWidth, value]);
 
   useLayoutEffect(() => {
     updateVisibleTabs();
