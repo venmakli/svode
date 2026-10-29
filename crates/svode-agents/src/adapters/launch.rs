@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 use svode_core::agent_adapters::{AgentAdapterKind, resolve_space_executable, system_home_dir};
 
+use super::launcher::{CODEX_EXECUTABLE_ENV, codex_launcher};
 use super::{
     AdapterError, AdapterInstallState, AdapterPin, AdapterStore, CliVersionStatus,
     InstalledAdapter, cli_version_range, detect_node, evaluate_cli_version,
@@ -155,6 +156,23 @@ impl AdapterStore {
                 &home,
             )
             .ok_or(LaunchUnavailable::NotSupported)?;
+        // DF-213: the Codex adapter runs the user's Codex through Svode's
+        // launcher. One that cannot be written leaves the direct launch: the
+        // agent still starts, and its threads unload after Codex's delay.
+        if let (AcpEntrypoint::Adapter { executable_env, .. }, Some((_, installed))) =
+            (entrypoint, &adapter_run)
+            && agent == AgentAdapterKind::Codex
+            && let Ok(launcher) = codex_launcher(&installed.dir)
+        {
+            launch.env.insert(
+                executable_env.to_string(),
+                launcher.to_string_lossy().into_owned(),
+            );
+            launch.env.insert(
+                CODEX_EXECUTABLE_ENV.to_string(),
+                executable.to_string_lossy().into_owned(),
+            );
+        }
         launch.environment = context.environment.clone();
         // The description's variables win over the provenance's.
         let mut env = context.env.clone();
@@ -298,8 +316,21 @@ mod tests {
         assert_eq!(launch.agent, "codex");
         assert_eq!(launch.program, bin.path().join("node"));
         assert!(launch.args[0].ends_with(pin.entry));
+        // DF-213: the adapter runs the user's Codex through the launcher.
         assert_eq!(
             launch.env.get("CODEX_PATH"),
+            Some(
+                &root
+                    .path()
+                    .join("codex")
+                    .join(pin.version)
+                    .join("svode-codex")
+                    .to_string_lossy()
+                    .into_owned()
+            )
+        );
+        assert_eq!(
+            launch.env.get("SVODE_CODEX_EXECUTABLE"),
             Some(&bin.path().join("codex").to_string_lossy().into_owned())
         );
         assert_eq!(
@@ -332,6 +363,94 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    /// Answers like `READY` and records the programs whose version it read.
+    struct Recording(std::sync::Mutex<Vec<PathBuf>>, Versions);
+
+    impl RuntimeCommandRunner for Recording {
+        fn run<'a>(
+            &'a self,
+            request: &'a RuntimeCommandRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<RuntimeCommandOutput, String>> + Send + 'a>>
+        {
+            self.0.lock().unwrap().push(request.program.clone());
+            self.1.run(request)
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_runs_the_executable_of_its_provenance_through_the_launcher() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("Svode данные").join("agent-adapters");
+        let bin = home.path().join("bin");
+        let space = home.path().join("Мой Space");
+        let codex = space.join("tools").join("my codex");
+        fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        executable(&bin, "codex");
+        executable(&bin, "node");
+        executable(codex.parent().unwrap(), "my codex");
+        fs::create_dir_all(space.join(".svode")).unwrap();
+        fs::write(
+            space.join(".svode/local.json"),
+            r#"{"agent":{"cliPaths":{"codex":"tools/my codex"}}}"#,
+        )
+        .unwrap();
+        let pin = adapter_pin(AgentAdapterKind::Codex).unwrap();
+        install(&root, pin.version);
+        let store = AdapterStore::new(root.clone());
+        let context = LaunchContext {
+            target: AdapterTarget {
+                cwd: space.clone(),
+                search_path: Some(OsString::from(&bin)),
+            },
+            environment: None,
+            env: BTreeMap::new(),
+        };
+        let runner = Recording(Default::default(), READY);
+
+        let launch = store
+            .launch_plan(AgentAdapterKind::Codex, None, &context, &runner)
+            .await
+            .unwrap();
+        let launcher = root.join("codex").join(pin.version).join("svode-codex");
+        // The Space-local override reaches the launcher, and the version
+        // check reads that executable, not the launcher.
+        assert_eq!(
+            launch.env.get("SVODE_CODEX_EXECUTABLE"),
+            Some(&codex.to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            launch.env.get("CODEX_PATH"),
+            Some(&launcher.to_string_lossy().into_owned())
+        );
+        assert!(runner.0.lock().unwrap().contains(&codex));
+        assert!(!runner.0.lock().unwrap().contains(&launcher));
+        assert!(
+            fs::read_to_string(&launcher)
+                .unwrap()
+                .starts_with("#!/bin/sh")
+        );
+        assert_ne!(
+            fs::metadata(&launcher).unwrap().permissions().mode() & 0o111,
+            0
+        );
+
+        // A launcher that cannot be written leaves the direct launch.
+        let dir = launcher.parent().unwrap();
+        fs::remove_file(&launcher).unwrap();
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let direct = store
+            .launch_plan(AgentAdapterKind::Codex, None, &context, &runner)
+            .await;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let direct = direct.unwrap();
+        assert_eq!(
+            direct.env.get("CODEX_PATH"),
+            Some(&codex.to_string_lossy().into_owned())
+        );
+        assert_eq!(direct.env.get("SVODE_CODEX_EXECUTABLE"), None);
     }
 
     #[tokio::test]

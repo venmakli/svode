@@ -170,6 +170,10 @@ jobs:
       # killing or dropping it ends the agent with the processes it started.
       - name: Agent process tree
         run: cargo test -p svode-agents -- process::tests
+      # The launcher through which the Codex adapter runs Codex (DF-213):
+      # `app-server` unloads threads at once, every other call passes as is.
+      - name: Codex launcher
+        run: cargo test -p svode-agents -- adapters::launcher::tests
       - name: Native session reader tests
         run: cargo test -p svode-desktop --lib -- agent_sessions::native_status agent_sessions::native_catalog agent_sessions::read_model agent_sessions::live_status
       # The local paths of the chat of Stage 10 `08` on Windows: drive paths

@@ -2,11 +2,13 @@
 //! Svode release fixes with its whole dependency tree, the Node.js runtime
 //! that executes it, installation into a host-chosen device-local
 //! directory, the verified CLI version range and the setup facts a host
-//! shows for an agent, and the launch plan of an available agent. Nothing
-//! here starts an ACP process.
+//! shows for an agent, and the launch plan of an available agent with the
+//! launcher through which the Codex adapter runs Codex. Nothing here starts
+//! an ACP process.
 
 mod install;
 mod launch;
+mod launcher;
 mod node;
 mod setup;
 mod source;
