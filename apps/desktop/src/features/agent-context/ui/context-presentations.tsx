@@ -19,6 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import {
   defineCollectionPresentation,
   normalizeCollectionSearchText,
@@ -163,11 +164,13 @@ function presetLayout(
     density: "compact",
     ...(id === "skills" || id === "plugins"
       ? {
-          getDescription: (item: AgentContextItem) => (
-            <span className="line-clamp-3 leading-relaxed">
-              {item.description}
-            </span>
-          ),
+          // Without a description the card has no description line.
+          getDescription: (item: AgentContextItem) =>
+            item.description ? (
+              <span className="line-clamp-3 leading-relaxed">
+                {item.description}
+              </span>
+            ) : null,
         }
       : {}),
     getTitle: (item) => item.name,
@@ -271,7 +274,8 @@ function presetLabel(id: AgentContextPresetId) {
 
 /** "Has problems" on the card of a problem row only. */
 function ItemProblemsMarker({ item }: { item: AgentContextItem }) {
-  const warnings = agentContextHealthWarnings(item);
+  const agents = useAgentAdapterDictionary();
+  const warnings = agentContextHealthWarnings(agents, item);
   if (warnings.length === 0) return null;
   const reason = warnings.join(" · ");
   return (

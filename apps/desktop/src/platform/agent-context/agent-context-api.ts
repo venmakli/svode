@@ -57,6 +57,15 @@ export interface AgentContextLocationDto {
   path: string;
 }
 
+export type AgentContextSkillFieldDto = "frontmatter" | "name" | "description";
+
+/** An agent that finds a skill and does not load it. */
+export interface AgentContextSkillRejectionDto {
+  agent: AgentIdDto;
+  /** Only `frontmatter` when the file has none. */
+  missing: AgentContextSkillFieldDto[];
+}
+
 export interface AgentContextItemSourceDto {
   path: string;
   target: string | null;
@@ -68,13 +77,16 @@ export interface AgentContextItemSourceDto {
     disabled: boolean;
     /** The agent keeps whether the plugin is on outside the device's files. */
     unverified: boolean;
+    /** What the agent requires of a skill file and this one lacks. */
+    missing: AgentContextSkillFieldDto[];
   }[];
 }
 
 export type AgentContextUnappliedDto =
   | { kind: "not_found" }
   | { kind: "superseded"; by: string[] }
-  | { kind: "disabled" };
+  | { kind: "disabled" }
+  | { kind: "rejected"; by: AgentContextSkillRejectionDto[] };
 
 export type AgentContextPluginComponentKindDto =
   | "commands"
@@ -127,6 +139,8 @@ export interface AgentContextItemDto {
   providers: AgentIdDto[];
   unapplied: AgentContextUnappliedDto | null;
   idleReaders: AgentIdDto[];
+  /** The agents, enabled or off in Svode, that find the skill and do not load it. */
+  rejections: AgentContextSkillRejectionDto[];
   sources: AgentContextItemSourceDto[];
   preview: AgentContextMarkdownPreviewDto;
   references: AgentContextReferenceDto[];

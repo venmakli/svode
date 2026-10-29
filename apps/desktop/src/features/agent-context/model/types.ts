@@ -34,6 +34,16 @@ export type AgentContextLocation =
   | { kind: "home"; path: string }
   | { kind: "absolute"; path: string };
 
+/** A part of a skill file's frontmatter an agent may require. */
+export type AgentContextSkillField = "frontmatter" | "name" | "description";
+
+/** An agent that finds a skill and does not load it: the file lacks what it requires. */
+export interface AgentContextSkillRejection {
+  agent: AgentId;
+  /** Only `frontmatter` when the file has none. */
+  missing: readonly AgentContextSkillField[];
+}
+
 /** An agent that reads an item by one path. */
 export interface AgentContextSourceReader {
   agent: AgentId;
@@ -43,6 +53,8 @@ export interface AgentContextSourceReader {
   disabled: boolean;
   /** The agent keeps whether the plugin is on outside the device's files. */
   unverified: boolean;
+  /** What the agent requires of a skill file and this one lacks; empty when it loads it. */
+  missing: readonly AgentContextSkillField[];
 }
 
 /** A path by which enabled agents find an item. */
@@ -60,7 +72,9 @@ export type AgentContextUnapplied =
   /** Every enabled agent that finds it takes another file. */
   | { kind: "superseded"; by: readonly string[] }
   /** The enabled agents that find the plugin have it off. */
-  | { kind: "disabled" };
+  | { kind: "disabled" }
+  /** Every enabled agent that finds the skill does not load it. */
+  | { kind: "rejected"; by: readonly AgentContextSkillRejection[] };
 
 /** A `metadata` value of `SKILL.md` as the scanner keeps it. */
 export type AgentContextSkillMetadataLeaf =
@@ -148,6 +162,8 @@ export interface AgentContextItem {
   unapplied: AgentContextUnapplied | null;
   /** Agents off in Svode that read the item by their policy. */
   idleReaders: readonly AgentId[];
+  /** The agents, enabled or off in Svode, that find the skill and do not load it. */
+  rejections: readonly AgentContextSkillRejection[];
   sources: readonly AgentContextItemSource[];
   body: string;
   truncated: boolean;

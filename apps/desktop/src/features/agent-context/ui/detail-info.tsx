@@ -14,11 +14,12 @@ import type {
   AgentContextReference,
   AgentContextSourceReader,
 } from "../model/types";
+import { agentContextMissingFieldsText } from "./skill-rejection-text";
 
 /**
  * ⓘ "Details": "Sources" — a line per path by which enabled agents find the
- * item, with the agents reading by it and only the shadowed ones marked —
- * and the imports of an instruction.
+ * item, with the agents reading by it and only the exceptions marked — and
+ * the imports of an instruction.
  */
 export function AgentContextItemInfo({ item }: { item: AgentContextItem }) {
   const agents = useAgentAdapterDictionary();
@@ -83,8 +84,16 @@ function SourceReaders({
   );
 }
 
-/** Only exceptions are labelled: shadowed, turned off, unchecked switch. */
+/**
+ * Only exceptions are labelled: not loaded, turned off, shadowed, unchecked
+ * switch.
+ */
 function readerException(reader: AgentContextSourceReader) {
+  if (reader.missing.length > 0) {
+    return ` · ${m.agent_context_reader_rejected({
+      fields: agentContextMissingFieldsText(reader.missing),
+    })}`;
+  }
   if (reader.disabled) return ` · ${m.agent_context_reader_disabled()}`;
   if (reader.supersededBy !== null) {
     return ` · ${

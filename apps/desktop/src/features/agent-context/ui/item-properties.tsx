@@ -29,6 +29,10 @@ import type {
   AgentContextLocation,
 } from "../model/types";
 import { agentContextHealthProperty } from "./health-property";
+import {
+  agentContextMissingFieldsText,
+  agentContextRejectionTexts,
+} from "./skill-rejection-text";
 
 /**
  * The icon of an item everywhere it is shown: the Svode logo on the Svode
@@ -100,7 +104,13 @@ export function agentContextLocationLabel(location: AgentContextLocation) {
 }
 
 /** Why "Providers" is empty, in one line. */
-export function agentContextUnappliedText(item: AgentContextItem) {
+export function agentContextUnappliedText(
+  agents: AgentAdapterDictionary,
+  item: AgentContextItem,
+) {
+  if (item.unapplied?.kind === "rejected") {
+    return agentContextRejectionTexts(agents, item.unapplied.by).join("; ");
+  }
   if (item.unapplied?.kind === "disabled") {
     return m.agent_context_unapplied_disabled();
   }
@@ -177,7 +187,7 @@ export function createAgentContextItemProperties({
       label: m.agent_context_property_providers(),
       standard: { options: agents.options(), type: "multi_select" },
     }),
-    agentContextHealthProperty<AgentContextItem>(),
+    agentContextHealthProperty<AgentContextItem>({ agents }),
     defineComputedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
@@ -239,7 +249,7 @@ function ProvidersCell({
 }) {
   const idle = agentContextIdleAgents(item);
   if (item.providers.length === 0 && idle.length === 0) {
-    const reason = agentContextUnappliedText(item);
+    const reason = agentContextUnappliedText(agents, item);
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -289,7 +299,7 @@ function ProvidersCell({
 /**
  * The applying agents with their names, then the agents that find the item
  * but do not apply it, muted, with the reason on hover; the button to
- * Providers when an agent off in Svode reads the item.
+ * Providers when enabling an agent off in Svode would apply the item.
  */
 function ProvidersDetail({
   agents,
@@ -315,7 +325,7 @@ function ProvidersDetail({
       </Button>
     ) : null;
   if (item.providers.length === 0 && idle.length === 0) {
-    const reason = agentContextUnappliedText(item);
+    const reason = agentContextUnappliedText(agents, item);
     return (
       <div
         className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
@@ -383,6 +393,12 @@ function idleAgentText(
   { agent, reason }: AgentContextIdleAgent,
 ): string {
   const name = agents.label(agent);
+  if (reason.kind === "rejected") {
+    return m.agent_context_idle_rejected({
+      agent: name,
+      fields: agentContextMissingFieldsText(reason.missing),
+    });
+  }
   if (reason.kind === "off_in_svode") {
     return m.agent_context_idle_off({ agent: name });
   }

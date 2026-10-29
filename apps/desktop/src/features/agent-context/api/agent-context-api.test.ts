@@ -67,6 +67,7 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
               disabled: false,
               supersededBy: null,
               unverified: false,
+              missing: [],
             },
           ],
           target: null,
@@ -80,6 +81,7 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
               disabled: false,
               supersededBy: null,
               unverified: false,
+              missing: [],
             },
           ],
           target: "/workspace/AGENTS.md",
@@ -87,6 +89,7 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
       ],
       unapplied: null,
       idleReaders: [],
+      rejections: [],
     },
     {
       description: "Review project changes.",
@@ -135,6 +138,7 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
               supersededBy: "/home/user/.claude/skills/review",
               disabled: false,
               unverified: false,
+              missing: [],
             },
           ],
           target: null,
@@ -145,6 +149,7 @@ const dto: Parameters<typeof toAgentContextSnapshot>[0] = {
         kind: "superseded",
       },
       idleReaders: ["hermes"],
+      rejections: [],
     },
   ],
   observedPersonalPaths: ["/home/user/.claude/CLAUDE.md"],
@@ -174,6 +179,7 @@ test("transport becomes one frozen set of items with their application", () => {
         disabled: false,
         supersededBy: null,
         unverified: false,
+        missing: [],
       },
     ],
     target: "/workspace/AGENTS.md",
@@ -237,6 +243,7 @@ test("a plugin keeps its facts and its components as items of their own", () => 
         skill: null,
         unapplied: { kind: "disabled" },
         idleReaders: [],
+        rejections: [],
       },
     ],
   });
@@ -251,4 +258,56 @@ test("a plugin keeps its facts and its components as items of their own", () => 
   ]);
   expect(plugin?.components[0]?.body).toBe("# Guide");
   expect(Object.isFrozen(plugin?.components)).toBe(true);
+});
+
+test("a skill keeps the agents that do not load it and what it lacks for them", () => {
+  const [, skill] = dto.items;
+  const snapshot = toAgentContextSnapshot({
+    ...dto,
+    items: [
+      {
+        ...skill!,
+        description: null,
+        health: "degraded",
+        healthReasons: [],
+        rejections: [
+          { agent: "codex", missing: ["description"] },
+          { agent: "hermes", missing: ["frontmatter"] },
+        ],
+        sources: [
+          {
+            linkKind: "direct",
+            path: "/workspace/.agents/skills/review",
+            readers: [
+              {
+                agent: "codex",
+                disabled: false,
+                missing: ["description"],
+                supersededBy: null,
+                unverified: false,
+              },
+            ],
+            target: null,
+          },
+        ],
+        unapplied: {
+          by: [{ agent: "codex", missing: ["description"] }],
+          kind: "rejected",
+        },
+      },
+    ],
+  });
+  const [rejected] = snapshot.items;
+
+  expect(rejected?.description).toBe(null);
+  expect(rejected?.unapplied).toEqual({
+    by: [{ agent: "codex", missing: ["description"] }],
+    kind: "rejected",
+  });
+  expect(rejected?.rejections).toEqual([
+    { agent: "codex", missing: ["description"] },
+    { agent: "hermes", missing: ["frontmatter"] },
+  ]);
+  expect(rejected?.sources[0]?.readers[0]?.missing).toEqual(["description"]);
+  expect(Object.isFrozen(rejected?.rejections[0]?.missing)).toBe(true);
 });

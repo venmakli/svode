@@ -97,6 +97,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
             disabled: false,
             supersededBy: null,
             unverified: false,
+            missing: [],
           },
         ],
         target: null,
@@ -105,6 +106,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     truncated: false,
     unapplied: null,
     idleReaders: [],
+    rejections: [],
     components: [],
     icon: null,
     managedBySvode: false,
@@ -142,6 +144,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
             disabled: false,
             supersededBy: null,
             unverified: false,
+            missing: [],
           },
         ],
         target: null,
@@ -150,6 +153,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     truncated: false,
     unapplied: null,
     idleReaders: [],
+    rejections: [],
     components: [],
     icon: null,
     managedBySvode: false,
@@ -542,6 +546,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
               supersededBy: "/workspace/AGENTS.override.md",
               disabled: false,
               unverified: false,
+              missing: [],
             },
           ],
           target: null,
@@ -554,6 +559,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
               disabled: false,
               supersededBy: null,
               unverified: false,
+              missing: [],
             },
           ],
           target: "/workspace/AGENTS.md",
@@ -623,6 +629,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
               disabled: false,
               supersededBy: null,
               unverified: false,
+              missing: [],
             },
           ],
           target: "/workspace/.agents/skills/review",
@@ -858,6 +865,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       providers: [],
       sources: [],
       idleReaders: ["claude-code"],
+      rejections: [],
       unapplied: { kind: "not_found" },
     };
     await act(async () => {
@@ -892,6 +900,109 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
     expect(openedProviders).toBe(1);
+
+    await act(async () => {
+      root?.unmount();
+      await settle();
+    });
+  });
+
+  test("a skill some agents do not load has no description line and names them with the missing field", async () => {
+    const env = await setup();
+    let controller: CollectionDetailController | null = null;
+    function CaptureController() {
+      controller = env.useCollectionDetailController();
+      return null;
+    }
+    let root: Root | null = null;
+    await act(async () => {
+      root = createRoot(doc.getElementById("app")!);
+      root.render(
+        <env.TooltipProvider>
+          <CaptureController />
+          <env.CaptureBinding />
+          <env.CollectionDetailPeekHost />
+        </env.TooltipProvider>,
+      );
+      await settle();
+    });
+    const rejected: AgentContextItem = {
+      ...skill,
+      description: null,
+      health: "degraded",
+      id: "skill:/workspace/.agents/skills/nodesc",
+      name: "nodesc",
+      providers: [],
+      sources: [
+        {
+          path: "/workspace/.agents/skills/nodesc",
+          readers: [
+            {
+              agent: "codex",
+              disabled: false,
+              supersededBy: null,
+              unverified: false,
+              missing: ["description"],
+            },
+          ],
+          target: null,
+        },
+      ],
+      idleReaders: ["claude-code"],
+      rejections: [
+        { agent: "codex", missing: ["description"] },
+        { agent: "claude-code", missing: ["name", "description"] },
+      ],
+      unapplied: {
+        by: [{ agent: "codex", missing: ["description"] }],
+        kind: "rejected",
+      },
+    };
+    await act(async () => {
+      await controller!.open({
+        ...env.detail(rejected),
+        selection: {
+          instanceKey: "agent-context:space:root",
+          presentationId: "all",
+          rowId: rejected.id,
+        },
+      });
+      await settle();
+    });
+
+    // No description: the header is the name alone.
+    expect(
+      doc.querySelector("[data-collection-detail-header]")?.textContent,
+    ).toBe("nodesc");
+    const providers = doc.querySelector<HTMLElement>(
+      "[data-agent-context-providers-detail]",
+    )!;
+    expect(
+      providers.querySelector('[data-agent-context-idle-agent="codex"]')
+        ?.textContent,
+    ).toBe("CodexCodex · doesn't load it: no description");
+    // The rejection replaces "off in Svode": enabling the agent would not
+    // apply the skill, so it leads nowhere.
+    expect(
+      providers.querySelector('[data-agent-context-idle-agent="claude-code"]')
+        ?.textContent,
+    ).toBe("Claude CodeClaude Code · doesn't load it: no name and description");
+    expect(providers.querySelector("button")).toBe(null);
+    expect(doc.querySelector("[data-agent-context-health]")?.textContent).toBe(
+      "Has problemsCodex doesn't load it: no descriptionClaude Code doesn't load it: no name and description",
+    );
+
+    await act(async () => {
+      topBar()
+        .querySelector<HTMLButtonElement>(
+          "[data-collection-detail-info-trigger]",
+        )!
+        .click();
+      await settle();
+    });
+    expect(doc.querySelector("[data-agent-context-readers]")?.textContent).toBe(
+      "Codex · doesn't load it: no description",
+    );
 
     await act(async () => {
       root?.unmount();
@@ -1120,6 +1231,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
               disabled: true,
               supersededBy: null,
               unverified: false,
+              missing: [],
             },
           ],
           target: null,
@@ -1251,6 +1363,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     const unread: AgentContextItem = {
       ...skill,
       idleReaders: [],
+      rejections: [],
       providers: [],
       sources: [],
       unapplied: { kind: "not_found" },

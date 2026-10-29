@@ -5,34 +5,50 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { AgentAdapterDictionary } from "@/features/agent-adapters";
 import {
   defineComputedCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
-import type { AgentContextSourceHealth } from "../model/types";
+import type {
+  AgentContextSkillRejection,
+  AgentContextSourceHealth,
+} from "../model/types";
+import { agentContextRejectionTexts } from "./skill-rejection-text";
 
 interface HealthRow {
   health: AgentContextSourceHealth;
   healthReasons: readonly string[];
+  /** Agents that find a skill and do not load it: a problem of the row. */
+  rejections: readonly AgentContextSkillRejection[];
 }
 
 /** The problems of a degraded row; a normal row has none. */
-export function agentContextHealthWarnings(row: HealthRow): readonly string[] {
+export function agentContextHealthWarnings(
+  agents: AgentAdapterDictionary,
+  row: HealthRow,
+): readonly string[] {
   if (row.health !== "degraded") return [];
-  return row.healthReasons.length > 0
-    ? Array.from(new Set(row.healthReasons))
-    : [m.agent_context_health_degraded()];
+  const warnings = Array.from(
+    new Set([
+      ...row.healthReasons,
+      ...agentContextRejectionTexts(agents, row.rejections),
+    ]),
+  );
+  return warnings.length > 0 ? warnings : [m.agent_context_health_degraded()];
 }
 
 /**
  * "Status": a select that is empty for a normal row and "Has problems" with
  * its reasons for a degraded one.
  */
-export function agentContextHealthProperty<
-  Row extends HealthRow,
->(): CollectionPropertyDefinition<Row> {
+export function agentContextHealthProperty<Row extends HealthRow>({
+  agents,
+}: {
+  agents: AgentAdapterDictionary;
+}): CollectionPropertyDefinition<Row> {
   return defineComputedCollectionProperty<Row>({
     capabilities: {
       filter: { kind: "standard" },
@@ -40,7 +56,7 @@ export function agentContextHealthProperty<
     },
     display: {
       render: (_value, row) => {
-        const warnings = agentContextHealthWarnings(row);
+        const warnings = agentContextHealthWarnings(agents, row);
         if (warnings.length === 0) return null;
         return (
           <Tooltip>
@@ -55,7 +71,7 @@ export function agentContextHealthProperty<
         );
       },
       renderDetail: (_value, row) => {
-        const warnings = agentContextHealthWarnings(row);
+        const warnings = agentContextHealthWarnings(agents, row);
         if (warnings.length === 0) return null;
         return (
           <div
@@ -82,7 +98,7 @@ export function agentContextHealthProperty<
     },
     featureId: "agent-context",
     getValue: (row) =>
-      agentContextHealthWarnings(row).length > 0
+      agentContextHealthWarnings(agents, row).length > 0
         ? m.agent_context_health_has_problems()
         : null,
     key: "health",

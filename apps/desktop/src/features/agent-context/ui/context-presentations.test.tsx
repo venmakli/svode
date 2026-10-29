@@ -20,6 +20,7 @@ import {
 import {
   agentContextItemDescription,
   agentContextLocationLabel,
+  agentContextUnappliedText,
   createAgentContextItemProperties,
 } from "./item-properties";
 
@@ -53,6 +54,7 @@ function item(overrides: Partial<AgentContextItem>): AgentContextItem {
     truncated: false,
     unapplied: null,
     idleReaders: [],
+    rejections: [],
     ...overrides,
   };
 }
@@ -81,6 +83,7 @@ const projectSkill = item({
   path: "/workspace/.claude/skills/review/SKILL.md",
   providers: [],
   idleReaders: ["claude-code"],
+  rejections: [],
   unapplied: { kind: "not_found" },
 });
 const pluginSkill = item({
@@ -114,6 +117,7 @@ const plugin = item({
           disabled: false,
           supersededBy: null,
           unverified: true,
+          missing: [],
         },
       ],
       target: null,
@@ -359,6 +363,115 @@ test("Providers show agent icons, an empty value names its reason", () => {
 
   expect(value("health", spaceAgents)).toBe("");
   expect(value("health", shadowed).includes("Has problems")).toBe(true);
+});
+
+test("a skill some agents do not load names them and the missing field; without a description its card has no description line", () => {
+  // Static markup escapes the apostrophe of "doesn't".
+  const text = (html: string) => html.replaceAll("&#x27;", "'");
+  const nodesc = item({
+    health: "degraded",
+    id: "skill:/workspace/.agents/skills/nodesc",
+    kind: "skill",
+    location: { kind: "target", path: ".agents/skills" },
+    name: "nodesc",
+    providers: ["claude-code"],
+    rejections: [{ agent: "codex", missing: ["description"] }],
+    sources: [
+      {
+        path: "/workspace/.agents/skills/nodesc",
+        readers: [
+          {
+            agent: "codex",
+            disabled: false,
+            supersededBy: null,
+            unverified: false,
+            missing: ["description"],
+          },
+          {
+            agent: "claude-code",
+            disabled: false,
+            supersededBy: null,
+            unverified: false,
+            missing: [],
+          },
+        ],
+        target: null,
+      },
+    ],
+  });
+
+  const providers = text(value("providers", nodesc));
+  expect(providers.includes("data-agent-icon-muted")).toBe(true);
+  expect(providers.includes("Codex · doesn't load it: no description")).toBe(
+    true,
+  );
+  expect(text(value("health", nodesc)).includes("Has problems")).toBe(true);
+  expect(
+    text(value("health", nodesc, "detail")).includes(
+      "Codex doesn't load it: no description",
+    ),
+  ).toBe(true);
+
+  // Every enabled agent rejects it: the empty value says who and why, and
+  // agents off in Svode that reject it do not lead to Providers.
+  const unloaded = item({
+    ...nodesc,
+    idleReaders: ["claude-code"],
+    providers: [],
+    rejections: [
+      { agent: "codex", missing: ["name", "description"] },
+      { agent: "claude-code", missing: ["name", "description"] },
+    ],
+    sources: [],
+    unapplied: {
+      by: [{ agent: "codex", missing: ["name", "description"] }],
+      kind: "rejected",
+    },
+  });
+  expect(agentContextUnappliedText(agents, unloaded)).toBe(
+    "Codex doesn't load it: no name and description",
+  );
+  expect(
+    agentContextUnappliedText(
+      agents,
+      item({
+        ...unloaded,
+        unapplied: { by: unloaded.rejections, kind: "rejected" },
+      }),
+    ),
+  ).toBe("Codex, Claude Code don't load it: no name and description");
+  const linked = createAgentContextItemProperties({
+    agents,
+    onOpenProviders: () => undefined,
+  }).find((property) => property.key === "providers")!;
+  const detail = text(
+    render(
+      <CollectionPropertyValue
+        context="detail"
+        property={linked as CollectionPropertyDefinition<unknown>}
+        row={unloaded}
+      />,
+    ),
+  );
+  expect(
+    detail.includes("Claude Code · doesn't load it: no name and description"),
+  ).toBe(true);
+  expect(detail.includes("off in Svode")).toBe(false);
+  expect(detail.includes("Open Providers")).toBe(false);
+
+  const gallery = presentation("skills").layout;
+  if (gallery.kind !== "gallery") throw new Error("gallery");
+  expect(gallery.getDescription?.(nodesc)).toBe(null);
+  expect(
+    render(<>{gallery.getDescription?.(projectSkill)}</>).includes(
+      "Review project changes.",
+    ),
+  ).toBe(true);
+  expect(
+    text(render(<>{gallery.renderOverlays?.(nodesc)}</>)).includes(
+      "load it: no description",
+    ),
+  ).toBe(true);
 });
 
 test("MCP servers are a List of top-level declarations described by their transport", () => {

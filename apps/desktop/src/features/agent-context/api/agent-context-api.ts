@@ -11,6 +11,7 @@ import {
   type AgentContextReferenceDto,
   type AgentContextSkillMetadataLeafDto,
   type AgentContextSkillMetadataValueDto,
+  type AgentContextSkillRejectionDto,
   type AgentContextSnapshotDto,
 } from "@/platform/agent-context/agent-context-api";
 import { listenAgentsEnabledChanged } from "@/platform/agent-setup/agent-setup-api";
@@ -33,6 +34,7 @@ import type {
   AgentContextSkillMetadataLeaf,
   AgentContextSkillFile,
   AgentContextSkillMetadataValue,
+  AgentContextSkillRejection,
   AgentContextSnapshot,
 } from "../model/types";
 
@@ -170,6 +172,7 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
         })
       : null,
     providers: Object.freeze([...item.providers]),
+    rejections: Object.freeze(item.rejections.map(rejection)),
     references: Object.freeze(
       item.references.map((reference) =>
         Object.freeze({
@@ -206,6 +209,7 @@ function normalizeItem(item: AgentContextItemDto): AgentContextItem {
               Object.freeze({
                 agent: reader.agent,
                 disabled: reader.disabled,
+                missing: Object.freeze([...reader.missing]),
                 supersededBy: reader.supersededBy,
                 unverified: reader.unverified,
               }),
@@ -230,7 +234,22 @@ function unapplied(
       kind: "superseded",
     });
   }
+  if (value.kind === "rejected") {
+    return Object.freeze({
+      by: Object.freeze(value.by.map(rejection)),
+      kind: "rejected",
+    });
+  }
   return Object.freeze({ kind: "disabled" });
+}
+
+function rejection(
+  value: AgentContextSkillRejectionDto,
+): AgentContextSkillRejection {
+  return Object.freeze({
+    agent: value.agent,
+    missing: Object.freeze([...value.missing]),
+  });
 }
 
 function skillMetadataValue(
