@@ -1,4 +1,10 @@
-import { useEffect, useState, type RefObject } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type RefObject,
+} from "react";
 import { useEditorReadOnly, useEditorRef } from "platejs/react";
 
 /** The draft whose composer takes focus back once its send is over. */
@@ -110,4 +116,21 @@ export function useRequestedComposerFocus(
   return (
     carried?.request === request && carried.focus && !settled.has(request)
   );
+}
+
+/** The composer's field to the controls inside the composer (DF-217). */
+export interface ComposerFieldHandle {
+  /** The point is in the visible box of the field. */
+  contains: (x: number, y: number) => boolean;
+  /** Puts the caret back where it was in the field, or at its end. */
+  focus: () => void;
+}
+
+export const ComposerFieldContext = createContext<ComposerFieldHandle | null>(
+  null,
+);
+
+/** The field of the composer the control is in, if any. */
+export function useComposerField(): ComposerFieldHandle | null {
+  return useContext(ComposerFieldContext);
 }

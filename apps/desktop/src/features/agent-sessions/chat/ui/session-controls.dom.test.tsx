@@ -1653,6 +1653,9 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(tabs()[1].getAttribute("aria-selected")).toBe("false");
       expect(lastCall("agent_runtime_hold_draft")).toBe(undefined);
       await pressKey(tabs()[1], "Enter");
+      // The choice closes the popover (DF-217); it shows the agent again.
+      expect(popover()).toBe(null);
+      await click(agentButton());
       expect(tabs()[1].getAttribute("aria-selected")).toBe("true");
       expect(tabs().map((tab) => tab.getAttribute("data-state"))).toEqual([
         "inactive",
@@ -1702,6 +1705,227 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(settingRow(m.sessions_chat_model())).toBe(undefined);
     },
   );
+
+  controlsTest(
+    "choosing a draft's agent closes the popover and gives focus to the field, while arrows and a value keep it open",
+    async () => {
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude", name: "Claude Code" },
+      ];
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      const tabs = () =>
+        Array.from(
+          popover()?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
+        );
+      await click(agentButton());
+      await act(async () => tabs()[0].focus());
+      await pressKey(tabs()[0], "ArrowRight");
+      expect(popover() === null).toBe(false);
+      expect(document.activeElement === tabs()[1]).toBe(true);
+
+      await pressKey(tabs()[1], "Enter");
+      expect(popover()).toBe(null);
+      expect(lastCall("agent_runtime_hold_draft")?.agent).toBe("claude");
+      expect(await fieldFocused()).toBe(true);
+
+      // The chosen agent again: nothing to start, the popover still closes.
+      await click(agentButton());
+      expect(await fieldFocused()).toBe(false);
+      calls.length = 0;
+      await click(tabs()[1]);
+      expect(popover()).toBe(null);
+      expect(lastCall("agent_runtime_hold_draft")).toBe(undefined);
+      expect(await fieldFocused()).toBe(true);
+
+      await click(agentButton());
+      await click(tabs()[0]);
+      expect(popover()).toBe(null);
+      expect(lastCall("agent_runtime_hold_draft")?.agent).toBe("codex");
+      expect(await fieldFocused()).toBe(true);
+
+      // A value returns to the main screen of the open popover.
+      await click(agentButton());
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Sol");
+      expect(lastCall("agent_runtime_set_setting")?.value).toEqual({
+        setting: "model",
+        value: "gpt-6-sol",
+      });
+      expect(popover() === null).toBe(false);
+      expect(Boolean(settingRow(m.sessions_chat_model()))).toBe(true);
+    },
+  );
+
+  controlsTest(
+    "choosing an agent under more closes both popovers and gives focus to the field",
+    async () => {
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude", name: "Claude Code" },
+        { id: "gemini", name: "Gemini" },
+      ];
+      // Tabs of 60px in a row of 150: one tab fits beside "more".
+      const restore = stubWidths(60, 150);
+      try {
+        await mount(
+          <NewSessionDraft
+            spacePath="/project"
+            onStarted={() => undefined}
+            onOpenAgentSettings={() => undefined}
+          />,
+        );
+        await click(agentButton());
+        await click(buttonByLabel(m.sessions_chat_agent_more()));
+        const popovers = () =>
+          document.querySelectorAll('[data-slot="popover-content"]').length;
+        expect(popovers()).toBe(2);
+        await click(
+          Array.from(document.querySelectorAll('[role="tab"]')).find((tab) =>
+            tab.textContent?.includes("Gemini"),
+          ),
+        );
+        expect(popovers()).toBe(0);
+        expect(lastCall("agent_runtime_hold_draft")?.agent).toBe("gemini");
+        expect(await fieldFocused()).toBe(true);
+      } finally {
+        restore();
+      }
+    },
+  );
+
+  controlsTest(
+    "a click in the field closes the agent popover and gives the field focus at once, a click elsewhere only closes it",
+    async () => {
+      const check = async () => {
+        // The field's visible box; the popover leaves it in view.
+        field().parentElement!.getBoundingClientRect = () =>
+          new window.DOMRect(0, 0, 400, 80);
+        await click(agentButton());
+        expect(await fieldFocused()).toBe(false);
+        await pressAt(200, 40);
+        expect(popover()).toBe(null);
+        expect(await fieldFocused()).toBe(true);
+
+        await click(agentButton());
+        await pressAt(200, 300);
+        expect(popover()).toBe(null);
+        expect(await fieldFocused()).toBe(false);
+        expect(document.activeElement === agentButton()).toBe(true);
+      };
+      await mount(
+        <SessionChat sessionId="codex:s1" session={key} scope={null} />,
+      );
+      await check();
+      await unmountAll();
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      await check();
+    },
+  );
+
+  controlsTest(
+    "the agent settings, the recovery settings and the sign-in close the popover before they open",
+    async () => {
+      let opened = 0;
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => (opened += 1)}
+        />,
+      );
+      const popoverButton = (text: string) =>
+        Array.from(popover()?.querySelectorAll("button") ?? []).find(
+          (button) => button.textContent === text,
+        );
+      await click(agentButton());
+      await click(popoverButton(m.sessions_chat_agent_settings()));
+      expect(popover()).toBe(null);
+      expect(opened).toBe(1);
+
+      await unmountAll();
+      holdAnswer = () => ({
+        hold: 5,
+        check: { state: "auth_required", methods: [] },
+        session: null,
+      });
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => (opened += 1)}
+        />,
+      );
+      await click(agentButton());
+      await click(popoverButton(m.sessions_chat_agent_open_settings()));
+      expect(popover()).toBe(null);
+      expect(opened).toBe(2);
+
+      await click(agentButton());
+      await click(popoverButton(m.settings_agents_action_sign_in()));
+      expect(popover()).toBe(null);
+      expect(lastCall("agent_setup_sign_in")?.agent).toBe("codex");
+    },
+  );
+
+  /** The composer's field. */
+  function field() {
+    return document.querySelector<HTMLElement>(
+      `[aria-label="${m.sessions_chat_composer_label()}"]`,
+    )!;
+  }
+
+  /** Focus is in the field once the editor's retries to take it are over. */
+  async function fieldFocused() {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 100)));
+    return field().contains(document.activeElement);
+  }
+
+  /** A press of the primary button at a point of the page. */
+  async function pressAt(x: number, y: number) {
+    await act(async () => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+        document.body.dispatchEvent(
+          new window.MouseEvent(type, {
+            bubbles: true,
+            button: 0,
+            clientX: x,
+            clientY: y,
+          }),
+        );
+      }
+    });
+    await settle();
+  }
+
+  /** Every element as wide as `width` in a container `clientWidth` wide. */
+  function stubWidths(width: number, clientWidth: number) {
+    const proto = window.HTMLElement.prototype;
+    const offset = Object.getOwnPropertyDescriptor(proto, "offsetWidth");
+    Object.defineProperty(proto, "offsetWidth", {
+      configurable: true,
+      get: () => width,
+    });
+    Object.defineProperty(proto, "clientWidth", {
+      configurable: true,
+      get: () => clientWidth,
+    });
+    return () => {
+      if (offset) Object.defineProperty(proto, "offsetWidth", offset);
+      delete (proto as { clientWidth?: number }).clientWidth;
+    };
+  }
 
   /** The emoji or icon class next to a Space name under the composer. */
   function scopeMarkIcon(root: ParentNode, name: string) {

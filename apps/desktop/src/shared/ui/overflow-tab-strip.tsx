@@ -4,6 +4,8 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { ChevronDown, MoreHorizontal } from "lucide-react";
@@ -30,6 +32,11 @@ interface OverflowTabStripProps<Value extends string> {
   tabs: readonly OverflowTab<Value>[];
   value: Value;
   onValueChange: (value: Value) => void;
+  /**
+   * A tab chosen by a click, Enter or Space, the active one included, as
+   * `onValueChange` reports only a change.
+   */
+  onTabChoose?: (value: Value) => void;
   moreLabel: string;
   /** Accessible name of the tab list. */
   listLabel?: string;
@@ -77,6 +84,7 @@ export function OverflowTabStrip<Value extends string>({
   tabs,
   value,
   onValueChange,
+  onTabChoose,
   moreLabel,
   listLabel,
   labelActiveOnly = false,
@@ -97,6 +105,13 @@ export function OverflowTabStrip<Value extends string>({
   );
 
   const hasTrailing = trailing != null;
+
+  const chooseInOverflow = onTabChoose
+    ? (next: Value) => {
+        setMoreOpen(false);
+        onTabChoose(next);
+      }
+    : undefined;
 
   const updateVisibleTabs = useCallback(() => {
     const container = containerRef.current;
@@ -193,7 +208,12 @@ export function OverflowTabStrip<Value extends string>({
         )}
       >
         {visibleTabs.map((tab) => (
-          <StripTab key={tab.value} tab={tab} label={showsLabel(tab)} />
+          <StripTab
+            key={tab.value}
+            tab={tab}
+            label={showsLabel(tab)}
+            onChoose={onTabChoose}
+          />
         ))}
         {shouldShowOverflowControl ? (
           <Popover open={moreOpen} onOpenChange={setMoreOpen}>
@@ -241,6 +261,7 @@ export function OverflowTabStrip<Value extends string>({
                       key={tab.value}
                       value={tab.value}
                       className="h-8 justify-start px-2.5"
+                      {...chooseHandlers(tab.value, chooseInOverflow)}
                     >
                       {tab.icon}
                       {tab.label}
@@ -280,13 +301,16 @@ export function OverflowTabStrip<Value extends string>({
 function StripTab<Value extends string>({
   tab,
   label,
+  onChoose,
 }: {
   tab: OverflowTab<Value>;
   label: boolean;
+  onChoose?: (value: Value) => void;
 }) {
+  const handlers = chooseHandlers(tab.value, onChoose);
   if (label) {
     return (
-      <TabsTrigger value={tab.value}>
+      <TabsTrigger value={tab.value} {...handlers}>
         {tab.icon}
         {tab.label}
       </TabsTrigger>
@@ -298,7 +322,7 @@ function StripTab<Value extends string>({
     <Tooltip>
       <TooltipTrigger asChild>
         <span className="inline-flex h-full">
-          <TabsTrigger value={tab.value} aria-label={tab.label}>
+          <TabsTrigger value={tab.value} aria-label={tab.label} {...handlers}>
             {tab.icon}
           </TabsTrigger>
         </span>
@@ -306,6 +330,22 @@ function StripTab<Value extends string>({
       <TooltipContent>{tab.label}</TooltipContent>
     </Tooltip>
   );
+}
+
+/** A tab's choice on the press that activates a tab of the `Tabs` primitive. */
+function chooseHandlers<Value extends string>(
+  value: Value,
+  onChoose: ((value: Value) => void) | undefined,
+) {
+  if (!onChoose) return {};
+  return {
+    onMouseDown: (event: MouseEvent) => {
+      if (event.button === 0 && !event.ctrlKey) onChoose(value);
+    },
+    onKeyDown: (event: KeyboardEvent) => {
+      if (event.key === " " || event.key === "Enter") onChoose(value);
+    },
+  };
 }
 
 function setNextLayout(

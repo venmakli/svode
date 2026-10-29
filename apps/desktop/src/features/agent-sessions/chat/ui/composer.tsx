@@ -15,6 +15,7 @@ import { SingleBlockPlugin, type Value } from "platejs";
 import {
   createPlatePlugin,
   Plate,
+  useEditorContainerRef,
   usePlateEditor,
   type PlateEditor,
 } from "platejs/react";
@@ -52,8 +53,10 @@ import { isKeyTaken } from "../../lib/session-content";
 import { composerKeyAction } from "../model/composer";
 import { useComposerDictation } from "../hooks/use-composer-dictation";
 import {
+  ComposerFieldContext,
   holdComposerFocus,
   useComposerFocusReturn,
+  type ComposerFieldHandle,
 } from "../hooks/use-composer-focus";
 import {
   useComposerDropReceiver,
@@ -137,6 +140,7 @@ export function Composer({
     value: draftValue(parts),
   });
   const rootRef = useRef<HTMLDivElement>(null);
+  const fieldBoxRef = useRef<HTMLElement | null>(null);
   const partsKey = JSON.stringify(parts);
   const emittedRef = useRef(partsKey);
 
@@ -172,6 +176,30 @@ export function Composer({
   useEffect(() => {
     editor.setOption(SessionCommandsPlugin, "commands", commands);
   }, [commands, editor]);
+
+  // The controls inside the field give it focus, as the agent popover does
+  // once it closes (DF-217).
+  const field = useMemo<ComposerFieldHandle>(
+    () => ({
+      contains: (x, y) => {
+        const box = fieldBoxRef.current?.getBoundingClientRect();
+        return (
+          box !== undefined &&
+          x >= box.left &&
+          x <= box.right &&
+          y >= box.top &&
+          y <= box.bottom
+        );
+      },
+      focus: () => {
+        // Slate ignores the blur of a read-only field and still counts it
+        // focused, so it would not focus it again.
+        editor.tf.blur();
+        editor.tf.focus(editor.selection ? undefined : { edge: "endEditor" });
+      },
+    }),
+    [editor],
+  );
 
   const sendDisabled = isDraftBlank(parts) || !canSend || sending;
   // The field takes focus back after the send (DF-197).
@@ -259,6 +287,7 @@ export function Composer({
         editor={editor}
         draftKey={draftKey}
         root={rootRef}
+        boxRef={fieldBoxRef}
         sending={sending}
         placeholder={placeholder}
         events={fieldEvents}
@@ -276,7 +305,9 @@ export function Composer({
           disabled={sending}
           commands={commands.length > 0}
         />
-        {controls}
+        <ComposerFieldContext.Provider value={field}>
+          {controls}
+        </ComposerFieldContext.Provider>
         <div className="ms-auto flex items-center gap-2">
           {sending && (
             <span className="text-xs text-muted-foreground">
@@ -317,6 +348,7 @@ const ComposerField = memo(function ComposerField({
   editor,
   draftKey,
   root,
+  boxRef,
   sending,
   placeholder,
   events,
@@ -324,6 +356,8 @@ const ComposerField = memo(function ComposerField({
   editor: PlateEditor;
   draftKey: string;
   root: RefObject<HTMLElement | null>;
+  /** Takes the field's visible box: the editor's scroll container. */
+  boxRef: RefObject<HTMLElement | null>;
   sending: boolean;
   placeholder: string;
   events: FieldEvents;
@@ -352,6 +386,8 @@ const ComposerField = memo(function ComposerField({
           onKeyDown={events.onKeyDown}
         />
       </EditorContainer>
+      {/* After the container, whose ref is set by the time it reads it. */}
+      <FieldBox boxRef={boxRef} />
     </Plate>
   );
 });
@@ -364,6 +400,14 @@ function FocusReturn({
   root: RefObject<HTMLElement | null>;
 }) {
   useComposerFocusReturn(draftKey, root);
+  return null;
+}
+
+function FieldBox({ boxRef }: { boxRef: RefObject<HTMLElement | null> }) {
+  const container = useEditorContainerRef();
+  useLayoutEffect(() => {
+    boxRef.current = container.current;
+  });
   return null;
 }
 

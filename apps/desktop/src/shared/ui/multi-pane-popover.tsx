@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,8 +40,14 @@ interface MultiPanePopoverProps<TPane extends string> {
   side?: "top" | "right" | "bottom" | "left";
   /** Modal keeps its own scroll lock, so the wheel scrolls it inside a sheet. */
   modal?: boolean;
+  /** Where focus goes once the popover closes; back to the trigger by default. */
+  onCloseAutoFocus?: PopoverContentProps["onCloseAutoFocus"];
+  /** A press outside the popover, before it closes. */
+  onPointerDownOutside?: PopoverContentProps["onPointerDownOutside"];
   className?: string;
 }
+
+type PopoverContentProps = ComponentProps<typeof PopoverContent>;
 
 export function MultiPanePopover<TPane extends string>({
   anchor,
@@ -56,6 +62,8 @@ export function MultiPanePopover<TPane extends string>({
   align = "end",
   side,
   modal,
+  onCloseAutoFocus,
+  onPointerDownOutside,
   className,
 }: MultiPanePopoverProps<TPane>) {
   const [innerPane, setInnerPane] = useState<TPane>(initialPane ?? mainPane);
@@ -98,6 +106,8 @@ export function MultiPanePopover<TPane extends string>({
       <PopoverContent
         align={align}
         side={side}
+        onCloseAutoFocus={onCloseAutoFocus}
+        onPointerDownOutside={onPointerDownOutside}
         className={cn(
           "flex w-80 max-h-[min(640px,var(--radix-popover-content-available-height))] flex-col gap-0 overflow-hidden !rounded-[10px] !p-0 !shadow-[0_0_0_1px_rgba(0,0,0,0.08),0_12px_32px_-8px_rgba(0,0,0,0.18),0_4px_8px_-2px_rgba(0,0,0,0.08)]",
           className,

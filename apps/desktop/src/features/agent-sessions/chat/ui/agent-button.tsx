@@ -21,6 +21,7 @@ import { SettingsRow, SettingsStaticRow } from "@/shared/ui/settings-row";
 import type { AgentLaunchUnavailableDto } from "../api/chat";
 import type { ChatAgent } from "../model/agents";
 import type { DraftAgentState } from "../hooks/use-draft-agent";
+import { useComposerField } from "../hooks/use-composer-focus";
 import {
   currentOptionName,
   filterOptions,
@@ -127,7 +128,33 @@ export function AgentModelButton({
   onChange: (value: SettingValue) => void;
 }) {
   const dictionary = useAgentAdapterDictionary();
+  const field = useComposerField();
   const [open, setOpen] = useState(false);
+  // The popover closes for a chosen agent or a click in the composer field
+  // and gives focus to the field rather than the button (DF-217).
+  const [focusField, setFocusField] = useState(false);
+  const close = (toField: boolean) => {
+    setFocusField(toField);
+    setOpen(false);
+  };
+  // Settings and the sign-in lead away from the popover: it closes first.
+  const signIn = draft?.recovery.onSignIn ?? null;
+  const choice: DraftAgentChoice | null = draft && {
+    ...draft,
+    recovery: {
+      onSignIn:
+        signIn &&
+        (() => {
+          close(false);
+          signIn();
+        }),
+      onOpenSettings: () => {
+        close(false);
+        draft.recovery.onOpenSettings();
+      },
+      onRetry: draft.recovery.onRetry,
+    },
+  };
   const [pane, setPane] = useState<AgentPane>("main");
   // The row whose screen was open takes focus back on the main screen.
   const [returnTo, setReturnTo] = useState<string | null>(null);
@@ -171,7 +198,7 @@ export function AgentModelButton({
     : "main";
   const rows = (
     <SettingRows
-      draft={draft}
+      draft={choice}
       settings={settings}
       entries={entries}
       unavailableModel={unavailableModel}
@@ -196,8 +223,24 @@ export function AgentModelButton({
         if (next) {
           setPane("main");
           setReturnTo(null);
+          setFocusField(false);
         }
         setOpen(next);
+      }}
+      onPointerDownOutside={(event) => {
+        // The modal layer hides the field from the press, so its point
+        // tells whether it is in the field.
+        const press = event.detail.originalEvent;
+        setFocusField(
+          press.button === 0 &&
+            !press.ctrlKey &&
+            field?.contains(press.clientX, press.clientY) === true,
+        );
+      }}
+      onCloseAutoFocus={(event) => {
+        if (!focusField || !field) return;
+        event.preventDefault();
+        field.focus();
       }}
       mainPane="main"
       pane={shownPane}
@@ -228,8 +271,12 @@ export function AgentModelButton({
           title: name,
           content: (
             <div className="flex flex-col p-1">
-              {draft ? (
-                <AgentTabs agent={agent} draft={draft}>
+              {choice ? (
+                <AgentTabs
+                  agent={agent}
+                  draft={choice}
+                  onChosen={() => close(true)}
+                >
                   {rows}
                 </AgentTabs>
               ) : (
@@ -245,15 +292,12 @@ export function AgentModelButton({
               )}
             </div>
           ),
-          footer: draft && (
+          footer: choice && (
             <Button
               variant="ghost"
               size="sm"
               className="w-full justify-start"
-              onClick={() => {
-                setOpen(false);
-                draft.recovery.onOpenSettings();
-              }}
+              onClick={choice.recovery.onOpenSettings}
             >
               <Settings2 data-icon="inline-start" />
               {m.sessions_chat_agent_settings()}
@@ -283,17 +327,20 @@ export function AgentModelButton({
 
 /**
  * The agents of a draft as tabs: arrows move between them, a click, Enter
- * or Space chooses one, which starts it (`04`, C1). Another agent shows its
- * icon, the chosen one its icon and name; agents that do not fit wait under
- * "more", as the views of a Collection do.
+ * or Space chooses one, which starts it (`04`, C1), the chosen one again
+ * included, and closes the popover. Another agent shows its icon, the
+ * chosen one its icon and name; agents that do not fit wait under "more",
+ * as the views of a Collection do.
  */
 function AgentTabs({
   agent,
   draft,
+  onChosen,
   children,
 }: {
   agent: string | null;
   draft: DraftAgentChoice;
+  onChosen: () => void;
   /** The rows of the chosen agent. */
   children: ReactNode;
 }) {
@@ -318,6 +365,7 @@ function AgentTabs({
           tabs={tabs}
           value={agent ?? ""}
           onValueChange={draft.onChoose}
+          onTabChoose={onChosen}
           moreLabel={m.sessions_chat_agent_more()}
           labelActiveOnly
           overflowActivationMode="manual"
