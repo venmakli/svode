@@ -403,6 +403,29 @@ test("R2 an image in a link survives typing, Enter, merging paragraphs and force
   expect(elementsOf(editor, INLINE_IMAGE_KEY)).toHaveLength(2);
 });
 
+test("R2 an image inside a reference link stays inline and keeps the reference form", () => {
+  const source =
+    "Intro\n\n[![i][img]][ref] and [![b](b.svg)][ref]\n\n[img]: ./i.png\n[ref]: ./plan.md\n";
+  const editor = editorFor(source);
+  expect(save(editor)).toBe(source);
+  expect(elementsOf(editor, KEYS.img)).toEqual([]);
+  const links = elementsOf(editor, KEYS.link);
+  expect(links).toHaveLength(2);
+  for (const link of links) {
+    expect(
+      link.children.some(
+        (child) => (child as TElement).type === INLINE_IMAGE_KEY,
+      ),
+    ).toBe(true);
+  }
+  editor.tf.insertText("!", { at: editor.api.end([1]) });
+  editor.tf.normalize({ force: true });
+  expect(save(editor)).toBe(
+    "Intro\n\n[![i][img]][ref] and [![b](b.svg)][ref]!\n\n[img]: ./i.png\n[ref]: ./plan.md\n",
+  );
+  expect(save(editorFor(save(editor)))).toBe(save(editor));
+});
+
 test("R2 forced normalization keeps the images of headings and links", () => {
   const source =
     "# Title ![a](a.png)\n\n[![logo](logo.png)](./plan.md)\n\n- [![b](b.svg)](https://ci.dev) item\n";
