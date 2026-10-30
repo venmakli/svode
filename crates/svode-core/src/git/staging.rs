@@ -1,13 +1,13 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
+    ops::Bound,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 use unicode_normalization::UnicodeNormalization;
 
 use super::GitError;
-use super::cli::{GitCli, GitOutput};
+use super::cli::{GitCli, GitOutput, literal_pathspec_input, literal_pathspecs, nul_paths_input};
 use crate::git::path::{RootMode, normalize_repo_relative};
 
 /// Presence of repository paths by their exact spelling. A case-insensitive
@@ -86,7 +86,22 @@ pub async fn exec(
         .map_err(|_| failure(stage, "command_unavailable", None, paths))
 }
 
-async fn read_paths(
+/// [`exec`] of a command that reads `input` from stdin.
+pub async fn exec_input(
+    cli: &GitCli,
+    repo: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+    input: &[u8],
+    stage: &'static str,
+    paths: &[String],
+) -> Result<GitOutput, GitError> {
+    cli.exec_with_input(repo, args, env, input)
+        .await
+        .map_err(|_| failure(stage, "command_unavailable", None, paths))
+}
+
+pub(crate) async fn read_paths(
     cli: &GitCli,
     repo: &Path,
     args: &[&str],
@@ -117,6 +132,38 @@ fn within(path: &str, scope: &str) -> bool {
         || path
             .strip_prefix(scope)
             .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// The sorted `entries` at or under `scope`.
+pub(crate) fn under<'a>(
+    entries: &'a BTreeSet<String>,
+    scope: &'a str,
+) -> impl Iterator<Item = &'a String> + 'a {
+    let whole = scope == "." || scope.is_empty();
+    let start = if whole {
+        Bound::Unbounded
+    } else {
+        Bound::Included(scope)
+    };
+    entries
+        .range::<str, _>((start, Bound::Unbounded))
+        .take_while(move |path| whole || path.starts_with(scope))
+        .filter(move |path| within(path, scope))
+}
+
+/// Whether `path` is one of `set` or lies under one, as the literal pathspecs
+/// of `set` match it.
+fn covered(set: &HashSet<&str>, path: &str) -> bool {
+    let mut current = path;
+    loop {
+        if set.contains(current) {
+            return true;
+        }
+        match current.rfind('/') {
+            Some(end) => current = &current[..end],
+            None => return false,
+        }
+    }
 }
 
 /// Enumerate through Git, which owns ignore rules, tracked deletions and repository boundaries.
@@ -168,34 +215,41 @@ pub async fn resolve(
             .extend(read_paths(cli, repo, &["ls-tree", "-r", "--name-only", "-z", "HEAD"]).await?);
     }
     let mut presence = Presence::new(repo);
+    let mut matched = Vec::with_capacity(scopes.len());
+    let mut folded = Vec::new();
+    for scope in &scopes {
+        let matches = under(&entries, scope).cloned().collect::<Vec<_>>();
+        let fold = matches.is_empty() && scope != "." && !scope.is_empty() && presence.exact(scope);
+        if fold {
+            folded.push(scope.clone());
+        }
+        matched.push((matches, fold));
+    }
+    // Git folding names on a case-insensitive file system counts the new
+    // spelling of a case-only relocation as its tracked old one.
+    let mut unfolded = BTreeSet::new();
+    let literals = literal_pathspecs(&folded);
+    for args in cli.path_batches(
+        &[
+            "-c",
+            "core.ignorecase=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+        ],
+        &literals,
+    ) {
+        unfolded.extend(read_paths(cli, repo, &args).await?);
+    }
     let mut selected = BTreeSet::new();
-    for scope in scopes {
-        let mut matches = entries
-            .iter()
-            .filter(|path| within(path, &scope))
-            .cloned()
-            .collect::<Vec<_>>();
-        if matches.is_empty() && scope != "." && !scope.is_empty() && presence.exact(&scope) {
-            // Git folding names on a case-insensitive file system counts the new
-            // spelling of a case-only relocation as its tracked old one.
-            matches = read_paths(
-                cli,
-                repo,
-                &[
-                    "-c",
-                    "core.ignorecase=false",
-                    "ls-files",
-                    "--others",
-                    "--exclude-standard",
-                    "-z",
-                    "--",
-                    &format!(":(literal){scope}"),
-                ],
-            )
-            .await?
-            .into_iter()
-            .filter(|path| presence.exact(path))
-            .collect();
+    for (scope, (mut matches, fold)) in scopes.into_iter().zip(matched) {
+        if fold {
+            matches = under(&unfolded, &scope)
+                .filter(|path| presence.exact(path))
+                .cloned()
+                .collect();
         }
         if matches.is_empty() && scope != "." && !scope.is_empty() && !repo.join(&scope).is_dir() {
             return Err(failure("prepare", "target_unavailable", None, &[scope]));
@@ -208,7 +262,9 @@ pub async fn resolve(
     }
     let selected = selected.into_iter().collect::<Vec<_>>();
     // A Space checkout behind the project pointer is never staged over it.
-    let backward = super::published_pointer::backward(cli, repo, &selected).await?;
+    let backward = super::published_pointer::backward(cli, repo, &selected)
+        .await
+        .map_err(|_| failure("prepare", "inventory_failed", None, &selected))?;
     Ok(selected
         .into_iter()
         .filter(|path| !backward.contains(path))
@@ -242,7 +298,7 @@ pub async fn recorded(
     }
     Ok(paths
         .into_iter()
-        .filter(|path| presence.exact(path) || entries.iter().any(|entry| within(entry, path)))
+        .filter(|path| presence.exact(path) || under(&entries, path).next().is_some())
         .collect())
 }
 
@@ -258,47 +314,27 @@ pub async fn prepare(
         .cloned()
         .collect::<BTreeSet<_>>();
     let indexed = read_paths(cli, repo, &["ls-files", "--cached", "-z"]).await?;
-    // Removals come first: a new spelling added while its old one is still
-    // indexed keeps the old spelling on a case-insensitive file system, and
-    // `git add` of that old spelling would find the new file.
-    for path in paths.iter().filter(|path| !present.contains(*path)) {
-        if indexed.contains(path) {
-            let out = exec(
-                cli,
-                repo,
-                &["update-index", "--force-remove", "--", path],
-                "prepare",
-                std::slice::from_ref(path),
-            )
-            .await?;
-            if out.exit_code != 0 {
-                return Err(failure(
-                    "prepare",
-                    "command_failed",
-                    Some(out.exit_code),
-                    std::slice::from_ref(path),
-                ));
-            }
-            continue;
-        }
-        // A tracked deletion already staged has nothing left to stage.
+    let (removed, absent): (Vec<_>, Vec<_>) = paths
+        .iter()
+        .filter(|path| !present.contains(*path))
+        .cloned()
+        .partition(|path| indexed.contains(path));
+    // A tracked deletion already staged has nothing left to stage.
+    if !absent.is_empty() {
         let head = exec(
             cli,
             repo,
-            &[
-                "ls-tree",
-                "-r",
-                "--name-only",
-                "-z",
-                "HEAD",
-                "--",
-                &format!(":(literal){path}"),
-            ],
+            &["ls-tree", "-r", "--name-only", "-z", "HEAD"],
             "prepare",
-            std::slice::from_ref(path),
+            &absent,
         )
         .await?;
-        if head.exit_code != 0 || !head.stdout.split('\0').any(|p| p == path) {
+        let tracked = if head.exit_code == 0 {
+            head.stdout.split('\0').collect::<HashSet<_>>()
+        } else {
+            HashSet::new()
+        };
+        if let Some(path) = absent.iter().find(|path| !tracked.contains(path.as_str())) {
             return Err(failure(
                 "prepare",
                 "target_unavailable",
@@ -307,14 +343,18 @@ pub async fn prepare(
             ));
         }
     }
-    for path in paths.iter().filter(|path| present.contains(*path)) {
-        let literal = format!(":(literal){path}");
-        let out = exec(
+    // Removals come first: a new spelling added while its old one is still
+    // indexed keeps the old spelling on a case-insensitive file system, and
+    // `git add` of that old spelling would find the new file.
+    if !removed.is_empty() {
+        let out = exec_input(
             cli,
             repo,
-            &["add", "--", &literal],
+            &["update-index", "--force-remove", "-z", "--stdin"],
+            &[],
+            &nul_paths_input(&removed),
             "prepare",
-            std::slice::from_ref(path),
+            &removed,
         )
         .await?;
         if out.exit_code != 0 {
@@ -322,7 +362,32 @@ pub async fn prepare(
                 "prepare",
                 "command_failed",
                 Some(out.exit_code),
-                std::slice::from_ref(path),
+                &removed,
+            ));
+        }
+    }
+    if !present.is_empty() {
+        let added = paths
+            .iter()
+            .filter(|path| present.contains(*path))
+            .cloned()
+            .collect::<Vec<_>>();
+        let out = exec_input(
+            cli,
+            repo,
+            &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            &[],
+            &literal_pathspec_input(&added),
+            "prepare",
+            &added,
+        )
+        .await?;
+        if out.exit_code != 0 {
+            return Err(failure(
+                "prepare",
+                "command_failed",
+                Some(out.exit_code),
+                &added,
             ));
         }
     }
@@ -352,34 +417,35 @@ pub async fn verify(
     if !missing.is_empty() {
         return Err(failure("verify", "paths_not_prepared", None, &missing));
     }
-    let literals = paths
-        .iter()
-        .map(|p| format!(":(literal){p}"))
-        .collect::<Vec<_>>();
-    let mut args = vec![
-        "diff",
-        "--no-ext-diff",
-        "--name-only",
-        "-z",
-        "--ignore-submodules=dirty",
-        "--",
-    ];
-    args.extend(literals.iter().map(String::as_str));
-    let out = exec(cli, repo, &args, "verify", paths).await?;
-    if out.exit_code != 0 {
-        return Err(failure(
-            "verify",
-            "verification_failed",
-            Some(out.exit_code),
-            paths,
-        ));
+    let literals = literal_pathspecs(paths);
+    let mut dirty = Vec::new();
+    for args in cli.path_batches(
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--name-only",
+            "-z",
+            "--ignore-submodules=dirty",
+            "--",
+        ],
+        &literals,
+    ) {
+        let out = exec(cli, repo, &args, "verify", paths).await?;
+        if out.exit_code != 0 {
+            return Err(failure(
+                "verify",
+                "verification_failed",
+                Some(out.exit_code),
+                paths,
+            ));
+        }
+        dirty.extend(
+            out.stdout
+                .split('\0')
+                .filter(|p| !p.is_empty())
+                .map(str::to_string),
+        );
     }
-    let dirty = out
-        .stdout
-        .split('\0')
-        .filter(|p| !p.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
     if !dirty.is_empty() {
         return Err(failure("verify", "paths_not_prepared", None, &dirty));
     }
@@ -442,10 +508,6 @@ async fn commit_through(
 ) -> Result<GitOutput, GitError> {
     let index = index.to_string_lossy();
     let env = [("GIT_INDEX_FILE", index.as_ref())];
-    let literals = paths
-        .iter()
-        .map(|path| format!(":(literal){path}"))
-        .collect::<Vec<_>>();
     let head = exec(
         cli,
         repo,
@@ -464,22 +526,27 @@ async fn commit_through(
             .await
             .map_err(|_| failure("commit", "command_unavailable", None, paths))?,
     ];
-    let mut args = vec!["ls-files", "--stage", "-z", "--"];
-    args.extend(literals.iter().map(String::as_str));
-    let staged = exec(cli, repo, &args, "commit", paths).await?;
+    let set = paths.iter().map(String::as_str).collect::<HashSet<_>>();
+    let staged = exec(cli, repo, &["ls-files", "--stage", "-z"], "commit", paths).await?;
+    let mut entries = Vec::new();
     let mut kept = BTreeSet::new();
     for record in staged
         .stdout
         .split('\0')
         .filter(|record| !record.is_empty())
     {
-        if let Some((_, path)) = record.split_once('\t') {
+        if let Some((_, path)) = record.split_once('\t')
+            && covered(&set, path)
+        {
+            entries.extend_from_slice(record.as_bytes());
+            entries.push(0);
             kept.insert(path.to_string());
         }
     }
-    if !staged.stdout.is_empty() {
+    if !entries.is_empty() {
         steps.push(
-            cli.exec_sensitive_with_stdin(
+            exec_input(
+                cli,
                 repo,
                 &[
                     "-c",
@@ -489,29 +556,36 @@ async fn commit_through(
                     "--index-info",
                 ],
                 &env,
-                Some(&staged.stdout),
-                Duration::from_secs(60),
+                &entries,
+                "commit",
+                paths,
             )
-            .await
-            .map_err(|_| failure("commit", "command_unavailable", None, paths))?,
+            .await?,
         );
     }
-    for path in paths.iter().filter(|path| !kept.contains(*path)) {
+    let removed = paths
+        .iter()
+        .filter(|path| !kept.contains(*path))
+        .collect::<Vec<_>>();
+    if !removed.is_empty() {
         steps.push(
-            cli.exec_redacted_with_env(
+            exec_input(
+                cli,
                 repo,
                 &[
                     "-c",
                     "core.ignorecase=false",
                     "update-index",
                     "--force-remove",
-                    "--",
-                    path,
+                    "-z",
+                    "--stdin",
                 ],
                 &env,
+                &nul_paths_input(removed),
+                "commit",
+                paths,
             )
-            .await
-            .map_err(|_| failure("commit", "command_unavailable", None, paths))?,
+            .await?,
         );
     }
     if let Some(step) = steps.iter().find(|step| step.exit_code != 0) {
@@ -527,17 +601,51 @@ async fn commit_through(
         .map_err(|_| failure("commit", "command_unavailable", None, paths))
 }
 
+/// Whether the index differs from HEAD at `paths`, or anywhere without paths.
 pub async fn has_changes(cli: &GitCli, repo: &Path, paths: &[String]) -> Result<bool, GitError> {
-    let literals = paths
-        .iter()
-        .map(|p| format!(":(literal){p}"))
-        .collect::<Vec<_>>();
-    let mut args = vec!["diff", "--cached", "--quiet", "--no-ext-diff", "--"];
-    args.extend(literals.iter().map(String::as_str));
-    let out = exec(cli, repo, &args, "verify", paths).await?;
-    match out.exit_code {
-        0 => Ok(false),
-        1 => Ok(true),
-        code => Err(failure("verify", "verification_failed", Some(code), paths)),
+    if paths.is_empty() {
+        let out = exec(
+            cli,
+            repo,
+            &["diff", "--cached", "--quiet", "--no-ext-diff"],
+            "verify",
+            paths,
+        )
+        .await?;
+        return match out.exit_code {
+            0 => Ok(false),
+            1 => Ok(true),
+            code => Err(failure("verify", "verification_failed", Some(code), paths)),
+        };
     }
+    // Comparing the index with HEAD costs the same without paths, and every
+    // staged path is listed on its own without rename pairing.
+    let out = exec(
+        cli,
+        repo,
+        &[
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--no-ext-diff",
+        ],
+        "verify",
+        paths,
+    )
+    .await?;
+    if out.exit_code != 0 {
+        return Err(failure(
+            "verify",
+            "verification_failed",
+            Some(out.exit_code),
+            paths,
+        ));
+    }
+    let set = paths.iter().map(String::as_str).collect::<HashSet<_>>();
+    Ok(out
+        .stdout
+        .split('\0')
+        .any(|path| !path.is_empty() && covered(&set, path)))
 }

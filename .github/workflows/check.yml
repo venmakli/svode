@@ -133,7 +133,8 @@ jobs:
     # The native session readers of Stage 10 `07` on Windows, which no live
     # device checks: their store fixtures, the store paths of this OS, the
     # liveness signal of a live and an exited child process and the Cursor
-    # chat folders of Windows paths; and the local paths of the chat of `08`.
+    # chat folders of Windows paths; the local paths of the chat of `08`; and
+    # Git path sets beyond the command line limit of this OS (DF-270).
     # Linux runs them with the workspace tests of the rust job.
     runs-on: windows-latest
     steps:
@@ -181,6 +182,12 @@ jobs:
       # filesystem access for a network share.
       - name: Chat paths of the system path helpers
         run: cargo test -p svode-core --lib -- system_path::tests
+      # A folder save, «Save all» with deletions and a case-only relocation
+      # and a structural commit of a moved folder, each with paths longer
+      # than 32 767 characters together, are one commit with Git for Windows,
+      # and the path batches of a Git call stay within the budget.
+      - name: Git path sets beyond the command line limit
+        run: cargo test -p svode-core --lib -- git::path_set_tests git::cli::tests
       - name: Chat paths of the agent runtime
         run: cargo test -p svode-agents -- prompt::tests changes::tests::a_path_on_a_network_share changes::tests::a_path_in_a_canonical_space acp::media::tests::a_network_share acp::media::tests::windows_drive_paths
       - name: Chat paths of Desktop

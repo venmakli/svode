@@ -80,25 +80,24 @@ pub async fn backward(
     if paths.is_empty() || !root.join(".gitmodules").is_file() {
         return Ok(BTreeSet::new());
     }
-    let literals = paths
-        .iter()
-        .map(|path| format!(":(literal){path}"))
-        .collect::<Vec<_>>();
-    let mut args = vec!["ls-tree", "-r", "-z", "HEAD", "--"];
-    args.extend(literals.iter().map(String::as_str));
-    let out = cli.exec_redacted(root, &args).await?;
-    if out.exit_code != 0 {
-        // An unborn project records no pointer yet.
-        let head = cli.exec(root, &["rev-parse", "--verify", "HEAD"]).await?;
-        if head.exit_code != 0 {
-            return Ok(BTreeSet::new());
+    let literals = super::cli::literal_pathspecs(paths);
+    let mut listing = String::new();
+    for args in cli.path_batches(&["ls-tree", "-r", "-z", "HEAD", "--"], &literals) {
+        let out = cli.exec_redacted(root, &args).await?;
+        if out.exit_code != 0 {
+            // An unborn project records no pointer yet.
+            let head = cli.exec(root, &["rev-parse", "--verify", "HEAD"]).await?;
+            if head.exit_code != 0 {
+                return Ok(BTreeSet::new());
+            }
+            return Err(GitError::GitCommandFailed(
+                "Cannot read project pointers".into(),
+            ));
         }
-        return Err(GitError::GitCommandFailed(
-            "Cannot read project pointers".into(),
-        ));
+        listing.push_str(&out.stdout);
     }
     let mut backward = BTreeSet::new();
-    for (path, pointer) in gitlinks(&out.stdout) {
+    for (path, pointer) in gitlinks(&listing) {
         let child = root.join(path);
         if child.join(".git").symlink_metadata().is_err() {
             continue;

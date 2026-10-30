@@ -229,6 +229,85 @@ impl GitCli {
         })
     }
 
+    /// Execute a git command that reads `input` from stdin, such as a path set
+    /// through `--pathspec-from-file=-` or `--stdin`. The input is written
+    /// while the output is read, so neither side waits on a full pipe; like
+    /// [`Self::exec_redacted`], nothing of the call reaches tracing.
+    pub async fn exec_with_input(
+        &self,
+        space_dir: &Path,
+        args: &[&str],
+        extra_env: &[(&str, &str)],
+        input: &[u8],
+    ) -> Result<GitOutput, GitError> {
+        let git_args = args_with_quote_path(args);
+        let mut cmd = Command::new(&self.git_path);
+        hide_tokio_window(&mut cmd);
+        apply_common_git_env(&mut cmd);
+        cmd.args(&git_args)
+            .current_dir(space_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        for (key, value) in extra_env {
+            cmd.env(key, value);
+        }
+        let mut child = cmd
+            .spawn()
+            .map_err(|error| GitError::GitCommandFailed(format!("Failed to spawn git: {error}")))?;
+        let stdin = child.stdin.take();
+        let write = async move {
+            if let Some(mut stdin) = stdin {
+                // A Git that stops reading early exits with the code that says why.
+                let _ = stdin.write_all(input).await;
+            }
+        };
+        let (_, output) = tokio::join!(write, child.wait_with_output());
+        let output = output.map_err(|error| {
+            GitError::GitCommandFailed(format!("Failed to wait for git: {error}"))
+        })?;
+        Ok(GitOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+        })
+    }
+
+    /// Upper bound of the command line of a Git call with `args` on every OS:
+    /// the program, the arguments Svode adds and `args`.
+    pub fn command_line_cost(&self, args: &[&str]) -> usize {
+        command_line_arg_cost(&self.git_path.to_string_lossy())
+            + args_with_quote_path(args)
+                .iter()
+                .map(|arg| command_line_arg_cost(arg))
+                .sum::<usize>()
+    }
+
+    /// Argument lists of one Git call each for a command that takes a path
+    /// set only as arguments: `args` followed by consecutive `paths`, every
+    /// list within [`PATH_SET_COMMAND_LINE_BUDGET`]. A path set of any size
+    /// then needs one call per budget, never one command line.
+    pub fn path_batches<'a>(&self, args: &[&'a str], paths: &'a [String]) -> Vec<Vec<&'a str>> {
+        let base = self.command_line_cost(args);
+        let mut batches = Vec::new();
+        let mut batch = args.to_vec();
+        let mut cost = base;
+        for path in paths {
+            let next = command_line_arg_cost(path);
+            if batch.len() > args.len() && cost + next > PATH_SET_COMMAND_LINE_BUDGET {
+                batches.push(std::mem::replace(&mut batch, args.to_vec()));
+                cost = base;
+            }
+            batch.push(path);
+            cost += next;
+        }
+        if batch.len() > args.len() {
+            batches.push(batch);
+        }
+        batches
+    }
+
     /// Execute a git command without a working directory (e.g. clone, or
     /// `--global` config writes).
     pub async fn exec_no_dir(&self, args: &[&str]) -> Result<GitOutput, GitError> {
@@ -355,6 +434,53 @@ fn apply_common_std_git_env(cmd: &mut StdCommand) {
     if let Some(path) = git_subprocess_path_env() {
         cmd.env("PATH", path);
     }
+}
+
+/// Longest command line a Git call with a path set may take: the Windows
+/// limit of 32 767 UTF-16 units, the smallest of the supported OSes, less a
+/// margin for the Git for Windows launcher, which starts the real binary under
+/// a longer program path.
+pub const PATH_SET_COMMAND_LINE_BUDGET: usize = 30_000;
+
+/// Upper bound of what `arg` adds to a command line: its UTF-8 bytes bound the
+/// UTF-16 units Windows counts, plus quotes, escapes of quotes and
+/// backslashes, and the separator.
+fn command_line_arg_cost(arg: &str) -> usize {
+    arg.len()
+        + arg
+            .bytes()
+            .filter(|byte| matches!(byte, b'"' | b'\\'))
+            .count()
+        + 3
+}
+
+/// `paths` as pathspecs Git matches as written, without pathspec magic.
+pub fn literal_pathspecs(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| format!(":(literal){path}"))
+        .collect()
+}
+
+/// Literal pathspecs of `paths` for `--pathspec-from-file=- --pathspec-file-nul`.
+pub fn literal_pathspec_input(paths: &[String]) -> Vec<u8> {
+    let mut input = Vec::new();
+    for path in paths {
+        input.extend_from_slice(b":(literal)");
+        input.extend_from_slice(path.as_bytes());
+        input.push(0);
+    }
+    input
+}
+
+/// NUL-terminated `paths` for `--stdin -z` of commands that take plain paths.
+pub fn nul_paths_input<'a>(paths: impl IntoIterator<Item = &'a String>) -> Vec<u8> {
+    let mut input = Vec::new();
+    for path in paths {
+        input.extend_from_slice(path.as_bytes());
+        input.push(0);
+    }
+    input
 }
 
 fn args_with_quote_path<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
@@ -509,7 +635,92 @@ fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{args_with_quote_path, parse_lfs_version};
+    use super::{
+        GitCli, PATH_SET_COMMAND_LINE_BUDGET, args_with_quote_path, command_line_arg_cost,
+        parse_lfs_version,
+    };
+
+    /// UTF-16 units of the command line Windows builds for `args`, with the
+    /// quoting of the Rust standard library: arguments with spaces, tabs or
+    /// quotes in quotes, backslashes before a quote doubled.
+    fn windows_command_line(args: &[&str]) -> usize {
+        args.iter()
+            .map(|arg| {
+                let quoted = arg.is_empty() || arg.contains([' ', '\t', '"']);
+                let mut units = arg.encode_utf16().count() + if quoted { 2 } else { 0 };
+                let mut backslashes = 0;
+                for c in arg.chars() {
+                    match c {
+                        '\\' => backslashes += 1,
+                        '"' => {
+                            units += backslashes + 1;
+                            backslashes = 0;
+                        }
+                        _ => backslashes = 0,
+                    }
+                }
+                if quoted {
+                    units += backslashes;
+                }
+                units + 1
+            })
+            .sum()
+    }
+
+    #[test]
+    fn path_batches_keep_every_call_of_any_set_within_the_budget() {
+        let cli = GitCli::for_test(r"C:\Program Files\Git\cmd\git.exe".into());
+        let paths = (0..20_000)
+            .map(|index| match index % 4 {
+                0 => format!(":(literal)Папка/{index} {}.md", "ж".repeat(120)),
+                1 => format!(":(literal)emoji/{index}-{}.md", "😀".repeat(60)),
+                2 => format!(":(literal)quotes/{index}\\\"{}\".md", "\\".repeat(40)),
+                _ => format!(":(literal)ascii/{index}-{}.md", "x".repeat(200)),
+            })
+            .collect::<Vec<_>>();
+        let args = ["diff", "--cached", "--name-status", "-z", "--"];
+        let batches = cli.path_batches(&args, &paths);
+        assert!(batches.len() > 1);
+        let mut joined = Vec::new();
+        for batch in &batches {
+            assert_eq!(&batch[..args.len()], args);
+            let mut line = vec![r"C:\Program Files\Git\cmd\git.exe"];
+            line.extend(args_with_quote_path(batch));
+            assert!(windows_command_line(&line) <= PATH_SET_COMMAND_LINE_BUDGET);
+            assert!(cli.command_line_cost(batch) <= PATH_SET_COMMAND_LINE_BUDGET);
+            joined.extend(batch[args.len()..].iter().copied());
+        }
+        assert_eq!(joined, paths.iter().map(String::as_str).collect::<Vec<_>>());
+        // Batches are full: one call per budget, not per path.
+        let total = paths
+            .iter()
+            .map(|path| command_line_arg_cost(path))
+            .sum::<usize>();
+        assert!(
+            batches.len()
+                <= total / (PATH_SET_COMMAND_LINE_BUDGET - cli.command_line_cost(&args) - 1_000)
+                    + 1
+        );
+    }
+
+    #[test]
+    fn a_set_within_the_budget_is_one_call_and_an_empty_set_none() {
+        let cli = GitCli::for_test("/usr/bin/git".into());
+        let paths = vec![":(literal)a.md".to_string(), ":(literal)b.md".to_string()];
+        assert_eq!(
+            cli.path_batches(&["ls-tree", "-r", "-z", "HEAD", "--"], &paths),
+            vec![vec![
+                "ls-tree",
+                "-r",
+                "-z",
+                "HEAD",
+                "--",
+                ":(literal)a.md",
+                ":(literal)b.md"
+            ]]
+        );
+        assert!(cli.path_batches(&["ls-tree", "--"], &[]).is_empty());
+    }
 
     #[test]
     fn parses_git_lfs_version_prefix() {

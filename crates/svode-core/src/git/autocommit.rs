@@ -564,58 +564,29 @@ async fn commit_prepared_paths(
     if !background_commit_allowed(repo, intent) {
         return Ok(false);
     }
+    let missing = |path: &String| optional && !repo.join(path).exists();
     let mut scopes = Vec::new();
-    for path in paths {
-        if optional && !repo.join(path).exists() {
-            let known = cli
-                .exec_redacted(
-                    repo,
-                    &[
-                        "ls-files",
-                        "--error-unmatch",
-                        "--",
-                        &format!(":(literal){path}"),
-                    ],
-                )
-                .await?;
-            if known.exit_code == 1 {
-                let staged = super::staging::exec(
-                    cli,
-                    repo,
-                    &[
-                        "diff",
-                        "--cached",
-                        "--name-only",
-                        "-z",
-                        "--",
-                        &format!(":(literal){path}"),
-                    ],
-                    "prepare",
-                    std::slice::from_ref(path),
-                )
-                .await?;
-                if staged.exit_code != 0 {
-                    return Err(super::staging::failure(
-                        "prepare",
-                        "inventory_failed",
-                        Some(staged.exit_code),
-                        std::slice::from_ref(path),
-                    ));
-                }
-                if staged.stdout.is_empty() {
-                    continue;
-                }
-            }
-            if known.exit_code != 0 && known.exit_code != 1 {
-                return Err(super::staging::failure(
-                    "prepare",
-                    "inventory_failed",
-                    Some(known.exit_code),
-                    std::slice::from_ref(path),
-                ));
+    if paths.iter().any(missing) {
+        // A missing optional path stays in scope while the index or a staged
+        // deletion still records something at or under it.
+        let indexed =
+            super::staging::read_paths(cli, repo, &["ls-files", "--cached", "-z"]).await?;
+        let staged = super::staging::read_paths(
+            cli,
+            repo,
+            &["diff", "--cached", "--name-only", "-z", "--no-renames"],
+        )
+        .await?;
+        for path in paths {
+            if !missing(path)
+                || super::staging::under(&indexed, path).next().is_some()
+                || super::staging::under(&staged, path).next().is_some()
+            {
+                scopes.push(path.clone());
             }
         }
-        scopes.push(path.clone());
+    } else {
+        scopes.extend_from_slice(paths);
     }
     super::branch::prepare_existing(cli, repo).await?;
     let concrete = super::staging::resolve(cli, repo, &scopes).await?;

@@ -13,6 +13,8 @@ pub mod markers;
 pub mod operations;
 pub mod ops;
 pub mod path;
+#[cfg(test)]
+mod path_set_tests;
 pub mod pending;
 pub mod policy;
 pub mod publication;

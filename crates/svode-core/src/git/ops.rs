@@ -662,13 +662,23 @@ pub async fn commit_paths(
     let out = if file_paths.iter().any(|path| presence.shadowed(path)) {
         super::staging::commit_prepared(cli, space_dir, &file_paths, &message).await?
     } else {
-        let mut args = vec!["commit", "--only", "-m", &message, "--"];
-        let literal_paths = file_paths
-            .iter()
-            .map(|path| format!(":(literal){path}"))
-            .collect::<Vec<_>>();
-        args.extend(literal_paths.iter().map(String::as_str));
-        super::staging::exec(cli, space_dir, &args, "commit", &file_paths).await?
+        super::staging::exec_input(
+            cli,
+            space_dir,
+            &[
+                "commit",
+                "--only",
+                "-m",
+                &message,
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ],
+            &[],
+            &super::cli::literal_pathspec_input(&file_paths),
+            "commit",
+            &file_paths,
+        )
+        .await?
     };
     if out.exit_code != 0 {
         return Err(super::staging::failure(
@@ -686,27 +696,23 @@ async fn generate_commit_message_for_paths(
     space_dir: &Path,
     paths: &[String],
 ) -> Result<String, GitError> {
-    let literal_paths = paths
-        .iter()
-        .map(|path| format!(":(literal){path}"))
-        .collect::<Vec<_>>();
-    let mut args = vec!["diff", "--cached", "--stat", "--"];
-    args.extend(literal_paths.iter().map(String::as_str));
-    let out = cli.exec_redacted(space_dir, &args).await?;
-
-    if out.stdout.trim().is_empty() {
+    // Renames pair within one batch; a path set within the budget is one.
+    let literal_paths = super::cli::literal_pathspecs(paths);
+    let mut records = Vec::new();
+    for args in cli.path_batches(
+        &["diff", "--cached", "--name-status", "-z", "--"],
+        &literal_paths,
+    ) {
+        let name_status = super::staging::exec(cli, space_dir, &args, "commit", paths).await?;
+        records.extend(parse_name_status_z(&name_status.stdout)?);
+    }
+    if records.is_empty() {
         return Ok("Update space".to_string());
     }
 
     let mut added: Vec<String> = Vec::new();
     let mut modified: Vec<String> = Vec::new();
     let mut deleted: Vec<String> = Vec::new();
-
-    // Also check diff --cached --name-status for accurate categorization
-    let mut args = vec!["diff", "--cached", "--name-status", "-z", "--"];
-    args.extend(literal_paths.iter().map(String::as_str));
-    let name_status = cli.exec_redacted(space_dir, &args).await?;
-    let records = parse_name_status_z(&name_status.stdout)?;
 
     if staged_changes_touch_sensitive_collection(space_dir, &records) {
         return Ok(sensitive_commit_message(&records));
