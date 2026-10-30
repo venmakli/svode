@@ -1,4 +1,4 @@
-import type { Column } from "./types";
+import type { Column, UniqueIdDuplicate } from "./types";
 import { normalizeUrlValue } from "../lib/url";
 import {
   normalizeActorValues,
@@ -23,6 +23,7 @@ export function shouldClosePropertyEditorOnChange(type: Column["type"]) {
 export type PropertyValidationCode =
   | "no_key"
   | "invalid_key"
+  | "duplicate_key"
   | "type_conflict"
   | "invalid_option"
   | "invalid_email_phone";
@@ -30,6 +31,8 @@ export type PropertyValidationCode =
 export interface PropertyValidationState {
   invalid: boolean;
   code?: PropertyValidationCode;
+  /** The other item holding the same number, for `duplicate_key`. */
+  duplicate?: UniqueIdDuplicate;
 }
 
 function validPropertyValue(): PropertyValidationState {
@@ -42,15 +45,22 @@ function invalidPropertyValue(
   return { invalid: true, code };
 }
 
+/**
+ * `duplicate` is the other item of the Collection that the backend found
+ * holding the same `unique_id` number; only a valid number repeats.
+ */
 export function validatePropertyValue(
   column: Column,
   value: unknown,
+  duplicate?: UniqueIdDuplicate | null,
 ): PropertyValidationState {
   // This version does not know what a newer one allows.
   if (column.newer) return validPropertyValue();
   if (column.type === "unique_id") {
     if (typeof value === "number" && Number.isInteger(value) && value > 0) {
-      return validPropertyValue();
+      return duplicate
+        ? { invalid: true, code: "duplicate_key", duplicate }
+        : validPropertyValue();
     }
     return invalidPropertyValue(isEmptyValue(value) ? "no_key" : "invalid_key");
   }

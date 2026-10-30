@@ -42,6 +42,7 @@ export async function getPageSchema(input: {
         schema: normalizeSchema(result.schema),
         collectionRootPath:
           result.collectionRootPath ?? result.collection_root_path ?? "",
+        uniqueIdDuplicate: result.uniqueIdDuplicate ?? null,
       }
     : null;
 }

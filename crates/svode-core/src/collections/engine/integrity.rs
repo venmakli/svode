@@ -1,5 +1,6 @@
 use super::*;
 pub use crate::collections::list::list_collections;
+use crate::collections::unique_id_duplicates::UniqueIdNumbers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,7 +57,7 @@ pub use crate::collections::list::CollectionInfo;
 ///
 /// This is intentionally read-only. Mutation flows should use the structural entry commands,
 /// but an agent that performed an explicit filesystem migration needs one product-level check
-/// for relation and sidebar-order invariants afterwards.
+/// for relation, `unique_id` and sidebar-order invariants afterwards.
 pub fn validate_collection_integrity_with_project(
     space: &str,
     collection_path: Option<&str>,
@@ -82,6 +83,7 @@ pub fn validate_collection_integrity_with_project(
     let mut report = CollectionIntegrityReport::default();
     for collection in &collections {
         validate_collection_relations(space, collection, project_path, &mut report)?;
+        validate_unique_id_duplicates(space, collection, &mut report)?;
     }
     validate_stale_order_refs(space, collection_path, &mut report)?;
     report.sort();
@@ -259,6 +261,37 @@ fn validate_collection_relations(
                     ));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Each item whose `unique_id` number another item of the Collection also
+/// holds, with the first other item by path.
+fn validate_unique_id_duplicates(
+    space: &str,
+    collection_path: &str,
+    report: &mut CollectionIntegrityReport,
+) -> Result<(), CollectionError> {
+    let Some(numbers) = UniqueIdNumbers::read(space, collection_path)? else {
+        return Ok(());
+    };
+    for (number, holders) in numbers.duplicate_groups() {
+        for holder in &holders {
+            let Some(other) = holders.iter().find(|other| other.path != holder.path) else {
+                continue;
+            };
+            report.push(integrity_issue(
+                CollectionIntegritySeverity::Error,
+                "UNIQUE_ID_DUPLICATE",
+                format!(
+                    "unique_id column '{}' value {number} is also held by another item",
+                    numbers.field()
+                ),
+                holder.path.clone(),
+                collection_path,
+                Some(other.path.clone()),
+            ));
         }
     }
     Ok(())

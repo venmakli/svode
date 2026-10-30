@@ -67,6 +67,7 @@ export function PropertyPanel({
   const {
     schema,
     collectionRootPath,
+    uniqueIdDuplicate,
     actors,
     editingField,
     setEditingField,
@@ -104,7 +105,11 @@ export function PropertyPanel({
         )}
       >
         {schema.columns.map((column) => {
-          const state = validatePropertyValue(column, panelValues[column.name]);
+          const state = validatePropertyValue(
+            column,
+            panelValues[column.name],
+            uniqueIdDuplicate,
+          );
           const validationMessage = propertyValidationMessage(state.code);
           const invalidOptions = invalidOptionValues(
             column,
@@ -145,6 +150,7 @@ export function PropertyPanel({
                 }
                 invalid={state.invalid}
                 message={validationMessage}
+                detail={state.duplicate?.title || undefined}
               />
               <div className="min-w-0">
                 <PropertyPanelValue
@@ -438,10 +444,12 @@ function PropertyLabel({
   schemaMenu,
   invalid,
   message,
+  detail,
 }: {
   schemaMenu: ReactNode;
   invalid: boolean;
   message?: string;
+  detail?: string;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
@@ -452,7 +460,16 @@ function PropertyLabel({
             <TooltipTrigger asChild>
               <AlertTriangle className="text-warning" />
             </TooltipTrigger>
-            <TooltipContent>{message}</TooltipContent>
+            <TooltipContent>
+              {detail ? (
+                <span className="flex flex-col">
+                  <span>{message}</span>
+                  <span className="opacity-70">{detail}</span>
+                </span>
+              ) : (
+                message
+              )}
+            </TooltipContent>
           </Tooltip>
         </TooltipProvider>
       ) : null}

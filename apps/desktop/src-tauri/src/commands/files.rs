@@ -22,6 +22,9 @@ use svode_core::collections::engine::{
     EntrySchemaResponse, Filter, PropertyOption, PropertyType, RelationBacklink,
     RelationTwoWayDiagnostics, ResolvedRelation, SchemaMutationWarning, Sort, View,
 };
+use svode_core::collections::unique_id_duplicates::{
+    UniqueIdDuplicate, unique_id_duplicate_of_item,
+};
 use svode_core::git::autocommit::{AutocommitService, StructuralChange, StructuralOp};
 use svode_core::index::backlinks::{BacklinkInfo, LinkValidation};
 use svode_core::page::entry::{self, Entry, WriteResult};
@@ -78,6 +81,22 @@ async fn apply_indexed_entry_dates(
         return;
     };
     svode_core::page::indexed_dates::apply_indexed_dates(&pool, &normalized, entry).await;
+}
+
+/// The duplicate mark of a Collection item while its Space index is open;
+/// without the index the item has none.
+async fn indexed_unique_id_duplicate(
+    index_state: &IndexState,
+    space: &str,
+    path: &str,
+) -> Option<UniqueIdDuplicate> {
+    let key = index_state.key_for_space_dir(Path::new(space)).await?;
+    let pool = index_state.get_or_create(&key).await.ok()?;
+    unique_id_duplicate_of_item(&pool, space, path)
+        .await
+        .inspect_err(|e| tracing::warn!("unique_id duplicate check failed for {path}: {e}"))
+        .ok()
+        .flatten()
 }
 
 #[derive(Debug, Clone, Serialize)]

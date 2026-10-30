@@ -653,7 +653,7 @@ pub fn collection_root_for_sql(collection_path: &str) -> String {
     if rel.is_empty() { ".".to_string() } else { rel }
 }
 
-fn json_path(field: &str) -> String {
+pub(super) fn json_path(field: &str) -> String {
     format!("$.\"{}\"", field.replace('"', "\\\""))
 }
 

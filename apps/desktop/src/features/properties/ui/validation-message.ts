@@ -9,6 +9,8 @@ export function propertyValidationMessage(
       return m.property_state_no_key();
     case "invalid_key":
       return m.property_state_invalid_key();
+    case "duplicate_key":
+      return m.property_state_duplicate_key();
     case "type_conflict":
       return m.property_state_type_conflict();
     case "invalid_option":

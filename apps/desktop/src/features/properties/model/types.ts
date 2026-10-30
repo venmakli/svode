@@ -117,9 +117,16 @@ export interface ChangeSchemaTypeResult {
   warnings: SchemaMutationWarning[];
 }
 
+/** The other Collection item that holds the same `unique_id` number. */
+export interface UniqueIdDuplicate {
+  path: string;
+  title: string;
+}
+
 export interface PageSchemaResult {
   schema: CollectionSchema;
   collectionRootPath?: string;
+  uniqueIdDuplicate?: UniqueIdDuplicate | null;
 }
 
 /** An actor value is a person's canonical email or an `agent:<ulid>` reference. */

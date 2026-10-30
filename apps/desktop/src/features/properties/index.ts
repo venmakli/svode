@@ -29,6 +29,7 @@ export type {
   ResolvedRelationPage,
   SchemaMutationWarning,
   StatusGroup,
+  UniqueIdDuplicate,
 } from "./model/types";
 export type {
   PropertyValidationCode,

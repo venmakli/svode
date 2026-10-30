@@ -776,7 +776,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         .changing(const { &[object(ObjectChange::Moved, at("/path"), at("/newPath"))] }),
         def(
             "validate_collection_integrity",
-            "Read-only check for Collection relation targets, stored Collection item references, and stale sidebar order refs after structural files changed outside Svode. Omit collectionPath to validate every Collection in the selected space.",
+            "Read-only check for Collection relation targets, stored Collection item references, unique_id numbers held by more than one item (UNIQUE_ID_DUPLICATE with relatedPath), and stale sidebar order refs after structural files changed outside Svode. Omit collectionPath to validate every Collection in the selected space.",
             schema(&[space_id(), collection_path_opt("collectionPath")], &[]),
             read_only_ann(),
             None,

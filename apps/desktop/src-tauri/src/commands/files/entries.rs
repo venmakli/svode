@@ -241,12 +241,39 @@ pub async fn read_page(
     Ok(entry.into())
 }
 
+/// The schema of a Collection item with the other item that holds its
+/// `unique_id` number.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageSchemaRead {
+    #[serde(flatten)]
+    response: EntrySchemaResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unique_id_duplicate: Option<UniqueIdDuplicate>,
+}
+
 #[tauri::command]
-pub fn get_page_schema(
+pub async fn get_page_schema(
     space: String,
     file_path: String,
-) -> Result<Option<EntrySchemaResponse>, AppError> {
-    Ok(engine::schema_response(&space, &file_path)?)
+    index_state: State<'_, IndexState>,
+) -> Result<Option<PageSchemaRead>, AppError> {
+    page_schema_read(&index_state, &space, &file_path).await
+}
+
+pub(super) async fn page_schema_read(
+    index_state: &IndexState,
+    space: &str,
+    file_path: &str,
+) -> Result<Option<PageSchemaRead>, AppError> {
+    let Some(response) = engine::schema_response(space, file_path)? else {
+        return Ok(None);
+    };
+    let unique_id_duplicate = indexed_unique_id_duplicate(index_state, space, file_path).await;
+    Ok(Some(PageSchemaRead {
+        response,
+        unique_id_duplicate,
+    }))
 }
 
 #[tauri::command]

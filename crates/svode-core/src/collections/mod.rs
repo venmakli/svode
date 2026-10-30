@@ -11,6 +11,7 @@ pub mod schema;
 mod schema_support;
 pub mod schema_validation;
 pub mod traversal;
+pub mod unique_id_duplicates;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CollectionError {

@@ -1531,3 +1531,85 @@ async fn df_251_project_link_validation_reports_definition_targets() {
         ]
     );
 }
+
+/// DF-237 R4: the page schema and the Collection item reads carry the
+/// other item that holds the same `unique_id` number.
+#[tokio::test]
+async fn collection_item_reads_carry_the_item_with_the_same_unique_id_number() {
+    let tmp = TempDir::new().unwrap();
+    let root = &tmp.path().canonicalize().unwrap();
+    let space = root.to_str().unwrap();
+    let state = IndexState::new();
+    write_tree_config(&tmp, vec![], vec![]);
+    for (path, content) in [
+        (
+            "tasks/schema.yaml",
+            "columns:\n  - { name: Key, type: unique_id, prefix: T, next: 4 }\nviews:\n  - { type: table, name: Table }\n",
+        ),
+        ("tasks/README.md", "---\ntitle: Tasks\n---\n"),
+        ("tasks/a.md", "---\ntitle: From A\nKey: 3\n---\n"),
+        ("tasks/b.md", "---\ntitle: From B\nKey: 3\n---\n"),
+        ("tasks/c.md", "---\ntitle: From C\nKey: 1\n---\n"),
+    ] {
+        fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+        fs::write(root.join(path), content).unwrap();
+        index::update::update_entry(&state, root, &root.join(path))
+            .await
+            .unwrap();
+    }
+    // An open project registers its Space directory.
+    state.open_project(root).await.unwrap();
+
+    let schema = |path: &'static str| {
+        let state = &state;
+        async move {
+            let read = entries::page_schema_read(state, space, path)
+                .await
+                .unwrap()
+                .unwrap();
+            serde_json::to_value(read).unwrap()
+        }
+    };
+    let a = schema("tasks/a.md").await;
+    assert_eq!(a["collectionRootPath"], "tasks");
+    assert_eq!(
+        a["uniqueIdDuplicate"],
+        serde_json::json!({ "path": "tasks/b.md", "title": "From B" })
+    );
+    assert!(
+        schema("tasks/c.md")
+            .await
+            .get("uniqueIdDuplicate")
+            .is_none()
+    );
+
+    let target = read::target_for_space(&state, space.to_string(), None)
+        .await
+        .unwrap();
+    let actors = crate::actors::ActorCatalogState::new();
+    let items = read::entries_for_view(&state, &actors, None, &target, "tasks", "Table", None)
+        .await
+        .unwrap();
+    let items = serde_json::to_value(items).unwrap();
+    let marks = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["path"].as_str().unwrap().to_string(),
+                item.get("unique_id_duplicate").cloned(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        marks["tasks/a.md"],
+        Some(serde_json::json!({ "path": "tasks/b.md", "title": "From B" }))
+    );
+    assert_eq!(
+        marks["tasks/b.md"],
+        Some(serde_json::json!({ "path": "tasks/a.md", "title": "From A" }))
+    );
+    assert_eq!(marks["tasks/c.md"], None);
+    assert_eq!(items[0]["meta"]["title"], "From A");
+}

@@ -521,6 +521,63 @@ fn collection_check_reads_sources_standalone() {
     assert_eq!(snapshot(&root), before);
 }
 
+/// DF-237 R4: a number that another item of the Collection holds is an
+/// integrity error naming both items.
+#[test]
+fn collection_check_reports_a_repeated_unique_id_number() {
+    let (_temp, root) = fixture();
+    write(
+        &root.join("issues/schema.yaml"),
+        "columns:\n  - { name: Key, type: unique_id, prefix: T, next: 4 }\nviews: []\n",
+    );
+    write(&root.join("issues/README.md"), "---\ntitle: Issues\n---\n");
+    write(
+        &root.join("issues/c.md"),
+        "---\ntitle: From C\nKey: 3\n---\n",
+    );
+    write(
+        &root.join("issues/d.md"),
+        "---\ntitle: From D\nKey: 3\n---\n",
+    );
+    write(
+        &root.join("issues/e.md"),
+        "---\ntitle: From E\nKey: 2\n---\n",
+    );
+    let before = snapshot(&root);
+
+    let (exit, value) = json(
+        &root,
+        &["collection", "check", "--collection", "issues"],
+        None,
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(value["errorCount"], 2, "{value}");
+    let issues = value["issuesBySeverity"]["errors"].as_array().unwrap();
+    for (path, related) in [
+        ("issues/c.md", "issues/d.md"),
+        ("issues/d.md", "issues/c.md"),
+    ] {
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue["code"] == "UNIQUE_ID_DUPLICATE"
+                    && issue["path"] == path
+                    && issue["relatedPath"] == related
+                    && issue["collectionPath"] == "issues"),
+            "{value}"
+        );
+    }
+
+    let human = svode(&root, &["collection", "check", "--collection", "issues"]);
+    assert_eq!(human.status.code(), Some(0));
+    let stdout = String::from_utf8(human.stdout).unwrap();
+    assert!(
+        stdout.contains("error UNIQUE_ID_DUPLICATE issues/c.md"),
+        "{stdout}"
+    );
+    assert_eq!(snapshot(&root), before);
+}
+
 #[test]
 fn structural_grammar_and_input_fail_before_the_command_runs() {
     let (_temp, root) = fixture();

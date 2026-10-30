@@ -264,6 +264,7 @@ export function useTableColumns({
                   onOpenRelationTarget,
                 }}
                 value={propertyDefinition.getValue(row.original.entry)}
+                uniqueIdDuplicate={row.original.entry.unique_id_duplicate}
                 editing={
                   editing?.path === row.original.entry.path &&
                   editing.field === property.name

@@ -54,6 +54,9 @@ export function usePropertyPanelState({
   const [collectionRootPath, setCollectionRootPath] = useState(() =>
     schemaResultCollectionPath(schemaResult),
   );
+  const [uniqueIdDuplicate, setUniqueIdDuplicate] = useState(
+    () => schemaResult.uniqueIdDuplicate ?? null,
+  );
   const [actors, setActors] = useState<ActorCandidate[]>([]);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [panelValues, setPanelValues] = useState(values);
@@ -67,6 +70,7 @@ export function usePropertyPanelState({
     if (!result) return;
     setSchema(normalizeSchema(result.schema));
     setCollectionRootPath(schemaResultCollectionPath(result));
+    setUniqueIdDuplicate(result.uniqueIdDuplicate ?? null);
   }, []);
 
   useEffect(() => {
@@ -114,11 +118,12 @@ export function usePropertyPanelState({
       const result: PageSchemaResult = {
         schema: normalizeSchema(nextSchema),
         collectionRootPath,
+        uniqueIdDuplicate,
       };
       applySchemaResult(result);
       onSchemaChange?.(result);
     },
-    [applySchemaResult, collectionRootPath, onSchemaChange],
+    [applySchemaResult, collectionRootPath, onSchemaChange, uniqueIdDuplicate],
   );
 
   const schemaMutationContext = useMemo<SchemaMutationContext>(
@@ -250,6 +255,7 @@ export function usePropertyPanelState({
   return {
     schema,
     collectionRootPath,
+    uniqueIdDuplicate,
     actors,
     editingField,
     setEditingField,

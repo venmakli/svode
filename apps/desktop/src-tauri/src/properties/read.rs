@@ -3,7 +3,11 @@ use std::path::{Path, PathBuf};
 use crate::actors::{ActorCandidate, ActorCatalogState};
 use crate::error::AppError;
 use crate::index::{IndexKey, IndexState};
+use serde::Serialize;
 use svode_core::collections::engine::{Filter, ResolvedRelation, Sort};
+use svode_core::collections::unique_id_duplicates::{
+    UniqueIdDuplicate, unique_id_duplicates_of_entries,
+};
 use svode_core::git::cli::GitCli;
 use svode_core::page::entry::Entry;
 
@@ -37,6 +41,33 @@ pub async fn target_for_space(
     Ok(CollectionReadTarget { space, index_key })
 }
 
+/// A Collection item with the other item that holds its `unique_id` number.
+#[derive(Debug, Serialize)]
+pub struct CollectionItemRead {
+    #[serde(flatten)]
+    entry: Entry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unique_id_duplicate: Option<UniqueIdDuplicate>,
+}
+
+async fn with_unique_id_duplicates(
+    pool: &sqlx::SqlitePool,
+    target: &CollectionReadTarget,
+    collection_path: &str,
+    entries: Vec<Entry>,
+) -> Result<Vec<CollectionItemRead>, AppError> {
+    let duplicates =
+        unique_id_duplicates_of_entries(pool, target.space(), collection_path, &entries).await?;
+    Ok(entries
+        .into_iter()
+        .zip(duplicates)
+        .map(|(entry, unique_id_duplicate)| CollectionItemRead {
+            entry,
+            unique_id_duplicate,
+        })
+        .collect())
+}
+
 async fn pool_for_target(
     index_state: &IndexState,
     target: &CollectionReadTarget,
@@ -52,9 +83,9 @@ pub async fn entries_for_view(
     collection_path: &str,
     view_name: &str,
     include_nested: Option<bool>,
-) -> Result<Vec<Entry>, AppError> {
+) -> Result<Vec<CollectionItemRead>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    Ok(svode_core::collections::entries::list_entries_for_view(
+    let entries = svode_core::collections::entries::list_entries_for_view(
         &pool,
         actor_catalog,
         git_cli,
@@ -63,7 +94,8 @@ pub async fn entries_for_view(
         view_name,
         include_nested,
     )
-    .await?)
+    .await?;
+    with_unique_id_duplicates(&pool, target, collection_path, entries).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -78,9 +110,9 @@ pub async fn query_entries(
     include_nested: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> Result<Vec<Entry>, AppError> {
+) -> Result<Vec<CollectionItemRead>, AppError> {
     let pool = pool_for_target(index_state, target).await?;
-    Ok(svode_core::collections::entries::query_entries(
+    let entries = svode_core::collections::entries::query_entries(
         &pool,
         actor_catalog,
         git_cli,
@@ -92,7 +124,8 @@ pub async fn query_entries(
         limit,
         offset,
     )
-    .await?)
+    .await?;
+    with_unique_id_duplicates(&pool, target, collection_path, entries).await
 }
 
 pub async fn resolve_relation(

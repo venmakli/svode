@@ -1,4 +1,5 @@
 import type { RepositoryAccessBlocker } from "@/features/git";
+import type { UniqueIdDuplicate } from "@/features/properties";
 
 export type CoverColorName =
   | "neutral"
@@ -47,6 +48,8 @@ export interface Page {
   path: string;
   warnings?: PageWarning[];
   name_conflict?: PageNameConflict;
+  /** The other item with the same `unique_id` number, on Collection item reads. */
+  unique_id_duplicate?: UniqueIdDuplicate;
   /** Version of the bytes this Page was read from, when the read reports it. */
   source_version?: string | null;
 }

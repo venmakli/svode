@@ -381,7 +381,7 @@ pub async fn list_collection_view_items(
     index_state: State<'_, IndexState>,
     git_state: State<'_, GitState>,
     actor_catalog: State<'_, crate::actors::ActorCatalogState>,
-) -> Result<Vec<Entry>, AppError> {
+) -> Result<Vec<read::CollectionItemRead>, AppError> {
     let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.detected().cloned();
     read::entries_for_view(
@@ -409,7 +409,7 @@ pub async fn query_collection_items(
     index_state: State<'_, IndexState>,
     git_state: State<'_, GitState>,
     actor_catalog: State<'_, crate::actors::ActorCatalogState>,
-) -> Result<Vec<Entry>, AppError> {
+) -> Result<Vec<read::CollectionItemRead>, AppError> {
     let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.detected().cloned();
     read::query_entries(

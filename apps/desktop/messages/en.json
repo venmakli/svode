@@ -215,6 +215,7 @@
   "property_state_invalid_email_phone": "Invalid format",
   "property_state_invalid_key": "Invalid key",
   "property_state_no_key": "No key",
+  "property_state_duplicate_key": "Duplicate ID",
   "property_collection_path": "Properties from {path}",
   "property_column_menu_label": "Open settings for {name}, {type} property",
   "property_dialog_add_column_title": "Add property",

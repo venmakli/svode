@@ -1,4 +1,5 @@
 import type { RepositoryAccessBlockerDto } from "@/platform/git/repository-access-api";
+import type { UniqueIdDuplicateDto } from "@/platform/properties/properties-api";
 import { invokeCommand } from "@/platform/native/invoke";
 
 export type PageCoverDto =
@@ -34,6 +35,8 @@ export interface PageDto {
   path: string;
   warnings?: PageWarningDto[];
   name_conflict?: PageNameConflictDto;
+  /** Collection item reads only. */
+  unique_id_duplicate?: UniqueIdDuplicateDto;
   source_version?: string | null;
 }
 

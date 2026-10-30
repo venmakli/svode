@@ -8,7 +8,11 @@ import {
   shouldClosePropertyEditorOnChange,
   validatePropertyValue,
 } from "@/features/properties";
-import type { Column, ActorCandidate } from "@/features/properties";
+import type {
+  Column,
+  ActorCandidate,
+  UniqueIdDuplicate,
+} from "@/features/properties";
 import type { RelationContext } from "@/features/properties";
 import { valueToString } from "@/features/properties";
 import {
@@ -29,6 +33,7 @@ export function PropertyCell({
   relationContext,
   readOnly = false,
   value,
+  uniqueIdDuplicate,
   editing,
   onEdit,
   onCancel,
@@ -41,12 +46,14 @@ export function PropertyCell({
   relationContext?: RelationContext;
   readOnly?: boolean;
   value: unknown;
+  /** The other item that holds the same `unique_id` number. */
+  uniqueIdDuplicate?: UniqueIdDuplicate;
   editing: boolean;
   onEdit: () => void;
   onCancel: () => void;
   onCommit: (value: unknown, options?: { close?: boolean }) => void;
 }) {
-  const validation = validatePropertyValue(column, value);
+  const validation = validatePropertyValue(column, value, uniqueIdDuplicate);
 
   if (readOnly) {
     return (

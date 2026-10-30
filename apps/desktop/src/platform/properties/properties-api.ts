@@ -110,10 +110,17 @@ export interface ChangeSchemaTypeResultDto {
   warnings: SchemaMutationWarningDto[];
 }
 
+/** The other Collection item that holds the same `unique_id` number. */
+export interface UniqueIdDuplicateDto {
+  path: string;
+  title: string;
+}
+
 export interface PageSchemaResultDto {
   schema: CollectionSchemaDto;
   collectionRootPath?: string;
   collection_root_path?: string;
+  uniqueIdDuplicate?: UniqueIdDuplicateDto;
 }
 
 export interface ActorCandidateDto {
