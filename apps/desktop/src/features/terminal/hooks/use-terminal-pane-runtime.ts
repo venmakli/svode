@@ -6,7 +6,10 @@ import {
   writeTerminal,
 } from "@/features/terminal/api/terminal";
 import { isTerminalToggleShortcut } from "@/features/terminal/lib/is-terminal-toggle-shortcut";
-import { subscribeTerminalOutput } from "@/features/terminal/lib/output-bus";
+import {
+  attachTerminalView,
+  type TerminalViewAttachment,
+} from "@/features/terminal/lib/output-bus";
 import { reportPaneSize } from "@/features/terminal/lib/pane-size-handoff";
 import type { TerminalTab } from "@/features/terminal/model/types";
 import { useTerminalDrop } from "@/features/terminal/hooks/use-terminal-drop";
@@ -58,6 +61,7 @@ export function useTerminalPaneRuntime({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const tabIdRef = useRef(tab.id);
   const ptyIdRef = useRef<string | null>(tab.ptyId);
+  const viewAttachmentRef = useRef<TerminalViewAttachment | null>(null);
   const activeRef = useRef(active);
   const autoFocusRef = useRef(autoFocus);
   const panelOpenRef = useRef(panelOpen);
@@ -189,7 +193,7 @@ export function useTerminalPaneRuntime({
     const fitAddon = new FitAddon();
     const writeInput = (data: string) => {
       const ptyId = ptyIdRef.current;
-      if (!ptyId) return;
+      if (!ptyId || !viewAttachmentRef.current?.acceptsInput()) return;
       void writeTerminal(ptyId, data).catch((error) => {
         console.warn("Failed to write terminal input:", error);
       });
@@ -221,7 +225,7 @@ export function useTerminalPaneRuntime({
       }),
       terminal.onBinary((data) => {
         const ptyId = ptyIdRef.current;
-        if (!ptyId) return;
+        if (!ptyId || !viewAttachmentRef.current?.acceptsInput()) return;
         void writeTerminal(ptyId, data).catch((error) => {
           console.warn("Failed to write terminal binary input:", error);
         });
@@ -260,11 +264,19 @@ export function useTerminalPaneRuntime({
   }, [cancelPendingFits, scheduleStabilizedFit, terminalVisible]);
 
   useEffect(() => {
-    if (!tab.ptyId) return;
-    return subscribeTerminalOutput(tab.ptyId, (data) => {
-      terminalRef.current?.write(data);
+    const terminal = terminalRef.current;
+    if (!tab.ptyId || !terminalVisible || !terminal) return;
+    const attachment = attachTerminalView(tab.ptyId, {
+      write: (data, onProcessed) => terminal.write(data, onProcessed),
     });
-  }, [tab.ptyId]);
+    viewAttachmentRef.current = attachment;
+    return () => {
+      attachment.detach();
+      if (viewAttachmentRef.current === attachment) {
+        viewAttachmentRef.current = null;
+      }
+    };
+  }, [tab.ptyId, terminalVisible]);
 
   useEffect(() => {
     const updateTheme = () => {
