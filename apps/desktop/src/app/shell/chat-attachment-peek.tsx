@@ -5,12 +5,14 @@ import { useOpenArtifact } from "@/features/artifact";
 import {
   ChatAttachmentOpenerContext,
   chatAttachmentKind,
+  chatMediaFile,
   locateChatAttachment,
   type ChatAttachment,
   type ChatAttachmentLocation,
 } from "@/features/agent-sessions";
 import { ChangesControl, fileChangesTarget } from "@/features/changes";
 import { usePeekNavigation } from "@/features/scope-surfaces";
+import type { LocalMediaFile } from "@/features/media/app-shell";
 import { useSpace } from "@/features/space";
 import { openPath } from "@/platform/native/shell";
 import {
@@ -20,6 +22,7 @@ import {
   VIDEO_EXTS,
 } from "@/platform/upload/media-types";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { isNetworkPath } from "@/shared/lib/local-paths";
 import { CompactScopePeek } from "./compact-scope-peek";
 
 const DocumentSurface = lazy(async () => ({
@@ -31,13 +34,16 @@ const MediaSurface = lazy(async () => ({
 
 type ViewerKind = "page" | "document" | "media";
 
-interface AttachmentPeekTarget {
-  kind: ViewerKind;
-  attachment: ChatAttachment;
-  location: ChatAttachmentLocation;
-  /** Media and documents name the project root without a Space id. */
-  registeredSpaceId: string | null;
-}
+type AttachmentPeekTarget =
+  | {
+      kind: ViewerKind;
+      attachment: ChatAttachment;
+      location: ChatAttachmentLocation;
+      /** Media and documents name the project root without a Space id. */
+      registeredSpaceId: string | null;
+    }
+  /** A media file outside the project, only to view it (DF-233 R2). */
+  | { kind: "local-media"; attachment: ChatAttachment; file: LocalMediaFile };
 
 const MEDIA_EXTENSIONS = new Set<string>([
   ...IMAGE_EXTS,
@@ -56,10 +62,11 @@ function viewerKind(attachment: ChatAttachment): ViewerKind | null {
 }
 
 /**
- * Opens the attachment badges of the chat (Stage 10 `04`): a page or a file
- * of the project in a peek over the chat — over the session peek as its
- * child — and anything else, a file outside the project or a pasted image,
- * in its system app.
+ * Opens the attachment badges of the chat (Stage 10 `04`, DF-233 R1): a page
+ * or a file of the project in a peek over the chat — over the session peek as
+ * its child —, an image, a video or an audio outside the project, a pasted
+ * image too, in the same peek with the media viewer, and anything else in its
+ * system app. A network path is never shown.
  */
 export function ChatAttachmentPeekProvider({
   children,
@@ -85,6 +92,14 @@ export function ChatAttachmentPeekProvider({
           location,
           registeredSpaceId:
             location.spaceId === activeRootId ? null : location.spaceId,
+        });
+        return;
+      }
+      if (kind === "media" && !isNetworkPath(attachment.path)) {
+        setTarget({
+          kind: "local-media",
+          attachment,
+          file: chatMediaFile(attachment.path),
         });
         return;
       }
@@ -127,7 +142,9 @@ function ChatAttachmentPeek({
     onClose();
   };
   usePeekStackEntry(Boolean(target), () => void leave(() => close(), "close"));
-  const project = projectPath ?? target?.location.spacePath ?? "";
+  const project =
+    projectPath ??
+    (target && "location" in target ? target.location.spacePath : "");
 
   return (
     <Sheet
@@ -164,6 +181,10 @@ function ChatAttachmentPeek({
             }
             onClose={() => void leave(() => close(), "close")}
           />
+        ) : target?.kind === "local-media" ? (
+          <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+            <MediaSurface file={target.file} onClose={close} />
+          </Suspense>
         ) : target ? (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>
             {(() => {

@@ -408,6 +408,19 @@ pub(crate) fn resolve_media_source_for_external(
     Ok(path)
 }
 
+/// A local media file by its absolute path, checked again right before it is
+/// opened outside Svode (DF-233 R4): an existing regular local file of a media
+/// format, never a network share. Its content is not inspected: a file too
+/// large or unreadable for the viewer still opens in its app.
+pub(crate) fn resolve_local_media_for_external(path: &Path) -> Result<PathBuf, MediaSourceError> {
+    // Not even resolved: that reaches the server.
+    if system_path::is_network_path(&path.to_string_lossy()) {
+        return Err(MediaSourceError::SourceUnavailable);
+    }
+    let (path, _, _) = resolve_local_media_path(path)?;
+    Ok(path)
+}
+
 pub(crate) fn validate_media_source_generation(
     project_path: &Path,
     space_id: Option<&str>,
@@ -1297,6 +1310,49 @@ mod tests {
             inspect_media_source(temp.path(), None, "too-many-frames.gif"),
             Err(MediaSourceError::ResourceLimit { .. })
         ));
+    }
+
+    #[test]
+    fn a_local_media_file_opens_outside_svode_only_as_an_existing_local_file() {
+        use crate::media::commands::media_local_list_external_apps;
+        let temp = tempfile::tempdir().unwrap();
+        let photo = temp.path().join("generated.png");
+        // Not shown by the viewer, still opened in its app.
+        fs::write(&photo, b"not a png").unwrap();
+        fs::create_dir(temp.path().join("folder.png")).unwrap();
+        fs::write(temp.path().join("notes.txt"), b"text").unwrap();
+
+        let canonical = fs::canonicalize(&photo).unwrap();
+        assert_eq!(resolve_local_media_for_external(&photo).unwrap(), canonical);
+        let apps = media_local_list_external_apps(photo.to_string_lossy().into_owned()).unwrap();
+        assert!(apps.iter().filter(|app| app.is_default).count() <= 1);
+
+        assert!(matches!(
+            resolve_local_media_for_external(&temp.path().join("missing.png")),
+            Err(MediaSourceError::SourceMissing)
+        ));
+        let mut refused = vec![
+            temp.path().join("folder.png"),
+            temp.path().join("notes.txt"),
+            PathBuf::from("generated.png"),
+            PathBuf::from(r"\\server\share\a.png"),
+            PathBuf::from("//server/share/a.png"),
+        ];
+        // On Unix the same file through two separators: refused unread.
+        if cfg!(unix) {
+            refused.push(PathBuf::from(format!("/{}", photo.display())));
+        }
+        for path in refused {
+            assert!(
+                matches!(
+                    resolve_local_media_for_external(&path),
+                    Err(MediaSourceError::SourceUnavailable | MediaSourceError::UnsupportedFormat)
+                ),
+                "{}",
+                path.display()
+            );
+            assert!(media_local_list_external_apps(path.to_string_lossy().into_owned()).is_err());
+        }
     }
 
     #[test]

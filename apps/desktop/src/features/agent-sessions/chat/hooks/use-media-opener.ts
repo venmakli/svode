@@ -8,10 +8,10 @@ import { useOpenAttachment } from "./use-attachment-opener";
 import * as m from "@/paraglide/messages.js";
 
 /**
- * Opens a media tile by the badge rule (`08` R2): a file of the project in
- * the Attachments Peek, any other file in its system app, media without a
- * file through a temp file in its system app, an external image in the
- * browser.
+ * Opens a media tile: a file by the badge rule (DF-233 R1) — of the project
+ * in the Attachments Peek, outside it in the peek with the media viewer —,
+ * media without a file through a temp file in its system app, an external
+ * image in the browser.
  */
 export function useOpenMedia(
   session: AgentSessionKeyDto | null,

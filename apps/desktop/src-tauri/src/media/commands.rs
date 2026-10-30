@@ -6,7 +6,8 @@ use tauri::{AppHandle, State};
 use super::MediaSourceState;
 use super::source::{
     MediaSourceDescriptor, MediaSourceError, inspect_local_media_source, inspect_media_source,
-    resolve_media_source_for_external, validate_media_source_generation,
+    resolve_local_media_for_external, resolve_media_source_for_external,
+    validate_media_source_generation,
 };
 use crate::external_apps::{self, ExternalAppDto};
 use svode_core::system_path;
@@ -121,6 +122,36 @@ pub(crate) fn media_reveal_external(
         space_id.as_deref(),
         &target_path,
     )?;
+    external_apps::reveal_file(Path::new(&system_path::user_facing_path(&path)))
+        .map_err(|_| MediaSourceError::ExternalOpenFailed)
+}
+
+/// Applications the OS offers for a local media file by its absolute path:
+/// media of an agent session outside the project (DF-233 R3).
+#[tauri::command]
+pub(crate) fn media_local_list_external_apps(
+    path: String,
+) -> Result<Vec<ExternalAppDto>, MediaSourceError> {
+    let path = resolve_local_media_for_external(Path::new(&path))?;
+    Ok(external_apps::file_apps(&path))
+}
+
+/// Opens a local media file in `app_id`, or in the OS default application
+/// when absent; the path is checked again before the launch.
+#[tauri::command]
+pub(crate) fn media_local_open_external(
+    app: AppHandle,
+    path: String,
+    app_id: Option<String>,
+) -> Result<(), MediaSourceError> {
+    let path = resolve_local_media_for_external(Path::new(&path))?;
+    external_apps::open_file(&app, &path, app_id.as_deref())
+        .map_err(|_| MediaSourceError::ExternalOpenFailed)
+}
+
+#[tauri::command]
+pub(crate) fn media_local_reveal_external(path: String) -> Result<(), MediaSourceError> {
+    let path = resolve_local_media_for_external(Path::new(&path))?;
     external_apps::reveal_file(Path::new(&system_path::user_facing_path(&path)))
         .map_err(|_| MediaSourceError::ExternalOpenFailed)
 }

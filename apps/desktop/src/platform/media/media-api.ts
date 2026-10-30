@@ -120,6 +120,27 @@ export function revealMediaExternal(input: MediaSourceInputDto): Promise<void> {
   return invokeCommand("media_reveal_external", { ...input });
 }
 
+/** Applications the OS offers for a local media file by its absolute path. */
+export function listLocalMediaExternalApps(
+  path: string,
+): Promise<ExternalAppDto[]> {
+  return invokeCommand<ExternalAppDto[]>("media_local_list_external_apps", {
+    path,
+  });
+}
+
+/** Opens a local media file in `appId`, or in the OS default application for `null`. */
+export function openLocalMediaExternal(
+  path: string,
+  appId: string | null,
+): Promise<void> {
+  return invokeCommand("media_local_open_external", { path, appId });
+}
+
+export function revealLocalMediaExternal(path: string): Promise<void> {
+  return invokeCommand("media_local_reveal_external", { path });
+}
+
 export function listenMediaSourceInvalidated(
   handler: (payload: MediaSourceInvalidatedDto) => void,
 ): Promise<UnlistenFn> {

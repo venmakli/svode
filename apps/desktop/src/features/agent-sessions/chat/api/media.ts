@@ -3,8 +3,13 @@ import {
   type AgentMediaOutcomeDto,
   type AgentSessionKeyDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
+import { filePreferenceKey } from "@/features/external-open";
+import type { LocalMediaFile } from "@/features/media/app-shell";
 import {
   createLocalMediaSource,
+  listLocalMediaExternalApps,
+  openLocalMediaExternal,
+  revealLocalMediaExternal,
   revokeMediaSource,
 } from "@/platform/media/media-api";
 import { savePastedImage } from "@/platform/native/clipboard";
@@ -54,6 +59,24 @@ export async function loadLocalMedia(path: string): Promise<LocalMediaOutcome> {
 
 export function releaseLocalMedia(token: string): void {
   void revokeMediaSource(token).catch(() => undefined);
+}
+
+/**
+ * A media file outside the project for the media viewer, only to view it
+ * (DF-233 R2–R4): read by the same capability as a tile, opened outside
+ * Svode after Desktop checks the path again.
+ */
+export function chatMediaFile(path: string): LocalMediaFile {
+  return {
+    path,
+    createSource: () => createLocalMediaSource(path),
+    externalOpen: {
+      preferenceKey: filePreferenceKey(path),
+      listApps: () => listLocalMediaExternalApps(path),
+      open: (appId) => openLocalMediaExternal(path, appId),
+      reveal: () => revealLocalMediaExternal(path),
+    },
+  };
 }
 
 function localMediaFailure(error: unknown): LocalMediaFailure {

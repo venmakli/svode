@@ -50,6 +50,7 @@ export {
   AttachmentOpenerContext as ChatAttachmentOpenerContext,
   type OpenAttachment as OpenChatAttachment,
 } from "./chat/hooks/use-attachment-opener";
+export { chatMediaFile } from "./chat/api/media";
 export {
   requestComposerFocus,
   type ComposerFocusRequest,
