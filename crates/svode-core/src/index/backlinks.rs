@@ -447,11 +447,16 @@ fn replace_target_links(
     })
 }
 
+/// A definition has no link text: its label is shared by the uses of the
+/// reference link, so only the text of an inline link follows the title.
 fn replacement_label(
     content: &str,
     link: &MarkdownLink,
     text_replace: Option<(&str, &str)>,
 ) -> Option<String> {
+    if link.kind == MarkdownLinkKind::Definition {
+        return None;
+    }
     let text = &content[link.label_start..link.label_end];
     text_replace
         .filter(|(old_stem, _)| {
@@ -465,11 +470,7 @@ fn rewrite_links<F>(content: &str, mut replacement: F) -> String
 where
     F: FnMut(&MarkdownLink) -> Option<(String, Option<String>)>,
 {
-    // Definitions keep their bytes: only inline links are rewritten.
-    let links: Vec<MarkdownLink> = parse_markdown_link_nodes(content)
-        .into_iter()
-        .filter(|link| link.kind == MarkdownLinkKind::Inline)
-        .collect();
+    let links = parse_markdown_link_nodes(content);
     if links.is_empty() {
         return content.to_string();
     }
@@ -479,6 +480,11 @@ where
     let mut changed = false;
 
     for link in links {
+        // The lenient inline parse also finds `[x](y.md)` inside the title of
+        // a definition; the link that starts first owns those bytes.
+        if link.full_start < last_end {
+            continue;
+        }
         result.push_str(&content[last_end..link.full_start]);
         if let Some((new_destination, new_label)) = replacement(&link) {
             changed = true;
@@ -1386,27 +1392,106 @@ mod tests {
     }
 
     #[test]
-    fn df_251_rename_keeps_definition_bytes() {
+    fn df_251_title_rename_rewrites_only_definition_addresses() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path();
         fs::write(ws.join("plan.md"), "Plan.\n").unwrap();
         fs::write(ws.join("other.md"), DF_251_OTHER).unwrap();
-        fs::write(ws.join("refonly.md"), "[Plan][p]\n\n[p]: plan.md\n").unwrap();
+        // The label projects to the old title, the address sits on the next
+        // line inside a block quote and the title holds an inline link.
+        let refonly = "\
+[plan][]
+
+> [plan]:
+> plan.md#goal 'see [plan](plan.md)'\r
+";
+        fs::write(ws.join("refonly.md"), refonly).unwrap();
 
         let index = BacklinkIndex::new();
         index.build(ws).unwrap();
-        let modified = index
+        let mut modified = index
             .update_links_on_rename(ws, "plan.md", "Roadmap.md", Some("Roadmap"))
             .unwrap();
+        modified.sort();
 
-        assert_eq!(modified, vec!["other.md"]);
+        assert_eq!(modified, vec!["other.md", "refonly.md"]);
         assert_eq!(
             fs::read_to_string(ws.join("other.md")).unwrap(),
-            DF_251_OTHER.replace("[plan](plan.md)", "[Roadmap](Roadmap.md)")
+            "\
+[Roadmap](Roadmap.md) [Plan][p] [plan.md][]
+
+[p]: Roadmap.md \"Title\"
+[plan.md]: <Roadmap.md>
+[unused]: Roadmap.md
+
+```
+[code]: plan.md
+```
+"
         );
         assert_eq!(
             fs::read_to_string(ws.join("refonly.md")).unwrap(),
-            "[Plan][p]\n\n[p]: plan.md\n"
+            refonly.replace("> plan.md#goal", "> Roadmap.md#goal")
+        );
+        assert_eq!(index.get_backlinks("Roadmap.md").len(), 2);
+    }
+
+    #[test]
+    fn df_251_definition_address_follows_inline_style_rules() {
+        let content = "\
+[a]: plan.md#goal
+[b]: <plan.md> (Title)
+[c]: Old%20Plan.md
+[d]:   plan.md   \"Title\"
+";
+        let rewritten =
+            |old: &str, new: &str| replace_target_links(content, "x.md", old, new, None);
+
+        assert_eq!(
+            rewritten("plan.md", "Новая папка/plan.md"),
+            "\
+[a]: <Новая папка/plan.md#goal>
+[b]: <Новая папка/plan.md> (Title)
+[c]: Old%20Plan.md
+[d]:   <Новая папка/plan.md>   \"Title\"
+"
+        );
+        assert_eq!(
+            rewritten("Old Plan.md", "New Plan.md"),
+            content.replace("Old%20Plan.md", "New%20Plan.md")
+        );
+    }
+
+    #[test]
+    fn df_251_project_rewrite_and_source_rebase_change_definition_addresses() {
+        let content =
+            "[plan](../plan.md)\n\n- [plan]: ../plan.md \"Plan\"\n- [o]: ../docs/other.md\n";
+        let root = Path::new("/project");
+
+        assert_eq!(
+            replace_link_urls_between(
+                content,
+                &root.join("spaces/a/inner.md"),
+                &root.join("spaces/plan.md"),
+                &root.join("Roadmap.md"),
+                Some(("plan", "Roadmap")),
+            ),
+            "[Roadmap](../../Roadmap.md)\n\n- [plan]: ../../Roadmap.md \"Plan\"\n- [o]: ../docs/other.md\n"
+        );
+        assert_eq!(
+            rebase_source_links(content, "docs/inner.md", "inner.md"),
+            "[plan](plan.md)\n\n- [plan]: plan.md \"Plan\"\n- [o]: docs/other.md\n"
+        );
+        // The moved tree `docs` holds the source and `docs/other.md`.
+        assert_eq!(
+            rebase_source_links_between_moved_tree(
+                content,
+                &root.join("docs/inner.md"),
+                &root.join("archive/docs/inner.md"),
+                &root.join("docs"),
+                &root.join("archive/docs"),
+            ),
+            "[plan](../../plan.md)\n\n- [plan]: ../../plan.md \"Plan\"\n- [o]: other.md\n"
         );
     }
 

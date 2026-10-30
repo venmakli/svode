@@ -2210,3 +2210,175 @@ async fn df_251_link_plans_include_sources_that_link_only_by_definition() {
             .unwrap();
     assert!(moved.contains(&root.join("RefOnly.md")), "{moved:?}");
 }
+
+#[tokio::test]
+async fn df_251_moves_renames_and_conversions_rewrite_and_rebase_definitions() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let space = root.to_str().unwrap();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::create_dir_all(root.join("docs")).unwrap();
+    fs::create_dir_all(root.join("notes")).unwrap();
+    fs::create_dir_all(root.join("tasks")).unwrap();
+    write_tree(
+        root,
+        &[
+            (
+                "Plan.md",
+                "---\ntitle: Plan\n---\n[o]: Other.md \"Other\"\n",
+            ),
+            ("Other.md", "---\ntitle: Other\n---\n"),
+            ("Index.md", "[Plan][p]\n\n[p]: Plan.md \"Title\"\n"),
+            (
+                "tasks/Ship.md",
+                "> [P][p]\n>\n> [p]:\n> <../Plan.md#goal>\n",
+            ),
+            ("docs/inner.md", "[x](../Plan.md)\n\n[r]: ../Plan.md\n"),
+            ("notes/Sibling.md", "[s]: ../Plan.md\n"),
+        ],
+    );
+    let state = IndexRuntimeState::default();
+    let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
+
+    // The moved source rebases its definition like its inline link.
+    super::ops::move_entry(space, "docs/inner.md", "", Some(space), runtime(&state))
+        .await
+        .unwrap();
+    assert_eq!(read("inner.md"), "[x](Plan.md)\n\n[r]: Plan.md\n");
+
+    super::ops::move_entry(space, "Plan.md", "notes", Some(space), runtime(&state))
+        .await
+        .unwrap();
+    assert_eq!(
+        read("Index.md"),
+        "[Plan][p]\n\n[p]: notes/Plan.md \"Title\"\n"
+    );
+    assert_eq!(
+        read("tasks/Ship.md"),
+        "> [P][p]\n>\n> [p]:\n> <../notes/Plan.md#goal>\n"
+    );
+    assert_eq!(
+        read("inner.md"),
+        "[x](notes/Plan.md)\n\n[r]: notes/Plan.md\n"
+    );
+    assert_eq!(read("notes/Sibling.md"), "[s]: Plan.md\n");
+    assert!(read("notes/Plan.md").ends_with("\n[o]: ../Other.md \"Other\"\n"));
+
+    // A path with a space takes the angle form.
+    let modified = super::ops::rename(space, "notes", "Old Notes", Some(space), runtime(&state))
+        .await
+        .unwrap();
+    assert!(
+        modified.iter().any(|path| path == "Index.md"),
+        "{modified:?}"
+    );
+    assert_eq!(
+        read("Index.md"),
+        "[Plan][p]\n\n[p]: <Old Notes/Plan.md> \"Title\"\n"
+    );
+    assert_eq!(read("Old Notes/Sibling.md"), "[s]: Plan.md\n");
+
+    // A target inside the moved subtree follows it, one outside keeps its
+    // absolute path.
+    super::ops::move_entry(space, "Old Notes", "tasks", Some(space), runtime(&state))
+        .await
+        .unwrap();
+    assert_eq!(
+        read("Index.md"),
+        "[Plan][p]\n\n[p]: <tasks/Old Notes/Plan.md> \"Title\"\n"
+    );
+    assert_eq!(
+        read("tasks/Ship.md"),
+        "> [P][p]\n>\n> [p]:\n> <Old Notes/Plan.md#goal>\n"
+    );
+    assert_eq!(read("tasks/Old Notes/Sibling.md"), "[s]: Plan.md\n");
+    assert!(read("tasks/Old Notes/Plan.md").ends_with("\n[o]: ../../Other.md \"Other\"\n"));
+
+    super::ops::convert_to_folder(
+        space,
+        "tasks/Old Notes/Plan.md",
+        Some(space),
+        runtime(&state),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read("Index.md"),
+        "[Plan][p]\n\n[p]: <tasks/Old Notes/Plan/README.md> \"Title\"\n"
+    );
+    assert_eq!(read("tasks/Old Notes/Sibling.md"), "[s]: Plan/README.md\n");
+    assert!(
+        read("tasks/Old Notes/Plan/README.md").ends_with("\n[o]: ../../../Other.md \"Other\"\n")
+    );
+
+    super::ops::convert_to_leaf(
+        space,
+        "tasks/Old Notes/Plan/README.md",
+        Some(space),
+        runtime(&state),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        read("Index.md"),
+        "[Plan][p]\n\n[p]: <tasks/Old Notes/Plan.md> \"Title\"\n"
+    );
+    assert_eq!(read("tasks/Old Notes/Sibling.md"), "[s]: Plan.md\n");
+    assert!(read("tasks/Old Notes/Plan.md").ends_with("\n[o]: ../../Other.md \"Other\"\n"));
+}
+
+#[tokio::test]
+async fn df_251_a_failed_step_restores_the_sources_with_rewritten_definitions() {
+    // A folder rename, a target move and a source move, each failed after
+    // its target links and after its source rebase.
+    let operations: [(&str, Option<&str>, &str); 3] = [
+        ("Area", None, "Zone"),
+        ("Area/Tasks/Item.md", Some("Area/Tasks/Sub"), ""),
+        ("Area/Ref.md", Some(""), ""),
+    ];
+    for stage in ["move_links", "move_sources"] {
+        for (from, to_parent, rename_to) in operations {
+            let tmp = TempDir::new().unwrap();
+            let root = tmp.path();
+            relation_target_space(root);
+            write_tree(
+                root,
+                &[
+                    (
+                        "RefOnly.md",
+                        "[Item][i]\n\n[i]: <Area/Tasks/Item.md> 'Item'\n",
+                    ),
+                    (
+                        "Area/Ref.md",
+                        "---\ntitle: Ref\n---\n[d]: ../Decisions/Decision.md\n",
+                    ),
+                ],
+            );
+            let space = root.to_str().unwrap();
+            let state = IndexRuntimeState::default();
+            let before = source_snapshot(root);
+
+            crate::page::write::inject_failure(Some(stage), None);
+            let error = match to_parent {
+                None => super::rename(space, from, rename_to, Some(space), runtime(&state))
+                    .await
+                    .map(|_| ()),
+                Some(to_parent) => {
+                    super::move_entry(space, from, to_parent, Some(space), runtime(&state))
+                        .await
+                        .map(|_| ())
+                }
+            }
+            .expect_err("injected failure");
+            crate::page::write::inject_failure(None, None);
+
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("injected {stage} failure")),
+                "{stage} {from}: {error:?}"
+            );
+            assert_eq!(source_snapshot(root), before, "{stage} {from}");
+        }
+    }
+}

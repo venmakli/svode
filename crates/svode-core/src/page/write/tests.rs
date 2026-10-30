@@ -1010,12 +1010,14 @@ async fn df_154_title_rename_rewrites_percent_encoded_links_in_their_form() {
 }
 
 #[tokio::test]
-async fn df_251_title_rename_plans_a_source_that_links_only_by_definition() {
+async fn df_251_title_rename_rewrites_sources_that_link_only_by_definition() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
-    let state = linked_project(root, "Plan.md", &[]).await;
+    let state = linked_project(root, "Plan.md", &["a"]).await;
     let refonly = "[Plan][p]\n\n[p]: Plan.md \"Title\"\n";
     fs::write(root.join("RefOnly.md"), refonly).unwrap();
+    let space_ref = "[Plan][]\n\n[Plan]: <../../Plan.md#goal>\n";
+    fs::write(root.join("spaces/a/RefOnly.md"), space_ref).unwrap();
     let requests = std::sync::Mutex::new(Vec::new());
 
     let renamed = save_denied(root, root, "Plan.md", "Roadmap", &state, &[], &requests)
@@ -1024,14 +1026,30 @@ async fn df_251_title_rename_plans_a_source_that_links_only_by_definition() {
 
     assert_eq!(renamed.result.new_path.as_deref(), Some("Roadmap.md"));
     let requests = requests.into_inner().unwrap();
-    assert!(
-        requests
-            .iter()
-            .any(|paths| paths.contains(&root.join("RefOnly.md"))),
-        "{requests:?}"
-    );
+    for path in ["RefOnly.md", "spaces/a/RefOnly.md"] {
+        assert!(
+            requests
+                .iter()
+                .any(|paths| paths.contains(&root.join(path))),
+            "{path}: {requests:?}"
+        );
+        assert!(
+            renamed.changed_paths.contains(&root.join(path)),
+            "{path}: {:?}",
+            renamed.changed_paths
+        );
+    }
+    // Only the address changes; the label and the uses keep the old text.
     assert_eq!(
         fs::read_to_string(root.join("RefOnly.md")).unwrap(),
-        refonly
+        "[Plan][p]\n\n[p]: Roadmap.md \"Title\"\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("spaces/a/RefOnly.md")).unwrap(),
+        "[Plan][]\n\n[Plan]: <../../Roadmap.md#goal>\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("spaces/a/Link.md")).unwrap(),
+        "[Old](../../Roadmap.md)\n"
     );
 }
