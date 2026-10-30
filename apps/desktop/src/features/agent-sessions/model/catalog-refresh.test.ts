@@ -192,6 +192,36 @@ test("a live terminal no session is listed with accelerates the list until one i
   stop();
 });
 
+test("a terminal running an agent no listed session runs in accelerates the list without the panel", async () => {
+  const { api, env, store, stop } = await startCatalog();
+  expect(store.getState().fastRefreshDemand).toBe(0);
+  api.agentTerminals = ["pty-1"];
+  await store.getState().load();
+  expect(env.activeIntervals()).toEqual([INTERVALS.fastListMs]);
+
+  const listsBefore = count(api, "list:");
+  await env.advance(INTERVALS.fastListMs);
+  expect(count(api, "list:")).toBe(listsBefore + 1);
+  expect(env.activeIntervals()).toEqual([INTERVALS.fastListMs]);
+
+  // A hidden window still polls no list.
+  await env.setVisible(false);
+  expect(env.activeIntervals()).toEqual([]);
+  await env.setVisible(true);
+  expect(env.activeIntervals()).toEqual([INTERVALS.fastListMs]);
+
+  // The agent's list names the session its terminal runs.
+  api.listed = [listedSession({ id: "claude-code:s1", source: "claude-code" })];
+  api.surfaces.set("pty-1", "claude-code:s1");
+  await env.advance(INTERVALS.fastListMs);
+  expect(
+    store.getState().sessions.find((session) => session.id === "claude-code:s1")
+      ?.runtime?.ptyId,
+  ).toBe("pty-1");
+  expect(env.activeIntervals()).toEqual([INTERVALS.hotMs, INTERVALS.listMs]);
+  stop();
+});
+
 test("returning to the foreground reloads the list after the minimal gap", async () => {
   const { api, env, stop } = await startCatalog();
 

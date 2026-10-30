@@ -867,7 +867,7 @@ mod tests {
             connections.held_catalog_agents(),
             ["codex", "claude-code", id.as_str()]
         );
-        assert!(connections.raise_catalog_agent(&id).await);
+        assert!(connections.raise_catalog_agent(&id).await.unwrap());
         let listing = runtime.catalog_connections();
         let connection = listing.iter().find(|c| c.agent == id).unwrap().connection;
         let list = runtime.list_sessions(connection).await.unwrap();

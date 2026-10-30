@@ -41,18 +41,22 @@ const CODEX_TUI_ORIGINATOR: &str = "codex-tui";
 /// may be coarser than the records' timestamps.
 const ROLLOUT_MODIFIED_TOLERANCE: Duration = Duration::seconds(2);
 
-/// Moves each live PTY of Svode to the session its agent process runs now.
-/// A failure leaves every link as it is (R6).
-pub(super) fn follow_terminal_sessions(state: &AgentSessionsState, terminals: &TerminalManager) {
+/// Moves each live PTY of Svode to the session its agent process runs now
+/// and returns the live PTYs with their processes, none when they cannot be
+/// read. A failure leaves every link as it is (R6).
+pub(super) fn follow_terminal_sessions(
+    state: &AgentSessionsState,
+    terminals: &TerminalManager,
+) -> Vec<LivePtyProcesses> {
     let ptys = match terminals.live_pty_processes() {
         Ok(ptys) => ptys,
         Err(error) => {
             tracing::warn!("the processes of managed terminals cannot be read: {error}");
-            return;
+            return Vec::new();
         }
     };
     if ptys.is_empty() {
-        return;
+        return ptys;
     }
     let records = claude_code::config_dir(&state.home_dir).join("sessions");
     let agent = AgentId::from(AgentAdapterKind::ClaudeCode);
@@ -92,6 +96,7 @@ pub(super) fn follow_terminal_sessions(state: &AgentSessionsState, terminals: &T
     if let Err(error) = terminals.follow_current_sessions(&current) {
         tracing::warn!("managed terminals keep their sessions: {error}");
     }
+    ptys
 }
 
 /// The session of the Claude Code process nearest the shell, nearest
@@ -413,6 +418,7 @@ mod tests {
             depth,
             start_time: start_time.timestamp() as u64,
             name: "claude".to_string(),
+            command_names: Vec::new(),
         }
     }
 
@@ -482,6 +488,7 @@ mod tests {
                     depth: 1,
                     start_time: 0,
                     name: "claude".to_string(),
+                    command_names: Vec::new(),
                 }
             ),
             None,

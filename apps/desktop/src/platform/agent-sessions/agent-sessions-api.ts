@@ -93,6 +93,11 @@ export interface AgentSessionsListResult {
   sources: AgentSessionSourceReport[];
   summary: AgentSessionsListSummary;
   cache: AgentSessionsCacheState;
+  /**
+   * Live Svode terminals of the project where an agent whose catalogue is
+   * its ACP list runs, yet no listed session of that agent runs in them.
+   */
+  agentTerminalsWithoutSession?: string[];
 }
 
 export interface AgentSessionsListSummary {

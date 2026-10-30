@@ -365,6 +365,7 @@ mod tests {
             cache: AgentSessionsCacheReport {
                 mode: AgentSessionsCacheMode::Current,
             },
+            agent_terminals_without_session: Vec::new(),
         }
     }
 

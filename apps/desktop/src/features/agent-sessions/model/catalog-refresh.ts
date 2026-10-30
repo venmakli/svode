@@ -41,6 +41,7 @@ function needsFastListRefresh(state: AgentSessionCatalogState): boolean {
     state.fastRefreshDemand > 0 ||
     state.pendingTerminals.length > 0 ||
     state.unlistedTerminalPtyIds.size > 0 ||
+    (state.result?.agentTerminalsWithoutSession?.length ?? 0) > 0 ||
     state.sessions.some((session) => session.runtime?.provisional === true)
   );
 }
@@ -55,8 +56,9 @@ function hotStatusKey(state: AgentSessionCatalogState): string {
 /**
  * The only refresh lifecycle of the project session catalog. While the window
  * is visible it polls the full list (accelerated for pending/provisional
- * records, live terminals no session is listed with and explicit
- * fast-refresh demand) plus hot status; while hidden it polls only hot
+ * records, live terminals no session is listed with, terminals running an
+ * agent none of whose listed sessions runs in them and explicit fast-refresh
+ * demand) plus hot status; while hidden it polls only hot
  * status of already known active, pending and provisional records. Returning to the foreground reloads the full list and starts the
  * agent connections an open Sessions collection needs; polls never start one.
  */

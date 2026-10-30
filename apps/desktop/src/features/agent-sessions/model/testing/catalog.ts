@@ -35,8 +35,12 @@ export function listedSession(
 export function listResult(
   sessions: ListedAgentSession[],
   generatedAt = "2026-09-29T10:00:00Z",
+  agentTerminalsWithoutSession: string[] = [],
 ): AgentSessionsListResult {
   return {
+    ...(agentTerminalsWithoutSession.length > 0
+      ? { agentTerminalsWithoutSession }
+      : {}),
     generatedAt,
     projectPath: "/project",
     status: "ok",
@@ -56,6 +60,8 @@ export interface FakeCatalogApi extends AgentSessionCatalogApi {
   listed: ListedAgentSession[];
   /** Live registered terminal surfaces, pty id → session id. */
   surfaces: Map<string, string>;
+  /** Live terminals with an agent process, as the read-model finds them. */
+  agentTerminals: string[];
   reentry: (sessionId: string) => AgentSessionReentryResult;
 }
 
@@ -78,10 +84,25 @@ function withSurfaces(
 
 export function fakeCatalogApi(): FakeCatalogApi {
   let nextPty = 0;
+  /** The list with the agent terminals no listed session runs in. */
+  const currentList = () => {
+    const sessions = withSurfaces(api.listed, api.surfaces);
+    const running = new Set(
+      sessions.flatMap((session) =>
+        session.runtime?.ptyId ? [session.runtime.ptyId] : [],
+      ),
+    );
+    return listResult(
+      sessions,
+      undefined,
+      api.agentTerminals.filter((ptyId) => !running.has(ptyId)),
+    );
+  };
   const api: FakeCatalogApi = {
     calls: [],
     listed: [],
     surfaces: new Map(),
+    agentTerminals: [],
     reentry: (sessionId) => {
       const ptyId = `pty-resume-${sessionId}`;
       api.surfaces.set(ptyId, sessionId);
@@ -89,11 +110,11 @@ export function fakeCatalogApi(): FakeCatalogApi {
     },
     list: async (projectPath) => {
       api.calls.push(`list:${projectPath}`);
-      return listResult(withSurfaces(api.listed, api.surfaces));
+      return currentList();
     },
     refresh: async (projectPath) => {
       api.calls.push(`refresh:${projectPath}`);
-      return listResult(withSurfaces(api.listed, api.surfaces));
+      return currentList();
     },
     raiseCatalog: async () => {
       api.calls.push("raise");

@@ -259,6 +259,11 @@ pub struct AgentSessionsListResult {
     pub sources: Vec<AgentSessionSourceReport>,
     pub summary: AgentSessionsSummary,
     pub cache: AgentSessionsCacheReport,
+    /// Live terminals of Svode in the project with a process of an agent
+    /// whose catalogue is its ACP list that no listed session of that agent
+    /// runs in (DF-225 R3); the catalogue is polled faster while any are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_terminals_without_session: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

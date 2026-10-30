@@ -1,14 +1,15 @@
 //! Desktop owner of agent connections (Stage 10 `02` C1/C3, `03` A1). An
 //! agent's ACP entrypoint starts only at a lifecycle boundary and only for
 //! an available agent: an open Sessions collection for the agents whose
-//! catalogue is their ACP list, the user's explicit check, an agent chosen
+//! catalogue is their ACP list, a process of such an agent running in a
+//! terminal of Svode (DF-225 R1), the user's explicit check, an agent chosen
 //! in a new session draft (with the session it creates early where the
 //! agent has evidence for it), the creation of a session and opening one in
 //! the chat; a Routine launch acquires a connection of its own provenance
 //! in `routines::acp_launch`. Sharing by launch plan, the provenance split
 //! and closing for idleness belong to the runtime.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -170,19 +171,28 @@ pub enum SessionOpening {
     },
 }
 
-/// Open Sessions collections and the catalogue connections they keep.
+/// Open Sessions collections, the agents running in terminals of Svode and
+/// the catalogue connections they keep, one per agent.
 #[derive(Default)]
 struct CatalogDemand {
     /// Hold id → webview label.
     holds: HashMap<u64, String>,
+    /// Agents whose process runs in a terminal of Svode (DF-225 R1).
+    terminals: HashSet<String>,
     leases: HashMap<String, ConnectionLease>,
 }
 
 impl CatalogDemand {
-    fn release_if_unheld(&mut self) {
-        if self.holds.is_empty() {
-            self.leases.clear();
-        }
+    /// An open collection keeps every catalogue agent, a terminal its own.
+    fn holds_agent(&self, agent: &str) -> bool {
+        !self.holds.is_empty() || self.terminals.contains(agent)
+    }
+
+    fn release_unheld(&mut self) {
+        let collection = !self.holds.is_empty();
+        let terminals = &self.terminals;
+        self.leases
+            .retain(|agent, _| collection || terminals.contains(agent));
     }
 }
 
@@ -529,11 +539,47 @@ impl AgentConnections {
     }
 
     /// The collection closed; with the last one its connections are left
-    /// to close after their idle time.
+    /// to close after their idle time, but for those of agents running in
+    /// terminals of Svode.
     pub fn release_catalog(&self, hold: u64) {
         let mut catalog = self.catalog.lock().unwrap();
         catalog.holds.remove(&hold);
-        catalog.release_if_unheld();
+        catalog.release_unheld();
+    }
+
+    /// The agents whose process runs in a terminal of Svode now (DF-225 R1):
+    /// each keeps its catalogue connection as an open collection does, one
+    /// however many terminals run it, and an agent no terminal runs any more
+    /// is left to close after its idle time unless a collection keeps it.
+    /// Returns the agents held from now on whose connection is not open, for
+    /// the caller to raise; an agent that does not list its catalogue or
+    /// declared no list is not held.
+    pub(crate) fn hold_terminal_agents(
+        &self,
+        agents: impl IntoIterator<Item = String>,
+    ) -> Vec<String> {
+        let listing = self.listing_catalog_agents();
+        let agents = agents
+            .into_iter()
+            .filter(|agent| listing.contains(agent))
+            .collect::<HashSet<_>>();
+        let mut catalog = self.catalog.lock().unwrap();
+        let previous = std::mem::replace(&mut catalog.terminals, agents);
+        catalog.release_unheld();
+        let mut raised = catalog
+            .terminals
+            .iter()
+            .filter(|agent| !previous.contains(*agent))
+            .filter(|agent| {
+                !catalog
+                    .leases
+                    .get(*agent)
+                    .is_some_and(ConnectionLease::is_open)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        raised.sort();
+        raised
     }
 
     /// A reloading or closing webview no longer shows its collections and
@@ -541,7 +587,7 @@ impl AgentConnections {
     pub fn release_webview(&self, webview: &str) {
         let mut catalog = self.catalog.lock().unwrap();
         catalog.holds.retain(|_, label| label != webview);
-        catalog.release_if_unheld();
+        catalog.release_unheld();
         drop(catalog);
         let released: Vec<DraftHold> = {
             let mut drafts = self.drafts.lock().unwrap();
@@ -565,13 +611,27 @@ impl AgentConnections {
         self.catalog.lock().unwrap().leases.remove(agent);
     }
 
-    /// Agents whose catalogue connection an open collection needs; none
-    /// while no collection is open. An agent that declared no list, in this
-    /// process or as the host keeps it, is not started for it again.
+    /// Agents whose catalogue connection an open collection or a terminal
+    /// of Svode running them needs; none while neither is. An agent that
+    /// declared no list, in this process or as the host keeps it, is not
+    /// started for it again.
     pub(crate) fn held_catalog_agents(&self) -> Vec<String> {
-        if self.catalog.lock().unwrap().holds.is_empty() {
+        let catalog = self.catalog.lock().unwrap();
+        if catalog.holds.is_empty() && catalog.terminals.is_empty() {
             return Vec::new();
         }
+        let collection = !catalog.holds.is_empty();
+        let terminals = catalog.terminals.clone();
+        drop(catalog);
+        self.listing_catalog_agents()
+            .into_iter()
+            .filter(|agent| collection || terminals.contains(agent))
+            .collect()
+    }
+
+    /// Agents whose list is their catalogue, but for those that declared
+    /// no list.
+    fn listing_catalog_agents(&self) -> Vec<String> {
         self.planner
             .catalog_agents()
             .into_iter()
@@ -583,35 +643,42 @@ impl AgentConnections {
             .collect()
     }
 
-    /// Starts the agent's catalogue connection unless it is open; true when
-    /// it is open for an open collection.
-    pub(crate) async fn raise_catalog_agent(&self, agent: &str) -> bool {
+    /// Starts the agent's catalogue connection unless it is open: `true`
+    /// when it is open for an open collection or a terminal running the
+    /// agent, `false` when nothing holds it or the agent is not available,
+    /// and the error when its connection failed to start.
+    pub(crate) async fn raise_catalog_agent(&self, agent: &str) -> Result<bool, AgentRuntimeError> {
         {
             let catalog = self.catalog.lock().unwrap();
-            if catalog.holds.is_empty() {
-                return false;
+            if !catalog.holds_agent(agent) {
+                return Ok(false);
             }
             if catalog
                 .leases
                 .get(agent)
                 .is_some_and(ConnectionLease::is_open)
             {
-                return true;
+                return Ok(true);
             }
         }
         match self.acquire(agent).await {
             Ok(lease) => {
                 let mut catalog = self.catalog.lock().unwrap();
-                // The collection may have closed meanwhile.
-                if catalog.holds.is_empty() {
-                    return false;
+                // The collection may have closed or the process exited
+                // meanwhile.
+                if !catalog.holds_agent(agent) {
+                    return Ok(false);
                 }
                 catalog.leases.insert(agent.to_string(), lease);
-                true
+                Ok(true)
             }
-            Err(refusal) => {
-                tracing::warn!("catalogue connection of {agent} was not started: {refusal}");
-                false
+            Err(ConnectRefusal::Unavailable(reason)) => {
+                tracing::debug!("catalogue connection of {agent} is not available: {reason}");
+                Ok(false)
+            }
+            Err(ConnectRefusal::Failed(error)) => {
+                tracing::warn!("catalogue connection of {agent} was not started: {error}");
+                Err(error)
             }
         }
     }

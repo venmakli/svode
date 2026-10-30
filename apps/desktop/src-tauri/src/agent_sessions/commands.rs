@@ -7,6 +7,7 @@ use super::AgentSessionsState;
 use super::read_model;
 use super::reentry;
 use super::refresh::AgentSessionsReadKind;
+use super::terminal_agents;
 use super::terminal_sessions;
 use super::types::{
     AgentSessionReentryResult, AgentSessionsHotStatusResult, AgentSessionsListResult,
@@ -25,6 +26,7 @@ pub async fn agent_sessions_list(
     terminal_manager: State<'_, TerminalManager>,
     agent_runtime: State<'_, AgentRuntimeState>,
     agent_setup: State<'_, AgentSetupState>,
+    connections: State<'_, Arc<AgentConnections>>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
@@ -40,6 +42,7 @@ pub async fn agent_sessions_list(
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let runtime = agent_runtime.runtime().clone();
+    let connections = connections.inner().clone();
     let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
     reads
@@ -48,14 +51,16 @@ pub async fn agent_sessions_list(
             AgentSessionsReadKind::Discovery,
             "agent_sessions_list",
             move || {
-                terminal_sessions::follow_terminal_sessions(&state, &terminal_manager);
-                let result = read_model::list_sessions(
+                let terminals = follow_terminals(&state, &terminal_manager, &connections, &runtime);
+                let mut result = read_model::list_sessions(
                     &state,
                     project_path,
                     terminal_manager.list_agent_surfaces()?,
                     runtime.sessions(),
                 )?;
                 terminal_manager.reconcile_agent_sessions(&result.sessions)?;
+                result.agent_terminals_without_session =
+                    terminal_agents::without_session(&root, &terminals, &result.sessions);
                 Ok(result)
             },
         )
@@ -102,6 +107,7 @@ pub async fn agent_sessions_refresh(
     terminal_manager: State<'_, TerminalManager>,
     agent_runtime: State<'_, AgentRuntimeState>,
     agent_setup: State<'_, AgentSetupState>,
+    connections: State<'_, Arc<AgentConnections>>,
     project_path: String,
 ) -> Result<AgentSessionsListResult, AppError> {
     let root = super::scope::normalize_project_path(&project_path)?;
@@ -117,6 +123,7 @@ pub async fn agent_sessions_refresh(
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let runtime = agent_runtime.runtime().clone();
+    let connections = connections.inner().clone();
     let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
     reads
@@ -125,14 +132,16 @@ pub async fn agent_sessions_refresh(
             AgentSessionsReadKind::FullRefresh,
             "agent_sessions_refresh",
             move || {
-                terminal_sessions::follow_terminal_sessions(&state, &terminal_manager);
-                let result = read_model::list_sessions(
+                let terminals = follow_terminals(&state, &terminal_manager, &connections, &runtime);
+                let mut result = read_model::list_sessions(
                     &state,
                     project_path,
                     terminal_manager.list_agent_surfaces()?,
                     runtime.sessions(),
                 )?;
                 terminal_manager.reconcile_agent_sessions(&result.sessions)?;
+                result.agent_terminals_without_session =
+                    terminal_agents::without_session(&root, &terminals, &result.sessions);
                 Ok(result)
             },
         )
@@ -182,6 +191,7 @@ pub async fn agent_sessions_hot_status(
     state: State<'_, AgentSessionsState>,
     terminal_manager: State<'_, TerminalManager>,
     agent_runtime: State<'_, AgentRuntimeState>,
+    connections: State<'_, Arc<AgentConnections>>,
     project_path: String,
     session_ids: Vec<String>,
 ) -> Result<AgentSessionsHotStatusResult, AppError> {
@@ -190,8 +200,9 @@ pub async fn agent_sessions_hot_status(
     let state = state.inner().clone();
     let terminal_manager = terminal_manager.inner().clone();
     let runtime = agent_runtime.runtime().clone();
+    let connections = connections.inner().clone();
     run_blocking(move || {
-        terminal_sessions::follow_terminal_sessions(&state, &terminal_manager);
+        follow_terminals(&state, &terminal_manager, &connections, &runtime);
         let result = read_model::hot_status(
             &state,
             project_path,
@@ -253,6 +264,22 @@ pub async fn agent_sessions_reenter(
         )
     })
     .await
+}
+
+/// The read boundary of the terminals of Svode: each live PTY follows the
+/// session its agent process runs (DF-163 R2), and the agents running in
+/// them hold their catalogue connections (DF-225 R1). Returns the terminals
+/// with such an agent.
+fn follow_terminals(
+    state: &super::AgentSessionsState,
+    terminals: &TerminalManager,
+    connections: &Arc<AgentConnections>,
+    runtime: &svode_agents::AgentRuntime,
+) -> Vec<terminal_agents::AgentTerminal> {
+    let ptys = terminal_sessions::follow_terminal_sessions(state, terminals);
+    let agent_terminals = terminal_agents::agent_terminals(&ptys);
+    terminal_agents::hold_catalogs(&state.acp_lists, connections, runtime, &agent_terminals);
+    agent_terminals
 }
 
 async fn run_blocking<T>(

@@ -178,6 +178,7 @@ fn list(
                 AgentSessionsCacheMode::Current
             },
         },
+        agent_terminals_without_session: Vec::new(),
     })
 }
 

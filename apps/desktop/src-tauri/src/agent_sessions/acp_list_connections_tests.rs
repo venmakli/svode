@@ -249,6 +249,223 @@ async fn an_unavailable_agent_is_never_started() {
     );
 }
 
+/// Live terminals of Svode: a shell tab with Claude Code under its node
+/// interpreter and two tabs with Codex under the shell.
+fn agent_ptys() -> Vec<crate::terminal::LivePtyProcesses> {
+    use crate::agent_sessions::terminal_agents::tests::{process, pty};
+    vec![
+        pty(
+            "claude",
+            "/work",
+            vec![
+                process(1, 0, "zsh", &["-zsh"]),
+                process(2, 1, "node", &["node", "claude"]),
+            ],
+        ),
+        pty(
+            "codex-1",
+            "/work",
+            vec![
+                process(3, 0, "zsh", &["-zsh"]),
+                process(4, 1, "codex", &["codex"]),
+            ],
+        ),
+        pty(
+            "codex-2",
+            "/work",
+            vec![
+                process(5, 0, "zsh", &["-zsh"]),
+                process(6, 1, "codex", &["codex"]),
+            ],
+        ),
+    ]
+}
+
+/// The read boundary of the terminals with these processes.
+fn hold_terminals(
+    sources: &Arc<AcpListSources>,
+    connections: &Arc<AgentConnections>,
+    runtime: &AgentRuntime,
+    ptys: &[crate::terminal::LivePtyProcesses],
+) -> Vec<JoinHandle<()>> {
+    use crate::agent_sessions::terminal_agents::{agent_terminals, hold_catalogs};
+    hold_catalogs(sources, connections, runtime, &agent_terminals(ptys))
+}
+
+fn sorted(mut agents: Vec<String>) -> Vec<String> {
+    agents.sort();
+    agents
+}
+
+#[tokio::test]
+async fn an_agent_running_in_a_terminal_holds_one_catalogue_connection_while_it_runs() {
+    let runtime = runtime();
+    let (connections, sources) = owner(
+        &runtime,
+        vec![
+            ("codex", Ok(scripted("codex", "ok"))),
+            ("claude-code", Ok(scripted("claude-code", "ok"))),
+        ],
+    );
+    let ptys = agent_ptys();
+
+    // No collection is open: the terminals start their agents and the
+    // lists are read once the connections are open.
+    settle(hold_terminals(&sources, &connections, &runtime, &ptys)).await;
+    assert_eq!(sorted(open_agents(&runtime)), ["claude-code", "codex"]);
+    assert_eq!(
+        status(&sources, AgentAdapterKind::Codex.id()),
+        (AgentSessionSourceStatus::Ok, 1)
+    );
+    assert_eq!(
+        status(&sources, AgentAdapterKind::ClaudeCode.id()),
+        (AgentSessionSourceStatus::Ok, 1)
+    );
+
+    // Two terminals of Codex keep one connection; a later boundary starts
+    // nothing again, and the idle time does not close a held connection.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    settle(hold_terminals(&sources, &connections, &runtime, &ptys)).await;
+    assert_eq!(sorted(open_agents(&runtime)), ["claude-code", "codex"]);
+
+    // Codex exits in one terminal, then in the other.
+    settle(hold_terminals(&sources, &connections, &runtime, &ptys[..2])).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(sorted(open_agents(&runtime)), ["claude-code", "codex"]);
+    settle(hold_terminals(&sources, &connections, &runtime, &ptys[..1])).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(open_agents(&runtime), ["claude-code"]);
+    // Closing an idle connection is normal: the last list stays, not stale.
+    assert_eq!(
+        status(&sources, AgentAdapterKind::Codex.id()),
+        (AgentSessionSourceStatus::Ok, 1)
+    );
+
+    // An open collection keeps its connections apart from the terminals.
+    let hold = connections.hold_catalog("main");
+    settle(sources.raise(&connections, &runtime)).await;
+    settle(hold_terminals(&sources, &connections, &runtime, &[])).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(sorted(open_agents(&runtime)), ["claude-code", "codex"]);
+    settle(hold_terminals(&sources, &connections, &runtime, &ptys[..1])).await;
+    connections.release_catalog(hold);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(open_agents(&runtime), ["claude-code"]);
+
+    // The last process exits.
+    settle(hold_terminals(&sources, &connections, &runtime, &[])).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(open_agents(&runtime).is_empty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_terminal_starts_no_unavailable_agent_nor_one_without_a_list_again() {
+    use crate::agent_sessions::terminal_agents::tests::{process, pty};
+    let runtime = runtime();
+    let (connections, sources) = owner(
+        &runtime,
+        vec![
+            ("codex", Err(LaunchUnavailable::Disabled)),
+            ("claude-code", Err(LaunchUnavailable::AdapterNotInstalled)),
+            ("qwen-code", Ok(scripted("qwen-code", "none"))),
+        ],
+    );
+    let qwen = vec![pty(
+        "qwen",
+        "/work",
+        vec![
+            process(1, 0, "zsh", &["-zsh"]),
+            process(2, 1, "node", &["node", "qwen"]),
+        ],
+    )];
+
+    settle(hold_terminals(
+        &sources,
+        &connections,
+        &runtime,
+        &agent_ptys(),
+    ))
+    .await;
+    assert!(open_agents(&runtime).is_empty());
+    assert!(sources.reads().is_empty());
+
+    // An agent that declared no list starts once and is no source.
+    settle(hold_terminals(&sources, &connections, &runtime, &qwen)).await;
+    assert!(sources.reads().is_empty());
+    settle(hold_terminals(&sources, &connections, &runtime, &[])).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(open_agents(&runtime).is_empty());
+    assert!(
+        connections
+            .hold_terminal_agents(["qwen-code".to_string()])
+            .is_empty(),
+        "it is not started for a terminal again"
+    );
+    assert!(connections.held_catalog_agents().is_empty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_poll_without_an_agent_in_a_terminal_starts_no_connection() {
+    use crate::agent_sessions::terminal_agents::tests::{process, pty};
+    let runtime = runtime();
+    let (connections, sources) = owner(&runtime, vec![("codex", Ok(scripted("codex", "ok")))]);
+    let plain = vec![pty(
+        "plain",
+        "/work",
+        vec![
+            process(1, 0, "zsh", &["-zsh"]),
+            process(2, 1, "vim", &["vim"]),
+            process(3, 1, "my-custom-agent", &["my-custom-agent"]),
+        ],
+    )];
+
+    settle(hold_terminals(&sources, &connections, &runtime, &plain)).await;
+    settle(sources.refresh(&runtime)).await;
+    settle(sources.raise(&connections, &runtime)).await;
+    assert!(open_agents(&runtime).is_empty());
+    assert!(sources.reads().is_empty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_connection_that_fails_to_start_for_a_terminal_marks_only_its_source_stale() {
+    let runtime = runtime();
+    let mut broken = scripted("codex", "ok");
+    broken.args = vec!["-c".into(), "exit 1".into()];
+    let (connections, sources) = owner(
+        &runtime,
+        vec![
+            ("codex", Ok(broken)),
+            ("claude-code", Ok(scripted("claude-code", "ok"))),
+        ],
+    );
+
+    settle(hold_terminals(
+        &sources,
+        &connections,
+        &runtime,
+        &agent_ptys(),
+    ))
+    .await;
+    assert_eq!(
+        status(&sources, AgentAdapterKind::Codex.id()),
+        (AgentSessionSourceStatus::Stale, 0)
+    );
+    assert_eq!(
+        status(&sources, AgentAdapterKind::ClaudeCode.id()),
+        (AgentSessionSourceStatus::Ok, 1)
+    );
+    // Later boundaries of the same terminals do not start it again.
+    assert!(
+        connections
+            .hold_terminal_agents(["codex".to_string(), "claude-code".to_string()])
+            .is_empty()
+    );
+    runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_check_starts_initializes_and_closes_unless_a_collection_keeps_the_agent() {
     let runtime = runtime();

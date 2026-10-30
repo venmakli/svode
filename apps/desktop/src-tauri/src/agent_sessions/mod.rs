@@ -9,6 +9,7 @@ mod read_model;
 mod reentry;
 mod refresh;
 mod scope;
+mod terminal_agents;
 pub(crate) mod terminal_outcomes;
 mod terminal_sessions;
 pub mod types;

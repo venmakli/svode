@@ -104,25 +104,41 @@ impl AcpListSources {
         self.start(lister, None)
     }
 
-    /// Starts the catalogue connections an open Sessions collection needs
-    /// and reads each list once its connection is open. Agents start on
-    /// their own, so a slow agent never delays another.
+    /// Starts the catalogue connections an open Sessions collection or a
+    /// terminal of Svode running an agent needs and reads each list once
+    /// its connection is open.
     pub(crate) fn raise(
         self: &Arc<Self>,
         connections: &Arc<AgentConnections>,
         lister: &impl CatalogLister,
     ) -> Vec<JoinHandle<()>> {
-        connections
-            .held_catalog_agents()
+        self.raise_agents(connections, lister, connections.held_catalog_agents())
+    }
+
+    /// Starts the catalogue connections of `agents` that something holds
+    /// and reads each list once its connection is open. Agents start on
+    /// their own, so a slow agent never delays another; one whose connection
+    /// fails to start marks only its own source `stale`.
+    pub(crate) fn raise_agents(
+        self: &Arc<Self>,
+        connections: &Arc<AgentConnections>,
+        lister: &impl CatalogLister,
+        agents: Vec<String>,
+    ) -> Vec<JoinHandle<()>> {
+        agents
             .into_iter()
             .map(|agent| {
                 let (sources, connections, lister) =
                     (self.clone(), connections.clone(), lister.clone());
                 tauri::async_runtime::spawn(async move {
-                    if connections.raise_catalog_agent(&agent).await {
-                        for read in sources.refresh_agent(&lister, &agent) {
-                            let _ = read.await;
+                    match connections.raise_catalog_agent(&agent).await {
+                        Ok(true) => {
+                            for read in sources.refresh_agent(&lister, &agent) {
+                                let _ = read.await;
+                            }
                         }
+                        Ok(false) => {}
+                        Err(error) => sources.fail_start(&agent, &error),
                     }
                 })
             })
@@ -196,6 +212,16 @@ impl AcpListSources {
             }));
         }
         reads
+    }
+
+    /// The agent's connection failed to start: its last good list, if any,
+    /// may be out of date.
+    fn fail_start(&self, agent: &str, error: &AgentRuntimeError) {
+        let mut agents = self.agents.lock().unwrap();
+        if self.is_forgotten(agent) {
+            return;
+        }
+        agents.entry(agent.to_string()).or_default().problem = Some(error.to_string());
     }
 
     pub(super) fn apply(
