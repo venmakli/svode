@@ -219,6 +219,38 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
     });
   }
 
+  for (const source of ["Do the task\n\n> quoted\n", ""]) {
+    test(`Routine editor cleared of all text changes to an empty instruction from ${JSON.stringify(source)}`, async () => {
+      const root = createRoot(document.getElementById("app")!);
+      const changes: string[] = [];
+      try {
+        await act(async () => {
+          root.render(
+            <TooltipProvider>
+              <ControlledMarkdownEditor
+                value={source}
+                onChange={(value) => changes.push(value)}
+              />
+            </TooltipProvider>,
+          );
+        });
+        await act(async () => {
+          mountedEditor!.tf.insertText("Typed", {
+            at: mountedEditor!.api.start([0])!,
+          });
+        });
+        expect(changes.at(-1)).toBe(`Typed${source || "\n"}`);
+        await act(async () => {
+          mountedEditor!.tf.select([]);
+          mountedEditor!.tf.deleteFragment();
+        });
+        expect(changes.at(-1)).toBe("");
+      } finally {
+        await act(async () => root.unmount());
+      }
+    });
+  }
+
   test("Routine editor renders table Page pills, preserves read-only and opens portable Page target", async () => {
     const root = createRoot(document.getElementById("app")!);
     const changes: string[] = [];

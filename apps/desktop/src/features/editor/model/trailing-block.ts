@@ -1,11 +1,6 @@
-import {
-  type Descendant,
-  ElementApi,
-  getPluginType,
-  KEYS,
-  type SlateEditor,
-  TextApi,
-} from "platejs";
+import { type Descendant, ElementApi, type SlateEditor } from "platejs";
+
+import { isEmptyParagraph } from "./empty-document";
 
 /**
  * The paragraph `TrailingBlockPlugin` adds after a last block that is not a
@@ -19,12 +14,9 @@ function isServiceTrailingBlock(
   node: Descendant | undefined,
 ): boolean {
   return (
-    !!node &&
     ElementApi.isElement(node) &&
     node[TRAILING_BLOCK_MARK] === true &&
-    node.type === getPluginType(editor, KEYS.p) &&
-    !("listStyleType" in node) &&
-    node.children.every((child) => TextApi.isText(child) && child.text === "")
+    isEmptyParagraph(editor, node)
   );
 }
 

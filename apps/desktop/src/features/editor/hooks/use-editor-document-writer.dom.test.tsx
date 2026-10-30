@@ -297,6 +297,60 @@ test("save of text typed into an empty body adds no blank line", async () => {
   }
 });
 
+function deleteAll(editor: PlateEditor) {
+  editor.tf.select([]);
+  editor.tf.deleteFragment();
+}
+
+for (const leading of ["", "\n", "\r\n"]) {
+  test(`save after deleting all text writes only the leading blank lines ${JSON.stringify(leading)}`, async () => {
+    const path = "pages/cleared.md";
+    const view = await harness(path, `${leading}Status: ok\n\nMore\n`);
+    try {
+      deleteAll(view.editor);
+      await view.save();
+      expect(view.writes.map((write) => write.content)).toEqual([leading]);
+
+      // The reread source is the written baseline: nothing to reconcile.
+      await view.reconcile();
+      expect(view.conflicts.filter(Boolean)).toEqual([]);
+      expect(view.writes.length).toBe(1);
+
+      view.editor.tf.insertText("Typed", { at: view.editor.api.start([0]) });
+      await view.save();
+      deleteAll(view.editor);
+      await view.save();
+      expect(view.writes.map((write) => write.content)).toEqual([
+        leading,
+        `${leading}Typed\n`,
+        leading,
+      ]);
+    } finally {
+      await view.cleanup();
+    }
+  });
+}
+
+test("a body of one U+200B paragraph opens empty and is not written without an edit", async () => {
+  const path = "pages/zwsp.md";
+  const view = await harness(path, "​\n");
+  try {
+    expect(view.editor.children.length).toBe(1);
+    expect(NodeApi.string(view.editor.children[0])).toBe("");
+    // The reread source matches the baseline and nothing was edited.
+    await view.reconcile();
+    expect(view.writes).toEqual([]);
+
+    view.editor.tf.insertText("Typed", { at: view.editor.api.start([0]) });
+    await view.save();
+    deleteAll(view.editor);
+    await view.save();
+    expect(view.writes.map((write) => write.content)).toEqual(["Typed\n", ""]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
 test("a draft written over a changed source keeps the leading blank lines it was edited from", async () => {
   const path = "pages/conflict.md";
   const view = await harness(path, "\nStatus: ok\n\nMiddle\n");

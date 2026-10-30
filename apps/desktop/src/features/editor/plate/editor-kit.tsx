@@ -50,6 +50,7 @@ import {
   remarkMarkdownComments,
   serializeMarkdownWithComments,
 } from "../model/markdown-comments";
+import { isEmptyDocument } from "../model/empty-document";
 import { deserializeEditorMarkdownSegment } from "../model/markdown-io";
 import {
   markdownLineBreakRules,
@@ -108,17 +109,17 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
     .extendApi(({ editor }) => ({
       serialize: (
         options?: Parameters<typeof serializeMarkdownWithComments>[1],
-      ) =>
-        serializeMarkdownWithComments(editor, {
+      ) => {
+        const value = withoutServiceTrailingBlock(
+          editor,
+          options?.value ?? editor.children,
+        );
+        if (isEmptyDocument(editor, value)) return "";
+        return serializeMarkdownWithComments(editor, {
           ...options,
-          value: withListLineBreaks(
-            editor,
-            withoutServiceTrailingBlock(
-              editor,
-              options?.value ?? editor.children,
-            ),
-          ),
-        }),
+          value: withListLineBreaks(editor, value),
+        });
+      },
     }))
     .extend(({ getOptions }) => ({
       options: {
