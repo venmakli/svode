@@ -277,11 +277,7 @@ impl GitCli {
     /// Upper bound of the command line of a Git call with `args` on every OS:
     /// the program, the arguments Svode adds and `args`.
     pub fn command_line_cost(&self, args: &[&str]) -> usize {
-        command_line_arg_cost(&self.git_path.to_string_lossy())
-            + args_with_quote_path(args)
-                .iter()
-                .map(|arg| command_line_arg_cost(arg))
-                .sum::<usize>()
+        command_line_cost(&self.git_path, &args_with_quote_path(args))
     }
 
     /// Argument lists of one Git call each for a command that takes a path
@@ -289,23 +285,7 @@ impl GitCli {
     /// list within [`PATH_SET_COMMAND_LINE_BUDGET`]. A path set of any size
     /// then needs one call per budget, never one command line.
     pub fn path_batches<'a>(&self, args: &[&'a str], paths: &'a [String]) -> Vec<Vec<&'a str>> {
-        let base = self.command_line_cost(args);
-        let mut batches = Vec::new();
-        let mut batch = args.to_vec();
-        let mut cost = base;
-        for path in paths {
-            let next = command_line_arg_cost(path);
-            if batch.len() > args.len() && cost + next > PATH_SET_COMMAND_LINE_BUDGET {
-                batches.push(std::mem::replace(&mut batch, args.to_vec()));
-                cost = base;
-            }
-            batch.push(path);
-            cost += next;
-        }
-        if batch.len() > args.len() {
-            batches.push(batch);
-        }
-        batches
+        path_batches_after(self.command_line_cost(args), args, paths)
     }
 
     /// Execute a git command without a working directory (e.g. clone, or
@@ -454,6 +434,40 @@ fn command_line_arg_cost(arg: &str) -> usize {
         + 3
 }
 
+/// Upper bound of the command line of `program` with exactly `args` on every OS.
+pub(crate) fn command_line_cost(program: &Path, args: &[&str]) -> usize {
+    command_line_arg_cost(&program.to_string_lossy())
+        + args
+            .iter()
+            .map(|arg| command_line_arg_cost(arg))
+            .sum::<usize>()
+}
+
+/// [`GitCli::path_batches`] of a call whose command line costs `base` without
+/// the paths.
+pub(crate) fn path_batches_after<'a>(
+    base: usize,
+    args: &[&'a str],
+    paths: &'a [String],
+) -> Vec<Vec<&'a str>> {
+    let mut batches = Vec::new();
+    let mut batch = args.to_vec();
+    let mut cost = base;
+    for path in paths {
+        let next = command_line_arg_cost(path);
+        if batch.len() > args.len() && cost + next > PATH_SET_COMMAND_LINE_BUDGET {
+            batches.push(std::mem::replace(&mut batch, args.to_vec()));
+            cost = base;
+        }
+        batch.push(path);
+        cost += next;
+    }
+    if batch.len() > args.len() {
+        batches.push(batch);
+    }
+    batches
+}
+
 /// `paths` as pathspecs Git matches as written, without pathspec magic.
 pub fn literal_pathspecs(paths: &[String]) -> Vec<String> {
     paths
@@ -479,6 +493,30 @@ pub fn nul_paths_input<'a>(paths: impl IntoIterator<Item = &'a String>) -> Vec<u
     for path in paths {
         input.extend_from_slice(path.as_bytes());
         input.push(0);
+    }
+    input
+}
+
+/// `paths` one per line for `--stdin-paths`. A path a line cannot hold as is
+/// (a line break, a trailing carriage return, a leading quote) is quoted in
+/// the C style Git unquotes there.
+pub fn stdin_paths_input<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<u8> {
+    let mut input = Vec::new();
+    for path in paths {
+        if path.starts_with('"') || path.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
+            input.push(b'"');
+            for byte in path.bytes() {
+                match byte {
+                    b'"' | b'\\' => input.extend_from_slice(&[b'\\', byte]),
+                    0..0x20 | 0x7f => input.extend_from_slice(format!("\\{byte:03o}").as_bytes()),
+                    _ => input.push(byte),
+                }
+            }
+            input.push(b'"');
+        } else {
+            input.extend_from_slice(path.as_bytes());
+        }
+        input.push(b'\n');
     }
     input
 }
@@ -720,6 +758,46 @@ mod tests {
             ]]
         );
         assert!(cli.path_batches(&["ls-tree", "--"], &[]).is_empty());
+    }
+
+    /// Names a line holds only quoted reach `--stdin-paths` as the same files.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdin_paths_name_the_files_hash_object_names_as_arguments() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cli = GitCli::detect().unwrap();
+        let names = [
+            "plain.md",
+            "\"quoted\".md",
+            "line\nbreak.md",
+            "carriage\r",
+            "tab\there.md",
+            "back\\slash \"in\" name.md",
+            "Папка.md",
+        ];
+        let mut expected = String::new();
+        for (index, name) in names.iter().enumerate() {
+            std::fs::write(dir.path().join(name), format!("{index}\n")).unwrap();
+            let out = cli
+                .exec(dir.path(), &["hash-object", "--", name])
+                .await
+                .unwrap();
+            assert_eq!(out.exit_code, 0, "{name:?}: {}", out.stderr);
+            expected.push_str(&out.stdout);
+        }
+
+        let out = cli
+            .exec_with_input(
+                dir.path(),
+                &["hash-object", "--stdin-paths"],
+                &[],
+                &super::stdin_paths_input(names),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(out.exit_code, 0, "{}", out.stderr);
+        assert_eq!(out.stdout, expected);
     }
 
     #[test]

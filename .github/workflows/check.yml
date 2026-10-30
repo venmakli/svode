@@ -184,8 +184,10 @@ jobs:
         run: cargo test -p svode-core --lib -- system_path::tests
       # A folder save, «Save all» with deletions and a case-only relocation
       # and a structural commit of a moved folder, each with paths longer
-      # than 32 767 characters together, are one commit with Git for Windows,
-      # and the path batches of a Git call stay within the budget.
+      # than 32 767 characters together, are one commit with Git for Windows;
+      # sync with matching edits, merge continuation, Page dates and the LFS
+      # check take such sets; and the path batches of a Git call stay within
+      # the budget.
       - name: Git path sets beyond the command line limit
         run: cargo test -p svode-core --lib -- git::path_set_tests git::cli::tests
       - name: Chat paths of the agent runtime

@@ -5,7 +5,7 @@ use serde::Serialize;
 use super::GitError;
 use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::branch::GitOperation;
-use super::cli::GitCli;
+use super::cli::{GitCli, literal_pathspec_input, nul_paths_input, stdin_paths_input};
 use super::path::{RootMode, normalize_repo_relative};
 
 #[derive(Debug, Clone, Serialize)]
@@ -345,28 +345,17 @@ async fn set_aside_matching_edits(cli: &GitCli, repo: &Path) -> Result<Vec<Strin
     let Some(base) = revision(cli, repo, &["merge-base", "HEAD", &incoming]).await? else {
         return Ok(paths);
     };
-    let committed = path_list(
+    let mut committed = Vec::new();
+    for args in with_paths(
         cli,
-        repo,
-        &with_paths(
-            &["diff", "--name-only", "-z", "--no-renames", &base, "HEAD"],
-            &paths,
-        ),
-    )
-    .await?;
-    let incoming_blobs = entries(
-        cli,
-        repo,
-        &with_paths(&["ls-tree", "-z", &incoming], &paths),
-    )
-    .await?;
-    let head_blobs = entries(cli, repo, &with_paths(&["ls-tree", "-z", "HEAD"], &paths)).await?;
-    let index_blobs = entries(
-        cli,
-        repo,
-        &with_paths(&["ls-files", "-z", "--stage"], &paths),
-    )
-    .await?;
+        &["diff", "--name-only", "-z", "--no-renames", &base, "HEAD"],
+        &paths,
+    ) {
+        committed.extend(path_list(cli, repo, &args).await?);
+    }
+    let incoming_blobs = entries(cli, repo, &["ls-tree", "-z", &incoming], &paths).await?;
+    let head_blobs = entries(cli, repo, &["ls-tree", "-z", "HEAD"], &paths).await?;
+    let index_blobs = entries(cli, repo, &["ls-files", "-z", "--stage"], &paths).await?;
     let candidates: Vec<&str> = paths
         .iter()
         .map(String::as_str)
@@ -380,9 +369,14 @@ async fn set_aside_matching_edits(cli: &GitCli, repo: &Path) -> Result<Vec<Strin
         .collect();
     let mut matching = Vec::new();
     if !candidates.is_empty() {
-        let mut args = vec!["hash-object", "--"];
-        args.extend(&candidates);
-        let out = cli.exec(repo, &args).await?;
+        let out = cli
+            .exec_with_input(
+                repo,
+                &["hash-object", "--stdin-paths"],
+                &[],
+                &stdin_paths_input(candidates.iter().copied()),
+            )
+            .await?;
         if out.exit_code != 0 {
             return Err(GitError::GitCommandFailed(format!(
                 "git hash-object failed: {}",
@@ -409,24 +403,30 @@ async fn set_aside_matching_edits(cli: &GitCli, repo: &Path) -> Result<Vec<Strin
     let (tracked, untracked): (Vec<String>, Vec<String>) = matching
         .into_iter()
         .partition(|path| head_blobs.contains_key(path));
-    for (args, paths) in [
+    for (command, options, paths) in [
         (
-            &["restore", "--source=HEAD", "--staged", "--worktree"][..],
+            "restore",
+            &["--source=HEAD", "--staged", "--worktree"][..],
             &tracked,
         ),
         (
-            &["rm", "--cached", "-q", "--ignore-unmatch"][..],
+            "rm",
+            &["--cached", "-q", "--ignore-unmatch"][..],
             &untracked,
         ),
     ] {
         if paths.is_empty() {
             continue;
         }
-        let out = cli.exec(repo, &with_paths(args, paths)).await?;
+        let mut args = vec!["--literal-pathspecs", command];
+        args.extend_from_slice(options);
+        args.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
+        let out = cli
+            .exec_with_input(repo, &args, &[], &nul_paths_input(paths))
+            .await?;
         if out.exit_code != 0 {
             return Err(GitError::GitCommandFailed(format!(
-                "git {} failed: {}",
-                args[0],
+                "git {command} failed: {}",
                 out.stderr.trim()
             )));
         }
@@ -442,32 +442,36 @@ async fn set_aside_matching_edits(cli: &GitCli, repo: &Path) -> Result<Vec<Strin
     Ok(Vec::new())
 }
 
-/// `args` limited to exactly `paths`, without pathspec magic.
-fn with_paths<'a>(args: &[&'a str], paths: &'a [String]) -> Vec<&'a str> {
+/// Argument lists of `args` limited to exactly `paths`, without pathspec
+/// magic, each within the command line budget.
+fn with_paths<'a>(cli: &GitCli, args: &[&'a str], paths: &'a [String]) -> Vec<Vec<&'a str>> {
     let mut all = vec!["--literal-pathspecs"];
     all.extend_from_slice(args);
     all.push("--");
-    all.extend(paths.iter().map(String::as_str));
-    all
+    cli.path_batches(&all, paths)
 }
 
 /// Path → (mode, object id) of tree or stage 0 index entries.
 type Entries = std::collections::HashMap<String, (String, String)>;
 
-/// Reads `ls-tree -z` or `ls-files -z --stage` records.
-async fn entries(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<Entries, GitError> {
-    let command = args[1];
-    let out = cli.exec(repo, args).await?;
-    if out.exit_code != 0 {
-        return Err(GitError::GitCommandFailed(format!(
-            "git {command} failed: {}",
-            out.stderr.trim()
-        )));
-    }
-    Ok(out
-        .stdout
-        .split('\0')
-        .filter_map(|record| {
+/// Reads `ls-tree -z` or `ls-files -z --stage` records of `paths`.
+async fn entries(
+    cli: &GitCli,
+    repo: &Path,
+    args: &[&str],
+    paths: &[String],
+) -> Result<Entries, GitError> {
+    let command = args[0];
+    let mut entries = Entries::new();
+    for args in with_paths(cli, args, paths) {
+        let out = cli.exec(repo, &args).await?;
+        if out.exit_code != 0 {
+            return Err(GitError::GitCommandFailed(format!(
+                "git {command} failed: {}",
+                out.stderr.trim()
+            )));
+        }
+        entries.extend(out.stdout.split('\0').filter_map(|record| {
             let (meta, path) = record.split_once('\t')?;
             let fields: Vec<&str> = meta.split(' ').collect();
             let (mode, oid) = match (command, fields.as_slice()) {
@@ -476,8 +480,9 @@ async fn entries(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<Entries, Gi
                 _ => return None,
             };
             Some((path.to_string(), (mode.to_string(), oid.to_string())))
-        })
-        .collect())
+        }));
+    }
+    Ok(entries)
 }
 
 async fn remote_error_to_sync_result(
@@ -683,33 +688,63 @@ pub async fn resolve_and_continue(
     paths: &[String],
 ) -> Result<SyncResult, GitError> {
     let target = super::operations::read_transport(cli, space_dir).await?;
-    let mut resolved = Vec::new();
-    for path in paths {
-        let path = normalize_repo_relative(path, RootMode::Reject)?;
-        let literal = format!(":(literal){path}");
-        let unmerged = cli
-            .exec(space_dir, &["ls-files", "--unmerged", "-z", "--", &literal])
-            .await?;
-        if unmerged.exit_code != 0 {
-            return Err(GitError::GitCommandFailed(format!(
-                "git ls-files failed: {}",
-                unmerged.stderr
-            )));
+    let paths = paths
+        .iter()
+        .map(|path| normalize_repo_relative(path, RootMode::Reject))
+        .collect::<Result<Vec<_>, _>>()?;
+    // One read of every unmerged entry instead of a call per path.
+    let unmerged = if paths.is_empty() {
+        Vec::new()
+    } else {
+        unmerged_paths(cli, space_dir).await?
+    };
+    // A path names its own entry or, as a pathspec, the entries under it.
+    let paths: Vec<String> = paths
+        .into_iter()
+        .filter(|path| {
+            unmerged
+                .iter()
+                .any(|entry| entry == path || is_under(entry, path))
+        })
+        .collect();
+    let mut contents = Vec::with_capacity(paths.len());
+    for path in &paths {
+        match std::fs::read(space_dir.join(path)) {
+            Ok(content) => contents.push(Some(content)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => contents.push(None),
+            Err(error) => return Err(error.into()),
         }
-        if unmerged.stdout.is_empty() {
+    }
+    let present: Vec<String> = paths
+        .iter()
+        .zip(&contents)
+        .filter(|(_, content)| content.is_some())
+        .map(|(path, _)| path.clone())
+        .collect();
+    let sizes = super::markers::marker_sizes(cli, space_dir, &present).await?;
+    for (path, content) in paths.iter().zip(&contents) {
+        let Some(content) = content else {
             continue;
-        }
-        if has_conflict_markers(cli, &space_dir.join(&path)).await? {
+        };
+        let size = sizes
+            .get(path)
+            .copied()
+            .unwrap_or(super::markers::DEFAULT_MARKER_SIZE);
+        if super::markers::has_marker_lines(content, size) {
             return Err(GitError::Conflict(format!(
                 "Conflict markers remain in {path}"
             )));
         }
-        resolved.push(literal);
     }
-    if !resolved.is_empty() {
-        let mut args = vec!["add", "--"];
-        args.extend(resolved.iter().map(String::as_str));
-        let add_out = cli.exec(space_dir, &args).await?;
+    if !paths.is_empty() {
+        let add_out = cli
+            .exec_with_input(
+                space_dir,
+                &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                &[],
+                &literal_pathspec_input(&paths),
+            )
+            .await?;
         if add_out.exit_code != 0 {
             return Err(GitError::GitCommandFailed(format!(
                 "git add failed: {}",
@@ -759,15 +794,27 @@ pub async fn resolve_and_continue(
     })
 }
 
-/// A Git conflict marker line of the size Git writes for `file`.
-async fn has_conflict_markers(cli: &GitCli, file: &Path) -> Result<bool, GitError> {
-    let content = match std::fs::read(file) {
-        Ok(content) => content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    let size = super::markers::marker_size(cli, file).await?;
-    Ok(super::markers::has_marker_lines(&content, size))
+/// Paths of the unmerged index entries of `repo`.
+async fn unmerged_paths(cli: &GitCli, repo: &Path) -> Result<Vec<String>, GitError> {
+    let out = cli.exec(repo, &["ls-files", "--unmerged", "-z"]).await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git ls-files failed: {}",
+            out.stderr
+        )));
+    }
+    Ok(out
+        .stdout
+        .split('\0')
+        .filter_map(|record| record.split_once('\t'))
+        .map(|(_, path)| path.to_string())
+        .collect())
+}
+
+fn is_under(entry: &str, path: &str) -> bool {
+    entry
+        .strip_prefix(path)
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Abort current merge.

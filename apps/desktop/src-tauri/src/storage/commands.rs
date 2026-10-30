@@ -225,6 +225,7 @@ async fn system_paths_dirty_before_strategy_apply(
     repo: &Path,
     paths: &[&str],
 ) -> Result<bool, AppError> {
+    // `paths` is the fixed set of system paths a strategy change writes.
     let mut args = vec!["status", "--porcelain=v1", "-z", "--"];
     args.extend_from_slice(paths);
     let out = cli.exec(repo, &args).await?;

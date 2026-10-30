@@ -17,6 +17,9 @@ use crate::{
     repo_path::{RootMode, normalize_repo_relative},
 };
 
+/// Paths of one statistics batch. It also bounds the path sets the Git calls
+/// below take as arguments: 50 paths of up to 590 characters each stay within
+/// the Windows command line limit of 32 767 characters.
 const MAX_FILES: usize = 50;
 const MAX_BYTES: usize = 512 * 1024;
 
@@ -74,6 +77,7 @@ pub(crate) async fn read_stats(
     let head_id = String::from_utf8_lossy(&head).trim().to_string();
     let mut baseline = BTreeMap::new();
     if has_head && !paths.is_empty() {
+        // At most MAX_FILES paths.
         let mut args = vec!["--literal-pathspecs", "ls-tree", "-l", "-z", &head_id, "--"];
         args.extend(paths.iter().map(String::as_str));
         let entries = git(cli, space, &args).await?;
@@ -145,7 +149,8 @@ pub(crate) async fn read_stats(
         }
     }
     if !tracked.is_empty() {
-        // HEAD -> disk counts, independent of staging and user diff drivers.
+        // HEAD -> disk counts, independent of staging and user diff drivers;
+        // at most MAX_FILES paths.
         let mut args = vec![
             "--literal-pathspecs",
             "diff",

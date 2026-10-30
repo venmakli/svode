@@ -1,11 +1,14 @@
 //! Path sets beyond the command line limit of every OS (DF-270): a save or an
-//! automatic commit of any size is one commit, no Git call exceeds the budget
-//! and the number of Git processes does not follow the number of paths.
+//! automatic commit of any size is one commit, the other Git calls with path
+//! sets (sync, merge continuation, Page dates, the LFS check) take sets of any
+//! size, no Git call exceeds the budget and the number of Git processes does
+//! not follow the number of paths.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[cfg(unix)]
+use tempfile::TempDir;
+
 use super::GitError;
 use super::autocommit::AutocommitService;
 use super::cli::GitCli;
@@ -13,6 +16,7 @@ use super::policy::{GitUserPolicy, write_user_policy};
 use super::save::save;
 use super::staging_tests::{TestHost, cli, git, repo, write};
 use super::state::GitRuntime;
+use super::sync::{SyncResult, resolve_and_continue, sync};
 
 /// The Windows command line limit the sets of these tests exceed.
 const WINDOWS_LIMIT: usize = 32_767;
@@ -377,4 +381,266 @@ async fn saving_all_of_17_000_long_paths_takes_at_most_a_minute() {
 #[ignore = "timing probe of DF-240 and DF-270 beyond the status list, run on demand"]
 async fn saving_all_of_21_000_long_paths_takes_at_most_a_minute() {
     save_all_long_names(21_000).await;
+}
+
+/// Clones `local` and `other` of a remote seeded with `count` files of long
+/// names in `Папка`, and those paths.
+async fn clones(cli: &GitCli, count: usize) -> (TempDir, PathBuf, PathBuf, Vec<String>) {
+    let seed = repo(cli, true).await;
+    let paths = bulk(seed.path(), "Папка", count, 60);
+    commit_all(cli, seed.path(), "Seed").await;
+    let tmp = TempDir::new().unwrap();
+    let remote = tmp.path().join("remote.git");
+    let remote = remote.to_str().unwrap();
+    let seed = seed.path().to_str().unwrap();
+    git(cli, tmp.path(), &["clone", "-q", "--bare", seed, remote]).await;
+    let [local, other] = ["local", "other"].map(|name| tmp.path().join(name));
+    for clone in [&local, &other] {
+        git(
+            cli,
+            tmp.path(),
+            &["clone", "-q", remote, clone.to_str().unwrap()],
+        )
+        .await;
+        for (key, value) in [
+            ("user.name", "Test"),
+            ("user.email", "test@example.test"),
+            ("commit.gpgsign", "false"),
+        ] {
+            git(cli, clone, &["config", key, value]).await;
+        }
+    }
+    (tmp, local, other, paths)
+}
+
+/// `local` behind a remote commit that edits its `count` tracked files and
+/// adds `count` new ones, with the same edits and new files uncommitted in
+/// `local`, and the paths of both.
+async fn matching_edits(cli: &GitCli, count: usize) -> (TempDir, PathBuf, Vec<String>) {
+    let (tmp, local, other, mut paths) = clones(cli, count).await;
+    let mut added = Vec::new();
+    for clone in [&other, &local] {
+        for path in &paths {
+            write(clone, path, "incoming\n");
+        }
+        added = bulk(clone, "Новое", count, 60);
+    }
+    commit_all(cli, &other, "Incoming").await;
+    git(cli, &other, &["push", "-q", "origin", "HEAD"]).await;
+    paths.extend(added);
+    (tmp, local, paths)
+}
+
+/// `local` and the remote each commit a different edit of the `count`
+/// tracked files.
+async fn conflicting_edits(cli: &GitCli, count: usize) -> (TempDir, PathBuf, Vec<String>) {
+    let (tmp, local, other, paths) = clones(cli, count).await;
+    for (clone, content) in [(&other, "theirs\n"), (&local, "ours\n")] {
+        for path in &paths {
+            write(clone, path, content);
+        }
+        commit_all(cli, clone, "Edit").await;
+    }
+    git(cli, &other, &["push", "-q", "origin", "HEAD"]).await;
+    (tmp, local, paths)
+}
+
+/// Sync of `local` stops on a conflict in exactly `paths`.
+async fn conflict(cli: &GitCli, local: &Path, paths: &[String]) -> Vec<String> {
+    let result = sync(cli, local).await;
+    let Ok(SyncResult::Conflict { mut files }) = result else {
+        panic!("{result:?}");
+    };
+    files.sort();
+    let mut expected = paths.to_vec();
+    expected.sort();
+    assert_eq!(files, expected);
+    files
+}
+
+async fn assert_synced(cli: &GitCli, local: &Path) {
+    assert_eq!(git(cli, local, &["status", "--porcelain"]).await, "");
+    assert_eq!(
+        git(cli, local, &["rev-parse", "HEAD"]).await,
+        git(cli, local, &["rev-parse", "@{upstream}"]).await
+    );
+}
+
+#[tokio::test]
+async fn edits_equal_to_incoming_beyond_the_command_line_limit_do_not_block_sync() {
+    let cli = cli();
+    let (_tmp, local, paths) = matching_edits(&cli, 600).await;
+    let (tracked, added) = paths.split_at(600);
+    assert!(length(tracked) > WINDOWS_LIMIT && length(added) > WINDOWS_LIMIT);
+
+    let result = sync(&cli, &local).await;
+
+    assert!(
+        matches!(result, Ok(SyncResult::Success { .. })),
+        "{result:?}"
+    );
+    assert_synced(&cli, &local).await;
+    let content = |path: &String| {
+        std::fs::read_to_string(local.join(path))
+            .unwrap()
+            .replace('\r', "")
+    };
+    assert!(tracked.iter().all(|path| content(path) == "incoming\n"));
+    for (index, path) in added.iter().enumerate() {
+        assert_eq!(content(path), format!("{index}\n"));
+    }
+}
+
+#[tokio::test]
+async fn continuing_a_merge_beyond_the_command_line_limit_commits_every_resolved_path() {
+    let cli = cli();
+    let (_tmp, local, paths) = conflicting_edits(&cli, 600).await;
+    assert!(length(&paths) > WINDOWS_LIMIT);
+    let files = conflict(&cli, &local, &paths).await;
+    let (last, resolved) = files.split_last().unwrap();
+    for path in resolved {
+        write(&local, path, "resolved\n");
+    }
+
+    // A marker left in one file of the set refuses the whole set.
+    let refusal = resolve_and_continue(&cli, &local, &files).await;
+    assert!(
+        matches!(&refusal, Err(GitError::Conflict(message)) if message.contains(last.as_str())),
+        "{refusal:?}"
+    );
+    let unmerged = git(&cli, &local, &["ls-files", "--unmerged", "-z"]).await;
+    assert_eq!(
+        unmerged.split('\0').filter(|r| !r.is_empty()).count(),
+        3 * files.len()
+    );
+
+    write(&local, last, "resolved\n");
+    let result = resolve_and_continue(&cli, &local, &files).await;
+
+    assert!(
+        matches!(result, Ok(SyncResult::Success { .. })),
+        "{result:?}"
+    );
+    assert_synced(&cli, &local).await;
+    let parents = git(&cli, &local, &["rev-list", "--parents", "-n", "1", "HEAD"]).await;
+    assert_eq!(parents.split_whitespace().count(), 3);
+    for path in [&files[0], last] {
+        let blob = format!("HEAD:{path}");
+        assert_eq!(git(&cli, &local, &["show", &blob]).await, "resolved\n");
+    }
+}
+
+#[tokio::test]
+async fn page_dates_of_a_path_set_beyond_the_command_line_limit_cover_every_path() {
+    let cli = cli();
+    let tmp = repo(&cli, true).await;
+    let root = tmp.path();
+    // 256 such paths, the former batch, are beyond the Windows limit too.
+    let paths = bulk(root, "Папка/Вложенная папка с длинным именем", 300, 110);
+    assert!(length(&paths[..256]) > WINDOWS_LIMIT);
+    commit_all(&cli, root, "Pages").await;
+    write(root, &paths[0], "edited\n");
+
+    let dates = crate::page::dates::derive_date_overrides(&cli, root, &paths).await;
+
+    assert_eq!(dates.len(), paths.len());
+    for (index, path) in paths.iter().enumerate() {
+        let date = &dates[path];
+        assert!(date.created.is_some(), "{path}");
+        // A Page with uncommitted edits keeps its own modification date.
+        assert_eq!(date.updated.is_some(), index > 0, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn the_lfs_filter_check_of_a_path_set_beyond_the_command_line_limit_answers_every_path() {
+    let cli = cli();
+    let tmp = repo(&cli, false).await;
+    let root = tmp.path();
+    write(
+        root,
+        ".gitattributes",
+        "*.png filter=lfs diff=lfs merge=lfs -text\n",
+    );
+    let paths = (0..300)
+        .map(|index| {
+            let extension = if index % 2 == 0 { "png" } else { "md" };
+            format!("Папка/{index:05}-{}.{extension}", "ж".repeat(250))
+        })
+        .collect::<Vec<_>>();
+    // 128 such paths, the former batch, are beyond the Windows limit too.
+    assert!(length(&paths[..128]) > WINDOWS_LIMIT);
+
+    let checks = crate::storage::policy::check_lfs_filters(&cli, root, &paths)
+        .await
+        .unwrap();
+
+    assert_eq!(checks.len(), paths.len());
+    for (check, path) in checks.iter().zip(&paths) {
+        assert_eq!(&check.path, path);
+        let expected = if path.ends_with(".png") {
+            "lfs"
+        } else {
+            "unspecified"
+        };
+        assert_eq!(check.value, expected, "{path}");
+    }
+}
+
+#[cfg(unix)]
+fn costs(log: &Path) -> Vec<usize> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(|cost| cost.parse().unwrap())
+        .collect()
+}
+
+/// Costs of the Git calls of a sync that sets aside `count` matching edits
+/// and `count` matching new files, and of continuing a merge with `count`
+/// resolved paths.
+#[cfg(unix)]
+async fn sync_and_continuation_calls(count: usize) -> (Vec<usize>, Vec<usize>) {
+    let real = cli();
+    let (tmp, local, _) = matching_edits(&real, count).await;
+    let (counting, log) = counting_cli(tmp.path(), &real);
+    let result = sync(&counting, &local).await;
+    assert!(
+        matches!(result, Ok(SyncResult::Success { .. })),
+        "{result:?}"
+    );
+    let set_aside = costs(&log);
+
+    let (tmp, local, paths) = conflicting_edits(&real, count).await;
+    let files = conflict(&real, &local, &paths).await;
+    for path in &files {
+        write(&local, path, "resolved\n");
+    }
+    let (counting, log) = counting_cli(tmp.path(), &real);
+    let result = resolve_and_continue(&counting, &local, &files).await;
+    assert!(
+        matches!(result, Ok(SyncResult::Success { .. })),
+        "{result:?}"
+    );
+    (set_aside, costs(&log))
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_git_calls_of_sync_and_merge_continuation_stay_within_the_budget_and_do_not_follow_the_set_size()
+ {
+    let (small_sync, small_resolve) = sync_and_continuation_calls(3).await;
+    let (large_sync, large_resolve) = sync_and_continuation_calls(600).await;
+    let budget = super::cli::PATH_SET_COMMAND_LINE_BUDGET;
+    for calls in [&large_sync, &large_resolve] {
+        assert!(calls.iter().all(|cost| *cost <= budget), "{calls:?}");
+    }
+    // 200 times the paths take a few more batches of reads, not a process each.
+    assert!(
+        large_sync.len() <= small_sync.len() + 30,
+        "{} sync calls for 6 paths, {} for 1 200",
+        small_sync.len(),
+        large_sync.len()
+    );
+    assert_eq!(large_resolve.len(), small_resolve.len());
 }

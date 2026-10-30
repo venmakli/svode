@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::git::GitError;
-use crate::git::cli::GitCli;
+use crate::git::cli::{GitCli, nul_paths_input};
 use crate::git::status;
 
 use super::config::{
@@ -35,7 +35,6 @@ pub const REPOSITORY_LFS_EXTENSIONS: &[&str] = &[
 const PROTECTED_EXTENSIONS: &[&str] = &["md", "markdown", "yaml", "yml", "json", "csv", "svg"];
 const PROTECTED_FILE_NAMES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
 
-const CHECK_ATTR_BATCH_SIZE: usize = 128;
 const MAX_UNCOVERED_PATHS: usize = 100;
 
 #[derive(Debug, thiserror::Error)]
@@ -375,38 +374,35 @@ pub async fn check_lfs_filters(
     repo_dir: &Path,
     paths: &[String],
 ) -> Result<Vec<LfsFilterCheck>, StoragePolicyError> {
-    let mut checks = Vec::with_capacity(paths.len());
-
-    for batch in paths.chunks(CHECK_ATTR_BATCH_SIZE) {
-        let mut args = vec![
-            "check-attr".to_string(),
-            "-z".to_string(),
-            "filter".to_string(),
-            "--".to_string(),
-        ];
-        args.extend(batch.iter().cloned());
-        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let output = cli.exec(repo_dir, &arg_refs).await?;
-        if output.exit_code != 0 {
-            return Err(GitError::GitCommandFailed(format!(
-                "git check-attr failed: {}",
-                output.stderr.trim()
-            ))
-            .into());
-        }
-
-        let parsed = parse_check_attr_z(&output.stdout)?;
-        if parsed.len() != batch.len() {
-            return Err(GitError::GitCommandFailed(format!(
-                "git check-attr returned {} result(s) for {} path(s)",
-                parsed.len(),
-                batch.len()
-            ))
-            .into());
-        }
-        checks.extend(parsed);
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    // The paths go through stdin: a set of any size is one call.
+    let output = cli
+        .exec_with_input(
+            repo_dir,
+            &["check-attr", "-z", "--stdin", "filter"],
+            &[],
+            &nul_paths_input(paths),
+        )
+        .await?;
+    if output.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git check-attr failed: {}",
+            output.stderr.trim()
+        ))
+        .into());
     }
 
+    let checks = parse_check_attr_z(&output.stdout)?;
+    if checks.len() != paths.len() {
+        return Err(GitError::GitCommandFailed(format!(
+            "git check-attr returned {} result(s) for {} path(s)",
+            checks.len(),
+            paths.len()
+        ))
+        .into());
+    }
     Ok(checks)
 }
 

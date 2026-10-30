@@ -7,7 +7,6 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use super::PageSource;
 
 const GIT_DATE_TIMEOUT_SECS: u64 = 3;
-const GIT_DATE_CHUNK_SIZE: usize = 256;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EntryDateOverride {
@@ -25,6 +24,10 @@ pub struct GitDateOutput {
 #[allow(async_fn_in_trait)]
 pub trait GitDateExecutor {
     async fn exec(&self, directory: &Path, args: &[&str]) -> Option<GitDateOutput>;
+
+    /// Upper bound of the command line of a call with `args`, by which a
+    /// path set is split into calls within the command line budget.
+    fn command_line_cost(&self, args: &[&str]) -> usize;
 }
 
 /// The detected Git CLI is already a date source; a host that holds one does
@@ -38,6 +41,10 @@ impl GitDateExecutor for crate::git::cli::GitCli {
             stdout: output.stdout,
             exit_code: output.exit_code,
         })
+    }
+
+    fn command_line_cost(&self, args: &[&str]) -> usize {
+        crate::git::cli::GitCli::command_line_cost(self, args)
     }
 }
 
@@ -60,6 +67,11 @@ impl GitDateExecutor for SystemGitDateExecutor {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             exit_code: output.status.code().unwrap_or(-1),
         })
+    }
+
+    fn command_line_cost(&self, args: &[&str]) -> usize {
+        let program = detect_git_binary().unwrap_or_default();
+        crate::git::cli::command_line_cost(&program, args)
     }
 }
 
@@ -185,9 +197,7 @@ async fn dirty_status<E: GitDateExecutor>(
     paths: &[String],
 ) -> Option<HashSet<String>> {
     let mut dirty = HashSet::new();
-    for chunk in paths.chunks(GIT_DATE_CHUNK_SIZE) {
-        let mut args = vec!["status", "--porcelain=v2", "-z", "--"];
-        args.extend(chunk.iter().map(String::as_str));
+    for args in path_batches(executor, &["status", "--porcelain=v2", "-z", "--"], paths) {
         let output = run(executor, space, &args).await?;
         if output.exit_code != 0 {
             return None;
@@ -204,17 +214,16 @@ async fn log_dates<E: GitDateExecutor>(
     dirty: &HashSet<String>,
 ) -> EntryDateOverrides {
     let mut overrides = EntryDateOverrides::new();
-    for chunk in paths.chunks(GIT_DATE_CHUNK_SIZE) {
-        let mut args = vec![
-            "log",
-            "--relative",
-            "--date=iso-strict",
-            "--format=format:%x1e%cI%x00",
-            "--name-only",
-            "-z",
-            "--",
-        ];
-        args.extend(chunk.iter().map(String::as_str));
+    let log = [
+        "log",
+        "--relative",
+        "--date=iso-strict",
+        "--format=format:%x1e%cI%x00",
+        "--name-only",
+        "-z",
+        "--",
+    ];
+    for args in path_batches(executor, &log, paths) {
         let Some(output) = run(executor, space, &args).await else {
             break;
         };
@@ -223,6 +232,15 @@ async fn log_dates<E: GitDateExecutor>(
         }
     }
     overrides
+}
+
+/// `args` followed by consecutive `paths`, one call per command line budget.
+fn path_batches<'a, E: GitDateExecutor>(
+    executor: &E,
+    args: &[&'a str],
+    paths: &'a [String],
+) -> Vec<Vec<&'a str>> {
+    crate::git::cli::path_batches_after(executor.command_line_cost(args), args, paths)
 }
 
 fn parse_status_paths(stdout: &str, prefix: &str, dirty: &mut HashSet<String>) {

@@ -1,10 +1,11 @@
 //! Git conflict marker lines: the marker size of a path and the check for
 //! marker lines left in a file.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use super::GitError;
-use super::cli::GitCli;
+use super::cli::{GitCli, nul_paths_input};
 
 /// Marker size Git uses when a path sets no valid `conflict-marker-size`.
 pub const DEFAULT_MARKER_SIZE: usize = 7;
@@ -42,6 +43,41 @@ pub async fn marker_size(cli: &GitCli, file: &Path) -> Result<usize, GitError> {
             "git check-attr returned malformed NUL-delimited output".into(),
         )),
     }
+}
+
+/// [`marker_size`] of each of `paths` of `repo` in one call.
+pub async fn marker_sizes(
+    cli: &GitCli,
+    repo: &Path,
+    paths: &[String],
+) -> Result<HashMap<String, usize>, GitError> {
+    if paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let out = cli
+        .exec_with_input(
+            repo,
+            &["check-attr", "-z", "--stdin", "conflict-marker-size"],
+            &[],
+            &nul_paths_input(paths),
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git check-attr failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    let fields: Vec<&str> = out.stdout.split_terminator('\0').collect();
+    if fields.len() != paths.len() * 3 {
+        return Err(GitError::GitCommandFailed(
+            "git check-attr returned malformed NUL-delimited output".into(),
+        ));
+    }
+    Ok(fields
+        .chunks_exact(3)
+        .map(|record| (record[0].to_string(), parse_marker_size(record[2])))
+        .collect())
 }
 
 /// `unspecified`, `set`, `unset` and anything but a positive integer fall back
