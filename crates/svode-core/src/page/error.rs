@@ -91,6 +91,7 @@ impl From<CollectionError> for PageError {
         match error {
             CollectionError::Io(error) => Self::Io(error),
             CollectionError::Schema(message) => Self::General(format!("schema error: {message}")),
+            CollectionError::NewerVersion(message) => Self::General(message),
             CollectionError::Index(message) => Self::Index(message),
             CollectionError::Sqlx(error) => Self::Db(error),
             CollectionError::FrontmatterParse(message) => Self::FrontmatterParse(message),

@@ -327,6 +327,7 @@ impl From<CollectionError> for ToolError {
         match error {
             CollectionError::Io(error) => io(error),
             CollectionError::Schema(message) => general(format!("schema error: {message}")),
+            CollectionError::NewerVersion(message) => general(message),
             CollectionError::Index(message) => index(message),
             CollectionError::Sqlx(error) => database(error),
             CollectionError::FrontmatterParse(message) => frontmatter(message),

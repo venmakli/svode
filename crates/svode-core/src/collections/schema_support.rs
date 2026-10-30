@@ -18,6 +18,42 @@ pub(super) fn schema_error(message: impl Into<String>) -> CollectionError {
     CollectionError::Schema(message.into())
 }
 
+/// Refusal of an operation on a property a newer Svode version added.
+pub(super) fn newer_column_error(name: &str) -> CollectionError {
+    CollectionError::NewerVersion(format!(
+        "property '{name}' was set by a newer Svode version; update Svode to change it or its values"
+    ))
+}
+
+/// Refusal of an operation on a view that this version cannot show.
+pub(super) fn newer_view_error(name: &str) -> CollectionError {
+    CollectionError::NewerVersion(format!(
+        "view '{name}' depends on what a newer Svode version set; update Svode to open or change it"
+    ))
+}
+
+/// Refusal of a status group filter on a column whose option holds a group a
+/// newer Svode version added.
+pub(super) fn newer_status_group_error(field: &str) -> CollectionError {
+    CollectionError::NewerVersion(format!(
+        "status '{field}' has an option group set by a newer Svode version; update Svode to filter it by group"
+    ))
+}
+
+/// Operation input with a value this version does not know.
+pub(super) fn ensure_known_input(
+    column: &Column,
+    stored: Option<&Column>,
+) -> Result<(), CollectionError> {
+    match column.newer_value_not_in(stored) {
+        Some(value) => Err(schema_error(format!(
+            "invalid {value} for column '{}'",
+            column.name
+        ))),
+        None => Ok(()),
+    }
+}
+
 pub(super) fn unique_id_value(value: &Value) -> Option<u64> {
     value.as_u64().filter(|value| *value >= 1)
 }
@@ -94,6 +130,7 @@ pub(super) fn validate_property_value(
     }
 
     match column.type_ {
+        PropertyType::Newer => Err(newer_column_error(&column.name)),
         PropertyType::Text => expect_string_value(&column.name, value).map(|_| ()),
         PropertyType::Number => {
             if value.as_f64().is_some() {

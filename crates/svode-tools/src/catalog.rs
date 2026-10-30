@@ -576,7 +576,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "get_collection_schema",
-            "Read a collection schema including sensitivity metadata. Call this before changing columns, views, filters, sort, or field values.",
+            "Read a collection schema including sensitivity metadata. Call this before changing columns, views, filters, sort, or field values. A newer_svode object lists properties and views that a newer Svode version set: they and unknown keys and values stay as written; do not change these properties or views, write their values, or filter and sort by them.",
             schema(
                 &[space_id(), collection_path_req("collectionPath")],
                 &["collectionPath"],

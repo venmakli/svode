@@ -11,6 +11,7 @@ use super::query::{
     EntryQueryRow, collection_root_for_sql, entry_parent_dir, order_rows, query_entry_rows,
     validate_ad_hoc_query,
 };
+use super::schema_support::newer_view_error;
 use crate::actors::resolver::ActorCatalogState;
 use crate::git::cli::GitCli;
 use crate::page::PageError;
@@ -31,6 +32,9 @@ pub async fn list_entries_for_view(
         .iter()
         .find(|view| view.name() == view_name)
         .ok_or_else(|| CollectionError::Schema(format!("view '{view_name}' not found")))?;
+    if schema.view_depends_on_newer(view) {
+        return Err(newer_view_error(view_name).into());
+    }
     let include_nested = include_nested.unwrap_or_else(|| match view {
         View::Table { show_nested, .. } => show_nested.unwrap_or(true),
         _ => false,

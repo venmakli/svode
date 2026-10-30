@@ -38,6 +38,7 @@ pub(super) fn normalize_view(
                 *card_cover = Some(vec!["cover".into(), "icon".into(), "title".into()]);
             }
         }
+        View::Newer { .. } => {}
     }
 }
 
@@ -98,6 +99,9 @@ pub fn ensure_entry_field_writable(
     let Some(column) = schema.columns.iter().find(|column| column.name == field) else {
         return Ok(());
     };
+    if column.is_newer() {
+        return Err(newer_column_error(field));
+    }
     if column.type_ == PropertyType::UniqueId {
         return Err(schema_error(format!(
             "unique_id field '{field}' is read-only"

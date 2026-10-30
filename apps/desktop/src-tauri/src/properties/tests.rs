@@ -197,23 +197,15 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
     .unwrap();
     validate_schema(&switch).unwrap();
 
+    // A display the type does not have was set by a newer Svode version: it
+    // reads and shows as the default; operation input cannot set it.
     for raw in [
         "columns:\n  - { name: Active, type: boolean, display: ring }\nviews: []\n",
         "columns:\n  - { name: Notes, type: text, display: switch }\nviews: []\n",
     ] {
         let schema: CollectionSchema = serde_norway::from_str(raw).unwrap();
-        let error = validate_schema(&schema).unwrap_err().to_string();
-        assert!(error.contains("invalid display"));
-        assert!(error.contains(if raw.contains("ring") {
-            "ring"
-        } else {
-            "switch"
-        }));
-        assert!(error.contains(if raw.contains("Active") {
-            "Active"
-        } else {
-            "Notes"
-        }));
+        validate_schema(&schema).unwrap();
+        assert!(!schema.columns[0].display_is_known());
     }
 
     let tmp = TempDir::new().unwrap();
@@ -244,6 +236,16 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
     assert_eq!(active.display.as_deref(), Some("switch"));
     assert_eq!(fs::read_to_string(&entry_path).unwrap(), entry_before);
     assert_eq!(updated.views.len(), 1);
+
+    let error = update_schema_column(
+        space.to_str().unwrap(),
+        "tasks",
+        "Active",
+        serde_norway::from_str("display: ring").unwrap(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("invalid display 'ring'") && error.contains("Active"));
 
     let defaulted = update_schema_column(
         space.to_str().unwrap(),
@@ -902,9 +904,18 @@ views: []
 
     normalize_schema(&mut schema);
 
-    assert_eq!(schema.columns[0].sensitivity, Some(ColumnSensitivity::Pii));
-    assert_eq!(schema.columns[1].sensitivity, Some(ColumnSensitivity::Pii));
-    assert_eq!(schema.columns[2].sensitivity, Some(ColumnSensitivity::None));
+    assert_eq!(
+        schema.columns[0].sensitivity,
+        Some(ColumnSensitivity::Pii.into())
+    );
+    assert_eq!(
+        schema.columns[1].sensitivity,
+        Some(ColumnSensitivity::Pii.into())
+    );
+    assert_eq!(
+        schema.columns[2].sensitivity,
+        Some(ColumnSensitivity::None.into())
+    );
     assert_eq!(
         column_effective_sensitivity(&schema.columns[2]),
         ColumnSensitivity::None

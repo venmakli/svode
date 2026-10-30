@@ -18,6 +18,10 @@ pub enum CollectionError {
     Io(#[from] std::io::Error),
     #[error("schema error: {0}")]
     Schema(String),
+    /// The operation depends on what a newer Svode version set in
+    /// `schema.yaml`; the message names it and asks to update Svode.
+    #[error("{0}")]
+    NewerVersion(String),
     #[error("index error: {0}")]
     Index(String),
     #[error("database error: {0}")]

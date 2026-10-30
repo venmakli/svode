@@ -104,6 +104,8 @@ fn property_type_message(type_: PropertyType) -> &'static str {
         PropertyType::Url => "url",
         PropertyType::Email => "email",
         PropertyType::Phone => "phone",
+        // Input never names it; see `PropertyType::Newer`.
+        PropertyType::Newer => "newer",
     }
 }
 

@@ -1889,6 +1889,99 @@ async fn collection_schema_keeps_keys_of_a_newer_svode_version() {
 }
 
 #[tokio::test]
+async fn collection_values_of_a_newer_svode_version_are_marked_and_refused_by_meaning() {
+    let fixture = index_fixture();
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let call = |name: &'static str, args: Value| call_tool(&host, Some(&target), name, args);
+    let schema_yaml = "columns:\n  - name: Status\n    type: text\n    color: teal\n  - name: Points\n    type: number\n  - name: Score\n    type: formula\n    expression: Points * 2\nviews:\n  - type: table\n    name: Table\n  - type: timeline\n    name: Roadmap\n    lanes: Status\n";
+    write(&fixture.project.join("tasks/schema.yaml"), schema_yaml);
+
+    let schema = call(
+        "get_collection_schema",
+        json!({ "collectionPath": "tasks" }),
+    )
+    .await;
+    let schema = &structured(&schema)["schema"];
+    assert_eq!(
+        schema["newer_svode"],
+        json!({ "columns": ["Score"], "views": ["Roadmap"] })
+    );
+    assert_eq!(schema["columns"][0]["color"], "teal");
+    assert_eq!(schema["columns"][2]["type"], "formula");
+    assert_eq!(schema["columns"][2]["expression"], "Points * 2");
+    assert_eq!(schema["views"][1]["lanes"], "Status");
+
+    let refused = |result: &ToolCallResult| {
+        let error = &result.structured_content.as_ref().unwrap()["error"];
+        assert_eq!(error_code(result), "SVODE_ERROR");
+        let message = error["message"].as_str().unwrap();
+        assert!(
+            message.contains("newer Svode version") && !message.contains("schema error"),
+            "{message}"
+        );
+    };
+    for query in [
+        json!({ "collectionPath": "tasks", "filter": [{ "field": "Score", "op": "eq", "value": 6 }] }),
+        json!({ "collectionPath": "tasks", "sort": [{ "field": "Score" }] }),
+    ] {
+        refused(&call("query_collection_items", query).await);
+    }
+    let before = read(&fixture, "tasks/alpha.md");
+    refused(
+        &call(
+            "update_collection_item_fields",
+            json!({ "path": "tasks/alpha.md", "fields": { "Score": 7 } }),
+        )
+        .await,
+    );
+    refused(
+        &call(
+            "update_collection_column",
+            json!({ "collectionPath": "tasks", "columnName": "Score", "patch": {} }),
+        )
+        .await,
+    );
+    refused(
+        &call(
+            "update_collection_view",
+            json!({ "collectionPath": "tasks", "viewName": "Roadmap", "patch": {} }),
+        )
+        .await,
+    );
+    assert_eq!(read(&fixture, "tasks/alpha.md"), before);
+    assert_eq!(read(&fixture, "tasks/schema.yaml"), schema_yaml);
+
+    // Other properties keep working and the writes keep the newer values.
+    let filtered = call(
+        "query_collection_items",
+        json!({ "collectionPath": "tasks", "filter": [{ "field": "Points", "op": "gt", "value": 2 }] }),
+    )
+    .await;
+    assert_eq!(titles(&structured(&filtered)["items"]), vec!["Alpha"]);
+    let added = call(
+        "add_collection_column",
+        json!({ "collectionPath": "tasks", "column": { "name": "Extra", "type": "text" } }),
+    )
+    .await;
+    assert!(!added.is_error, "{:?}", added.structured_content);
+    let written = read(&fixture, "tasks/schema.yaml");
+    assert!(
+        written.contains("color: teal")
+            && written.contains("type: formula\n  expression: Points * 2")
+            && written.contains("type: timeline\n  lanes: Status")
+            && !written.contains("newer_svode"),
+        "{written}"
+    );
+    let input = call(
+        "add_collection_column",
+        json!({ "collectionPath": "tasks", "column": { "name": "Calc", "type": "formula" } }),
+    )
+    .await;
+    assert!(input.is_error);
+}
+
+#[tokio::test]
 async fn integrity_git_status_and_actors_read_through_the_host_runtime() {
     let fixture = index_fixture();
     let host = FixtureHost::new(None);

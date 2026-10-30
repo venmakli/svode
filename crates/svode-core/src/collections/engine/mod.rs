@@ -30,6 +30,9 @@ use crate::collections::relation_read::value_relative_to_collection;
 use crate::collections::schema::find_collection_root;
 use crate::collections::schema::normalize_rel_path;
 use crate::collections::schema::read_schema_at;
+use crate::collections::schema_support::{
+    ensure_known_input, newer_column_error, newer_view_error,
+};
 use crate::collections::traversal::collect_md_files_in_space;
 use crate::collections::traversal::collection_markdown_files;
 use crate::content_tree::child_folder_names;
@@ -118,11 +121,26 @@ fn schema_error(message: impl Into<String>) -> CollectionError {
     CollectionError::Schema(message.into())
 }
 
+/// Sensitivity of the column for decisions about personal data. A value set
+/// by a newer Svode version, or a newer property without `sensitivity: none`,
+/// counts as `pii`.
 pub fn column_effective_sensitivity(column: &Column) -> ColumnSensitivity {
-    if let Some(sensitivity) = column.sensitivity {
-        return sensitivity;
+    match &column.sensitivity {
+        Some(OrNewer::Known(sensitivity)) => return *sensitivity,
+        Some(OrNewer::Newer(_)) => return ColumnSensitivity::Pii,
+        None => {}
     }
     match column.type_ {
+        PropertyType::Newer
+            if column
+                .unknown_keys
+                .get("sensitivity")
+                .and_then(Value::as_str)
+                == Some("none") =>
+        {
+            ColumnSensitivity::None
+        }
+        PropertyType::Newer => ColumnSensitivity::Pii,
         PropertyType::Email | PropertyType::Phone => ColumnSensitivity::Pii,
         _ => ColumnSensitivity::None,
     }
@@ -191,30 +209,30 @@ pub fn default_status_options() -> Vec<PropertyOption> {
     vec![
         PropertyOption {
             name: "Backlog".into(),
-            color: Some(ColorName::Gray),
+            color: Some(ColorName::Gray.into()),
             icon: None,
-            group: Some(StatusGroup::Todo),
+            group: Some(StatusGroup::Todo.into()),
             unknown_keys: Mapping::new(),
         },
         PropertyOption {
             name: "Todo".into(),
-            color: Some(ColorName::Blue),
+            color: Some(ColorName::Blue.into()),
             icon: None,
-            group: Some(StatusGroup::Todo),
+            group: Some(StatusGroup::Todo.into()),
             unknown_keys: Mapping::new(),
         },
         PropertyOption {
             name: "In progress".into(),
-            color: Some(ColorName::Yellow),
+            color: Some(ColorName::Yellow.into()),
             icon: None,
-            group: Some(StatusGroup::InProgress),
+            group: Some(StatusGroup::InProgress.into()),
             unknown_keys: Mapping::new(),
         },
         PropertyOption {
             name: "Done".into(),
-            color: Some(ColorName::Green),
+            color: Some(ColorName::Green.into()),
             icon: None,
-            group: Some(StatusGroup::Done),
+            group: Some(StatusGroup::Done.into()),
             unknown_keys: Mapping::new(),
         },
     ]
@@ -435,7 +453,8 @@ fn write_schema_with_project(
     validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;
     let dir = collection_dir(space, collection_path);
     fs::create_dir_all(&dir)?;
-    let yaml = serde_norway::to_string(&schema)
+    let yaml = schema
+        .to_file_yaml()
         .map_err(|e| schema_error(format!("could not serialize schema: {e}")))?;
     fs::write(dir.join(SCHEMA_FILE), yaml)?;
     Ok(())
@@ -925,6 +944,14 @@ fn detach_two_way_relation_with_project(
     else {
         return Ok(());
     };
+    // A reverse property a newer Svode version set stays as written, with
+    // its values, like the other places that only change known relations.
+    if read_schema_or_default(&target_space, &relation)?
+        .column(reverse_name)
+        .is_some_and(Column::is_newer)
+    {
+        return Ok(());
+    }
     if delete_reverse_column {
         let mut reverse_schema = read_schema_or_default(&target_space, &relation)?;
         let before = reverse_schema.columns.len();
@@ -1758,7 +1785,8 @@ fn write_schema_without_relation_validation(
     validate_schema(&schema)?;
     let dir = collection_dir(space, collection_path);
     fs::create_dir_all(&dir)?;
-    let yaml = serde_norway::to_string(&schema)
+    let yaml = schema
+        .to_file_yaml()
         .map_err(|e| schema_error(format!("could not serialize schema: {e}")))?;
     fs::write(dir.join(SCHEMA_FILE), yaml)?;
     Ok(())
@@ -2449,11 +2477,13 @@ fn relation_value_from_values(column: &Column, values: Vec<String>) -> Value {
 }
 
 pub fn validate_property_value(column: &Column, value: &Value) -> Result<(), CollectionError> {
-    if value.is_null() {
+    // Clearing a value of a newer property is a write of it too.
+    if value.is_null() && !column.is_newer() {
         return Ok(());
     }
 
     match column.type_ {
+        PropertyType::Newer => Err(newer_column_error(&column.name)),
         PropertyType::Text => expect_string_value(&column.name, value).map(|_| ()),
         PropertyType::Number => {
             if value.as_f64().is_some() {
@@ -3225,5 +3255,7 @@ fn infer_type(value: &Value) -> PropertyType {
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod newer_values_tests;
 #[cfg(test)]
 mod unknown_keys_tests;

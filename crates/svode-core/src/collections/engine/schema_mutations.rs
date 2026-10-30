@@ -17,6 +17,7 @@ pub fn add_schema_column_with_project(
     project_path: Option<&str>,
 ) -> Result<CollectionSchema, CollectionError> {
     column.discard_unknown_keys();
+    ensure_known_input(&column, None)?;
     if column.type_ == PropertyType::Status && column.options.is_none() {
         column.options = Some(default_status_options());
     }
@@ -147,6 +148,7 @@ pub fn change_schema_type_with_warnings_and_project(
         column.type_ = new_type;
         normalize_column_for_new_type(column, conversion_strategy.as_ref())?;
         normalize_column_relation_paths(column)?;
+        ensure_known_input(column, old_column.as_ref())?;
         let collect_options = matches!(
             column.type_,
             PropertyType::Select | PropertyType::MultiSelect
@@ -391,6 +393,7 @@ pub fn update_schema_column_with_project(
         let column = find_column_mut(&mut schema, column_name)?;
         apply_column_patch(column, patch)?;
         normalize_column_relation_paths(column)?;
+        ensure_known_input(column, Some(&old_column))?;
         let new_column = column.clone();
         validate_schema(&schema)?;
         rewrite_actor_cardinality_values(space, collection_path, &old_column, &new_column)?;
@@ -523,6 +526,9 @@ pub fn delete_schema_column_with_project(
             .iter()
             .find(|column| column.name == column_name)
             .cloned();
+        if old_column.as_ref().is_some_and(Column::is_newer) {
+            return Err(newer_column_error(column_name));
+        }
         let before = schema.columns.len();
         schema.columns.retain(|column| column.name != column_name);
         if schema.columns.len() == before {
@@ -564,6 +570,7 @@ pub fn add_option(
         let mut schema = read_schema_or_default(space, collection_path)?;
         let column = find_column_mut(&mut schema, column_name)?;
         ensure_option_column(column)?;
+        let stored = column.clone();
         let options = column.options.get_or_insert_with(Vec::new);
         if options.iter().any(|existing| existing.name == option.name) {
             return Err(schema_error(format!(
@@ -572,6 +579,7 @@ pub fn add_option(
             )));
         }
         options.push(option);
+        ensure_known_input(column, Some(&stored))?;
         write_schema(space, collection_path, &schema)?;
         Ok(schema)
     })
@@ -673,6 +681,12 @@ pub fn clear_field_values(
     collection_path: &str,
     field: &str,
 ) -> Result<Vec<PathBuf>, CollectionError> {
+    if read_schema_or_default(space, collection_path)?
+        .column(field)
+        .is_some_and(Column::is_newer)
+    {
+        return Err(newer_column_error(field));
+    }
     let files = collection_markdown_files(space, collection_path)?;
     let mut changed = Vec::new();
     with_rollback(files.clone(), || {
@@ -791,6 +805,7 @@ pub fn update_option(
         let mut schema = read_schema_or_default(space, collection_path)?;
         let column = find_column_mut(&mut schema, column_name)?;
         ensure_option_column(column)?;
+        let stored = column.clone();
         let target = column
             .options
             .as_mut()
@@ -807,6 +822,7 @@ pub fn update_option(
         if let Some(patch) = patch {
             apply_option_patch(target, patch)?;
         }
+        ensure_known_input(column, Some(&stored))?;
 
         write_schema(space, collection_path, &schema)?;
         Ok(schema)
@@ -970,6 +986,9 @@ pub fn add_view(
             *view.name_mut() = base_name.to_string();
         }
         normalize_view_for_schema(&schema, &mut view);
+        if schema.view_depends_on_newer(&view) {
+            return Err(newer_view_error(view.name()));
+        }
         let index = position
             .unwrap_or(schema.views.len())
             .min(schema.views.len());
@@ -1013,12 +1032,18 @@ pub fn update_view(
             .iter()
             .position(|view| view.name() == view_name)
             .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
+        if schema.view_depends_on_newer(&schema.views[pos]) {
+            return Err(newer_view_error(view_name));
+        }
         let mut raw = serde_norway::to_value(&schema.views[pos])
             .map_err(|e| schema_error(format!("could not encode view: {e}")))?;
         merge_mapping_patch(&mut raw, patch)?;
         let mut view: View = serde_norway::from_value(raw)
             .map_err(|e| schema_error(format!("invalid view patch: {e}")))?;
         normalize_view_for_schema(&schema, &mut view);
+        if schema.view_depends_on_newer(&view) {
+            return Err(newer_view_error(view.name()));
+        }
         view.keep_unknown_keys_of(&schema.views[pos]);
         schema.views[pos] = view;
         write_schema(space, collection_path, &schema)?;
@@ -1062,6 +1087,9 @@ pub fn duplicate_view(
             .find(|view| view.name() == view_name)
             .cloned()
             .ok_or_else(|| schema_error(format!("view '{view_name}' not found")))?;
+        if schema.view_depends_on_newer(&view) {
+            return Err(newer_view_error(view_name));
+        }
         *view.name_mut() = new_name.trim().to_string();
         schema.views.push(view);
         write_schema(space, collection_path, &schema)?;
@@ -1147,15 +1175,20 @@ pub(super) fn find_column_mut<'a>(
     schema: &'a mut CollectionSchema,
     column_name: &str,
 ) -> Result<&'a mut Column, CollectionError> {
-    schema
+    let column = schema
         .columns
         .iter_mut()
         .find(|column| column.name == column_name)
-        .ok_or_else(|| schema_error(format!("column '{column_name}' not found")))
+        .ok_or_else(|| schema_error(format!("column '{column_name}' not found")))?;
+    if column.is_newer() {
+        return Err(newer_column_error(column_name));
+    }
+    Ok(column)
 }
 
 fn ensure_option_column(column: &Column) -> Result<(), CollectionError> {
     match column.type_ {
+        PropertyType::Newer => Err(newer_column_error(&column.name)),
         PropertyType::Select | PropertyType::MultiSelect | PropertyType::Status => Ok(()),
         _ => Err(schema_error(format!(
             "column '{}' does not support options",
@@ -1405,6 +1438,7 @@ fn convert_value_for_type(value: Value, column: &Column) -> Value {
             value_to_scalar_string(&value).map(Value::String)
         }
         PropertyType::Relation => convert_value_for_relation(value, column),
+        PropertyType::Newer => None,
     };
 
     converted
@@ -1610,7 +1644,7 @@ fn replace_string_refs_in_views(views: &mut [View], old: &str, new: &str) {
 }
 
 fn replace_string_refs_in_view(view: &mut View, old: &str, new: &str) {
-    for filter in filters_mut(view) {
+    for filter in filters_mut(view).into_iter().flatten() {
         if filter.field == old {
             filter.field = new.to_string();
         }
@@ -1647,16 +1681,19 @@ fn replace_string_refs_in_view(view: &mut View, old: &str, new: &str) {
             }
             replace_field_list(card_fields, old, new);
         }
+        View::Newer { .. } => {}
     }
 }
 
-fn filters_mut(view: &mut View) -> &mut Vec<Filter> {
+/// Filters of a known view; references inside a newer view stay as written.
+fn filters_mut(view: &mut View) -> Option<&mut Vec<Filter>> {
     match view {
         View::Table { filter, .. }
         | View::Board { filter, .. }
         | View::Calendar { filter, .. }
         | View::List { filter, .. }
-        | View::Gallery { filter, .. } => filter,
+        | View::Gallery { filter, .. } => Some(filter),
+        View::Newer { .. } => None,
     }
 }
 
@@ -1666,7 +1703,7 @@ fn replace_sort_refs_in_view(view: &mut View, old: &str, new: &str) {
         | View::Board { sort, .. }
         | View::List { sort, .. }
         | View::Gallery { sort, .. } => Some(sort),
-        View::Calendar { .. } => None,
+        View::Calendar { .. } | View::Newer { .. } => None,
     };
     if let Some(sorts) = sorts {
         for sort in sorts {
@@ -1683,7 +1720,7 @@ fn retain_sort_refs_in_view(view: &mut View, target: &str) {
         | View::Board { sort, .. }
         | View::List { sort, .. }
         | View::Gallery { sort, .. } => Some(sort),
-        View::Calendar { .. } => None,
+        View::Calendar { .. } | View::Newer { .. } => None,
     };
     if let Some(sorts) = sorts {
         sorts.retain(|sort| sort.field != target);
@@ -1711,7 +1748,9 @@ pub(super) fn strip_string_refs_in_views(views: &mut [View], target: &str) {
 }
 
 fn strip_string_refs_in_view(view: &mut View, target: &str) {
-    filters_mut(view).retain(|filter| filter.field != target);
+    if let Some(filters) = filters_mut(view) {
+        filters.retain(|filter| filter.field != target);
+    }
     retain_sort_refs_in_view(view, target);
     match view {
         View::Table { visible_fields, .. } => retain_not_field(visible_fields, target),
@@ -1750,6 +1789,7 @@ fn strip_string_refs_in_view(view: &mut View, target: &str) {
             }
             retain_not_field(card_fields, target);
         }
+        View::Newer { .. } => {}
     }
 }
 

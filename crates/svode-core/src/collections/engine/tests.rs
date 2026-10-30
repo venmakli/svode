@@ -66,13 +66,14 @@ views: []
             .contains("type: boolean")
     );
 
+    // A type this version does not know, the legacy `checkbox` among them,
+    // reads as a property of a newer Svode version and is kept as written.
     let legacy = serde_norway::from_str::<CollectionSchema>(
         "columns:\n  - { name: Active, type: checkbox }\nviews: []\n",
     )
-    .unwrap_err()
-    .to_string();
-    assert!(legacy.contains("checkbox"));
-    assert!(legacy.contains("boolean"));
+    .unwrap();
+    assert!(legacy.columns[0].is_newer());
+    assert!(legacy.to_file_yaml().unwrap().contains("type: checkbox"));
 
     let invalid_default: CollectionSchema = serde_norway::from_str(
         "columns:\n  - { name: Active, type: boolean, default: yes }\nviews: []\n",
@@ -135,7 +136,10 @@ fn read_schema_applies_sensitivity_defaults_and_accepts_legacy_schema() {
     .unwrap();
 
     let schema = read_schema_at(&schema_path).unwrap();
-    assert_eq!(schema.columns[0].sensitivity, Some(ColumnSensitivity::Pii));
+    assert_eq!(
+        schema.columns[0].sensitivity,
+        Some(ColumnSensitivity::Pii.into())
+    );
     assert_eq!(schema.columns[1].sensitivity, None);
 }
 

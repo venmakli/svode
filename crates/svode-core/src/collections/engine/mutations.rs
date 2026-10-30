@@ -113,6 +113,9 @@ pub fn prepare_initial_collection_schema(
     project_path: Option<&str>,
 ) -> Result<PreparedCollectionMutation<CollectionSchema>, CollectionError> {
     schema.discard_unknown_keys();
+    for column in &schema.columns {
+        ensure_known_input(column, None)?;
+    }
     normalize_schema(&mut schema);
     validate_schema(&schema)?;
     validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;

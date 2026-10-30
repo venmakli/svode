@@ -734,10 +734,7 @@ async fn title_update_renames_collection_tree_and_rebases_indexes_and_backlinks(
 async fn title_update_ignores_unrelated_broken_schemas_for_standalone_pages() {
     for project_aware in [false, true] {
         for folder in [false, true] {
-            for broken_yaml in [
-                "columns:\n  - { name: Active, type: checkbox }\n",
-                "columns: [",
-            ] {
+            for broken_yaml in ["columns:\n  - { name: Active }\n", "columns: ["] {
                 let tmp = TempDir::new().unwrap();
                 let root = tmp.path();
                 write_tree_config(&tmp, vec![], vec![]);
@@ -840,7 +837,7 @@ async fn title_update_defers_relation_domain_rename_and_retries_the_same_title()
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::create_dir_all(root.join("Broken collection")).unwrap();
         let broken = root.join("Broken collection/schema.yaml");
-        std::fs::write(&broken, "columns:\n  - { name: Active, type: checkbox }\n").unwrap();
+        std::fs::write(&broken, "columns:\n  - { name: Active }\n").unwrap();
         std::fs::create_dir_all(root.join(capability).parent().unwrap()).unwrap();
         std::fs::write(root.join(capability), "columns: []\n").unwrap();
         std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
@@ -869,7 +866,7 @@ async fn title_update_defers_relation_domain_rename_and_retries_the_same_title()
             .unwrap();
         assert_eq!(warning.path.as_deref(), Some(path));
         assert!(warning.message.contains(broken.to_str().unwrap()));
-        assert!(warning.message.contains("checkbox"));
+        assert!(warning.message.contains("missing field `type`"));
         std::fs::write(&broken, "columns: []\n").unwrap();
         let retried = update_title(root, path, "Renamed Page", None, &index_state, &nonces)
             .await
@@ -1353,7 +1350,7 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
         let schema = if with_relation {
             "columns:\n  - name: Task\n    type: relation\n    relation: Tasks\n    relation_scope: root\n"
         } else {
-            "columns:\n  - { name: Active, type: checkbox }\n"
+            "columns:\n  - { name: Active }\n"
         };
         std::fs::write(&child_schema, schema).unwrap();
         if with_relation {

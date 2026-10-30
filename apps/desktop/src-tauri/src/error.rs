@@ -22,6 +22,9 @@ impl From<svode_core::collections::CollectionError> for AppError {
             svode_core::collections::CollectionError::Schema(message) => {
                 Self::General(format!("schema error: {message}"))
             }
+            svode_core::collections::CollectionError::NewerVersion(message) => {
+                Self::General(message)
+            }
             svode_core::collections::CollectionError::Index(message) => Self::Index(message),
             svode_core::collections::CollectionError::Sqlx(error) => Self::Db(error),
             svode_core::collections::CollectionError::FrontmatterParse(message) => {

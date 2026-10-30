@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use super::CollectionError;
 use super::schema::normalize_rel_path;
 pub use super::schema_support::normalize_relation_value_shape;
-use super::schema_support::schema_error;
 pub use super::schema_support::validate_relation_value_shape;
+use super::schema_support::{newer_column_error, schema_error};
 use crate::git::path::{RootMode, normalize_repo_relative};
 use serde::Serialize;
 
@@ -502,6 +502,9 @@ pub fn ensure_compatible_reverse_with_scope(
     current_column: &str,
     allow_limit_one: bool,
 ) -> Result<(), CollectionError> {
+    if reverse.is_newer() {
+        return Err(newer_column_error(&reverse.name));
+    }
     if reverse.type_ != PropertyType::Relation {
         return Err(schema_error(format!(
             "reverse column '{}' is not a relation",
@@ -584,6 +587,9 @@ pub fn diagnose_two_way_relation_with_project(
 ) -> Result<RelationTwoWayDiagnostics, CollectionError> {
     let collection_path = collection_root_for_schema(collection_path);
     let schema = read_schema_or_default(space, &collection_path)?;
+    if schema.column(column_name).is_some_and(Column::is_newer) {
+        return Err(newer_column_error(column_name));
+    }
     let column = schema
         .columns
         .iter()

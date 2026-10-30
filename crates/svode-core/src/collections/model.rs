@@ -1,8 +1,58 @@
+use serde::de::{DeserializeOwned, IntoDeserializer};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_norway::{Mapping, Value};
 
 use crate::page::ColorName;
+
+/// A value of a `schema.yaml` enumeration: one this version knows, or one a
+/// newer Svode version wrote, kept as written. Reading the file never fails
+/// on it; what the value means stays unknown, so the schema shows the field
+/// as by default and writes the value back until an operation sets the field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrNewer<T> {
+    Known(T),
+    Newer(String),
+}
+
+impl<T> OrNewer<T> {
+    pub fn is_newer(&self) -> bool {
+        matches!(self, Self::Newer(_))
+    }
+}
+
+impl<T> From<T> for OrNewer<T> {
+    fn from(value: T) -> Self {
+        Self::Known(value)
+    }
+}
+
+impl<T: Serialize> Serialize for OrNewer<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Known(value) => value.serialize(serializer),
+            Self::Newer(value) => serializer.serialize_str(value),
+        }
+    }
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for OrNewer<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(known_value::<T>(&raw).map_or(Self::Newer(raw), Self::Known))
+    }
+}
+
+/// `raw` as a value of the enumeration `T`, when this version knows it.
+fn known_value<T: DeserializeOwned>(raw: &str) -> Option<T> {
+    T::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(raw)).ok()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +70,18 @@ pub enum PropertyType {
     Url,
     Email,
     Phone,
+    /// A property a newer Svode version added: its type, `limit` or
+    /// `relation_scope` type is unknown. The column keeps every key of the
+    /// file, its own `type` among them, in `unknown_keys`; its known fields
+    /// stay empty, since their meaning may differ. Never read from input.
+    #[serde(skip)]
+    Newer,
+}
+
+impl PropertyType {
+    pub fn is_newer(&self) -> bool {
+        *self == Self::Newer
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,11 +238,11 @@ pub enum StatusGroup {
 pub struct PropertyOption {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub color: Option<ColorName>,
+    pub color: Option<OrNewer<ColorName>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub group: Option<StatusGroup>,
+    pub group: Option<OrNewer<StatusGroup>>,
     #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
     pub unknown_keys: Mapping,
 }
@@ -194,11 +256,11 @@ impl<'de> Deserialize<'de> for PropertyOption {
         struct PropertyOptionObject {
             name: String,
             #[serde(default)]
-            color: Option<ColorName>,
+            color: Option<OrNewer<ColorName>>,
             #[serde(default)]
             icon: Option<String>,
             #[serde(default)]
-            group: Option<StatusGroup>,
+            group: Option<OrNewer<StatusGroup>>,
             #[serde(flatten)]
             unknown_keys: Mapping,
         }
@@ -233,10 +295,10 @@ impl<'de> Deserialize<'de> for PropertyOption {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Column {
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", skip_serializing_if = "PropertyType::is_newer")]
     pub type_: PropertyType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sensitivity: Option<ColumnSensitivity>,
+    pub sensitivity: Option<OrNewer<ColumnSensitivity>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -248,7 +310,7 @@ pub struct Column {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<ColorName>,
+    pub color: Option<OrNewer<ColorName>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_by_default: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,6 +382,16 @@ pub enum FilterOp {
     GroupNeq,
     GroupIn,
     GroupNotIn,
+}
+
+impl FilterOp {
+    /// Whether the operator filters a status column by option group.
+    pub fn is_status_group(self) -> bool {
+        matches!(
+            self,
+            Self::GroupEq | Self::GroupNeq | Self::GroupIn | Self::GroupNotIn
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -423,6 +495,16 @@ pub enum View {
         #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
         unknown_keys: Mapping,
     },
+    /// A view that holds a value a newer Svode version added: its type, a
+    /// filter operator or a status group in a filter. It keeps every key of
+    /// the file, its `type` among them, in `unknown_keys`; only its name is
+    /// known. Never read from input.
+    #[serde(untagged, skip_deserializing)]
+    Newer {
+        name: String,
+        #[serde(flatten)]
+        unknown_keys: Mapping,
+    },
 }
 
 impl View {
@@ -432,7 +514,8 @@ impl View {
             | View::Board { name, .. }
             | View::Calendar { name, .. }
             | View::List { name, .. }
-            | View::Gallery { name, .. } => name,
+            | View::Gallery { name, .. }
+            | View::Newer { name, .. } => name,
         }
     }
 
@@ -442,10 +525,12 @@ impl View {
             | View::Board { name, .. }
             | View::Calendar { name, .. }
             | View::List { name, .. }
-            | View::Gallery { name, .. } => name,
+            | View::Gallery { name, .. }
+            | View::Newer { name, .. } => name,
         }
     }
 
+    /// Filters of a known view; a newer view has none this version reads.
     pub fn filters(&self) -> &[Filter] {
         match self {
             View::Table { filter, .. }
@@ -453,6 +538,7 @@ impl View {
             | View::Calendar { filter, .. }
             | View::List { filter, .. }
             | View::Gallery { filter, .. } => filter,
+            View::Newer { .. } => &[],
         }
     }
 
@@ -462,8 +548,33 @@ impl View {
             | View::Board { sort, .. }
             | View::List { sort, .. }
             | View::Gallery { sort, .. } => sort,
-            View::Calendar { .. } => &[],
+            View::Calendar { .. } | View::Newer { .. } => &[],
         }
+    }
+
+    /// Fields that lay out the view's items: `group_by`, `date_field`,
+    /// `color_field` and `card_cover`.
+    pub fn layout_fields(&self) -> Vec<&str> {
+        match self {
+            View::Board { group_by, .. } => group_by.as_deref().into_iter().collect(),
+            View::Calendar {
+                date_field,
+                color_field,
+                ..
+            } => date_field
+                .as_deref()
+                .into_iter()
+                .chain(color_field.as_deref())
+                .collect(),
+            View::Gallery { card_cover, .. } => {
+                card_cover.iter().flatten().map(String::as_str).collect()
+            }
+            View::Table { .. } | View::List { .. } | View::Newer { .. } => Vec::new(),
+        }
+    }
+
+    pub fn is_newer(&self) -> bool {
+        matches!(self, View::Newer { .. })
     }
 
     pub fn unknown_keys(&self) -> &Mapping {
@@ -472,7 +583,8 @@ impl View {
             | View::Board { unknown_keys, .. }
             | View::Calendar { unknown_keys, .. }
             | View::List { unknown_keys, .. }
-            | View::Gallery { unknown_keys, .. } => unknown_keys,
+            | View::Gallery { unknown_keys, .. }
+            | View::Newer { unknown_keys, .. } => unknown_keys,
         }
     }
 
@@ -482,17 +594,19 @@ impl View {
             | View::Board { unknown_keys, .. }
             | View::Calendar { unknown_keys, .. }
             | View::List { unknown_keys, .. }
-            | View::Gallery { unknown_keys, .. } => unknown_keys,
+            | View::Gallery { unknown_keys, .. }
+            | View::Newer { unknown_keys, .. } => unknown_keys,
         }
     }
 
-    fn filters_and_sorts_mut(&mut self) -> (&mut Vec<Filter>, Option<&mut Vec<Sort>>) {
+    fn filters_and_sorts_mut(&mut self) -> (&mut [Filter], Option<&mut [Sort]>) {
         match self {
             View::Table { filter, sort, .. }
             | View::Board { filter, sort, .. }
             | View::List { filter, sort, .. }
             | View::Gallery { filter, sort, .. } => (filter, Some(sort)),
             View::Calendar { filter, .. } => (filter, None),
+            View::Newer { .. } => (&mut [], None),
         }
     }
 
@@ -568,7 +682,112 @@ impl PropertyOption {
     }
 }
 
+/// Display values this version knows for a property type.
+fn known_display(type_: PropertyType, display: &str) -> bool {
+    match type_ {
+        PropertyType::Number => ["number", "percent", "bar", "ring"].contains(&display),
+        PropertyType::Date => ["short", "medium", "long"].contains(&display),
+        PropertyType::Actor => display == "all_time",
+        PropertyType::Boolean => ["checkbox", "switch"].contains(&display),
+        _ => false,
+    }
+}
+
+fn newer_raw<T>(value: &Option<OrNewer<T>>) -> Option<&str> {
+    match value {
+        Some(OrNewer::Newer(raw)) => Some(raw),
+        _ => None,
+    }
+}
+
 impl Column {
+    /// A property a newer Svode version added, kept whole: see
+    /// [`PropertyType::Newer`].
+    fn newer(name: String, unknown_keys: Mapping) -> Self {
+        Self {
+            name,
+            type_: PropertyType::Newer,
+            sensitivity: None,
+            default: None,
+            options: None,
+            display: None,
+            min: None,
+            max: None,
+            color: None,
+            time_by_default: None,
+            range_by_default: None,
+            relation: None,
+            relation_scope: None,
+            limit: None,
+            two_way: None,
+            prefix: None,
+            next: None,
+            multiple: None,
+            unknown_keys,
+        }
+    }
+
+    pub fn is_newer(&self) -> bool {
+        self.type_.is_newer()
+    }
+
+    /// Whether this version knows the `display` for the column type. Another
+    /// display was set by a newer Svode version and shows as the default.
+    pub fn display_is_known(&self) -> bool {
+        self.display
+            .as_deref()
+            .is_none_or(|display| known_display(self.type_, display))
+    }
+
+    /// Whether an option holds a status group this version does not know.
+    pub fn has_newer_option_group(&self) -> bool {
+        self.options
+            .iter()
+            .flatten()
+            .any(|option| option.group.as_ref().is_some_and(OrNewer::is_newer))
+    }
+
+    /// The first value set by a newer Svode version that this column holds
+    /// and `stored`, the same column before the operation, does not hold in
+    /// the same place. Operation input keeps such values as they are but
+    /// never brings new ones into the file.
+    pub fn newer_value_not_in(&self, stored: Option<&Column>) -> Option<String> {
+        let stored_raw = |pick: fn(&Column) -> Option<&str>| stored.and_then(pick);
+        if let Some(raw) = newer_raw(&self.color)
+            && stored_raw(|column| newer_raw(&column.color)) != Some(raw)
+        {
+            return Some(format!("color '{raw}'"));
+        }
+        if let Some(raw) = newer_raw(&self.sensitivity)
+            && stored_raw(|column| newer_raw(&column.sensitivity)) != Some(raw)
+        {
+            return Some(format!("sensitivity '{raw}'"));
+        }
+        if let Some(display) = self.display.as_deref().filter(|_| !self.display_is_known())
+            && stored.is_none_or(|stored| {
+                stored.type_ != self.type_ || stored.display.as_deref() != Some(display)
+            })
+        {
+            return Some(format!("display '{display}'"));
+        }
+        for option in self.options.iter().flatten() {
+            let stored_option = stored
+                .and_then(|stored| stored.options.as_deref())
+                .and_then(|options| options.iter().find(|stored| stored.name == option.name));
+            if let Some(raw) = newer_raw(&option.color)
+                && stored_option.and_then(|stored| newer_raw(&stored.color)) != Some(raw)
+            {
+                return Some(format!("color '{raw}' of option '{}'", option.name));
+            }
+            if let Some(raw) = newer_raw(&option.group)
+                && stored_option.and_then(|stored| newer_raw(&stored.group)) != Some(raw)
+            {
+                return Some(format!("group '{raw}' of option '{}'", option.name));
+            }
+        }
+        None
+    }
+
     /// Drops the unknown keys of the column, its options and relation scope.
     pub fn discard_unknown_keys(&mut self) {
         self.unknown_keys.clear();
@@ -625,25 +844,229 @@ impl CollectionSchema {
             .for_each(Column::discard_unknown_keys);
         self.views.iter_mut().for_each(View::discard_unknown_keys);
     }
+
+    pub fn column(&self, name: &str) -> Option<&Column> {
+        self.columns.iter().find(|column| column.name == name)
+    }
+
+    fn field_is_newer(&self, field: &str) -> bool {
+        self.column(field).is_some_and(Column::is_newer)
+    }
+
+    /// Whether the filter depends on what a newer Svode version set: it
+    /// filters a newer property, or by status group a column with an option
+    /// of a newer group.
+    pub fn filter_depends_on_newer(&self, filter: &Filter) -> bool {
+        self.column(&filter.field).is_some_and(|column| {
+            column.is_newer() || (filter.op.is_status_group() && column.has_newer_option_group())
+        })
+    }
+
+    /// Whether this version cannot show the view's items: the view is newer,
+    /// or its filter, sort or layout field depends on a newer value. Fields
+    /// it only shows (`visible_fields`, `card_fields`) do not count.
+    pub fn view_depends_on_newer(&self, view: &View) -> bool {
+        view.is_newer()
+            || view
+                .filters()
+                .iter()
+                .any(|filter| self.filter_depends_on_newer(filter))
+            || view
+                .sorts()
+                .iter()
+                .any(|sort| self.field_is_newer(&sort.field))
+            || view
+                .layout_fields()
+                .into_iter()
+                .any(|field| self.field_is_newer(field))
+    }
+
+    /// What a newer Svode version set that this version cannot use, or
+    /// `None` when there is nothing.
+    pub fn newer_svode(&self) -> Option<NewerSvode> {
+        let marker = NewerSvode {
+            columns: self
+                .columns
+                .iter()
+                .filter(|column| column.is_newer())
+                .map(|column| column.name.clone())
+                .collect(),
+            views: self
+                .views
+                .iter()
+                .filter(|view| self.view_depends_on_newer(view))
+                .map(|view| view.name().to_string())
+                .collect(),
+        };
+        (!marker.columns.is_empty() || !marker.views.is_empty()).then_some(marker)
+    }
+
+    /// The schema as the text of `schema.yaml`: without the
+    /// [`NewerSvode`] marker that the serialized schema carries otherwise.
+    pub fn to_file_yaml(&self) -> Result<String, serde_norway::Error> {
+        serde_norway::to_string(&self.fields(None))
+    }
+
+    fn fields(&self, newer_svode: Option<NewerSvode>) -> SchemaFields<'_> {
+        SchemaFields {
+            system_fields: self.system_fields.as_ref(),
+            templates: self.templates.as_ref(),
+            nested_items: self.nested_items,
+            columns: &self.columns,
+            views: &self.views,
+            newer_svode,
+            unknown_keys: &self.unknown_keys,
+        }
+    }
+}
+
+/// Properties and views of a schema that this version cannot use, since a
+/// newer Svode version set them: newer properties (unknown type, `limit` or
+/// `relation_scope` type) and views it cannot show (see
+/// [`CollectionSchema::view_depends_on_newer`]), by name. The serialized
+/// schema carries it as `newer_svode` for Desktop, MCP and CLI; the file
+/// never does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewerSvode {
+    pub columns: Vec<String>,
+    pub views: Vec<String>,
 }
 
 /// The `schema.yaml` format. Every object keeps the keys this version does
 /// not know in `unknown_keys` and writes them back after its known keys, so a
 /// write by an older Svode keeps what a newer one added. Operation input
-/// never brings unknown keys into the file: the operations drop them.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+/// never brings unknown keys into the file: the operations drop them. A value
+/// of a known key that a newer version added never makes the file unreadable:
+/// see [`OrNewer`], [`PropertyType::Newer`] and [`View::Newer`].
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
 pub struct CollectionSchema {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub system_fields: Option<SystemFields>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub templates: Option<TemplatesConfig>,
     /// Pages below the direct children of the root are items too.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default)]
     pub nested_items: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "file_columns")]
     pub columns: Vec<Column>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "file_views")]
     pub views: Vec<View>,
-    #[serde(flatten, skip_serializing_if = "Mapping::is_empty")]
+    #[serde(flatten)]
     pub unknown_keys: Mapping,
+}
+
+/// The serialized schema carries the [`NewerSvode`] marker; the file is
+/// written by [`CollectionSchema::to_file_yaml`].
+impl Serialize for CollectionSchema {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.fields(self.newer_svode()).serialize(serializer)
+    }
+}
+
+#[derive(Serialize)]
+struct SchemaFields<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_fields: Option<&'a SystemFields>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    templates: Option<&'a TemplatesConfig>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    nested_items: bool,
+    columns: &'a [Column],
+    views: &'a [View],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    newer_svode: Option<NewerSvode>,
+    #[serde(flatten)]
+    unknown_keys: &'a Mapping,
+}
+
+const VIEW_TYPES: [&str; 5] = ["table", "board", "calendar", "list", "gallery"];
+
+fn file_columns<'de, D>(deserializer: D) -> Result<Vec<Column>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<Value>::deserialize(deserializer)?
+        .into_iter()
+        .map(|value| match value {
+            Value::Mapping(mapping) if column_is_newer(&mapping) => {
+                newer_item(mapping).map(|(name, keys)| Column::newer(name, keys))
+            }
+            value => serde_norway::from_value(value),
+        })
+        .collect::<Result<_, _>>()
+        .map_err(serde::de::Error::custom)
+}
+
+fn file_views<'de, D>(deserializer: D) -> Result<Vec<View>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<Value>::deserialize(deserializer)?
+        .into_iter()
+        .map(|value| match value {
+            Value::Mapping(mapping) if view_is_newer(&mapping) => {
+                newer_item(mapping).map(|(name, unknown_keys)| View::Newer { name, unknown_keys })
+            }
+            value => serde_norway::from_value(value),
+        })
+        .collect::<Result<_, _>>()
+        .map_err(serde::de::Error::custom)
+}
+
+/// Name and the other keys of a newer column or view.
+fn newer_item(mut mapping: Mapping) -> Result<(String, Mapping), serde_norway::Error> {
+    match mapping.shift_remove("name") {
+        Some(Value::String(name)) => Ok((name, mapping)),
+        Some(_) => Err(serde::de::Error::custom("name must be a string")),
+        None => Err(serde::de::Error::missing_field("name")),
+    }
+}
+
+fn str_at<'a>(mapping: &'a Mapping, key: &str) -> Option<&'a str> {
+    mapping.get(key).and_then(Value::as_str)
+}
+
+fn column_is_newer(mapping: &Mapping) -> bool {
+    let scope_is_newer = match mapping.get("relation_scope") {
+        Some(Value::String(scope)) => scope != "root",
+        Some(Value::Mapping(scope)) => {
+            str_at(scope, "type").is_some_and(|type_| !matches!(type_, "root" | "space"))
+        }
+        _ => false,
+    };
+    str_at(mapping, "type").is_some_and(|raw| known_value::<PropertyType>(raw).is_none())
+        || str_at(mapping, "limit").is_some_and(|raw| known_value::<RelationLimit>(raw).is_none())
+        || scope_is_newer
+}
+
+fn view_is_newer(mapping: &Mapping) -> bool {
+    let filter_is_newer = |filter: &Value| {
+        let Some(op) = filter.get("op").and_then(Value::as_str) else {
+            return false;
+        };
+        let Some(op) = known_value::<FilterOp>(op) else {
+            return true;
+        };
+        let newer_group = |value: &Value| {
+            value
+                .as_str()
+                .is_some_and(|group| known_value::<StatusGroup>(group).is_none())
+        };
+        let values = ["value", "values"]
+            .into_iter()
+            .filter_map(|key| filter.get(key))
+            .flat_map(|value| match value {
+                Value::Sequence(values) => values.iter().collect::<Vec<_>>(),
+                value => vec![value],
+            });
+        op.is_status_group() && values.into_iter().any(newer_group)
+    };
+    str_at(mapping, "type").is_some_and(|type_| !VIEW_TYPES.contains(&type_))
+        || mapping
+            .get("filter")
+            .and_then(Value::as_sequence)
+            .is_some_and(|filters| filters.iter().any(filter_is_newer))
 }

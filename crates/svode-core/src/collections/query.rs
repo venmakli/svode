@@ -425,7 +425,9 @@ fn push_status_group_filter(
         .collect();
     let mut option_names = Vec::new();
     for option in column.options.as_deref().unwrap_or_default() {
-        let Some(group) = option.group else { continue };
+        let Some(OrNewer::Known(group)) = option.group else {
+            continue;
+        };
         if wanted.contains(status_group_name(group)) {
             option_names.push(Value::String(option.name.clone()));
         }
@@ -641,6 +643,7 @@ pub fn validate_ad_hoc_query(
     }
     for sort in sort {
         validate_field_ref(schema, &column_names, &sort.field, FieldContext::Sort)?;
+        field_type(schema, &sort.field, FieldContext::Sort)?;
     }
     Ok(())
 }

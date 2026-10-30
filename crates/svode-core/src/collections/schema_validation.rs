@@ -25,6 +25,9 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), CollectionError>
             )));
         }
         column_names.insert(column.name.clone());
+        if column.is_newer() {
+            continue;
+        }
 
         match column.type_ {
             PropertyType::Select | PropertyType::MultiSelect => {
@@ -87,8 +90,6 @@ pub fn validate_schema(schema: &CollectionSchema) -> Result<(), CollectionError>
             }
             _ => {}
         }
-
-        validate_column_display(column)?;
 
         if !is_actor_type(column.type_)
             && column.type_ != PropertyType::UniqueId
@@ -159,10 +160,13 @@ pub fn normalize_schema(schema: &mut CollectionSchema) {
     }
 
     for column in &mut schema.columns {
+        if column.is_newer() {
+            continue;
+        }
         if column.sensitivity.is_none()
             && matches!(column.type_, PropertyType::Email | PropertyType::Phone)
         {
-            column.sensitivity = Some(ColumnSensitivity::Pii);
+            column.sensitivity = Some(ColumnSensitivity::Pii.into());
         }
         if matches!(
             column.type_,
@@ -241,6 +245,7 @@ pub(super) fn normalize_view(
                 *card_cover = Some(vec!["cover".into(), "icon".into(), "title".into()]);
             }
         }
+        View::Newer { .. } => {}
     }
 }
 
@@ -289,7 +294,9 @@ fn validate_views(
                 view.name()
             )));
         }
-        validate_view(schema, column_names, view)?;
+        if !view.is_newer() {
+            validate_view(schema, column_names, view)?;
+        }
     }
     Ok(())
 }
@@ -301,7 +308,11 @@ fn validate_view(
 ) -> Result<(), CollectionError> {
     for filter in view.filters() {
         validate_field_ref(schema, column_names, &filter.field, FieldContext::Filter)?;
-        validate_filter_op(schema, filter)?;
+        // A filter on what a newer version set leaves the view unshown
+        // instead of making the schema unreadable.
+        if !schema.filter_depends_on_newer(filter) {
+            validate_filter_op(schema, filter)?;
+        }
     }
     for sort in view.sorts() {
         validate_field_ref(schema, column_names, &sort.field, FieldContext::Sort)?;
@@ -360,6 +371,7 @@ fn validate_view(
                 validate_field_ref(schema, column_names, field, FieldContext::CardField)?;
             }
         }
+        View::Newer { .. } => {}
     }
     Ok(())
 }
@@ -420,6 +432,10 @@ fn validate_custom_field_context(
         .iter()
         .find(|column| column.name == field)
         .ok_or_else(|| schema_error(format!("field '{field}' not found")))?;
+    // A view may name a newer property anywhere; using it is refused instead.
+    if column.is_newer() {
+        return Ok(());
+    }
     let allowed = match context {
         FieldContext::Filter | FieldContext::VisibleField | FieldContext::CardField => true,
         FieldContext::Sort => true,
@@ -446,6 +462,13 @@ pub fn validate_filter_op(
     schema: &CollectionSchema,
     filter: &Filter,
 ) -> Result<(), CollectionError> {
+    if filter.op.is_status_group()
+        && schema
+            .column(&filter.field)
+            .is_some_and(Column::has_newer_option_group)
+    {
+        return Err(newer_status_group_error(&filter.field));
+    }
     let ty = field_type(schema, &filter.field, FieldContext::Filter)?;
     let op_allowed = match ty {
         FieldType::TextLike => matches!(
@@ -639,10 +662,7 @@ fn validate_filter_value(
     ty: FieldType,
     value: &Value,
 ) -> Result<(), CollectionError> {
-    if matches!(
-        filter.op,
-        FilterOp::GroupEq | FilterOp::GroupNeq | FilterOp::GroupIn | FilterOp::GroupNotIn
-    ) {
+    if filter.op.is_status_group() {
         let raw = value.as_str().ok_or_else(|| {
             schema_error(format!(
                 "filter '{}' requires status group value",
@@ -765,6 +785,7 @@ pub fn field_type(
             PropertyType::Actor => FieldType::Actor,
             PropertyType::Boolean => FieldType::Boolean,
             PropertyType::Relation => FieldType::Multi,
+            PropertyType::Newer => return Err(newer_column_error(field)),
         });
     }
     match field {
@@ -799,26 +820,6 @@ fn validate_options(
                 option.name
             )));
         }
-    }
-    Ok(())
-}
-
-fn validate_column_display(column: &Column) -> Result<(), CollectionError> {
-    let Some(display) = column.display.as_deref() else {
-        return Ok(());
-    };
-    let allowed = match column.type_ {
-        PropertyType::Number => ["number", "percent", "bar", "ring"].contains(&display),
-        PropertyType::Date => ["short", "medium", "long"].contains(&display),
-        PropertyType::Actor => display == "all_time",
-        PropertyType::Boolean => ["checkbox", "switch"].contains(&display),
-        _ => false,
-    };
-    if !allowed {
-        return Err(schema_error(format!(
-            "invalid display '{display}' for column '{}'",
-            column.name
-        )));
     }
     Ok(())
 }
