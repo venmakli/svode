@@ -16,12 +16,14 @@ import {
   commitSaveScopeAndMaybeSync,
   continueGitResolve,
   dirtyPathsForGitSaveScope,
+  explicitCommitRefusal,
   gitSaveShortcutLabel,
   gitStatusHasDirtyPath,
   getGitSpaceStatus,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
   selfPathsForGitSaveScope,
+  type GitCommitRefusal,
   type GitSaveScope,
   type GitSaveScopeLabel,
   type GitSaveScopeTreeNode,
@@ -93,8 +95,11 @@ interface UseEditorDocumentWriterInput {
 }
 
 interface UseEditorDocumentWriterResult {
-  handleSave: () => Promise<void>;
-  handleSaveAll: () => Promise<void>;
+  /** An explicit commit of the Page; a refusal is returned before any write. */
+  handleSave: () => Promise<GitCommitRefusal | null>;
+  handleSaveAll: (scope?: GitSaveScope) => Promise<GitCommitRefusal | null>;
+  /** True while a draft waits for the user's choice in a source conflict. */
+  hasSourceConflict: () => boolean;
   scheduleAutoSave: () => void;
   flushPendingSource: () => Promise<void>;
   /** Drops the unsaved body and loads the saved source, writing nothing. */
@@ -481,7 +486,7 @@ export function useEditorDocumentWriter({
   ]);
 
   const handleSave = useCallback(async () => {
-    if (!editor || !currentDocument || !spacePath) return;
+    if (!editor || !currentDocument || !spacePath) return null;
 
     const status = getGitSpaceStatus(spacePath);
     const currentSurfaceDirty =
@@ -496,12 +501,19 @@ export function useEditorDocumentWriter({
         }),
         currentDocument,
       );
-      return;
+      return null;
     }
+    const refusal = explicitCommitRefusal(spacePath, {
+      kind: "file",
+      path: currentDocument,
+      label: "page",
+    });
+    if (refusal) return refusal;
 
     cancelDebounce();
     try {
       await saveCurrentSurface();
+      return null;
     } catch (error) {
       if (
         onWriteAccessError &&
@@ -526,14 +538,16 @@ export function useEditorDocumentWriter({
 
   const handleSaveAll = useCallback(
     async (explicitScope?: GitSaveScope) => {
-      if (!spacePath) return;
-      cancelDebounce();
+      if (!spacePath) return null;
       const saveAllScope =
         explicitScope ??
         resolveGitSaveAllScope({
           activePath: currentDocument,
           tree: saveScopeTree,
         });
+      const refusal = explicitCommitRefusal(spacePath, saveAllScope);
+      if (refusal) return refusal;
+      cancelDebounce();
 
       if (!editor || !currentDocument) {
         await commitSaveScopeAndMaybeSync(
@@ -542,7 +556,7 @@ export function useEditorDocumentWriter({
           [],
           projectPath ?? undefined,
         ).then(clearCommittedMarkers);
-        return;
+        return null;
       }
 
       const isDirty = useEditorStore
@@ -555,7 +569,7 @@ export function useEditorDocumentWriter({
           [],
           projectPath ?? undefined,
         ).then(clearCommittedMarkers);
-        return;
+        return null;
       }
 
       const saveAll = async () => {
@@ -576,6 +590,7 @@ export function useEditorDocumentWriter({
       };
       try {
         await saveAll();
+        return null;
       } catch (err) {
         if (onWriteAccessError && (await onWriteAccessError(err, saveAll))) {
           throw err;
@@ -605,6 +620,7 @@ export function useEditorDocumentWriter({
     flushPendingSource,
     handleSave,
     handleSaveAll,
+    hasSourceConflict: sourceSync.isOpen,
     reconcileExternalChange,
     scheduleAutoSave,
   };

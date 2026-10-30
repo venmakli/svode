@@ -26,6 +26,7 @@ import type { PageSourceConflict } from "../model/source-conflict";
  */
 export function PageSaveRecoveryDialog({
   block,
+  commitRefused = false,
   open,
   retryDisabled,
   onClose,
@@ -36,6 +37,8 @@ export function PageSaveRecoveryDialog({
   title,
 }: {
   block: PageSaveBlock | null;
+  /** Opened by an explicit commit refused for the source conflict. */
+  commitRefused?: boolean;
   open: boolean;
   retryDisabled: boolean;
   onClose: () => void;
@@ -118,6 +121,7 @@ export function PageSaveRecoveryDialog({
         ) : (
           <PageSaveRecoveryContent
             block={shown}
+            commitRefused={commitRefused}
             pending={pending}
             retryDisabled={retryDisabled}
             onConfirmDiscard={() => setConfirming(true)}
@@ -135,6 +139,7 @@ export function PageSaveRecoveryDialog({
 
 function PageSaveRecoveryContent({
   block,
+  commitRefused,
   pending,
   retryDisabled,
   onConfirmDiscard,
@@ -142,6 +147,7 @@ function PageSaveRecoveryContent({
   onRetryWrite,
 }: {
   block: PageSaveBlock;
+  commitRefused: boolean;
   pending: "retry" | "discard" | null;
   retryDisabled: boolean;
   onConfirmDiscard: () => void;
@@ -176,6 +182,11 @@ function PageSaveRecoveryContent({
         {note ? (
           <p className="text-destructive" data-page-source-conflict-note>
             {note}
+          </p>
+        ) : null}
+        {commitRefused ? (
+          <p className="text-foreground" data-page-commit-refused>
+            {m.page_source_conflict_commit_refused()}
           </p>
         ) : null}
       </div>

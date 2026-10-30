@@ -71,6 +71,7 @@ export function ReadmeSurface() {
         onWriteAccessError={pageSurface.recoverSourceWriteError}
         saveFailureShown={saveFailureShown}
         onSourceConflict={pageSurface.reportSourceConflict}
+        onCommitRefused={pageSurface.showCommitRefusal}
         prepareManagedImport={async () => {
           if (!(await pageSurface.prepareForNavigation()))
             throw new Error(m.page_surface_save_error());

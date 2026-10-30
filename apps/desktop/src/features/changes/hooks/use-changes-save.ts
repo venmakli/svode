@@ -11,7 +11,11 @@ import {
   type GitSaveError,
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
-import { commitSaveScopeAndMaybeSync } from "@/features/git/editor";
+import {
+  commitSaveScopeAndMaybeSync,
+  explicitCommitRefusal,
+  type GitCommitRefusal,
+} from "@/features/git/editor";
 import { inspectionSaveScope, resolveInspectionScope } from "../model/scope";
 import type { ChangesTarget } from "../model/scope";
 
@@ -30,6 +34,7 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
     key: string;
     saving: boolean;
     error: GitSaveError | null;
+    refusal?: GitCommitRefusal | null;
   } | null>(null);
   if (state && state.key !== targetKey) setState(null);
   const busy = useRef(false);
@@ -62,24 +67,30 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
       setState({ key: targetKey, saving: true, error: null });
       try {
         const aggregate = resolveInspectionScope(target).kind !== "file";
+        const scope = inspectionSaveScope(target);
+        let refusal: GitCommitRefusal | null = null;
         if (hasPageSaveOwner(target.spacePath, target.path)) {
-          await dispatchPageSave(
+          refusal = await dispatchPageSave(
             target.spacePath,
             target.path,
             all,
-            all && aggregate ? inspectionSaveScope(target) : undefined,
+            all && aggregate ? scope : undefined,
           );
         } else if (all || !aggregate) {
+          refusal = explicitCommitRefusal(target.spacePath, scope);
           // Without an open editor the file on disk is what gets saved.
-          await commitSaveScopeAndMaybeSync(
-            target.spacePath,
-            inspectionSaveScope(target),
-            [],
-            target.projectPath ?? undefined,
-          );
+          if (!refusal)
+            await commitSaveScopeAndMaybeSync(
+              target.spacePath,
+              scope,
+              [],
+              target.projectPath ?? undefined,
+            );
         } else {
           toast.info(m.git_save_no_surface());
         }
+        if (refusal && active.current === owner)
+          setState({ key: targetKey, saving: true, error: null, refusal });
       } catch (error) {
         if (active.current !== owner) return;
         const failure = gitSaveErrorFromError(error);
@@ -137,5 +148,6 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
     save,
     saving: state?.key === targetKey && state.saving,
     error: state?.key === targetKey ? state.error : null,
+    refusal: state?.key === targetKey ? (state.refusal ?? null) : null,
   };
 }

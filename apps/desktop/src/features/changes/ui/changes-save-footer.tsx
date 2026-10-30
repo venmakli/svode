@@ -2,6 +2,7 @@ import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { SheetFooter } from "@/components/ui/sheet";
+import type { GitCommitRefusal } from "@/features/git/editor";
 import {
   RepositoryAccessInlineRecovery,
   RepositoryAccessPrimaryButton,
@@ -16,11 +17,14 @@ export function ChangesSaveFooter({
   dirty,
   statusError,
   fileScope,
+  onChooseVersion,
 }: {
   save: ReturnType<typeof useChangesSave>;
   dirty: boolean;
   statusError: boolean;
   fileScope: boolean;
+  /** Leaves "Changes" for the version choice of the Page a refusal names. */
+  onChooseVersion: (refusal: GitCommitRefusal) => void;
 }) {
   const hint =
     typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
@@ -30,9 +34,27 @@ export function ChangesSaveFooter({
       : fileScope
         ? "Ctrl+S"
         : "Ctrl+Shift+S";
-  if (!dirty && !save.error && !save.saving) return null;
+  if (!dirty && !save.error && !save.saving && !save.refusal) return null;
+  const { refusal } = save;
   return (
     <SheetFooter className="shrink-0 border-t">
+      {refusal ? (
+        <Alert data-changes-commit-refused>
+          <AlertDescription className="flex min-w-0 flex-col items-start gap-2 [overflow-wrap:anywhere]">
+            <span>
+              {m.git_commit_refused_source_conflict({ title: refusal.title })}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onChooseVersion(refusal)}
+            >
+              {m.git_commit_refused_choose_version()}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {save.error ? (
         <Alert variant="destructive">
           <AlertDescription className="flex min-w-0 flex-col gap-1 [overflow-wrap:anywhere]">

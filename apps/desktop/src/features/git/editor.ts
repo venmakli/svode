@@ -19,7 +19,12 @@ import {
 } from "./effects/git-notifications";
 
 export type { GitCommitResult } from "./api/git-actions";
-export { registerPageSaveOwner } from "./model/page-save-owner";
+export {
+  explicitCommitRefusal,
+  registerPageSaveOwner,
+  type GitCommitRefusal,
+} from "./model/page-save-owner";
+export { notifyGitCommitRefusal } from "./effects/git-notifications";
 export {
   dirtyPathsForGitSaveScope,
   gitSaveShortcutLabel,

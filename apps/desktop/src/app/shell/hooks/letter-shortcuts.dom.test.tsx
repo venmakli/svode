@@ -62,6 +62,9 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   });
   let allowNavigation = true;
   let activeRootPath: string | null = "/project";
+  let activeContentPath: string | null = "page.md";
+  let rootSpaces: { id: string; path: string }[] = [];
+  const saves = { commits: 0, refusals: [] as string[] };
   mock.module("@tanstack/react-router", () => ({
     useNavigate: () => () => calls.navigate++,
   }));
@@ -74,14 +77,19 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   const artifact = { ...(await import("@/features/artifact")) };
   mock.module("@/features/artifact", () => ({
     ...artifact,
-    useActiveContentPath: () => "page.md",
+    useActiveContentPath: () => activeContentPath,
     useActiveContentSpaceId: () => null,
     useCloseActiveContent: () => () => {},
   }));
   const gitAppShell = { ...(await import("@/features/git/app-shell")) };
   mock.module("@/features/git/app-shell", () => ({
     ...gitAppShell,
-    commitSaveScopeAndMaybeSync() {},
+    commitSaveScopeAndMaybeSync: async () => {
+      saves.commits++;
+      return null;
+    },
+    notifyGitCommitRefusal: (refusal: { title: string }) =>
+      saves.refusals.push(refusal.title),
     dirtyPathsForGitSaveScope: () => [],
     getGitSpaceStatus() {},
     gitSaveShortcutLabel: () => "",
@@ -105,7 +113,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
         activeRootPath,
         activeRootId: activeRootPath ? "root" : null,
         activeRootName: "Project",
-        rootSpaces: [],
+        rootSpaces,
         spaces: [],
         goHome: () => calls.home++,
       }),
@@ -114,7 +122,7 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   mock.module("@/features/scope-surfaces", () => ({
     ...scopeSurfaces,
     useScopeSurfaceStore: (selector: (state: unknown) => unknown) =>
-      selector({}),
+      selector({ surfaceByOwnerKey: {} }),
   }));
   mock.module("../model", () => ({
     useShellStore: () => ({ openAppSettings() {} }),
@@ -292,6 +300,38 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     }
     expect(calls.guard).toBe(5);
     expect(calls.navigate).toBe(3);
+  });
+  test("⇧⌘S of a Space screen refuses its commit while a Page of the Space holds a source conflict", async () => {
+    const { registerPageSaveOwner } = await import("@/features/git/editor");
+    let conflicted = true;
+    const release = registerPageSaveOwner("/project", "notes/plan.md", {
+      save: async () => null,
+      saveAll: async () => null,
+      sourceConflict: () =>
+        conflicted ? { title: "Plan", chooseVersion() {} } : null,
+    });
+    activeContentPath = null;
+    rootSpaces = [{ id: "root", path: "/project" }];
+    try {
+      await act(async () => {
+        root.render(<Shell />);
+      });
+      const save = () =>
+        act(async () => {
+          expect(
+            fire("KeyS", "s", true, { shiftKey: true }).defaultPrevented,
+          ).toBe(true);
+        });
+      await save();
+      expect(saves).toEqual({ commits: 0, refusals: ["Plan"] });
+      conflicted = false;
+      await save();
+      expect(saves).toEqual({ commits: 1, refusals: ["Plan"] });
+    } finally {
+      release();
+      activeContentPath = "page.md";
+      rootSpaces = [];
+    }
   });
   test("the Home shell takes Search of its active project, but no terminal panel or ⌘0", async () => {
     for (const mac of [true, false]) {

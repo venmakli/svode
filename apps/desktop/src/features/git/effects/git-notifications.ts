@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { toGitPublicationBlock } from "../api/git-sync-error";
 import { syncStopFromResult, type GitSyncOutcome } from "../model";
+import type { GitCommitRefusal } from "../model/page-save-owner";
 import { gitSyncStopTitle } from "../ui/git-sync-stop-copy";
 
 export function notifyGitSyncConflict(fileCount: number): void {
@@ -70,4 +71,17 @@ export function notifyGitResolveOutcome(
     return;
   }
   notifyGitSyncOutcome(outcome);
+}
+
+/** A refused explicit commit outside the Page and "Changes": names the Page and leads to its version choice. */
+export function notifyGitCommitRefusal(refusal: GitCommitRefusal): void {
+  toast.warning(
+    m.git_commit_refused_source_conflict({ title: refusal.title }),
+    {
+      action: {
+        label: m.git_commit_refused_choose_version(),
+        onClick: () => refusal.chooseVersion(),
+      },
+    },
+  );
 }

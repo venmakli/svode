@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FileDiff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { refreshGitStatus, useGitStore } from "@/features/git";
+import type { GitCommitRefusal } from "@/features/git/editor";
 import { PeekCloseButton } from "@/shared/ui/peek-top-bar";
 import * as m from "@/paraglide/messages.js";
 import {
@@ -153,6 +154,8 @@ function ChangesSheetContent({
   );
   const reader = useMemo(() => createItemReader(), []);
   const save = useChangesSave(target, open);
+  // The version choice opens once "Changes" has closed and let go of focus.
+  const versionChoiceRef = useRef<GitCommitRefusal | null>(null);
 
   return (
     <SheetContent
@@ -175,6 +178,13 @@ function ChangesSheetContent({
           ? "bg-transparent backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
           : undefined
       }
+      onCloseAutoFocus={(event) => {
+        const refusal = versionChoiceRef.current;
+        if (!refusal) return;
+        versionChoiceRef.current = null;
+        event.preventDefault();
+        refusal.chooseVersion();
+      }}
     >
       <ChangesBody
         key={`${scope.kind}:${scope.path}`}
@@ -191,6 +201,10 @@ function ChangesSheetContent({
         dirty={dirty}
         statusError={statusError}
         fileScope={scope.kind === "file"}
+        onChooseVersion={(refusal) => {
+          versionChoiceRef.current = refusal;
+          onClose();
+        }}
       />
       <div className="absolute top-3 right-3">
         <PeekCloseButton onClick={onClose} />

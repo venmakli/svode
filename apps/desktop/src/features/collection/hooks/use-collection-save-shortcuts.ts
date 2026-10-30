@@ -3,8 +3,10 @@ import { toast } from "sonner";
 import {
   commitSaveScopeAndMaybeSync,
   dirtyPathsForGitSaveScope,
+  explicitCommitRefusal,
   getGitSpaceStatus,
   gitSaveShortcutLabel,
+  notifyGitCommitRefusal,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
   type GitSaveScope,
@@ -48,6 +50,11 @@ export function useCollectionSaveShortcuts({
       });
 
       if (event.shiftKey) {
+        const refusal = explicitCommitRefusal(spacePath, saveAllScope);
+        if (refusal) {
+          notifyGitCommitRefusal(refusal);
+          return;
+        }
         void commitSaveScopeAndMaybeSync(
           spacePath,
           saveAllScope,

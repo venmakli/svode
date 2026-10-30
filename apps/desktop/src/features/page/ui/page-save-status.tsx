@@ -12,6 +12,7 @@ import { PageSaveRecoveryDialog } from "./page-save-recovery-dialog";
 /**
  * The save state in the title row: while the session holds a blocked draft,
  * a "Not saved" indicator replaces `children` and opens the recovery Dialog.
+ * A commit refused for a source conflict opens it too, saying so.
  */
 export function PageSaveStatus({
   children,
@@ -28,6 +29,7 @@ export function PageSaveStatus({
 }) {
   const session = usePageSurfaceSession();
   const {
+    commitRefusalRequest,
     persistenceError,
     recovery,
     registerRecoveryElement,
@@ -45,6 +47,15 @@ export function PageSaveStatus({
   );
   const reason = block ? pageSaveBlockReason(block) : null;
   const [open, setOpen] = useState(false);
+  const [refusal, setRefusal] = useState({
+    request: commitRefusalRequest,
+    shown: false,
+  });
+  if (refusal.request !== commitRefusalRequest) {
+    const shown = block?.kind === "conflict";
+    setRefusal({ request: commitRefusalRequest, shown });
+    if (shown) setOpen(true);
+  }
   // A resolved block closes its Dialog; the next block never opens it.
   if (open && !block) setOpen(false);
   const indicatorRef = useRef<HTMLButtonElement | null>(null);
@@ -87,7 +98,10 @@ export function PageSaveStatus({
           aria-haspopup="dialog"
           aria-label={m.page_save_blocked_label({ reason: reason ?? "" })}
           data-page-save-block={block.kind}
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            setRefusal((current) => ({ ...current, shown: false }));
+            setOpen(true);
+          }}
         >
           <TriangleAlert data-icon="inline-start" />
           {m.page_save_blocked()}
@@ -100,10 +114,14 @@ export function PageSaveStatus({
       </span>
       <PageSaveRecoveryDialog
         block={block}
+        commitRefused={refusal.shown}
         open={open && blocked}
         retryDisabled={Boolean(onRetry) && session.readOnly}
         title={title}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setRefusal((current) => ({ ...current, shown: false }));
+          setOpen(false);
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (handoffRef.current) {

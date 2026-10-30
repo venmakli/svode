@@ -20,8 +20,10 @@ import {
 import {
   commitSaveScopeAndMaybeSync,
   dirtyPathsForGitSaveScope,
+  explicitCommitRefusal,
   getGitSpaceStatus,
   gitSaveShortcutLabel,
+  notifyGitCommitRefusal,
   type GitSaveScope,
   type GitSaveScopeLabel,
 } from "@/features/git/app-shell";
@@ -139,6 +141,11 @@ export function useKeyboardShortcuts() {
         if (saveRoute === "blocked") {
           return;
         } else if (saveRoute === "descendants") {
+          const refusal = explicitCommitRefusal(activeScopeSpace.path, scope);
+          if (refusal) {
+            notifyGitCommitRefusal(refusal);
+            return;
+          }
           void commitSaveScopeAndMaybeSync(
             activeScopeSpace.path,
             scope,

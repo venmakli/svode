@@ -394,6 +394,64 @@ domTest("a source conflict holds navigation and offers both explicit choices in 
   }
 });
 
+domTest("a refused commit opens the conflict Dialog at once with its line, the indicator without it", async () => {
+  const page = await renderPage("local", { renderRecovery: true });
+  try {
+    const document = page.dom.window.document;
+    const refusedLine = () =>
+      document.querySelector("[data-page-commit-refused]")?.textContent ??
+      null;
+    // Without a source conflict a refusal request opens nothing.
+    await act(async () => {
+      page.session().showCommitRefusal();
+      await settle();
+    });
+    expect(document.querySelector("[role=dialog]")).toBeNull();
+
+    for (const status of ["ready", "read_failed"] as const) {
+      await act(async () =>
+        page.session().reportSourceConflict({
+          status,
+          pending: null,
+          failure: null,
+          writeDraft: () => undefined,
+          loadFile: () => undefined,
+          retryRead: () => undefined,
+        }),
+      );
+      expect(document.querySelector("[role=dialog]")).toBeNull();
+      await act(async () => {
+        page.session().showCommitRefusal();
+        await settle();
+      });
+      const dialog = document.querySelector<HTMLElement>("[role=dialog]")!;
+      expect(dialog.dataset.pageSaveRecovery).toBe("conflict");
+      expect(refusedLine()).toBe(
+        "Nothing was committed. Choose a version, then try again.",
+      );
+      expect(dialog.contains(document.activeElement)).toBe(true);
+
+      // Closing without a choice keeps the draft and returns to the indicator.
+      await act(async () => {
+        buttonWithText(page.dom, "Close").click();
+        await settle();
+      });
+      expect(document.querySelector("[role=dialog]")).toBeNull();
+      expect(document.activeElement).toBe(indicatorOf(page.dom));
+
+      await openRecovery(page.dom);
+      expect(document.querySelector("[role=dialog]") === null).toBe(false);
+      expect(refusedLine()).toBeNull();
+      await act(async () => {
+        buttonWithText(page.dom, "Close").click();
+        await settle();
+      });
+    }
+  } finally {
+    await page.cleanup();
+  }
+});
+
 domTest("a failed fresh read offers only reading again", async () => {
   const page = await renderPage("local", { renderRecovery: true });
   try {

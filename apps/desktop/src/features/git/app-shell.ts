@@ -7,8 +7,10 @@ export { SpaceGitWatcher } from "./ui/space-git-watcher";
 export {
   commitSaveScopeAndMaybeSync,
   dirtyPathsForGitSaveScope,
+  explicitCommitRefusal,
   getGitSpaceStatus,
   gitSaveShortcutLabel,
+  notifyGitCommitRefusal,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
   type GitSaveScope,

@@ -4,11 +4,18 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import { NodeApi, type Descendant, type TElement } from "platejs";
 import { createPlateEditor, type PlateEditor } from "platejs/react";
 import type { Page, PageSourceConflict } from "@/features/page";
+import {
+  refreshGitSpaceStatus,
+  registerPageSaveOwner,
+  type GitCommitRefusal,
+  type GitSaveScope,
+} from "@/features/git/editor";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { createTestDom } from "@/shared/testing/dom";
 import type { ConflictElement } from "../conflict/parse-conflicts";
 import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
+import { useEditorStore } from "../model";
 import { EditorKit } from "../plate/editor-kit";
 import { useEditorDocumentWriter } from "./use-editor-document-writer";
 
@@ -30,8 +37,10 @@ function page(path: string, body: string, version: string): Page {
 
 async function harness(path: string, body: string, markerSize = 7) {
   const dom = await createTestDom();
-  const disk = { body, version: "v1" };
+  const disk = { body, version: "v1", readFails: false, dirty: false };
   const writes: WriteCall[] = [];
+  const commits: { command: string; paths: string[] }[] = [];
+  const versionChoices: string[] = [];
   const markerSizeReads: string[] = [];
   const conflicts: (PageSourceConflict | null)[] = [];
   let reads = 0;
@@ -39,7 +48,17 @@ async function harness(path: string, body: string, markerSize = 7) {
     const input = args as Record<string, string>;
     if (command === "read_page") {
       reads += 1;
+      if (disk.readFails) throw new Error("Synthetic read failure");
       return page(path, disk.body, disk.version);
+    }
+    if (command.startsWith("git_commit_")) {
+      commits.push({
+        command,
+        paths: (args as { filePaths?: string[]; filePath?: string })
+          .filePaths ?? [input.filePath],
+      });
+      disk.dirty = false;
+      return { files: [] };
     }
     if (command === "write_page_body") {
       if (input.sourceVersion !== disk.version) throw { kind: "source_stale" };
@@ -52,7 +71,8 @@ async function harness(path: string, body: string, markerSize = 7) {
       disk.version = `v${writes.length + 1}`;
       return { write_nonce: `n${writes.length}`, source_version: disk.version };
     }
-    if (command === "git_status") return { files: [] };
+    if (command === "git_status")
+      return { files: disk.dirty ? [{ path, state: "modified" }] : [] };
     if (command === "git_conflict_marker_size") {
       markerSizeReads.push(input.path);
       return markerSize;
@@ -105,6 +125,23 @@ async function harness(path: string, body: string, markerSize = 7) {
     useEffect(() => {
       writerRef.current = writer;
     });
+    const { handleSave, handleSaveAll, hasSourceConflict } = writer;
+    // The owner the Page session registers for the commits of this window.
+    useEffect(
+      () =>
+        registerPageSaveOwner(SPACE, path, {
+          save: handleSave,
+          saveAll: handleSaveAll,
+          sourceConflict: () =>
+            hasSourceConflict()
+              ? {
+                  title: "Plan",
+                  chooseVersion: () => versionChoices.push(path),
+                }
+              : null,
+        }),
+      [handleSave, handleSaveAll, hasSourceConflict],
+    );
     return null;
   }
 
@@ -112,10 +149,24 @@ async function harness(path: string, body: string, markerSize = 7) {
   // Loads the source the way discarding a draft does: editor value and baseline.
   await act(() => writerRef.current!.discardPendingSource());
 
+  const commit = async (
+    run: (
+      writer: ReturnType<typeof useEditorDocumentWriter>,
+    ) => Promise<GitCommitRefusal | null>,
+  ) => {
+    let refusal: GitCommitRefusal | null = null;
+    await act(async () => {
+      refusal = await run(writerRef.current!);
+    });
+    return refusal as GitCommitRefusal | null;
+  };
+
   return {
     editor,
     writes,
+    commits,
     conflicts,
+    versionChoices,
     disk,
     markerSizeReads,
     reads: () => reads,
@@ -130,6 +181,11 @@ async function harness(path: string, body: string, markerSize = 7) {
     },
     reconcile: () =>
       act(() => writerRef.current!.reconcileExternalChange(path)),
+    /** ⌘S of the Page. */
+    commitPage: () => commit((writer) => writer.handleSave()),
+    /** ⇧⌘S of the Page, or the area commit "Changes" sends to its owner. */
+    commitArea: (scope?: GitSaveScope) =>
+      commit((writer) => writer.handleSaveAll(scope)),
     cleanup: async () => {
       clearNativeMocks();
       await dom.dispose();
@@ -321,6 +377,117 @@ test("a reloaded CRLF source parses blocks with the marker size of its path and 
       "# Plan\n\nStatus: remote edit\n\nFooter\n",
     ]);
   } finally {
+    await view.cleanup();
+  }
+});
+
+/** A draft of `path` whose source then changed outside Svode, reported as a conflict. */
+async function openSourceConflict(
+  path: string,
+  status: "ready" | "read_failed" = "ready",
+) {
+  const view = await harness(path, "Plan\n\nMiddle\n");
+  appendToBlock(view.editor, "Middle", " edited");
+  useEditorStore.getState().markUnsaved(SPACE, path);
+  view.holdDraft();
+  view.disk.body = "Changed outside\n";
+  view.disk.version = "v-external";
+  view.disk.readFails = status === "read_failed";
+  await view.reconcile();
+  expect(view.conflicts.at(-1)?.status).toBe(status);
+  // The external edit left the file changed in the working tree.
+  view.disk.dirty = true;
+  await act(() => refreshGitSpaceStatus(SPACE));
+  return view;
+}
+
+async function untilResolved(view: Awaited<ReturnType<typeof harness>>) {
+  await act(async () => {
+    for (let turn = 0; turn < 40 && view.conflicts.at(-1) !== null; turn++)
+      await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(view.conflicts.at(-1)).toBeNull();
+}
+
+for (const status of ["ready", "read_failed"] as const) {
+  test(`an explicit commit during a ${status} source conflict writes and commits nothing and returns the refusal`, async () => {
+    const path = `pages/refused-${status}.md`;
+    const view = await openSourceConflict(path, status);
+    try {
+      const space = { kind: "space", path: "", label: "space" } as const;
+      for (const refusal of [
+        await view.commitPage(),
+        await view.commitArea(),
+        await view.commitArea(space),
+      ]) {
+        expect(refusal?.path).toBe(path);
+        expect(refusal?.title).toBe("Plan");
+      }
+      expect(view.writes).toEqual([]);
+      expect(view.commits).toEqual([]);
+      // The surface of the entry presents the refusal, not the writer.
+      expect(view.versionChoices).toEqual([]);
+      (await view.commitPage())!.chooseVersion();
+      expect(view.versionChoices).toEqual([path]);
+    } finally {
+      await view.cleanup();
+    }
+  });
+}
+
+test("after loading the file version the next explicit commit commits the file version", async () => {
+  const path = "pages/refused-then-loaded.md";
+  const view = await openSourceConflict(path);
+  try {
+    expect((await view.commitPage()) === null).toBe(false);
+    await act(async () => view.conflicts.at(-1)!.loadFile());
+    await untilResolved(view);
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+
+    expect(await view.commitPage()).toBeNull();
+    expect(view.writes.map((write) => write.content)).toEqual([
+      "Changed outside\n",
+    ]);
+    expect(view.commits).toEqual([
+      { command: "git_commit_file", paths: [path] },
+    ]);
+
+    view.disk.dirty = true;
+    expect(await view.commitArea()).toBeNull();
+    expect(view.commits.at(-1)).toEqual({
+      command: "git_commit_paths",
+      paths: [path],
+    });
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("after writing my text the next explicit commit commits the editor text", async () => {
+  const path = "pages/refused-then-written.md";
+  const view = await openSourceConflict(path);
+  try {
+    expect((await view.commitArea()) === null).toBe(false);
+    await act(async () => view.conflicts.at(-1)!.writeDraft());
+    await untilResolved(view);
+    expect(view.commits).toEqual([]);
+
+    expect(await view.commitPage()).toBeNull();
+    expect(view.writes.at(-1)?.content).toBe(serialized(view.editor));
+    expect(view.writes.at(-1)?.content.includes("Middle edited")).toBe(true);
+    expect(view.commits).toEqual([
+      { command: "git_commit_file", paths: [path] },
+    ]);
+
+    view.disk.dirty = true;
+    useEditorStore.getState().markUnsaved(SPACE, path);
+    expect(await view.commitArea()).toBeNull();
+    expect(view.commits.at(-1)).toEqual({
+      command: "git_commit_paths",
+      paths: [path],
+    });
+  } finally {
+    useEditorStore.getState().clearUnsaved(SPACE, path);
     await view.cleanup();
   }
 });

@@ -45,6 +45,8 @@ interface PlateDocumentEditorProps {
   /** The host already shows that saving is blocked: an explicit save failure stays silent. */
   saveFailureShown?: () => boolean;
   onSourceConflict?: (conflict: PageSourceConflict | null) => void;
+  /** Opens the source conflict recovery after an explicit commit was refused. */
+  onCommitRefused?: () => void;
 }
 
 export function PlateDocumentEditor({
@@ -65,6 +67,7 @@ export function PlateDocumentEditor({
   onWriteAccessError,
   saveFailureShown,
   onSourceConflict,
+  onCommitRefused,
 }: PlateDocumentEditorProps) {
   const editor = usePlateEditor({
     plugins: EditorKit,
@@ -98,6 +101,7 @@ export function PlateDocumentEditor({
     onWriteAccessError,
     saveFailureShown,
     onSourceConflict,
+    onCommitRefused,
   });
 
   useEffect(() => {

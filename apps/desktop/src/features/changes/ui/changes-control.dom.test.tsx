@@ -74,10 +74,13 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         if (failSave) throw new Error("Synthetic save failure");
         dirty = false;
         await refreshGitStatus("/project");
+        return null;
       },
       saveAll: async () => {
         savedAll++;
+        return null;
       },
+      sourceConflict: () => null,
     });
     const root = createRoot(dom.window.document.getElementById("app")!);
     try {
@@ -349,13 +352,16 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     const release = registerPageSaveOwner("/aggregate", "contract/README.md", {
       save: async () => {
         saveCurrent++;
+        return null;
       },
       saveAll: async (scope) => {
         scopes.push(scope);
         if (failSave) throw new Error("Synthetic scoped failure");
         files = files.filter((file) => !file.path.startsWith("contract/"));
         await refreshGitStatus("/aggregate");
+        return null;
       },
+      sourceConflict: () => null,
     });
     const root = createRoot(dom.window.document.getElementById("app")!);
     const doc = dom.window.document;
@@ -1411,7 +1417,8 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
           new Promise((_, reject) => {
             rejectOld = reject;
           }),
-        saveAll: async () => {},
+        saveAll: async () => null,
+        sourceConflict: () => null,
       }),
       registerPageSaveOwner("/df118-switch", "new.md", {
         save: async () => {
@@ -1424,7 +1431,8 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
             pathSample: "new.md",
           };
         },
-        saveAll: async () => {},
+        saveAll: async () => null,
+        sourceConflict: () => null,
       }),
     ];
     const root = createRoot(dom.window.document.getElementById("app")!);
@@ -1519,6 +1527,165 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         await nextFrame(dom);
       });
       releases.forEach((release) => release());
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
+  test("a source conflict of an open Page refuses the commit and leads from the Alert to its version choice", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    const base = {
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      hasStaged: false,
+      hasUnstaged: true,
+      hasConflicts: false,
+      tracking: null,
+    };
+    let files = [
+      { path: "notes/alpha.md", state: "modified" },
+      { path: "notes/bravo.md", state: "modified" },
+      { path: "other.md", state: "modified" },
+    ];
+    const commits: string[] = [];
+    mockNativeIpc(
+      (command) => {
+        if (command === "git_status") return { ...base, files };
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "df223-repo",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_working_tree_item") return null;
+        if (command === "git_inspection_stats")
+          return { generation: "", items: [] };
+        if (command.startsWith("git_commit_")) {
+          commits.push(command);
+          files = [];
+          return { ...base, files };
+        }
+        if (command === "git_get_user_policy") return { autoSync: false };
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { explicitCommitRefusal, registerPageSaveOwner } =
+      await import("@/features/git/editor");
+    const space = "/df223";
+    let conflicted = true;
+    const choices: string[] = [];
+    const owner = (path: string, title: string) =>
+      registerPageSaveOwner(space, path, {
+        // The editor owner decides with the same predicate before writing.
+        save: async () =>
+          explicitCommitRefusal(space, { kind: "file", path, label: "page" }),
+        saveAll: async (scope) =>
+          explicitCommitRefusal(
+            space,
+            scope ?? { kind: "file", path, label: "page" },
+          ),
+        sourceConflict: () =>
+          conflicted
+            ? { title, chooseVersion: () => choices.push(title) }
+            : null,
+      });
+    const releases = [
+      owner("notes/bravo.md", "Bravo"),
+      owner("notes/charlie.md", "Charlie"),
+    ];
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const doc = dom.window.document;
+    const render = (target: Parameters<typeof ChangesControl>[0]["target"]) =>
+      act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl target={target} />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+    const button = (text: string) =>
+      [...doc.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
+        node.textContent?.startsWith(text),
+      )!;
+    const click = (node: HTMLElement) =>
+      act(async () => {
+        node.click();
+        await nextFrame(dom);
+        await nextFrame(dom);
+      });
+    const alert = () =>
+      doc.querySelector("[data-changes-commit-refused]")?.textContent ?? null;
+    const refusalText =
+      "Nothing was committed: the file of “Bravo” changed outside Svode and your text isn't written yet. Choose a version, then try again.Choose version";
+    try {
+      // The open Page: its owner refuses before writing.
+      await render({
+        kind: "page",
+        sourceShape: "file",
+        spacePath: space,
+        path: "notes/bravo.md",
+        name: "bravo.md",
+      });
+      await click(doc.querySelector<HTMLElement>("[data-changes-trigger]")!);
+      await click(button("Save"));
+      expect(alert()).toBe(refusalText);
+      expect(commits).toEqual([]);
+      expect(doc.querySelector('[data-slot="alert"][class*="destructive"]')).toBeNull();
+      // Saving stays available, and the choice leaves "Changes" first.
+      expect(button("Save").disabled).toBe(false);
+      await click(button("Choose version"));
+      expect(doc.querySelector("[data-changes-commit-refused]")).toBeNull();
+      expect(doc.querySelector('[data-slot="sheet-content"]')).toBeNull();
+      expect(choices).toEqual(["Bravo"]);
+
+      // A folder without an owner: the area holds the Page, the first by path.
+      await render({
+        kind: "owner",
+        sourceShape: "directory",
+        spacePath: space,
+        path: "notes/README.md",
+        name: "notes",
+      });
+      await click(doc.querySelector<HTMLElement>("[data-changes-trigger]")!);
+      await click(button("Save all"));
+      expect(alert()).toBe(refusalText);
+      expect(commits).toEqual([]);
+      await click(button("Choose version"));
+      expect(choices).toEqual(["Bravo", "Bravo"]);
+
+      // The Space: refused while the conflict is open, committed as usual after.
+      await render({
+        kind: "space",
+        sourceShape: "directory",
+        spacePath: space,
+        path: "README.md",
+        name: "Space",
+      });
+      await click(doc.querySelector<HTMLElement>("[data-changes-trigger]")!);
+      await click(button("Save all"));
+      expect(alert()).toBe(refusalText);
+      expect(commits).toEqual([]);
+      conflicted = false;
+      await click(button("Save all"));
+      expect(alert()).toBeNull();
+      expect(commits).toEqual(["git_commit_paths"]);
+    } finally {
+      releases.forEach((release) => release());
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
       clearNativeMocks();
       restore();
       dom.window.close();

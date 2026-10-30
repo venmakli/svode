@@ -34,6 +34,8 @@ import {
 } from "./use-page-persistence";
 
 interface PageSurfaceSessionContextValue {
+  /** Changes each time an explicit commit is refused for this Page's source conflict. */
+  commitRefusalRequest: number;
   /** Drops the unsaved drafts and rereads the saved source; false if it failed. */
   discard: () => Promise<boolean>;
   persistenceError: string | null;
@@ -68,6 +70,8 @@ interface PageSurfaceSessionContextValue {
   runMutation: (operation: () => Promise<void>) => Promise<void>;
   /** Resolves once the saves and mutations queued so far have finished. */
   settled: () => Promise<void>;
+  /** Opens the source conflict recovery of this Page after a refused commit. */
+  showCommitRefusal: () => void;
   sourceConflict: PageSourceConflict | null;
 }
 
@@ -182,6 +186,11 @@ function PageSurfaceSession({
   const registerRecoveryElement = useCallback((element: HTMLElement | null) => {
     recoveryElementRef.current = element;
   }, []);
+  const [commitRefusalRequest, setCommitRefusalRequest] = useState(0);
+  const showCommitRefusal = useCallback(
+    () => setCommitRefusalRequest((request) => request + 1),
+    [],
+  );
   const titleRef = useRef(displayName);
   const registerTitle = useCallback((title: string) => {
     titleRef.current = title;
@@ -234,6 +243,7 @@ function PageSurfaceSession({
 
   const value = useMemo<PageSurfaceSessionContextValue>(
     () => ({
+      commitRefusalRequest,
       discard,
       persistenceError,
       prepareForNavigation,
@@ -249,9 +259,11 @@ function PageSurfaceSession({
       retryPersistence,
       runMutation,
       settled,
+      showCommitRefusal,
       sourceConflict,
     }),
     [
+      commitRefusalRequest,
       discard,
       persistenceError,
       prepareForNavigation,
@@ -267,6 +279,7 @@ function PageSurfaceSession({
       retryPersistence,
       runMutation,
       settled,
+      showCommitRefusal,
       sourceConflict,
     ],
   );

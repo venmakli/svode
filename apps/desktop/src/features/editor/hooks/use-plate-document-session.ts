@@ -42,6 +42,8 @@ interface UsePlateDocumentSessionInput {
   ) => Promise<boolean>;
   saveFailureShown?: () => boolean;
   onSourceConflict?: (conflict: PageSourceConflict | null) => void;
+  /** Opens the source conflict recovery after an explicit commit was refused. */
+  onCommitRefused?: () => void;
 }
 
 interface UsePlateDocumentSessionResult {
@@ -74,6 +76,7 @@ export function usePlateDocumentSession({
   onWriteAccessError,
   saveFailureShown,
   onSourceConflict,
+  onCommitRefused,
 }: UsePlateDocumentSessionInput): UsePlateDocumentSessionResult {
   const activeDocument = useActiveContentPath();
   const activeDocumentSpaceId = useActiveContentSpaceId();
@@ -208,6 +211,7 @@ export function usePlateDocumentSession({
     flushPendingSource,
     handleSave,
     handleSaveAll,
+    hasSourceConflict,
     reconcileExternalChange,
     scheduleAutoSave,
   } = useEditorDocumentWriter({
@@ -244,13 +248,37 @@ export function usePlateDocumentSession({
     return registerPageSaveOwner(spacePath, currentDocument, {
       save: handleSave,
       saveAll: handleSaveAll,
+      sourceConflict: () =>
+        hasSourceConflict()
+          ? {
+              title: titleRef.current || currentDocument,
+              chooseVersion: () => onCommitRefused?.(),
+            }
+          : null,
     });
-  }, [spacePath, currentDocument, handleSave, handleSaveAll]);
+  }, [
+    spacePath,
+    currentDocument,
+    handleSave,
+    handleSaveAll,
+    hasSourceConflict,
+    onCommitRefused,
+    titleRef,
+  ]);
 
+  // In the Page a refused commit opens the version choice right away.
+  const saveFromShortcut = useCallback(
+    async () => (await handleSave())?.chooseVersion(),
+    [handleSave],
+  );
+  const saveAllFromShortcut = useCallback(
+    async () => (await handleSaveAll())?.chooseVersion(),
+    [handleSaveAll],
+  );
   useEditorSaveShortcuts({
     disabled: readOnly,
-    onSave: handleSave,
-    onSaveAll: handleSaveAll,
+    onSave: saveFromShortcut,
+    onSaveAll: saveAllFromShortcut,
   });
 
   useFileWatcher({

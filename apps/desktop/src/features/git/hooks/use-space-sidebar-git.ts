@@ -3,7 +3,9 @@ import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
 import { useRepositoryAccessPreflight } from "./use-repository-access-preflight";
 import { commitAllSpace } from "../api/git-actions";
+import { notifyGitCommitRefusal } from "../effects/git-notifications";
 import { useGitStore, type GitCloneProgress } from "../model";
+import { explicitCommitRefusal } from "../model/page-save-owner";
 import { useGitWatch } from "./use-git-watch";
 
 export type SpaceSidebarGitCloneProgress = GitCloneProgress;
@@ -30,6 +32,15 @@ export function useSpaceSidebarGit(
   });
   const commitAll = useCallback(() => {
     const run = async () => {
+      const refusal = explicitCommitRefusal(spacePath, {
+        kind: "space",
+        path: "",
+        label: "space",
+      });
+      if (refusal) {
+        notifyGitCommitRefusal(refusal);
+        return;
+      }
       try {
         await commitAllSpace(spacePath, projectPath);
         setPending(false);
