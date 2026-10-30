@@ -1008,3 +1008,30 @@ async fn df_154_title_rename_rewrites_percent_encoded_links_in_their_form() {
         "[Roadmap 2027](../../Roadmap%202027.md)\n"
     );
 }
+
+#[tokio::test]
+async fn df_251_title_rename_plans_a_source_that_links_only_by_definition() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let state = linked_project(root, "Plan.md", &[]).await;
+    let refonly = "[Plan][p]\n\n[p]: Plan.md \"Title\"\n";
+    fs::write(root.join("RefOnly.md"), refonly).unwrap();
+    let requests = std::sync::Mutex::new(Vec::new());
+
+    let renamed = save_denied(root, root, "Plan.md", "Roadmap", &state, &[], &requests)
+        .await
+        .unwrap();
+
+    assert_eq!(renamed.result.new_path.as_deref(), Some("Roadmap.md"));
+    let requests = requests.into_inner().unwrap();
+    assert!(
+        requests
+            .iter()
+            .any(|paths| paths.contains(&root.join("RefOnly.md"))),
+        "{requests:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("RefOnly.md")).unwrap(),
+        refonly
+    );
+}

@@ -2176,3 +2176,36 @@ async fn service_files_removed_with_a_folder_page_join_its_structural_commit() {
         );
     }
 }
+
+#[tokio::test]
+async fn df_251_link_plans_include_sources_that_link_only_by_definition() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::create_dir_all(root.join("Folder")).unwrap();
+    fs::write(root.join("Plan.md"), "Plan.\n").unwrap();
+    fs::write(root.join("Folder/Doc.md"), "Doc.\n").unwrap();
+    fs::write(root.join("RefOnly.md"), "[Plan][p]\n\n[p]: Plan.md\n").unwrap();
+    fs::write(
+        root.join("FolderRef.md"),
+        "> [Doc][d]\n>\n> [d]: <Folder/Doc.md>\n",
+    )
+    .unwrap();
+    let space = root.to_str().unwrap();
+    let state = IndexRuntimeState::default();
+
+    let page = super::backlink_mutation_paths(&state, space, Some(space), "Plan.md", false)
+        .await
+        .unwrap();
+    assert!(page.contains(&root.join("RefOnly.md")), "{page:?}");
+    assert!(!page.contains(&root.join("FolderRef.md")), "{page:?}");
+    let folder = super::backlink_mutation_paths(&state, space, Some(space), "Folder", true)
+        .await
+        .unwrap();
+    assert!(folder.contains(&root.join("FolderRef.md")), "{folder:?}");
+    let moved =
+        super::plan::move_mutation_paths(&state, space, Some(space), "Plan.md", "Folder/Plan.md")
+            .await
+            .unwrap();
+    assert!(moved.contains(&root.join("RefOnly.md")), "{moved:?}");
+}

@@ -242,6 +242,12 @@ pub fn replace_body_preserving_frontmatter(
     Ok(format!("{prefix}{separator}{body}"))
 }
 
+/// Byte offset where the body of a Markdown file starts: after its
+/// frontmatter block, or 0 without one.
+pub(crate) fn body_start(content: &str) -> usize {
+    split_frontmatter(content).map_or(0, |parts| parts.body_start)
+}
+
 fn split_frontmatter(content: &str) -> Result<FrontmatterParts, FrontmatterError> {
     let leading_len = content.len() - content.trim_start().len();
     let trimmed = &content[leading_len..];

@@ -749,4 +749,118 @@ mod tests {
         .unwrap();
         assert_eq!(members, vec!["tasks/b/README.md".to_string()]);
     }
+
+    /// `Index.md` reaches `Plan.md` and the missing `Nope.md` only through
+    /// link reference definitions; the code block definition is no link.
+    fn write_definition_link_project(project: &Path) {
+        std::fs::create_dir_all(project.join(".svode")).unwrap();
+        std::fs::write(project.join("Plan.md"), "---\ntitle: Plan\n---\nPlan\n").unwrap();
+        std::fs::write(
+            project.join("Index.md"),
+            "---\ntitle: Index\n---\n[Plan][p] and [Gone][g]\n\n[p]: Plan.md \"Title\"\n[g]: <Nope.md>\n\n```\n[c]: Code.md\n```\n",
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn df_251_definitions_are_knowledge_edges_backlinks_and_broken_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        write_definition_link_project(project);
+        let state = IndexState::default();
+        repair_root(&state, project).await;
+
+        assert_eq!(
+            index_link_edges(&state, project).await,
+            vec![
+                ("Nope.md".to_string(), "broken".to_string()),
+                ("Plan.md".to_string(), "ready".to_string()),
+            ]
+        );
+        let graph = read_project_knowledge(
+            &state,
+            project,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            KnowledgeFilters {
+                node_kinds: Some(Vec::new()),
+                neighbor: Some(KnowledgeSource {
+                    space_id: None,
+                    path: "Plan.md".to_string(),
+                    kind: "page".to_string(),
+                }),
+                ..KnowledgeFilters::default()
+            },
+        )
+        .await;
+        assert!(graph.edges.iter().any(|edge| {
+            edge.kind == "links_to"
+                && edge.source.path == "Index.md"
+                && edge.target_status == "ready"
+        }));
+        assert_eq!(count_broken_links(&state, project).await.unwrap(), 1);
+
+        state.ensure_project_backlinks_built(project).await.unwrap();
+        let backlinks = state
+            .backlinks_for(&IndexKey::Root(project.to_path_buf()))
+            .await
+            .get_backlinks("Plan.md");
+        assert_eq!(backlinks.len(), 1);
+        assert_eq!(backlinks[0].source_path, "Index.md");
+        assert_eq!(backlinks[0].link_count, 1);
+    }
+
+    #[tokio::test]
+    async fn df_251_index_of_the_previous_schema_is_rebuilt_with_definition_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        write_definition_link_project(project);
+        let key = IndexKey::Root(project.to_path_buf());
+        let state = IndexState::default();
+        repair_root(&state, project).await;
+        // Leave the rows the previous version wrote: no link rows for
+        // definitions.
+        let pool = state.get_or_create(&key).await.unwrap();
+        sqlx::query("DELETE FROM knowledge_links WHERE source_path = 'Index.md'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM broken_links")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE schema_version SET version = ?")
+            .bind(crate::index::db::SCHEMA_VERSION - 1)
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.close_project(project).await;
+        let before = std::fs::read(project.join("Index.md")).unwrap();
+
+        let state = IndexState::default();
+        let pool = state.get_or_create(&key).await.unwrap();
+        IndexUpdateState::new(Arc::new(RoutineStoreState::new()))
+            .reconcile_space(&state, &key, None::<&SystemGitDateExecutor>)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            index_link_edges(&state, project).await,
+            vec![
+                ("Nope.md".to_string(), "broken".to_string()),
+                ("Plan.md".to_string(), "ready".to_string()),
+            ]
+        );
+        let broken: Vec<String> = sqlx::query_scalar("SELECT target_url FROM broken_links")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(broken, vec!["Nope.md".to_string()]);
+        assert_eq!(std::fs::read(project.join("Index.md")).unwrap(), before);
+    }
 }

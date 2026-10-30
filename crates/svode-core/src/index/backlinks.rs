@@ -7,7 +7,7 @@ use crate::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 use crate::index::IndexError;
 use crate::page::filename;
 use crate::page::links::{
-    LinkDestinationStyle, MarkdownLink, escape_literal_percent,
+    LinkDestinationStyle, MarkdownLink, MarkdownLinkKind, escape_literal_percent,
     normalize_link_path_preserve_parent, parse_markdown_link_nodes, percent_decode_link_path,
     percent_encode_link_path,
 };
@@ -465,7 +465,11 @@ fn rewrite_links<F>(content: &str, mut replacement: F) -> String
 where
     F: FnMut(&MarkdownLink) -> Option<(String, Option<String>)>,
 {
-    let links = parse_markdown_link_nodes(content);
+    // Definitions keep their bytes: only inline links are rewritten.
+    let links: Vec<MarkdownLink> = parse_markdown_link_nodes(content)
+        .into_iter()
+        .filter(|link| link.kind == MarkdownLinkKind::Inline)
+        .collect();
     if links.is_empty() {
         return content.to_string();
     }
@@ -1169,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_markdown_links_skip_images_external_reference_style() {
+    fn test_parse_markdown_links_skip_images_external_and_reference_uses() {
         let content = "\
 ![image](photo.md)
 [external](mailto:test@example.com)
@@ -1177,11 +1181,15 @@ mod tests {
 [ref][target]
 [local](target.md)
 
-[target]: ignored.md
+[target]: definition.md
 ";
         let links = parse_markdown_links(content);
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].0, "target.md");
+        let paths = links
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect::<Vec<_>>();
+        // The use `[ref][target]` is not a link; its definition is.
+        assert_eq!(paths, vec!["target.md", "definition.md"]);
     }
 
     #[test]
@@ -1319,6 +1327,87 @@ mod tests {
         // Index should now have entries for renamed-b.md
         assert_eq!(index.get_backlinks("renamed-b.md").len(), 1);
         assert_eq!(index.get_backlinks("b.md").len(), 0);
+    }
+
+    const DF_251_OTHER: &str = "\
+[plan](plan.md) [Plan][p] [plan.md][]
+
+[p]: ./plan.md \"Title\"
+[plan.md]: <plan.md>
+[unused]: plan.md
+
+```
+[code]: plan.md
+```
+";
+
+    #[test]
+    fn df_251_definitions_are_backlinks_and_validated_links() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("plan.md"), "Plan.\n").unwrap();
+        fs::write(ws.join("other.md"), DF_251_OTHER).unwrap();
+        fs::write(ws.join("refonly.md"), "[Plan][p]\n\n[p]: plan.md\n").unwrap();
+        fs::write(ws.join("gone.md"), "[Gone][g]\n\n[g]: missing.md\n").unwrap();
+
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+        let mut backlinks = index
+            .get_backlinks("plan.md")
+            .into_iter()
+            .map(|info| (info.source_path, info.link_count))
+            .collect::<Vec<_>>();
+        backlinks.sort();
+        // One inline link and three definitions; the code block holds none.
+        assert_eq!(
+            backlinks,
+            vec![("other.md".to_string(), 4), ("refonly.md".to_string(), 1)]
+        );
+
+        index.remove_file("refonly.md");
+        index.update_file(ws, "refonly.md").unwrap();
+        assert_eq!(index.get_backlinks("plan.md").len(), 2);
+
+        let validation = |path: &str| {
+            validate_links(ws, path)
+                .unwrap()
+                .into_iter()
+                .map(|item| (item.url, item.exists))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            validation("refonly.md"),
+            vec![("plan.md".to_string(), true)]
+        );
+        assert_eq!(
+            validation("gone.md"),
+            vec![("missing.md".to_string(), false)]
+        );
+    }
+
+    #[test]
+    fn df_251_rename_keeps_definition_bytes() {
+        let tmp = TempDir::new().unwrap();
+        let ws = tmp.path();
+        fs::write(ws.join("plan.md"), "Plan.\n").unwrap();
+        fs::write(ws.join("other.md"), DF_251_OTHER).unwrap();
+        fs::write(ws.join("refonly.md"), "[Plan][p]\n\n[p]: plan.md\n").unwrap();
+
+        let index = BacklinkIndex::new();
+        index.build(ws).unwrap();
+        let modified = index
+            .update_links_on_rename(ws, "plan.md", "Roadmap.md", Some("Roadmap"))
+            .unwrap();
+
+        assert_eq!(modified, vec!["other.md"]);
+        assert_eq!(
+            fs::read_to_string(ws.join("other.md")).unwrap(),
+            DF_251_OTHER.replace("[plan](plan.md)", "[Roadmap](Roadmap.md)")
+        );
+        assert_eq!(
+            fs::read_to_string(ws.join("refonly.md")).unwrap(),
+            "[Plan][p]\n\n[p]: plan.md\n"
+        );
     }
 
     #[test]

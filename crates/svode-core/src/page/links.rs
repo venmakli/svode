@@ -20,10 +20,26 @@ pub enum LinkDestinationStyle {
     },
 }
 
-/// Parsed ordinary inline Markdown link. Spans are byte offsets into the
-/// original content. Reference-style links and images are intentionally absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkdownLinkKind {
+    /// Inline link `[text](path.md)`.
+    Inline,
+    /// Link reference definition `[label]: path.md "title"`. It holds the
+    /// address of every reference link that uses its label, so it is the
+    /// link unit; uses such as `[text][label]` are not links of their own.
+    Definition,
+}
+
+/// Parsed internal Markdown link: an inline link or a link reference
+/// definition. Spans are byte offsets into the original content. Images and
+/// reference link uses are absent.
+///
+/// For an inline link the label is the link text between the brackets; for a
+/// definition it is the label between the brackets and `full_end` is the end
+/// of its title, or of its destination without a title.
 #[derive(Debug, Clone)]
 pub struct MarkdownLink {
+    pub kind: MarkdownLinkKind,
     pub full_start: usize,
     pub full_end: usize,
     pub label_start: usize,
@@ -35,11 +51,21 @@ pub struct MarkdownLink {
     pub style: LinkDestinationStyle,
 }
 
-/// Parse standard markdown links `[text](./path.md)` from content.
+/// Parse internal links of a Markdown file: inline links `[text](./path.md)`
+/// and link reference definitions `[label]: ./path.md` of its body.
 /// Returns vec of (normalized_target_path, LinkSpan).
 /// Only matches relative .md paths (not http, mailto, #anchors).
 pub fn parse_markdown_links(content: &str) -> Vec<(String, LinkSpan)> {
-    parse_markdown_link_nodes(content)
+    link_spans(parse_markdown_link_nodes(content))
+}
+
+/// Parse internal links of a Page body whose frontmatter is already removed.
+pub fn parse_markdown_body_links(body: &str) -> Vec<(String, LinkSpan)> {
+    link_spans(link_nodes(body, 0))
+}
+
+fn link_spans(links: Vec<MarkdownLink>) -> Vec<(String, LinkSpan)> {
+    links
         .into_iter()
         .map(|link| {
             (
@@ -53,7 +79,23 @@ pub fn parse_markdown_links(content: &str) -> Vec<(String, LinkSpan)> {
         .collect()
 }
 
+/// Internal links of a Markdown file in source order. Definitions are found
+/// only in the body after the frontmatter.
 pub fn parse_markdown_link_nodes(content: &str) -> Vec<MarkdownLink> {
+    link_nodes(content, crate::page::frontmatter::body_start(content))
+}
+
+fn link_nodes(content: &str, body_start: usize) -> Vec<MarkdownLink> {
+    let mut links = parse_inline_link_nodes(content);
+    let definitions = parse_definition_nodes(content, body_start);
+    if !definitions.is_empty() {
+        links.extend(definitions);
+        links.sort_by_key(|link| link.full_start);
+    }
+    links
+}
+
+fn parse_inline_link_nodes(content: &str) -> Vec<MarkdownLink> {
     let bytes = content.as_bytes();
     let mut links = Vec::new();
     let mut cursor = 0usize;
@@ -116,15 +158,9 @@ pub fn parse_markdown_link_nodes(content: &str) -> Vec<MarkdownLink> {
         let full_end = destination.full_end;
         let destination = destination.value;
         if let Some((path, anchor, form)) = parse_internal_markdown_destination(destination) {
-            let style = match style {
-                LinkDestinationStyle::Plain if form.decoded => {
-                    LinkDestinationStyle::PercentEncoded {
-                        non_ascii: form.non_ascii,
-                    }
-                }
-                style => style,
-            };
+            let style = written_style(style, form);
             links.push(MarkdownLink {
+                kind: MarkdownLinkKind::Inline,
                 full_start: open,
                 full_end,
                 label_start: open + 1,
@@ -140,6 +176,133 @@ pub fn parse_markdown_link_nodes(content: &str) -> Vec<MarkdownLink> {
     }
 
     links
+}
+
+fn written_style(style: LinkDestinationStyle, form: PercentForm) -> LinkDestinationStyle {
+    match style {
+        LinkDestinationStyle::Plain if form.decoded => LinkDestinationStyle::PercentEncoded {
+            non_ascii: form.non_ascii,
+        },
+        style => style,
+    }
+}
+
+/// Link reference definitions of the body that starts at `body_start`, as
+/// CommonMark recognizes them: at the start of a block and not as a paragraph
+/// continuation, also in block quotes and list items, never in code or HTML
+/// blocks. Footnote definitions `[^1]: ...` are footnotes, as in GFM.
+fn parse_definition_nodes(content: &str, body_start: usize) -> Vec<MarkdownLink> {
+    let body = &content[body_start..];
+    // Every definition has `]:` right after its label.
+    if !body.contains("]:") {
+        return Vec::new();
+    }
+    let mut options = markdown::ParseOptions::default();
+    options.constructs.gfm_footnote_definition = true;
+    // Only MDX constructs fail to parse, and they are off.
+    let Ok(tree) = markdown::to_mdast(body, &options) else {
+        return Vec::new();
+    };
+    let mut links = Vec::new();
+    let mut stack = vec![&tree];
+    while let Some(node) = stack.pop() {
+        if let markdown::mdast::Node::Definition(definition) = node {
+            if let Some(position) = &definition.position {
+                links.extend(
+                    definition_link(body, position.start.offset, position.end.offset).map(|link| {
+                        MarkdownLink {
+                            full_start: link.full_start + body_start,
+                            full_end: link.full_end + body_start,
+                            label_start: link.label_start + body_start,
+                            label_end: link.label_end + body_start,
+                            destination_outer_start: link.destination_outer_start + body_start,
+                            destination_outer_end: link.destination_outer_end + body_start,
+                            ..link
+                        }
+                    }),
+                );
+            }
+        } else if let Some(children) = node.children() {
+            stack.extend(children.iter().rev());
+        }
+    }
+    links
+}
+
+/// Read the label and destination of the definition the parser found at
+/// `start..end` of `body`.
+fn definition_link(body: &str, start: usize, end: usize) -> Option<MarkdownLink> {
+    let bytes = body.as_bytes();
+    let open = start + body.get(start..end)?.find('[')?;
+    let label_close = find_unescaped_byte(body, open + 1, b']').filter(|close| *close < end)?;
+    if bytes.get(label_close + 1) != Some(&b':') {
+        return None;
+    }
+
+    // The destination may follow on the next line, after the block quote
+    // markers of the containers the definition starts in.
+    let line_start = body[..open].rfind(['\n', '\r']).map_or(0, |idx| idx + 1);
+    let quote_markers = body[line_start..open].matches('>').count();
+    let mut cursor = skip_spaces(bytes, label_close + 2);
+    if let Some(line_end) = line_ending_len(bytes, cursor) {
+        cursor += line_end;
+        for _ in 0..quote_markers {
+            let marker = skip_spaces(bytes, cursor);
+            if bytes.get(marker) != Some(&b'>') {
+                break;
+            }
+            cursor = marker + 1;
+        }
+        cursor = skip_spaces(bytes, cursor);
+    }
+
+    let destination_outer_start = cursor;
+    let (style, destination_outer_end, destination) = if bytes.get(cursor) == Some(&b'<') {
+        let angle_close =
+            find_unescaped_byte(body, cursor + 1, b'>').filter(|close| *close < end)?;
+        (
+            LinkDestinationStyle::Angle,
+            angle_close + 1,
+            &body[cursor + 1..angle_close],
+        )
+    } else {
+        let destination_end = body[cursor..end]
+            .find(|ch: char| ch.is_ascii_whitespace() || ch.is_ascii_control())
+            .map_or(end, |idx| cursor + idx);
+        (
+            LinkDestinationStyle::Plain,
+            destination_end,
+            &body[cursor..destination_end],
+        )
+    };
+    let (path, anchor, form) = parse_internal_markdown_destination(destination)?;
+    Some(MarkdownLink {
+        kind: MarkdownLinkKind::Definition,
+        full_start: open,
+        full_end: end,
+        label_start: open + 1,
+        label_end: label_close,
+        destination_outer_start,
+        destination_outer_end,
+        path,
+        anchor,
+        style: written_style(style, form),
+    })
+}
+
+fn skip_spaces(bytes: &[u8], mut idx: usize) -> usize {
+    while matches!(bytes.get(idx), Some(b' ' | b'\t')) {
+        idx += 1;
+    }
+    idx
+}
+
+fn line_ending_len(bytes: &[u8], idx: usize) -> Option<usize> {
+    match (bytes.get(idx), bytes.get(idx + 1)) {
+        (Some(b'\r'), Some(b'\n')) => Some(2),
+        (Some(b'\n' | b'\r'), _) => Some(1),
+        _ => None,
+    }
 }
 
 struct ParsedDestination<'a> {
@@ -413,4 +576,162 @@ fn has_url_scheme(url: &str) -> bool {
     let mut chars = scheme.chars();
     chars.next().is_some_and(|ch| ch.is_ascii_alphabetic())
         && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Path, anchor and source text of every definition of `content`.
+    fn definitions(content: &str) -> Vec<(String, String, &str)> {
+        parse_markdown_link_nodes(content)
+            .into_iter()
+            .filter(|link| link.kind == MarkdownLinkKind::Definition)
+            .map(|link| {
+                (
+                    link.path,
+                    link.anchor,
+                    &content[link.full_start..link.full_end],
+                )
+            })
+            .collect()
+    }
+
+    fn paths(content: &str) -> Vec<String> {
+        definitions(content)
+            .into_iter()
+            .map(|(path, _, _)| path)
+            .collect()
+    }
+
+    #[test]
+    fn df_251_definition_spans_label_and_destination() {
+        let content = "Intro\n\n[Plan]: <./plan b.md> \"Title\"\n";
+        let links = parse_markdown_link_nodes(content);
+        assert_eq!(links.len(), 1);
+        let link = &links[0];
+        assert_eq!(link.kind, MarkdownLinkKind::Definition);
+        assert_eq!(
+            &content[link.full_start..link.full_end],
+            "[Plan]: <./plan b.md> \"Title\""
+        );
+        assert_eq!(&content[link.label_start..link.label_end], "Plan");
+        assert_eq!(
+            &content[link.destination_outer_start..link.destination_outer_end],
+            "<./plan b.md>"
+        );
+        assert_eq!(link.path, "plan b.md");
+        assert_eq!(link.style, LinkDestinationStyle::Angle);
+    }
+
+    #[test]
+    fn df_251_recognizes_definitions_where_commonmark_does() {
+        let cases: &[(&str, &[&str])] = &[
+            ("[p]: plan.md\n", &["plan.md"]),
+            ("[p]: plan.md \"T\"\n", &["plan.md"]),
+            ("[p]: plan.md 'T'\n", &["plan.md"]),
+            ("[p]: plan.md (T)\n", &["plan.md"]),
+            ("[p]: <my plan.md>\n", &["my plan.md"]),
+            ("[p]:\n  plan.md\n  \"Title\"\n", &["plan.md"]),
+            ("> [p]: plan.md\n", &["plan.md"]),
+            ("> [p]:\n> plan.md\n", &["plan.md"]),
+            ("> > [p]:\n> > plan.md\n", &["plan.md"]),
+            ("> [p]:\nplan.md\n", &["plan.md"]),
+            ("[p]:\r\n  plan.md\r\n", &["plan.md"]),
+            ("- [p]: plan.md\n", &["plan.md"]),
+            ("1. [p]:\n   plan.md\n", &["plan.md"]),
+            ("# Heading\n[p]: plan.md\n", &["plan.md"]),
+            (
+                "[a]: a.md\n[b]: b.md\n[c]: c.md\n",
+                &["a.md", "b.md", "c.md"],
+            ),
+            ("[p]: a.md\n[p]: b.md\n", &["a.md", "b.md"]),
+            ("Text without uses.\n\n[unused]: plan.md\n", &["plan.md"]),
+            ("[p]: ../plan.md\n", &["../plan.md"]),
+            ("[p]: Roadmap%20Draft.md\n", &["Roadmap Draft.md"]),
+            ("   [p]: plan.md\n", &["plan.md"]),
+            ("[p]: plan.md\n\"bad\" title\n", &["plan.md"]),
+            ("---\ntitle: T\n---\n[p]: plan.md\n", &["plan.md"]),
+        ];
+        for (content, expected) in cases {
+            assert_eq!(paths(content), *expected, "{content:?}");
+        }
+    }
+
+    #[test]
+    fn df_251_skips_what_commonmark_does_not_define() {
+        let cases = [
+            "```\n[p]: plan.md\n```\n",
+            "~~~\n[p]: plan.md\n~~~\n",
+            "    [p]: plan.md\n",
+            "Paragraph\n[p]: plan.md\n",
+            "[^1]: plan.md\n",
+            "[//]: #\n",
+            "[x]: https://example.com/plan.md\n",
+            "[x]: plan.md extra\n",
+            "[x]: <plan.md>(T)\n",
+            "<div>\n[p]: plan.md\n</div>\n",
+            "---\nlink: \"[p]: plan.md\"\n[p]: plan.md\n---\nBody\n",
+            "[x]: image.png\n",
+        ];
+        for content in cases {
+            assert_eq!(paths(content), Vec::<String>::new(), "{content:?}");
+        }
+    }
+
+    #[test]
+    fn df_251_definition_anchor_and_percent_form_follow_inline_rules() {
+        let content = "[a]: plan.md#раздел\n[b]: %D0%9F%D0%BB%D0%B0%D0%BD.md\n";
+        assert_eq!(
+            definitions(content),
+            vec![
+                (
+                    "plan.md".to_string(),
+                    "#раздел".to_string(),
+                    "[a]: plan.md#раздел"
+                ),
+                (
+                    "План.md".to_string(),
+                    String::new(),
+                    "[b]: %D0%9F%D0%BB%D0%B0%D0%BD.md"
+                ),
+            ]
+        );
+        let styles = parse_markdown_link_nodes(content)
+            .into_iter()
+            .map(|link| link.style)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            styles,
+            vec![
+                LinkDestinationStyle::Plain,
+                LinkDestinationStyle::PercentEncoded { non_ascii: true },
+            ]
+        );
+    }
+
+    #[test]
+    fn df_251_inline_links_and_definitions_come_in_source_order() {
+        let content = "See [Plan][p] and [inline](a.md).\n\n[p]: plan.md\n\nThen [b](b.md).\n";
+        let links = parse_markdown_link_nodes(content);
+        let found = links
+            .iter()
+            .map(|link| (link.kind, link.path.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            found,
+            vec![
+                (MarkdownLinkKind::Inline, "a.md"),
+                (MarkdownLinkKind::Definition, "plan.md"),
+                (MarkdownLinkKind::Inline, "b.md"),
+            ]
+        );
+        assert_eq!(
+            parse_markdown_body_links("---\n[p]: plan.md\n---\n")
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect::<Vec<_>>(),
+            vec!["plan.md".to_string()]
+        );
+    }
 }

@@ -10,7 +10,7 @@ use crate::index::model::{
     KnowledgeFragmentArtifact,
 };
 use crate::page::identity::{MarkdownIdentityFacts, SourceShape, resolve_markdown_identity};
-use crate::page::links::parse_markdown_links;
+use crate::page::links::{LinkSpan, parse_markdown_body_links, parse_markdown_links};
 
 pub fn build_file_artifact(
     source_path: &str,
@@ -32,7 +32,7 @@ pub fn build_file_artifact(
         return None;
     }
     let kind = "page";
-    let mut edges = markdown_edges(source_path, raw);
+    let mut edges = markdown_edges(source_path, parse_markdown_links(raw));
     if let Some(root) = collection_root {
         edges.push(KnowledgeEdgeArtifact {
             kind: "member_of".to_string(),
@@ -107,7 +107,7 @@ pub fn build_collection_artifact(
             "schemaPath": if projection.source_path == "." { "schema.yaml".to_string() } else { format!("{}/schema.yaml", projection.source_path) },
         }),
         searchable,
-        markdown_edges(&location_path, &projection.body),
+        markdown_edges(&location_path, parse_markdown_body_links(&projection.body)),
     )
 }
 
@@ -210,8 +210,8 @@ pub fn finish_artifact(
     }
 }
 
-fn markdown_edges(source_path: &str, raw: &str) -> Vec<KnowledgeEdgeArtifact> {
-    parse_markdown_links(raw)
+fn markdown_edges(source_path: &str, links: Vec<(String, LinkSpan)>) -> Vec<KnowledgeEdgeArtifact> {
+    links
         .into_iter()
         .map(|(target_url, span)| KnowledgeEdgeArtifact {
             kind: "links_to".to_string(),

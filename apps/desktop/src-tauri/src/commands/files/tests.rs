@@ -1501,3 +1501,33 @@ async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_re
     // A save without a baseline, such as a metadata save, is not compared.
     save("Unversioned\n", None).await.unwrap();
 }
+
+#[tokio::test]
+async fn df_251_project_link_validation_reports_definition_targets() {
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path();
+    fs::create_dir_all(project.join(".svode")).unwrap();
+    fs::create_dir_all(project.join("docs")).unwrap();
+    fs::write(project.join("Plan.md"), "Plan.\n").unwrap();
+    fs::write(
+        project.join("docs/Index.md"),
+        "---\ntitle: Index\n---\n[Plan][p], [Gone][g] and [inline](../Plan.md)\n\n> [p]: <../Plan.md#Next> \"Title\"\n\n[g]: Nope%20Here.md\n",
+    )
+    .unwrap();
+    let state = IndexState::new();
+
+    let validation = validate_project_links(&state, project, project, "docs/Index.md")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|item| (item.url, item.exists))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        validation,
+        vec![
+            ("../Plan.md".to_string(), true),
+            ("Nope Here.md".to_string(), false),
+        ]
+    );
+}

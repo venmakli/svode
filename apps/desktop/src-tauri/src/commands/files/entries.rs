@@ -526,34 +526,45 @@ pub async fn validate_links(
     index_state: State<'_, IndexState>,
 ) -> Result<Vec<LinkValidation>, AppError> {
     if let Some(proj) = project_path.as_deref().filter(|p| !p.is_empty()) {
-        let source_space_id = index_state.core.space_id_for_dir(Path::new(&space)).await;
-        let abs = Path::new(&space).join(&path);
-        if !abs.exists() {
-            return Ok(Vec::new());
-        }
-        let content = std::fs::read_to_string(abs)?;
-        let links = svode_core::index::backlinks::parse_markdown_links(&content);
-        let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for (url, _) in links {
-            if !seen.insert(url.clone()) {
-                continue;
-            }
-            let resolved = index_state
-                .resolve_doc_link_path(Path::new(proj), source_space_id.as_deref(), &path, &url)
-                .await?;
-            out.push(LinkValidation {
-                url,
-                exists: resolved.exists,
-            });
-        }
-        Ok(out)
+        validate_project_links(&index_state, Path::new(proj), Path::new(&space), &path).await
     } else {
         Ok(svode_core::index::backlinks::validate_links(
             Path::new(&space),
             &path,
         )?)
     }
+}
+
+/// Validate the links of one Page against the whole Project, so links into
+/// other Spaces resolve.
+pub(super) async fn validate_project_links(
+    index_state: &IndexState,
+    project: &Path,
+    space: &Path,
+    path: &str,
+) -> Result<Vec<LinkValidation>, AppError> {
+    let source_space_id = index_state.core.space_id_for_dir(space).await;
+    let abs = space.join(path);
+    if !abs.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(abs)?;
+    let links = svode_core::index::backlinks::parse_markdown_links(&content);
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (url, _) in links {
+        if !seen.insert(url.clone()) {
+            continue;
+        }
+        let resolved = index_state
+            .resolve_doc_link_path(project, source_space_id.as_deref(), path, &url)
+            .await?;
+        out.push(LinkValidation {
+            url,
+            exists: resolved.exists,
+        });
+    }
+    Ok(out)
 }
 
 #[tauri::command]
