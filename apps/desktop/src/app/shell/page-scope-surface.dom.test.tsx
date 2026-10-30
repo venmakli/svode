@@ -174,16 +174,13 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         </div>
       ) : null,
   }));
-  mock.module(
-    "@/features/collection/detail-peek/detail-peek",
-    () => ({
-      CollectionDetailPeekHost: () => null,
-      useCollectionDetailController: () => ({
-        close: async () => allowCollectionNavigation,
-        open: async () => true,
-      }),
+  mock.module("@/features/collection/detail-peek/detail-peek", () => ({
+    CollectionDetailPeekHost: () => null,
+    useCollectionDetailController: () => ({
+      close: async () => allowCollectionNavigation,
+      open: async () => true,
     }),
-  );
+  }));
   mock.module("./app-with-variables", () => ({
     AppWithVariables: function App({
       owner,
@@ -224,7 +221,8 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   const { useScopeOwner } = await import("@/features/scope-surfaces");
   const { followContentRelocation, openPage, publishPageTitleOutcome } =
     await import("@/features/page/navigation");
-  const { trackOwnContentRelocation } = await import("@/features/page/page-api");
+  const { trackOwnContentRelocation } =
+    await import("@/features/page/page-api");
   const { useMainHeaderContribution } =
     await import("./main-header-contribution");
   const { PageScopeSurface } = await import("./page-scope-surface");
@@ -350,7 +348,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
             : read;
         }
         if (command === "get_page_schema")
-          return options.schemaColumns
+          return options.schemaColumns !== undefined
             ? {
                 schema: {
                   columns: Array.from(
@@ -1044,9 +1042,33 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     }
   });
 
+  test("a Collection item without properties shows the panel only outside read-only", async () => {
+    const plain = await fixture("Folder/Note.md");
+    try {
+      expect(plain.dom.window.document.querySelector("[data-columns]")).toBe(
+        null,
+      );
+    } finally {
+      await plain.cleanup();
+    }
+
+    const f = await fixture("Folder/Note.md", false, { schemaColumns: 0 });
+    const panel = () => f.dom.window.document.querySelector("[data-columns]");
+    try {
+      expect(panel()?.getAttribute("data-columns")).toBe("0");
+      expect(panelProps.readOnly).toBe(false);
+      await f.access("read_only");
+      expect(panel()).toBe(null);
+      await f.access("local");
+      expect(panel()?.getAttribute("data-columns")).toBe("0");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
   test("full Page delete confirms a Page or a Collection item by its schema", async () => {
     for (const [schemaColumns, kind] of [
-      [0, "page"],
+      [undefined, "page"],
       [1, "collection-item"],
     ] as const) {
       const f = await fixture("Folder/Note.md", false, { schemaColumns });
@@ -1062,9 +1084,9 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
             .querySelector("[data-delete]")
             ?.getAttribute("data-delete-kind"),
         ).toBe(kind);
-        expect(
-          (deleteDialogProps.confirmation as { name: string }).name,
-        ).toBe("Folder/Note.md");
+        expect((deleteDialogProps.confirmation as { name: string }).name).toBe(
+          "Folder/Note.md",
+        );
         expect(
           f.calls.find(({ command }) => command === "get_backlinks")?.args
             .targetPath,

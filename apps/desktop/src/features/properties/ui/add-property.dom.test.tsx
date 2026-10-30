@@ -6,6 +6,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
+import type { Column } from "../model/types";
 
 const isolatedProcess = process.env.SVODE_ADD_PROPERTY_DOM_PROCESS === "1";
 
@@ -28,7 +29,8 @@ if (!isolatedProcess) {
   // Radix picks its layout effect by the presence of `document` at import.
   installDomGlobals(createDom());
   const toastErrors: unknown[] = [];
-  const addedColumns: unknown[] = [];
+  const addedColumns: Column[] = [];
+  const server = { refuse: true, columns: [] as Column[] };
   const mock = (
     bunTest as unknown as {
       mock: { module: (specifier: string, factory: () => unknown) => void };
@@ -38,10 +40,16 @@ if (!isolatedProcess) {
 
   mock.module("../api/schema-api", () => ({
     ...realSchemaApi,
-    addSchemaColumn: async ({ column }: { column: unknown }) => {
+    addSchemaColumn: async ({ column }: { column: Column }) => {
       addedColumns.push(column);
-      throw new Error("schema error: backend refused");
+      if (server.refuse) throw new Error("schema error: backend refused");
+      server.columns = [...server.columns, column];
+      return { columns: server.columns };
     },
+    getPageSchema: async () => ({
+      collectionRootPath: "tasks",
+      schema: { columns: server.columns },
+    }),
   }));
   mock.module("sonner", () => ({
     toast: {
@@ -55,8 +63,9 @@ if (!isolatedProcess) {
   const { PropertyTypeMenuPane } = await import("./schema-column-menu");
   const { propertyTypeAddUnavailableReason } =
     await import("./property-type-meta");
-  const { AddColumnDialog } = await import("./column-schema-dialogs");
+  const { PropertyAddTypeMenu } = await import("./property-add-type-menu");
   const { PropertyPanel } = await import("./property-panel");
+  const { setLocale } = await import("@/paraglide/runtime.js");
   const m = await import("@/paraglide/messages.js");
 
   const withSingletons = [
@@ -155,153 +164,284 @@ if (!isolatedProcess) {
     ).toBe(1);
   });
 
-  test("add field dialog disables an existing Status and ID", async () => {
-    const render = async (columns: typeof withSingletons | []) => {
-      const dom = createDom();
-      const restoreGlobals = installDomGlobals(dom);
-      const root = createRoot(dom.window.document.getElementById("app")!);
-      try {
+  /** Renders a record property panel and returns its add-property action. */
+  async function renderPanel({
+    columns,
+    values = {},
+    readOnly = false,
+  }: {
+    columns: Column[];
+    values?: Record<string, unknown>;
+    readOnly?: boolean;
+  }) {
+    server.columns = columns;
+    const dom = createDom();
+    const restoreGlobals = installDomGlobals(dom);
+    const container = dom.window.document.getElementById("app")!;
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <PropertyPanel
+          mode="full"
+          readOnly={readOnly}
+          spacePath="/project"
+          projectPath="/project"
+          filePath="tasks/task.md"
+          pageLabel="Task"
+          schemaResult={{ collectionRootPath: "tasks", schema: { columns } }}
+          values={values}
+          onValueChange={async () => undefined}
+        />,
+      );
+      await nextFrame(dom);
+    });
+    const addButtons = () =>
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>("button"),
+      ).filter((button) => button.textContent === m.collection_add_property());
+    const popover = () =>
+      dom.window.document.querySelector<HTMLElement>(
+        '[data-slot="popover-content"]',
+      );
+    return {
+      dom,
+      container,
+      addButtons,
+      popover,
+      openMenu: async () => {
         await act(async () => {
-          root.render(
-            <AddColumnDialog
-              open
-              onOpenChange={() => undefined}
-              columns={columns}
-              onSubmit={async () => undefined}
-            />,
-          );
+          addButtons()[0].click();
+          await nextFrame(dom);
+        });
+        return popover()!;
+      },
+      /** Opens the add menu and picks a type in it. */
+      add: async (label: string) => {
+        await act(async () => {
+          addButtons()[0].click();
           await nextFrame(dom);
         });
         await act(async () => {
-          dom.window.document
-            .getElementById("property-column-type")!
-            .dispatchEvent(
-              new dom.window.KeyboardEvent("keydown", {
-                key: "Enter",
-                bubbles: true,
-              }),
-            );
+          rowButton(popover()!, label).click();
+          await nextFrame(dom);
+          await nextFrame(dom);
           await nextFrame(dom);
         });
-        return Array.from(
-          dom.window.document.querySelectorAll<HTMLElement>('[role="option"]'),
-        ).map((option) => ({
-          text: option.textContent ?? "",
-          disabled: option.hasAttribute("data-disabled"),
-        }));
-      } finally {
+      },
+      cleanup: async () => {
         await act(async () => root.unmount());
         restoreGlobals();
         dom.window.close();
-      }
+      },
     };
-    const byLabel = (
-      options: { text: string; disabled: boolean }[],
-      label: string,
-    ) => options.find((option) => option.text.startsWith(label))!;
-    const statusReason = m.property_type_add_unavailable({
-      type: m.table_property_type_status(),
-    });
+  }
 
-    const blocked = await render(withSingletons);
-    expect(blocked.length).toBe(13);
-    expect(byLabel(blocked, m.table_property_type_status())).toEqual({
-      text: `${m.table_property_type_status()}${statusReason}`,
-      disabled: true,
-    });
-    expect(byLabel(blocked, m.table_property_type_unique_id()).disabled).toBe(
-      true,
-    );
-    expect(
-      blocked.find((option) => option.text === m.table_property_type_select())
-        ?.disabled,
-    ).toBe(false);
-    expect(
-      blocked.find(
-        (option) => option.text === m.table_property_type_multi_select(),
-      )?.disabled,
-    ).toBe(false);
-
-    const open = await render([]);
-    expect(open.length).toBe(13);
-    expect(open.some((option) => option.disabled)).toBe(false);
-  });
-
-  test("a refused add from the property panel shows a localized toast and keeps the dialog", async () => {
-    toastErrors.length = 0;
-    addedColumns.length = 0;
+  /** Opens the add menu the table + uses, for comparison with the panel. */
+  async function openSharedAddMenu(columns: Column[]) {
     const dom = createDom();
     const restoreGlobals = installDomGlobals(dom);
     const root = createRoot(dom.window.document.getElementById("app")!);
+    await act(async () => {
+      root.render(
+        <PropertyAddTypeMenu
+          trigger={<button type="button">+</button>}
+          columns={columns}
+          onSelect={() => undefined}
+        />,
+      );
+      await nextFrame(dom);
+    });
+    await act(async () => {
+      dom.window.document.querySelector("button")!.click();
+      await nextFrame(dom);
+    });
+    const menu = readMenu(
+      dom.window.document.querySelector<HTMLElement>(
+        '[data-slot="popover-content"]',
+      )!,
+    );
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+    return menu;
+  }
+
+  test("the record panel opens the shared add-type list with nothing marked", async () => {
+    const columns: Column[] = [
+      { name: "Summary", type: "text" },
+      ...withSingletons,
+    ];
+    const shared = await openSharedAddMenu(columns);
+    const panel = await renderPanel({ columns });
+    try {
+      expect(panel.addButtons().length).toBe(1);
+      const menu = readMenu(await panel.openMenu());
+      expect(menu).toEqual(shared);
+      expect(menu.rows.length).toBe(13);
+      expect(menu.title).toBe(m.table_property_type_title());
+      expect(menu.notice).toBe(m.property_add_type_notice());
+      expect(menu.rows.some((item) => item.checked)).toBe(false);
+      expect(
+        menu.rows.find((item) => item.label === m.table_property_type_status())
+          ?.unavailable,
+      ).toBe(true);
+    } finally {
+      await panel.cleanup();
+    }
+  });
+
+  test("the record panel names a new property after its type and opens its menu with the name focused", async () => {
+    setLocale("ru", { reload: false });
+    server.refuse = false;
+    addedColumns.length = 0;
+    const panel = await renderPanel({
+      columns: [{ name: "Summary", type: "text" }],
+      values: { Summary: "Review" },
+    });
+    const focusedName = () => {
+      const input = panel.dom.window.document
+        .activeElement as HTMLInputElement | null;
+      return input?.getAttribute("aria-label") === m.property_dialog_name()
+        ? input.value
+        : null;
+    };
+    try {
+      await panel.add("Текст");
+      expect(addedColumns).toEqual([{ name: "Текст", type: "text" }]);
+      expect(
+        panel.container.querySelector(
+          '[data-property-label-trigger="Текст"]',
+        ) === null,
+      ).toBe(false);
+      expect(focusedName()).toBe("Текст");
+
+      await act(async () => {
+        panel.dom.window.document.dispatchEvent(
+          new panel.dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        );
+        await nextFrame(panel.dom);
+      });
+      await panel.add("Текст");
+      expect(addedColumns[1]).toEqual({ name: "Текст 2", type: "text" });
+      expect(focusedName()).toBe("Текст 2");
+
+      await act(async () => {
+        panel.dom.window.document.dispatchEvent(
+          new panel.dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        );
+        await nextFrame(panel.dom);
+      });
+      await panel.add("Связь");
+      expect(addedColumns[2]).toEqual({
+        name: "Связь",
+        type: "relation",
+        relation: "tasks",
+      });
+    } finally {
+      server.refuse = true;
+      setLocale("en", { reload: false });
+      await panel.cleanup();
+    }
+  });
+
+  test("a refused add from the property panel shows a localized toast and keeps the schema", async () => {
+    toastErrors.length = 0;
+    addedColumns.length = 0;
     const originalConsoleError = console.error;
     const consoleErrors: unknown[] = [];
     console.error = (...args: unknown[]) => consoleErrors.push(args);
+    const panel = await renderPanel({
+      columns: [{ name: "Summary", type: "text" }],
+      values: { Summary: "Review" },
+    });
 
     try {
-      await act(async () => {
-        root.render(
-          <PropertyPanel
-            mode="full"
-            spacePath="/project"
-            projectPath="/project"
-            filePath="tasks/task.md"
-            pageLabel="Task"
-            schemaResult={{
-              collectionRootPath: "tasks",
-              schema: { columns: [{ name: "Summary", type: "text" }] },
-            }}
-            values={{ Summary: "Review" }}
-            onValueChange={async () => undefined}
-          />,
-        );
-        await nextFrame(dom);
-      });
-
-      const addField = Array.from(
-        dom.window.document.querySelectorAll<HTMLButtonElement>("button"),
-      ).find(
-        (button) => button.textContent === m.editor_frontmatter_add_field(),
-      )!;
-      await act(async () => {
-        addField.click();
-        await nextFrame(dom);
-      });
-
-      const nameInput = dom.window.document.getElementById(
-        "property-column-name",
-      ) as HTMLInputElement;
-      await act(async () => {
-        setInputValue(dom, nameInput, "Priority");
-        await nextFrame(dom);
-      });
-      const submit = Array.from(
-        dom.window.document.querySelectorAll<HTMLButtonElement>(
-          '[role="dialog"] button',
-        ),
-      ).find((button) => button.textContent === m.editor_frontmatter_add())!;
-      await act(async () => {
-        submit.click();
-        await nextFrame(dom);
-        await nextFrame(dom);
-      });
+      await panel.add(m.table_property_type_text());
 
       expect(addedColumns.length).toBe(1);
       expect(toastErrors).toEqual([m.property_add_failed()]);
       expect(consoleErrors.length).toBe(1);
+      expect(panel.popover()).toBe(null);
       expect(
-        dom.window.document.getElementById("property-column-name") === null,
-      ).toBe(false);
-      expect(
-        dom.window.document.querySelectorAll("[data-property-label-trigger]")
+        panel.container.querySelectorAll("[data-property-label-trigger]")
           .length,
       ).toBe(1);
     } finally {
       console.error = originalConsoleError;
-      await act(async () => root.unmount());
-      restoreGlobals();
-      dom.window.close();
+      await panel.cleanup();
     }
   });
+
+  test("a collection without properties offers only the add action, and none in read-only", async () => {
+    const empty = await renderPanel({
+      columns: [],
+      values: { Legacy: "orphan value" },
+    });
+    try {
+      expect(empty.addButtons().length).toBe(1);
+      expect(empty.container.querySelectorAll("button").length).toBe(1);
+      expect(empty.container.textContent).toBe(m.collection_add_property());
+    } finally {
+      await empty.cleanup();
+    }
+
+    const readOnly = await renderPanel({ columns: [], readOnly: true });
+    try {
+      expect(readOnly.container.innerHTML).toBe("");
+    } finally {
+      await readOnly.cleanup();
+    }
+
+    const filled = await renderPanel({
+      columns: [{ name: "Summary", type: "text" }],
+      readOnly: true,
+    });
+    try {
+      expect(filled.addButtons().length).toBe(0);
+    } finally {
+      await filled.cleanup();
+    }
+  });
+}
+
+/** Title, type rows and notice of an add-type menu, as the user sees them. */
+function readMenu(popover: HTMLElement) {
+  const document = popover.ownerDocument;
+  const rows = Array.from(
+    popover.querySelectorAll<HTMLButtonElement>(".p-1 > button"),
+  ).map((button) => {
+    const describedBy = button.getAttribute("aria-describedby");
+    return {
+      label: button.querySelector(".font-medium")?.textContent ?? "",
+      className: button.className,
+      unavailable: button.getAttribute("aria-disabled") === "true",
+      description: describedBy
+        ? (document.getElementById(describedBy)?.textContent ?? null)
+        : null,
+      checked:
+        button.querySelector('.lucide-check[data-icon="inline-end"]') !== null,
+    };
+  });
+  return {
+    title: popover.querySelector("div.truncate")?.textContent ?? "",
+    rows,
+    notice: popover.querySelector(".text-xs.text-muted-foreground")
+      ?.textContent,
+  };
+}
+
+function rowButton(popover: HTMLElement, label: string) {
+  return Array.from(
+    popover.querySelectorAll<HTMLButtonElement>(".p-1 > button"),
+  ).find(
+    (button) => button.querySelector(".font-medium")?.textContent === label,
+  )!;
 }
 
 function rowsByLabel(document: Document) {
@@ -312,21 +452,6 @@ function rowsByLabel(document: Document) {
     if (label) rows.set(label, button);
   }
   return rows;
-}
-
-function setInputValue(dom: JSDOM, input: HTMLInputElement, value: string) {
-  // React watches value changes of the focused text input in this DOM.
-  input.focus();
-  Object.getOwnPropertyDescriptor(
-    dom.window.HTMLInputElement.prototype,
-    "value",
-  )!.set!.call(input, value);
-  input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  const propertyChange = new dom.window.Event("propertychange", {
-    bubbles: true,
-  });
-  Object.defineProperty(propertyChange, "propertyName", { value: "value" });
-  input.dispatchEvent(propertyChange);
 }
 
 function createDom() {

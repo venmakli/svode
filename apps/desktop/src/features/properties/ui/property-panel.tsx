@@ -21,7 +21,8 @@ import {
 import { PropertyControl } from "./property-control";
 import { PropertyValue } from "./property-value";
 import { propertyValidationMessage } from "./validation-message";
-import { AddColumnDialog, AddOptionDialog } from "./schema-dialogs";
+import { AddOptionDialog } from "./schema-dialogs";
+import { PropertyAddTypeMenu } from "./property-add-type-menu";
 import { PropertyLabelTrigger, SchemaColumnMenu } from "./schema-column-menu";
 import { usePropertyPanelState } from "../hooks/use-property-panel-state";
 import { hasOption, valueToString } from "../lib/utils";
@@ -43,10 +44,7 @@ interface PropertyPanelProps {
   onSchemaChange?: (result: PageSchemaResult | null) => void;
 }
 
-type DialogState =
-  | { type: "add-column" }
-  | { type: "add-option"; column: Column }
-  | null;
+type DialogState = { type: "add-option"; column: Column } | null;
 
 export function PropertyPanel({
   spacePath,
@@ -78,7 +76,7 @@ export function PropertyPanel({
     handleSchemaError,
     applyCollectionSchema,
     assignUniqueId,
-    addColumn,
+    addProperty,
     addOption,
     promoteOrphan,
     clearOrphanValues,
@@ -94,8 +92,33 @@ export function PropertyPanel({
     onSchemaChange,
   });
 
+  const addPropertyAction = readOnly ? null : (
+    <PropertyAddTypeMenu
+      trigger={
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-fit justify-start gap-1.5 px-1.5 font-normal text-muted-foreground"
+        >
+          <Plus data-icon="inline-start" />
+          {m.collection_add_property()}
+        </Button>
+      }
+      columns={schema.columns}
+      align="start"
+      onSelect={(type) =>
+        void addProperty(type).then((name) => {
+          if (name) setOpenColumn(name);
+        })
+      }
+    />
+  );
+
+  // A collection without properties offers only the first one to add.
+  if (schema.columns.length === 0) return addPropertyAction;
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       <div
         className={cn(
           "grid gap-x-6 gap-y-2",
@@ -267,34 +290,7 @@ export function PropertyPanel({
         ))}
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t pt-3">
-        <span className="text-xs text-muted-foreground">
-          {m.property_collection_path({ path: collectionRootPath })}
-        </span>
-        {!readOnly ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setDialog({ type: "add-column" })}
-          >
-            <Plus data-icon="inline-start" />
-            {m.editor_frontmatter_add_field()}
-          </Button>
-        ) : null}
-      </div>
-
-      {!readOnly ? (
-        <AddColumnDialog
-          open={dialog?.type === "add-column"}
-          onOpenChange={(open) => !open && setDialog(null)}
-          collectionPath={collectionRootPath}
-          columns={schema.columns}
-          onSubmit={async (column) => {
-            if (await addColumn(column)) setDialog(null);
-          }}
-        />
-      ) : null}
+      {addPropertyAction}
       {!readOnly ? (
         <AddOptionDialog
           open={dialog?.type === "add-option"}

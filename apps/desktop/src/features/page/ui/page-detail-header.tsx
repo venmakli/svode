@@ -107,7 +107,9 @@ export function PageDetailHeader({
         readOnly={metadataReadOnly}
       />
       {showReadError && context.status === "error" ? <PageReadError /> : null}
-      {page && schemaResult?.schema.columns.length ? (
+      {page &&
+      schemaResult &&
+      (schemaResult.schema.columns.length > 0 || !readOnly) ? (
         <div className="max-w-5xl">
           <PropertyPanel
             key={`properties:${readOnly ? "view" : "edit"}`}

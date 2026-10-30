@@ -17,8 +17,10 @@ import type {
   Column,
   PageSchemaResult,
   PropertyOption,
+  PropertyType,
   RelationContext,
 } from "../model/types";
+import { newPropertyColumn } from "../ui/property-type-meta";
 import * as m from "@/paraglide/messages.js";
 
 interface UsePropertyPanelStateInput {
@@ -162,20 +164,32 @@ export function usePropertyPanelState({
     [filePath, projectPath, refreshSchema, runSchemaMutation, spacePath],
   );
 
-  const addColumn = useCallback(
-    async (column: Column) => {
+  /** Adds a property named after its type; resolves to its name, or null on refusal. */
+  const addProperty = useCallback(
+    async (type: PropertyType) => {
+      const column = newPropertyColumn({
+        columns: schema.columns,
+        type,
+        collectionPath: collectionRootPath,
+      });
       try {
         await addSchemaColumn({ ...schemaMutationContext, column });
       } catch (error) {
         notifyPropertyAddFailed(error);
-        return false;
+        return null;
       }
       await runSchemaMutation(async () => {
         await refreshSchema();
       });
-      return true;
+      return column.name;
     },
-    [refreshSchema, runSchemaMutation, schemaMutationContext],
+    [
+      collectionRootPath,
+      refreshSchema,
+      runSchemaMutation,
+      schema.columns,
+      schemaMutationContext,
+    ],
   );
 
   const addOption = useCallback(
@@ -266,7 +280,7 @@ export function usePropertyPanelState({
     handleSchemaError,
     applyCollectionSchema,
     assignUniqueId,
-    addColumn,
+    addProperty,
     addOption,
     promoteOrphan,
     clearOrphanValues,
