@@ -1375,7 +1375,11 @@ pub struct UnpushedCommit {
     pub timestamp: String,
 }
 
-/// List commits on the current branch that are not in origin/<branch>.
+/// Most outgoing commits one list reads; the remote counter still counts all.
+const UNPUSHED_COMMITS_LIMIT: usize = 50;
+
+/// List the newest commits on the current branch that are not in
+/// origin/<branch>, at most `UNPUSHED_COMMITS_LIMIT`.
 pub async fn unpushed_commits(
     cli: &GitCli,
     space_dir: &Path,
@@ -1399,16 +1403,16 @@ pub async fn unpushed_commits(
         .await?;
 
     let format_arg = "--format=%h%x00%s%x00%an%x00%aI";
+    let limit_arg = format!("--max-count={UNPUSHED_COMMITS_LIMIT}");
 
-    let range_arg;
-    let args: Vec<&str> = if upstream_check.exit_code == 0 {
-        range_arg = format!("origin/{}..HEAD", branch);
-        vec!["log", format_arg, &range_arg]
+    let range_arg = if upstream_check.exit_code == 0 {
+        format!("origin/{}..HEAD", branch)
     } else {
         // Origin exists but upstream branch not fetched yet (pre-first-push).
         // All local commits on the current branch are unpushed.
-        vec!["log", format_arg, "--max-count=50", "HEAD"]
+        "HEAD".to_string()
     };
+    let args = ["log", format_arg, limit_arg.as_str(), range_arg.as_str()];
 
     let out = cli.exec(space_dir, &args).await?;
     if out.exit_code != 0 {
@@ -1471,6 +1475,77 @@ mod tests {
             0
         );
         repo
+    }
+
+    async fn empty_commits(cli: &GitCli, repo: &Path, prefix: &str, count: usize) {
+        for index in 1..=count {
+            let message = format!("{prefix} {index}");
+            let out = cli
+                .exec(repo, &["commit", "--allow-empty", "-m", &message])
+                .await
+                .unwrap();
+            assert_eq!(out.exit_code, 0, "{}", out.stderr);
+        }
+    }
+
+    async fn unpushed_messages(cli: &GitCli, repo: &Path) -> Vec<String> {
+        unpushed_commits(cli, repo)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|commit| commit.message)
+            .collect()
+    }
+
+    fn newest_first(prefix: &str, from: usize, to: usize) -> Vec<String> {
+        (from..=to)
+            .rev()
+            .map(|index| format!("{prefix} {index}"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn unpushed_commits_read_at_most_the_newest_fifty_of_the_counter_range() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let repo = init_test_repo(&cli).await;
+        let path = repo.path();
+        empty_commits(&cli, path, "local", 60).await;
+        assert!(unpushed_messages(&cli, path).await.is_empty());
+
+        let remote = TempDir::new().unwrap();
+        let init = cli.exec(remote.path(), &["init", "--bare"]).await.unwrap();
+        assert_eq!(init.exit_code, 0, "{}", init.stderr);
+        let add = cli
+            .exec(
+                path,
+                &["remote", "add", "origin", remote.path().to_str().unwrap()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(add.exit_code, 0, "{}", add.stderr);
+        assert_eq!(
+            unpushed_messages(&cli, path).await,
+            newest_first("local", 11, 60)
+        );
+
+        let push = cli.exec(path, &["push", "origin", "HEAD"]).await.unwrap();
+        assert_eq!(push.exit_code, 0, "{}", push.stderr);
+        assert!(unpushed_messages(&cli, path).await.is_empty());
+        empty_commits(&cli, path, "offline", 60).await;
+        assert_eq!(
+            unpushed_messages(&cli, path).await,
+            newest_first("offline", 11, 60)
+        );
+
+        let push = cli.exec(path, &["push", "origin", "HEAD"]).await.unwrap();
+        assert_eq!(push.exit_code, 0, "{}", push.stderr);
+        empty_commits(&cli, path, "few", 3).await;
+        assert_eq!(
+            unpushed_messages(&cli, path).await,
+            newest_first("few", 1, 3)
+        );
     }
 
     async fn init_metadata_only_submodule(cli: &GitCli, root: &Path) -> std::path::PathBuf {

@@ -55,6 +55,8 @@ export interface GitSyncWidget {
   loadingCommits: boolean;
   /** The list could not be read for the shown counters. */
   commitsFailed: boolean;
+  /** Outgoing commits left out of the shown list, by the counter it was read for. */
+  moreCommits: number;
   authOpen: boolean;
   authChallenge: GitAuthChallenge | null;
   authSaving: boolean;
@@ -412,6 +414,10 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     commits: outgoingList?.commits ?? [],
     loadingCommits: open && remoteChecked && !listCurrent,
     commitsFailed: listCurrent && outgoingList?.failed === true,
+    moreCommits:
+      outgoingList && !outgoingList.failed
+        ? Math.max(0, outgoingList.status.ahead - outgoingList.commits.length)
+        : 0,
     authOpen,
     authChallenge,
     authSaving,

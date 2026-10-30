@@ -289,4 +289,175 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
       await dom.dispose();
     }
   });
+
+  test("a cut list ends with the commits it leaves out, counted by the counter it was read for", async () => {
+    const path = "/project/space";
+    let ahead = 120;
+    let listFails = false;
+    let fetchFails = false;
+    let holdList = false;
+    const held: (() => void)[] = [];
+    const status = (count: number) => ({
+      branch: "main",
+      ahead: count,
+      behind: 0,
+      files: [],
+      hasStaged: false,
+      hasUnstaged: false,
+      hasConflicts: false,
+      tracking: "origin/main",
+      totalFiles: 0,
+      omittedFiles: 0,
+    });
+    // The backend reads at most the newest 50 commits of the counted range.
+    const commits = (count: number) =>
+      Array.from({ length: Math.min(count, 50) }, (_, index) => ({
+        sha: `sha${count}-${index}`,
+        message: `Commit ${count - index}`,
+        author: "Fixture",
+        timestamp: "0",
+      }));
+    const dom = await createTestDom();
+    mockNativeIpc(
+      async (command) => {
+        if (command === "git_get_user_policy") return { autoSync: false };
+        if (command === "git_get_remote")
+          return "https://example.test/space.git";
+        if (command === "git_publication_status") return null;
+        if (command === "git_sync_preflight") return null;
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: path,
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_fetch_status") {
+          if (fetchFails) throw "fetch failed";
+          return status(ahead);
+        }
+        if (command === "git_status") return status(ahead);
+        if (command === "git_unpushed_commits") {
+          if (listFails) throw "git log failed";
+          const list = commits(ahead);
+          if (holdList)
+            return new Promise((resolve) => held.push(() => resolve(list)));
+          return list;
+        }
+        throw new Error(command);
+      },
+      { shouldMockEvents: true },
+    );
+    const { useGitStore } = await import("../model/git-store");
+    const { refreshGitRemoteStatus } =
+      await import("../api/git-status-actions");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const m = await import("@/paraglide/messages.js");
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+    const dialog = () =>
+      dom.document.querySelector<HTMLElement>("[role=dialog]");
+    const rows = () =>
+      Array.from(dialog()?.querySelectorAll("section li") ?? []).map(
+        (row) => row.textContent,
+      );
+    const more = () =>
+      dialog()?.querySelector("[data-git-outgoing-more]")?.textContent ?? null;
+    const counter = (count: number) =>
+      dialog()?.textContent?.includes(
+        m.git_sync_outgoing_summary({ count: String(count) }),
+      );
+    const refresh = async () => {
+      await act(async () => {
+        await refreshGitRemoteStatus(path);
+      });
+      await settle();
+    };
+    const expectCut = (count: number) => {
+      const left = count - 50;
+      expect(counter(count)).toBe(true);
+      expect(rows().length).toBe(51);
+      expect(rows().at(-1)).toBe(
+        m.git_sync_outgoing_more({ count: String(left) }),
+      );
+      expect(rows()[49]?.includes(`Commit ${left + 1}`)).toBe(true);
+    };
+    try {
+      await dom.render(
+        <TooltipProvider>
+          <GitSyncStatusWidget repositoryPath={path} />
+        </TooltipProvider>,
+      );
+      await settle();
+      await act(async () => {
+        dom.document
+          .querySelector<HTMLButtonElement>("[data-repository-control]")!
+          .click();
+      });
+      await settle();
+      expect(more()).toBe(m.git_sync_outgoing_more({ count: "70" }));
+      expectCut(120);
+
+      // Until the list of newer counters arrives, the shown list keeps the
+      // remainder of the counter it was read for.
+      holdList = true;
+      ahead = 130;
+      await refresh();
+      expect(counter(130)).toBe(true);
+      expect(more()).toBe(m.git_sync_outgoing_more({ count: "70" }));
+      await act(async () => held[0]());
+      await settle();
+      expectCut(130);
+      holdList = false;
+      held.length = 0;
+
+      // A list that is not cut has no remainder.
+      ahead = 3;
+      await refresh();
+      expect(counter(3)).toBe(true);
+      expect(rows().length).toBe(3);
+      expect(more()).toBe(null);
+
+      ahead = 0;
+      await refresh();
+      expect(dialog()?.textContent?.includes(m.git_sync_outgoing_empty())).toBe(
+        true,
+      );
+      expect(more()).toBe(null);
+
+      // Neither does a failed read nor a remote status that is not checked.
+      listFails = true;
+      ahead = 120;
+      await refresh();
+      expect(
+        dialog()?.querySelector("[data-git-outgoing-failed]")?.textContent,
+      ).toBe(m.git_sync_outgoing_load_failed());
+      expect(more()).toBe(null);
+
+      listFails = false;
+      await refresh();
+      expectCut(120);
+      fetchFails = true;
+      await act(async () => {
+        await refreshGitRemoteStatus(path).catch(() => {});
+      });
+      await settle();
+      expect(
+        dialog()?.textContent?.includes(m.git_sync_outgoing_unchecked()),
+      ).toBe(true);
+      expect(more()).toBe(null);
+    } finally {
+      await dom.render(null);
+      clearNativeMocks();
+      useGitStore.getState().clear(path);
+      useGitStore.getState().clear("/project");
+      await dom.dispose();
+    }
+  });
 }

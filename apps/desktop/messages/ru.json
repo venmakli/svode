@@ -2434,6 +2434,7 @@
   "git_sync_remote_checking": "Проверяется состояние remote…",
   "git_sync_outgoing_unchecked": "Список исходящих коммитов недоступен до проверки состояния remote.",
   "git_sync_outgoing_load_failed": "Не удалось загрузить исходящие коммиты.",
+  "git_sync_outgoing_more": "И ещё {count}.",
   "git_sync_access_read_only": "Этот репозиторий доступен только для чтения. Для публикации нужны права на запись.",
   "git_sync_access_unknown": "Проверьте доступ к записи этого репозитория в настройках Git, затем повторите.",
   "git_push_lfs_objects_missing": "Git-провайдер отклонил push: у него нет LFS-объектов, на которые ссылаются коммиты ({count}).",

@@ -355,6 +355,16 @@ export function GitSyncStatusWidget({
                             <p className="mt-1 truncate">{commit.message}</p>
                           </li>
                         ))}
+                        {sync.moreCommits > 0 && (
+                          <li
+                            className="p-3 text-sm text-muted-foreground"
+                            data-git-outgoing-more
+                          >
+                            {m.git_sync_outgoing_more({
+                              count: String(sync.moreCommits),
+                            })}
+                          </li>
+                        )}
                       </ul>
                     )}
                   </div>
