@@ -63,7 +63,7 @@ pub(crate) async fn read_stats(
             ));
         }
     }
-    let status = ops::status(cli, space).await?;
+    let status = ops::full_status(cli, space).await?;
     let states: BTreeMap<_, _> = status
         .files
         .iter()

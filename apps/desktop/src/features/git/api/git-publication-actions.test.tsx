@@ -474,6 +474,8 @@ if (process.env.SVODE_PUBLICATION_TEST === "1") {
       hasUnstaged: false,
       hasConflicts: false,
       tracking: "origin/main",
+      totalFiles: 0,
+      omittedFiles: 0,
     };
     git.applyStatus(alias, status);
     recordGitOperationOutcome({

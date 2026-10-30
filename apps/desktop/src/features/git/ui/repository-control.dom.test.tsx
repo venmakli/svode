@@ -763,6 +763,8 @@ async function applyBranch(path: string) {
     hasUnstaged: false,
     hasConflicts: false,
     tracking: "origin/main",
+    totalFiles: 0,
+    omittedFiles: 0,
   });
 }
 

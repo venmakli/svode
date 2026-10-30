@@ -36,6 +36,8 @@ export function toGitStatus(dto: GitStatusDto): GitStatus {
       path: file.path,
       state: file.state,
     })),
+    totalFiles: dto.totalFiles,
+    omittedFiles: dto.omittedFiles,
   };
 }
 

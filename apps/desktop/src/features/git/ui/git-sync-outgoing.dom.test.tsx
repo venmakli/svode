@@ -56,6 +56,8 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
       hasUnstaged: false,
       hasConflicts: false,
       tracking: "origin/main",
+      totalFiles: 0,
+      omittedFiles: 0,
     });
     const commits = (count: number) =>
       Array.from({ length: count }, (_, index) => ({

@@ -900,7 +900,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "get_git_status",
-            "Return read-only Git status for the active/default or selected space. This is only for review/reporting pending changes; Svode app owns commit/sync/autocommit flows.",
+            "Return read-only Git status for the active/default or selected space. This is only for review/reporting pending changes; Svode app owns commit/sync/autocommit flows. files lists at most 20000 changed paths, conflicts first; totalFiles counts every changed path and omittedFiles the paths left out of files, while hasStaged, hasUnstaged and hasConflicts cover every path. Git gets 30 seconds to return the status; past that the call fails with GIT_COMMAND_FAILED naming the repository.",
             schema(&[space_id()], &[]),
             read_only_ann(),
             None,
@@ -948,6 +948,7 @@ pub fn guide_text() -> &'static str {
 - Target: Svode MCP is a tools-only local product API. It currently negotiates protocolVersion 2025-06-18 for client compatibility while using 2025-11-25-friendly tool definitions: object inputSchema, optional outputSchema only when it matches structuredContent, annotations, and tools/list pagination tolerance.
 - Mutating tools do not autocommit. They return changedPaths in structuredContent. Svode app owns commit/sync/autocommit policy.
 - A mutation of a repository with a remote needs current write evidence. REPOSITORY_ACCESS_DENIED carries status, reason and hint and writes nothing: MCP never probes the remote itself, so verify access with `svode git access verify` for that Space or in the Svode app, then retry.
+- get_git_status lists at most 20000 changed paths, conflicts first. omittedFiles above 0 means the list is partial: totalFiles and the has* flags still cover every path, so never treat a path missing from files as unchanged.
 - A title change whose rename would also write other repositories that refuse keeps the new title and the current filename: the result has a filename_rename_deferred warning with reason repository_access_denied and blockers. Verify access for those repositories, then save the same title again to rename.
 
 Structure choice:
@@ -2052,6 +2053,20 @@ mod tests {
         assert!(guide_text().contains("confirmAutomaticExecution=true"));
         assert!(guide_text().contains("Use run_routine only"));
         assert!(guide_text().contains("served only through the running Svode desktop app"));
+    }
+
+    #[test]
+    fn git_status_definition_and_guide_describe_the_list_limit() {
+        let definitions = definitions();
+        let status = definitions
+            .iter()
+            .find(|definition| definition.name == "get_git_status")
+            .unwrap();
+        let description = status.description;
+        for part in ["20000", "totalFiles", "omittedFiles", "30 seconds"] {
+            assert!(description.contains(part), "{part}");
+        }
+        assert!(guide_text().contains("omittedFiles above 0 means the list is partial"));
     }
 
     #[test]

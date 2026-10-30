@@ -13,7 +13,7 @@ use crate::storage::config::SpaceGitType;
 // Status reads have one owner; the operations surface re-exports it so callers
 // keep their existing `ops::…` path without a second implementation.
 pub use super::status::{
-    GitStatus, current_branch, get_remote, normalize_git_path, ref_exists, status,
+    GitStatus, current_branch, full_status, get_remote, normalize_git_path, ref_exists, status,
     status_with_remote_counts,
 };
 #[cfg(test)]
@@ -647,7 +647,7 @@ pub async fn commit_paths(
     if file_paths.is_empty() {
         return Ok(false);
     }
-    if status(cli, space_dir).await?.has_conflicts {
+    if full_status(cli, space_dir).await?.has_conflicts {
         return Err(GitError::Conflict(
             "Resolve the repository merge before saving paths".into(),
         ));
@@ -2055,6 +2055,8 @@ mod tests {
                     state: "untracked".to_string(),
                 },
             ],
+            total_files: 2,
+            omitted_files: 0,
         };
 
         strip_status_path_prefix(&mut status, "spaces/docs/").unwrap();

@@ -22,7 +22,12 @@ export interface GitStatusDto {
   hasUnstaged: boolean;
   hasConflicts: boolean;
   tracking: string | null;
+  /** At most 20 000 paths, conflicts first. */
   files: FileGitStatusDto[];
+  /** Changed paths of the repository, listed in `files` or not. */
+  totalFiles: number;
+  /** Changed paths left out of `files` by the list limit. */
+  omittedFiles: number;
 }
 
 export interface UnpushedCommitDto {

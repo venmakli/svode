@@ -2010,6 +2010,9 @@ async fn integrity_git_status_and_actors_read_through_the_host_runtime() {
     let status = call_tool(&host, Some(&target), "get_git_status", json!({})).await;
     let status = &structured(&status)["status"];
     assert_eq!(status["hasUnstaged"], true);
+    let listed = status["files"].as_array().unwrap().len();
+    assert_eq!(status["totalFiles"], listed);
+    assert_eq!(status["omittedFiles"], 0);
     assert!(
         status["files"]
             .as_array()

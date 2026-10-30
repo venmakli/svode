@@ -56,6 +56,8 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
       hasConflicts: files.length > 0,
       tracking: "origin/main",
       files: files.map((path) => ({ path, state: "conflict" as const })),
+      totalFiles: files.length,
+      omittedFiles: 0,
     };
   }
 

@@ -4,7 +4,7 @@ use std::process::{Command as StdCommand, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use super::GitError;
@@ -579,4 +579,51 @@ pub async fn read_bounded(
     .await
     .map_err(|_| GitError::GitCommandFailed("Diff read timed out".into()))??;
     Ok(result)
+}
+
+/// Run a Git read without optional locks and hand each NUL-terminated record of
+/// its output to `record` as it arrives, so no output size is ever buffered.
+/// Returns whether Git succeeded, or `None` when `timeout` passed first; the
+/// process is killed then and on a `record` error.
+pub async fn read_records(
+    cli: &GitCli,
+    repo: &Path,
+    args: &[&str],
+    timeout: Option<Duration>,
+    mut record: impl FnMut(&[u8]) -> Result<(), GitError>,
+) -> Result<Option<bool>, GitError> {
+    let mut command = Command::new(cli.git_path());
+    hide_tokio_window(&mut command);
+    cli.configure_process_env(&mut command);
+    command
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let read = async {
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            if stdout.read_until(0, &mut buffer).await? == 0 {
+                break;
+            }
+            if buffer.last() == Some(&0) {
+                buffer.pop();
+            }
+            record(&buffer)?;
+        }
+        Ok::<_, GitError>(child.wait().await?.success())
+    };
+    match timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, read).await {
+            Ok(success) => success.map(Some),
+            Err(_) => Ok(None),
+        },
+        None => read.await.map(Some),
+    }
 }

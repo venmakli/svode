@@ -47,7 +47,7 @@ pub async fn save(
     let mut pending = runtime.pending().begin_save(space, anchors.as_deref());
     let selected = match requested {
         Some(paths) => paths,
-        None => ops::status(&cli, space)
+        None => ops::full_status(&cli, space)
             .await?
             .files
             .into_iter()

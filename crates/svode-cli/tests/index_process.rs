@@ -231,6 +231,8 @@ fn a_cold_index_is_built_and_each_command_sees_external_edits() {
         // commits, fetches or changes the history.
         let status = ok(root, &["git", "status"]);
         assert!(status["status"].is_object(), "{status}");
+        assert!(status["status"]["totalFiles"].is_u64(), "{status}");
+        assert_eq!(status["status"]["omittedFiles"], 0, "{status}");
         let actors = ok(root, &["actor", "list"]);
         assert_eq!(actors["actors"][0]["email"], "agent@example.com");
         assert_eq!(git(root, &["rev-parse", "HEAD"]), head);

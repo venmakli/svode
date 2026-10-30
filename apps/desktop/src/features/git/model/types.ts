@@ -24,6 +24,8 @@ export interface GitStatus {
   hasConflicts: boolean;
   tracking: string | null;
   files: FileGitStatus[];
+  totalFiles: number;
+  omittedFiles: number;
 }
 
 export type GitRemoteOperation =

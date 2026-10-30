@@ -243,6 +243,13 @@ impl From<svode_core::git::GitError> for AppError {
             GitError::PullBlocked { repository, files } => {
                 Self::GitPullBlocked { repository, files }
             }
+            GitError::StatusTimedOut {
+                repository,
+                seconds,
+            } => Self::GitStatusTimedOut {
+                repository,
+                seconds,
+            },
             GitError::SaveFailed {
                 stage,
                 reason,
@@ -493,6 +500,9 @@ pub enum AppError {
         files: Vec<String>,
     },
 
+    #[error("Git did not return the status of {repository} within {seconds} seconds")]
+    GitStatusTimedOut { repository: String, seconds: u64 },
+
     #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
     GitSaveFailed {
         stage: &'static str,
@@ -610,6 +620,7 @@ impl AppError {
             AppError::GitBranchBlocked { .. } => "git_branch_blocked",
             AppError::GitPushRejected { .. } => "git_push_rejected",
             AppError::GitPullBlocked { .. } => "git_pull_blocked",
+            AppError::GitStatusTimedOut { .. } => "git_status_timed_out",
             AppError::GitSaveFailed { .. } => "git_save_failed",
             AppError::GitConflict(_) => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
@@ -692,6 +703,9 @@ impl Serialize for AppError {
             }
             AppError::GitPullBlocked { repository, files } => {
                 serde_json::json!({ "kind": self.kind(), "repository": repository, "files": files }).serialize(serializer)
+            }
+            AppError::GitStatusTimedOut { repository, seconds } => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "repository": repository, "seconds": seconds }).serialize(serializer)
             }
             AppError::GitSaveFailed { stage, reason, exit_code, path_count, path_sample } => {
                 serde_json::json!({ "kind": self.kind(), "stage": stage, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
@@ -978,6 +992,27 @@ mod tests {
         assert_eq!(value, expected);
         assert_eq!(value["kind"], "git_push_rejected");
         assert_eq!(value["lfsDeclaration"], "pending");
+    }
+
+    #[test]
+    fn status_timeout_keeps_the_core_transport_shape() {
+        let core = svode_core::git::GitError::StatusTimedOut {
+            repository: "Research".into(),
+            seconds: 30,
+        };
+        let expected = serde_json::to_value(&core).unwrap();
+        let value = serde_json::to_value(AppError::from(core)).unwrap();
+
+        assert_eq!(value, expected);
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "git_status_timed_out",
+                "message": "Git did not return the status of Research within 30 seconds",
+                "repository": "Research",
+                "seconds": 30,
+            })
+        );
     }
 
     #[test]

@@ -95,6 +95,8 @@ const status: GitStatus = {
     { path: "tasks/entry.md", state: "modified" },
     { path: "outside.md", state: "modified" },
   ],
+  totalFiles: 4,
+  omittedFiles: 0,
 };
 
 test("directory Page Peek keeps subtree Save all without loaded sidebar descendants", () => {

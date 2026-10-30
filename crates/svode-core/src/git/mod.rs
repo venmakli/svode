@@ -80,6 +80,8 @@ pub enum GitError {
         path_count: usize,
         path_sample: Option<String>,
     },
+    #[error("Git did not return the status of {repository} within {seconds} seconds")]
+    StatusTimedOut { repository: String, seconds: u64 },
     #[error("Git conflict: {0}")]
     Conflict(String),
     #[error("Git auth required: {0}")]
@@ -112,6 +114,7 @@ impl GitError {
             GitError::PushRejected { .. } => "git_push_rejected",
             GitError::PullBlocked { .. } => "git_pull_blocked",
             GitError::SaveFailed { .. } => "git_save_failed",
+            GitError::StatusTimedOut { .. } => "git_status_timed_out",
             GitError::Conflict(_) => "git_conflict",
             GitError::AuthRequired(_) => "git_auth_required",
             GitError::NoRemote => "git_no_remote",
@@ -173,6 +176,16 @@ impl serde::Serialize for GitError {
             GitError::SourceBusy { path } => {
                 serde_json::json!({ "kind": self.kind(), "path": path }).serialize(serializer)
             }
+            GitError::StatusTimedOut {
+                repository,
+                seconds,
+            } => serde_json::json!({
+                "kind": self.kind(),
+                "message": self.to_string(),
+                "repository": repository,
+                "seconds": seconds,
+            })
+            .serialize(serializer),
             GitError::RepositoryAccessDenied {
                 repository_id,
                 status,

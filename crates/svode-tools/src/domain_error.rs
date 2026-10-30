@@ -148,7 +148,9 @@ impl From<GitError> for ToolError {
         }
         let code = match &error {
             GitError::GitNotFound => "GIT_NOT_FOUND",
-            GitError::GitCommandFailed(_) => "GIT_COMMAND_FAILED",
+            GitError::GitCommandFailed(_) | GitError::StatusTimedOut { .. } => {
+                "GIT_COMMAND_FAILED"
+            }
             GitError::PathNotAccessible(_) => "PATH_NOT_ACCESSIBLE",
             GitError::RepositoryAccessDenied { .. } => "REPOSITORY_ACCESS_DENIED",
             GitError::Conflict(_) => "GIT_CONFLICT",

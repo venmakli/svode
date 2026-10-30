@@ -61,6 +61,39 @@ async fn scoped_save_commits_only_its_paths_and_keeps_unrelated_staged_bytes() {
 }
 
 #[tokio::test]
+async fn saving_one_page_of_a_repository_beyond_the_status_list_commits_it() {
+    let cli = cli();
+    let tmp = repo(&cli, true).await;
+    let space = tmp.path();
+    super::status::untracked_bulk(space, 0..21_000);
+    write(space, "page.md", "page\n");
+
+    let runtime = runtime();
+    let host = TestHost::default();
+    let report = save(
+        &runtime,
+        &host,
+        None,
+        space,
+        Some(vec!["page.md".to_string()]),
+    )
+    .await
+    .expect("save of one Page");
+
+    assert_eq!(git(&cli, space, &["show", "HEAD:page.md"]).await, "page\n");
+    // The report is the listed status; the operation decided by the full one.
+    let full = super::ops::full_status(&cli, space).await.unwrap();
+    assert!(full.files.len() >= 21_000);
+    assert!(!full.files.iter().any(|file| file.path == "page.md"));
+    assert_eq!(report.status.files.len(), super::status::STATUS_LIST_LIMIT);
+    assert_eq!(report.status.total_files, full.files.len());
+    assert_eq!(
+        report.status.omitted_files,
+        full.files.len() - super::status::STATUS_LIST_LIMIT
+    );
+}
+
+#[tokio::test]
 async fn save_without_changes_publishes_no_commit() {
     let cli = cli();
     let tmp = repo(&cli, true).await;

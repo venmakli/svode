@@ -265,6 +265,8 @@ function status(files: GitStatus["files"]): GitStatus {
     hasConflicts: files.some((file) => file.state === "conflict"),
     tracking: null,
     files,
+    totalFiles: files.length,
+    omittedFiles: 0,
   };
 }
 
@@ -280,6 +282,8 @@ test("status failure retains the last snapshot and explicit retry clears its err
     hasConflicts: false,
     tracking: null,
     files: [],
+    totalFiles: 0,
+    omittedFiles: 0,
   };
   git.applyStatus(space, status);
   await git.refreshStatus(space, async () => {

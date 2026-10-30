@@ -75,6 +75,8 @@ test("branch recovery survives remote-status refresh and remains scoped to its r
     hasConflicts: false,
     tracking: null,
     files: [],
+    totalFiles: 0,
+    omittedFiles: 0,
   });
   expect(useGitStore.getState().branchError[path]?.includes("recovery")).toBe(
     true,

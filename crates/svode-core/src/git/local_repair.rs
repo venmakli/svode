@@ -61,7 +61,7 @@ async fn repair_authorized(
         tracing::info!(repository = %repository.display(), error_kind = error.kind(), "local ignore repair skipped; retry on writable open");
         return Ok(RepairOutcome::Skipped);
     }
-    let status = ops::status(cli, repository).await?;
+    let status = ops::full_status(cli, repository).await?;
     if status.has_conflicts || status.branch == "(detached)" || status.branch == "HEAD" {
         tracing::info!(repository = %repository.display(), "local ignore repair skipped for unsafe repository");
         return Ok(RepairOutcome::Skipped);
@@ -412,6 +412,20 @@ mod tests {
 mod recovery_tests {
     use super::*;
     use crate::git::staging_tests::{cli, git, repo, write};
+
+    #[tokio::test]
+    async fn repair_reads_every_path_of_a_large_repository() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        crate::git::status::untracked_bulk(root.path(), 0..21_000);
+        assert_eq!(
+            repair_authorized(&cli, root.path(), false, Ok(()))
+                .await
+                .unwrap(),
+            RepairOutcome::Changed
+        );
+        assert!(root.path().join(".gitignore").is_file());
+    }
 
     #[tokio::test]
     async fn conflict_prevents_repair_until_resolved() {

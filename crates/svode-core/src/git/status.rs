@@ -1,11 +1,17 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Duration;
 use unicode_normalization::UnicodeNormalization;
 
 use super::GitError;
-use super::cli::{GitCli, read_bounded};
+use super::cli::{GitCli, read_records};
 use super::path::{RootMode, normalize_repo_relative};
+
+/// Most paths a listed status carries; flags and totals still cover every path.
+pub const STATUS_LIST_LIMIT: usize = 20_000;
+/// How long a listed status read waits for Git.
+pub const STATUS_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +26,10 @@ pub struct GitStatus {
     pub has_conflicts: bool,
     pub tracking: Option<String>,
     pub files: Vec<FileGitStatus>,
+    /// Changed paths of the repository, listed in `files` or not.
+    pub total_files: usize,
+    /// Changed paths left out of `files` by [`STATUS_LIST_LIMIT`].
+    pub omitted_files: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -45,10 +55,30 @@ pub async fn get_remote(cli: &GitCli, space_dir: &Path) -> Result<Option<String>
     }
 }
 
-/// Get space git status by parsing `git status --porcelain=v2 --branch -z`.
+/// Status as Desktop, MCP and CLI present it: every path counts toward the
+/// flags and totals, `files` holds at most [`STATUS_LIST_LIMIT`] paths with the
+/// conflicts first, and Git gets [`STATUS_READ_TIMEOUT`] to answer.
 pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, GitError> {
+    let mut status = read_status(cli, space_dir, Some(STATUS_READ_TIMEOUT)).await?;
+    limit_files(&mut status, STATUS_LIST_LIMIT);
+    Ok(status)
+}
+
+/// Status an operation decides by: every path, with no limit on their number,
+/// the output size or the time Git takes.
+pub async fn full_status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, GitError> {
+    read_status(cli, space_dir, None).await
+}
+
+/// Parse `git status --porcelain=v2 --branch -z` as Git writes it.
+async fn read_status(
+    cli: &GitCli,
+    space_dir: &Path,
+    timeout: Option<Duration>,
+) -> Result<GitStatus, GitError> {
     let prefix = status_path_prefix(cli, space_dir).await?;
-    let (success, bytes) = read_bounded(
+    let mut parser = StatusParser::default();
+    let read = read_records(
         cli,
         space_dir,
         &[
@@ -61,22 +91,30 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, GitErro
             "--",
             ".",
         ],
-        4 * 1024 * 1024,
+        timeout,
+        |record| {
+            let record = std::str::from_utf8(record).map_err(|_| {
+                GitError::GitCommandFailed("Repository paths have invalid encoding".into())
+            })?;
+            parser.record(record)
+        },
     )
     .await?;
-    if !success || bytes.len() > 4 * 1024 * 1024 {
-        return Err(GitError::GitCommandFailed(
-            "Repository status unavailable or exceeds the read limit".into(),
-        ));
+    match (read, timeout) {
+        (Some(true), _) => {}
+        (Some(false), _) => {
+            return Err(GitError::GitCommandFailed(
+                "Repository status unavailable".into(),
+            ));
+        }
+        (None, timeout) => {
+            return Err(GitError::StatusTimedOut {
+                repository: repository_name(space_dir),
+                seconds: timeout.unwrap_or_default().as_secs(),
+            });
+        }
     }
-    let output = String::from_utf8(bytes)
-        .map_err(|_| GitError::GitCommandFailed("Repository paths have invalid encoding".into()))?;
-    let mut status = parse_status_porcelain_v2_z(&output)?;
-    if status.files.len() > 20_000 {
-        return Err(GitError::GitCommandFailed(
-            "Repository status exceeds the item limit".into(),
-        ));
-    }
+    let mut status = parser.finish();
     strip_status_path_prefix(&mut status, &prefix)?;
     let relocations = case_relocations(cli, space_dir, &status.files).await?;
     if !relocations.is_empty() {
@@ -106,7 +144,37 @@ pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, GitErro
         status.has_unstaged = false;
         status.has_conflicts = local_conflicts;
     }
+    status.total_files = status.files.len();
     Ok(status)
+}
+
+/// Keep at most `limit` paths: every conflict first, then the rest in Git order.
+fn limit_files(status: &mut GitStatus, limit: usize) {
+    if status.files.len() > limit {
+        let (mut files, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut status.files)
+            .into_iter()
+            .partition(|file| file.state == "conflict");
+        files.extend(rest);
+        files.truncate(limit);
+        status.files = files;
+    }
+    status.omitted_files = status.total_files - status.files.len();
+}
+
+/// The repository a status error names: its Space or project name, else its
+/// folder name, never an absolute path.
+fn repository_name(space_dir: &Path) -> String {
+    crate::storage::config::read_space_assets_config(space_dir)
+        .map(|config| config.name)
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| {
+            std::fs::canonicalize(space_dir).ok().and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+        })
+        .unwrap_or_else(|| "repository".into())
 }
 
 /// Git folding names on a case-insensitive file system reports nothing for a
@@ -263,105 +331,122 @@ pub fn strip_status_path_prefix(status: &mut GitStatus, prefix: &str) -> Result<
 }
 
 pub fn parse_status_porcelain_v2_z(stdout: &str) -> Result<GitStatus, GitError> {
-    let mut branch = String::from("HEAD");
-    let mut ahead: u32 = 0;
-    let mut behind: u32 = 0;
-    let mut has_staged = false;
-    let mut has_unstaged = false;
-    let mut has_conflicts = false;
-    let mut tracking: Option<String> = None;
-    let mut files: Vec<FileGitStatus> = Vec::new();
+    let mut parser = StatusParser::default();
+    for record in stdout.split('\0') {
+        parser.record(record)?;
+    }
+    Ok(parser.finish())
+}
 
-    let records: Vec<&str> = stdout.split('\0').collect();
-    let mut idx = 0;
-    while idx < records.len() {
-        let record = records[idx];
-        idx += 1;
+/// Porcelain v2 records one at a time, so the output is never held whole.
+#[derive(Default)]
+struct StatusParser {
+    branch: Option<String>,
+    ahead: u32,
+    behind: u32,
+    has_staged: bool,
+    has_unstaged: bool,
+    has_conflicts: bool,
+    tracking: Option<String>,
+    files: Vec<FileGitStatus>,
+    /// The previous record was a rename, whose next record is its source.
+    rename_source: bool,
+}
+
+impl StatusParser {
+    fn record(&mut self, record: &str) -> Result<(), GitError> {
+        if std::mem::take(&mut self.rename_source) && !record.is_empty() {
+            self.files.push(FileGitStatus {
+                path: normalize_git_path(record)?,
+                state: "deleted".to_string(),
+            });
+            return Ok(());
+        }
         if record.is_empty() {
-            continue;
+            return Ok(());
         }
 
         if let Some(rest) = record.strip_prefix("# branch.head ") {
-            branch = rest.to_string();
-            continue;
+            self.branch = Some(rest.to_string());
+            return Ok(());
         }
         if let Some(rest) = record.strip_prefix("# branch.upstream ") {
-            tracking = Some(rest.to_string());
-            continue;
+            self.tracking = Some(rest.to_string());
+            return Ok(());
         }
         if let Some(rest) = record.strip_prefix("# branch.ab ") {
             for part in rest.split_whitespace() {
                 if let Some(n) = part.strip_prefix('+') {
-                    ahead = n.parse().unwrap_or(0);
+                    self.ahead = n.parse().unwrap_or(0);
                 } else if let Some(n) = part.strip_prefix('-') {
-                    behind = n.parse().unwrap_or(0);
+                    self.behind = n.parse().unwrap_or(0);
                 }
             }
-            continue;
+            return Ok(());
         }
 
         if record.starts_with("u ") {
-            has_conflicts = true;
+            self.has_conflicts = true;
             if let Some(path) = split_status_fields(record, 11).get(10) {
-                files.push(FileGitStatus {
+                self.files.push(FileGitStatus {
                     path: normalize_git_path(path)?,
                     state: "conflict".to_string(),
                 });
             }
-            continue;
+            return Ok(());
         }
 
         if record.starts_with("1 ") {
             let fields = split_status_fields(record, 9);
             if fields.len() >= 9 {
-                update_staged_flags(fields[1], &mut has_staged, &mut has_unstaged);
-                files.push(FileGitStatus {
+                update_staged_flags(fields[1], &mut self.has_staged, &mut self.has_unstaged);
+                self.files.push(FileGitStatus {
                     path: normalize_git_path(fields[8])?,
                     state: status_state_for_xy(fields[1]).to_string(),
                 });
             }
-            continue;
+            return Ok(());
         }
 
         if record.starts_with("2 ") {
             let fields = split_status_fields(record, 10);
             if fields.len() >= 10 {
-                update_staged_flags(fields[1], &mut has_staged, &mut has_unstaged);
-                files.push(FileGitStatus {
+                update_staged_flags(fields[1], &mut self.has_staged, &mut self.has_unstaged);
+                self.files.push(FileGitStatus {
                     path: normalize_git_path(fields[9])?,
                     state: status_state_for_xy(fields[1]).to_string(),
                 });
-                if idx < records.len() && !records[idx].is_empty() {
-                    files.push(FileGitStatus {
-                        path: normalize_git_path(records[idx])?,
-                        state: "deleted".to_string(),
-                    });
-                    idx += 1;
-                }
+                self.rename_source = true;
             }
-            continue;
+            return Ok(());
         }
 
         if let Some(rest) = record.strip_prefix("? ") {
-            has_unstaged = true;
-            files.push(FileGitStatus {
+            self.has_unstaged = true;
+            self.files.push(FileGitStatus {
                 path: normalize_git_path(rest)?,
                 state: "untracked".to_string(),
             });
         }
+        Ok(())
     }
 
-    Ok(GitStatus {
-        repository: None,
-        branch,
-        ahead,
-        behind,
-        has_staged,
-        has_unstaged,
-        has_conflicts,
-        tracking,
-        files,
-    })
+    fn finish(self) -> GitStatus {
+        let total_files = self.files.len();
+        GitStatus {
+            repository: None,
+            branch: self.branch.unwrap_or_else(|| "HEAD".to_string()),
+            ahead: self.ahead,
+            behind: self.behind,
+            has_staged: self.has_staged,
+            has_unstaged: self.has_unstaged,
+            has_conflicts: self.has_conflicts,
+            tracking: self.tracking,
+            files: self.files,
+            total_files,
+            omitted_files: 0,
+        }
+    }
 }
 
 fn split_status_fields(record: &str, fields: usize) -> Vec<&str> {
@@ -408,8 +493,180 @@ pub async fn current_branch(cli: &GitCli, space_dir: &Path) -> Result<String, Gi
 }
 
 #[cfg(test)]
+pub(super) fn untracked_bulk(root: &Path, range: std::ops::Range<usize>) {
+    // Long names keep the status output of 21 000 paths above 4 MB.
+    let folder = root.join("bulk");
+    std::fs::create_dir_all(&folder).unwrap();
+    for index in range {
+        std::fs::write(
+            folder.join(format!("{index:05}-{}.md", "x".repeat(190))),
+            "",
+        )
+        .unwrap();
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::staging_tests::{cli, git, repo, write};
+
+    fn file(path: &str, state: &str) -> FileGitStatus {
+        FileGitStatus {
+            path: path.into(),
+            state: state.into(),
+        }
+    }
+
+    #[test]
+    fn listed_files_keep_every_conflict_first_and_count_the_rest() {
+        let mut status = parse_status_porcelain_v2_z("").unwrap();
+        status.files = vec![
+            file("a.md", "modified"),
+            file("b.md", "untracked"),
+            file("c.md", "untracked"),
+            file("late.md", "conflict"),
+            file("d.md", "untracked"),
+        ];
+        status.total_files = 5;
+        limit_files(&mut status, 3);
+        assert_eq!(
+            status.files,
+            vec![
+                file("late.md", "conflict"),
+                file("a.md", "modified"),
+                file("b.md", "untracked"),
+            ]
+        );
+        assert_eq!((status.total_files, status.omitted_files), (5, 2));
+
+        let mut within = parse_status_porcelain_v2_z("").unwrap();
+        within.files = vec![file("a.md", "modified"), file("b.md", "conflict")];
+        within.total_files = 2;
+        limit_files(&mut within, 3);
+        assert_eq!(
+            within.files,
+            vec![file("a.md", "modified"), file("b.md", "conflict")]
+        );
+        assert_eq!(within.omitted_files, 0);
+    }
+
+    #[test]
+    fn streamed_rename_records_keep_their_source() {
+        let status = parse_status_porcelain_v2_z(
+            "# branch.head main\0\
+2 R. N... 100644 100644 100644 abc abc R100 new.md\0old.md\0\
+? notes.md\0",
+        )
+        .unwrap();
+        assert_eq!(
+            status.files,
+            vec![
+                file("new.md", "modified"),
+                file("old.md", "deleted"),
+                file("notes.md", "untracked"),
+            ]
+        );
+        assert_eq!(status.total_files, 3);
+    }
+
+    #[tokio::test]
+    async fn listed_status_of_a_large_repository_has_the_limit_and_exact_totals() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        write(root.path(), "baseline.md", "changed\n");
+        untracked_bulk(root.path(), 0..18_999);
+        let within = status(&cli, root.path()).await.unwrap();
+        assert_eq!(within.files.len(), 19_000);
+        assert_eq!((within.total_files, within.omitted_files), (19_000, 0));
+
+        untracked_bulk(root.path(), 18_999..21_000);
+        let listed = status(&cli, root.path()).await.unwrap();
+        assert_eq!(listed.files.len(), STATUS_LIST_LIMIT);
+        assert_eq!((listed.total_files, listed.omitted_files), (21_001, 1_001));
+        assert!(!listed.has_staged && listed.has_unstaged && !listed.has_conflicts);
+        assert_eq!(listed.files[0], file("baseline.md", "modified"));
+        let full = full_status(&cli, root.path()).await.unwrap();
+        assert_eq!(full.files.len(), 21_001);
+        assert_eq!((full.total_files, full.omitted_files), (21_001, 0));
+        // The output exceeds the former 4 MB read limit.
+        let output = cli
+            .exec(
+                root.path(),
+                &["status", "--porcelain=v2", "--untracked-files=all", "-z"],
+            )
+            .await
+            .unwrap();
+        assert!(output.stdout.len() > 4 * 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn listed_status_keeps_a_conflict_beyond_the_limit() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        git(&cli, root.path(), &["checkout", "-b", "other"]).await;
+        write(root.path(), "zz-last.md", "other\n");
+        git(&cli, root.path(), &["add", "."]).await;
+        git(&cli, root.path(), &["commit", "-m", "Other"]).await;
+        git(&cli, root.path(), &["checkout", "-"]).await;
+        write(root.path(), "zz-last.md", "current\n");
+        git(&cli, root.path(), &["add", "."]).await;
+        git(&cli, root.path(), &["commit", "-m", "Current"]).await;
+        assert_ne!(
+            cli.exec(root.path(), &["merge", "other"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+        untracked_bulk(root.path(), 0..21_000);
+        let listed = status(&cli, root.path()).await.unwrap();
+        assert!(listed.has_conflicts);
+        assert_eq!(listed.files[0], file("zz-last.md", "conflict"));
+        assert_eq!((listed.total_files, listed.omitted_files), (21_001, 1_001));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_slow_status_read_names_the_repository_and_its_time_limit() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        write(
+            root.path(),
+            ".svode/config.json",
+            "{\"name\": \"Research\"}\n",
+        );
+        let hook = root.path().join(".git/slow-fsmonitor");
+        svode_testkit::write_executable(&hook, "#!/bin/sh\nsleep 4\nexit 1\n").unwrap();
+        git(
+            &cli,
+            root.path(),
+            &["config", "core.fsmonitor", hook.to_str().unwrap()],
+        )
+        .await;
+
+        let error = read_status(&cli, root.path(), Some(Duration::from_secs(1)))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, GitError::StatusTimedOut { repository, seconds: 1 } if repository == "Research"),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "Git did not return the status of Research within 1 seconds"
+        );
+        assert_eq!(
+            STATUS_READ_TIMEOUT,
+            Duration::from_secs(30),
+            "the listed read waits 30 seconds"
+        );
+        // Diff reads keep their own limit and wording.
+        let diff = super::super::cli::read_bounded(&cli, root.path(), &["diff"], 1024)
+            .await
+            .unwrap_err();
+        assert_eq!(diff.to_string(), "Git command failed: Diff read timed out");
+    }
 
     #[tokio::test]
     async fn reads_status_without_desktop_or_mutating_repository() {

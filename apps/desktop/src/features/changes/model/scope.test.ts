@@ -24,6 +24,8 @@ const status: GitStatus = {
   hasUnstaged: true,
   hasConflicts: false,
   tracking: null,
+  totalFiles: 4,
+  omittedFiles: 0,
   files: [
     "contract/note.md",
     "contract/sibling.md",

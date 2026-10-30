@@ -464,7 +464,7 @@ pub async fn diagnose_repo_lfs_policy(
         None
     };
 
-    let status = status::status(cli, repo_dir).await?;
+    let status = status::full_status(cli, repo_dir).await?;
     let candidates: Vec<String> = status
         .files
         .into_iter()
