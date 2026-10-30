@@ -1474,7 +1474,7 @@ async fn apply_move<E: GitDateExecutor>(
                 paths.extend(unique_id_paths.iter().cloned());
                 paths.sort();
                 paths.dedup();
-                commit_schema_now(
+                record_unique_id_changes(
                     commits,
                     project_path,
                     space,
@@ -1804,7 +1804,7 @@ pub async fn duplicate<E: GitDateExecutor>(
             );
         } else {
             paths.extend(unique_id_paths);
-            commit_schema_now(
+            record_unique_id_changes(
                 commits,
                 project_path,
                 space,
@@ -1826,9 +1826,12 @@ pub async fn duplicate<E: GitDateExecutor>(
     Ok(duplicated)
 }
 
-/// Allocated unique ids must reach history immediately, so they are committed
-/// outside the pending structural batch.
-async fn commit_schema_now(
+/// Hands an operation's changed set together with the `unique_id` values and
+/// the schema `next` it allocated to the content commit rules: like any
+/// content change they stay pending until a manual commit, or an automatic
+/// content version when content commits are enabled. There is no separate
+/// immediate commit.
+async fn record_unique_id_changes(
     commits: &dyn StructuralCommitSink,
     project_path: Option<&str>,
     space: &str,

@@ -17,8 +17,10 @@ pub trait StructuralCommitSink: Send + Sync {
     /// registration of one operation carries the same `change` identity.
     fn schedule(&self, project: &Path, space: &Path, change: StructuralChange, paths: Vec<PathBuf>);
 
-    /// Commit `paths` immediately under `message`, bypassing the pending batch.
-    /// Used where a source rewrite must not stay uncommitted between steps.
+    /// Register `paths` of an operation that allocated `unique_id` values as
+    /// content changes under `message`, without a structural change identity.
+    /// They follow the content commit rules like any other content change;
+    /// nothing is committed immediately.
     fn commit_now<'a>(
         &'a self,
         project: &'a Path,

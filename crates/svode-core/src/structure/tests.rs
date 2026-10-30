@@ -963,7 +963,8 @@ async fn df_154_move_rename_and_conversion_rewrite_percent_encoded_links() {
 }
 
 /// Records each structural history registration with its Space and whether
-/// it is an immediate commit.
+/// it went through `commit_now`, the registration of an operation that
+/// allocated `unique_id` values.
 #[derive(Default)]
 struct GroupSink(std::sync::Mutex<Vec<(bool, std::path::PathBuf, Vec<std::path::PathBuf>)>>);
 
@@ -1141,7 +1142,7 @@ async fn rename_and_move_register_every_changed_file_in_one_group() {
 }
 
 #[tokio::test]
-async fn a_move_with_unique_ids_commits_the_whole_changed_set_at_once() {
+async fn a_move_with_unique_ids_registers_the_whole_changed_set_in_one_group() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
     crate::page::test_support::scaffold_space(root, "Root");

@@ -280,9 +280,12 @@ impl AutocommitService {
         outcome
     }
 
-    /// Commit an explicit touched-path set with a fixed operational message.
-    /// Stage-4 schema mutations use this when `schema.yaml` and migrated
-    /// markdown entries must land in one path-scoped commit.
+    /// Register an explicit touched-path set of a schema or `unique_id`
+    /// mutation (`schema.yaml`, its `next` and the entries it rewrote) as
+    /// content changes. Schemas and entries are content: the set stays
+    /// pending until a manual commit, or an automatic content version when
+    /// content commits are enabled. Nothing is committed here and the message
+    /// is unused.
     pub async fn commit_paths_now(
         &self,
         _project_path: PathBuf,

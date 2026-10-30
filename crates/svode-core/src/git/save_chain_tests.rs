@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use super::GitError;
+use super::autocommit::AutocommitService;
 use super::pending::{PendingPaths, StructuralChange};
 use super::save::save;
 use super::staging_tests::{TestHost, cli, git, write};
@@ -690,4 +691,92 @@ async fn a_case_only_folder_rename_is_listed_and_saved_as_a_relocation() {
         git(&cli, fixture.root(), &["status", "--porcelain"]).await,
         ""
     );
+}
+
+/// The Desktop sink over the real autocommit service: a `unique_id`
+/// allocation goes through `commit_paths_now` like in the app.
+struct ServiceSink<'a>(&'a AutocommitService);
+
+impl StructuralCommitSink for ServiceSink<'_> {
+    fn schedule(
+        &self,
+        project: &Path,
+        space: &Path,
+        change: StructuralChange,
+        paths: Vec<PathBuf>,
+    ) {
+        self.0
+            .schedule_structural_paths(project.to_path_buf(), space.to_path_buf(), change, paths);
+    }
+
+    fn commit_now<'a>(
+        &'a self,
+        project: &'a Path,
+        space: &'a Path,
+        paths: Vec<PathBuf>,
+        message: String,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            self.0
+                .commit_paths_now(project.to_path_buf(), space.to_path_buf(), paths, message)
+                .await
+                .unwrap();
+        })
+    }
+}
+
+#[tokio::test]
+async fn unique_id_allocated_by_move_and_duplicate_stays_pending_until_a_manual_save() {
+    let fixture = Fixture::new(&[
+        (
+            "Tasks/schema.yaml",
+            "columns:\n  - { name: Key, type: unique_id, prefix: T, next: 2 }\n",
+        ),
+        ("Tasks/README.md", "---\ntitle: Tasks\n---\n"),
+        ("Tasks/Item.md", "---\ntitle: Item\nKey: 1\n---\nItem\n"),
+        ("Loose.md", "---\ntitle: Loose\n---\nLoose\n"),
+    ])
+    .await;
+    let host = Arc::new(TestHost::default());
+    let service = AutocommitService::new(fixture.git.clone(), host.clone());
+    let sink = ServiceSink(&service);
+    let runtime = || StructureRuntime {
+        commits: Some(&sink),
+        ..fixture.structure()
+    };
+    let root = fixture.space();
+    let before = fixture.head().await;
+
+    let moved = structure::move_entry(root, "Loose.md", "Tasks", Some(root), runtime())
+        .await
+        .unwrap();
+    let duplicated = structure::duplicate(root, "Tasks/Item.md", Some(root), runtime())
+        .await
+        .unwrap()
+        .path;
+
+    assert!(fixture.read(&moved).contains("Key: 2"));
+    assert!(fixture.read(&duplicated).contains("Key: 3"));
+    assert!(fixture.read("Tasks/schema.yaml").contains("next: 4"));
+    assert_eq!(fixture.head().await, before, "no commit at allocation");
+    assert!(host.commits.lock().unwrap().is_empty());
+    let pending = fixture.pending();
+    for path in ["Tasks/schema.yaml", moved.as_str(), duplicated.as_str()] {
+        assert!(pending.contains(&fixture.root().join(path)), "{path}");
+    }
+    let status = git(&cli(), fixture.root(), &["status", "--porcelain"]).await;
+    assert!(status.contains("Tasks/schema.yaml"), "{status}");
+
+    fixture.save(None).await.expect("manual save");
+
+    let committed = fixture.committed().await;
+    for record in [
+        "M\tTasks/schema.yaml".to_string(),
+        "D\tLoose.md".to_string(),
+        format!("A\t{moved}"),
+        format!("A\t{duplicated}"),
+    ] {
+        assert!(committed.contains(&record), "{record} not in {committed:?}");
+    }
+    assert!(fixture.pending().is_empty());
 }
