@@ -4,6 +4,7 @@ import {
 } from "@/platform/git/git-api";
 import { useGitStore, type GitStatus } from "../model";
 import { toGitStatus } from "./git-mappers";
+import { gitStatusFailureFromError } from "./git-status-error";
 import { gitSyncErrorMessage } from "./git-sync-error";
 
 export async function getGitStatusSnapshot(
@@ -15,7 +16,11 @@ export async function getGitStatusSnapshot(
 export function refreshGitStatus(spacePath: string): Promise<void> {
   return useGitStore
     .getState()
-    .refreshStatus(spacePath, () => getGitStatusSnapshot(spacePath));
+    .refreshStatus(
+      spacePath,
+      () => getGitStatusSnapshot(spacePath),
+      gitStatusFailureFromError,
+    );
 }
 
 export async function fetchGitStatusSnapshot(

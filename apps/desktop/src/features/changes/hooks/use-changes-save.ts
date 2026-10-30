@@ -48,8 +48,8 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
       closeRecovery();
     };
   }, [targetKey, closeRecovery]);
-  const statusError = useGitStore(
-    (state) => state.statusErrors[target.spacePath] ?? false,
+  const statusError = useGitStore((state) =>
+    Boolean(state.statusErrors[target.spacePath]),
   );
   const editable = repositoryAccessIsEditable(access);
   const save = useCallback(

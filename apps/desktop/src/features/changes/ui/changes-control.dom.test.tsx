@@ -1366,6 +1366,199 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     }
   });
 
+  test("a status timeout names its repository and an incomplete list never claims a scope clean", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    let files: { path: string; state: string }[] = [
+      { path: "contract/README.md", state: "modified" },
+      { path: "contract/new.md", state: "untracked" },
+      { path: "other.md", state: "modified" },
+    ];
+    let omittedFiles = 30_000;
+    let failure: unknown = null;
+    mockNativeIpc(
+      (command, args) => {
+        if (command === "git_status") {
+          if (failure) throw failure;
+          return {
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasStaged: false,
+            hasUnstaged: true,
+            hasConflicts: false,
+            tracking: null,
+            files,
+            totalFiles: files.length + omittedFiles,
+            omittedFiles,
+          };
+        }
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "df240-repo",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_inspection_stats") {
+          const input = args as { paths: string[]; generation: string };
+          return {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: 1,
+              deletions: 0,
+            })),
+          };
+        }
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { refreshGitStatus } = await import("@/features/git");
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const originalLocale = getLocale();
+    const originalDebug = console.debug;
+    console.debug = () => undefined;
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const doc = dom.window.document;
+    const trigger = () =>
+      doc.querySelector<HTMLButtonElement>("[data-changes-trigger]")!;
+    const notice = () =>
+      doc.querySelector("[data-changes-list-truncated]")?.textContent;
+    const body = () => doc.querySelector("[data-changes-body]")!;
+    const filterTrigger = () =>
+      doc.querySelector('[data-changes-toolbar] [role="combobox"]')
+        ?.textContent;
+    const refresh = async () => {
+      await act(async () => {
+        await refreshGitStatus("/df240");
+        await nextFrame(dom);
+      });
+    };
+    try {
+      await setLocale("en", { reload: false });
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl
+              target={{
+                kind: "page",
+                sourceShape: "directory",
+                spacePath: "/df240",
+                path: "contract/README.md",
+                name: "Contract",
+              }}
+            />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+      await refresh();
+      expect(trigger().dataset.changesDirty).toBe("true");
+      expect(trigger().textContent).toBe("2+");
+      expect(trigger().getAttribute("aria-label")).toBe(
+        "Changes in Contract: 2+",
+      );
+      await act(async () => {
+        trigger().click();
+        await nextFrame(dom);
+      });
+      expect(notice()).toBe(
+        "Showing the first 3 of 30,003 changes in the repository. Save all also saves the hidden ones.",
+      );
+      expect(filterTrigger()).toBe("All files · 2+");
+      expect(doc.querySelectorAll("[data-changes-item-trigger]").length).toBe(
+        2,
+      );
+      expect(
+        doc.querySelector<HTMLButtonElement>("[data-slot=sheet-footer] button")
+          ?.disabled,
+      ).toBe(false);
+
+      await selectChangeFilter(dom, "Deleted");
+      expect(filterTrigger()).toBe("Deleted · 0+");
+      expect(body().textContent?.includes("No files of this type")).toBe(false);
+      expect(Boolean(notice())).toBe(true);
+
+      // The scope has no listed paths, yet the list omits others.
+      files = [{ path: "other.md", state: "modified" }];
+      await refresh();
+      expect(trigger().dataset.changesDirty).toBe("false");
+      expect(trigger().getAttribute("aria-label")).toBe("Changes in Contract");
+      expect(body().textContent?.includes("No changes")).toBe(false);
+      expect(notice()).toBe(
+        "Showing the first 1 of 30,001 changes in the repository. Save all also saves the hidden ones.",
+      );
+
+      omittedFiles = 0;
+      await refresh();
+      expect(trigger().getAttribute("aria-label")).toBe(
+        "No changes in Contract",
+      );
+      expect(notice()).toBe(undefined);
+      expect(body().textContent?.includes("No changes")).toBe(true);
+
+      failure = {
+        kind: "git_status_timed_out",
+        message: "Git did not return the status of Research within 30 seconds",
+        repository: "Research",
+        seconds: 30,
+      };
+      await refresh();
+      const alert = () => body().querySelector('[data-slot="alert"]');
+      expect(
+        alert()?.querySelector('[data-slot="alert-description"]')?.textContent,
+      ).toBe(
+        "Git did not return the status of Research within 30 seconds. Retry later.",
+      );
+      expect(trigger().getAttribute("aria-label")).toBe("Changes in Contract");
+      expect(body().textContent?.includes("No changes")).toBe(false);
+
+      await setLocale("ru", { reload: false });
+      await refresh();
+      expect(
+        alert()?.querySelector('[data-slot="alert-description"]')?.textContent,
+      ).toBe("Git не вернул статус «Research» за 30 секунд. Повторите позже.");
+      await setLocale("en", { reload: false });
+
+      failure = new Error("Synthetic status failure");
+      await refresh();
+      expect(
+        alert()?.querySelector('[data-slot="alert-description"]')?.textContent,
+      ).toBe("Repository status is unavailable. Retry to update the list.");
+
+      failure = null;
+      omittedFiles = 5;
+      await act(async () => {
+        alert()!.querySelector("button")!.click();
+        await nextFrame(dom);
+        await nextFrame(dom);
+      });
+      expect(
+        alert()?.hasAttribute("data-changes-list-truncated") ?? false,
+      ).toBe(true);
+      expect(notice()).toBe(
+        "Showing the first 1 of 6 changes in the repository. Save all also saves the hidden ones.",
+      );
+    } finally {
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      await setLocale(originalLocale, { reload: false });
+      console.debug = originalDebug;
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
   test("switching Changes targets and sessions discards prior errors and late recovery", async () => {
     const dom = createDom();
     const restore = installDomGlobals(dom);

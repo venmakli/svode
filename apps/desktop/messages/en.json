@@ -2262,6 +2262,8 @@
   "changes_metadata": "The source type or repository metadata changed. Text comparison is unavailable.",
   "changes_budget_limit": "The open previews reached the limit. Collapse other files and retry, or show the source file.",
   "changes_repository_failed": "Repository status is unavailable. Retry to update the list.",
+  "changes_repository_timeout": "Git did not return the status of {repository} within 30 seconds. Retry later.",
+  "changes_list_truncated": "Showing the first {shown} of {total} changes in the repository. Save all also saves the hidden ones.",
   "changes_more": "Show more · {count} remaining",
   "storage_s3_setup_secrets": "Choose or create two Secrets and save to turn on file transfers. Your storage target and files are unchanged.",
   "storage_s3_secret_missing": "{role}: Secret {name} is missing, empty, or has a different type. Create it again or select another Secret.",

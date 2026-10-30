@@ -6,6 +6,7 @@ import {
   selectTreeNodeChangeIndicator,
   useGitStore,
 } from "./git-store";
+import { gitStatusFailureFromError } from "../api/git-status-error";
 import type { GitStatus } from "./types";
 
 const SPACE_PATH = "/tmp/svode-space";
@@ -204,7 +205,11 @@ test("refreshStatus replaces stale dirty files with a clean snapshot", async () 
 
   await useGitStore
     .getState()
-    .refreshStatus(SPACE_PATH, async () => status([]));
+    .refreshStatus(
+      SPACE_PATH,
+      async () => status([]),
+      gitStatusFailureFromError,
+    );
 
   expect(
     selectFileChangeIndicator(useGitStore.getState(), SPACE_PATH, "AGENTS.md"),
@@ -270,7 +275,7 @@ function status(files: GitStatus["files"]): GitStatus {
   };
 }
 
-test("status failure retains the last snapshot and explicit retry clears its error", async () => {
+test("status failure retains the last snapshot, keeps its kind and explicit retry clears it", async () => {
   const space = "/status-recovery";
   const git = useGitStore.getState();
   const status: GitStatus = {
@@ -286,13 +291,36 @@ test("status failure retains the last snapshot and explicit retry clears its err
     omittedFiles: 0,
   };
   git.applyStatus(space, status);
-  await git.refreshStatus(space, async () => {
-    throw new Error("Synthetic repository unavailable");
-  });
+  await git.refreshStatus(
+    space,
+    async () => {
+      throw new Error("Synthetic repository unavailable");
+    },
+    gitStatusFailureFromError,
+  );
   expect(useGitStore.getState().statuses[space]).toBe(status);
-  expect(useGitStore.getState().statusErrors[space]).toBe(true);
-  await git.refreshStatus(space, async () => status);
-  expect(useGitStore.getState().statusErrors[space]).toBe(false);
+  expect(useGitStore.getState().statusErrors[space]).toEqual({
+    kind: "unavailable",
+  });
+  await git.refreshStatus(
+    space,
+    async () => {
+      throw {
+        kind: "git_status_timed_out",
+        message: "Git did not return the status of Research within 30 seconds",
+        repository: "Research",
+        seconds: 30,
+      };
+    },
+    gitStatusFailureFromError,
+  );
+  expect(useGitStore.getState().statuses[space]).toBe(status);
+  expect(useGitStore.getState().statusErrors[space]).toEqual({
+    kind: "timed_out",
+    repository: "Research",
+  });
+  await git.refreshStatus(space, async () => status, gitStatusFailureFromError);
+  expect(space in useGitStore.getState().statusErrors).toBe(false);
   git.clear(space);
 });
 

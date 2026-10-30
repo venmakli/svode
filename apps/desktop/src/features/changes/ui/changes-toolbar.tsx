@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import * as m from "@/paraglide/messages.js";
+import { getLocale } from "@/paraglide/runtime.js";
 import type { ChangesFilter, summarizeChanges } from "../model/list-summary";
 import { ChangeStateIcon } from "./change-state-icon";
 
@@ -24,15 +25,23 @@ const filterLabels = (): Record<ChangesFilter, string> => ({
   conflict: m.changes_filter_conflict(),
 });
 
+/** A count of listed changes; "+" when the status list omits paths. */
+export function changesCount(count: number, incomplete: boolean) {
+  const value = new Intl.NumberFormat(getLocale()).format(count);
+  return incomplete ? `${value}+` : value;
+}
+
 export function ChangesFilterSelect({
   filter,
   onFilterChange,
   counts,
+  incomplete,
   className,
 }: {
   filter: ChangesFilter;
   onFilterChange: (filter: ChangesFilter) => void;
   counts: Record<ChangesFilter, number>;
+  incomplete: boolean;
   className?: string;
 }) {
   const labels = filterLabels();
@@ -53,7 +62,7 @@ export function ChangesFilterSelect({
       >
         <SelectValue>
           <ChangeStateIcon state={filter} />
-          {labels[filter]} · {counts[filter]}
+          {labels[filter]} · {changesCount(counts[filter], incomplete)}
         </SelectValue>
       </SelectTrigger>
       <SelectContent position="popper" align="end">
@@ -61,7 +70,7 @@ export function ChangesFilterSelect({
           {filters.map((value) => (
             <SelectItem key={value} value={value} textValue={labels[value]}>
               <ChangeStateIcon state={value} />
-              {labels[value]} · {counts[value]}
+              {labels[value]} · {changesCount(counts[value], incomplete)}
             </SelectItem>
           ))}
         </SelectGroup>

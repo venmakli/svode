@@ -4,6 +4,7 @@ import type {
   FileGitStatus,
   GitCloneProgress,
   GitStatus,
+  GitStatusFailure,
   GitPublicationStatus,
 } from "./types";
 import type { GitSyncStop } from "./sync-stop";
@@ -19,6 +20,7 @@ import {
  *
  * Sources of truth:
  * - `statuses` is the latest `git status` snapshot per space path.
+ * - `statusErrors` is why the latest status read failed, until one succeeds.
  * - `syncing` flags spaces in the middle of a pull/push.
  * - `cloning` tracks in-progress `git clone` operations and their percent.
  * - `syncError` is set when sync fails (auth/network) → indicator goes to `✕`.
@@ -34,7 +36,7 @@ interface GitState {
     publication: GitPublicationStatus | null,
   ) => void;
   statuses: Record<string, GitStatus>;
-  statusErrors: Record<string, boolean>;
+  statusErrors: Record<string, GitStatusFailure>;
   syncing: Record<string, boolean>;
   backendSyncing: Record<string, boolean>;
   updateBackendSyncing: (path: string, active: boolean) => void;
@@ -61,6 +63,7 @@ interface GitState {
   refreshStatus: (
     spacePath: string,
     loadStatus: () => Promise<GitStatus>,
+    failure: (error: unknown) => GitStatusFailure,
   ) => Promise<void>;
   /** Clear local state for a removed space. */
   clear: (spacePath: string) => void;
@@ -212,7 +215,7 @@ export const useGitStore = create<GitState>((set, get) => {
       refreshVersions[spacePath] = (refreshVersions[spacePath] ?? 0) + 1;
       set((s) => ({
         statuses: { ...s.statuses, [spacePath]: status },
-        statusErrors: { ...s.statusErrors, [spacePath]: false },
+        statusErrors: withoutPath(s.statusErrors, spacePath),
         publications: repositoryState(
           s.publications,
           spacePath,
@@ -248,7 +251,7 @@ export const useGitStore = create<GitState>((set, get) => {
       }));
     },
 
-    refreshStatus: async (spacePath, loadStatus) => {
+    refreshStatus: async (spacePath, loadStatus, failure) => {
       const version = (refreshVersions[spacePath] ?? 0) + 1;
       refreshVersions[spacePath] = version;
       try {
@@ -258,7 +261,7 @@ export const useGitStore = create<GitState>((set, get) => {
       } catch (err) {
         if (refreshVersions[spacePath] === version) {
           set((s) => ({
-            statusErrors: { ...s.statusErrors, [spacePath]: true },
+            statusErrors: { ...s.statusErrors, [spacePath]: failure(err) },
           }));
         }
         // Space may not have git initialized yet — leave previous status alone
@@ -374,6 +377,12 @@ export const useGitStore = create<GitState>((set, get) => {
       }),
   };
 });
+
+function withoutPath<T>(state: Record<string, T>, path: string) {
+  if (!(path in state)) return state;
+  const { [path]: _removed, ...rest } = state;
+  return rest;
+}
 
 /** Migrate provisional display-path state after the backend resolves identity. */
 function repositoryState<T>(

@@ -6,6 +6,7 @@ export type {
   GitCloneProgress,
   GitAuthChallenge,
   GitStatus,
+  GitStatusFailure,
   GitRemoteAuthMethod,
   GitRemoteAuthCredentials,
   GitRemoteOperation,

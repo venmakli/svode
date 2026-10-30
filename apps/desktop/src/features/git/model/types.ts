@@ -28,6 +28,11 @@ export interface GitStatus {
   omittedFiles: number;
 }
 
+/** Why the last status read of a Space failed. */
+export type GitStatusFailure =
+  | { kind: "timed_out"; repository: string }
+  | { kind: "unavailable" };
+
 export type GitRemoteOperation =
   | "sync"
   | "clone"

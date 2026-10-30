@@ -9,7 +9,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { refreshGitStatus, type GitStatus } from "@/features/git";
+import {
+  refreshGitStatus,
+  type GitStatus,
+  type GitStatusFailure,
+} from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 import { useChangesItemNames } from "../hooks/use-changes-item-names";
 import { useChangesAccordion } from "../hooks/use-changes-accordion";
@@ -22,7 +26,11 @@ import {
   type ChangesFilter,
 } from "../model/list-summary";
 import { ChangedItem } from "./changed-item";
-import { ChangesFilterSelect, ChangesSummary } from "./changes-toolbar";
+import {
+  ChangesFilterSelect,
+  ChangesSummary,
+  changesCount,
+} from "./changes-toolbar";
 
 export function ChangesBody({
   open,
@@ -36,7 +44,7 @@ export function ChangesBody({
   open: boolean;
   scope: InspectionScope;
   status?: GitStatus;
-  error: boolean;
+  error?: GitStatusFailure;
   paths: string[];
   reader: ItemReader;
   name: string;
@@ -49,6 +57,8 @@ export function ChangesBody({
   const accordion = useChangesAccordion(paths, body, filtered.paths);
   const stats = useChangesStats(scope, status, paths);
   const toolbar = scope.kind !== "file" && status && !error;
+  // A list that omits paths never claims a scope or a filter is clean.
+  const incomplete = !error && status ? status.omittedFiles > 0 : false;
   return (
     <>
       <SheetHeader className="shrink-0 pt-3 pr-12">
@@ -70,6 +80,7 @@ export function ChangesBody({
                   if (body.current) body.current.scrollTop = 0;
                 }}
                 counts={filtered.counts}
+                incomplete={incomplete}
               />
             </>
           ) : null}
@@ -93,7 +104,11 @@ export function ChangesBody({
           {error ? (
             <Alert>
               <AlertDescription>
-                {m.changes_repository_failed()}
+                {error.kind === "timed_out"
+                  ? m.changes_repository_timeout({
+                      repository: error.repository,
+                    })
+                  : m.changes_repository_failed()}
               </AlertDescription>
               <Button
                 variant="outline"
@@ -103,12 +118,22 @@ export function ChangesBody({
               </Button>
             </Alert>
           ) : null}
+          {incomplete && status ? (
+            <Alert className="mx-4 mb-2 w-auto" data-changes-list-truncated>
+              <AlertDescription>
+                {m.changes_list_truncated({
+                  shown: changesCount(status.files.length, false),
+                  total: changesCount(status.totalFiles, false),
+                })}
+              </AlertDescription>
+            </Alert>
+          ) : null}
           {!status ? (
             error ? null : (
               <Skeleton className="m-4 h-32" />
             )
           ) : paths.length === 0 ? (
-            error ? null : (
+            error || incomplete ? null : (
               <Empty>
                 <EmptyHeader>
                   <EmptyTitle>{m.changes_clean()}</EmptyTitle>
@@ -128,7 +153,7 @@ export function ChangesBody({
             />
           ) : (
             <>
-              {filtered.paths.length === 0 ? (
+              {filtered.paths.length === 0 && !incomplete ? (
                 <Empty>
                   <EmptyHeader>
                     <EmptyTitle>{m.changes_filter_empty()}</EmptyTitle>

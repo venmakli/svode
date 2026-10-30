@@ -20,6 +20,7 @@ import {
 import { createItemReader } from "../model/item-reader";
 import { ChangesBody } from "./changes-body";
 import { ChangesSaveFooter } from "./changes-save-footer";
+import { changesCount } from "./changes-toolbar";
 import { useChangesSave } from "../hooks/use-changes-save";
 
 export function ChangesControl({
@@ -55,13 +56,15 @@ function ScopeChangesControl({
   );
   const paths = inspectionPaths(scope, status);
   const dirty = paths.length > 0;
-  const statusError = useGitStore(
-    (state) => state.statusErrors[target.spacePath] ?? false,
+  const statusError = useGitStore((state) =>
+    Boolean(state.statusErrors[target.spacePath]),
   );
-  // Quiet control: "no changes" is claimed only for a readable status.
+  const incomplete = status ? status.omittedFiles > 0 : false;
+  const count = changesCount(paths.length, incomplete);
+  // Quiet control: "no changes" is claimed only for a readable full status.
   const label = dirty
-    ? m.changes_scope_label({ name: target.name, count: String(paths.length) })
-    : status && !statusError
+    ? m.changes_scope_label({ name: target.name, count })
+    : status && !statusError && !incomplete
       ? m.changes_scope_clean_label({ name: target.name })
       : m.changes_scope_title({ name: target.name });
   useEffect(() => {
@@ -84,7 +87,7 @@ function ScopeChangesControl({
               <FileDiff data-icon={dirty ? "inline-start" : undefined} />
               {dirty ? (
                 <Badge variant="secondary" data-icon="inline-end">
-                  {paths.length}
+                  {count}
                 </Badge>
               ) : null}
             </Button>
@@ -150,7 +153,7 @@ function ChangesSheetContent({
   const paths = inspectionPaths(scope, status);
   const dirty = paths.length > 0;
   const statusError = useGitStore(
-    (state) => state.statusErrors[target.spacePath] ?? false,
+    (state) => state.statusErrors[target.spacePath],
   );
   const reader = useMemo(() => createItemReader(), []);
   const save = useChangesSave(target, open);
@@ -199,7 +202,7 @@ function ChangesSheetContent({
       <ChangesSaveFooter
         save={save}
         dirty={dirty}
-        statusError={statusError}
+        statusError={Boolean(statusError)}
         fileScope={scope.kind === "file"}
         onChooseVersion={(refusal) => {
           versionChoiceRef.current = refusal;
