@@ -8,7 +8,11 @@ import {
   type LinkDefinitions,
   linkDefinitionsOf,
 } from "../model/markdown-references";
-import { findConflictBlocks } from "./conflict-markers";
+import {
+  type AmbiguousConflict,
+  type ConflictText,
+  findConflictBlocks,
+} from "./conflict-markers";
 
 /**
  * A conflict element in the Plate tree.
@@ -25,11 +29,28 @@ export interface ConflictElement extends TElement {
 }
 
 /**
+ * A conflict element of a block whose marker lines allow more than one split:
+ * it shows the text of the block and offers only Edit.
+ */
+export interface AmbiguousConflictElement extends TElement {
+  type: "conflict";
+  ambiguous: AmbiguousConflict;
+  children: [{ text: "" }];
+}
+
+export function isAmbiguousConflict(
+  element: ConflictElement | AmbiguousConflictElement,
+): element is AmbiguousConflictElement {
+  return element.ambiguous !== undefined;
+}
+
+/**
  * Split raw markdown on the Git conflict blocks of markers of `markerSize` and
  * deserialize each non-conflict segment via the Plate Markdown plugin.
  * Conflict blocks become custom `conflict` elements with `ours` / `theirs`
- * stored as raw markdown strings. Text keeps its line endings. Reference links
- * of a segment resolve by the link definitions of all segments.
+ * stored as raw markdown strings, ambiguous blocks with their text. Text keeps
+ * its line endings. Reference links of a segment resolve by the link
+ * definitions of all segments.
  */
 export function deserializeWithConflicts(
   editor: PlateEditor,
@@ -37,15 +58,24 @@ export function deserializeWithConflicts(
   markerSize: number,
 ): Descendant[] {
   let cursor = 0;
-  const parts: (string | ConflictElement)[] = [];
+  const parts: (string | ConflictElement | AmbiguousConflictElement)[] = [];
 
   for (const block of findConflictBlocks(body, markerSize)) {
-    parts.push(body.slice(cursor, block.start), {
-      type: "conflict",
-      ours: block.ours,
-      theirs: block.theirs,
-      children: [{ text: "" }],
-    });
+    parts.push(
+      body.slice(cursor, block.start),
+      block.ambiguous
+        ? {
+            type: "conflict",
+            ambiguous: block.ambiguous,
+            children: [{ text: "" }],
+          }
+        : {
+            type: "conflict",
+            ours: block.ours,
+            theirs: block.theirs,
+            children: [{ text: "" }],
+          },
+    );
     cursor = block.end;
   }
   parts.push(body.slice(cursor));
@@ -80,14 +110,55 @@ export function deserializeConflictBranch(
   editor: PlateEditor,
   markdown: string,
 ): Descendant[] {
-  const nodes = deserializeEditorMarkdownInsertion(editor, markdown);
+  return deserializeConflictRuns(editor, [markdown])[0];
+}
+
+/**
+ * Deserialize the Edit text of an ambiguous conflict block to replace its
+ * conflict element. Marker lines become paragraphs of plain text; the runs of
+ * text between them go through Markdown IO like a branch, and their reference
+ * links resolve by the link definitions of all runs first, then by the
+ * document's.
+ */
+export function deserializeAmbiguousConflictEdit(
+  editor: PlateEditor,
+  edit: ConflictText[],
+): Descendant[] {
+  const runs = edit
+    .filter(({ marker, text }) => !marker && text.trim().length > 0)
+    .map(({ text }) => text.trim() + "\n");
+  const nodes = deserializeConflictRuns(editor, runs);
+  let run = 0;
+  return edit.flatMap(({ marker, text }) => {
+    if (marker) return [{ type: "p", children: [{ text }] } as Descendant];
+    return text.trim().length > 0 ? nodes[run++] : [];
+  });
+}
+
+/**
+ * Deserialize runs of conflict text. Reference links resolve by the link
+ * definitions of the runs first, then by the document's.
+ */
+function deserializeConflictRuns(
+  editor: PlateEditor,
+  runs: string[],
+): Descendant[][] {
+  const nodes = runs.map((run) =>
+    deserializeEditorMarkdownInsertion(editor, run),
+  );
   const document = linkDefinitionsOf(editor, editor.children);
-  if (document.size === 0) return nodes;
-  const definitions = new Map(linkDefinitionsOf(editor, nodes));
-  for (const [identifier, definition] of document) {
-    if (!definitions.has(identifier)) definitions.set(identifier, definition);
+  // A single run already resolves by its own definitions.
+  if (runs.length < 2 && document.size === 0) return nodes;
+  const definitions: LinkDefinitions = new Map();
+  for (const value of [...nodes, editor.children]) {
+    for (const [identifier, definition] of linkDefinitionsOf(editor, value)) {
+      if (!definitions.has(identifier)) definitions.set(identifier, definition);
+    }
   }
-  return deserializeEditorMarkdownInsertion(editor, markdown, definitions);
+  if (definitions.size === 0) return nodes;
+  return runs.map((run) =>
+    deserializeEditorMarkdownInsertion(editor, run, definitions),
+  );
 }
 
 /** Does the given Plate value contain any unresolved conflict elements? */

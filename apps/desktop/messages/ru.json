@@ -953,6 +953,8 @@
   "git_conflict_theirs": "Входящие изменения",
   "git_conflict_accept": "Принять",
   "git_conflict_edit": "Редактировать",
+  "git_conflict_ambiguous_title": "Версии не разделить автоматически",
+  "git_conflict_ambiguous_description": "В тексте есть строки, похожие на маркеры конфликта, поэтому неясно, где кончается каждая версия. Отредактируйте текст вручную.",
   "git_conflict_count": "{count} конфликтов",
   "git_status_changed": "Изменён",
   "git_status_untracked": "Не отслеживается",

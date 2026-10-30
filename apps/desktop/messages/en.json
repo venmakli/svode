@@ -953,6 +953,8 @@
   "git_conflict_theirs": "Incoming changes",
   "git_conflict_accept": "Accept",
   "git_conflict_edit": "Edit",
+  "git_conflict_ambiguous_title": "Versions can't be separated automatically",
+  "git_conflict_ambiguous_description": "Some lines look like conflict markers, so it is unclear where each version ends. Edit the text by hand.",
   "git_conflict_count": "{count} conflicts",
   "git_status_changed": "Changed",
   "git_status_untracked": "Untracked",

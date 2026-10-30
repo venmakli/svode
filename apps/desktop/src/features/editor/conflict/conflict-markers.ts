@@ -1,17 +1,37 @@
 /** Marker size Git uses when a path sets no valid `conflict-marker-size`. */
 export const DEFAULT_CONFLICT_MARKER_SIZE = 7;
 
-/** A Git conflict block of a body, by offsets of its marker lines. */
-export interface ConflictBlock {
-  /** Offset of the `<` marker line. */
-  start: number;
-  /** Offset after the line ending of the `>` marker line. */
-  end: number;
-  ours: string;
-  theirs: string;
-  /** The marker lines allow another split; this one is the first in the body. */
-  ambiguous: boolean;
+/** Text of an ambiguous block: a marker line, or a line or run of lines between them. */
+export interface ConflictText {
+  text: string;
+  /** A marker line of the path size, which may or may not be a real marker. */
+  marker: boolean;
 }
+
+/** A block whose marker lines allow more than one split. */
+export interface AmbiguousConflict {
+  /** Every line of the block as the file holds it, without line endings. */
+  lines: ConflictText[];
+  /**
+   * The text Edit puts in place of the block: the lines between its outer
+   * markers, with marker lines apart from the runs of text between them.
+   */
+  edit: ConflictText[];
+}
+
+/**
+ * A Git conflict block of a body, by offsets of its marker lines: its sides,
+ * or its text when the marker lines allow more than one split.
+ */
+export type ConflictBlock = {
+  /** Offset of the first `<` marker line. */
+  start: number;
+  /** Offset after the line ending of the last `>` marker line. */
+  end: number;
+} & (
+  | { ours: string; theirs: string; ambiguous: null }
+  | { ambiguous: AmbiguousConflict }
+);
 
 type MarkerKind = "<" | "|" | "=" | ">";
 
@@ -84,7 +104,9 @@ interface Split {
  * `=` line, otherwise `merge`, where `|` lines are side content. A block takes
  * the first `<` line, the first `|` line in the `diff3` style, the first `=`
  * line after it and the first `>` line after that; other marker lines inside
- * are content. A `<` line without `=` and `>` lines after it stays text.
+ * are content. A `<` line without `=` and `>` lines after it stays text. A
+ * block whose marker lines allow another split is ambiguous: it runs from its
+ * first `<` line to the last `>` line before the next block and keeps its text.
  */
 export function findConflictBlocks(
   body: string,
@@ -130,7 +152,43 @@ export function findConflictBlocks(
     to - from > 1
       ? body.slice(lines[from + 1].start, lines[to - 1].contentEnd)
       : "";
-  return splits.map((split, index) => {
+  const text = (line: Line) => body.slice(line.start, line.contentEnd);
+  const count = (kind: MarkerKind, from: number, to: number) =>
+    lines.slice(from, to).filter((line) => line.kind === kind).length;
+  const ambiguousConflict = (
+    lt: number,
+    eq: number,
+    last: number,
+  ): AmbiguousConflict => {
+    // An outer marker line stays out of Edit only when no other line of its
+    // kind could be that marker.
+    const from = count("<", lt, last + 1) === 1 ? lt + 1 : lt;
+    const to = count(">", eq + 1, last + 1) === 1 ? last : last + 1;
+    const edit: ConflictText[] = [];
+    let run = -1;
+    for (let index = from; index <= to; index++) {
+      if (index < to && lines[index].kind === null) {
+        if (run < 0) run = index;
+        continue;
+      }
+      if (run >= 0)
+        edit.push({
+          text: body.slice(lines[run].start, lines[index - 1].contentEnd),
+          marker: false,
+        });
+      run = -1;
+      if (index < to) edit.push({ text: text(lines[index]), marker: true });
+    }
+    return {
+      lines: lines.slice(lt, last + 1).map((line) => ({
+        text: text(line),
+        marker: line.kind !== null,
+      })),
+      edit,
+    };
+  };
+
+  return splits.map((split, index): ConflictBlock => {
     const { lt, bar, eq, gt } = split;
     const limit = splits[index + 1]?.lt ?? lines.length;
     const ambiguous =
@@ -142,12 +200,21 @@ export function findConflictBlocks(
       find("=", eq + 1, gt) >= 0 ||
       // A `>` line in "theirs".
       find(">", gt + 1, limit) >= 0;
+    if (!ambiguous)
+      return {
+        start: lines[lt].start,
+        end: lines[gt].end,
+        ours: side(lt, diff3 ? bar : eq),
+        theirs: side(eq, gt),
+        ambiguous: null,
+      };
+    let last = gt;
+    for (let line = gt + 1; line < limit; line++)
+      if (lines[line].kind === ">") last = line;
     return {
       start: lines[lt].start,
-      end: lines[gt].end,
-      ours: side(lt, diff3 ? bar : eq),
-      theirs: side(eq, gt),
-      ambiguous,
+      end: lines[last].end,
+      ambiguous: ambiguousConflict(lt, eq, last),
     };
   });
 }

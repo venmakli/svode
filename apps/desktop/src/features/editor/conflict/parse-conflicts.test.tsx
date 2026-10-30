@@ -271,6 +271,96 @@ const fixtures = {
  */
 const crlf = (source: string) => source.replaceAll("\n", "\r\n");
 
+// Git 2.55.0 conflicts whose marker lines allow more than one split.
+const ambiguousFixtures = {
+  // A setext underline of exactly 7 `=` inside "ours" of a `merge` file.
+  setext7:
+    "# T\n\n<<<<<<< HEAD\nHeading\n=======\n\nlocal\n=======\nStatus: remote edit\n>>>>>>> other\n\nEnd\n",
+  // A `||||||| note` line inside "ours" of a `diff3` file.
+  barInOurs:
+    "# T\n\n<<<<<<< HEAD\nStatus: local\n||||||| note\n||||||| base\nStatus: draft\n=======\nStatus: remote\n>>>>>>> other\n\nEnd\n",
+  // A `>>>>>>> quoted` line inside "theirs".
+  gtInTheirs:
+    "# T\n\n<<<<<<< HEAD\nStatus: local edit\n=======\nStatus: remote edit\n>>>>>>> quoted\nmore\n>>>>>>> other\n\nEnd\n",
+  // A `<` line before the block without its own `=` and `>` lines.
+  ltBefore:
+    "# T\n\n<<<<<<< note\n\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> other\n\nEnd\n",
+};
+
+/** The lines the ambiguous block shows, and the Markdown saved after Edit. */
+const ambiguousExpected: Record<
+  keyof typeof ambiguousFixtures,
+  { lines: string[]; markers: string[]; saved: string }
+> = {
+  setext7: {
+    lines: [
+      "<<<<<<< HEAD",
+      "Heading",
+      "=======",
+      "",
+      "local",
+      "=======",
+      "Status: remote edit",
+      ">>>>>>> other",
+    ],
+    markers: ["<<<<<<< HEAD", "=======", "=======", ">>>>>>> other"],
+    // The only `<` and `>` lines are the outer markers and stay out.
+    saved:
+      "# T\n\nHeading\n\n\\=======\n\nlocal\n\n\\=======\n\nStatus: remote edit\n\nEnd\n",
+  },
+  barInOurs: {
+    lines: [
+      "<<<<<<< HEAD",
+      "Status: local",
+      "||||||| note",
+      "||||||| base",
+      "Status: draft",
+      "=======",
+      "Status: remote",
+      ">>>>>>> other",
+    ],
+    markers: [
+      "<<<<<<< HEAD",
+      "||||||| note",
+      "||||||| base",
+      "=======",
+      ">>>>>>> other",
+    ],
+    saved:
+      "# T\n\nStatus: local\n\n||||||| note\n\n||||||| base\n\nStatus: draft\n\n\\=======\n\nStatus: remote\n\nEnd\n",
+  },
+  gtInTheirs: {
+    lines: [
+      "<<<<<<< HEAD",
+      "Status: local edit",
+      "=======",
+      "Status: remote edit",
+      ">>>>>>> quoted",
+      "more",
+      ">>>>>>> other",
+    ],
+    markers: ["<<<<<<< HEAD", "=======", ">>>>>>> quoted", ">>>>>>> other"],
+    // Two `>` lines after the separator: both stay as text.
+    saved:
+      "# T\n\nStatus: local edit\n\n\\=======\n\nStatus: remote edit\n\n\\>>>>>>> quoted\n\nmore\n\n\\>>>>>>> other\n\nEnd\n",
+  },
+  ltBefore: {
+    lines: [
+      "<<<<<<< note",
+      "",
+      "<<<<<<< HEAD",
+      "mine",
+      "=======",
+      "theirs",
+      ">>>>>>> other",
+    ],
+    markers: ["<<<<<<< note", "<<<<<<< HEAD", "=======", ">>>>>>> other"],
+    // Two `<` lines: both stay as text.
+    saved:
+      "# T\n\n\\<\\<\\<\\<\\<\\<\\< note\n\n\\<\\<\\<\\<\\<\\<\\< HEAD\n\nmine\n\n\\=======\n\ntheirs\n\nEnd\n",
+  },
+};
+
 function conflictSides(value: Descendant[]) {
   return value
     .filter((node) => (node as { type?: string }).type === "conflict")
@@ -344,6 +434,22 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     }
   });
 
+  test("Edit of an ambiguous block resolves a reference link by a definition across a marker line", async () => {
+    const { deserializeAmbiguousConflictEdit } =
+      await import("./parse-conflicts");
+    const nodes = deserializeAmbiguousConflictEdit(
+      createPlateEditor({ plugins: EditorKit }),
+      [
+        { text: "See [the doc][ref]", marker: false },
+        { text: "=======", marker: true },
+        { text: "\n[ref]: https://example.test/doc", marker: false },
+      ],
+    );
+    const link = JSON.stringify(nodes[0]);
+    expect(link.includes('"url":"https://example.test/doc"')).toBe(true);
+    expect(nodes[1]).toEqual({ type: "p", children: [{ text: "=======" }] });
+  });
+
   test("conflict choice in an isolated DOM process", () => {
     const child = spawnSync(
       process.execPath,
@@ -357,28 +463,142 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 30_000);
 } else {
-  test("choosing a side of a zdiff3 conflict in LF and CRLF writes only that side to Markdown", async () => {
+  // Plate's selection and DOM plugins need these beyond the shared set.
+  const domGlobals = [
+    "Document",
+    "NodeList",
+    "HTMLCollection",
+    "HTMLTextAreaElement",
+    "ShadowRoot",
+    "DOMRect",
+    "Range",
+    "Selection",
+    "KeyboardEvent",
+    "MouseEvent",
+    "DOMParser",
+  ] as const;
+
+  test("an ambiguous block shows its whole text and only Edit, which leaves marker lines as text paragraphs", async () => {
     const { createTestDom } = await import("@/shared/testing/dom");
     const dom = await createTestDom();
-    // Plate's selection and DOM plugins need these beyond the shared set.
-    for (const key of [
-      "Document",
-      "NodeList",
-      "HTMLCollection",
-      "HTMLTextAreaElement",
-      "ShadowRoot",
-      "DOMRect",
-      "Range",
-      "Selection",
-      "KeyboardEvent",
-      "MouseEvent",
-      "DOMParser",
-    ] as const) {
+    for (const key of domGlobals)
       Object.defineProperty(globalThis, key, {
         configurable: true,
         value: window[key],
       });
+    const { MarkdownPlugin } = await import("@platejs/markdown");
+    const { Plate, PlateContent, createPlateEditor } =
+      await import("platejs/react");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const m = await import("@/paraglide/messages.js");
+    const { EditorKit } = await import("../plate/editor-kit");
+    const { deserializeWithConflicts, hasUnresolvedConflicts } =
+      await import("./parse-conflicts");
+    const { DEFAULT_CONFLICT_MARKER_SIZE } = await import("./conflict-markers");
+    const buttons = (label: string) =>
+      [...dom.document.querySelectorAll("button")].filter(
+        (button) => button.textContent === label,
+      );
+    try {
+      for (const [name, source] of Object.entries(ambiguousFixtures)) {
+        const expected =
+          ambiguousExpected[name as keyof typeof ambiguousFixtures];
+        const editor = createPlateEditor({
+          plugins: EditorKit,
+          value: (instance) =>
+            deserializeWithConflicts(
+              instance,
+              source,
+              DEFAULT_CONFLICT_MARKER_SIZE,
+            ) as Value,
+        });
+        // The save stays blocked until Edit.
+        expect(hasUnresolvedConflicts(editor.children)).toBe(true);
+        await dom.render(
+          <TooltipProvider>
+            <Plate key={name} editor={editor}>
+              <PlateContent />
+            </Plate>
+          </TooltipProvider>,
+        );
+        const block = dom.document.querySelector('[role="group"]');
+        expect(block === null).toBe(false);
+        const title = dom.document.getElementById(
+          block!.getAttribute("aria-labelledby")!,
+        );
+        expect(title?.textContent).toBe(
+          `⚠ ${m.git_conflict_ambiguous_title()}`,
+        );
+        const shown = block!.textContent ?? "";
+        expect(shown.includes(m.git_conflict_ambiguous_description())).toBe(
+          true,
+        );
+        expect(shown.includes(m.git_conflict_ours())).toBe(false);
+        expect(shown.includes(m.git_conflict_theirs())).toBe(false);
+        const panels = [...block!.querySelectorAll("pre")];
+        expect(panels.length).toBe(1);
+        expect(panels[0].textContent).toBe(expected.lines.join("\n"));
+        expect(
+          [...panels[0].querySelectorAll("[data-conflict-marker]")].map(
+            (line) => line.textContent?.trimEnd(),
+          ),
+        ).toEqual(expected.markers);
+        expect(buttons(m.git_conflict_accept())).toEqual([]);
+        const edit = buttons(m.git_conflict_edit());
+        expect(edit.length).toBe(1);
+
+        await act(async () => edit[0].click());
+        expect(hasUnresolvedConflicts(editor.children)).toBe(false);
+        const saved = editor.getApi(MarkdownPlugin).markdown.serialize();
+        expect(saved).toBe(expected.saved);
+        // Reopened, the marker lines are the same text paragraphs.
+        const reopened = deserializeWithConflicts(
+          createPlateEditor({ plugins: EditorKit }),
+          saved,
+          DEFAULT_CONFLICT_MARKER_SIZE,
+        );
+        expect(hasUnresolvedConflicts(reopened)).toBe(false);
+        expect(reopened).toEqual(editor.children);
+      }
+
+      // A plain block of the same Page keeps its sides and Accept.
+      const mixed = `${fixtures.twoBlocks.merge.split("\n\nMiddle one")[0]}\n\nMiddle\n\n${ambiguousFixtures.setext7.slice("# T\n\n".length)}`;
+      const editor = createPlateEditor({
+        plugins: EditorKit,
+        value: (instance) =>
+          deserializeWithConflicts(
+            instance,
+            mixed,
+            DEFAULT_CONFLICT_MARKER_SIZE,
+          ) as Value,
+      });
+      await dom.render(
+        <TooltipProvider>
+          <Plate key="mixed" editor={editor}>
+            <PlateContent />
+          </Plate>
+        </TooltipProvider>,
+      );
+      expect(dom.document.querySelectorAll('[role="group"]').length).toBe(1);
+      expect(buttons(m.git_conflict_accept()).length).toBe(2);
+      expect(buttons(m.git_conflict_edit()).length).toBe(2);
+      await act(async () => buttons(m.git_conflict_accept())[0].click());
+      // The ambiguous block still blocks the save.
+      expect(hasUnresolvedConflicts(editor.children)).toBe(true);
+      expect(dom.document.querySelectorAll('[role="group"]').length).toBe(1);
+    } finally {
+      await dom.dispose();
     }
+  }, 30_000);
+
+  test("choosing a side of a zdiff3 conflict in LF and CRLF writes only that side to Markdown", async () => {
+    const { createTestDom } = await import("@/shared/testing/dom");
+    const dom = await createTestDom();
+    for (const key of domGlobals)
+      Object.defineProperty(globalThis, key, {
+        configurable: true,
+        value: window[key],
+      });
     const { MarkdownPlugin } = await import("@platejs/markdown");
     const { Plate, PlateContent, createPlateEditor } =
       await import("platejs/react");

@@ -97,11 +97,11 @@ const fixtures: Record<string, Record<Style, string>> = {
 const styles: Style[] = ["merge", "diff3", "zdiff3"];
 
 function blocks(body: string, size = DEFAULT_CONFLICT_MARKER_SIZE) {
-  return findConflictBlocks(body, size).map(({ ours, theirs, ambiguous }) => ({
-    ours,
-    theirs,
-    ambiguous,
-  }));
+  return findConflictBlocks(body, size).map((block) =>
+    block.ambiguous
+      ? { ambiguous: block.ambiguous }
+      : { ours: block.ours, theirs: block.theirs },
+  );
 }
 
 /** The document text around the blocks. */
@@ -116,9 +116,7 @@ function outside(body: string, size = DEFAULT_CONFLICT_MARKER_SIZE) {
   return parts;
 }
 
-const sides = (ours: string, theirs: string) => [
-  { ours, theirs, ambiguous: false },
-];
+const sides = (ours: string, theirs: string) => [{ ours, theirs }];
 
 test("marker-like text inside a side stays in that side in every style", () => {
   for (const style of styles) {
@@ -140,12 +138,10 @@ test("marker-like text inside a side stays in that side in every style", () => {
 });
 
 test("a merge file whose block has a `|` line in ours keeps it as content", () => {
-  expect(blocks(fixtures.barInOurs.merge)).toEqual(
-    [
-      { ours: "Status: local\n||||||| note", theirs: "Status: remote" },
-      { ours: "Owner: me", theirs: "Owner: them" },
-    ].map((block) => ({ ...block, ambiguous: false })),
-  );
+  expect(blocks(fixtures.barInOurs.merge)).toEqual([
+    { ours: "Status: local\n||||||| note", theirs: "Status: remote" },
+    { ours: "Owner: me", theirs: "Owner: them" },
+  ]);
 });
 
 test("blocks take markers of the path size; other runs are content", () => {
@@ -200,49 +196,211 @@ test("a `<` line without `=` and `>` lines after it stays text", () => {
   ).toEqual(sides("mine", "theirs"));
 });
 
-test("blocks whose marker lines allow another split are ambiguous and take the first split", () => {
+const md = (text: string) => ({ text, marker: false });
+const marker = (text: string) => ({ text, marker: true });
+
+test("blocks whose marker lines allow another split are ambiguous and keep their text", () => {
   expect(blocks(fixtures.setext7.merge)).toEqual([
     {
-      ours: "Heading",
-      theirs: "\nlocal\n=======\nStatus: remote edit",
-      ambiguous: true,
+      ambiguous: {
+        lines: [
+          marker("<<<<<<< HEAD"),
+          md("Heading"),
+          marker("======="),
+          md(""),
+          md("local"),
+          marker("======="),
+          md("Status: remote edit"),
+          marker(">>>>>>> other"),
+        ],
+        // The only `<` and `>` lines are the outer markers.
+        edit: [
+          md("Heading"),
+          marker("======="),
+          md("\nlocal"),
+          marker("======="),
+          md("Status: remote edit"),
+        ],
+      },
+    },
+  ]);
+  expect(outside(fixtures.setext7.merge)).toEqual(["# T\n\n", "\nEnd\n"]);
+
+  for (const style of ["diff3", "zdiff3"] as const)
+    expect(blocks(fixtures.barInOurs[style])).toEqual([
+      {
+        ambiguous: {
+          lines: [
+            marker("<<<<<<< HEAD"),
+            md("Status: local"),
+            marker("||||||| note"),
+            marker("||||||| base"),
+            md("Status: draft"),
+            marker("======="),
+            md("Status: remote"),
+            marker(">>>>>>> other"),
+          ],
+          edit: [
+            md("Status: local"),
+            marker("||||||| note"),
+            marker("||||||| base"),
+            md("Status: draft"),
+            marker("======="),
+            md("Status: remote"),
+          ],
+        },
+      },
+      { ours: "Owner: me", theirs: "Owner: them" },
+    ]);
+
+  // Two `>` lines after the separator: both stay in Edit as text, and the
+  // block runs to the last one.
+  expect(blocks(fixtures.gtInTheirs.merge)).toEqual([
+    {
+      ambiguous: {
+        lines: [
+          marker("<<<<<<< HEAD"),
+          md("Status: local edit"),
+          marker("======="),
+          md("Status: remote edit"),
+          marker(">>>>>>> quoted"),
+          md("more"),
+          marker(">>>>>>> other"),
+        ],
+        edit: [
+          md("Status: local edit"),
+          marker("======="),
+          md("Status: remote edit"),
+          marker(">>>>>>> quoted"),
+          md("more"),
+          marker(">>>>>>> other"),
+        ],
+      },
     },
   ]);
   for (const style of ["diff3", "zdiff3"] as const)
-    expect(blocks(fixtures.barInOurs[style])).toEqual([
-      { ours: "Status: local", theirs: "Status: remote", ambiguous: true },
-      { ours: "Owner: me", theirs: "Owner: them", ambiguous: false },
-    ]);
-  for (const style of styles)
     expect(blocks(fixtures.gtInTheirs[style])).toEqual([
       {
-        ours: "Status: local edit",
-        theirs: "Status: remote edit",
-        ambiguous: true,
+        ambiguous: {
+          lines: [
+            marker("<<<<<<< HEAD"),
+            md("Status: local edit"),
+            marker("||||||| base"),
+            md("Status: draft"),
+            marker("======="),
+            md("Status: remote edit"),
+            marker(">>>>>>> quoted"),
+            md("more"),
+            marker(">>>>>>> other"),
+          ],
+          edit: [
+            md("Status: local edit"),
+            marker("||||||| base"),
+            md("Status: draft"),
+            marker("======="),
+            md("Status: remote edit"),
+            marker(">>>>>>> quoted"),
+            md("more"),
+            marker(">>>>>>> other"),
+          ],
+        },
       },
     ]);
-  // A `<` line before the block without its own `=` and `>` lines.
-  expect(
-    blocks(
-      "Intro\n<<<<<<< note\n\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> other\n",
-    ),
-  ).toEqual([
+  for (const style of styles)
+    expect(outside(fixtures.gtInTheirs[style])).toEqual(["# T\n\n", "\nEnd\n"]);
+
+  // A `<` line before the block without its own `=` and `>` lines: both `<`
+  // lines stay in Edit as text.
+  const ltBefore =
+    "Intro\n<<<<<<< note\n\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> other\n";
+  expect(blocks(ltBefore)).toEqual([
     {
-      ours: "\n<<<<<<< HEAD\nmine",
-      theirs: "theirs",
-      ambiguous: true,
+      ambiguous: {
+        lines: [
+          marker("<<<<<<< note"),
+          md(""),
+          marker("<<<<<<< HEAD"),
+          md("mine"),
+          marker("======="),
+          md("theirs"),
+          marker(">>>>>>> other"),
+        ],
+        edit: [
+          marker("<<<<<<< note"),
+          md(""),
+          marker("<<<<<<< HEAD"),
+          md("mine"),
+          marker("======="),
+          md("theirs"),
+        ],
+      },
     },
   ]);
+  expect(outside(ltBefore)).toEqual(["Intro\n", ""]);
+
   // A second `=` line in "theirs" or in the base.
   expect(
     blocks("<<<<<<< a\nmine\n=======\ntheirs\n=======\n>>>>>>> b\n"),
-  ).toEqual([{ ours: "mine", theirs: "theirs\n=======", ambiguous: true }]);
+  ).toEqual([
+    {
+      ambiguous: {
+        lines: [
+          marker("<<<<<<< a"),
+          md("mine"),
+          marker("======="),
+          md("theirs"),
+          marker("======="),
+          marker(">>>>>>> b"),
+        ],
+        edit: [md("mine"), marker("======="), md("theirs"), marker("=======")],
+      },
+    },
+  ]);
   expect(
     blocks(
       "<<<<<<< a\nmine\n||||||| base\nold\n=======\nolder\n=======\ntheirs\n>>>>>>> b\n",
-    ),
+    )[0].ambiguous?.edit,
   ).toEqual([
-    { ours: "mine", theirs: "older\n=======\ntheirs", ambiguous: true },
+    md("mine"),
+    marker("||||||| base"),
+    md("old"),
+    marker("======="),
+    md("older"),
+    marker("======="),
+    md("theirs"),
+  ]);
+});
+
+test("an ambiguous block ends at its last `>` line before the next block", () => {
+  const body =
+    "<<<<<<< a\nmine\n=======\ntheirs\n>>>>>>> q\nmore\n>>>>>>> b\n\nMid\n\n<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n";
+  const [first, second] = blocks(body);
+  expect(first.ambiguous?.lines.at(-1)).toEqual(marker(">>>>>>> b"));
+  expect(second).toEqual({ ours: "x", theirs: "y" });
+  expect(outside(body)).toEqual(["", "\nMid\n\n", ""]);
+});
+
+test("ambiguous lines leave out line endings and runs of text keep them", () => {
+  const block = findConflictBlocks(
+    fixtures.setext7.merge.replaceAll("\n", "\r\n"),
+    DEFAULT_CONFLICT_MARKER_SIZE,
+  )[0];
+  expect(block.ambiguous?.lines.map(({ text }) => text)).toEqual([
+    "<<<<<<< HEAD",
+    "Heading",
+    "=======",
+    "",
+    "local",
+    "=======",
+    "Status: remote edit",
+    ">>>>>>> other",
+  ]);
+  expect(block.ambiguous?.edit).toEqual([
+    md("Heading"),
+    marker("======="),
+    md("\r\nlocal"),
+    marker("======="),
+    md("Status: remote edit"),
   ]);
 });
 

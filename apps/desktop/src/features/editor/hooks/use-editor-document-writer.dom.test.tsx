@@ -12,7 +12,12 @@ import {
 } from "@/features/git/editor";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { createTestDom } from "@/shared/testing/dom";
-import type { ConflictElement } from "../conflict/parse-conflicts";
+import {
+  type AmbiguousConflictElement,
+  type ConflictElement,
+  deserializeAmbiguousConflictEdit,
+  isAmbiguousConflict,
+} from "../conflict/parse-conflicts";
 import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
 import { useEditorStore } from "../model";
@@ -429,6 +434,76 @@ test("a reloaded CRLF source parses blocks with the marker size of its path and 
     await view.save();
     expect(view.writes.map((write) => write.content)).toEqual([
       "# Plan\n\nStatus: remote edit\n\nFooter\n",
+    ]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("an ambiguous block blocks the save until Edit, and its marker lines reopen as text paragraphs", async () => {
+  const path = "pages/ambiguous-conflict.md";
+  const view = await harness(path, "Plain\n");
+  try {
+    view.disk.body = [
+      "# Plan",
+      "",
+      "<<<<<<< HEAD",
+      "Heading",
+      "=======",
+      "",
+      "local",
+      "=======",
+      "Status: remote edit",
+      ">>>>>>> other",
+      "",
+      "Footer",
+      "",
+    ].join("\n");
+    view.disk.version = "v-merge";
+    await view.reconcile();
+    const index = view.editor.children.findIndex(
+      (node) => (node as TElement).type === "conflict",
+    );
+    const conflict = view.editor.children[
+      index
+    ] as unknown as AmbiguousConflictElement;
+    expect(isAmbiguousConflict(conflict)).toBe(true);
+
+    await view.save();
+    expect(view.writes).toEqual([]);
+
+    // Edit the way the ambiguous conflict block does.
+    view.editor.tf.removeNodes({ at: [index] });
+    view.editor.tf.insertNodes(
+      deserializeAmbiguousConflictEdit(
+        view.editor,
+        conflict.ambiguous.edit,
+      ) as never,
+      { at: [index] },
+    );
+    await view.save();
+    const saved =
+      "# Plan\n\nHeading\n\n\\=======\n\nlocal\n\n\\=======\n\nStatus: remote edit\n\nFooter\n";
+    expect(view.writes.map((write) => write.content)).toEqual([saved]);
+
+    // Reopened from the file: an outside edit after the save reloads it.
+    view.disk.body = saved + "\nMore\n";
+    view.disk.version = "v-reopened";
+    await view.reconcile();
+    expect(
+      view.editor.children.map((node) => [
+        (node as TElement).type,
+        NodeApi.string(node),
+      ]),
+    ).toEqual([
+      ["h1", "Plan"],
+      ["p", "Heading"],
+      ["p", "======="],
+      ["p", "local"],
+      ["p", "======="],
+      ["p", "Status: remote edit"],
+      ["p", "Footer"],
+      ["p", "More"],
     ]);
   } finally {
     await view.cleanup();
