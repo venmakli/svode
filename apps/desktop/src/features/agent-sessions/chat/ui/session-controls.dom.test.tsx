@@ -1911,6 +1911,63 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   );
 
   controlsTest(
+    "in the session peek the opened draft popover gives focus to the chosen agent, with more agents than fit too",
+    async () => {
+      // The peek's sheet keeps focus inside itself until the popover's own
+      // focus scope takes over.
+      const peek = () => (
+        <Sheet open onOpenChange={() => undefined}>
+          <SheetContent side="right">
+            <SheetTitle>Session</SheetTitle>
+            <NewSessionDraft
+              spacePath="/project"
+              onStarted={() => undefined}
+              onOpenAgentSettings={() => undefined}
+            />
+          </SheetContent>
+        </Sheet>
+      );
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude", name: "Claude Code" },
+      ];
+      await mount(peek());
+      await click(agentButton());
+      expect(agentTabs().length).toBe(2);
+      expect(document.activeElement === agentTabs()[0]).toBe(true);
+      await pressKey(document.activeElement, "Escape");
+      expect(popover()).toBe(null);
+
+      await unmountAll();
+      chatAgents = Array.from({ length: 9 }, (_, index) => ({
+        id: `agent-${index + 1}`,
+        name: `Agent ${index + 1}`,
+      }));
+      const restore = stubWidths(40, 200);
+      try {
+        await mount(peek());
+        for (let opening = 0; opening < 2; opening += 1) {
+          await click(agentButton());
+          expect(agentTabs().length).toBe(3);
+          expect(Boolean(buttonByLabel(m.sessions_chat_agent_more()))).toBe(
+            true,
+          );
+          expect(document.activeElement === agentTabs()[0]).toBe(true);
+          await pressKey(document.activeElement, "ArrowRight");
+          expect(document.activeElement === agentTabs()[1]).toBe(true);
+          expect(agentTabs()[1].getAttribute("aria-selected")).toBe("false");
+          await pressKey(document.activeElement, "ArrowLeft");
+          expect(document.activeElement === agentTabs()[0]).toBe(true);
+          await pressKey(document.activeElement, "Escape");
+          expect(popover()).toBe(null);
+        }
+      } finally {
+        restore();
+      }
+    },
+  );
+
+  controlsTest(
     "without a chosen agent the opened popover gives focus to the first tab, with more agents than fit too",
     async () => {
       chatAgents = Array.from({ length: 9 }, (_, index) => ({

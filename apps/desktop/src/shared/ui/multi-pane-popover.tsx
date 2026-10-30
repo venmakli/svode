@@ -42,6 +42,12 @@ interface MultiPanePopoverProps<TPane extends string> {
   side?: "top" | "right" | "bottom" | "left";
   /** Modal keeps its own scroll lock, so the wheel scrolls it inside a sheet. */
   modal?: boolean;
+  /**
+   * Where focus goes once the popover opens; to its first tabbable element by
+   * default. Runs once the popover's focus trap holds, over the trap of a
+   * sheet it opens from.
+   */
+  onOpenAutoFocus?: PopoverContentProps["onOpenAutoFocus"];
   /** Where focus goes once the popover closes; back to the trigger by default. */
   onCloseAutoFocus?: PopoverContentProps["onCloseAutoFocus"];
   /** A press outside the popover, before it closes. */
@@ -65,6 +71,7 @@ export function MultiPanePopover<TPane extends string>({
   align = "end",
   side,
   modal,
+  onOpenAutoFocus,
   onCloseAutoFocus,
   onPointerDownOutside,
   className,
@@ -109,6 +116,7 @@ export function MultiPanePopover<TPane extends string>({
       <PopoverContent
         align={align}
         side={side}
+        onOpenAutoFocus={onOpenAutoFocus}
         onCloseAutoFocus={onCloseAutoFocus}
         onPointerDownOutside={onPointerDownOutside}
         className={cn(

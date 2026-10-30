@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
@@ -22,6 +23,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
+
+/** Focus of a strip given on request, as when a popover opens on it. */
+export interface OverflowTabStripFocus {
+  /**
+   * Focuses the active tab or the control standing for it, without one the
+   * first tab; before the tabs are laid out, once they are. False when the
+   * strip has no tabs.
+   */
+  focus(): boolean;
+}
 
 export interface OverflowTab<Value extends string = string> {
   value: Value;
@@ -49,10 +60,11 @@ interface OverflowTabStripProps<Value extends string> {
   /** Activation of the tabs listed under the overflow control. */
   overflowActivationMode?: "automatic" | "manual";
   /**
-   * Once its tabs are laid out after mounting, the strip takes focus: the
-   * active tab or the control standing for it, without one the first tab.
+   * Gives focus to the strip on request. A popover asks for it once its
+   * focus trap holds: focus taken before that, as right after the tabs are
+   * laid out, the trap of a sheet around the popover takes back.
    */
-  autoFocus?: boolean;
+  focusRef?: Ref<OverflowTabStripFocus>;
   /** Content after the tabs, such as an add button. */
   trailing?: ReactNode;
   /** Width the tabs leave free for `trailing`. */
@@ -95,14 +107,14 @@ export function OverflowTabStrip<Value extends string>({
   listLabel,
   labelActiveOnly = false,
   overflowActivationMode,
-  autoFocus = false,
+  focusRef,
   trailing,
   trailingWidth = 0,
   className,
 }: OverflowTabStripProps<Value>) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const focusTargetRef = useRef<HTMLButtonElement | null>(null);
-  const focusPendingRef = useRef(autoFocus);
+  const focusPendingRef = useRef(false);
   const tabMeasureRefs = useRef<Array<HTMLDivElement | null>>([]);
   const moreMeasureRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<TabStripLayout>(defaultLayout);
@@ -191,12 +203,27 @@ export function OverflowTabStrip<Value extends string>({
     updateVisibleTabs();
   }, [updateVisibleTabs]);
 
+  const hasTabs = tabs.length > 0;
+  useImperativeHandle(
+    focusRef,
+    () => ({
+      focus() {
+        if (!hasTabs) return false;
+        const target = focusTargetRef.current;
+        // The first render has no tabs: they show once measured.
+        if (target) target.focus();
+        else focusPendingRef.current = true;
+        return true;
+      },
+    }),
+    [hasTabs],
+  );
+
   useLayoutEffect(() => {
-    // The first render has no tabs: they show once measured.
-    if (!focusPendingRef.current) return;
-    if (layout.visibleCount === 0 && !layout.hasOverflow) return;
+    const target = focusTargetRef.current;
+    if (!focusPendingRef.current || !target) return;
     focusPendingRef.current = false;
-    focusTargetRef.current?.focus();
+    target.focus();
   }, [layout]);
 
   useEffect(() => {

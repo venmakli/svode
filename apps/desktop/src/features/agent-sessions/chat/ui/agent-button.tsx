@@ -1,5 +1,12 @@
 import { ChevronDown, Loader2, RotateCw, Settings2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+} from "react";
 import {
   AgentIcon,
   useAgentAdapterDictionary,
@@ -16,7 +23,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { InputGroupButton } from "@/components/ui/input-group";
 import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
-import { OverflowTabStrip } from "@/shared/ui/overflow-tab-strip";
+import {
+  OverflowTabStrip,
+  type OverflowTabStripFocus,
+} from "@/shared/ui/overflow-tab-strip";
 import { SettingsRow, SettingsStaticRow } from "@/shared/ui/settings-row";
 import type { AgentLaunchUnavailableDto } from "../api/chat";
 import type { ChatAgent } from "../model/agents";
@@ -130,6 +140,8 @@ export function AgentModelButton({
   const dictionary = useAgentAdapterDictionary();
   const field = useComposerField();
   const [open, setOpen] = useState(false);
+  // A draft's opened popover starts on the agent tabs (DF-261).
+  const agentTabsFocus = useRef<OverflowTabStripFocus | null>(null);
   // The popover closes for a chosen agent or a click in the composer field
   // and gives focus to the field rather than the button (DF-217).
   const [focusField, setFocusField] = useState(false);
@@ -227,6 +239,11 @@ export function AgentModelButton({
         }
         setOpen(next);
       }}
+      onOpenAutoFocus={(event) => {
+        // Once the popover's focus trap holds: a sheet's trap would take
+        // focus back from a tab focused earlier.
+        if (agentTabsFocus.current?.focus()) event.preventDefault();
+      }}
       onPointerDownOutside={(event) => {
         // The modal layer hides the field from the press, so its point
         // tells whether it is in the field.
@@ -275,9 +292,7 @@ export function AgentModelButton({
                 <AgentTabs
                   agent={agent}
                   draft={choice}
-                  // The opened popover starts on the agent; back from a
-                  // setting's screen its row takes focus instead (DF-261).
-                  autoFocus={returnTo === null}
+                  focusRef={agentTabsFocus}
                   onChosen={() => close(true)}
                 >
                   {rows}
@@ -338,14 +353,14 @@ export function AgentModelButton({
 function AgentTabs({
   agent,
   draft,
-  autoFocus,
+  focusRef,
   onChosen,
   children,
 }: {
   agent: string | null;
   draft: DraftAgentChoice;
-  /** The chosen agent takes focus once the tabs show. */
-  autoFocus: boolean;
+  /** Gives focus to the chosen agent, as the opened popover does. */
+  focusRef: Ref<OverflowTabStripFocus>;
   onChosen: () => void;
   /** The rows of the chosen agent. */
   children: ReactNode;
@@ -375,7 +390,7 @@ function AgentTabs({
           moreLabel={m.sessions_chat_agent_more()}
           labelActiveOnly
           overflowActivationMode="manual"
-          autoFocus={autoFocus}
+          focusRef={focusRef}
           listLabel={m.sessions_chat_agent_tabs()}
           className="flex-1 justify-start"
         />
