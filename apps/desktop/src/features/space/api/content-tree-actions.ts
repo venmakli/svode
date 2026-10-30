@@ -13,7 +13,10 @@ import {
   renameContentTreeItem,
 } from "@/platform/space/content-tree-api";
 import { convertToCollection } from "@/platform/collections/collections-api";
-import { trackOwnContentDeletion } from "@/features/page/page-api";
+import {
+  trackOwnContentDeletion,
+  trackOwnContentRelocation,
+} from "@/features/page/page-api";
 import type { TreeNode } from "../model/types";
 import { treeNodeHasChildren, treeParentKeyForNode } from "../lib/tree-cache";
 
@@ -69,12 +72,16 @@ export function renameTreeItemPath(input: {
   to: string;
   projectPath: ProjectPath;
 }): Promise<string[]> {
-  return renameContentTreeItem({
-    space: input.spacePath,
-    from: input.from,
-    to: input.to,
-    projectPath: input.projectPath,
-  });
+  return trackOwnContentRelocation(
+    { spacePath: input.spacePath, path: input.from },
+    () =>
+      renameContentTreeItem({
+        space: input.spacePath,
+        from: input.from,
+        to: input.to,
+        projectPath: input.projectPath,
+      }),
+  );
 }
 
 export function updateTreePageTitle(input: {
@@ -83,13 +90,20 @@ export function updateTreePageTitle(input: {
   title: string;
   projectPath: ProjectPath;
 }): Promise<PageDto> {
-  return updatePageField({
-    space: input.spacePath,
-    filePath: input.filePath,
-    field: "title",
-    value: input.title,
-    projectPath: input.projectPath,
-  });
+  // A new title renames the file, or the directory of a README, with all
+  // Pages under it.
+  return trackOwnContentRelocation(
+    { spacePath: input.spacePath, path: input.filePath },
+    () =>
+      updatePageField({
+        space: input.spacePath,
+        filePath: input.filePath,
+        field: "title",
+        value: input.title,
+        projectPath: input.projectPath,
+      }),
+    (page) => page.path !== input.filePath,
+  );
 }
 
 export function nestTreePage(input: {

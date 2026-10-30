@@ -73,7 +73,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
 
   // Deletions this Desktop runs must be known to open Pages they remove.
   const deleted: [string, string][] = [];
-  mock.module("@/features/page/model/own-deletion", () => ({
+  mock.module("@/features/page/model/own-path-change", () => ({
     trackOwnContentDeletion: async (
       target: { spacePath: string; path: string },
       run: () => Promise<unknown>,
@@ -85,7 +85,11 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
       }
       return result;
     },
-    watchOwnPageDeletion: () => ({ deletedHere: () => false, stop: () => {} }),
+    trackOwnContentRelocation: (
+      _target: unknown,
+      run: () => Promise<unknown>,
+    ) => run(),
+    watchOwnPathChange: () => ({ changedHere: () => false, stop: () => {} }),
   }));
 
   // React DOM reads the environment when it loads, so after the globals.

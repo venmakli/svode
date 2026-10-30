@@ -20,7 +20,7 @@ import {
 } from "@/platform/space/content-tree-api";
 import { convertToCollection as convertToCollectionDto } from "@/platform/collections/collections-api";
 import { normalizePage } from "../model/normalize-page";
-import { trackOwnContentDeletion } from "../model/own-deletion";
+import { trackOwnContentDeletion } from "../model/own-path-change";
 import type {
   Page,
   PageDetailState,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import type { PageSchemaResult } from "@/features/properties";
 import { listenPageSourceEvents } from "../api/page-source-events-api";
 import { isReadmeMissingError } from "../lib/readme-state";
-import { watchOwnPageDeletion } from "../model/own-deletion";
+import { watchOwnPathChange } from "../model/own-path-change";
 import {
   isPageAncestorEvent,
   isPageSchemaEvent,
@@ -23,13 +23,16 @@ interface PageDetailRefreshOptions {
   applySchema: (
     update: (current: PageSchemaResult | null) => PageSchemaResult | null,
   ) => void;
-  /** Resolves once this session's own saves and path changes have finished. */
+  /**
+   * Resolves once this session's own saves and path changes and the
+   * structural operations of this Desktop over the Space have finished.
+   */
   settled: () => Promise<void>;
   /**
-   * The Page file stopped existing outside this session; `deletedHere` when
-   * a deletion started in this Desktop removed it.
+   * The Page file stopped existing outside this session; `changedHere` when
+   * a deletion, rename or move started in this Desktop left its path.
    */
-  onGone: (deletedHere: boolean) => void;
+  onGone: (changedHere: boolean) => void;
 }
 
 /**
@@ -61,7 +64,7 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     let appliedSchemaRead = 0;
     // An own deletion of a directory Page reaches no watcher event, so its
     // end checks the Page as an event would.
-    const ownDeletion = watchOwnPageDeletion(spacePath, path, () => {
+    const ownChange = watchOwnPathChange(spacePath, path, () => {
       void refreshPage().catch(warn);
     });
 
@@ -78,11 +81,12 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
         if (confirmingGone) {
           appliedPageRead = read;
           active = false;
-          optionsRef.current.onGone(ownDeletion.deletedHere());
+          optionsRef.current.onGone(ownChange.changedHere());
           return;
         }
-        // An own rename, move or conversion leaves this path too; once it
-        // has finished, the handoff has retired this subscription.
+        // An own rename, move or conversion of the Page or of a folder above
+        // it leaves this path too, so only its end tells the outcome; a
+        // handoff of the Page has retired this subscription by then.
         await optionsRef.current.settled();
         if (active) return refreshPage(true);
         return;
@@ -122,7 +126,7 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     });
     return () => {
       active = false;
-      ownDeletion.stop();
+      ownChange.stop();
       void unlisten.then((stop) => stop());
     };
   }, [path, spacePath]);

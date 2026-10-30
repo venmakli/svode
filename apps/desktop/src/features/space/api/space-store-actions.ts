@@ -1,7 +1,4 @@
-import {
-  createPage,
-  type PageDto,
-} from "@/platform/pages/pages-api";
+import { createPage, type PageDto } from "@/platform/pages/pages-api";
 import {
   getNavigationExpandedPaths,
   saveNavigationExpandedPaths,
@@ -13,6 +10,7 @@ import {
   saveContentTreeOrder,
 } from "@/platform/space/content-tree-api";
 import { clearMcpActiveContext, setMcpActiveContext } from "@/platform/mcp";
+import { trackOwnContentRelocation } from "@/features/page/page-api";
 import {
   createProject,
   createSpace,
@@ -159,12 +157,16 @@ export function moveSpaceTreeItem(input: {
   toParent: string;
   projectPath: string | null;
 }) {
-  return moveContentTreeItem({
-    space: input.spacePath,
-    from: input.from,
-    toParent: input.toParent,
-    projectPath: input.projectPath,
-  });
+  return trackOwnContentRelocation(
+    { spacePath: input.spacePath, path: input.from },
+    () =>
+      moveContentTreeItem({
+        space: input.spacePath,
+        from: input.from,
+        toParent: input.toParent,
+        projectPath: input.projectPath,
+      }),
+  );
 }
 
 export function saveSpaceTreeOrder(input: {

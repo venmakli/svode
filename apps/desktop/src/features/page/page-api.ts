@@ -1,5 +1,8 @@
 export * from "./api/page-api";
-export { trackOwnContentDeletion } from "./model/own-deletion";
+export {
+  trackOwnContentDeletion,
+  trackOwnContentRelocation,
+} from "./model/own-path-change";
 export { treeOrderUnreadableToast } from "./lib/tree-order-error";
 export {
   pageNameConflictDisplayPath,

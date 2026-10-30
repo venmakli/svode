@@ -140,6 +140,7 @@ export function PageDetailProvider({
     reloadTreeParent,
     reloadTreePathParent,
     reloadTreePathParents,
+    treePathMutationsSettled,
   } = useSpaceTreeSync();
   const activeSpaceRef = useRef(spacePath);
   useEffect(() => {
@@ -371,11 +372,17 @@ export function PageDetailProvider({
     localFields: () => drafts.keys(),
     applyPage: applyPageUpdate,
     applySchema: setSchemaResult,
-    settled: () => pageSurface?.settled() ?? Promise.resolve(),
-    onGone: (deletedHere) => {
+    settled: async () => {
+      // A sidebar rename or move of a folder above the Page leaves its path
+      // as the session's own path changes do.
+      await treePathMutationsSettled(spacePath);
+      await pageSurface?.settled();
+    },
+    onGone: (changedHere) => {
       if (target === "page") {
-        // The user confirmed an own deletion; only another writer's is news.
-        if (!deletedHere)
+        // The user deleted, renamed or moved it here; only another writer's
+        // change is news.
+        if (!changedHere)
           toast.warning(
             m.page_deleted_externally_title({
               title: page?.meta.title.trim() || resolvedFallbackTitle,
