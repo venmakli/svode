@@ -431,7 +431,7 @@ pub async fn git_commit_file(
             )
             .await?;
         return Ok(flow::SaveReport {
-            status: ops::status(state.cli()?, &path).await?,
+            status: state.status(&path, false).await?,
             parent: None,
         });
     }

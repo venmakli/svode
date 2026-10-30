@@ -627,3 +627,28 @@ pub async fn read_records(
         None => read.await.map(Some),
     }
 }
+
+/// Run a Git write and wait for it up to `timeout`. A command still running
+/// then is left to finish on its own rather than killed while it may hold a
+/// Git lock. Returns whether Git succeeded, or `None` when the wait ended first.
+pub async fn write_within(
+    cli: &GitCli,
+    repo: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Option<bool>, GitError> {
+    let mut command = Command::new(cli.git_path());
+    hide_tokio_window(&mut command);
+    cli.configure_process_env(&mut command);
+    command
+        .args(args)
+        .current_dir(repo)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn()?;
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(status) => Ok(Some(status?.success())),
+        Err(_) => Ok(None),
+    }
+}

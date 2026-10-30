@@ -1,17 +1,25 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use unicode_normalization::UnicodeNormalization;
 
 use super::GitError;
-use super::cli::{GitCli, read_records};
+use super::cli::{GitCli, read_records, write_within};
 use super::path::{RootMode, normalize_repo_relative};
 
 /// Most paths a listed status carries; flags and totals still cover every path.
 pub const STATUS_LIST_LIMIT: usize = 20_000;
 /// How long a listed status read waits for Git.
 pub const STATUS_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// A listed read slower than this updates the cached stat data of the index.
+const SLOW_STATUS_READ: Duration = Duration::from_secs(1);
+/// Least time between two index stat updates of one repository.
+const INDEX_REFRESH_INTERVAL: Duration = Duration::from_secs(10 * 60);
+
+/// When Svode last updated the stat data of each index, by its absolute path.
+static INDEX_REFRESHED: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,10 +66,95 @@ pub async fn get_remote(cli: &GitCli, space_dir: &Path) -> Result<Option<String>
 /// Status as Desktop, MCP and CLI present it: every path counts toward the
 /// flags and totals, `files` holds at most [`STATUS_LIST_LIMIT`] paths with the
 /// conflicts first, and Git gets [`STATUS_READ_TIMEOUT`] to answer.
+///
+/// The caller holds the Svode lock of the repository: a slow read updates the
+/// cached stat data of its index.
 pub async fn status(cli: &GitCli, space_dir: &Path) -> Result<GitStatus, GitError> {
-    let mut status = read_status(cli, space_dir, Some(STATUS_READ_TIMEOUT)).await?;
+    listed_status(
+        cli,
+        space_dir,
+        STATUS_READ_TIMEOUT,
+        SLOW_STATUS_READ,
+        INDEX_REFRESH_INTERVAL,
+    )
+    .await
+}
+
+async fn listed_status(
+    cli: &GitCli,
+    space_dir: &Path,
+    timeout: Duration,
+    slow: Duration,
+    interval: Duration,
+) -> Result<GitStatus, GitError> {
+    let started = Instant::now();
+    let read = read_status(cli, space_dir, Some(timeout)).await;
+    if started.elapsed() > slow || matches!(read, Err(GitError::StatusTimedOut { .. })) {
+        refresh_index_stat(cli, space_dir, interval).await;
+    }
+    let mut status = read?;
     limit_files(&mut status, STATUS_LIST_LIMIT);
     Ok(status)
+}
+
+/// Reads run without optional locks, so Git never writes the stat data it
+/// refreshes, and after a copy, restore or cloud sync touches every file each
+/// read rehashes them all again. This explicit write records that stat data
+/// once, without changing any index entry. It runs only under the Svode lock
+/// of the repository, with no Git operation in progress, `index.lock` free and
+/// HEAD on a branch, at most once per `interval` per repository. The lock is
+/// held at most [`STATUS_READ_TIMEOUT`]; an update still running then finishes
+/// under `index.lock` alone. A failure is silent and the next slow read tries
+/// again.
+async fn refresh_index_stat(cli: &GitCli, space_dir: &Path, interval: Duration) {
+    let Ok(index) = cli
+        .exec(
+            space_dir,
+            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+        )
+        .await
+    else {
+        return;
+    };
+    if index.exit_code != 0 {
+        return;
+    }
+    let index = PathBuf::from(index.stdout.trim_end());
+    let refreshed = INDEX_REFRESHED.get_or_init(Default::default);
+    if refreshed
+        .lock()
+        .ok()
+        .and_then(|refreshed| refreshed.get(&index).map(Instant::elapsed))
+        .is_some_and(|since| since < interval)
+    {
+        return;
+    }
+    if !matches!(
+        super::branch::operation_in_progress(cli, space_dir).await,
+        Ok(None)
+    ) {
+        return;
+    }
+    if !matches!(
+        cli.exec(space_dir, &["symbolic-ref", "-q", "HEAD"]).await,
+        Ok(head) if head.exit_code == 0
+    ) {
+        return;
+    }
+    if index.with_file_name("index.lock").exists() {
+        return;
+    }
+    if let Ok(Some(true)) = write_within(
+        cli,
+        space_dir,
+        &["update-index", "-q", "--refresh"],
+        STATUS_READ_TIMEOUT,
+    )
+    .await
+        && let Ok(mut refreshed) = refreshed.lock()
+    {
+        refreshed.insert(index, Instant::now());
+    }
 }
 
 /// Status an operation decides by: every path, with no limit on their number,
@@ -666,6 +759,226 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(diff.to_string(), "Git command failed: Diff read timed out");
+    }
+
+    /// Give each file the modification time `seconds` after the epoch, as a
+    /// copy, restore or cloud sync does to every file of a repository.
+    fn touch(root: &Path, paths: &[&str], seconds: u64) {
+        let time = std::time::UNIX_EPOCH + Duration::from_secs(seconds);
+        for path in paths {
+            std::fs::File::options()
+                .write(true)
+                .open(root.join(path))
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        }
+    }
+
+    /// Modification second the index caches for `path`.
+    async fn cached_mtime(cli: &GitCli, root: &Path, path: &str) -> u64 {
+        let debug = git(cli, root, &["ls-files", "--debug", "--", path]).await;
+        let line = debug
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("mtime: "))
+            .unwrap();
+        line.split(':').next().unwrap().parse().unwrap()
+    }
+
+    const NEVER: Duration = Duration::from_secs(3600);
+
+    #[tokio::test]
+    async fn a_slow_listed_read_updates_the_index_stat_once_per_interval() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        write(root.path(), "notes.md", "notes\n");
+        git(&cli, root.path(), &["add", "."]).await;
+        git(&cli, root.path(), &["commit", "-m", "Notes"]).await;
+        let tracked = ["baseline.md", "notes.md"];
+        let interval = Duration::from_secs(600);
+
+        // A fast read writes nothing: reads run without optional locks.
+        touch(root.path(), &tracked, 1_000_000_000);
+        let fast = listed_status(&cli, root.path(), STATUS_READ_TIMEOUT, NEVER, interval)
+            .await
+            .unwrap();
+        assert_eq!(fast.total_files, 0);
+        assert_ne!(
+            cached_mtime(&cli, root.path(), "notes.md").await,
+            1_000_000_000
+        );
+
+        // A slow read records the stat data, so the next read rehashes nothing.
+        let slow = listed_status(
+            &cli,
+            root.path(),
+            STATUS_READ_TIMEOUT,
+            Duration::ZERO,
+            interval,
+        )
+        .await
+        .unwrap();
+        assert_eq!(slow.total_files, 0);
+        for path in tracked {
+            assert_eq!(cached_mtime(&cli, root.path(), path).await, 1_000_000_000);
+        }
+        let entries = git(&cli, root.path(), &["ls-files", "--stage"]).await;
+
+        // Within the interval another slow read leaves the index alone.
+        touch(root.path(), &tracked, 1_100_000_000);
+        listed_status(
+            &cli,
+            root.path(),
+            STATUS_READ_TIMEOUT,
+            Duration::ZERO,
+            interval,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cached_mtime(&cli, root.path(), "notes.md").await,
+            1_000_000_000
+        );
+
+        // Past the interval it updates the stat data again.
+        listed_status(
+            &cli,
+            root.path(),
+            STATUS_READ_TIMEOUT,
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cached_mtime(&cli, root.path(), "notes.md").await,
+            1_100_000_000
+        );
+        // Only stat data changed: the staged entries are the same.
+        assert_eq!(
+            git(&cli, root.path(), &["ls-files", "--stage"]).await,
+            entries
+        );
+        assert_eq!(INDEX_REFRESH_INTERVAL, Duration::from_secs(600));
+        assert_eq!(SLOW_STATUS_READ, Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn a_held_index_lock_skips_the_update_silently_and_the_next_slow_read_retries() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        let interval = Duration::from_secs(600);
+        touch(root.path(), &["baseline.md"], 1_000_000_000);
+        let lock = root.path().join(".git/index.lock");
+        std::fs::write(&lock, "").unwrap();
+
+        let status = listed_status(
+            &cli,
+            root.path(),
+            STATUS_READ_TIMEOUT,
+            Duration::ZERO,
+            interval,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status.total_files, 0);
+        assert_ne!(
+            cached_mtime(&cli, root.path(), "baseline.md").await,
+            1_000_000_000
+        );
+        assert!(lock.exists(), "the lock of another writer stays");
+
+        // A skipped update does not count toward the interval.
+        std::fs::remove_file(&lock).unwrap();
+        listed_status(
+            &cli,
+            root.path(),
+            STATUS_READ_TIMEOUT,
+            Duration::ZERO,
+            interval,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            cached_mtime(&cli, root.path(), "baseline.md").await,
+            1_000_000_000
+        );
+    }
+
+    #[tokio::test]
+    async fn a_merge_or_a_detached_head_gets_no_index_update_and_no_error() {
+        let cli = cli();
+        let merging = repo(&cli, true).await;
+        git(&cli, merging.path(), &["checkout", "-b", "other"]).await;
+        write(merging.path(), "page.md", "other\n");
+        git(&cli, merging.path(), &["add", "."]).await;
+        git(&cli, merging.path(), &["commit", "-m", "Other"]).await;
+        git(&cli, merging.path(), &["checkout", "-"]).await;
+        write(merging.path(), "page.md", "current\n");
+        git(&cli, merging.path(), &["add", "."]).await;
+        git(&cli, merging.path(), &["commit", "-m", "Current"]).await;
+        assert_ne!(
+            cli.exec(merging.path(), &["merge", "other"])
+                .await
+                .unwrap()
+                .exit_code,
+            0
+        );
+
+        let detached = repo(&cli, true).await;
+        git(&cli, detached.path(), &["checkout", "--detach"]).await;
+
+        for root in [&merging, &detached] {
+            touch(root.path(), &["baseline.md"], 1_000_000_000);
+            let status = listed_status(
+                &cli,
+                root.path(),
+                STATUS_READ_TIMEOUT,
+                Duration::ZERO,
+                Duration::ZERO,
+            )
+            .await
+            .unwrap();
+            assert!(!status.files.iter().any(|file| file.path == "baseline.md"));
+            assert_ne!(
+                cached_mtime(&cli, root.path(), "baseline.md").await,
+                1_000_000_000
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_timed_out_listed_read_still_updates_the_index_stat() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        let hook = root.path().join(".git/slow-fsmonitor");
+        svode_testkit::write_executable(&hook, "#!/bin/sh\nsleep 2\nexit 1\n").unwrap();
+        git(
+            &cli,
+            root.path(),
+            &["config", "core.fsmonitor", hook.to_str().unwrap()],
+        )
+        .await;
+        touch(root.path(), &["baseline.md"], 1_000_000_000);
+
+        let error = listed_status(
+            &cli,
+            root.path(),
+            Duration::from_secs(1),
+            NEVER,
+            Duration::from_secs(600),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, GitError::StatusTimedOut { seconds: 1, .. }),
+            "{error:?}"
+        );
+        assert_eq!(
+            cached_mtime(&cli, root.path(), "baseline.md").await,
+            1_000_000_000
+        );
     }
 
     #[tokio::test]
