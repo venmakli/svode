@@ -36,15 +36,14 @@ export const ImageElement = withHOC(
     const resolvedUrl = useResolvedMediaUrl(
       shouldResolve ? unsafeUrl : undefined,
     );
-    const [imageReady, setImageReady] = React.useState(false);
+    // Readiness belongs to the URL that loaded: a cached image can fire `load`
+    // before an effect would reset it, so nothing resets it.
+    const [readyUrl, setReadyUrl] = React.useState<string | null>(null);
+    const imageReady = !!resolvedUrl && readyUrl === resolvedUrl;
 
     const { isDragging, handleRef } = useDraggable({
       element: props.element,
     });
-
-    React.useEffect(() => {
-      setImageReady(false);
-    }, [resolvedUrl]);
 
     return (
       <MediaToolbar plugin={ImagePlugin}>
@@ -80,8 +79,8 @@ export const ImageElement = withHOC(
                       ...rest,
                       decoding: "async",
                       loading: "lazy",
-                      onError: () => setImageReady(true),
-                      onLoad: () => setImageReady(true),
+                      onError: () => setReadyUrl(resolvedUrl),
+                      onLoad: () => setReadyUrl(resolvedUrl),
                       src: resolvedUrl,
                     })}
                   />

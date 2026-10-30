@@ -76,14 +76,15 @@ export function InlineImageElement(
   const resolvedUrl = useResolvedMediaUrl(
     shouldResolve ? element.url : undefined,
   );
-  const [status, setStatus] = React.useState<"loading" | "loaded" | "failed">(
-    "loading",
-  );
+  // The result belongs to the URL it came from: a cached image can fire `load`
+  // before an effect would reset the state, so nothing resets it.
+  const [settled, setSettled] = React.useState<{
+    url: string;
+    status: "loaded" | "failed";
+  } | null>(null);
+  const status =
+    resolvedUrl && settled?.url === resolvedUrl ? settled.status : "loading";
   const name = element.alt || fileNameOf(element.url);
-
-  React.useEffect(() => {
-    setStatus("loading");
-  }, [resolvedUrl]);
 
   return (
     <PlateElement {...props} as="span">
@@ -129,8 +130,12 @@ export function InlineImageElement(
                   "h-[1lh] w-auto max-w-full rounded-sm object-contain",
                   status === "loading" && "absolute opacity-0",
                 )}
-                onLoad={() => setStatus("loaded")}
-                onError={() => setStatus("failed")}
+                onLoad={() =>
+                  setSettled({ url: resolvedUrl, status: "loaded" })
+                }
+                onError={() =>
+                  setSettled({ url: resolvedUrl, status: "failed" })
+                }
               />
             ) : null}
           </>
