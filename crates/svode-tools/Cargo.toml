@@ -13,9 +13,12 @@ serde_json = "1"
 indexmap = { version = "2.13", features = ["serde"] }
 serde_norway = "0.9.42"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
 tempfile = "3"
+toml = "0.9"
+tracing-core = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

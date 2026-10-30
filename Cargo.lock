@@ -5533,6 +5533,7 @@ dependencies = [
  "svode-tools",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5683,6 +5684,7 @@ dependencies = [
  "svode-tools",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5720,7 +5722,10 @@ dependencies = [
  "svode-core",
  "tempfile",
  "tokio",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
+ "tracing-core",
+ "tracing-subscriber",
 ]
 
 [[package]]

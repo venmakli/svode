@@ -5,6 +5,7 @@ use svode_core::git::write_guard;
 use svode_tools::standalone::StandaloneHost;
 
 fn main() {
+    svode_tools::logging::init(tracing::Level::WARN);
     let raw = std::env::args_os().collect::<Vec<_>>();
     let rendered = match parse(&raw) {
         Err(rendered) => rendered,

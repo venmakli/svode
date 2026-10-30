@@ -4,6 +4,7 @@ pub mod dispatch;
 mod domain_error;
 pub mod error;
 pub mod host;
+pub mod logging;
 mod mutation;
 pub mod owner;
 pub mod path;
