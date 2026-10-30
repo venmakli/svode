@@ -67,6 +67,7 @@ import {
   TRAILING_BLOCK_MARK,
   withoutServiceTrailingBlock,
 } from "../model/trailing-block";
+import { BrokenLinksPlugin } from "./broken-links-plugin";
 import { InlineImagePlugin } from "./inline-image-plugin";
 import { MarkdownCommentKit } from "./markdown-comment-kit";
 import { SystemDictationPlugin } from "./system-dictation-plugin";
@@ -87,6 +88,7 @@ const ProductLinkKit = [
       afterEditable: () => <PageLinkFloatingToolbar />,
     },
   }),
+  BrokenLinksPlugin,
   LinkShortcutPlugin,
 ];
 

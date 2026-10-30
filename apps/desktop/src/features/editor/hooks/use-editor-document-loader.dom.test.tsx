@@ -9,6 +9,7 @@ import type { Page } from "@/features/page";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import type { ConflictElement } from "../conflict/parse-conflicts";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
+import { BrokenLinksPlugin } from "../plate/broken-links-plugin";
 import { useEditorDocumentLoader } from "./use-editor-document-loader";
 import { useEditorLinkValidation } from "./use-editor-link-validation";
 
@@ -73,16 +74,20 @@ async function harness(disk: Map<string, Page>, markerSize = 7) {
     return structuredClone(source);
   });
   const root = createRoot(dom.window.document.getElementById("app")!);
-  let editor = createPlateEditor({ plugins: [MarkdownPlugin] });
+  const newEditor = () =>
+    createPlateEditor({ plugins: [MarkdownPlugin, BrokenLinksPlugin] });
+  let editor = newEditor();
   const loading: boolean[] = [];
   const noop = () => {};
   const loadEditorValue = (value: Descendant[]) =>
     loadProgrammaticEditorValue(editor, value);
   const shown = { key: null as string | null };
   const keys: (string | null)[] = [];
-  const marks = { broken: new Set<string>() };
-  const setBrokenLinks = (links: Set<string>) => {
-    marks.broken = links;
+  // The marks of the editor of the open surface.
+  const marks = {
+    get broken() {
+      return editor.getOption(BrokenLinksPlugin, "brokenLinks");
+    },
   };
 
   function Loader({
@@ -112,17 +117,16 @@ async function harness(disk: Map<string, Page>, markerSize = 7) {
       initialPageSpacePath: initialPage ? SPACE : null,
       isLoadingRef,
       loadEditorValue: loadEditorValue,
-      setBrokenLinks,
       spacePath: SPACE,
     });
     // The document session validates links for the key of the current document.
     useEditorLinkValidation({
+      editor,
       loadedDocumentKey:
         loadedDocumentKey === keyOf(path) ? loadedDocumentKey : null,
       currentDocument: path,
       spacePath: SPACE,
       projectPath: null,
-      setBrokenLinks,
     });
     useEffect(() => {
       loading.push(documentLoading);
@@ -179,13 +183,13 @@ async function harness(disk: Map<string, Page>, markerSize = 7) {
     },
     /** Mounts a new editor for the document, as opening its surface does. */
     open: async (path: string, initialPage: Page | null) => {
-      editor = createPlateEditor({ plugins: [MarkdownPlugin] });
+      editor = newEditor();
       await render(path, initialPage);
       return loaded(path);
     },
     /** Starts loading in a new editor without waiting for the load. */
     start: async (path: string, initialPage: Page | null) => {
-      editor = createPlateEditor({ plugins: [MarkdownPlugin] });
+      editor = newEditor();
       await render(path, initialPage);
     },
     /** Runs the load again in the open editor, as a new provided Page does. */
@@ -197,7 +201,6 @@ async function harness(disk: Map<string, Page>, markerSize = 7) {
     leave: async () => {
       await act(async () => root.render(null));
       shown.key = null;
-      marks.broken = new Set();
     },
     cleanup: async () => {
       await act(async () => root.unmount());

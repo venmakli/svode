@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { usePluginOption } from "platejs/react";
 import { toast } from "sonner";
 
 import { useOpenPage } from "@/features/page/navigation";
@@ -9,7 +10,7 @@ import {
   resolvePageLink,
   type PageLinkResolveResult,
 } from "../api/page-link-api";
-import { useEditorStore } from "../model";
+import { BrokenLinksPlugin } from "../plate/broken-links-plugin";
 import {
   absoluteDocumentPath,
   isBrokenPageLink,
@@ -41,7 +42,7 @@ export function usePageLinkNavigation(
   const openSpace = useSpace((s) => s.openSpace);
   const clearActiveSpace = useSpace((s) => s.clearActiveSpace);
   const loadSpaces = useSpace((s) => s.loadSpaces);
-  const brokenLinks = useEditorStore((s) => s.brokenLinks);
+  const brokenLinks = usePluginOption(BrokenLinksPlugin, "brokenLinks");
   const [cloneTarget, setCloneTarget] = useState<PageLinkResolveResult | null>(
     null,
   );

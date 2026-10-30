@@ -19,6 +19,7 @@ import {
   setCachedDocumentValueByKey,
   setDocumentBaseline,
 } from "../model/plate-document-cache";
+import { BrokenLinksPlugin } from "../plate/broken-links-plugin";
 import * as m from "@/paraglide/messages.js";
 
 interface MutableRef<T> {
@@ -41,7 +42,6 @@ interface UseEditorDocumentLoaderInput {
   initialPageSpacePath: string | null;
   isLoadingRef: MutableRef<boolean>;
   loadEditorValue: (value: Descendant[]) => Descendant[];
-  setBrokenLinks: (links: Set<string>) => void;
   spacePath: string;
 }
 
@@ -97,7 +97,6 @@ export function useEditorDocumentLoader({
   initialPageSpacePath,
   isLoadingRef,
   loadEditorValue,
-  setBrokenLinks,
   spacePath,
 }: UseEditorDocumentLoaderInput): UseEditorDocumentLoaderResult {
   const initialPageRef = useRef<Page | null>(initialPage);
@@ -233,7 +232,7 @@ export function useEditorDocumentLoader({
     currentPathRef.current = currentDocument;
     currentCacheKeyRef.current = currentCacheKey;
     isLoadingRef.current = true;
-    setBrokenLinks(new Set());
+    editor.setOption(BrokenLinksPlugin, "brokenLinks", new Set());
     queueMicrotask(() => {
       if (sequence === loadSeqRef.current) {
         setLoadedDocumentKey(null);
@@ -369,7 +368,6 @@ export function useEditorDocumentLoader({
     loadEditorValue,
     cancelDebounce,
     clearUnsaved,
-    setBrokenLinks,
     applyLoadedPage,
     applyMeta,
     currentCacheKeyRef,

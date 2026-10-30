@@ -76,7 +76,7 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
     await import("../hooks/use-page-link-navigation");
   const { useInsertPageLinkTarget } =
     await import("../hooks/use-page-link-insertion");
-  const { useEditorStore } = await import("../model");
+  const { BrokenLinksPlugin } = await import("../plate/broken-links-plugin");
   const { PageLinkElement } = await import("./page-link-element");
   const { InlineImagePlugin } = await import("../plate/inline-image-plugin");
 
@@ -135,7 +135,11 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
 
   function linkEditor() {
     return createPlateEditor({
-      plugins: [LinkPlugin.withComponent(PageLinkElement), InlineImagePlugin],
+      plugins: [
+        LinkPlugin.withComponent(PageLinkElement),
+        InlineImagePlugin,
+        BrokenLinksPlugin,
+      ],
       value: [
         ...links.map((url, index) => ({
           type: "p",
@@ -177,9 +181,9 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
       </output>
     );
   }
-  async function render() {
+  async function render(editor = linkEditor()) {
     await dom.render(
-      <Plate editor={linkEditor()}>
+      <Plate editor={editor}>
         <EditorAssetResolveProvider value={context}>
           <PlateContent />
           {links.map((url) => (
@@ -209,8 +213,13 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
     clearNativeMocks();
     installIpc();
     // Project-mode `validate_links`: decoded paths as written in the document.
-    useEditorStore.getState().setBrokenLinks(new Set(["../Nope Here.md"]));
-    await render();
+    const editor = linkEditor();
+    editor.setOption(
+      BrokenLinksPlugin,
+      "brokenLinks",
+      new Set(["../Nope Here.md"]),
+    );
+    await render(editor);
 
     expect(isStruck(0)).toBe(false);
     expect(isStruck(1)).toBe(false);
@@ -218,7 +227,11 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
 
     // Space-mode `validate_links`: decoded paths from the Space root.
     await act(async () => {
-      useEditorStore.getState().setBrokenLinks(new Set(["Nope Here.md"]));
+      editor.setOption(
+        BrokenLinksPlugin,
+        "brokenLinks",
+        new Set(["Nope Here.md"]),
+      );
     });
     expect(isStruck(0)).toBe(false);
     expect(isStruck(2)).toBe(true);

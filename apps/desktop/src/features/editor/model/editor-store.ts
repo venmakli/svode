@@ -8,8 +8,6 @@ interface EditorState {
   aiModified: Record<string, boolean>;
   /** Cache-invalidation-only flag: forces Plate to re-read from disk on next open. No visual side effect. */
   staleCache: Record<string, boolean>;
-  /** Set of broken link target paths for the currently open document */
-  brokenLinks: Set<string>;
   /** Paths to ignore in file watcher events (structural operations, auto-cleared after timeout) */
   suppressedPaths: Set<string>;
 
@@ -33,14 +31,12 @@ interface EditorState {
   ) => void;
   /** Returns true if the path is currently suppressed */
   isSuppressed: (scopePath: string | null | undefined, path: string) => boolean;
-  setBrokenLinks: (links: Set<string>) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   unsavedChanges: {},
   aiModified: {},
   staleCache: {},
-  brokenLinks: new Set<string>(),
   suppressedPaths: new Set<string>(),
 
   markUnsaved: (scopePath, path) =>
@@ -116,8 +112,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   isSuppressed: (scopePath, path) =>
     get().suppressedPaths.has(editorFileKey(scopePath, path)),
-
-  setBrokenLinks: (links) => set({ brokenLinks: links }),
 }));
 
 function removeEditorFileKeys(

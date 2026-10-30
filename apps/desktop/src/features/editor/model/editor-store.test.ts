@@ -35,7 +35,6 @@ function resetEditorStore() {
     unsavedChanges: {},
     aiModified: {},
     staleCache: {},
-    brokenLinks: new Set<string>(),
     suppressedPaths: new Set<string>(),
   });
 }

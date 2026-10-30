@@ -29,10 +29,10 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { useEditorStore } from "../model";
 import * as m from "@/paraglide/messages.js";
 import { isBrokenPageLink, relativeDocumentPath } from "../lib/page-link-utils";
 import { useEditorDocumentContext } from "../hooks/use-resolved-asset-url";
+import { BrokenLinksPlugin } from "../plate/broken-links-plugin";
 import { BrokenLinkRepair } from "./broken-link-repair";
 import { PageLinkTargetPicker } from "./page-link-target-picker";
 
@@ -197,7 +197,7 @@ function PageLinkEditContent({
   const editor = useEditorRef();
   const selection = useEditorSelection();
   const editorDocument = useEditorDocumentContext();
-  const brokenLinks = useEditorStore((s) => s.brokenLinks);
+  const brokenLinks = usePluginOption(BrokenLinksPlugin, "brokenLinks");
   const projectPath = editorDocument?.projectPath ?? null;
   const activeDocument = editorDocument?.documentPath ?? null;
   const currentSpacePath = editorDocument?.spacePath ?? "";

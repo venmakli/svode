@@ -89,7 +89,7 @@ export function usePlateDocumentSession({
     activeRootId,
   } = useSpace();
   const { patchPageTreeMeta } = useSpaceTreeSync();
-  const { markUnsaved, clearUnsaved, setBrokenLinks } = useEditorStore();
+  const { markUnsaved, clearUnsaved } = useEditorStore();
 
   const currentDocument = documentPath ?? activeDocument;
   const currentDocumentSpaceId = documentSpaceId ?? activeDocumentSpaceId;
@@ -176,7 +176,6 @@ export function usePlateDocumentSession({
     initialPageSpacePath,
     isLoadingRef,
     loadEditorValue,
-    setBrokenLinks,
     spacePath,
   });
 
@@ -189,11 +188,11 @@ export function usePlateDocumentSession({
       : null;
 
   useEditorLinkValidation({
+    editor,
     loadedDocumentKey: linkValidationDocumentKey,
     currentDocument,
     spacePath,
     projectPath: projectPath ?? null,
-    setBrokenLinks,
   });
 
   useEffect(() => cancelDebounce, [cancelDebounce]);

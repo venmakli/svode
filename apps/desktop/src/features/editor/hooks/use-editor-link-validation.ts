@@ -1,24 +1,27 @@
 import { useEffect } from "react";
+import type { PlateEditor } from "platejs/react";
 
 import { validatePageLinks } from "@/features/page/page-api";
 
+import { BrokenLinksPlugin } from "../plate/broken-links-plugin";
+
 interface UseEditorLinkValidationInput {
+  editor: PlateEditor | null;
   loadedDocumentKey: string | null;
   currentDocument: string | null;
   spacePath: string;
   projectPath: string | null;
-  setBrokenLinks: (links: Set<string>) => void;
 }
 
 export function useEditorLinkValidation({
+  editor,
   loadedDocumentKey,
   currentDocument,
   spacePath,
   projectPath,
-  setBrokenLinks,
 }: UseEditorLinkValidationInput) {
   useEffect(() => {
-    if (!loadedDocumentKey || !currentDocument || !spacePath) return;
+    if (!editor || !loadedDocumentKey || !currentDocument || !spacePath) return;
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -34,10 +37,11 @@ export function useEditorLinkValidation({
               .filter((result) => !result.exists)
               .map((result) => result.url),
           );
-          setBrokenLinks(broken);
+          editor.setOption(BrokenLinksPlugin, "brokenLinks", broken);
         })
         .catch(() => {
-          if (!cancelled) setBrokenLinks(new Set());
+          if (!cancelled)
+            editor.setOption(BrokenLinksPlugin, "brokenLinks", new Set());
         });
     }, 0);
 
@@ -45,11 +49,5 @@ export function useEditorLinkValidation({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [
-    loadedDocumentKey,
-    currentDocument,
-    spacePath,
-    projectPath,
-    setBrokenLinks,
-  ]);
+  }, [editor, loadedDocumentKey, currentDocument, spacePath, projectPath]);
 }
