@@ -24,9 +24,9 @@ import type {
   ViewType,
 } from "@/features/collection/query/model";
 import { handleError } from "../hooks/error-feedback";
-import { viewType } from "../lib/utils";
+import { isKnownViewType, viewType } from "../lib/utils";
 import { SettingsSection } from "@/shared/ui/settings-row";
-import { viewIcons } from "./view-icons";
+import { viewIcon } from "./view-icons";
 import * as m from "@/paraglide/messages.js";
 
 interface ManageViewsPaneProps {
@@ -69,12 +69,13 @@ export function ManageViewsPane({
       .map((name) => {
         const view = byName.get(name);
         if (!view) return null;
-        const type = viewType(view);
         return {
-          Icon: viewIcons[type],
+          Icon: viewIcon(view),
           active: view.name === activeViewName,
           label: view.name,
-          typeLabel: viewTypeLabel(type),
+          typeLabel: isKnownViewType(view)
+            ? viewTypeLabel(viewType(view))
+            : m.collection_view_type_newer(),
           value: view.name,
         };
       })

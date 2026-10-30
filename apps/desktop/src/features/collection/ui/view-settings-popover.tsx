@@ -42,6 +42,7 @@ export function ViewSettingsPopover({
   open,
   pane,
   view,
+  newer,
   renameValue,
   onOpenChange,
   onPaneChange,
@@ -62,6 +63,8 @@ export function ViewSettingsPopover({
   open: boolean;
   pane: SettingsPane;
   view: CollectionView | null;
+  /** The view depends on a newer Svode version: only rename and delete. */
+  newer: boolean;
   renameValue: string;
   onOpenChange: (open: boolean) => void;
   onPaneChange: (pane: SettingsPane) => void;
@@ -182,29 +185,31 @@ export function ViewSettingsPopover({
     readOnly,
   });
 
+  const mainPane = {
+    id: "main" as const,
+    title: view?.name ?? m.collection_view(),
+    content: (
+      <ViewSettingsMainPane
+        view={view}
+        newer={newer}
+        renameValue={renameValue}
+        schema={schema}
+        query={query}
+        onRenameValueChange={onRenameValueChange}
+        onRename={onRename}
+        openPane={openPane}
+        updateTypeSetting={updateTypeSetting}
+      />
+    ),
+    footer: (
+      <ViewSettingsMainFooter
+        onDuplicate={newer ? null : onDuplicate}
+        onDeleteRequest={onDeleteRequest}
+      />
+    ),
+  };
   const panes = [
-    {
-      id: "main" as const,
-      title: view?.name ?? m.collection_view(),
-      content: (
-        <ViewSettingsMainPane
-          view={view}
-          renameValue={renameValue}
-          schema={schema}
-          query={query}
-          onRenameValueChange={onRenameValueChange}
-          onRename={onRename}
-          openPane={openPane}
-          updateTypeSetting={updateTypeSetting}
-        />
-      ),
-      footer: (
-        <ViewSettingsMainFooter
-          onDuplicate={onDuplicate}
-          onDeleteRequest={onDeleteRequest}
-        />
-      ),
-    },
+    mainPane,
     {
       id: "layout" as const,
       title: m.collection_view_type(),
@@ -343,7 +348,7 @@ export function ViewSettingsPopover({
           if (nextOpen && !readOnly) setPane("main");
           onOpenChange(nextOpen);
         }}
-        pane={pane}
+        pane={newer ? "main" : pane}
         onPaneChange={setPane}
         mainPane={readOnly ? pane : "main"}
         className="w-80 max-w-[calc(100vw-2rem)]"
@@ -364,7 +369,7 @@ export function ViewSettingsPopover({
             <span className="sr-only">{m.view_query_settings_title()}</span>
           </Button>
         }
-        panes={panes}
+        panes={newer ? [mainPane] : panes}
       />
       {typeChange && typeChangeColumn ? (
         <ColumnTypeChangeDialog

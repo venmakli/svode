@@ -13,8 +13,7 @@ import type {
 } from "@/features/collection/query/model";
 import { SettingsRow, SettingsSection } from "@/shared/ui/settings-row";
 import { ManageViewsPane } from "./manage-views-pane";
-import { viewType } from "../lib/utils";
-import { viewIcons } from "./view-icons";
+import { viewIcon, viewIcons } from "./view-icons";
 import type { ActiveTab } from "../model";
 
 interface CollectionTabStripProps {
@@ -58,7 +57,7 @@ export function CollectionTabStrip({
   const tabs = useMemo<OverflowTab<ActiveTab>[]>(
     () =>
       views.map((view) => {
-        const Icon = viewIcons[viewType(view)];
+        const Icon = viewIcon(view);
         return { value: view.name, label: view.name, icon: <Icon /> };
       }),
     [views],

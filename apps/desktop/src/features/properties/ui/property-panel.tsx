@@ -25,6 +25,7 @@ import { AddColumnDialog, AddOptionDialog } from "./schema-dialogs";
 import { PropertyLabelTrigger, SchemaColumnMenu } from "./schema-column-menu";
 import { usePropertyPanelState } from "../hooks/use-property-panel-state";
 import { hasOption, valueToString } from "../lib/utils";
+import { NewerPropertyLabel } from "./newer-property";
 import * as m from "@/paraglide/messages.js";
 
 interface PropertyPanelProps {
@@ -113,7 +114,9 @@ export function PropertyPanel({
             <div key={column.name} className="contents">
               <PropertyLabel
                 schemaMenu={
-                  readOnly ? (
+                  column.newer ? (
+                    <NewerPropertyLabel column={column} />
+                  ) : readOnly ? (
                     <PropertyLabelTrigger
                       column={column}
                       open={false}
@@ -150,7 +153,7 @@ export function PropertyPanel({
                   value={panelValues[column.name]}
                   invalid={state.invalid}
                   disabled={state.code === "type_conflict"}
-                  readOnly={readOnly}
+                  readOnly={readOnly || column.newer === true}
                   editing={editingField === column.name}
                   actors={actors}
                   relationContext={relationContext}

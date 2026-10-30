@@ -1,5 +1,9 @@
 import type { Page } from "@/features/page";
-import type { CollectionView, ViewType } from "@/features/collection/query/model";
+import type { CollectionSchema } from "@/features/properties";
+import type {
+  CollectionView,
+  ViewType,
+} from "@/features/collection/query/model";
 
 export function humanize(path: string) {
   const normalized = normalizePagePath(path);
@@ -28,6 +32,34 @@ export function viewName(view: unknown): string {
   return typeof view === "object" && view !== null && "name" in view
     ? String((view as { name: unknown }).name)
     : "";
+}
+
+const VIEW_TYPES: readonly unknown[] = [
+  "table",
+  "board",
+  "calendar",
+  "list",
+  "gallery",
+] satisfies ViewType[];
+
+/** Whether the view has a type this version knows. */
+export function isKnownViewType(view: CollectionView): boolean {
+  return VIEW_TYPES.includes(view.type);
+}
+
+/**
+ * Whether this version cannot show the view: a newer Svode version created
+ * it, or its filter, sort or layout depends on what a newer version set.
+ */
+export function isNewerView(
+  schema: CollectionSchema,
+  view: CollectionView | null | undefined,
+): boolean {
+  if (!view) return false;
+  return (
+    !isKnownViewType(view) ||
+    Boolean(schema.newerSvode?.views.includes(view.name))
+  );
 }
 
 export function viewType(view: CollectionView | null | undefined): ViewType {

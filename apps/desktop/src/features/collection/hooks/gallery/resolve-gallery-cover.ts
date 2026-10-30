@@ -36,7 +36,11 @@ export function resolveGalleryCover({
     }
 
     const column = schema.columns.find((item) => item.name === source);
-    if (!column || (column.type !== "url" && column.type !== "text")) {
+    if (
+      !column ||
+      column.newer ||
+      (column.type !== "url" && column.type !== "text")
+    ) {
       continue;
     }
     const value = entry.meta.extra?.[source];

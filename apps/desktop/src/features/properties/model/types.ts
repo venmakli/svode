@@ -61,6 +61,11 @@ export interface Column {
   next?: number | null;
   multiple?: boolean | null;
   sensitivity?: PropertySensitivity | null;
+  /**
+   * A newer Svode version set this property: its type, `limit` or scope is
+   * unknown here, so it is shown read-only as text and never changed.
+   */
+  newer?: boolean;
 }
 
 export type ColumnPatch = Partial<
@@ -92,6 +97,13 @@ export interface CollectionSchema {
   templates?: { default?: string | null; order?: string[] | null } | null;
   columns: Column[];
   views?: unknown[];
+  /** Properties and views a newer Svode version set, by name. */
+  newerSvode?: NewerSvode | null;
+}
+
+export interface NewerSvode {
+  columns: string[];
+  views: string[];
 }
 
 export interface SchemaMutationWarning {
@@ -124,7 +136,11 @@ export interface HumanActorCandidate {
 }
 
 /** State of an agent reference the host could not resolve to a selectable agent. */
-export type AgentActorCandidateState = "loading" | "missing" | "ambiguous" | "error";
+export type AgentActorCandidateState =
+  | "loading"
+  | "missing"
+  | "ambiguous"
+  | "error";
 
 export interface AgentActorCandidate {
   kind: "agent";

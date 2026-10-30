@@ -15,18 +15,12 @@ test("effectiveBooleanValue keeps exactly two states without truthy coercion", (
   expect(effectiveBooleanValue(1)).toBe(undefined);
 });
 
-test("effectiveBooleanDisplay defaults only missing display to checkbox", () => {
+test("effectiveBooleanDisplay draws a missing or newer display as checkbox", () => {
   expect(effectiveBooleanDisplay(undefined)).toBe("checkbox");
   expect(effectiveBooleanDisplay(null)).toBe("checkbox");
   expect(effectiveBooleanDisplay("checkbox")).toBe("checkbox");
   expect(effectiveBooleanDisplay("switch")).toBe("switch");
-  let error: unknown;
-  try {
-    effectiveBooleanDisplay("ring");
-  } catch (caught) {
-    error = caught;
-  }
-  expect(String(error)).toBe("Error: Invalid boolean display: ring");
+  expect(effectiveBooleanDisplay("toggle")).toBe("checkbox");
 });
 
 test("boolean validation accepts missing but preserves non-boolean conflicts", () => {

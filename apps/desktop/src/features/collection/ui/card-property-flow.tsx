@@ -143,6 +143,7 @@ function CardPropertyItem({
 }
 
 function isInteractiveCardType(column: Column) {
+  if (column.newer) return false;
   return (
     column.type === "select" ||
     column.type === "multi_select" ||

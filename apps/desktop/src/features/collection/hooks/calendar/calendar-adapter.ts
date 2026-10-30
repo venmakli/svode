@@ -8,7 +8,7 @@ import type {
   Column,
   PropertyOption,
 } from "@/features/properties";
-import { optionByName } from "@/features/properties";
+import { knownColorName, optionByName } from "@/features/properties";
 import { entryCollectionPath, isFolderEntry } from "../../lib/entry-tree";
 import type {
   CalendarEventModel,
@@ -151,13 +151,15 @@ function eventColor(
     typeof view.color_field === "string" ? view.color_field : null;
   if (!colorField) return null;
   const column = schema.columns.find((item) => item.name === colorField);
-  if (!column || !["select", "status"].includes(column.type)) return null;
+  if (!column || column.newer || !["select", "status"].includes(column.type)) {
+    return null;
+  }
   const option = optionByName(column, entry.meta.extra?.[column.name]);
   return optionColorName(option);
 }
 
 function optionColorName(option: PropertyOption | undefined) {
-  return option?.color ?? null;
+  return knownColorName(option?.color);
 }
 
 function storageScalarFromEvent(date: Date, allDay: boolean) {

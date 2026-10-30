@@ -112,10 +112,13 @@ export function definePageCollectionProperties(
     }),
     ...schema.columns.map((column) =>
       defineSchemaBackedCollectionProperty({
-        capabilities: {
-          filter: { kind: "standard" },
-          sort: { kind: "standard" },
-        },
+        // Nothing filters or sorts by a property of a newer Svode version.
+        capabilities: column.newer
+          ? {}
+          : {
+              filter: { kind: "standard" },
+              sort: { kind: "standard" },
+            },
         column,
         getAccessibilityLabel: (page: Page) =>
           `${column.name}: ${page.meta.title}`,

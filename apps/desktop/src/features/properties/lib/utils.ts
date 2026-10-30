@@ -4,18 +4,21 @@ import type {
   ColorName,
   Column,
   DateRangeValue,
+  NewerSvode,
   PropertyOption,
   PropertyType,
+  RelationScope,
   StatusGroup,
 } from "../model/types";
 import type { CSSProperties } from "react";
 
-type ColumnInput = Omit<Column, "type"> & {
+type ColumnInput = Omit<Column, "type" | "relationScope"> & {
   type?: PropertyType;
   type_?: PropertyType;
   time_by_default?: boolean | null;
   range_by_default?: boolean | null;
-  relation_scope?: Column["relationScope"] | null;
+  relationScope?: unknown;
+  relation_scope?: unknown;
   two_way?: string | null;
 };
 
@@ -24,6 +27,7 @@ type CollectionSchemaInput = Omit<CollectionSchema, "columns"> & {
     title?: { label?: string | null } | null;
   } | null;
   columns?: ColumnInput[];
+  newer_svode?: NewerSvode | null;
 };
 
 export const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
@@ -61,10 +65,18 @@ export const COLOR_NAMES: ColorName[] = [
   "brown",
 ];
 
-export function normalizeColumn(column: ColumnInput): Column {
-  const rawType = (column.type ??
-    (column as unknown as { type_: PropertyType }).type_) as PropertyType;
-  const type = rawType;
+export function normalizeColumn(
+  column: ColumnInput,
+  newerColumns: ReadonlySet<string> = new Set(),
+): Column {
+  const rawType = column.type ?? column.type_;
+  const newer =
+    column.newer === true ||
+    newerColumns.has(column.name) ||
+    !isPropertyType(rawType);
+  // A property of a newer version keeps no unknown type: every surface shows
+  // it read-only as text.
+  const type = isPropertyType(rawType) ? rawType : "text";
   const sensitivity =
     column.sensitivity ?? (type === "email" || type === "phone" ? "pii" : null);
   const {
@@ -80,7 +92,9 @@ export function normalizeColumn(column: ColumnInput): Column {
     type,
     timeByDefault: column.timeByDefault ?? column.time_by_default ?? false,
     rangeByDefault: column.rangeByDefault ?? column.range_by_default ?? false,
-    relationScope: column.relationScope ?? column.relation_scope ?? null,
+    relationScope: normalizeRelationScope(
+      column.relationScope ?? column.relation_scope,
+    ),
     twoWay: column.twoWay ?? column.two_way ?? null,
     multiple: type === "actor" ? Boolean(column.multiple) : column.multiple,
     prefix:
@@ -88,25 +102,82 @@ export function normalizeColumn(column: ColumnInput): Column {
         ? column.prefix.trim()
         : null,
     sensitivity,
+    ...(newer ? { newer } : {}),
   };
 }
 
 export function normalizeSchema(
   schema: CollectionSchemaInput,
 ): CollectionSchema {
-  const { system_fields: _systemFields, ...rest } = schema;
+  const {
+    system_fields: _systemFields,
+    newer_svode: _newerSvode,
+    ...rest
+  } = schema;
+  const newerSvode = schema.newerSvode ?? schema.newer_svode ?? null;
+  const newerColumns = new Set(newerSvode?.columns ?? []);
   return {
     ...rest,
     systemFields: schema.systemFields ?? schema.system_fields ?? null,
-    columns: (schema.columns ?? []).map(normalizeColumn),
+    columns: (schema.columns ?? []).map((column) =>
+      normalizeColumn(column, newerColumns),
+    ),
+    newerSvode,
   };
 }
 
-export function optionColor(option?: PropertyOption | null): ColorName {
-  return option?.color ?? "neutral";
+/** The value of a property of a newer version, as text read-only. */
+export function newerValueText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => newerValueText(item)).join(", ");
+  }
+  return valueToString(value);
 }
 
-export function colorStyle(color: ColorName = "neutral") {
+function normalizeRelationScope(value: unknown): RelationScope | null {
+  if (value === "root") return "root";
+  if (!value || typeof value !== "object") return null;
+  const scope = value as { type?: unknown; id?: unknown };
+  if (scope.type === "root") return "root";
+  if (scope.type === "space" && typeof scope.id === "string") {
+    return { type: "space", id: scope.id };
+  }
+  return null;
+}
+
+function isPropertyType(value: unknown): value is PropertyType {
+  return PROPERTY_TYPES.some((item) => item.value === value);
+}
+
+/** A known color name, or `null` for none or one of a newer version. */
+export function knownColorName(value: unknown): ColorName | null {
+  return COLOR_NAMES.includes(value as ColorName) ? (value as ColorName) : null;
+}
+
+export function isKnownStatusGroup(value: unknown): value is StatusGroup {
+  return STATUS_GROUPS.some((group) => group.value === value);
+}
+
+/** Whether an option of the status has a group of a newer version. */
+export function hasNewerStatusGroup(column: Column): boolean {
+  return Boolean(
+    column.type === "status" &&
+    column.options?.some(
+      (option) => option.group != null && !isKnownStatusGroup(option.group),
+    ),
+  );
+}
+
+export function optionColor(option?: PropertyOption | null): ColorName {
+  return knownColorName(option?.color) ?? "neutral";
+}
+
+/** A color of a newer version is drawn as `fallback`. */
+export function colorStyle(
+  value?: ColorName | null,
+  fallback: ColorName = "neutral",
+) {
+  const color = knownColorName(value) ?? fallback;
   return {
     "--property-color": `var(--property-${color})`,
     "--property-color-soft": `var(--property-${color}-soft)`,
@@ -138,11 +209,11 @@ export function isSensitivePropertyType(type: PropertyType): boolean {
   return type === "email" || type === "phone";
 }
 
+/** A `sensitivity` of a newer version counts as `pii`. */
 export function isSensitiveColumn(column: Column): boolean {
-  return (
-    column.sensitivity === "pii" ||
-    (column.sensitivity == null && isSensitivePropertyType(column.type))
-  );
+  return column.sensitivity == null
+    ? isSensitivePropertyType(column.type)
+    : column.sensitivity !== "none";
 }
 
 export function valueToString(value: unknown): string {

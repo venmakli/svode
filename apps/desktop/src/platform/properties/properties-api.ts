@@ -42,7 +42,11 @@ export interface PropertyOptionDto {
   group?: StatusGroupDto | null;
 }
 
-export type RelationScopeDto = "root" | { type: "space"; id: string };
+/** A `root` scope with keys of a newer Svode version arrives as an object. */
+export type RelationScopeDto =
+  | "root"
+  | { type: "root"; [key: string]: unknown }
+  | { type: "space"; id: string; [key: string]: unknown };
 
 export interface ColumnDto {
   name: string;
@@ -81,6 +85,18 @@ export interface CollectionSchemaDto {
   nested_items?: boolean;
   columns: ColumnDto[];
   views?: unknown[];
+  newer_svode?: NewerSvodeDto | null;
+}
+
+/**
+ * Properties and views of a schema that a newer Svode version set, by name;
+ * present only when there are some. Their keys and values, and unknown values
+ * in known objects (a color, a status group, `sensitivity`, `display`), come
+ * as written in the file.
+ */
+export interface NewerSvodeDto {
+  columns: string[];
+  views: string[];
 }
 
 export interface SchemaMutationWarningDto {

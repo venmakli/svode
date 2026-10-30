@@ -63,6 +63,7 @@ function BoardPropertyChip({
 
   const validation = validatePropertyValue(column, value);
   const interactive =
+    !column.newer &&
     (column.type === "actor" || column.type === "relation") &&
     Boolean(onUpdateField);
   const fullWidth =

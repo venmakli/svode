@@ -5,12 +5,9 @@ export function effectiveBooleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+/** A display of a newer Svode version is drawn as the default checkbox. */
 export function effectiveBooleanDisplay(
   display: string | null | undefined,
 ): BooleanDisplay {
-  if (display === null || display === undefined || display === "checkbox") {
-    return "checkbox";
-  }
-  if (display === "switch") return "switch";
-  throw new Error(`Invalid boolean display: ${display}`);
+  return display === "switch" ? "switch" : "checkbox";
 }

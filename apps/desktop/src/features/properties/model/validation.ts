@@ -46,6 +46,8 @@ export function validatePropertyValue(
   column: Column,
   value: unknown,
 ): PropertyValidationState {
+  // This version does not know what a newer one allows.
+  if (column.newer) return validPropertyValue();
   if (column.type === "unique_id") {
     if (typeof value === "number" && Number.isInteger(value) && value > 0) {
       return validPropertyValue();

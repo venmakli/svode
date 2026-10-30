@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { knownColorName } from "../../lib/utils";
 import type { Column, ColumnPatch } from "../../model/types";
 import { ColorPicker } from "../color-picker";
 import { ColumnSelect, deferStateUpdate } from "./common";
@@ -49,7 +50,7 @@ export function NumberSettingsPane({
               {m.table_number_color()}
             </span>
             <ColorPicker
-              value={column.color ?? "blue"}
+              value={knownColorName(column.color) ?? "blue"}
               onChange={(color) => onPatchColumn({ color })}
             />
           </label>

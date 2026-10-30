@@ -218,6 +218,7 @@ function toActorCandidate(actor: ActorCandidateDto): HumanActorCandidate {
 
 function toColumnDto(column: Column): ColumnDto {
   const {
+    newer: _newer,
     timeByDefault,
     rangeByDefault,
     relationScope,

@@ -93,7 +93,7 @@ export function NumberControl({
                 <Progress
                   value={clamped}
                   className="min-w-20 flex-1 **:data-[slot=progress-indicator]:bg-(--property-color)"
-                  style={colorStyle(column.color ?? "blue")}
+                  style={colorStyle(column.color, "blue")}
                 />
               ) : (
                 <RingProgress value={clamped} color={column.color ?? "blue"} />
@@ -182,7 +182,7 @@ function RingProgress({
       className="grid size-7 shrink-0 place-items-center rounded-full bg-(--property-ring-bg) text-[10px] font-medium text-muted-foreground"
       style={
         {
-          ...colorStyle(color ?? "blue"),
+          ...colorStyle(color, "blue"),
           "--progress": `${value}%`,
           "--property-ring-bg":
             "conic-gradient(var(--property-color) var(--progress), var(--muted) 0)",

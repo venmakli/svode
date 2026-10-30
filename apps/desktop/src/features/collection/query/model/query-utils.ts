@@ -1,5 +1,5 @@
 import type { CollectionSchema, PropertyType } from "@/features/properties";
-import { normalizeSchema } from "@/features/properties";
+import { hasNewerStatusGroup, normalizeSchema } from "@/features/properties";
 import type {
   CollectionView,
   FilterOp,
@@ -112,13 +112,16 @@ export function queryFields(
   context: "filter" | "sort" | "group",
 ) {
   const normalized = normalizeSchema(schema);
-  const customFields: QueryField[] = normalized.columns.map((column) => ({
-    name: column.name,
-    label: column.name,
-    type: column.type,
-    kind: "custom",
-    column,
-  }));
+  // Nothing filters, sorts or groups by a property of a newer Svode version.
+  const customFields: QueryField[] = normalized.columns
+    .filter((column) => !column.newer)
+    .map((column) => ({
+      name: column.name,
+      label: column.name,
+      type: column.type,
+      kind: "custom",
+      column,
+    }));
 
   if (context === "filter") {
     return [...SYSTEM_FILTER_FIELDS, ...customFields];
@@ -162,6 +165,12 @@ export function filterOpsForField(field: QueryField) {
       "is_empty",
       "is_not_empty",
     ] satisfies FilterOp[];
+  }
+  // The group of an option a newer Svode version set is unknown here.
+  if (field.column && hasNewerStatusGroup(field.column)) {
+    return filterOpsForType(field.type).filter(
+      (op) => !op.startsWith("group_"),
+    );
   }
   return filterOpsForType(field.type);
 }

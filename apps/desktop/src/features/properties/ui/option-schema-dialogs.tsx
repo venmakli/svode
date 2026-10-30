@@ -29,13 +29,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { COLOR_NAMES, STATUS_GROUPS } from "../lib/utils";
+import { COLOR_NAMES, optionColor, STATUS_GROUPS } from "../lib/utils";
 import type { Column, PropertyOption } from "../model/types";
 import * as m from "@/paraglide/messages.js";
-import {
-  deferStateUpdate,
-  type BaseDialogProps,
-} from "./schema-dialog-utils";
+import { deferStateUpdate, type BaseDialogProps } from "./schema-dialog-utils";
 
 export function AddOptionDialog({
   open,
@@ -190,7 +187,7 @@ function OptionFields({
       <div className="flex flex-col gap-1.5">
         <Label>{m.property_dialog_color()}</Label>
         <Select
-          value={option.color ?? "neutral"}
+          value={optionColor(option)}
           onValueChange={(color) =>
             onChange({ ...option, color: color as PropertyOption["color"] })
           }

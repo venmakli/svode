@@ -34,6 +34,7 @@ import {
   propertyTypeAddUnavailableReason,
   propertyTypeLabel,
 } from "@/features/properties/column-menu";
+import { NEWER_PROPERTY_ICON } from "@/features/properties/display";
 import { handleError } from "../../hooks/error-feedback";
 import { SortableFieldVisibilityRow } from "../view-settings-panes";
 import {
@@ -131,7 +132,7 @@ export function ViewSettingsPropertiesPane({
                 id={column.name}
                 icon={Settings}
                 label={column.name}
-                meta={column.type}
+                meta={column.newer ? m.property_newer_meta() : column.type}
                 visible={savedFields.includes(column.name)}
                 onClick={() => openProperty(column.name)}
                 onToggle={() => toggleField(column.name)}
@@ -203,6 +204,15 @@ export function ViewSettingsPropertyEditPane({
   );
   const systemType = selectedColumn ? null : systemFieldType(selectedProperty);
 
+  if (selectedColumn?.newer) {
+    return (
+      <ViewSettingsNewerPropertyPane
+        visible={savedFields.includes(selectedProperty)}
+        onToggleVisible={() => toggleField(selectedProperty)}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col p-1">
       <SettingsSection label={m.collection_properties_label()} />
@@ -265,6 +275,35 @@ export function ViewSettingsPropertyEditPane({
         }
         onClick={() => openFieldSort(selectedProperty)}
       />
+    </div>
+  );
+}
+
+// A property of a newer Svode version: the view may only show or hide it.
+function ViewSettingsNewerPropertyPane({
+  visible,
+  onToggleVisible,
+}: {
+  visible: boolean;
+  onToggleVisible: () => void;
+}) {
+  return (
+    <div className="flex flex-col p-1">
+      <SettingsSection label={m.collection_properties_label()} />
+      <SettingsStaticRow
+        icon={NEWER_PROPERTY_ICON}
+        label={m.table_column_type()}
+        meta={m.property_newer_meta()}
+      />
+      <SettingsRow
+        icon={visible ? Eye : EyeOff}
+        label={m.table_visible()}
+        meta={visible ? m.view_query_yes() : m.view_query_no()}
+        onClick={onToggleVisible}
+      />
+      <p className="px-2 py-1.5 text-xs text-muted-foreground">
+        {m.property_newer_hint()}
+      </p>
     </div>
   );
 }

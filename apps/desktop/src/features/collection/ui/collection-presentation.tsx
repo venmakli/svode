@@ -22,11 +22,13 @@ import {
   activatePageCollectionItem,
   type PageCollectionPresentationDescriptor,
 } from "../persisted/page-collection-definition";
+import { isNewerView } from "../lib/utils";
 import { CollectionPresentationShell } from "../runtime/ui/presentation-shell";
 import { BoardView } from "./board/board-view";
 import { CalendarView } from "./calendar/calendar-view";
 import { GalleryView } from "./gallery/gallery-view";
 import { ListView } from "./list/list-view";
+import { NewerViewNotice } from "./newer-view-notice";
 import { TableView } from "./table/table-view";
 
 interface FixedCollectionPresentationProps {
@@ -116,6 +118,7 @@ function SchemaBackedCollectionPresentation({
   onCalendarScopeChange,
   onCreatePage,
 }: SchemaBackedCollectionPresentationProps) {
+  if (isNewerView(schema, view)) return <NewerViewNotice />;
   const commonProps = {
     readOnly,
     name: view.name,

@@ -14,7 +14,10 @@ import {
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/shared/lib/utils";
-import type { CollectionView, ViewType } from "@/features/collection/query/model";
+import type {
+  CollectionView,
+  ViewType,
+} from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
 import { SettingsRow } from "@/shared/ui/settings-row";
 import { viewIcons } from "./view-icons";
@@ -174,7 +177,7 @@ export function TypeSettingsRows({
   }
   if (type === "calendar") {
     const dateColumns = schema.columns.filter(
-      (column) => column.type === "date",
+      (column) => !column.newer && column.type === "date",
     );
     const defaultScope = String(view?.default_scope ?? "month");
     const nextScope =
@@ -229,7 +232,10 @@ export function TypeSettingsRows({
     ? (view.card_cover as unknown[]).map(String)
     : ["cover", "icon", "title"];
   const imageSourceFields = schema.columns
-    .filter((column) => column.type === "url" || column.type === "text")
+    .filter(
+      (column) =>
+        !column.newer && (column.type === "url" || column.type === "text"),
+    )
     .map((column) => column.name);
   const coverSourceOptions = [
     ["cover", "icon", "title"],
@@ -308,9 +314,10 @@ export function GroupPane({
 }) {
   const groupable = schema.columns.filter(
     (column) =>
-      column.type === "status" ||
-      column.type === "select" ||
-      (column.type === "actor" && !column.multiple),
+      !column.newer &&
+      (column.type === "status" ||
+        column.type === "select" ||
+        (column.type === "actor" && !column.multiple)),
   );
   return (
     <div className="flex flex-col p-1">

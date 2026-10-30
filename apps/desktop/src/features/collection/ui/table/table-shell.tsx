@@ -28,6 +28,10 @@ import {
   PROPERTY_TYPE_ICONS,
   type CollectionSchema,
 } from "@/features/properties";
+import {
+  NEWER_PROPERTY_ICON,
+  NewerPropertyHint,
+} from "@/features/properties/display";
 import { detailPageViewClassName } from "@/shared/ui/page-layout";
 import { TITLE_ICON } from "./icons";
 import { defaultColumnWidth } from "./utils";
@@ -39,6 +43,7 @@ export function ColumnHeader({
   icon: Icon,
   open,
   readOnly,
+  newer = false,
   children,
   onOpenChange,
   onResizeMouseDown,
@@ -47,26 +52,31 @@ export function ColumnHeader({
   icon: ElementType;
   open: boolean;
   readOnly: boolean;
+  /** A property of a newer Svode version: no menu, a hint why. */
+  newer?: boolean;
   children: ReactNode;
   onOpenChange: (open: boolean) => void;
   onResizeMouseDown?: (event: ReactMouseEvent) => void;
 }) {
+  const withMenu = !readOnly && !newer;
   const trigger = (
     <button
       type="button"
-      disabled={readOnly}
+      disabled={readOnly && !newer}
+      data-newer-property={newer ? label : undefined}
       className={cn(
-        "group/header relative flex h-full w-full items-center gap-2 px-2 text-left text-[12px] font-semibold text-muted-foreground hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group/header relative flex h-full w-full items-center gap-2 px-2 text-left text-[12px] font-semibold text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        withMenu && "hover:bg-accent/70",
         open && "bg-accent",
       )}
       onContextMenu={(event) => {
         event.preventDefault();
-        onOpenChange(true);
+        if (withMenu) onOpenChange(true);
       }}
     >
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {!readOnly ? (
+      {withMenu ? (
         <MoreVertical
           className={cn(
             "size-3.5 shrink-0 text-muted-foreground opacity-0 group-hover/header:opacity-100",
@@ -78,7 +88,13 @@ export function ColumnHeader({
   );
   return (
     <div className="relative h-full w-full">
-      {readOnly ? trigger : cloneColumnMenu(children, trigger)}
+      {newer ? (
+        <NewerPropertyHint>{trigger}</NewerPropertyHint>
+      ) : withMenu ? (
+        cloneColumnMenu(children, trigger)
+      ) : (
+        trigger
+      )}
       {onResizeMouseDown ? (
         <span
           className="absolute -right-1 top-0 z-20 h-full w-2 cursor-col-resize"
@@ -125,7 +141,9 @@ export function LoadingTable({
                 const Icon =
                   field === "title"
                     ? TITLE_ICON
-                    : PROPERTY_TYPE_ICONS[column?.type ?? "text"];
+                    : column?.newer
+                      ? NEWER_PROPERTY_ICON
+                      : PROPERTY_TYPE_ICONS[column?.type ?? "text"];
                 return (
                   <TableHead
                     key={field}

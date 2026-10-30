@@ -23,10 +23,16 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/shared/lib/utils";
-import { hasOption, optionByName, STATUS_GROUPS } from "../../lib/utils";
+import {
+  hasOption,
+  isKnownStatusGroup,
+  optionByName,
+  STATUS_GROUPS,
+} from "../../lib/utils";
 import { PropertyBadge } from "../property-badge";
 import * as m from "@/paraglide/messages.js";
 import { OptionDot, useAutoOpen } from "./common";
+import type { PropertyOption } from "../../model/types";
 import type { PropertyControlProps } from "./types";
 
 export function SelectControl({
@@ -111,6 +117,10 @@ export function StatusControl({
     (typeof value === "string" && value
       ? { name: value, color: "neutral" as const }
       : null);
+  // Options of a group a newer Svode version set stay selectable.
+  const newerGroupOptions = (column.options ?? []).filter(
+    (option) => !isKnownStatusGroup(option.group),
+  );
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -142,28 +152,58 @@ export function StatusControl({
             {(column.options ?? [])
               .filter((option) => option.group === group.value)
               .map((option) => (
-                <DropdownMenuItem
+                <StatusOptionItem
                   key={option.name}
+                  option={option}
+                  selected={option.name === value}
                   onSelect={() => void onChange(option.name)}
-                >
-                  <OptionDot option={option} />
-                  <span className="min-w-0 flex-1 truncate">
-                    {option.icon ? `${option.icon} ` : ""}
-                    {option.name}
-                  </span>
-                  {option.name === value ? (
-                    <Check data-icon="inline-end" />
-                  ) : null}
-                </DropdownMenuItem>
+                />
               ))}
           </DropdownMenuGroup>
         ))}
+        {newerGroupOptions.length > 0 ? (
+          <DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>
+              {m.property_status_group_newer()}
+            </DropdownMenuLabel>
+            {newerGroupOptions.map((option) => (
+              <StatusOptionItem
+                key={option.name}
+                option={option}
+                selected={option.name === value}
+                onSelect={() => void onChange(option.name)}
+              />
+            ))}
+          </DropdownMenuGroup>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void onChange(null)}>
           {m.property_action_clear()}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function StatusOptionItem({
+  option,
+  selected,
+  onSelect,
+}: {
+  option: PropertyOption;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <DropdownMenuItem onSelect={onSelect}>
+      <OptionDot option={option} />
+      <span className="min-w-0 flex-1 truncate">
+        {option.icon ? `${option.icon} ` : ""}
+        {option.name}
+      </span>
+      {selected ? <Check data-icon="inline-end" /> : null}
+    </DropdownMenuItem>
   );
 }
 

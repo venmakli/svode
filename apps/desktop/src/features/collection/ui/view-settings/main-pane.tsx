@@ -27,6 +27,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function ViewSettingsMainPane({
   view,
+  newer,
   renameValue,
   schema,
   query,
@@ -36,6 +37,7 @@ export function ViewSettingsMainPane({
   updateTypeSetting,
 }: {
   view: CollectionView | null;
+  newer: boolean;
   renameValue: string;
   schema: CollectionSchema;
   query: UseViewQueryResult;
@@ -44,8 +46,6 @@ export function ViewSettingsMainPane({
   openPane: (pane: SettingsPane) => void;
   updateTypeSetting: (patch: Record<string, unknown>) => void;
 }) {
-  const type = viewType(view);
-
   return (
     <div className="flex flex-col p-1">
       <div className="p-2">
@@ -60,6 +60,36 @@ export function ViewSettingsMainPane({
           className="h-9 border-0 bg-muted px-3 text-sm font-semibold shadow-none focus-visible:ring-0"
         />
       </div>
+      {!newer ? (
+        <ViewSettingsMainRows
+          view={view}
+          schema={schema}
+          query={query}
+          openPane={openPane}
+          updateTypeSetting={updateTypeSetting}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ViewSettingsMainRows({
+  view,
+  schema,
+  query,
+  openPane,
+  updateTypeSetting,
+}: {
+  view: CollectionView | null;
+  schema: CollectionSchema;
+  query: UseViewQueryResult;
+  openPane: (pane: SettingsPane) => void;
+  updateTypeSetting: (patch: Record<string, unknown>) => void;
+}) {
+  const type = viewType(view);
+
+  return (
+    <>
       <SettingsSection label={m.collection_general_section()} />
       <SettingsRow
         icon={LayoutGrid}
@@ -102,7 +132,7 @@ export function ViewSettingsMainPane({
         schema={schema}
         onPatch={updateTypeSetting}
       />
-    </div>
+    </>
   );
 }
 
@@ -110,17 +140,20 @@ export function ViewSettingsMainFooter({
   onDuplicate,
   onDeleteRequest,
 }: {
-  onDuplicate: () => Promise<void>;
+  /** `null` when the view cannot be duplicated. */
+  onDuplicate: (() => Promise<void>) | null;
   onDeleteRequest: () => void;
 }) {
   return (
     <div className="flex flex-col">
-      <SettingsRow
-        icon={Copy}
-        label={m.collection_duplicate_view()}
-        right={null}
-        onClick={() => void onDuplicate().catch(handleError)}
-      />
+      {onDuplicate ? (
+        <SettingsRow
+          icon={Copy}
+          label={m.collection_duplicate_view()}
+          right={null}
+          onClick={() => void onDuplicate().catch(handleError)}
+        />
+      ) : null}
       <SettingsRow
         icon={Trash2}
         label={m.space_delete()}

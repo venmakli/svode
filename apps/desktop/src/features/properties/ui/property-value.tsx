@@ -34,6 +34,7 @@ import {
 import { effectiveBooleanValue } from "../model/boolean";
 import { BooleanPropertyValue } from "./boolean-property";
 import { ActorCandidateAvatar, ActorCandidateValue } from "./actor-candidate";
+import { NewerPropertyValue } from "./newer-property";
 
 export function PropertyValueActions({
   column,
@@ -42,7 +43,10 @@ export function PropertyValueActions({
   column: Column;
   value: unknown;
 }) {
-  if (!["text", "url", "email", "phone", "unique_id"].includes(column.type)) {
+  if (
+    column.newer ||
+    !["text", "url", "email", "phone", "unique_id"].includes(column.type)
+  ) {
     return null;
   }
   if (isEmptyValue(value)) return null;
@@ -101,6 +105,7 @@ export function PropertyValue({
   relationContext?: RelationContext;
   relationPresentation?: "default" | "table";
 }) {
+  if (column.newer) return <NewerPropertyValue value={value} />;
   if (column.type === "unique_id") {
     const display = uniqueIdDisplay(column, value);
     const raw = uniqueIdRawDisplay(value);
@@ -288,7 +293,7 @@ export function NumberPreview({
         className="grid size-7 shrink-0 place-items-center rounded-full bg-(--property-ring-bg) text-[10px] font-medium text-muted-foreground"
         style={
           {
-            ...colorStyle(column.color ?? "blue"),
+            ...colorStyle(column.color, "blue"),
             "--progress": `${clamped}%`,
             "--property-ring-bg":
               "conic-gradient(var(--property-color) var(--progress), var(--muted) 0)",
@@ -310,7 +315,7 @@ export function NumberPreview({
             <Progress
               value={clamped}
               className="h-2 min-w-0 flex-1 [&_[data-slot=progress-indicator]]:bg-(--property-color)"
-              style={colorStyle(column.color ?? "blue")}
+              style={colorStyle(column.color, "blue")}
             />
             <span className="tabular-nums text-muted-foreground">{value}</span>
           </span>

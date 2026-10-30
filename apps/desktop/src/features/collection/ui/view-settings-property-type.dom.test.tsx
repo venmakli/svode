@@ -120,6 +120,7 @@ if (!isolatedProcess) {
             open={open}
             pane={pane}
             view={view}
+            newer={false}
             renameValue="Table"
             onOpenChange={setOpen}
             onPaneChange={setPane}

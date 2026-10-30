@@ -29,9 +29,10 @@ export function calendarDateColumn(
     typeof view.date_field === "string" ? view.date_field : null;
   return (
     schema.columns.find(
-      (column) => column.type === "date" && column.name === configured,
+      (column) =>
+        !column.newer && column.type === "date" && column.name === configured,
     ) ??
-    schema.columns.find((column) => column.type === "date") ??
+    schema.columns.find((column) => !column.newer && column.type === "date") ??
     null
   );
 }

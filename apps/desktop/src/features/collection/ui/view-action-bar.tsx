@@ -7,6 +7,7 @@ import type {
 } from "@/features/collection/query/model";
 import type { CollectionView } from "@/features/collection/query/model";
 import type { CollectionSchema } from "@/features/properties";
+import { isNewerView } from "../lib/utils";
 import { SearchControl } from "./search-control";
 import type { SettingsPane } from "../model";
 import type { TemplateInfo, TemplateKind } from "../model";
@@ -110,16 +111,20 @@ export function ViewActionBar({
     activeView?.type === "board"
       ? (query.merged.groupBy ?? undefined)
       : undefined;
+  // A view this version cannot show keeps only rename and delete.
+  const newer = isNewerView(schema, activeView);
 
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <SearchControl
-        open={searchOpen}
-        query={searchQuery}
-        onOpenChange={onSearchOpenChange}
-        onQueryChange={onSearchQueryChange}
-      />
-      {activeView?.type === "board" && groupBy ? (
+      {!newer ? (
+        <SearchControl
+          open={searchOpen}
+          query={searchQuery}
+          onOpenChange={onSearchOpenChange}
+          onQueryChange={onSearchQueryChange}
+        />
+      ) : null}
+      {!newer && activeView?.type === "board" && groupBy ? (
         <Button
           type="button"
           variant="ghost"
@@ -138,30 +143,35 @@ export function ViewActionBar({
           <span className="truncate">{groupBy}</span>
         </Button>
       ) : null}
-      <CollectionQueryToolbarButton
-        active={filterActive}
-        count={filterCount}
-        icon={Filter}
-        label={m.view_query_filter_title()}
-        onClick={() => {
-          onSettingsPaneChange("filter");
-          onSettingsOpenChange(!filterActive);
-        }}
-      />
-      <CollectionQueryToolbarButton
-        active={sortActive}
-        count={sortCount}
-        icon={ArrowUpDown}
-        label={m.view_query_sort_title()}
-        onClick={() => {
-          onSettingsPaneChange("sort");
-          onSettingsOpenChange(!sortActive);
-        }}
-      />
+      {!newer ? (
+        <>
+          <CollectionQueryToolbarButton
+            active={filterActive}
+            count={filterCount}
+            icon={Filter}
+            label={m.view_query_filter_title()}
+            onClick={() => {
+              onSettingsPaneChange("filter");
+              onSettingsOpenChange(!filterActive);
+            }}
+          />
+          <CollectionQueryToolbarButton
+            active={sortActive}
+            count={sortCount}
+            icon={ArrowUpDown}
+            label={m.view_query_sort_title()}
+            onClick={() => {
+              onSettingsPaneChange("sort");
+              onSettingsOpenChange(!sortActive);
+            }}
+          />
+        </>
+      ) : null}
       <ViewSettingsPopover
         open={settingsOpen}
         pane={settingsPane}
         view={activeView}
+        newer={newer}
         renameValue={renameValue}
         onOpenChange={onSettingsOpenChange}
         onPaneChange={onSettingsPaneChange}

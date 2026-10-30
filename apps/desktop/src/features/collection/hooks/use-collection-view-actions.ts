@@ -11,11 +11,7 @@ import {
   reorderCollectionViews,
   updateCollectionView,
 } from "../api";
-import {
-  nextTableViewName,
-  nextViewName,
-  viewType,
-} from "../lib/utils";
+import { nextTableViewName, nextViewName, viewType } from "../lib/utils";
 import type { ActiveTab, SettingsPane } from "../model";
 import type { CollectionView, ViewType } from "../query";
 
@@ -59,13 +55,14 @@ export function useCollectionViewActions({
 }) {
   function autoConfigForType(nextType: ViewType) {
     if (!schema) return {};
+    // A layout by a property of a newer Svode version could not be shown.
+    const columns = schema.columns.filter((column) => !column.newer);
     if (nextType === "board") {
       const groupBy =
-        schema.columns.find((column) => column.type === "status")?.name ??
-        schema.columns.find((column) => column.type === "select")?.name ??
-        schema.columns.find(
-          (column) => column.type === "actor" && !column.multiple,
-        )?.name ??
+        columns.find((column) => column.type === "status")?.name ??
+        columns.find((column) => column.type === "select")?.name ??
+        columns.find((column) => column.type === "actor" && !column.multiple)
+          ?.name ??
         null;
       return groupBy
         ? { type: nextType, group_by: groupBy }
@@ -73,7 +70,7 @@ export function useCollectionViewActions({
     }
     if (nextType === "calendar") {
       const dateField =
-        schema.columns.find((column) => column.type === "date")?.name ?? null;
+        columns.find((column) => column.type === "date")?.name ?? null;
       return dateField
         ? { type: nextType, date_field: dateField }
         : { type: nextType, date_field: null };

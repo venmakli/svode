@@ -27,6 +27,7 @@ import {
   resolveStandardPropertyColumn,
 } from "@/features/properties";
 import { PROPERTY_TYPE_ICONS } from "@/features/properties";
+import { NEWER_PROPERTY_ICON } from "@/features/properties/display";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
 import { TITLE_ICON } from "./icons";
@@ -202,7 +203,9 @@ export function useTableColumns({
         const property = propertyDefinition
           ? resolveStandardPropertyColumn(propertyDefinition)
           : null;
-        const Icon = PROPERTY_TYPE_ICONS[property?.type ?? "text"];
+        const Icon = property?.newer
+          ? NEWER_PROPERTY_ICON
+          : PROPERTY_TYPE_ICONS[property?.type ?? "text"];
         return {
           id: field,
           size:
@@ -212,40 +215,43 @@ export function useTableColumns({
           meta: {
             header: {
               readOnly,
+              newer: property?.newer === true,
               label: propertyDefinition?.label ?? field,
               icon: Icon,
               open: openColumn === field,
               onOpenChange: (open) => setOpenColumn(open ? field : null),
-              menu: property
-                ? {
-                    field,
-                    label: field,
-                    column: property,
-                    open: openColumn === field,
-                    view,
-                    query,
-                    schema,
-                    collectionPath,
-                    spacePath,
-                    projectPath,
-                    affectedEntries: entries.filter(
-                      (entry) => entry.meta.extra?.[field] !== undefined,
-                    ).length,
-                    actors,
-                    onRequestActors: (allTime = false) =>
-                      onRequestActors(allTime),
-                    onOpenChange: (open) => setOpenColumn(open ? field : null),
-                    onSchemaChange: (next) =>
-                      onSchemaChange(normalizeSchema(next)),
-                    onUpdateViewPatch,
-                  }
-                : null,
+              menu:
+                property && !property.newer
+                  ? {
+                      field,
+                      label: field,
+                      column: property,
+                      open: openColumn === field,
+                      view,
+                      query,
+                      schema,
+                      collectionPath,
+                      spacePath,
+                      projectPath,
+                      affectedEntries: entries.filter(
+                        (entry) => entry.meta.extra?.[field] !== undefined,
+                      ).length,
+                      actors,
+                      onRequestActors: (allTime = false) =>
+                        onRequestActors(allTime),
+                      onOpenChange: (open) =>
+                        setOpenColumn(open ? field : null),
+                      onSchemaChange: (next) =>
+                        onSchemaChange(normalizeSchema(next)),
+                      onUpdateViewPatch,
+                    }
+                  : null,
             },
           },
           cell: ({ row }) =>
             property && propertyDefinition ? (
               <PropertyCell
-                readOnly={readOnly}
+                readOnly={readOnly || property.newer === true}
                 column={property}
                 pageLabel={row.original.entry.meta.title}
                 actors={actors}

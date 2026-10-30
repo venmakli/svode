@@ -18,6 +18,7 @@ import {
 } from "./property-controls/text-number-controls";
 import { UniqueIdControl } from "./property-controls/unique-id-control";
 import type { PropertyControlProps } from "./property-controls/types";
+import { NewerPropertyValue } from "./newer-property";
 import { RelationControl } from "./relation-control";
 
 export type { PropertyControlProps } from "./property-controls/types";
@@ -37,6 +38,7 @@ export function PropertyControl({
   onChange,
   onOpenChange,
 }: PropertyControlProps) {
+  if (column.newer) return <NewerPropertyValue value={value} />;
   switch (column.type) {
     case "number":
       return (

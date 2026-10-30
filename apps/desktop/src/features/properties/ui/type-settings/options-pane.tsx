@@ -27,7 +27,11 @@ import type {
   PropertyOption,
   StatusGroup,
 } from "../../model/types";
-import { STATUS_GROUPS } from "../../lib/utils";
+import {
+  isKnownStatusGroup,
+  optionColor,
+  STATUS_GROUPS,
+} from "../../lib/utils";
 import { useOptionSettings } from "../../hooks/use-option-settings";
 import { ColorPicker } from "../color-picker";
 import { SettingsRow, SettingsSection } from "@/shared/ui/settings-row";
@@ -99,6 +103,11 @@ export function OptionsPane({
   };
 
   if (column.type === "status") {
+    // Options of a group a newer Svode version set stay selectable and
+    // editable; only that group is unknown here.
+    const newerGroupOptions = options.filter(
+      (option) => !isKnownStatusGroup(option.group),
+    );
     return (
       <DndContext
         sensors={sensors}
@@ -133,6 +142,22 @@ export function OptionsPane({
                 />
               </StatusGroupDropZone>
             ))}
+            {newerGroupOptions.length > 0 ? (
+              <>
+                <SettingsSection label={m.property_status_group_newer()} />
+                {newerGroupOptions.map((option) => (
+                  <OptionRow
+                    key={option.name}
+                    option={option}
+                    autoFocus={focusedOption === option.name}
+                    onColor={(color) => updateOption(option, { color })}
+                    onRename={(name) => renameOption(option, name)}
+                    onDelete={() => removeOption(option)}
+                    onSettled={clearFocusedOption}
+                  />
+                ))}
+              </>
+            ) : null}
           </div>
         </SortableContext>
       </DndContext>
@@ -212,11 +237,7 @@ function OptionRow({
       >
         <GripVertical />
       </button>
-      <ColorPicker
-        value={option.color ?? "neutral"}
-        onChange={onColor}
-        compact
-      />
+      <ColorPicker value={optionColor(option)} onChange={onColor} compact />
       <Input
         autoFocus={autoFocus}
         value={draft}

@@ -227,7 +227,7 @@ function CalendarPropertyControl({
   const value = calendarColumnValue(entry, column);
   const validation = validatePropertyValue(column, value);
 
-  if (readOnly || isReadonlySystemColumn(column)) {
+  if (readOnly || isReadonlyColumn(column)) {
     return (
       <span className="inline-flex min-w-0 max-w-full items-center text-xs">
         <PropertyValue
@@ -289,8 +289,12 @@ function calendarColumnLabel(column: Column) {
   return column.name;
 }
 
-function isReadonlySystemColumn(column: Column) {
-  return column.name === "created" || column.name === "updated";
+function isReadonlyColumn(column: Column) {
+  return (
+    column.newer === true ||
+    column.name === "created" ||
+    column.name === "updated"
+  );
 }
 
 function PageKindMarker({

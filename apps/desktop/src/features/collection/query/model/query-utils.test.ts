@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import type { CollectionSchema } from "@/features/properties";
 import {
+  filterOpsForField,
+  queryField,
   queryFields,
   resolveViewQuery,
   validateQuery,
@@ -81,6 +83,61 @@ test("resolveViewQuery merges local overrides and reports stale shared state", (
     sort: [{ field: "created", desc: true }],
     group_by: null,
   });
+});
+
+test("properties of a newer Svode version are not offered to filter, sort or group", () => {
+  const newer: CollectionSchema = {
+    ...schema(),
+    columns: [
+      ...schema().columns,
+      { name: "Score", type: "text", newer: true },
+      { name: "Lead", type: "status", newer: true },
+    ],
+  };
+
+  for (const context of ["filter", "sort", "group"] as const) {
+    const names = queryFields(newer, context).map((field) => field.name);
+    expect(names.includes("Score")).toBe(false);
+    expect(names.includes("Lead")).toBe(false);
+  }
+  const result = validateQuery(newer, "table", {
+    name: "Main",
+    type: "table",
+    filter: [{ field: "Score", op: "contains", value: "x" }],
+    sort: [{ field: "Score" }],
+    groupBy: null,
+  });
+  expect(result.filter).toEqual([]);
+  expect(result.sort).toEqual([]);
+  expect(result.issues.map((issue) => issue.reason)).toEqual([
+    "unknown_field",
+    "unknown_field",
+  ]);
+});
+
+test("a status with an option of a newer group offers no group operators", () => {
+  const known = queryField(schema(), "Status", "filter");
+  expect(known && filterOpsForField(known).includes("group_eq")).toBe(true);
+
+  const newer: CollectionSchema = {
+    ...schema(),
+    columns: schema().columns.map((column) =>
+      column.name === "Status"
+        ? {
+            ...column,
+            options: [
+              ...(column.options ?? []),
+              { name: "Blocked", group: "blocked" as "todo" },
+            ],
+          }
+        : column,
+    ),
+  };
+  const field = queryField(newer, "Status", "filter");
+  expect(field?.name).toBe("Status");
+  const ops = field ? filterOpsForField(field) : [];
+  expect(ops.some((op) => op.startsWith("group_"))).toBe(false);
+  expect(ops.includes("eq")).toBe(true);
 });
 
 function schema(): CollectionSchema {
