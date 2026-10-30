@@ -122,9 +122,7 @@ export function TemplatesSplitButton({
             </div>
           ) : null}
           {loading ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-              {m.collection_templates_loading()}
-            </div>
+            <TemplatesListNotice label={m.collection_templates_loading()} />
           ) : sortedTemplates.length > 0 ? (
             <DndContext
               sensors={sensors}
@@ -152,10 +150,7 @@ export function TemplatesSplitButton({
               </SortableContext>
             </DndContext>
           ) : (
-            <div className="flex min-h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground">
-              <FileText data-icon="inline-start" />
-              <span>{m.collection_templates_empty()}</span>
-            </div>
+            <TemplatesListNotice label={m.collection_templates_empty()} />
           )}
         </div>
       ),
@@ -305,6 +300,15 @@ export function TemplatesSplitButton({
         }
       />
     </ButtonGroup>
+  );
+}
+
+/** A muted line in place of the template list, on the grid of the menu rows. */
+function TemplatesListNotice({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-8 items-center rounded-md border border-transparent px-2 py-1.5 text-[13px] text-muted-foreground">
+      {label}
+    </div>
   );
 }
 
