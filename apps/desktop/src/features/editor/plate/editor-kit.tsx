@@ -62,6 +62,7 @@ import {
 } from "../model/markdown-inline-image";
 import { markdownLinkRules } from "../model/markdown-link";
 import { markdownParagraphRules } from "../model/markdown-paragraph";
+import { markdownImageReferenceRules } from "../model/markdown-references";
 import {
   TRAILING_BLOCK_MARK,
   withoutServiceTrailingBlock,
@@ -132,6 +133,7 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
           ...markdownParagraphRules,
           ...markdownCommentRules,
           ...markdownInlineImageRules,
+          ...markdownImageReferenceRules,
         },
       },
       parser: {

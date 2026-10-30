@@ -1,6 +1,12 @@
 import type { DeserializeMdOptions, MdImage, MdRules } from "@platejs/markdown";
 import { getPluginType, type TElement } from "platejs";
 
+import {
+  imageReferenceNode,
+  type MarkdownReference,
+  referenceOf,
+  writableReference,
+} from "./markdown-references";
 import type { MdastNode } from "./markdown-source";
 
 /**
@@ -18,6 +24,7 @@ export interface InlineImageElement extends TElement {
   url: string;
   alt: string;
   title?: string;
+  reference?: MarkdownReference;
   children: [{ text: "" }];
 }
 
@@ -77,6 +84,7 @@ export const markdownInlineImageRules: MdRules = {
   [INLINE_IMAGE_KEY]: {
     deserialize: (mdastNode: MdImage, _deco, options) => {
       const { alt, title, url } = mdastNode;
+      const reference = referenceOf(mdastNode);
       return {
         type: options.editor
           ? getPluginType(options.editor, INLINE_IMAGE_KEY)
@@ -84,10 +92,14 @@ export const markdownInlineImageRules: MdRules = {
         url,
         alt: alt ?? "",
         ...(typeof title === "string" && { title }),
+        ...(reference && { reference }),
         children: [{ text: "" }],
       };
     },
-    serialize: ({ alt, title, url }: InlineImageElement): MdImage => {
+    serialize: (node: InlineImageElement, options) => {
+      const { alt, title, url } = node;
+      const reference = writableReference(node, options);
+      if (reference) return imageReferenceNode(reference, alt);
       return {
         type: "image",
         url,

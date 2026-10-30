@@ -7,8 +7,10 @@ import {
 } from "platejs/react";
 import { Button } from "@/components/ui/button";
 import * as m from "@/paraglide/messages.js";
-import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
-import { type ConflictElement as TConflictElement } from "./parse-conflicts";
+import {
+  type ConflictElement as TConflictElement,
+  deserializeConflictBranch,
+} from "./parse-conflicts";
 
 /**
  * Renders a git merge-conflict block as two stacked panels (ours / theirs)
@@ -23,10 +25,7 @@ export function ConflictElementComponent(
   function replaceWithMarkdown(markdown: string) {
     const path = editor.api.findPath(element);
     if (!path) return;
-    const fragment = deserializeEditorMarkdownInsertion(
-      editor,
-      markdown.trim() + "\n",
-    );
+    const fragment = deserializeConflictBranch(editor, markdown.trim() + "\n");
     editor.tf.removeNodes({ at: path });
     editor.tf.insertNodes(fragment as never, { at: path });
   }

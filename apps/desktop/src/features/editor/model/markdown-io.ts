@@ -11,6 +11,11 @@ import {
   restoreMarkdownLiteral,
 } from "./markdown-literals";
 import {
+  createReferenceResolution,
+  type LinkDefinitions,
+  type ReferenceResolution,
+} from "./markdown-references";
+import {
   applyTextEdits,
   composeMappedText,
   type MappedText,
@@ -152,17 +157,19 @@ function plateInputFor(
   );
 }
 
-export function deserializeEditorMarkdownSegment(
+function deserializeBoundaryMarkdown(
   editor: PlateEditor,
-  segment: string,
+  markdown: string,
+  references: ReferenceResolution,
 ): Descendant[] {
-  const markdown = withLfLineEndings(segment);
   const markdownApi = editor.getApi(MarkdownPlugin).markdown;
   const remarkPlugins = editor.getOptions(MarkdownPlugin).remarkPlugins ?? [];
   const deserialize = (plateInput: MappedText, onError?: () => void) =>
     markdownApi.deserialize(plateInput.text, {
       onError,
       remarkPlugins: [
+        // References are links and images before any other plugin runs.
+        references.plugin,
         ...remarkPlugins,
         markdownSourcePlugin(markdown, plateInput, [
           annotateMarkdownComment,
@@ -185,11 +192,41 @@ export function deserializeEditorMarkdownSegment(
   return Array.isArray(nodes) ? (nodes as Descendant[]) : [];
 }
 
+/**
+ * Reference links and images of the segment resolve by `definitions`, the
+ * link definitions of the whole document, or by the segment's own when there
+ * are none.
+ */
+export function deserializeEditorMarkdownSegment(
+  editor: PlateEditor,
+  segment: string,
+  definitions?: LinkDefinitions,
+): Descendant[] {
+  const markdown = withLfLineEndings(segment);
+  if (definitions && definitions.size > 0) {
+    const references = createReferenceResolution(definitions);
+    const nodes = deserializeBoundaryMarkdown(
+      editor,
+      markdown + references.suffix,
+      references,
+    );
+    if (references.isComplete()) return nodes;
+    // The segment ends inside a block that took in the appended definitions;
+    // its references resolve by its own.
+  }
+  return deserializeBoundaryMarkdown(
+    editor,
+    markdown,
+    createReferenceResolution(),
+  );
+}
+
 export function deserializeEditorMarkdownInsertion(
   editor: PlateEditor,
   markdown: string,
+  definitions?: LinkDefinitions,
 ): Descendant[] {
-  const nodes = deserializeEditorMarkdownSegment(editor, markdown);
+  const nodes = deserializeEditorMarkdownSegment(editor, markdown, definitions);
   if (nodes.length > 0) return nodes;
 
   const fallbackText = withLfLineEndings(markdown).trimEnd();
