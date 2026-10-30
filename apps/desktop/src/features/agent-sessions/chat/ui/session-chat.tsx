@@ -14,6 +14,7 @@ import {
   useRequestedComposerFocus,
   type ComposerFocusRequest,
 } from "../hooks/use-composer-focus";
+import { useAgentSessionCatalog } from "../../hooks/use-agent-session-catalog";
 import { useSessionActivity } from "../hooks/use-session-activity";
 import { useSessionSettings } from "../hooks/use-session-settings";
 import {
@@ -92,6 +93,12 @@ export function SessionChat({
   onStateChange?: (state: ChatSessionState | null) => void;
 }) {
   const { snapshot, error } = useSessionActivity(session, epoch);
+  // A replay carries no turn outcomes: the catalogue status tells whether
+  // the last turn failed (DF-226 R3).
+  const status = useAgentSessionCatalog(
+    (state) =>
+      state.sessions.find((known) => known.id === sessionId)?.status ?? null,
+  );
   const composer = useSessionComposer(
     sessionId,
     session,
@@ -209,6 +216,7 @@ export function SessionChat({
       <ChatTimeline
         session={session}
         snapshot={snapshot}
+        status={status}
         header={
           <HistoryHeader
             snapshot={snapshot}

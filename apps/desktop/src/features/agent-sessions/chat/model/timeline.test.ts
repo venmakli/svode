@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type {
   AgentActivityItemDto,
+  AgentSessionStatusDto,
   AgentTurnStateDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 import { activitySnapshot } from "../../model/testing/activity";
@@ -150,6 +151,151 @@ test("a failed turn keeps its error and marker outside the fold", () => {
   expect(turn.summary?.count).toBe(1);
   const error = turn.entries.find((entry) => entry.id === "e1")!;
   expect(isExpanded({}, turn, error)).toBe(true);
+});
+
+/** A session opened in the chat: replayed turns, no runtime turn yet. */
+const replayed: AgentTurnStateDto = {
+  turnId: null,
+  phase: "none",
+  lastOutcome: null,
+  status: { state: "unknown", source: "none", confidence: "approximate" },
+};
+
+const failedStatus: AgentSessionStatusDto = {
+  state: "idle",
+  stopReason: "error",
+  source: "native_status_reader",
+  confidence: "approximate",
+};
+
+const replayItems = [
+  item("user:r1", "replay:1", { kind: "user_message" }, "Hi"),
+  item("m1", "replay:1", { kind: "agent_message" }, "Hello"),
+  item("user:r2", "replay:2", { kind: "user_message" }, "Reply with oscar"),
+];
+
+test("a failed status marks the replayed last turn without its own outcome", () => {
+  const timeline = projectTimeline(
+    {
+      turn: replayed,
+      // A record outside turns after the replay does not take the marker.
+      items: [
+        ...replayItems,
+        item("g1", null, { kind: "generic", label: "x" }),
+      ],
+    },
+    failedStatus,
+  );
+
+  expect(timeline.map((turn) => turn.entries.map((entry) => entry.id))).toEqual(
+    [["user:r1", "m1"], ["user:r2", "status-failure:replay:2"], ["g1"]],
+  );
+  const marker = timeline[1].entries[1];
+  expect(marker.kind === "outcome" && marker.item).toEqual({
+    kind: "status_failure",
+  });
+  expect(timeline[1].summary).toBeNull();
+});
+
+test("a failure marker follows the folded last turn outside its fold", () => {
+  const [turn] = projectTimeline(
+    {
+      turn: replayed,
+      items: [
+        item("user:r1", "replay:1", { kind: "user_message" }, "Go"),
+        tool("a", "replay:1"),
+        item("m1", "replay:1", { kind: "agent_message" }, "Partial"),
+      ],
+    },
+    failedStatus,
+  );
+
+  expect(shownEntries({}, turn).map((entry) => entry.id)).toEqual([
+    "user:r1",
+    "m1",
+    "status-failure:replay:1",
+  ]);
+  expect(turn.summary?.count).toBe(1);
+});
+
+test("without a failed status or with the runtime's own outcome no marker is added", () => {
+  const ids = (
+    items: AgentActivityItemDto[],
+    status: AgentSessionStatusDto | null,
+    turn = replayed,
+  ) =>
+    projectTimeline({ turn, items }, status).flatMap((group) =>
+      group.entries.map((entry) => entry.id),
+    );
+  const all = ["user:r1", "m1", "user:r2"];
+
+  expect(ids(replayItems, null)).toEqual(all);
+  expect(ids(replayItems, { ...failedStatus, stopReason: "end_turn" })).toEqual(
+    all,
+  );
+  expect(
+    ids(replayItems, {
+      state: "running",
+      source: "native_status_reader",
+      confidence: "approximate",
+    }),
+  ).toEqual(all);
+  // A turn the runtime ended keeps its result, shown or not, and only it.
+  for (const outcome of [
+    item("o2", "replay:2", {
+      kind: "turn_outcome",
+      reason: "error",
+      durationMs: 5,
+    }),
+    item("o2", "replay:2", { kind: "interrupted", durationMs: 5 }),
+  ]) {
+    expect(ids([...replayItems, outcome], failedStatus)).toEqual([
+      ...all,
+      "o2",
+    ]);
+  }
+  expect(
+    ids(
+      [
+        ...replayItems,
+        item("o2", "replay:2", {
+          kind: "turn_outcome",
+          reason: "end_turn",
+          durationMs: 5,
+        }),
+      ],
+      failedStatus,
+    ),
+  ).toEqual(all);
+});
+
+test("a new turn takes the failure marker away", () => {
+  const next = [
+    ...replayItems,
+    item("user:t1", "t1", { kind: "user_message" }, "Again"),
+  ];
+  const live = { ...running, turnId: "t1" };
+  expect(
+    projectTimeline({ turn: live, items: next }, failedStatus).flatMap((turn) =>
+      turn.entries.map((entry) => entry.id),
+    ),
+  ).toEqual(["user:r1", "m1", "user:r2", "user:t1"]);
+
+  const done = [
+    ...next,
+    item("m2", "t1", { kind: "agent_message" }, "oscar"),
+    item("o1", "t1", {
+      kind: "turn_outcome",
+      reason: "end_turn",
+      durationMs: 5,
+    }),
+  ];
+  expect(
+    projectTimeline(
+      { turn: { ...idle, turnId: "t1" }, items: done },
+      failedStatus,
+    ).flatMap((turn) => turn.entries.map((entry) => entry.id)),
+  ).toEqual(["user:r1", "m1", "user:r2", "user:t1", "m2"]);
 });
 
 test("a turn without folded items and a live turn get no summary row", () => {

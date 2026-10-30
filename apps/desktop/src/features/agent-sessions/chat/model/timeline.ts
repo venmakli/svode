@@ -1,6 +1,7 @@
 import type {
   AgentActivityItemDto,
   AgentSessionSnapshotDto,
+  AgentSessionStatusDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 import { createsMedia } from "./media";
 
@@ -26,8 +27,19 @@ export type NoticeItem =
   | ItemOf<"config_change">
   | InteractionRecord;
 
+/**
+ * The failure of the last turn known only from the session status: a
+ * replay carries no turn outcomes (DF-226 R3).
+ */
+export interface StatusFailure {
+  kind: "status_failure";
+}
+
 /** A turn result worth showing: anything but a plain end of turn. */
-export type OutcomeItem = ItemOf<"turn_outcome"> | ItemOf<"interrupted">;
+export type OutcomeItem =
+  | ItemOf<"turn_outcome">
+  | ItemOf<"interrupted">
+  | StatusFailure;
 
 export type TimelineEntry =
   | { kind: "user"; id: string; item: ItemOf<"user_message"> }
@@ -67,17 +79,24 @@ export interface TimelineTurn {
 
 const SESSION_GROUP = "session";
 
+/** The items of one turn, or of the session between turns. */
+interface ItemGroup {
+  id: string;
+  items: AgentActivityItemDto[];
+}
+
 /**
  * The timeline of a session: its items grouped by turn in order, projected
- * into entries. A pure function of the runtime snapshot, so a reload or a
- * resubscription projects the same timeline.
+ * into entries. A pure function of the runtime snapshot and the session
+ * status, so a reload or a resubscription projects the same timeline.
  */
 export function projectTimeline(
   snapshot: Pick<AgentSessionSnapshotDto, "items" | "turn">,
+  status: AgentSessionStatusDto | null = null,
 ): TimelineTurn[] {
   const liveTurn =
     snapshot.turn.phase !== "none" ? snapshot.turn.turnId : null;
-  const groups: { id: string; items: AgentActivityItemDto[] }[] = [];
+  const groups: ItemGroup[] = [];
   for (const item of snapshot.items) {
     const id = item.turnId ?? SESSION_GROUP;
     const last = groups.at(-1);
@@ -90,9 +109,17 @@ export function projectTimeline(
     if (known) known.items.push(item);
     else groups.push({ id, items: [item] });
   }
+  const failedTurn = statusFailedTurn(groups, liveTurn, status);
   return groups.map((group, index) => {
     const live = group.id !== SESSION_GROUP && group.id === liveTurn;
     const entries = projectTurn(group.items);
+    if (group === failedTurn) {
+      entries.push({
+        kind: "outcome",
+        id: `status-failure:${group.id}`,
+        item: { kind: "status_failure" },
+      });
+    }
     return {
       id: group.id === SESSION_GROUP ? `${SESSION_GROUP}:${index}` : group.id,
       live,
@@ -103,6 +130,25 @@ export function projectTimeline(
           : summarize(entries, group.items),
     };
   });
+}
+
+/**
+ * The last turn, when the session status says it failed and the turn has
+ * no outcome of its own: a replayed turn that failed (DF-226 R3). A turn
+ * the runtime ended or is running keeps its own result.
+ */
+function statusFailedTurn(
+  groups: ItemGroup[],
+  liveTurn: string | null,
+  status: AgentSessionStatusDto | null,
+): ItemGroup | undefined {
+  if (status?.state !== "idle" || status.stopReason !== "error") return;
+  const last = lastWhere(groups, (group) => group.id !== SESSION_GROUP);
+  if (!last || last.id === liveTurn) return;
+  const ended = last.items.some(
+    (item) => item.kind === "turn_outcome" || item.kind === "interrupted",
+  );
+  return ended ? undefined : last;
 }
 
 function projectTurn(items: AgentActivityItemDto[]): TimelineEntry[] {
@@ -203,7 +249,7 @@ function sameNotice(left: NoticeItem, right: NoticeItem): boolean {
 /** A turn result that leaves the turn failed: shown outside the fold. */
 function isFailure(entry: TimelineEntry): boolean {
   if (entry.kind !== "outcome") return false;
-  return entry.item.kind === "interrupted" || entry.item.reason === "error";
+  return entry.item.kind !== "turn_outcome" || entry.item.reason === "error";
 }
 
 function summarize(

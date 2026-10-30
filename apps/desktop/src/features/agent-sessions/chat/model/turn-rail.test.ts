@@ -101,6 +101,33 @@ test("an entry per user's message with its first line, reply start and state", (
   ]);
 });
 
+test("a replayed last turn that failed by the session status is failed", () => {
+  const entries = turnRailEntries(
+    projectTimeline(
+      {
+        items: [user("u1", "replay:1", "Hi"), user("u2", "replay:2", "Again")],
+        turn: {
+          turnId: null,
+          phase: "none",
+          lastOutcome: null,
+          status: {
+            state: "unknown",
+            source: "none",
+            confidence: "approximate",
+          },
+        },
+      },
+      {
+        state: "idle",
+        stopReason: "error",
+        source: "native_status_reader",
+        confidence: "approximate",
+      },
+    ),
+  );
+  expect(entries.map((entry) => entry.state)).toEqual(["done", "failed"]);
+});
+
 test("badges count media the turn created and files it changed", () => {
   const [first, second] = turnRailEntries(
     timeline([

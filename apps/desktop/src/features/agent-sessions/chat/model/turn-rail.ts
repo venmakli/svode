@@ -63,7 +63,7 @@ function turnState(turn: TimelineTurn): TurnRailState {
   if (turn.live) return "live";
   const outcome = lastWhere(turn.entries, (entry) => entry.kind === "outcome");
   if (outcome?.kind !== "outcome") return "done";
-  if (outcome.item.kind === "interrupted") return "failed";
+  if (outcome.item.kind !== "turn_outcome") return "failed";
   if (outcome.item.reason === "error") return "failed";
   if (outcome.item.reason === "cancelled") return "stopped";
   return "done";

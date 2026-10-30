@@ -38,6 +38,7 @@ import type {
   AgentActivityItemDto,
   AgentSessionKeyDto,
   AgentSessionSnapshotDto,
+  AgentSessionStatusDto,
 } from "../api/chat";
 import { useItemDetail } from "../hooks/use-item-detail";
 import { useLiveEdgeMarker } from "../hooks/use-live-edge-marker";
@@ -93,15 +94,22 @@ export function ChatTimeline(props: ChatTimelineProps) {
 interface ChatTimelineProps {
   session: AgentSessionKeyDto;
   snapshot: AgentSessionSnapshotDto;
+  /** The session status of the catalogue; a failure marks the last turn. */
+  status?: AgentSessionStatusDto | null;
   /** History state shown above the first turn. */
   header?: ReactNode;
 }
 
-function TimelineView({ session, snapshot, header }: ChatTimelineProps) {
+function TimelineView({
+  session,
+  snapshot,
+  status = null,
+  header,
+}: ChatTimelineProps) {
   const [manual, setManual] = useState<ManualExpansion>({});
   const toggle = (id: string, open: boolean) =>
     setManual((current) => ({ ...current, [id]: open }));
-  const turns = projectTimeline(snapshot);
+  const turns = projectTimeline(snapshot, status);
   const marker = useLiveEdgeMarker(snapshot);
 
   return (
@@ -698,6 +706,9 @@ function OutcomeMarker({ item }: { item: OutcomeItem }) {
   let failed = false;
   if (item.kind === "interrupted") {
     text = m.sessions_chat_outcome_interrupted();
+    failed = true;
+  } else if (item.kind === "status_failure") {
+    text = m.sessions_chat_outcome_error();
     failed = true;
   } else {
     switch (item.reason) {

@@ -34,6 +34,7 @@ export type {
   AgentSessionKeyDto,
   AgentSessionOpeningDto,
   AgentSessionSnapshotDto,
+  AgentSessionStatusDto,
   AgentSessionUsageDto,
   AgentSessionValuesDto,
   AgentSettingRefusalDto,
