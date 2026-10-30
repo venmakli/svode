@@ -77,6 +77,40 @@ if (process.env.SVODE_EDITOR_TOC_DOM !== "1") {
   const { PlateDocumentEditor } =
     await import("../src/features/editor/plate/plate-editor");
 
+  async function renderPage(path: string, body: string) {
+    const meta = { title: "Goal" } as never;
+    const page = { meta, body, path, source_version: "v1" };
+    mockNativeIpc((cmd) => {
+      if (cmd === "read_page") return page;
+      if (cmd === "validate_links") return [];
+      return null;
+    });
+    const root = createRoot(document.getElementById("app")!);
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <PlateDocumentEditor
+            bodyOnly
+            pageScroll
+            documentPath={page.path}
+            documentSpaceId="space"
+            spacePath="/space"
+            projectPath="/space"
+            bodyOnlyMeta={meta}
+            initialPage={page as never}
+            initialPageSpacePath="/space"
+          />
+        </TooltipProvider>,
+      );
+    });
+    for (let i = 0; i < 10; i++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    }
+    return root;
+  }
+
   test("Page editor shows the TOC for headings of a freshly opened Page", async () => {
     const meta = { title: "Goal" } as never;
     const page = {
@@ -118,6 +152,37 @@ if (process.env.SVODE_EDITOR_TOC_DOM !== "1") {
         document.querySelector("[data-slate-editor]")?.textContent,
       ).toContain("Key Results");
       expect(document.querySelectorAll("nav button").length).toBe(2);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  test("the TOC shows a heading with an inline image as one entry of its text", async () => {
+    const root = await renderPage(
+      "title.md",
+      "# Title ![a](a.png)\n\nFirst.\n\n## Next\n\nSecond.\n",
+    );
+    try {
+      expect(
+        document.querySelector(
+          "[data-slate-editor] h1 [role=img][aria-label=a]",
+        ) !== null,
+      ).toBe(true);
+      const nav = document.querySelector("nav")!;
+      expect(nav.querySelectorAll("button").length).toBe(2);
+      await act(async () => {
+        nav.dispatchEvent(
+          new window.MouseEvent("mouseover", {
+            bubbles: true,
+            relatedTarget: document.body,
+          }),
+        );
+      });
+      expect(
+        [...nav.querySelectorAll("button")].map((button) =>
+          button.textContent?.trim(),
+        ),
+      ).toEqual(["Title", "Next"]);
     } finally {
       await act(async () => root.unmount());
     }

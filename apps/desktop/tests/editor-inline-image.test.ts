@@ -192,6 +192,13 @@ test("R4 typing and formatting around the image keep it in the line", () => {
   expect(save(editor)).toBe("Just Before X![logo](./logo.png)Y **after**.!\n");
 });
 
+test("R4 the caret reaches both sides of an image at the edges of its line", () => {
+  const editor = editorFor("![a](a.png) middle ![b](b.png)\n");
+  editor.tf.insertText("X", { at: editor.api.start([0]) });
+  editor.tf.insertText("Y", { at: editor.api.end([0]) });
+  expect(save(editor)).toBe("X![a](a.png) middle ![b](b.png)Y\n");
+});
+
 test("R4 Enter before and after the image keeps it in its part of the line", () => {
   const before = editorFor("Before ![logo](./logo.png) after.\n");
   before.tf.select(before.api.before(pathOfImage(before))!);
@@ -283,7 +290,6 @@ for (const [name, source] of [
   ["a link to an image file", "See [logo](./logo.png) here.\n"],
   ["a paragraph of the user with an edge space", "&#x20;lead and tail&#x20;\n"],
   ["a block comment", "Text\n\n<!-- block -->\n"],
-  ["an image inside a link", "[![logo](logo.png)](./plan.md)\n"],
 ] as const) {
   test(`R6 ${name} is unchanged`, () => {
     expect(save(editorFor(source))).toBe(source);
@@ -296,4 +302,112 @@ test("R6 no U+200B is written around an inline image at the edges", () => {
   const saved = save(editor);
   expect(saved).toBe("![a](a.png) middle! ![b](b.png)\n");
   expect(saved).not.toContain("​");
+});
+
+// R2: an image in a heading or link is always inline and survives edits.
+function headingImages(editor: Editor) {
+  return elementsOf(editor, INLINE_IMAGE_KEY).map((image) => image.url);
+}
+
+for (const [source, typed, deleteBefore, deleted] of [
+  [
+    "# Title ![a](a.png)\n",
+    "# XTitle ![a](a.png)Y\n",
+    ["Title", 5],
+    "# Titl ![a](a.png)\n",
+  ],
+  [
+    "## A ![i](i.png) B\n",
+    "## XA ![i](i.png) BY\n",
+    [" B", 1],
+    "## A ![i](i.png)B\n",
+  ],
+  ["# ![a](a.png)\n", "# X![a](a.png)Y\n", null, "# ![a](a.png)\n"],
+] as const) {
+  test(`R2 ${JSON.stringify(source)} keeps its image through edits`, () => {
+    const editor = editorFor(source);
+    expect(save(editor)).toBe(source);
+    expect(elementsOf(editor, KEYS.img)).toEqual([]);
+    expect(headingImages(editor)).toHaveLength(1);
+    expect(editor.children).toHaveLength(1);
+
+    editor.tf.insertText("X", { at: editor.api.start([0]) });
+    editor.tf.insertText("Y", { at: editor.api.end([0]) });
+    expect(headingImages(editor)).toHaveLength(1);
+    expect(save(editor)).toBe(typed);
+
+    const edited = editorFor(source);
+    edited.tf.select(edited.api.end([0]));
+    edited.tf.insertText("Z");
+    edited.tf.deleteBackward("character");
+    expect(save(edited)).toBe(source);
+    if (deleteBefore) {
+      edited.tf.select(pointAt(edited, deleteBefore[0], deleteBefore[1]));
+      edited.tf.deleteBackward("character");
+    }
+    expect(headingImages(edited)).toHaveLength(1);
+    expect(save(edited)).toBe(deleted);
+    expect(save(editorFor(save(edited)))).toBe(deleted);
+  });
+}
+
+for (const [name, source] of [
+  ["an image link to a Page", "[![logo](logo.png)](./plan.md)\n"],
+  ["a badge", "[![b](b.svg)](https://ci.dev)\n"],
+  [
+    "a link with text and an image",
+    'See [Plan ![i](i.png "I")](./plan.md) now.\n',
+  ],
+  ["a heading with an image link", "## [![b](b.svg)](https://ci.dev) Build\n"],
+] as const) {
+  test(`R2 ${name} keeps the image inline in the link`, () => {
+    const editor = editorFor(source);
+    expect(save(editor)).toBe(source);
+    expect(elementsOf(editor, KEYS.img)).toEqual([]);
+    const [link] = elementsOf(editor, KEYS.link);
+    expect(
+      link.children.some(
+        (child) => (child as TElement).type === INLINE_IMAGE_KEY,
+      ),
+    ).toBe(true);
+    expect(save(editorFor(save(editor)))).toBe(source);
+  });
+}
+
+test("R2 an image in a link survives typing, Enter, merging paragraphs and forced normalization", () => {
+  const source =
+    "Intro\n\n[![logo](logo.png)](./plan.md) and [![b](b.svg)](https://ci.dev)\n";
+  const editor = editorFor(source);
+  editor.tf.insertText("!", { at: editor.api.end([1]) });
+  editor.tf.insertText("Go ", { at: editor.api.start([1]) });
+  expect(save(editor)).toBe(
+    "Intro\n\nGo [![logo](logo.png)](./plan.md) and [![b](b.svg)](https://ci.dev)!\n",
+  );
+
+  editor.tf.select(pointAt(editor, " and", 4));
+  editor.tf.insertBreak();
+  editor.tf.deleteForward("character");
+  expect(save(editor)).toBe(
+    "Intro\n\nGo [![logo](logo.png)](./plan.md) and\n\n[![b](b.svg)](https://ci.dev)!\n",
+  );
+
+  editor.tf.select(editor.api.start([2])!);
+  editor.tf.deleteBackward("character");
+  editor.tf.select(editor.api.start([1])!);
+  editor.tf.deleteBackward("character");
+  editor.tf.normalize({ force: true });
+  expect(save(editor)).toBe(
+    "IntroGo [![logo](logo.png)](./plan.md) and[![b](b.svg)](https://ci.dev)!\n",
+  );
+  expect(elementsOf(editor, KEYS.link)).toHaveLength(2);
+  expect(elementsOf(editor, INLINE_IMAGE_KEY)).toHaveLength(2);
+});
+
+test("R2 forced normalization keeps the images of headings and links", () => {
+  const source =
+    "# Title ![a](a.png)\n\n[![logo](logo.png)](./plan.md)\n\n- [![b](b.svg)](https://ci.dev) item\n";
+  const editor = editorFor(source);
+  editor.tf.normalize({ force: true });
+  expect(elementsOf(editor, INLINE_IMAGE_KEY)).toHaveLength(3);
+  expect(save(editor)).toBe(source);
 });

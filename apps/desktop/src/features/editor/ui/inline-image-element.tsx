@@ -55,6 +55,15 @@ function openInlineImagePreview(
   ImagePreviewStore.set("previewList", previewList);
 }
 
+/** Inside a link a click is the link's: the image opens no preview. */
+function isInLink(editor: SlateEditor, element: TInlineImageElement): boolean {
+  const path = editor.api.findPath(element);
+  return (
+    !!path &&
+    !!editor.api.above({ at: path, match: { type: editor.getType(KEYS.link) } })
+  );
+}
+
 /** An image inside a line of text, at most one line high. */
 export function InlineImageElement(
   props: PlateElementProps<TInlineImageElement>,
@@ -85,7 +94,10 @@ export function InlineImageElement(
           "relative mx-px inline-flex max-w-full items-center rounded-sm align-middle select-none",
           !readOnly && selected && focused && "ring-2 ring-ring",
         )}
-        onDoubleClick={() => openInlineImagePreview(editor, element)}
+        onDoubleClick={() => {
+          if (!isInLink(editor, element))
+            openInlineImagePreview(editor, element);
+        }}
       >
         {status === "failed" ? (
           <span

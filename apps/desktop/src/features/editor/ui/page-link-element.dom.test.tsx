@@ -78,6 +78,7 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
     await import("../hooks/use-page-link-insertion");
   const { useEditorStore } = await import("../model");
   const { PageLinkElement } = await import("./page-link-element");
+  const { InlineImagePlugin } = await import("../plate/inline-image-plugin");
 
   // Pages of the fixture project: what `resolve_doc_link` finds after it
   // decodes the raw url (DF-154A).
@@ -134,15 +135,38 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
 
   function linkEditor() {
     return createPlateEditor({
-      plugins: [LinkPlugin.withComponent(PageLinkElement)],
-      value: links.map((url, index) => ({
-        type: "p",
-        children: [
-          { text: "" },
-          { type: "a", url, children: [{ text: `link ${index}` }] },
-          { text: "" },
-        ],
-      })),
+      plugins: [LinkPlugin.withComponent(PageLinkElement), InlineImagePlugin],
+      value: [
+        ...links.map((url, index) => ({
+          type: "p",
+          children: [
+            { text: "" },
+            { type: "a", url, children: [{ text: `link ${index}` }] },
+            { text: "" },
+          ],
+        })),
+        {
+          type: "p",
+          children: [
+            { text: "" },
+            {
+              type: "a",
+              url: links[1],
+              children: [
+                { text: "" },
+                {
+                  type: "inline_img",
+                  url: "logo.png",
+                  alt: "logo",
+                  children: [{ text: "" }],
+                },
+                { text: "" },
+              ],
+            },
+            { text: "" },
+          ],
+        },
+      ],
     });
   }
   function Probe({ url }: { url: string }) {
@@ -235,6 +259,18 @@ if (process.env.SVODE_PAGE_LINK_ELEMENT_DOM !== "1") {
     });
     await until(() => opened.length > 1);
     expect(opened).toEqual(["Roadmap Draft.md", "План.md"]);
+  });
+
+  test("a click on an image inside the pill opens the Page", async () => {
+    opened.length = 0;
+    const image = dom.document.querySelector<HTMLElement>(
+      'span.bg-accent img[alt="logo"]',
+    )!;
+    await act(async () => {
+      image.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    await until(() => opened.length > 0);
+    expect(opened).toEqual(["План.md"]);
   });
 
   test("an inserted link to a Page with % in its title writes %25", async () => {

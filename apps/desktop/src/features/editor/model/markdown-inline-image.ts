@@ -14,8 +14,10 @@ import type { MdastNode } from "./markdown-source";
  * the paragraph, which splits the line around it. An image that shares its
  * line with other content is read as an inline void element of its own
  * instead, and written back where it stands. An image alone in its paragraph
- * or table cell stays Plate's block. Which one an image is follows from the
- * Markdown on every read; the file holds `![alt](url "title")` either way.
+ * or table cell stays Plate's block; an image in a heading or link is always
+ * inline, since Slate removes a block inside them when it normalizes them.
+ * Which one an image is follows from the Markdown on every read; the file
+ * holds `![alt](url "title")` either way.
  */
 export const INLINE_IMAGE_KEY = "inline_img";
 
@@ -67,9 +69,22 @@ function markInlineImages(container: MdastNode) {
   }
 }
 
+/** Every image of a heading or link is inline, even one alone in it. */
+function markAllImagesInline(node: MdastNode) {
+  for (const child of node.children ?? []) {
+    if (child.type === "image") child.type = INLINE_IMAGE_KEY;
+    else markAllImagesInline(child);
+  }
+}
+
 const CONTAINER_TYPES = new Set(["paragraph", "tableCell"]);
+const ALWAYS_INLINE_TYPES = new Set(["heading", "link", "linkReference"]);
 
 function markContainers(node: MdastNode) {
+  if (ALWAYS_INLINE_TYPES.has(node.type)) {
+    markAllImagesInline(node);
+    return;
+  }
   if (CONTAINER_TYPES.has(node.type)) markInlineImages(node);
   for (const child of node.children ?? []) markContainers(child);
 }

@@ -43,6 +43,7 @@ if (process.env.SVODE_INLINE_IMAGE_ELEMENT_DOM !== "1") {
     await import("@platejs/media/react");
   const { MediaAdapterProvider, defaultMediaAdapter } =
     await import("@/components/ui/media-adapter");
+  const { LinkPlugin } = await import("@platejs/link/react");
   const { InlineImagePlugin } = await import("../plate/inline-image-plugin");
 
   // `pending.png` stays unresolved; other addresses resolve to the webview.
@@ -60,7 +61,7 @@ if (process.env.SVODE_INLINE_IMAGE_ELEMENT_DOM !== "1") {
   });
 
   const editor = createPlateEditor({
-    plugins: [ImagePlugin, InlineImagePlugin],
+    plugins: [ImagePlugin, InlineImagePlugin, LinkPlugin],
     value: [
       {
         type: "p",
@@ -75,6 +76,18 @@ if (process.env.SVODE_INLINE_IMAGE_ELEMENT_DOM !== "1") {
         ],
       },
       { type: "img", url: "block.png", children: [{ text: "" }] },
+      {
+        type: "p",
+        children: [
+          { text: "" },
+          {
+            type: "a",
+            url: "https://ci.dev",
+            children: [{ text: "" }, image("b.svg", "badge"), { text: "" }],
+          },
+          { text: "" },
+        ],
+      },
     ],
   });
 
@@ -151,6 +164,17 @@ if (process.env.SVODE_INLINE_IMAGE_ELEMENT_DOM !== "1") {
       "shots/my%20shot.png",
       "pending.png",
       "block.png",
+      "b.svg",
     ]);
+  });
+
+  test("an image inside a link opens no preview on a double click", async () => {
+    ImagePreviewStore.set("currentPreview", null);
+    const badge = imageOf("badge")!;
+    expect(badge.closest(".slate-a") !== null).toBe(true);
+    await act(async () => {
+      badge.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(ImagePreviewStore.get("currentPreview")).toBeNull();
   });
 }
