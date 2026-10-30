@@ -56,12 +56,17 @@ import {
   remarkBreakLineEndings,
   withListLineBreaks,
 } from "../model/markdown-line-breaks";
+import {
+  markdownInlineImageRules,
+  remarkInlineImages,
+} from "../model/markdown-inline-image";
 import { markdownLinkRules } from "../model/markdown-link";
 import { markdownParagraphRules } from "../model/markdown-paragraph";
 import {
   TRAILING_BLOCK_MARK,
   withoutServiceTrailingBlock,
 } from "../model/trailing-block";
+import { InlineImagePlugin } from "./inline-image-plugin";
 import { MarkdownCommentKit } from "./markdown-comment-kit";
 import { SystemDictationPlugin } from "./system-dictation-plugin";
 import { LinkShortcutPlugin } from "./link-shortcut-plugin";
@@ -118,6 +123,7 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
           ...getOptions().remarkPlugins,
           remarkMarkdownComments,
           remarkBreakLineEndings,
+          remarkInlineImages,
         ],
         rules: {
           ...getOptions().rules,
@@ -125,6 +131,7 @@ const ProductMarkdownKit = MarkdownKit.map((plugin) =>
           ...markdownLinkRules,
           ...markdownParagraphRules,
           ...markdownCommentRules,
+          ...markdownInlineImageRules,
         },
       },
       parser: {
@@ -186,6 +193,7 @@ export const EditorKit = [
   ...TableKit,
   ...ToggleKit,
   ...MediaKit,
+  InlineImagePlugin,
   ...CalloutKit,
   ...(ENABLE_PLATE_ADVANCED_BLOCKS ? TocKit : []),
   ...(ENABLE_PLATE_ADVANCED_BLOCKS ? ColumnKit : []),

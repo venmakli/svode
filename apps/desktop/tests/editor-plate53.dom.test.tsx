@@ -157,6 +157,38 @@ if (process.env.SVODE_PLATE53_DOM !== "1") {
     }
   });
 
+  test("Routine editor keeps a paragraph with an inline image when neighbouring text changes", async () => {
+    const root = createRoot(document.getElementById("app")!);
+    const changes: string[] = [];
+    const source =
+      "Intro\n\nBefore ![logo](./logo.png) after.\n\n- item ![a](a.png) more\n";
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ControlledMarkdownEditor
+              value={source}
+              onChange={(value) => changes.push(value)}
+            />
+          </TooltipProvider>,
+        );
+      });
+      const images = [
+        ...document.querySelectorAll("[data-slate-editor] img"),
+      ].map((img) => img.getAttribute("alt"));
+      expect(images).toEqual(["logo", "a"]);
+      expect(changes).toEqual([]);
+      await act(async () => {
+        mountedEditor!.tf.insertText("edited ", {
+          at: { path: [0, 0], offset: 0 },
+        });
+      });
+      expect(changes.at(-1)).toBe(source.replace("Intro", "edited Intro"));
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   for (const ending of ["> quoted", "```js\nconst a = 1;\n```"]) {
     test(`Routine editor ending with ${ending.split("\n")[0]} changes without a trailing U+200B paragraph`, async () => {
       const root = createRoot(document.getElementById("app")!);

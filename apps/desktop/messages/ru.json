@@ -161,6 +161,7 @@
   "editor_markdown_comment_name": "Комментарий: {text}",
   "editor_markdown_link_definition": "Определение ссылки",
   "editor_markdown_link_definition_name": "Определение ссылки: {text}",
+  "editor_inline_image_failed": "Картинка не загрузилась: {name}",
   "editor_add_cover": "Добавить обложку",
   "editor_change_cover": "Изменить обложку",
   "editor_reposition_cover": "Позиция",
