@@ -52,6 +52,10 @@ export {
 } from "./chat/hooks/use-attachment-opener";
 export { chatMediaFile } from "./chat/api/media";
 export {
+  HeldMediaOpenerContext as ChatHeldMediaOpenerContext,
+  type OpenHeldMedia as OpenChatHeldMedia,
+} from "./chat/hooks/use-media-opener";
+export {
   requestComposerFocus,
   type ComposerFocusRequest,
 } from "./chat/hooks/use-composer-focus";

@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { FileWarning, RefreshCw } from "lucide-react";
+import { ExternalLink, FileWarning, Globe, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,10 +13,13 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ExternalOpenButton,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   OpenWithControl,
   useExternalOpenGroup,
-  type ExternalOpenBinding,
   type OpenWithGroup,
 } from "@/features/external-open";
 import * as m from "@/paraglide/messages.js";
@@ -28,6 +31,8 @@ import {
   mediaDisplayName,
   mediaFormatFromPath,
   normalizeRuntimePath,
+  type HeldMedia,
+  type HeldMediaAction,
   type LocalMediaFile,
   type MediaFailure,
   type MediaTarget,
@@ -65,30 +70,38 @@ export function MediaSurface({
       /** A file outside the Space, only to view it; keep the same object. */
       file: LocalMediaFile;
     }
+  | {
+      /** Media the window holds, only to view it; keep the same object. */
+      held: HeldMedia;
+    }
 )) {
   const file = "file" in source ? source.file : null;
+  const held = "held" in source ? source.held : null;
   const { path, projectPath, spaceId, spacePath } =
-    "file" in source
-      ? { path: "", projectPath: "", spaceId: null, spacePath: "" }
-      : source;
+    "path" in source
+      ? source
+      : { path: "", projectPath: "", spaceId: null, spacePath: "" };
   const target = useMemo<MediaTarget>(
     () =>
-      file
-        ? { kind: "local", ...file }
-        : {
-            path,
-            projectPath,
-            spaceId:
-              normalizeRuntimePath(projectPath) ===
-              normalizeRuntimePath(spacePath)
-                ? null
-                : spaceId,
-            spacePath,
-          },
-    [file, path, projectPath, spaceId, spacePath],
+      held
+        ? { kind: "held", ...held }
+        : file
+          ? { kind: "local", ...file }
+          : {
+              path,
+              projectPath,
+              spaceId:
+                normalizeRuntimePath(projectPath) ===
+                normalizeRuntimePath(spacePath)
+                  ? null
+                  : spaceId,
+              spacePath,
+            },
+    [file, held, path, projectPath, spaceId, spacePath],
   );
   const session = useMediaSession(target);
-  const title = mediaDisplayName(target.path);
+  const title =
+    target.kind === "held" ? target.name : mediaDisplayName(target.path);
   const openFullPage = onOpenFullPage
     ? async () => {
         await session.prepareFullPageHandoff();
@@ -96,6 +109,30 @@ export function MediaSurface({
       }
     : undefined;
   const openWith = useExternalOpenGroup(session.externalOpen);
+  // Held media whose data is gone has no way out either.
+  const unavailable =
+    session.state.phase === "failed" &&
+    session.state.failure.kind === "unavailable";
+  const renderExternalOpen = (
+    presentation: "icon" | "text",
+    variant: "default" | "outline" = "outline",
+  ) =>
+    held ? (
+      unavailable ? null : (
+        <HeldMediaActionButton
+          action={held.action}
+          group={openWith}
+          presentation={presentation}
+          variant={variant}
+        />
+      )
+    ) : (
+      <OpenWithControl
+        groups={[openWith]}
+        presentation={presentation}
+        variant={variant}
+      />
+    );
   const loadedSource =
     session.state.phase === "loading" || session.state.phase === "ready"
       ? session.state.source
@@ -111,7 +148,10 @@ export function MediaSurface({
             icon={
               <MediaFamilyIcon
                 family={
-                  loadedSource?.family ?? mediaFamilyFromPath(target.path)
+                  loadedSource?.family ??
+                  (target.kind === "held"
+                    ? target.family
+                    : mediaFamilyFromPath(target.path))
                 }
               />
             }
@@ -121,7 +161,7 @@ export function MediaSurface({
         info={info}
         viewTools={viewTools}
         changes={changes}
-        openWith={<OpenWithControl groups={[openWith]} />}
+        openWith={renderExternalOpen("icon")}
         onExpand={openFullPage}
         onClose={onClose}
       />
@@ -174,7 +214,7 @@ export function MediaSurface({
       ) : (
         <MediaFailureState
           failure={session.state.failure}
-          externalOpen={session.externalOpen}
+          renderExternalOpen={(variant) => renderExternalOpen("text", variant)}
           onRetry={session.retry}
         />
       )}
@@ -210,13 +250,53 @@ function MediaLoadingState() {
   );
 }
 
+/**
+ * The one way out of Svode of held media, without a choice of applications:
+ * "Open in app" or "Open in browser" as its owner names it.
+ */
+function HeldMediaActionButton({
+  action,
+  group,
+  presentation,
+  variant,
+}: {
+  action: HeldMediaAction;
+  group: OpenWithGroup;
+  presentation: "icon" | "text";
+  variant: "default" | "outline";
+}) {
+  const Icon = action.kind === "browser" ? Globe : ExternalLink;
+  const button = (
+    <Button
+      type="button"
+      variant={variant}
+      size={presentation === "text" ? "default" : "icon-sm"}
+      aria-label={presentation === "text" ? undefined : action.label}
+      disabled={group.pending}
+      data-held-media-action={action.kind}
+      onClick={() => group.primary.run()}
+    >
+      <Icon data-icon={presentation === "text" ? "inline-start" : undefined} />
+      {presentation === "text" ? action.label : null}
+    </Button>
+  );
+  return presentation === "text" ? (
+    button
+  ) : (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="bottom">{action.label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function MediaFailureState({
   failure,
-  externalOpen,
+  renderExternalOpen,
   onRetry,
 }: {
   failure: MediaFailure;
-  externalOpen: ExternalOpenBinding;
+  renderExternalOpen(variant: "default" | "outline"): ReactNode;
   onRetry(): void;
 }) {
   const externalOnly =
@@ -232,29 +312,28 @@ function MediaFailureState({
         <EmptyTitle>{failureTitle(failure)}</EmptyTitle>
         <EmptyDescription>{failureDescription(failure)}</EmptyDescription>
       </EmptyHeader>
-      <EmptyContent className="flex-row justify-center">
-        {externalOnly ? (
-          <ExternalOpenButton
-            {...externalOpen}
-            presentation="text"
-            variant="default"
-          />
-        ) : (
-          <Button type="button" onClick={onRetry}>
-            <RefreshCw data-icon="inline-start" />
-            {m.attachments_retry()}
-          </Button>
-        )}
-        {!externalOnly ? (
-          <ExternalOpenButton {...externalOpen} presentation="text" />
-        ) : null}
-      </EmptyContent>
+      {/* Held media whose data is gone: no retry and no way out. */}
+      {failure.kind === "unavailable" ? null : (
+        <EmptyContent className="flex-row justify-center">
+          {externalOnly ? (
+            renderExternalOpen("default")
+          ) : (
+            <Button type="button" onClick={onRetry}>
+              <RefreshCw data-icon="inline-start" />
+              {m.attachments_retry()}
+            </Button>
+          )}
+          {!externalOnly ? renderExternalOpen("outline") : null}
+        </EmptyContent>
+      )}
     </Empty>
   );
 }
 
 function failureTitle(failure: MediaFailure) {
   switch (failure.kind) {
+    case "unavailable":
+      return m.media_unavailable_title();
     case "external_only":
       return m.media_external_only_title();
     case "malformed":
@@ -280,6 +359,8 @@ function failureTitle(failure: MediaFailure) {
 
 function failureDescription(failure: MediaFailure) {
   switch (failure.kind) {
+    case "unavailable":
+      return failure.detail ?? "";
     case "external_only":
       return m.media_external_only_description();
     case "malformed":

@@ -1,2 +1,2 @@
 export { MediaSurface } from "./ui/media-surface";
-export type { LocalMediaFile } from "./model/types";
+export type { HeldMedia, LocalMediaFile } from "./model/types";

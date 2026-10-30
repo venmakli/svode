@@ -130,16 +130,49 @@ export function mediaBlob(data: string, mimeType: string): Blob {
 }
 
 /**
- * Opens an image of the text by its address: an external one in the
- * browser, a `data:` one as media without a file.
+ * The data the runtime holds for media without a file, in the memory of the
+ * window for the media viewer (DF-233 R4): an address freed by `release`,
+ * nothing written to disk.
  */
-export async function openMediaUrl(media: ChatMedia): Promise<void> {
-  if (!media.url) throw new Error("The media has no address");
-  const data = dataImage(media.url);
-  if (!data) {
-    await openPath(media.url);
-    return;
-  }
+export async function loadMediaData(
+  session: AgentSessionKeyDto,
+  data: { itemId: string; segmentId: string },
+): Promise<
+  | {
+      ok: true;
+      url: string;
+      mimeType: string;
+      size: number;
+      release(): void;
+    }
+  | {
+      ok: false;
+      outcome: Exclude<AgentMediaOutcomeDto, { outcome: "available" }>;
+    }
+> {
+  const outcome = await readMediaData(session, data.itemId, data.segmentId);
+  if (outcome.outcome !== "available") return { ok: false, outcome };
+  const blob = mediaBlob(outcome.data, outcome.mimeType);
+  const url = URL.createObjectURL(blob);
+  return {
+    ok: true,
+    url,
+    mimeType: outcome.mimeType,
+    size: blob.size,
+    release: () => URL.revokeObjectURL(url),
+  };
+}
+
+/**
+ * Opens a `data:` image of the text in its system app, on the user's
+ * action only (DF-233 R3): written into the system temp directory first.
+ */
+export async function openDataImage(
+  media: ChatMedia,
+  url: string,
+): Promise<void> {
+  const data = dataImage(url);
+  if (!data) throw new Error("The image has no data");
   const blob = data.base64
     ? mediaBlob(data.payload, data.mimeType)
     : new Blob([decodeURIComponent(data.payload)], { type: data.mimeType });
@@ -151,9 +184,9 @@ export async function openMediaUrl(media: ChatMedia): Promise<void> {
 }
 
 /**
- * Opens media without a file in its system app (`08` R2): on the user's
- * click its data is written into the system temp directory, as a pasted
- * image is (`04`). The only disk write of agent media.
+ * Opens media without a file in its system app, on the user's action only
+ * (DF-233 R3): its data is written into the system temp directory, as a
+ * pasted image is (`04`). The only disk write of agent media.
  */
 export async function openMediaData(
   session: AgentSessionKeyDto,

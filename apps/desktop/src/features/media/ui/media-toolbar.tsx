@@ -65,7 +65,9 @@ export function MediaMetadataPopover({
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
           <dt className="text-muted-foreground">{m.media_metadata_format()}</dt>
           <dd className="truncate text-right">
-            {formatMediaName(source.format)}
+            {source.format
+              ? formatMediaName(source.format)
+              : m.media_metadata_unavailable()}
           </dd>
           {showDimensions ? (
             <>
@@ -92,13 +94,17 @@ export function MediaMetadataPopover({
             </>
           ) : null}
           <dt className="text-muted-foreground">{m.media_metadata_size()}</dt>
-          <dd className="text-right">{formatMediaBytes(source.sizeBytes)}</dd>
+          <dd className="text-right">
+            {source.sizeBytes === null
+              ? m.media_metadata_unavailable()
+              : formatMediaBytes(source.sizeBytes)}
+          </dd>
         </dl>
       </PopoverContent>
     </Popover>
   );
 }
 
-function formatMediaName(format: MediaSourceDescriptor["format"]) {
+function formatMediaName(format: NonNullable<MediaSourceDescriptor["format"]>) {
   return format === "three_gp" ? "3GP" : format.toUpperCase();
 }

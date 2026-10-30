@@ -114,7 +114,7 @@ test("a file outside the Space loads and opens through its owner", async () => {
     path: "/home/user/.claude/skills/review/assets/logo.png",
   };
 
-  const source = await loadMediaSource(target);
+  const { source } = await loadMediaSource(target);
   await checkMediaSource(target, "other");
   const unlisten = await subscribeMediaInvalidated(target, () => undefined);
   unlisten();

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act, useContext, useEffect, useState } from "react";
+import type { HeldMedia } from "@/features/media/app-shell";
 import type { SpaceInfo } from "@/features/space";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import { createTestDom } from "@/shared/testing/dom";
@@ -91,7 +92,7 @@ if (process.env.SVODE_CHAT_MEDIA_PEEK_DOM !== "1") {
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { Sheet, SheetContent, SheetTitle } =
     await import("@/components/ui/sheet");
-  const { ChatAttachmentOpenerContext } =
+  const { ChatAttachmentOpenerContext, ChatHeldMediaOpenerContext } =
     await import("@/features/agent-sessions");
   const { registerRootSpace } = await import("@/features/space");
   const { usePeekStackEntry } =
@@ -138,13 +139,57 @@ if (process.env.SVODE_CHAT_MEDIA_PEEK_DOM !== "1") {
 
   let open: ((attachment: { path: string; name: string }) => void) | null =
     null;
+  let openHeld: ((media: HeldMedia) => void) | null = null;
   function Opener() {
     const opener = useContext(ChatAttachmentOpenerContext);
+    const heldOpener = useContext(ChatHeldMediaOpenerContext);
     useEffect(() => {
       open = opener;
+      openHeld = heldOpener;
     });
     return null;
   }
+
+  /** Media the chat holds, recording what the viewer does with it. */
+  function heldMedia(
+    overrides: Partial<HeldMedia> & {
+      content?: Awaited<ReturnType<HeldMedia["load"]>>;
+    } = {},
+  ) {
+    const log: string[] = [];
+    const { content, ...rest } = overrides;
+    const media: HeldMedia = {
+      key: "m1:image",
+      name: "image.png",
+      family: "image",
+      load: async () => {
+        log.push("load");
+        return (
+          content ?? {
+            url: "blob:http://localhost/held-image",
+            mimeType: "image/png",
+            sizeBytes: 4,
+            release: () => log.push("release"),
+          }
+        );
+      },
+      action: {
+        kind: "app",
+        label: m.sessions_chat_media_open_in_app(),
+        run: async () => {
+          log.push("open in app");
+        },
+      },
+      ...rest,
+    };
+    return { media, log };
+  }
+  async function openHeldMedia(media: HeldMedia) {
+    await act(async () => openHeld!(media));
+    await settle();
+  }
+  const heldAction = () =>
+    mediaPeek()?.querySelector<HTMLElement>("[data-held-media-action]");
   async function openAttachment(path: string) {
     await act(async () =>
       open!({ path, name: path.split("/").at(-1) ?? path }),
@@ -275,6 +320,132 @@ if (process.env.SVODE_CHAT_MEDIA_PEEK_DOM !== "1") {
       "//server/share/photo.png",
     ]);
     expect(commands("media_create_local_source")).toEqual([]);
+    await dom.render(null);
+  });
+
+  test("media without a file opens in the media peek from the memory of the window, its app only by Open in app", async () => {
+    await dom.render(
+      <TooltipProvider>
+        <ChatAttachmentPeekProvider>
+          <Opener />
+        </ChatAttachmentPeekProvider>
+      </TooltipProvider>,
+    );
+    calls.length = 0;
+    const { media, log } = heldMedia();
+    await openHeldMedia(media);
+    // One media by its name, read once, nothing asked of Desktop.
+    expect(identity()).toBe("image.png");
+    expect(log).toEqual(["load"]);
+    expect(mediaPeek()!.querySelector("img")?.getAttribute("src")).toBe(
+      "blob:http://localhost/held-image",
+    );
+    expect(
+      calls.filter((call) => !call.command.startsWith("plugin:event|")),
+    ).toEqual([]);
+    expect(
+      mediaPeek()!.querySelector(`[aria-label="${m.peek_expand()}"]`),
+    ).toBeNull();
+    expect(mediaPeek()!.querySelector("[data-changes-trigger]")).toBeNull();
+
+    // One action, without a list of applications or Finder.
+    const action = heldAction()!;
+    expect(action.getAttribute("data-held-media-action")).toBe("app");
+    expect(action.getAttribute("aria-label")).toBe(
+      m.sessions_chat_media_open_in_app(),
+    );
+    expect(
+      mediaPeek()!.querySelector(`[aria-label="${m.external_open_with()}"]`),
+    ).toBeNull();
+    await click(action);
+    expect(log).toEqual(["load", "open in app"]);
+    expect(identity()).toBe("image.png");
+
+    // Closing frees the data.
+    await click(
+      mediaPeek()!.querySelector<HTMLElement>(
+        `[aria-label="${m.peek_close()}"]`,
+      )!,
+    );
+    expect(mediaPeek()).toBe(undefined);
+    expect(log).toEqual(["load", "open in app", "release"]);
+    expect(
+      calls.filter((call) => !call.command.startsWith("plugin:event|")),
+    ).toEqual([]);
+    await dom.render(null);
+  });
+
+  test("a shown external image loads without a referrer and opens in the browser only by its action", async () => {
+    await dom.render(
+      <TooltipProvider>
+        <ChatAttachmentPeekProvider>
+          <Opener />
+        </ChatAttachmentPeekProvider>
+      </TooltipProvider>,
+    );
+    const url = "https://cdn.example.com/a/logo.png";
+    const { media, log } = heldMedia({
+      key: url,
+      name: "logo",
+      content: { url, remote: true, mimeType: null, sizeBytes: null },
+      action: {
+        kind: "browser",
+        label: m.sessions_chat_media_open_in_browser(),
+        run: async () => {
+          log.push("browser");
+        },
+      },
+    });
+    await openHeldMedia(media);
+    expect(identity()).toBe("logo");
+    const image = mediaPeek()!.querySelector("img")!;
+    expect(image.getAttribute("src")).toBe(url);
+    expect(image.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(image.hasAttribute("crossorigin")).toBe(false);
+    const action = heldAction()!;
+    expect(action.getAttribute("aria-label")).toBe(
+      m.sessions_chat_media_open_in_browser(),
+    );
+    await click(action);
+    expect(log).toEqual(["load", "browser"]);
+    await dom.render(null);
+  });
+
+  test("data the runtime let go shows its reason without a way out", async () => {
+    await dom.render(
+      <TooltipProvider>
+        <ChatAttachmentPeekProvider>
+          <Opener />
+        </ChatAttachmentPeekProvider>
+      </TooltipProvider>,
+    );
+    const reason = m.sessions_chat_media_released();
+    const { media } = heldMedia({ content: { unavailable: reason } });
+    await openHeldMedia(media);
+    const text = mediaPeek()!.textContent ?? "";
+    expect(text.includes(m.media_unavailable_title())).toBe(true);
+    expect(text.includes(reason)).toBe(true);
+    expect(heldAction() ?? null).toBeNull();
+    expect(text.includes(m.attachments_retry())).toBe(false);
+    await dom.render(null);
+  });
+
+  test("from the session peek held media opens as its child: Esc closes only it and frees the data", async () => {
+    await dom.render(
+      <TooltipProvider>
+        <ChatAttachmentPeekProvider>
+          <SessionPeek />
+        </ChatAttachmentPeekProvider>
+      </TooltipProvider>,
+    );
+    await settle();
+    const { media, log } = heldMedia();
+    await openHeldMedia(media);
+    expect(identity()).toBe("image.png");
+    await pressEscape(heldAction()!);
+    expect(mediaPeek()).toBe(undefined);
+    expect(Boolean(doc.querySelector("[data-session-peek]"))).toBe(true);
+    expect(log).toEqual(["load", "release"]);
     await dom.render(null);
   });
 

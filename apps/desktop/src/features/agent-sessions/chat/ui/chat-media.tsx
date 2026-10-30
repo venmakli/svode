@@ -25,10 +25,9 @@ import {
 } from "@/components/ui/tooltip";
 import { formatMediaBytes, formatMediaDuration } from "@/features/media";
 import { cn } from "@/shared/lib/utils";
-import { openInSystem } from "../api/attachments";
 import type { AgentSessionKeyDto } from "../api/chat";
 import { useAttachmentAvailable } from "../hooks/use-attachment-preview";
-import { useOpenMedia } from "../hooks/use-media-opener";
+import { useOpenMedia, useOpenMediaInApp } from "../hooks/use-media-opener";
 import { useMediaView, type MediaView } from "../hooks/use-media-view";
 import {
   groupMedia,
@@ -422,7 +421,7 @@ function MediaStatus({
   className?: string;
   inline?: boolean;
 }) {
-  const open = useOpenMedia(session);
+  const openInApp = useOpenMediaInApp(session);
   const name = mediaName(media);
   const Icon =
     view.state === "missing"
@@ -448,9 +447,7 @@ function MediaStatus({
         type="button"
         variant="outline"
         size="xs"
-        onClick={() =>
-          media.path ? void openInSystem(media.path) : open(media)
-        }
+        onClick={() => openInApp(media)}
       >
         {m.sessions_chat_media_open_in_app()}
       </Button>

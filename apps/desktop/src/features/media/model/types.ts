@@ -27,15 +27,53 @@ export interface LocalMediaFile {
   externalOpen: ExternalOpenTarget;
 }
 
+/**
+ * Media the window holds itself, only to view it: data in its memory or an
+ * address its owner already shows. Nothing is written to view it; its owner
+ * reads it on open, frees it on close and names its one way out of Svode.
+ */
+export interface HeldMedia {
+  /** Unique among the media of its owner. */
+  key: string;
+  name: string;
+  family: MediaSourceDescriptor["family"];
+  /** Reads the media for the viewer, or why it is unavailable. */
+  load(): Promise<HeldMediaContent>;
+  /** Opens the media outside Svode, only on the user's action. */
+  action: HeldMediaAction;
+}
+
+export type HeldMediaContent =
+  | {
+      /** A `blob:` or `data:` address, or an external one (`remote`). */
+      url: string;
+      /** Loaded without CORS mode and without a referrer. */
+      remote?: boolean;
+      mimeType: string | null;
+      sizeBytes: number | null;
+      /** Frees what `load` took; runs once the viewer closes. */
+      release?(): void;
+    }
+  /** The reason as the owner names it. */
+  | { unavailable: string };
+
+export interface HeldMediaAction {
+  kind: "app" | "browser";
+  label: string;
+  run(): Promise<void>;
+}
+
 export type MediaTarget =
   | SpaceMediaTarget
-  | ({ kind: "local" } & LocalMediaFile);
+  | ({ kind: "local" } & LocalMediaFile)
+  | ({ kind: "held" } & HeldMedia);
 
 export interface MediaSourceDescriptor {
-  format: MediaFormat;
+  /** `null` while unknown, for media the window holds. */
+  format: MediaFormat | null;
   family: "image" | "audio" | "video";
   mimeType: string;
-  sizeBytes: number;
+  sizeBytes: number | null;
   generation: string;
   width: number | null;
   height: number | null;
@@ -43,8 +81,11 @@ export interface MediaSourceDescriptor {
   intrinsicOversized: boolean;
   inlinePreview: boolean;
   requiresRangeRequests: boolean;
+  /** Names one loaded source; a capability for a file. */
   capabilityToken: string;
   sourceUrl: string;
+  /** An external address: loaded without CORS mode and without a referrer. */
+  remote?: boolean;
   durationSeconds?: number;
 }
 
@@ -55,6 +96,8 @@ export interface MediaRuntimeMetadata {
 }
 
 export type MediaFailureKind =
+  /** Held media whose data is gone; `detail` is the reason to show. */
+  | "unavailable"
   | "resource_limit"
   | "malformed"
   | "source_unavailable"
@@ -110,6 +153,7 @@ export type MediaSessionState =
   | { phase: "failed"; failure: MediaFailure };
 
 export function mediaTargetKey(target: MediaTarget) {
+  if (target.kind === "held") return `held\0${target.key}`;
   return target.kind === "local"
     ? `local\0${normalizeRuntimePath(target.path)}`
     : `${normalizeRuntimePath(target.spacePath)}\0${target.path}`;
@@ -156,6 +200,30 @@ export function mediaFormatFromPath(path: string): MediaFormat | null {
     default:
       return null;
   }
+}
+
+const MIME_FORMATS: Record<string, MediaFormat> = {
+  "image/svg+xml": "svg",
+  "image/x-icon": "ico",
+  "image/vnd.microsoft.icon": "ico",
+  "audio/mpeg": "mp3",
+  "audio/mp4": "m4a",
+  "audio/wave": "wav",
+  "video/quicktime": "mov",
+  "video/x-matroska": "mkv",
+  "video/x-msvideo": "avi",
+  "video/3gpp": "three_gp",
+  "video/x-ms-wmv": "wmv",
+  "audio/x-ms-wma": "wma",
+};
+
+/** The format a MIME type names; `null` for any other type. */
+export function mediaFormatFromMime(mimeType: string): MediaFormat | null {
+  const type = mimeType.split(";")[0].trim().toLowerCase();
+  const subtype = type.split("/")[1]?.replace(/^x-/u, "");
+  return (
+    MIME_FORMATS[type] ?? (subtype ? mediaFormatFromPath(`.${subtype}`) : null)
+  );
 }
 
 export function mediaFamilyFromFormat(

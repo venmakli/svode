@@ -370,7 +370,8 @@ export function MediaImageViewer({
               ref={imageRef}
               alt={title}
               className="m-auto shrink-0"
-              crossOrigin="anonymous"
+              crossOrigin={source.remote ? undefined : "anonymous"}
+              referrerPolicy={source.remote ? "no-referrer" : undefined}
               draggable={false}
               src={source.sourceUrl}
               style={{ height: renderedHeight, width: renderedWidth }}

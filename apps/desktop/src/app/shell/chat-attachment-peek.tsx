@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenArtifact } from "@/features/artifact";
 import {
   ChatAttachmentOpenerContext,
+  ChatHeldMediaOpenerContext,
   chatAttachmentKind,
   chatMediaFile,
   locateChatAttachment,
@@ -12,7 +13,7 @@ import {
 } from "@/features/agent-sessions";
 import { ChangesControl, fileChangesTarget } from "@/features/changes";
 import { usePeekNavigation } from "@/features/scope-surfaces";
-import type { LocalMediaFile } from "@/features/media/app-shell";
+import type { HeldMedia, LocalMediaFile } from "@/features/media/app-shell";
 import { useSpace } from "@/features/space";
 import { openPath } from "@/platform/native/shell";
 import {
@@ -43,7 +44,9 @@ type AttachmentPeekTarget =
       registeredSpaceId: string | null;
     }
   /** A media file outside the project, only to view it (DF-233 R2). */
-  | { kind: "local-media"; attachment: ChatAttachment; file: LocalMediaFile };
+  | { kind: "local-media"; attachment: ChatAttachment; file: LocalMediaFile }
+  /** Media of the chat without a file, or an image by its address (R2). */
+  | { kind: "held-media"; media: HeldMedia };
 
 const MEDIA_EXTENSIONS = new Set<string>([
   ...IMAGE_EXTS,
@@ -66,7 +69,8 @@ function viewerKind(attachment: ChatAttachment): ViewerKind | null {
  * or a file of the project in a peek over the chat — over the session peek as
  * its child —, an image, a video or an audio outside the project, a pasted
  * image too, in the same peek with the media viewer, and anything else in its
- * system app. A network path is never shown.
+ * system app. A network path is never shown. Media the chat holds without a
+ * file opens in the same peek too.
  */
 export function ChatAttachmentPeekProvider({
   children,
@@ -108,16 +112,23 @@ export function ChatAttachmentPeekProvider({
     [activeRootId, rootSpaces, spaces],
   );
 
+  const openHeld = useCallback(
+    (media: HeldMedia) => setTarget({ kind: "held-media", media }),
+    [],
+  );
+
   return (
     <ChatAttachmentOpenerContext.Provider value={open}>
-      {children}
-      <ChatAttachmentPeek
-        target={target}
-        projectPath={
-          rootSpaces.find((space) => space.id === activeRootId)?.path
-        }
-        onClose={() => setTarget(null)}
-      />
+      <ChatHeldMediaOpenerContext.Provider value={openHeld}>
+        {children}
+        <ChatAttachmentPeek
+          target={target}
+          projectPath={
+            rootSpaces.find((space) => space.id === activeRootId)?.path
+          }
+          onClose={() => setTarget(null)}
+        />
+      </ChatHeldMediaOpenerContext.Provider>
     </ChatAttachmentOpenerContext.Provider>
   );
 }
@@ -131,9 +142,10 @@ function ChatAttachmentPeek({
   projectPath: string | undefined;
   onClose: () => void;
 }) {
-  const navigation = usePeekNavigation(
-    requested,
-    (target) => target.attachment.path,
+  const navigation = usePeekNavigation(requested, (target) =>
+    target.kind === "held-media"
+      ? `held\0${target.media.key}`
+      : target.attachment.path,
   );
   const { target, leave } = navigation;
   const openArtifact = useOpenArtifact();
@@ -161,7 +173,9 @@ function ChatAttachmentPeek({
         style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
       >
         <SheetTitle className="sr-only">
-          {target?.attachment.name ?? ""}
+          {(target?.kind === "held-media"
+            ? target.media.name
+            : target?.attachment.name) ?? ""}
         </SheetTitle>
         {target?.kind === "page" ? (
           <CompactScopePeek
@@ -184,6 +198,10 @@ function ChatAttachmentPeek({
         ) : target?.kind === "local-media" ? (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>
             <MediaSurface file={target.file} onClose={close} />
+          </Suspense>
+        ) : target?.kind === "held-media" ? (
+          <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+            <MediaSurface held={target.media} onClose={close} />
           </Suspense>
         ) : target ? (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>

@@ -9,6 +9,7 @@ import type {
   AgentSessionKeyDto,
   AgentSessionSnapshotDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
+import type { HeldMedia } from "@/features/media/app-shell";
 import { JSDOM } from "jsdom";
 
 if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
@@ -42,6 +43,7 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
   const mediaReads: string[] = [];
   const systemOpened: string[] = [];
   const saved: string[] = [];
+  let voiceReleased = false;
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -84,7 +86,7 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       if (segmentId === "big") {
         return { outcome: "unavailable", reason: "too_large" };
       }
-      if (segmentId === "old") {
+      if (segmentId === "old" || (segmentId === "voice" && voiceReleased)) {
         return { outcome: "unavailable", reason: "released" };
       }
       return { outcome: "available", mimeType: "audio/wav", data: "UklGRg==" };
@@ -118,8 +120,10 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
   const { ChatTimeline } = await import("./chat-timeline");
   const { AttachmentOpenerContext } =
     await import("../hooks/use-attachment-opener");
+  const { HeldMediaOpenerContext } = await import("../hooks/use-media-opener");
 
   const opened: string[] = [];
+  const held: HeldMedia[] = [];
 
   function segment(
     id: string,
@@ -280,7 +284,11 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
             <AttachmentOpenerContext.Provider
               value={(attachment) => opened.push(attachment.path)}
             >
-              <ChatTimeline session={key} snapshot={snapshot()} />
+              <HeldMediaOpenerContext.Provider
+                value={(media) => held.push(media)}
+              >
+                <ChatTimeline session={key} snapshot={snapshot()} />
+              </HeldMediaOpenerContext.Provider>
             </AttachmentOpenerContext.Provider>
           </TooltipProvider>
         </ThemeProvider>,
@@ -425,17 +433,68 @@ if (process.env.SVODE_CHAT_MEDIA_DOM !== "1") {
       ).toBe(true);
       expect(lost.querySelector("button")).toBe(null);
 
-      // Media without a file opens through a temp file in its system app.
+      // Media without a file opens in the media peek, nothing written.
       const voice = Array.from(document.querySelectorAll("button")).find(
         (button) => button.textContent === "voice",
       );
+      mediaReads.length = 0;
       await click(voice);
       await settle();
+      expect(saved).toEqual([]);
+      expect(systemOpened).toEqual([]);
+      expect(
+        held.map(({ key, name, family }) => ({ key, name, family })),
+      ).toEqual([{ key: "m1:voice", name: "voice", family: "audio" }]);
+      expect(mediaReads).toEqual([]);
+
+      // The viewer reads the data on open into the memory of the window
+      // and frees it on close.
+      const [media] = held;
+      const createdUrls: string[] = [];
+      const revokedUrls: string[] = [];
+      const { createObjectURL, revokeObjectURL } = URL;
+      URL.createObjectURL = (blob: Blob) => {
+        const url = createObjectURL(blob);
+        createdUrls.push(url);
+        return url;
+      };
+      URL.revokeObjectURL = (url: string) => {
+        revokedUrls.push(url);
+        revokeObjectURL(url);
+      };
+      try {
+        const content = await media.load();
+        expect(mediaReads).toEqual(["m1/voice"]);
+        if ("unavailable" in content) throw new Error("unavailable");
+        expect(content.url).toBe(createdUrls[0]);
+        expect(content.mimeType).toBe("audio/wav");
+        expect(content.sizeBytes).toBe(4);
+        expect(saved).toEqual([]);
+        content.release?.();
+        expect(revokedUrls).toEqual([content.url]);
+      } finally {
+        URL.createObjectURL = createObjectURL;
+        URL.revokeObjectURL = revokeObjectURL;
+      }
+
+      // "Open in app" writes the temp file once, on the action only.
+      expect(media.action.kind).toBe("app");
+      expect(media.action.label).toBe(m.sessions_chat_media_open_in_app());
+      await act(async () => media.action.run());
       expect(saved).toEqual(["4"]);
       expect(systemOpened).toEqual(["/tmp/svode-pasted/voice.wav"]);
+
+      // Data the runtime let go is unavailable with its reason.
+      voiceReleased = true;
+      expect(await media.load()).toEqual({
+        unavailable: m.sessions_chat_media_released(),
+      });
     } finally {
       await unmountAll();
       systemOpened.length = 0;
+      saved.length = 0;
+      held.length = 0;
+      voiceReleased = false;
     }
   });
 

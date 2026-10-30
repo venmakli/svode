@@ -63,16 +63,19 @@ if (process.env.SVODE_MEDIA_SESSION_DOM !== "1") {
     loadMediaSource: async () => {
       await sourceGate;
       opened += 1;
-      return descriptor(`t${opened}`);
+      const token = `t${opened}`;
+      return {
+        source: descriptor(token),
+        release: async () => {
+          released.push(token);
+        },
+      };
     },
     mediaExternalOpenTarget: () => ({
       listApps: async () => [],
       open: async () => undefined,
       preferenceKey: "mp4",
     }),
-    releaseMediaSource: async (token: string) => {
-      released.push(token);
-    },
     subscribeMediaInvalidated: async (
       _target: MediaTarget,
       handler: () => void,

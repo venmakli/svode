@@ -7,7 +7,6 @@ import {
   checkMediaSource,
   loadMediaSource,
   mediaExternalOpenTarget,
-  releaseMediaSource,
   subscribeMediaInvalidated,
 } from "../api/media-api";
 import { MediaRuntimeSession, mediaSessionCoordinator } from "../model/session";
@@ -57,12 +56,12 @@ export function useMediaSession(stableTarget: MediaTarget) {
       viewStateRef.current = initialViewState;
       setViewState(initialViewState);
       try {
-        const source = await loadMediaSource(stableTarget);
+        const { source, release } = await loadMediaSource(stableTarget);
         if (session.signal.aborted) {
-          await releaseMediaSource(source.capabilityToken);
+          await release();
           return;
         }
-        session.addDisposer(() => releaseMediaSource(source.capabilityToken));
+        session.addDisposer(release);
         if (source.family === "image" && !source.inlinePreview) {
           sessionRef.current = null;
           setState({

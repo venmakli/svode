@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act, type ReactNode } from "react";
 import type { Root } from "react-dom/client";
+import type { HeldMedia } from "@/features/media/app-shell";
 import { JSDOM } from "jsdom";
 
 if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
@@ -106,6 +107,7 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
   const { TooltipProvider } = await import("@/components/ui/tooltip");
   const { AttachmentOpenerContext } =
     await import("../hooks/use-attachment-opener");
+  const { HeldMediaOpenerContext } = await import("../hooks/use-media-opener");
   const { SessionCwdContext } = await import("../hooks/use-path-base");
   const { RevealedImagesProvider } =
     await import("../hooks/use-revealed-images");
@@ -113,6 +115,7 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
 
   const doc = dom.window.document;
   const opened: string[] = [];
+  const held: HeldMedia[] = [];
   const mounted: Root[] = [];
 
   function tree(text: string, streaming = false): ReactNode {
@@ -121,9 +124,11 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
         <AttachmentOpenerContext.Provider
           value={(attachment) => opened.push(attachment.path)}
         >
-          <SessionCwdContext.Provider value="/work/project">
-            <AgentText text={text} streaming={streaming} />
-          </SessionCwdContext.Provider>
+          <HeldMediaOpenerContext.Provider value={(media) => held.push(media)}>
+            <SessionCwdContext.Provider value="/work/project">
+              <AgentText text={text} streaming={streaming} />
+            </SessionCwdContext.Provider>
+          </HeldMediaOpenerContext.Provider>
         </AttachmentOpenerContext.Provider>
       </TooltipProvider>
     );
@@ -217,9 +222,26 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
       await click(bunny);
       expect(opened).toEqual(["/abs/a.png"]);
 
+      // A `data:` image opens in the media peek from the memory of the
+      // window: nothing is written until "Open in app".
       const data = byLabel("dot")!;
       expect(data.querySelector("img")?.getAttribute("src")).toBe(dot);
       await click(data);
+      expect(saved).toEqual([]);
+      expect(shellOpened).toEqual([]);
+      expect(held.length).toBe(1);
+      const [media] = held;
+      expect([media.name, media.family]).toEqual(["dot", "image"]);
+      expect(await media.load()).toEqual({
+        url: dot,
+        remote: false,
+        mimeType: "image/png",
+        sizeBytes: 8,
+      });
+      expect(saved).toEqual([]);
+      expect(media.action.kind).toBe("app");
+      expect(media.action.label).toBe(m.sessions_chat_media_open_in_app());
+      await act(async () => media.action.run());
       expect(saved.length).toBe(1);
       expect(shellOpened).toEqual(["/tmp/svode-pasted/dot.png"]);
       expect(fetches).toBe(0);
@@ -229,6 +251,8 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
       opened.length = 0;
       shellOpened.length = 0;
       loads.length = 0;
+      saved.length = 0;
+      held.length = 0;
     }
   });
 
@@ -329,7 +353,21 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
       expect(image.getAttribute("src")).toBe(url);
       expect(image.getAttribute("referrerpolicy")).toBe("no-referrer");
       expect(doc.querySelector("[data-external-image]")).toBe(null);
+      // The shown image opens in the media peek by its address; the
+      // browser only by "Open in browser".
       await click(tile);
+      expect(shellOpened).toEqual([]);
+      expect(held.length).toBe(1);
+      const [media] = held;
+      expect(await media.load()).toEqual({
+        url,
+        remote: true,
+        mimeType: null,
+        sizeBytes: null,
+      });
+      expect(media.action.kind).toBe("browser");
+      expect(media.action.label).toBe(m.sessions_chat_media_open_in_browser());
+      await act(async () => media.action.run());
       expect(shellOpened).toEqual([url]);
 
       // The message mounts again in the same timeline: still shown.
@@ -349,6 +387,7 @@ if (process.env.SVODE_TEXT_MEDIA_DOM !== "1") {
       await unmountAll();
       loads.length = 0;
       shellOpened.length = 0;
+      held.length = 0;
     }
   });
 
