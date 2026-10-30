@@ -33,12 +33,20 @@ interface PageDetailRefreshOptions {
    * a deletion, rename or move started in this Desktop left its path.
    */
   onGone: (changedHere: boolean) => void;
+  /**
+   * Follows a folder above the Page that this Desktop renames or moves: saves
+   * the pending work before, and takes the Page to its new path after.
+   */
+  relocation?: {
+    prepare: () => Promise<unknown>;
+    follow: (path: string) => void;
+  };
 }
 
 /**
  * Keeps the shown Page metadata and schema in line with the files when
- * another writer changes them, and reports the Page when its file is gone.
- * The editor reconciles the body on its own.
+ * another writer changes them, and reports the Page when its file is gone or
+ * a folder above it moved here. The editor reconciles the body on its own.
  */
 export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
   const { spacePath, path } = options;
@@ -64,8 +72,18 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
     let appliedSchemaRead = 0;
     // An own deletion of a directory Page reaches no watcher event, so its
     // end checks the Page as an event would.
-    const ownChange = watchOwnPathChange(spacePath, path, () => {
-      void refreshPage().catch(warn);
+    const ownChange = watchOwnPathChange(spacePath, path, {
+      onDeleted: () => void refreshPage().catch(warn),
+      follower: {
+        prepare: async () => optionsRef.current.relocation?.prepare(),
+        follow: (next) => {
+          const relocation = optionsRef.current.relocation;
+          if (!relocation) return;
+          // The Page goes on at its new path, so nothing tells this one gone.
+          active = false;
+          relocation.follow(next);
+        },
+      },
     });
 
     const refreshPage = async (confirmingGone = false): Promise<void> => {
@@ -86,7 +104,8 @@ export function usePageDetailRefresh(options: PageDetailRefreshOptions) {
         }
         // An own rename, move or conversion of the Page or of a folder above
         // it leaves this path too, so only its end tells the outcome; a
-        // handoff of the Page has retired this subscription by then.
+        // handoff of the Page or its move with the folder has retired this
+        // subscription by then.
         await optionsRef.current.settled();
         if (active) return refreshPage(true);
         return;

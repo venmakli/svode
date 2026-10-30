@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { retargetActiveContent } from "@/features/artifact";
+import { followContentRelocation } from "@/features/page/navigation";
 import type { TreeNode } from "../model/types";
 import { nestTreePage, unnestTreePage } from "../api/content-tree-actions";
 import {
@@ -165,6 +166,13 @@ export function useFileTreeDragCommand({
           .moveContentItem(spaceId, movePlan.movePath, movePlan.toParent);
         if (newPath) {
           editorSync.suppressPaths([newPath]);
+          // A Page open inside a moved folder goes with it.
+          followContentRelocation(
+            space.path,
+            spaceId,
+            movePlan.movePath,
+            newPath,
+          );
         }
 
         if (newPath && movePlan.isBareFolder) {

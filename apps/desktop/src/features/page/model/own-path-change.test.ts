@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  followOwnContentRelocation,
   trackOwnContentDeletion,
   trackOwnContentRelocation,
   watchOwnPathChange,
@@ -73,9 +74,9 @@ test("a failed own deletion and one finished before the watch are not this Page'
 
 test("a running or finished own rename or move of a folder leaves the Pages under it", async () => {
   const deleted: string[] = [];
-  const page = watchOwnPathChange("/space", "docs/sub/a.md", () =>
-    deleted.push("page"),
-  );
+  const page = watchOwnPathChange("/space", "docs/sub/a.md", {
+    onDeleted: () => deleted.push("page"),
+  });
   const prefixed = watchOwnPathChange("/space", "docs-old/a.md");
   try {
     let running = false;
@@ -124,5 +125,88 @@ test("a title rename leaves the Pages under its README only when the path change
     kept.stop();
     renamed.stop();
     failed.stop();
+  }
+});
+
+function follower(spacePath: string, path: string, log: string[]) {
+  return watchOwnPathChange(spacePath, path, {
+    follower: {
+      prepare: async () => {
+        log.push(`save ${path}`);
+      },
+      follow: (next) => log.push(`${path} -> ${next}`),
+    },
+  });
+}
+
+test("Pages inside a folder moved here save first and follow it, at any depth", async () => {
+  const log: string[] = [];
+  const watches = [
+    follower("/space", "docs/a.md", log),
+    follower("/space", "docs/sub/b.md", log),
+    follower("/space", "docs/sub/README.md", log),
+    follower("/space", "docs-old/a.md", log),
+    follower("/other", "docs/a.md", log),
+  ];
+  try {
+    await trackOwnContentRelocation(
+      { spacePath: "/space", path: "docs" },
+      async () => {
+        log.push("rename");
+      },
+    );
+    followOwnContentRelocation("/space", "docs", "notes");
+    expect(log).toEqual([
+      "save docs/a.md",
+      "save docs/sub/b.md",
+      "save docs/sub/README.md",
+      "rename",
+      "docs/a.md -> notes/a.md",
+      "docs/sub/b.md -> notes/sub/b.md",
+      "docs/sub/README.md -> notes/sub/README.md",
+    ]);
+  } finally {
+    for (const watch of watches) watch.stop();
+  }
+});
+
+test("the moved item itself is handed over by its own rename or move, not followed", async () => {
+  const log: string[] = [];
+  const watches = [
+    follower("/space", "docs/README.md", log),
+    follower("/space", "docs/a.md", log),
+    follower("/space", "leaf.md", log),
+  ];
+  try {
+    await trackOwnContentRelocation(
+      { spacePath: "/space", path: "docs/README.md" },
+      async () => ({ path: "notes/README.md" }),
+    );
+    followOwnContentRelocation("/space", "docs/README.md", "notes/README.md");
+    await trackOwnContentRelocation(
+      { spacePath: "/space", path: "leaf.md" },
+      async () => undefined,
+    );
+    followOwnContentRelocation("/space", "leaf.md", "archive/leaf.md");
+    expect(log).toEqual(["save docs/a.md", "docs/a.md -> notes/a.md"]);
+  } finally {
+    for (const watch of watches) watch.stop();
+  }
+});
+
+test("a failed move saves the Pages inside and moves none of them", async () => {
+  const log: string[] = [];
+  const page = follower("/space", "docs/a.md", log);
+  try {
+    await trackOwnContentRelocation(
+      { spacePath: "/space", path: "docs" },
+      async () => {
+        throw new Error("Name taken");
+      },
+    ).catch(() => undefined);
+    expect(page.changedHere()).toBe(false);
+    expect(log).toEqual(["save docs/a.md"]);
+  } finally {
+    page.stop();
   }
 });

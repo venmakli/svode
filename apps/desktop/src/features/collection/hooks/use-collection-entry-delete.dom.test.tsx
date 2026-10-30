@@ -89,6 +89,8 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
       _target: unknown,
       run: () => Promise<unknown>,
     ) => run(),
+    followOwnContentRelocation: () => {},
+    ownChangeRoot: (path: string) => path,
     watchOwnPathChange: () => ({ changedHere: () => false, stop: () => {} }),
   }));
 

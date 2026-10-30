@@ -16,7 +16,10 @@ import {
   suppressEditorFileEvents,
 } from "@/features/editor/file-tree-sync";
 import { retargetActiveContent } from "@/features/artifact";
-import { publishPageTitleOutcome } from "@/features/page/navigation";
+import {
+  followContentRelocation,
+  publishPageTitleOutcome,
+} from "@/features/page/navigation";
 import { normalizePage, publishPageFilenameWarnings } from "@/features/page";
 import {
   renameTreeItemPath,
@@ -146,6 +149,9 @@ export function useFileTreeItemRename({
         // An App or Collection without README open from this folder stays
         // open at its new path, as a renamed Page does.
         retargetActiveContent(node.path, newPath, spaceId);
+        // A Page open inside it follows too, before the old path of its
+        // folder may be taken for a vanished Page.
+        followContentRelocation(space.path, spaceId, node.path, newPath);
         if (modifiedFiles.length > 0) {
           markEditorFilesStale(space.path, modifiedFiles);
           // Rewritten link sources outside the folder reach an open document
@@ -174,6 +180,7 @@ export function useFileTreeItemRename({
           suppressEditorFileEvents(space.path, [node.path, page.path]);
         }
         publishPageTitleOutcome(space.path, node.path, page);
+        followContentRelocation(space.path, spaceId, node.path, page.path);
         publishPageFilenameWarnings(page.warnings);
         finishTreeMutation();
         patchPageTreeMeta(

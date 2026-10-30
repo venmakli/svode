@@ -7,6 +7,7 @@ export {
   openArtifact,
   openScopeOwner,
   retargetActiveContent,
+  retargetActiveContentInside,
   setActiveContentShown,
 } from "./api/selection-actions";
 export {

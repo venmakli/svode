@@ -65,6 +65,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         },
       ): () => void;
       onDocumentPathChange(path: string): void;
+      documentPathHandoff: { previousPath: string; path: string } | null;
     }) {
       convert = props.onDocumentPathChange;
       const { registerPersistence } = props;
@@ -82,6 +83,11 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       return (
         <textarea
           data-editor={props.documentPath}
+          data-handoff={
+            props.documentPathHandoff
+              ? `${props.documentPathHandoff.previousPath} -> ${props.documentPathHandoff.path}`
+              : ""
+          }
           defaultValue={props.initialPage.body}
           readOnly={props.readOnly}
         />
@@ -216,8 +222,9 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     getActiveContentPath,
   } = await import("@/features/artifact");
   const { useScopeOwner } = await import("@/features/scope-surfaces");
-  const { openPage, publishPageTitleOutcome } =
+  const { followContentRelocation, openPage, publishPageTitleOutcome } =
     await import("@/features/page/navigation");
+  const { trackOwnContentRelocation } = await import("@/features/page/page-api");
   const { useMainHeaderContribution } =
     await import("./main-header-contribution");
   const { PageScopeSurface } = await import("./page-scope-surface");
@@ -871,6 +878,61 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       } finally {
         await f.cleanup();
       }
+    }
+  });
+
+  test("a full Page inside a folder moved here saves its pending work first and goes on at the new path in the same editor", async () => {
+    toasts.length = 0;
+    const f = await fixture("docs/sub/a.md");
+    const doc = f.dom.window.document;
+    try {
+      const editor = doc.querySelector<HTMLTextAreaElement>("textarea")!;
+      editor.value = "typed before the move";
+      const steps: string[] = [];
+      let saved!: () => void;
+      flushBody = () => {
+        steps.push("save");
+        return new Promise<void>((resolve) => {
+          saved = () => {
+            steps.push("saved");
+            resolve();
+          };
+        });
+      };
+      const reads = f.reads();
+      let moving!: Promise<void>;
+      await act(async () => {
+        moving = trackOwnContentRelocation(
+          { spacePath: f.spacePath, path: "docs" },
+          async () => {
+            steps.push("move");
+          },
+        );
+        await settle();
+      });
+      // The folder waits for the save in flight, so the work lands in the
+      // file that moves and the old path is not written after.
+      expect(steps).toEqual(["save"]);
+      await act(async () => {
+        saved();
+        await moving;
+        followContentRelocation(f.spacePath, "root", "docs", "notes");
+        await settle();
+      });
+      await act(settle);
+      expect(steps).toEqual(["save", "saved", "move"]);
+      expect(getActiveContentPath()).toBe("notes/sub/a.md");
+      expect(doc.querySelector("textarea")).toBe(editor);
+      expect(editor.dataset.editor).toBe("notes/sub/a.md");
+      expect(editor.dataset.handoff).toBe("docs/sub/a.md -> notes/sub/a.md");
+      expect(editor.value).toBe("typed before the move");
+      expect(mounts).toBe(1);
+      expect(unmounts).toBe(0);
+      expect(f.reads()).toBe(reads);
+      expect(toasts).toEqual([]);
+    } finally {
+      flushBody = async () => {};
+      await f.cleanup();
     }
   });
 

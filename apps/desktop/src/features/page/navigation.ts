@@ -1,4 +1,5 @@
 export {
+  followContentRelocation,
   openPage,
   publishPageTitleOutcome,
   retargetPage,

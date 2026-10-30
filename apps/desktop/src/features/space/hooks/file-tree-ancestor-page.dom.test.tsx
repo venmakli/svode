@@ -33,11 +33,11 @@ function node(path: string, kind: TreeNode["kind"]): TreeNode {
 }
 
 /**
- * A Page open under `docs`, with the sidebar operations over the Space. Each
+ * A Page open at `page`, with the sidebar operations over the Space. Each
  * operation that leaves a path holds until `release`, and the watcher may
  * report the old folder while it runs.
  */
-async function environment() {
+async function environment(page = PAGE) {
   const dom = new JSDOM("<!doctype html><div id=app></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -67,7 +67,7 @@ async function environment() {
     path: spacePath,
     status: "ready",
   };
-  const files = new Set([PAGE, "docs/README.md"]);
+  const files = new Set([page, "docs/README.md"]);
   const relocate = (from: string, to: string) => {
     for (const path of [...files])
       if (path.startsWith(`${from}/`)) {
@@ -77,8 +77,14 @@ async function environment() {
   };
   let operation = Promise.resolve();
   let reportDuring: string | null = null;
+  let failure: string | null = null;
+  let reads = 0;
   const { emit } = await import("@/platform/native/events");
   const leave = async (from: string, to: string) => {
+    if (failure) {
+      await operation;
+      throw failure;
+    }
     relocate(from, to);
     if (reportDuring)
       await emit("file:created", { space: spacePath, path: reportDuring });
@@ -88,6 +94,7 @@ async function environment() {
     async (command, args) => {
       const input = (args ?? {}) as Record<string, unknown>;
       if (command === "read_page") {
+        reads += 1;
         const path = String(input.path);
         if (!files.has(path)) throw `File not found: ${path}`;
         return {
@@ -128,11 +135,41 @@ async function environment() {
     activeRootPath: spacePath,
     rootSpaces: [space],
   });
-  const { PageDetailProvider } = await import("@/features/page/scope-surface");
+  const { PageDetailProvider, usePageDetailContext } =
+    await import("@/features/page/scope-surface");
+  const { closeActiveContent, getActiveContentPath, useActiveContentPath } =
+    await import("@/features/artifact");
+  const { openPage } = await import("@/features/page/navigation");
   const { useFileTreeItemRename } = await import("./use-file-tree-item-rename");
   const { useFileTreeDragCommand } =
     await import("./use-file-tree-drag-command");
   let gone = 0;
+  let shownPath: string | null = null;
+  function Shown() {
+    const path = usePageDetailContext().page?.path ?? null;
+    useEffect(() => {
+      shownPath = path;
+    });
+    return null;
+  }
+  // The shell opens the selected Page at its path.
+  function OpenPage() {
+    const path = useActiveContentPath();
+    if (!path) return null;
+    return (
+      <PageDetailProvider
+        spacePath={spacePath}
+        spaceId="root"
+        readmePath={path}
+        ownerPath={path}
+        target="page"
+        onOpenPath={() => {}}
+        onPageGone={() => (gone += 1)}
+      >
+        <Shown />
+      </PageDetailProvider>
+    );
+  }
   const actions: {
     rename?: ReturnType<typeof useFileTreeItemRename>;
     drag?: ReturnType<typeof useFileTreeDragCommand>;
@@ -160,21 +197,13 @@ async function environment() {
     return null;
   }
   const root = createRoot(dom.window.document.getElementById("app")!);
+  closeActiveContent();
+  openPage(page, "root");
   const render = async (row: TreeNode) => {
     await act(async () => {
       root.render(
         <>
-          <PageDetailProvider
-            spacePath={spacePath}
-            spaceId="root"
-            readmePath={PAGE}
-            ownerPath={PAGE}
-            target="page"
-            onOpenPath={() => {}}
-            onPageGone={() => (gone += 1)}
-          >
-            {null}
-          </PageDetailProvider>
+          <OpenPage />
           <Sidebar row={row} />
         </>,
       );
@@ -187,7 +216,14 @@ async function environment() {
     files,
     shown,
     gone: () => gone,
+    reads: () => reads,
+    /** The path the open Page shows and the selection holds. */
+    opened: () => ({ page: shownPath, selection: getActiveContentPath() }),
     render,
+    /** Makes the next operations fail once released. */
+    fail: (message: string) => {
+      failure = message;
+    },
     /** Holds the next operations until the returned release. */
     hold: (folder: string | null) => {
       const gate = deferred();
@@ -251,6 +287,7 @@ async function environment() {
     },
     cleanup: async () => {
       await act(async () => root.unmount());
+      closeActiveContent();
       Object.assign(toast, saved);
       clearNativeMocks();
       restore();
@@ -263,18 +300,43 @@ const operations = {
   "renaming the folder": {
     row: node("docs", "folder"),
     run: (env: Awaited<ReturnType<typeof environment>>) => env.rename("notes"),
+    to: "notes",
   },
   "renaming the folder Page by its title": {
     row: node("docs/README.md", "page"),
     run: (env: Awaited<ReturnType<typeof environment>>) => env.rename("notes"),
+    to: "notes",
   },
   "dragging the folder into another": {
     row: node("docs", "folder"),
     run: (env: Awaited<ReturnType<typeof environment>>) => env.drag("docs"),
+    to: "archive/docs",
   },
 } as const;
 
 for (const [name, operation] of Object.entries(operations)) {
+  for (const page of ["docs/a.md", PAGE]) {
+    const moved = `${operation.to}${page.slice("docs".length)}`;
+    test(`${name} above an open Page at ${page} takes it to ${moved} without a watcher event`, async () => {
+      const env = await environment(page);
+      try {
+        await env.render(operation.row);
+        const reads = env.reads();
+        env.hold(null)();
+        await env.finish(await operation.run(env));
+        expect(env.opened()).toEqual({ page: moved, selection: moved });
+        // The session goes on at the new path without reading the Page again.
+        expect(env.reads()).toBe(reads);
+        expect(env.files.has(moved)).toBe(true);
+        expect(env.files.has(page)).toBe(false);
+        expect(env.gone()).toBe(0);
+        expect(env.shown).toEqual([]);
+      } finally {
+        await env.cleanup();
+      }
+    });
+  }
+
   test(`${name} above an open Page confirms nothing while it runs and gives no message for the old folder reported then`, async () => {
     const env = await environment();
     try {
@@ -287,8 +349,9 @@ for (const [name, operation] of Object.entries(operations)) {
       expect(env.gone()).toBe(0);
       release();
       await env.finish(running);
-      // Until the Page follows its folder, it closes as an own deletion does.
-      expect(env.gone()).toBe(1);
+      const moved = `${operation.to}/sub/a.md`;
+      expect(env.opened()).toEqual({ page: moved, selection: moved });
+      expect(env.gone()).toBe(0);
       expect(env.shown).toEqual([]);
     } finally {
       await env.cleanup();
@@ -302,8 +365,47 @@ for (const [name, operation] of Object.entries(operations)) {
       env.hold(null)();
       await env.finish(await operation.run(env));
       await env.event("docs");
-      expect(env.gone()).toBe(1);
+      const moved = `${operation.to}/sub/a.md`;
+      expect(env.opened()).toEqual({ page: moved, selection: moved });
+      expect(env.gone()).toBe(0);
       expect(env.shown).toEqual([]);
+    } finally {
+      await env.cleanup();
+    }
+  });
+}
+
+for (const [name, row] of [
+  ["renaming the folder", node("docs", "folder")],
+  ["renaming the folder Page by its title", node("docs/README.md", "page")],
+] as const) {
+  test(`${name} that fails leaves the open Page inside where it is`, async () => {
+    const env = await environment();
+    try {
+      await env.render(row);
+      env.fail("Name taken");
+      env.hold(null)();
+      await env.finish(await env.rename("notes"));
+      expect(env.opened()).toEqual({ page: PAGE, selection: PAGE });
+      expect(env.files.has(PAGE)).toBe(true);
+      expect(env.gone()).toBe(0);
+    } finally {
+      await env.cleanup();
+    }
+  });
+}
+
+for (const page of ["docs-old/a.md", "other/b.md"]) {
+  test(`renaming the folder docs leaves the open Page at ${page} where it is`, async () => {
+    const env = await environment(page);
+    try {
+      await env.render(node("docs", "folder"));
+      const reads = env.reads();
+      env.hold(null)();
+      await env.finish(await env.rename("notes"));
+      expect(env.opened()).toEqual({ page, selection: page });
+      expect(env.reads()).toBe(reads);
+      expect(env.gone()).toBe(0);
     } finally {
       await env.cleanup();
     }
