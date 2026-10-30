@@ -212,10 +212,7 @@ export function useBoardViewRuntime({
 
   const addGroupColumn = useCallback(
     async (type: PropertyType = "status") => {
-      const { name } = await addColumn({
-        type,
-        baseName: "Status",
-      });
+      const { name } = await addColumn(type);
       query.setLocalQuery({ groupBy: name });
     },
     [addColumn, query],

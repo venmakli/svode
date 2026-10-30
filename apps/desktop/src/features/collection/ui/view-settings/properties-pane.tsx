@@ -27,15 +27,10 @@ import type {
   UseViewQueryResult,
   ViewType,
 } from "@/features/collection/query/model";
-import type { CollectionSchema, PropertyType } from "@/features/properties";
+import type { CollectionSchema } from "@/features/properties";
 import { TypeSettingsPane } from "@/features/properties/column-settings";
-import {
-  PropertyTypeMenuPane,
-  propertyTypeAddUnavailableReason,
-  propertyTypeLabel,
-} from "@/features/properties/column-menu";
+import { propertyTypeLabel } from "@/features/properties/column-menu";
 import { NEWER_PROPERTY_ICON } from "@/features/properties/display";
-import { handleError } from "../../hooks/error-feedback";
 import { SortableFieldVisibilityRow } from "../view-settings-panes";
 import {
   SettingsRow,
@@ -149,26 +144,6 @@ export function ViewSettingsPropertiesPane({
         onClick={addColumn}
       />
     </div>
-  );
-}
-
-export function ViewSettingsPropertyAddTypePane({
-  schema,
-  addColumnWithType,
-}: {
-  schema: CollectionSchema;
-  addColumnWithType: (propertyType: PropertyType) => Promise<void>;
-}) {
-  return (
-    <PropertyTypeMenuPane
-      activeType="text"
-      unavailableReason={(type) =>
-        propertyTypeAddUnavailableReason(schema.columns, type)
-      }
-      onSelect={(nextType) =>
-        void addColumnWithType(nextType).catch(handleError)
-      }
-    />
   );
 }
 

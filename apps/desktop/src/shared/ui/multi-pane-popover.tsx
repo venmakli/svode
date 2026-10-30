@@ -32,6 +32,8 @@ interface MultiPanePopoverProps<TPane extends string> {
   panes: Array<MultiPaneDefinition<TPane>>;
   mainPane: TPane;
   initialPane?: TPane;
+  /** The main pane also shows its title, with a back button that closes. */
+  mainPaneHeader?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   pane?: TPane;
@@ -55,6 +57,7 @@ export function MultiPanePopover<TPane extends string>({
   panes,
   mainPane,
   initialPane,
+  mainPaneHeader = false,
   open,
   onOpenChange,
   pane,
@@ -113,7 +116,7 @@ export function MultiPanePopover<TPane extends string>({
           className,
         )}
       >
-        {activePane === mainPane ? null : (
+        {activePane === mainPane && !mainPaneHeader ? null : (
           <>
             <div className="flex h-10 shrink-0 items-center gap-1 px-2">
               <Button

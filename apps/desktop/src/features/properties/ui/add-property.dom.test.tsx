@@ -78,12 +78,11 @@ if (!isolatedProcess) {
     );
   });
 
-  test("add-type pane disables an existing Status and ID with the reason", () => {
+  test("add-type pane marks nothing and keeps an existing Status and ID unavailable with the reason", () => {
     const render = (columns: typeof withSingletons | []) => {
       const dom = new JSDOM(
         `<!doctype html><body>${renderToStaticMarkup(
           <PropertyTypeMenuPane
-            activeType="text"
             unavailableReason={(type) =>
               propertyTypeAddUnavailableReason(columns, type)
             }
@@ -95,23 +94,65 @@ if (!isolatedProcess) {
     };
 
     const blocked = render(withSingletons);
-    expect(blocked.get(m.table_property_type_status())?.disabled).toBe(true);
-    expect(blocked.get(m.table_property_type_unique_id())?.disabled).toBe(true);
+    const status = blocked.get(m.table_property_type_status())!;
+    expect(status.disabled).toBe(false);
+    expect(status.getAttribute("aria-disabled")).toBe("true");
     expect(
-      blocked.get(m.table_property_type_status())?.textContent?.includes(
-        m.property_type_add_unavailable({
-          type: m.table_property_type_status(),
-        }),
-      ),
-    ).toBe(true);
-    expect(blocked.get(m.table_property_type_select())?.disabled).toBe(false);
-    expect(blocked.get(m.table_property_type_multi_select())?.disabled).toBe(
-      false,
+      status.ownerDocument.getElementById(
+        status.getAttribute("aria-describedby")!,
+      )?.textContent,
+    ).toBe(
+      m.property_type_add_unavailable({
+        type: m.table_property_type_status(),
+      }),
     );
+    expect(
+      blocked
+        .get(m.table_property_type_unique_id())
+        ?.getAttribute("aria-disabled"),
+    ).toBe("true");
+    expect(
+      blocked
+        .get(m.table_property_type_select())
+        ?.hasAttribute("aria-disabled"),
+    ).toBe(false);
+    expect(
+      Array.from(blocked.values()).some(
+        (row) =>
+          row.querySelector('.lucide-check[data-icon="inline-end"]') !== null,
+      ),
+    ).toBe(false);
 
     const open = render([]);
-    expect(open.get(m.table_property_type_status())?.disabled).toBe(false);
-    expect(open.get(m.table_property_type_unique_id())?.disabled).toBe(false);
+    expect(
+      Array.from(open.values()).some((row) =>
+        row.hasAttribute("aria-disabled"),
+      ),
+    ).toBe(false);
+  });
+
+  test("the change-type pane marks and disables the current type", () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>${renderToStaticMarkup(
+        <PropertyTypeMenuPane
+          activeType="select"
+          disableActive
+          onSelect={() => undefined}
+        />,
+      )}</body>`,
+    );
+    const rows = rowsByLabel(dom.window.document);
+    const current = rows.get(m.table_property_type_select())!;
+    expect(current.disabled).toBe(true);
+    expect(
+      current.querySelector('.lucide-check[data-icon="inline-end"]') !== null,
+    ).toBe(true);
+    expect(
+      Array.from(rows.values()).filter(
+        (row) =>
+          row.querySelector('.lucide-check[data-icon="inline-end"]') !== null,
+      ).length,
+    ).toBe(1);
   });
 
   test("add field dialog disables an existing Status and ID", async () => {

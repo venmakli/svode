@@ -2,7 +2,10 @@ import { useState } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { CollectionSchema, PropertyType } from "@/features/properties";
-import { notifyPropertyAddFailed } from "@/features/properties";
+import {
+  newPropertyColumn,
+  notifyPropertyAddFailed,
+} from "@/features/properties";
 import { addCollectionColumn } from "../api";
 import { handleError } from "./error-feedback";
 import {
@@ -217,23 +220,16 @@ export function useViewSettingsActions({
     );
   }
 
-  function nextColumnName() {
-    const names = new Set(schema.columns.map((column) => column.name));
-    let index = schema.columns.length + 1;
-    let name = `Property ${index}`;
-    while (names.has(name)) {
-      index += 1;
-      name = `Property ${index}`;
-    }
-    return name;
-  }
-
   function addColumn() {
     setPane("propertyAddType");
   }
 
   async function addColumnWithType(propertyType: PropertyType) {
-    const column = { name: nextColumnName(), type: propertyType };
+    const column = newPropertyColumn({
+      columns: schema.columns,
+      type: propertyType,
+      collectionPath,
+    });
     let next: CollectionSchema;
     try {
       next = await addCollectionColumn({

@@ -1,6 +1,10 @@
 import { toast } from "sonner";
 import type { CollectionSchema, PropertyType } from "@/features/properties";
-import { normalizeSchema } from "@/features/properties";
+import {
+  newPropertyColumn,
+  normalizeSchema,
+  uniquePropertyName,
+} from "@/features/properties";
 import {
   addCollectionColumn,
   addCollectionDateColumn,
@@ -21,14 +25,6 @@ export function useCollectionColumnActions({
   projectPath?: string | null;
   onSchemaChange: (schema: CollectionSchema) => void;
 }) {
-  function uniqueColumnName(baseName: string) {
-    const names = new Set(schema.columns.map((column) => column.name));
-    if (!names.has(baseName)) return baseName;
-    let index = 2;
-    while (names.has(`${baseName} ${index}`)) index += 1;
-    return `${baseName} ${index}`;
-  }
-
   async function runColumnMutation(
     mutation: () => Promise<CollectionSchema>,
   ): Promise<boolean> {
@@ -43,33 +39,25 @@ export function useCollectionColumnActions({
     }
   }
 
-  async function addColumn({
-    type,
-    baseName,
-    relation,
-  }: {
-    type: PropertyType;
-    baseName: string;
-    relation?: string;
-  }) {
-    const name = uniqueColumnName(baseName);
+  async function addColumn(type: PropertyType) {
+    const column = newPropertyColumn({
+      columns: schema.columns,
+      type,
+      collectionPath,
+    });
     const next = await addCollectionColumn({
       spacePath,
       collectionPath,
-      column: {
-        name,
-        type,
-        relation,
-      },
+      column,
       projectPath,
     });
     const normalized = normalizeSchema(next);
     onSchemaChange(normalized);
-    return { name, schema: normalized };
+    return { name: column.name, schema: normalized };
   }
 
   async function addDateColumn({ baseName }: { baseName: string }) {
-    const name = uniqueColumnName(baseName);
+    const name = uniquePropertyName(schema.columns, baseName);
     const next = await addCollectionDateColumn({
       spacePath,
       collectionPath,

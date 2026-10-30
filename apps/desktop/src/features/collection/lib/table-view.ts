@@ -1,11 +1,6 @@
 import type { CollectionView } from "@/features/collection/query/model";
 import type { Page } from "@/features/page";
-import type {
-  CollectionSchema,
-  Column,
-  PropertyType,
-} from "@/features/properties";
-import { PROPERTY_TYPES } from "@/features/properties";
+import type { CollectionSchema, Column } from "@/features/properties";
 import type { CollectionTableRow } from "../model/table-types";
 import {
   entryCollectionPath,
@@ -131,16 +126,4 @@ export function isNestedCollection(
   nestedCollectionPaths: Set<string>,
 ) {
   return nestedCollectionPaths.has(entryCollectionPath(entry));
-}
-
-export function uniqueColumnName(schema: CollectionSchema, baseName: string) {
-  const names = new Set(schema.columns.map((column) => column.name));
-  if (!names.has(baseName)) return baseName;
-  let index = 2;
-  while (names.has(`${baseName} ${index}`)) index += 1;
-  return `${baseName} ${index}`;
-}
-
-export function propertyTypeLabel(type: PropertyType) {
-  return PROPERTY_TYPES.find((item) => item.value === type)?.label ?? type;
 }

@@ -1,5 +1,9 @@
 export { ColumnTypeChangeDialog } from "./ui/column-type-change-dialog";
 export {
+  PropertyAddTypeMenu,
+  propertyAddTypePane,
+} from "./ui/property-add-type-menu";
+export {
   PropertyLabelTrigger,
   PropertyTypeMenuPane,
   SchemaColumnMenu,

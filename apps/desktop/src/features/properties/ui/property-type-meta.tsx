@@ -7,6 +7,7 @@ import {
   Flag,
   Grid2X2,
   Hash,
+  Info,
   KeyRound,
   Link,
   ListTree,
@@ -22,7 +23,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { isPropertyTypeAddable } from "../model/add-column";
+import { isPropertyTypeAddable, uniquePropertyName } from "../model/add-column";
 import type { Column, PropertyType } from "../model/types";
 import * as m from "@/paraglide/messages.js";
 
@@ -70,6 +71,26 @@ export function propertyTypeAddUnavailableReason(
     : m.property_type_add_unavailable({ type: propertyTypeLabel(type) });
 }
 
+/**
+ * The column a UI entrypoint adds without asking for a name: named after its
+ * type, numbered when taken; a relation points at the current collection.
+ */
+export function newPropertyColumn({
+  columns,
+  type,
+  collectionPath,
+}: {
+  columns: readonly Column[];
+  type: PropertyType;
+  collectionPath: string | null | undefined;
+}): Column {
+  return {
+    name: uniquePropertyName(columns, propertyTypeLabel(type)),
+    type,
+    ...(type === "relation" ? { relation: collectionPath || "." } : {}),
+  };
+}
+
 export function propertyTypeSettingsMeta(column: Column): {
   icon: LucideIcon;
   label: string;
@@ -115,6 +136,27 @@ export function SensitivePropertyTypeHint() {
       </TooltipTrigger>
       <TooltipContent side="right" align="center" className="max-w-64">
         {m.property_pii_git_history_hint()}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Why a property type cannot be added, shown on hover of an info icon. */
+export function PropertyTypeUnavailableHint({ reason }: { reason: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          aria-hidden="true"
+          data-property-type-unavailable-hint=""
+          className="inline-flex text-muted-foreground"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Info data-icon="inline-end" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" align="center" className="max-w-64">
+        {reason}
       </TooltipContent>
     </Tooltip>
   );

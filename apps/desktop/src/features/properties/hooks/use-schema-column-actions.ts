@@ -7,6 +7,7 @@ import {
   renameSchemaColumn,
 } from "../api/schema-api";
 import { propertyErrorMessage } from "../lib/error-message";
+import { uniquePropertyName } from "../model/add-column";
 import type {
   CollectionSchema,
   Column,
@@ -150,8 +151,8 @@ export function useSchemaColumnActions({
   const duplicateColumn = useCallback(() => {
     const duplicate = {
       ...column,
-      name: uniqueColumnName(
-        schema,
+      name: uniquePropertyName(
+        schema.columns,
         `${column.name} (${m.table_duplicate_column_suffix()})`,
       ),
     };
@@ -189,14 +190,6 @@ export function useSchemaColumnActions({
         : null,
     renameColumn,
   };
-}
-
-function uniqueColumnName(schema: CollectionSchema, baseName: string) {
-  const names = new Set(schema.columns.map((item) => item.name));
-  if (!names.has(baseName)) return baseName;
-  let index = 2;
-  while (names.has(`${baseName} ${index}`)) index += 1;
-  return `${baseName} ${index}`;
 }
 
 function showSchemaMutationWarnings(warnings: SchemaMutationWarning[]) {

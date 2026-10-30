@@ -7,7 +7,6 @@ import {
   entryParentDir,
   flattenRows,
   normalizeVisibleFields,
-  propertyTypeLabel,
   showNestedForView,
 } from "../../lib/table-view";
 import { titleFilter } from "../../lib/utils";
@@ -191,11 +190,7 @@ export function useTableViewRuntime({
     async (type: PropertyType) => {
       let columnName: string;
       try {
-        ({ name: columnName } = await addColumn({
-          type,
-          baseName: propertyTypeLabel(type),
-          relation: type === "relation" ? collectionPath || "." : undefined,
-        }));
+        ({ name: columnName } = await addColumn(type));
       } catch (error) {
         notifyPropertyAddFailed(error);
         return;
@@ -210,7 +205,7 @@ export function useTableViewRuntime({
       }
       setOpenColumn(columnName);
     },
-    [addColumn, collectionPath, updateViewPatch, visibleFields],
+    [addColumn, updateViewPatch, visibleFields],
   );
 
   const handleCreate = useCallback(

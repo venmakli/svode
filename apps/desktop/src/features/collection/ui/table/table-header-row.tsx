@@ -7,7 +7,7 @@ import {
   TableRow as ShadcnTableRow,
 } from "@/components/ui/table";
 import type { Column, PropertyType } from "@/features/properties";
-import { PropertyTypePicker } from "./property-type-picker";
+import { PropertyAddTypeMenu } from "@/features/properties/column-menu";
 import type { CollectionTableRow } from "./types";
 import * as m from "@/paraglide/messages.js";
 
@@ -38,7 +38,7 @@ export function TableHeaderRow({
           ))}
           <TableHead className="h-[34px] p-0">
             {!readOnly ? (
-              <PropertyTypePicker
+              <PropertyAddTypeMenu
                 trigger={
                   <Button
                     type="button"

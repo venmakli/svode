@@ -10,9 +10,11 @@ import type {
 import type { CollectionSchema } from "@/features/properties";
 import {
   ColumnTypeChangeDialog,
+  propertyAddTypePane,
   PropertyTypeMenuPane,
 } from "@/features/properties/column-menu";
 import { useCollectionActors, useViewSettingsActions } from "../hooks";
+import { handleError } from "../hooks/error-feedback";
 import { viewType } from "../lib/utils";
 import type { SettingsPane } from "../model";
 import {
@@ -22,7 +24,6 @@ import {
 } from "./view-settings/main-pane";
 import {
   ViewSettingsPropertiesPane,
-  ViewSettingsPropertyAddTypePane,
   ViewSettingsPropertyEditPane,
 } from "./view-settings/properties-pane";
 import {
@@ -241,17 +242,12 @@ export function ViewSettingsPopover({
       ),
       notice: m.collection_properties_notice(),
     },
-    {
+    propertyAddTypePane({
       id: "propertyAddType" as const,
-      title: m.table_property_type_title(),
-      content: (
-        <ViewSettingsPropertyAddTypePane
-          schema={schema}
-          addColumnWithType={addColumnWithType}
-        />
-      ),
-      notice: m.table_property_type_notice(),
-    },
+      columns: schema.columns,
+      onSelect: (propertyType) =>
+        void addColumnWithType(propertyType).catch(handleError),
+    }),
     {
       id: "propertyEdit" as const,
       title: selectedProperty,

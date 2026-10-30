@@ -15,3 +15,15 @@ export function isPropertyTypeAddable(
     !columns.some((column) => column.type === type)
   );
 }
+
+/** The base name, or the base name with the first free number from 2. */
+export function uniquePropertyName(
+  columns: readonly Column[],
+  baseName: string,
+) {
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has(baseName)) return baseName;
+  let index = 2;
+  while (names.has(`${baseName} ${index}`)) index += 1;
+  return `${baseName} ${index}`;
+}

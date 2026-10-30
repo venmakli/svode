@@ -91,4 +91,8 @@ export {
   valueToString,
 } from "./lib/utils";
 export { notifyPropertyAddFailed } from "./lib/error-message";
-export { PROPERTY_TYPE_ICONS } from "./ui/property-type-meta";
+export { uniquePropertyName } from "./model/add-column";
+export {
+  newPropertyColumn,
+  PROPERTY_TYPE_ICONS,
+} from "./ui/property-type-meta";

@@ -1,4 +1,4 @@
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useId, useState, type ComponentProps, type ReactNode } from "react";
 import {
   Check,
   ChevronRight,
@@ -36,6 +36,7 @@ import {
   PROPERTY_TYPE_ICONS,
   propertyTypeLabel,
   propertyTypeSettingsMeta,
+  PropertyTypeUnavailableHint,
   SensitivePropertyTypeHint,
 } from "./property-type-meta";
 import * as m from "@/paraglide/messages.js";
@@ -342,22 +343,29 @@ export function SchemaMenuSeparator() {
 export function SchemaMenuRow({
   icon: Icon,
   label,
-  description,
   meta,
   right,
+  unavailableReason,
   onClick,
   disabled,
   destructive,
 }: {
   icon: LucideIcon;
   label: string;
-  description?: string;
   meta?: string;
   right?: ReactNode;
+  /**
+   * The row stays one line and cannot be chosen; the reason shows on hover of
+   * an info icon and describes the row. The row is not `disabled`, so the
+   * icon still receives the pointer.
+   */
+  unavailableReason?: string | null;
   onClick?: () => void;
   disabled?: boolean;
   destructive?: boolean;
 }) {
+  const reasonId = useId();
+  const unavailable = Boolean(unavailableReason);
   return (
     <Button
       type="button"
@@ -366,33 +374,34 @@ export function SchemaMenuRow({
       className={cn(
         "min-h-8 w-full justify-start gap-2.5 rounded-md px-2 py-1.5 text-[13px] font-normal",
         "[&_svg:not([class*='size-'])]:size-3.5",
-        description && "h-auto",
+        "aria-disabled:cursor-default aria-disabled:opacity-50 aria-disabled:hover:bg-transparent dark:aria-disabled:hover:bg-transparent aria-disabled:active:translate-y-0",
         destructive &&
           "text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive",
       )}
-      onClick={onClick}
+      aria-disabled={unavailable || undefined}
+      aria-describedby={unavailable ? reasonId : undefined}
+      onClick={unavailable ? undefined : onClick}
       disabled={disabled}
     >
       <Icon
         className={cn("text-muted-foreground", destructive && "text-current")}
         data-icon="inline-start"
       />
-      {description ? (
-        <span className="flex min-w-0 flex-1 flex-col text-left">
-          <span className="truncate font-medium">{label}</span>
-          <span className="text-[11.5px] leading-4 whitespace-normal text-muted-foreground">
-            {description}
-          </span>
-        </span>
-      ) : (
-        <span className="min-w-0 flex-1 truncate text-left font-medium">
-          {label}
-        </span>
-      )}
+      <span className="min-w-0 flex-1 truncate text-left font-medium">
+        {label}
+      </span>
       {meta ? (
         <span className="shrink-0 text-[11.5px] text-muted-foreground">
           {meta}
         </span>
+      ) : null}
+      {unavailableReason ? (
+        <>
+          <span id={reasonId} hidden>
+            {unavailableReason}
+          </span>
+          <PropertyTypeUnavailableHint reason={unavailableReason} />
+        </>
       ) : null}
       {right !== undefined ? (
         right
@@ -409,6 +418,10 @@ export function SchemaMenuRow({
   );
 }
 
+/**
+ * The property type list. With `activeType` it changes a column's type and
+ * marks the current one; without it, it adds a property and marks nothing.
+ */
 export function PropertyTypeMenuPane({
   activeType,
   disabled = false,
@@ -416,7 +429,7 @@ export function PropertyTypeMenuPane({
   unavailableReason,
   onSelect,
 }: {
-  activeType: PropertyType;
+  activeType?: PropertyType;
   disabled?: boolean;
   disableActive?: boolean;
   unavailableReason?: (type: PropertyType) => string | null;
@@ -428,16 +441,13 @@ export function PropertyTypeMenuPane({
         {Object.entries(PROPERTY_TYPE_ICONS).map(([type, Icon]) => {
           const propertyType = type as PropertyType;
           const active = propertyType === activeType;
-          const reason = unavailableReason?.(propertyType) ?? undefined;
           return (
             <SchemaMenuRow
               key={type}
               icon={Icon}
               label={propertyTypeLabel(propertyType)}
-              description={reason}
-              disabled={
-                disabled || (disableActive && active) || Boolean(reason)
-              }
+              unavailableReason={unavailableReason?.(propertyType)}
+              disabled={disabled || (disableActive && active)}
               right={
                 <span className="flex items-center gap-2">
                   {isSensitivePropertyType(propertyType) ? (
