@@ -1433,7 +1433,6 @@
   "collection_template_duplicate": "Duplicate template",
   "collection_template_delete": "Delete template",
   "collection_template_type_leaf": "Leaf",
-  "collection_template_type_folder": "Folder",
   "collection_template_type_nested_collection": "Nested collection",
   "collection_default_template_missing": "Default template missing",
   "collection_none": "None",

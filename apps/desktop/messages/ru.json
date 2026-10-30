@@ -1433,7 +1433,6 @@
   "collection_template_duplicate": "Дублировать шаблон",
   "collection_template_delete": "Удалить шаблон",
   "collection_template_type_leaf": "Страница",
-  "collection_template_type_folder": "Папка",
   "collection_template_type_nested_collection": "Вложенная коллекция",
   "collection_default_template_missing": "Шаблон по умолчанию не найден",
   "collection_none": "Нет",

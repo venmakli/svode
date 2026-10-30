@@ -19,7 +19,6 @@ import {
   Copy,
   Database,
   FileText,
-  FolderOpen,
   MoreVertical,
   Pencil,
   Plus,
@@ -44,7 +43,7 @@ import * as m from "@/paraglide/messages.js";
 
 const typeIcons = {
   leaf: FileText,
-  folder: FolderOpen,
+  folder: FileText,
   nestedCollection: Database,
 } satisfies Record<TemplateKind, typeof FileText>;
 
@@ -239,16 +238,6 @@ export function TemplatesSplitButton({
             right={null}
             onClick={() =>
               void runAndClose(() => onCreateTemplate("leaf")).catch(
-                handleError,
-              )
-            }
-          />
-          <SettingsRow
-            icon={FolderOpen}
-            label={m.collection_template_type_folder()}
-            right={null}
-            onClick={() =>
-              void runAndClose(() => onCreateTemplate("folder")).catch(
                 handleError,
               )
             }
