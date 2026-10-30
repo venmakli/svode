@@ -768,6 +768,17 @@ impl Service<'_> {
         names: Vec<String>,
         cleanup: Vec<String>,
     ) -> Result<Change> {
+        // A Project or Space config that cannot be read is never rewritten,
+        // even when its Variables section reads.
+        if !owner.global
+            && let Some(space) = owner.directory.parent()
+            && matches!(
+                crate::space_config::read(space),
+                Err(crate::space_config::SpaceConfigError::Unreadable(_))
+            )
+        {
+            return Err(Error::InvalidConfig);
+        }
         // No prior config image is journaled: ordinary -> Secret must not duplicate plaintext.
         let current = Snapshot::read(owner)?;
         if current.revision != snapshot.revision {

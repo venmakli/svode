@@ -114,7 +114,7 @@ pub struct RegistryEntry {
 // --- Space Config (.svode/config.json) ---
 
 // The portable config model and its write rule are owned by `svode-core`.
-pub use svode_core::space_config::{AgentConfig, SpaceConfig, SpaceDefaults, SpaceRef};
+pub use svode_core::space_config::{AgentConfig, SpaceConfig, SpaceDefaults, SpaceRef, Unreadable};
 
 // Assets configuration is owned by the storage policy in `svode-core`; the
 // Space config only embeds it.
@@ -151,6 +151,10 @@ pub struct SpaceInfo {
     pub status: SpaceStatus,
     #[serde(default)]
     pub lfs_state: LfsState,
+    /// Why the project or space config exists but cannot be read; it is then
+    /// shown under its folder name, without its spaces and settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_unreadable: Option<Unreadable>,
 }
 
 #[cfg(test)]
@@ -194,6 +198,9 @@ mod tests {
             last_opened: None,
             status: SpaceStatus::Ready,
             lfs_state: LfsState::NotApplicable,
+            config_unreadable: Some(Unreadable::Field {
+                field: "name".to_string(),
+            }),
         };
 
         let json = serde_json::to_value(info).expect("serialize SpaceInfo");
@@ -202,5 +209,9 @@ mod tests {
         assert!(json.get("has_schema").is_none());
         assert_eq!(json.get("hasApp"), Some(&serde_json::Value::Bool(true)));
         assert!(json.get("has_app").is_none());
+        assert_eq!(
+            json.get("configUnreadable"),
+            Some(&serde_json::json!({ "kind": "field", "field": "name" }))
+        );
     }
 }

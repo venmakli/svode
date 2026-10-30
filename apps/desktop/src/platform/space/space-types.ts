@@ -37,6 +37,13 @@ export interface LfsPolicyDiagnosticDto {
   lfsDeclaration: LfsDeclarationStateDto | null;
 }
 
+/** Why an existing `.svode/config.json` cannot be read; never a path or contents. */
+export type SpaceConfigUnreadableDto =
+  | { kind: "conflict" }
+  | { kind: "notJson" }
+  | { kind: "field"; field: string }
+  | { kind: "access" };
+
 export interface SpaceInfoDto {
   id: string;
   name: string;
@@ -49,6 +56,8 @@ export interface SpaceInfoDto {
   lastOpened: string | null;
   status: SpaceStatusDto;
   lfsState: LfsStateDto;
+  /** The config exists but cannot be read; the name is then the folder's. */
+  configUnreadable?: SpaceConfigUnreadableDto;
 }
 
 export interface GitSpaceConfigDto {

@@ -32,7 +32,7 @@ fn fixture() -> (tempfile::TempDir, AgentConfig, Secrets) {
         std::fs::create_dir_all(dir.path().join(folder).join(".svode")).unwrap();
         std::fs::write(
             dir.path().join(folder).join(".svode/config.json"),
-            json!({"spaces":[{"id":"child", "path":"child"}]}).to_string(),
+            json!({"name": "Space", "spaces":[{"id":"child", "path":"child"}]}).to_string(),
         )
         .unwrap();
     }

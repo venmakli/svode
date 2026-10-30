@@ -121,6 +121,9 @@ pub struct ProjectChild {
     pub has_schema: bool,
     pub has_app: bool,
     pub status: SpaceReadiness,
+    /// Why the child's own config exists but cannot be read; the child then
+    /// shows under its folder name and nothing else from that file.
+    pub config_unreadable: Option<crate::space_config::Unreadable>,
 }
 
 pub fn list_project_children(parent: &Path) -> Result<Vec<ProjectChild>, ContentTreeError> {
@@ -129,12 +132,18 @@ pub fn list_project_children(parent: &Path) -> Result<Vec<ProjectChild>, Content
     for child in config.spaces.unwrap_or_default() {
         let path = parent.join(&child.path);
         let status = space_reference_status(parent, &child.path, child.repo.as_deref());
-        let child_config = if status == SpaceReadiness::Ready {
-            read_tree_config(&path)
-        } else {
-            None
-        };
         let ready = status == SpaceReadiness::Ready;
+        let (child_config, config_unreadable) = if ready {
+            match crate::space_config::read(&path) {
+                Ok(config) => (Some(config), None),
+                Err(crate::space_config::SpaceConfigError::Unreadable(reason)) => {
+                    (None, Some(reason))
+                }
+                Err(_) => (None, None),
+            }
+        } else {
+            (None, None)
+        };
         result.push(ProjectChild {
             id: child.id,
             folder: child.path.clone(),
@@ -166,6 +175,7 @@ pub fn list_project_children(parent: &Path) -> Result<Vec<ProjectChild>, Content
             has_schema: ready && has_direct_schema(&path),
             has_app: ready && has_direct_app_marker(&path),
             status,
+            config_unreadable,
         });
     }
     Ok(result)

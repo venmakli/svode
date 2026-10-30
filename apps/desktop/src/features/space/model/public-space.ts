@@ -25,6 +25,7 @@ export type SpacePublicState = Pick<
   | "clearActiveSpace"
   | "patchSpaceMetadata"
   | "goHome"
+  | "recheckSpaceConfigs"
 >;
 
 export type SpaceTreeSyncState = Pick<
@@ -65,6 +66,7 @@ function selectPublicState(state: SpaceState): SpacePublicState {
     clearActiveSpace: state.clearActiveSpace,
     patchSpaceMetadata: state.patchSpaceMetadata,
     goHome: state.goHome,
+    recheckSpaceConfigs: state.recheckSpaceConfigs,
   };
 }
 

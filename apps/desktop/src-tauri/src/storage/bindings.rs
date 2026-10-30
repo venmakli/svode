@@ -424,7 +424,7 @@ mod tests {
         for project_name in ["first", "second"] {
             let project = dir.path().join(project_name);
             std::fs::create_dir_all(project.join(".svode")).unwrap();
-            std::fs::write(project.join(".svode/config.json"), "{}").unwrap();
+            std::fs::write(project.join(".svode/config.json"), r#"{"name":"Project"}"#).unwrap();
             let scope = VariableScope {
                 project_path: project.to_str().unwrap().into(),
                 space_id: None,

@@ -159,6 +159,7 @@ fn root_project_info(
     path: &Path,
     cfg: &SpaceConfig,
     last_opened: Option<String>,
+    config_unreadable: Option<Unreadable>,
 ) -> SpaceInfo {
     SpaceInfo {
         id,
@@ -172,6 +173,7 @@ fn root_project_info(
         last_opened,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,
+        config_unreadable,
     }
 }
 
@@ -240,12 +242,19 @@ pub fn list_projects(app: AppHandle) -> Result<Vec<SpaceInfo>, AppError> {
     Ok(reg.spaces.iter().map(listed_project_info).collect())
 }
 
-/// A project of the list; one whose folder is gone or whose config cannot be
-/// read stays in the list as missing or broken, named after its folder.
+/// A project of the list; one whose folder or config is gone stays in the
+/// list as missing or broken, named after its folder. A config that exists
+/// but cannot be read leaves the project ready under its folder name.
 fn listed_project_info(entry: &RegistryEntry) -> SpaceInfo {
     let path = Path::new(&entry.path);
-    if let Ok(cfg) = config::read_space_config(path) {
-        return root_project_info(entry.id.clone(), path, &cfg, entry.last_opened.clone());
+    if let Ok((cfg, config_unreadable)) = project::read_registered_config(path) {
+        return root_project_info(
+            entry.id.clone(),
+            path,
+            &cfg,
+            entry.last_opened.clone(),
+            config_unreadable,
+        );
     }
     let name = path
         .file_name()
@@ -267,6 +276,7 @@ fn listed_project_info(entry: &RegistryEntry) -> SpaceInfo {
             SpaceStatus::Missing
         },
         lfs_state: LfsState::NotApplicable,
+        config_unreadable: None,
     }
 }
 
@@ -295,7 +305,7 @@ pub async fn create_project(
         .path()
         .app_config_dir()
         .map_err(|e| AppError::General(e.to_string()))?;
-    let (id, cfg) = project::create_project(
+    let registered = project::create_project(
         &config_dir,
         &name,
         &icon,
@@ -313,19 +323,13 @@ pub async fn create_project(
         }
     }
 
-    Ok(SpaceInfo {
-        id,
-        name: cfg.name,
-        icon: cfg.icon,
-        description: cfg.description,
-        path: system_path::user_facing_path(sp_path),
-        has_spaces: false,
-        has_schema: project::has_schema_capability(sp_path, SpaceStatus::Ready),
-        has_app: project::has_app_capability(sp_path, SpaceStatus::Ready),
-        last_opened: None,
-        status: SpaceStatus::Ready,
-        lfs_state: LfsState::NotApplicable,
-    })
+    Ok(root_project_info(
+        registered.id,
+        sp_path,
+        &registered.config,
+        None,
+        registered.config_unreadable,
+    ))
 }
 
 #[tauri::command]
@@ -352,7 +356,11 @@ pub async fn open_project_folder(
     if preauthorized_readme_repair {
         require_repository_mutation(&app, sp_path).await?;
     }
-    let (id, mut cfg) = project::open_project_folder(&config_dir, sp_path)?;
+    let project::Registered {
+        id,
+        config: mut cfg,
+        config_unreadable,
+    } = project::open_project_folder(&config_dir, sp_path)?;
     refresh_recent_projects_menu(&app);
     app.state::<RoutineSchedulerState>().sync(&app);
     let repairs_allowed = !had_git_before
@@ -386,7 +394,8 @@ pub async fn open_project_folder(
 
     // If the folder was already a git repo but we just scaffolded .svode/
     // or README.md into it, commit the scaffold on top of HEAD.
-    if had_git_before && (!svode_existed_before || !readme_existed_before) {
+    let readme_created = !readme_existed_before && sp_path.join("README.md").exists();
+    if had_git_before && (!svode_existed_before || readme_created) {
         let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit
                 .commit_scaffold(sp_path.to_path_buf(), sp_path.to_path_buf())
@@ -433,19 +442,13 @@ pub async fn open_project_folder(
 
     crate::git::delivery::repair_project(&app, sp_path).await;
 
-    Ok(SpaceInfo {
+    Ok(root_project_info(
         id,
-        name: cfg.name,
-        icon: cfg.icon,
-        description: cfg.description,
-        path: system_path::user_facing_path(sp_path),
-        has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
-        has_schema: project::has_schema_capability(sp_path, SpaceStatus::Ready),
-        has_app: project::has_app_capability(sp_path, SpaceStatus::Ready),
-        last_opened: None,
-        status: SpaceStatus::Ready,
-        lfs_state: LfsState::NotApplicable,
-    })
+        sp_path,
+        &cfg,
+        None,
+        config_unreadable,
+    ))
 }
 
 #[tauri::command]
@@ -556,8 +559,9 @@ async fn enter_project(
     let sp_ref = registry::find_space(&config_dir, &id)?
         .ok_or_else(|| AppError::SpaceNotFound(id.clone()))?;
     let project_path = PathBuf::from(&sp_ref.path);
-    // A missing or unreadable project fails before it is prepared or bound.
-    config::read_space_config(&project_path)?;
+    // A missing project fails before it is prepared or bound; one whose config
+    // cannot be read opens under its folder name.
+    project::read_registered_config(&project_path)?;
 
     let binding = match crate::app_windows::window_binding(app, window_label, &id) {
         WindowBinding::OtherWindow(owner) => {
@@ -602,8 +606,14 @@ async fn enter_project(
         crate::app_windows::stop_runtime_unless_served(app, &id);
     }
 
-    let cfg = config::read_space_config(&project_path)?;
-    let project = root_project_info(id, &project_path, &cfg, sp_ref.last_opened);
+    let (cfg, config_unreadable) = project::read_registered_config(&project_path)?;
+    let project = root_project_info(
+        id,
+        &project_path,
+        &cfg,
+        sp_ref.last_opened,
+        config_unreadable,
+    );
     Ok(EnterProjectResult::Opened {
         config: Box::new(cfg),
         project,
@@ -660,8 +670,9 @@ async fn prepare_project(
         }
     }
 
-    let cfg = config::read_space_config(&project_path)?;
-    let readme_created = if repairs_allowed {
+    // A config that cannot be read leaves the project without a README repair.
+    let (cfg, config_unreadable) = project::read_registered_config(&project_path)?;
+    let readme_created = if repairs_allowed && config_unreadable.is_none() {
         project::ensure_scope_readme(&project_path, &cfg.name)?
     } else {
         false
@@ -992,7 +1003,11 @@ pub async fn project_clone(
     let svode_existed_before = path.join(".svode").join("config.json").exists();
     let readme_existed_before = path.join("README.md").exists();
 
-    let (id, mut cfg) = project::open_project_folder(&config_dir, &path)?;
+    let project::Registered {
+        id,
+        config: mut cfg,
+        config_unreadable,
+    } = project::open_project_folder(&config_dir, &path)?;
     refresh_recent_projects_menu(&app);
     app.state::<RoutineSchedulerState>().sync(&app);
     let gitignore_changed = crate::git::delivery::repair_scope(&app, &path, &path).await?
@@ -1003,7 +1018,8 @@ pub async fn project_clone(
     }
 
     // If we just scaffolded .svode/ or README.md, commit it.
-    if !svode_existed_before || !readme_existed_before {
+    let readme_created = !readme_existed_before && path.join("README.md").exists();
+    if !svode_existed_before || readme_created {
         let commit_result = if !svode_existed_before && readme_existed_before {
             autocommit.commit_scaffold(path.clone(), path.clone()).await
         } else if !svode_existed_before {
@@ -1044,19 +1060,7 @@ pub async fn project_clone(
 
     crate::git::delivery::repair_project(&app, &path).await;
 
-    Ok(SpaceInfo {
-        id,
-        name: cfg.name,
-        icon: cfg.icon,
-        description: cfg.description,
-        path: system_path::user_facing_path(&path),
-        has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
-        has_schema: project::has_schema_capability(&path, SpaceStatus::Ready),
-        has_app: project::has_app_capability(&path, SpaceStatus::Ready),
-        last_opened: None,
-        status: SpaceStatus::Ready,
-        lfs_state: LfsState::NotApplicable,
-    })
+    Ok(root_project_info(id, &path, &cfg, None, config_unreadable))
 }
 
 #[tauri::command]
@@ -1510,8 +1514,10 @@ mod tests {
         )
         .expect("config");
         let broken = temp.path().join("broken");
-        std::fs::create_dir_all(broken.join(".svode")).expect("svode dir");
-        std::fs::write(broken.join(".svode/config.json"), "{").expect("config");
+        std::fs::create_dir_all(&broken).expect("broken dir");
+        let unreadable_path = temp.path().join("unreadable");
+        std::fs::create_dir_all(unreadable_path.join(".svode")).expect("svode dir");
+        std::fs::write(unreadable_path.join(".svode/config.json"), "{").expect("config");
         let entry = |id: &str, path: &Path| RegistryEntry {
             id: id.to_string(),
             last_opened: Some("2026-10-01T00:00:00Z".to_string()),
@@ -1521,11 +1527,19 @@ mod tests {
         let ready = listed_project_info(&entry("ready", &ready));
         let broken = listed_project_info(&entry("broken", &broken));
         let missing = listed_project_info(&entry("missing", &temp.path().join("gone")));
+        let unreadable = listed_project_info(&entry("unreadable", &unreadable_path));
 
         assert_eq!(
             (ready.name.as_str(), ready.status),
             ("Ready", SpaceStatus::Ready)
         );
+        assert!(ready.config_unreadable.is_none());
+        assert_eq!(
+            (unreadable.name.as_str(), unreadable.status),
+            ("unreadable", SpaceStatus::Ready)
+        );
+        assert_eq!(unreadable.config_unreadable, Some(Unreadable::NotJson));
+        assert!(!unreadable.has_spaces);
         assert_eq!(
             (broken.name.as_str(), broken.status),
             ("broken", SpaceStatus::Broken)

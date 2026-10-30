@@ -33,7 +33,11 @@ fn project(path: &Path) {
         json!({"name":"Test", "spaces":[{"id":"child","path":"child"}]}).to_string(),
     )
     .unwrap();
-    fs::write(path.join("child/.svode/config.json"), "{}").unwrap();
+    fs::write(
+        path.join("child/.svode/config.json"),
+        json!({"name":"Child"}).to_string(),
+    )
+    .unwrap();
 }
 fn app(path: &Path, child: bool, refs: &[&str]) -> AppVariableOwnerContext {
     let path = path.canonicalize().unwrap();

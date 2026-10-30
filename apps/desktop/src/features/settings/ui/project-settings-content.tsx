@@ -9,6 +9,7 @@ import { ProjectVariablesSection } from "./app-variables-section";
 import { ProjectGeneralSection } from "./project-general-section";
 import { ProjectGitSection } from "./project-git-section";
 import { ProjectStorageSection } from "./project-storage-section";
+import { SpaceConfigAlerts } from "./space-config-alerts";
 
 // One project section page: the project block, then a block per space. The
 // destination's space is the owner whose block is shown; the project opens
@@ -67,6 +68,8 @@ export function ProjectSettingsContent({
 
   return (
     <>
+      <SpaceConfigAlerts />
+
       {section === "general" && <ProjectGeneralSection {...owners} />}
 
       {section === "variables" && (

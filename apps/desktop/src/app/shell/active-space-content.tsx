@@ -9,7 +9,7 @@ import {
   useCloseActiveContent,
 } from "@/features/artifact";
 import type { TreeNode } from "@/features/space";
-import { useSpace } from "@/features/space";
+import { SpaceConfigAlert, useSpace } from "@/features/space";
 import { EmptyProjectState } from "@/features/space/app-shell";
 import {
   createRegisteredSpaceOwner,
@@ -235,6 +235,16 @@ export function ActiveSpaceContent() {
       return (
         <div className="relative flex h-full flex-col overflow-hidden">
           <div className="scrollbar-hide min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+            {selectedScopeHome.configUnreadable ? (
+              <div className="px-6 pt-4">
+                <SpaceConfigAlert
+                  space={selectedScopeHome}
+                  owner={
+                    selectedScopeHome.id === activeRootId ? "project" : "space"
+                  }
+                />
+              </div>
+            ) : null}
             <ScopeSurfacePage
               key={spaceOwner.ownerKey}
               owner={spaceOwner}

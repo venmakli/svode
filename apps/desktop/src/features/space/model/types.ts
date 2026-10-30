@@ -1,4 +1,7 @@
-import type { ProjectWindowRequestDto } from "@/platform/space/space-types";
+import type {
+  ProjectWindowRequestDto,
+  SpaceConfigUnreadableDto,
+} from "@/platform/space/space-types";
 
 export type SpaceGitType = "inline" | "independent" | "submodule";
 
@@ -16,6 +19,9 @@ export type RootEntry = "opened" | "otherWindow" | "failed";
 /** What the window of a project does for an action started in another window. */
 export type ProjectWindowRequest = ProjectWindowRequestDto;
 
+/** Why the config of a project or space exists but cannot be read. */
+export type SpaceConfigUnreadable = SpaceConfigUnreadableDto;
+
 export interface SpaceInfo {
   id: string;
   name: string;
@@ -28,6 +34,8 @@ export interface SpaceInfo {
   lastOpened: string | null;
   status: SpaceStatus;
   lfsState: LfsState;
+  /** Its spaces and settings stay hidden until the config reads again. */
+  configUnreadable?: SpaceConfigUnreadable;
 }
 
 export interface TreeNode {

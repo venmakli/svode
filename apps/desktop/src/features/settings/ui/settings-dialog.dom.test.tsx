@@ -46,6 +46,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
         activeRootPath,
         activeRootId: "project",
         activeRootName: "Long project ".repeat(15),
+        rootSpaces: [],
         spaces: activeRootPath ? spaces : [],
         patchSpaceMetadata: noop,
       };
@@ -53,6 +54,7 @@ if (process.env.SVODE_UNIFIED_SETTINGS_DOM !== "1") {
     },
     CreateSpaceDialog: ({ open }: { open: boolean }) =>
       open ? <div data-create-space /> : null,
+    SpaceConfigAlert: () => null,
   }));
   mock.module("@/features/page/navigation", () => ({
     useOpenPage: () => noop,

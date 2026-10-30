@@ -80,6 +80,17 @@ export interface SpaceState extends SpaceTreeState {
   ) => void;
   patchSpaceSchemaCapability: (spaceId: string, hasSchema: boolean) => void;
   patchSpaceAppCapability: (spaceId: string, hasApp: boolean) => void;
+  /** Reads the configs of the active project and its spaces again. */
+  recheckSpaceConfigs: () => Promise<void>;
+}
+
+/** The active project or one of its spaces has a config that cannot be read. */
+export function selectHasUnreadableConfig(state: SpaceState): boolean {
+  return (
+    state.rootSpaces.some(
+      (space) => space.id === state.activeRootId && space.configUnreadable,
+    ) || state.spaces.some((space) => space.configUnreadable)
+  );
 }
 
 /** Active space id: nested space if selected, otherwise root project */
@@ -382,6 +393,34 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       ),
     }));
   },
+
+  // A project whose config reads again gets its name, icon and spaces
+  // without reopening; its spaces are read again in either case.
+  recheckSpaceConfigs: async () => {
+    const { activeRootId, activeRootPath } = get();
+    if (!activeRootId || !activeRootPath) return;
+    let projects: SpaceInfo[];
+    try {
+      projects = await spaceActions.listRootSpaces();
+    } catch (err) {
+      console.warn("Failed to read project configs again:", err);
+      return;
+    }
+    if (get().activeRootId !== activeRootId) return;
+    const project = projects.find((space) => space.id === activeRootId);
+    set({
+      rootSpaces: projects,
+      rootsLoaded: true,
+      ...(project && !project.configUnreadable
+        ? { activeRootName: project.name, activeRootIcon: project.icon }
+        : {}),
+    });
+    if (project?.configUnreadable) {
+      set({ spaces: [] });
+      return;
+    }
+    await get().loadSpaces(activeRootPath);
+  },
 }));
 
 /**
@@ -433,7 +472,9 @@ async function enterRoot(
       .catch((err) => console.warn("ensure_assets_scope failed:", err));
     await store.getState().loadTreeChildren(id);
     await store.getState().loadExpandedPaths(id);
-    await store.getState().loadSpaces(project.path);
+    // A config that cannot be read lists no spaces until it reads again.
+    if (!project.configUnreadable)
+      await store.getState().loadSpaces(project.path);
     return "opened";
   } catch (err) {
     console.error("Failed to open project:", err);

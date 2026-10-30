@@ -42,7 +42,10 @@ import {
 } from "../hooks/use-space-scope-collapse";
 import type { SpaceInfo } from "../model";
 import { FileTreeItem } from "./file-tree-item";
-import { TreeLoadingRows } from "./nav-space-indicators";
+import {
+  SpaceConfigWarningIcon,
+  TreeLoadingRows,
+} from "./nav-space-indicators";
 import { SortableFileTree } from "./sortable-file-tree";
 import { useSpaceRowGitControls } from "./space-row-git-controls";
 
@@ -258,6 +261,7 @@ export function SpaceRow({
           ) : (
             <span className="flex-1 truncate">{ws.name}</span>
           )}
+          {ws.configUnreadable ? <SpaceConfigWarningIcon /> : null}
           {gitControls.inlineActivity}
         </SidebarMenuButton>
         {gitControls.progress}

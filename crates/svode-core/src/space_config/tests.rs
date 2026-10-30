@@ -275,19 +275,121 @@ fn a_config_without_unknown_keys_is_written_as_before() {
     );
 }
 
+/// Contents of `.svode/config.json` that exist but cannot be read, with the
+/// reason each one gives.
+fn unreadable_files() -> Vec<(&'static str, String, Unreadable)> {
+    let field = |field: &str| Unreadable::Field {
+        field: field.to_string(),
+    };
+    vec![
+        (
+            "conflict markers",
+            "{\n<<<<<<< HEAD\n  \"name\": \"Ours\"\n=======\n  \"name\": \"Theirs\"\n>>>>>>> origin/main\n}\n"
+                .to_string(),
+            Unreadable::Conflict,
+        ),
+        ("broken JSON", "{\"name\": \"Docs\",".to_string(), Unreadable::NotJson),
+        ("not an object", "[\"Docs\"]".to_string(), Unreadable::NotJson),
+        ("no name", "{\"icon\": \"x\"}".to_string(), field("name")),
+        (
+            "field of another type",
+            "{\"name\": \"Docs\", \"spaces\": {\"id\": 1}}".to_string(),
+            field("spaces"),
+        ),
+        (
+            "repeated key",
+            "{\"name\": \"Ours\", \"name\": \"Theirs\"}".to_string(),
+            field("name"),
+        ),
+    ]
+}
+
 #[test]
-fn create_replaces_the_file_but_its_variables_section() {
+fn read_tells_why_an_existing_file_cannot_be_read() {
+    for (case, contents, reason) in unreadable_files() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        fs::create_dir_all(temp.path().join(".svode")).expect("svode dir");
+        fs::write(temp.path().join(".svode/config.json"), &contents).expect("config");
+
+        match read(temp.path()) {
+            Err(SpaceConfigError::Unreadable(actual)) => assert_eq!(actual, reason, "{case}"),
+            other => panic!("{case}: {other:?}"),
+        }
+    }
     let temp = tempfile::tempdir().expect("temp dir");
-    write_raw(
-        temp.path(),
-        &json!({ "name": 7, "variables": { "GIT": {} } }),
-    );
+    assert!(matches!(
+        read(temp.path()),
+        Err(SpaceConfigError::Missing(_))
+    ));
+}
+
+#[test]
+fn the_reason_names_neither_the_path_nor_the_contents() {
+    for (case, contents, _) in unreadable_files() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        fs::create_dir_all(temp.path().join(".svode")).expect("svode dir");
+        fs::write(temp.path().join(".svode/config.json"), &contents).expect("config");
+
+        let message = read(temp.path()).unwrap_err().to_string();
+        assert!(
+            message.starts_with(".svode/config.json cannot be read: "),
+            "{case}"
+        );
+        assert!(!message.contains(&*temp.path().to_string_lossy()), "{case}");
+        assert!(
+            !message.contains("Ours") && !message.contains("Docs"),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn writers_refuse_an_unreadable_file_and_leave_it_as_is() {
+    for (case, contents, reason) in unreadable_files() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        fs::create_dir_all(temp.path().join(".svode")).expect("svode dir");
+        let path = temp.path().join(".svode/config.json");
+        fs::write(&path, &contents).expect("config");
+
+        let refused = |result: Result<(), SpaceConfigError>| match result {
+            Err(SpaceConfigError::Unreadable(actual)) => assert_eq!(actual, reason, "{case}"),
+            other => panic!("{case}: {other:?}"),
+        };
+        refused(write(temp.path(), &config_with_git()));
+        refused(mutate(temp.path(), |_| Ok::<_, SpaceConfigError>(())));
+        assert!(matches!(
+            create(temp.path(), &config_with_git()),
+            Err(SpaceConfigError::Exists)
+        ));
+        assert_eq!(
+            fs::read_to_string(&path).expect("config"),
+            contents,
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn create_refuses_an_existing_file() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let config = json!({ "name": "Kept", "variables": { "GIT": {} } });
+    write_raw(temp.path(), &config);
+
+    assert!(matches!(
+        create(temp.path(), &config_with_git()),
+        Err(SpaceConfigError::Exists)
+    ));
+    assert_eq!(raw(temp.path()), config);
+}
+
+#[test]
+fn create_writes_a_missing_file() {
+    let temp = tempfile::tempdir().expect("temp dir");
 
     create(temp.path(), &config_with_git()).expect("create");
 
     let value = raw(temp.path());
     assert_eq!(value["name"], "Docs");
-    assert_eq!(value["variables"], json!({ "GIT": {} }));
     assert!(value.get("git").is_none());
 }
 
@@ -427,7 +529,6 @@ fn sibling_writers_preserve_latest_variables_and_reject_pending_transition() {
     let before = service.catalog(&owner).unwrap();
     write(temp.path(), &stale).unwrap();
     crate::git::policy::write_user_policy(temp.path(), &GitUserPolicy::default()).unwrap();
-    create(temp.path(), &config_with_git()).unwrap();
     mutate(temp.path(), |_| Ok::<_, SpaceConfigError>(())).unwrap();
     let after = service.catalog(&owner).unwrap();
     assert_eq!(
@@ -436,9 +537,53 @@ fn sibling_writers_preserve_latest_variables_and_reject_pending_transition() {
     );
     fs::write(temp.path().join(".svode/variables.pending.json"), "{}").unwrap();
     assert!(write(temp.path(), &stale).is_err());
-    assert!(create(temp.path(), &stale).is_err());
     assert!(mutate(temp.path(), |_| Ok::<_, SpaceConfigError>(())).is_err());
     assert!(crate::git::policy::write_user_policy(temp.path(), &GitUserPolicy::default()).is_err());
+}
+
+#[test]
+fn variables_refuse_to_write_a_config_that_cannot_be_read() {
+    let temp = tempfile::tempdir().unwrap();
+    let contents = "{\"icon\": \"x\", \"name\": \"A\", \"name\": \"B\"}";
+    fs::create_dir_all(temp.path().join(".svode")).unwrap();
+    fs::write(temp.path().join(".svode/config.json"), contents).unwrap();
+    let context =
+        crate::variables::Context::new(temp.path(), None, &temp.path().join("library")).unwrap();
+    let owner =
+        crate::variables::Owner::in_context(&context, &crate::variables::SourceOwner::Project)
+            .unwrap();
+    struct NoSecrets;
+    impl crate::variables::SecretStore for NoSecrets {
+        fn get(&self, _: &str) -> crate::variables::Result<Option<String>> {
+            panic!("ordinary fixture")
+        }
+        fn set(&self, _: &str, _: &str) -> crate::variables::Result<()> {
+            panic!("ordinary fixture")
+        }
+        fn remove(&self, _: &str) -> crate::variables::Result<()> {
+            panic!("ordinary fixture")
+        }
+    }
+    let service = crate::variables::Service::new(&NoSecrets);
+
+    let saved = service.save(
+        &owner,
+        crate::variables::Save {
+            name: "PORTABLE".into(),
+            mode: crate::variables::Mode::Git,
+            kind: crate::variables::Kind::Variable,
+            value: Some("value".into()),
+            revision: service.catalog(&owner).unwrap().revision,
+            operation: crate::variables::SaveOperation::Create,
+            keep: None,
+        },
+    );
+
+    assert_eq!(saved.unwrap_err(), crate::variables::Error::InvalidConfig);
+    assert_eq!(
+        fs::read_to_string(temp.path().join(".svode/config.json")).unwrap(),
+        contents
+    );
 }
 
 #[test]

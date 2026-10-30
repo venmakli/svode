@@ -7,6 +7,7 @@ export type {
   LfsState,
   LocalConfig,
   SpaceConfig,
+  SpaceConfigUnreadable,
   SpaceDefaults,
   SpaceGitType,
   SpaceInfo,
@@ -32,6 +33,7 @@ export {
   type ContentDeleteSubject,
 } from "./hooks/use-content-delete-confirmation";
 export { usePageFolderContents } from "./hooks/use-page-folder-contents";
+export { SpaceConfigAlert } from "./ui/space-config-alert";
 /** The registered Spaces of a project, read from its config without opening it. */
 export { listChildSpaces as readProjectSpaces } from "./api/space-store-actions";
 export { CreateSpaceDialog } from "./ui/create-space-dialog";

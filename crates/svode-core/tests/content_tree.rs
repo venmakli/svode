@@ -86,6 +86,34 @@ fn core_lists_the_same_visible_children_without_desktop_runtime() {
 }
 
 #[test]
+fn a_child_whose_config_cannot_be_read_shows_its_folder_and_the_reason() {
+    use svode_core::space_config::Unreadable;
+
+    let space = tempfile::tempdir().unwrap();
+    let root = space.path();
+    fs::create_dir_all(root.join(".svode")).unwrap();
+    fs::write(
+        root.join(".svode/config.json"),
+        r#"{"name":"Root","spaces":[{"id":"child","path":"child","repo":null}]}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("child/.svode")).unwrap();
+    let conflict =
+        "{\n<<<<<<< HEAD\n\"name\": \"Ours\"\n=======\n\"name\": \"Theirs\"\n>>>>>>> main\n}\n";
+    fs::write(root.join("child/.svode/config.json"), conflict).unwrap();
+
+    let children = list_project_children(root).unwrap();
+
+    assert_eq!(children[0].status, SpaceReadiness::Ready);
+    assert_eq!(children[0].name, "child");
+    assert_eq!(children[0].config_unreadable, Some(Unreadable::Conflict));
+    assert_eq!(
+        fs::read_to_string(root.join("child/.svode/config.json")).unwrap(),
+        conflict
+    );
+}
+
+#[test]
 fn scope_owner_facts_follow_the_tree_marker_rule_for_every_owner_form() {
     use svode_core::content_tree::ContentTreeError;
     use svode_core::content_tree::owner::{ScopeOwnerIdentity, scope_owner_facts};

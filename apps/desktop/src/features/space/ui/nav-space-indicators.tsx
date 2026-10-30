@@ -1,4 +1,4 @@
-import { CloudOff } from "lucide-react";
+import { CloudOff, TriangleAlert } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -44,6 +44,21 @@ export function LfsIndicatorIcon({ lfsState }: { lfsState: LfsState }) {
       <TooltipContent side="right">
         {m.storage_lfs_banner_missing_remote_title()}
       </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** A space whose config cannot be read; its home and Settings tell why. */
+export function SpaceConfigWarningIcon() {
+  const label = m.space_config_unreadable_space_title();
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex" role="img" aria-label={label}>
+          <TriangleAlert className="text-warning" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
   );
 }

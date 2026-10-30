@@ -76,7 +76,9 @@ async fn repair_authorized(
     if inline {
         ops::ensure_inline_gitignore(repository)?;
     }
-    if repository.join(".svode/config.json").exists() {
+    // Only a readable config registers children; one that cannot be read
+    // leaves their rollout to an open after it is fixed.
+    if crate::space_config::read(repository).is_ok() {
         for child in registered_children(repository)? {
             let folder = normalize_space_folder(&child.folder)?;
             if !child.ready {
@@ -239,6 +241,21 @@ mod tests {
                 .unwrap()
                 .exit_code,
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_config_that_cannot_be_read_repairs_the_repository_without_its_children() {
+        let cli = cli();
+        let root = repo(&cli, true).await;
+        let config = r#"{"icon":"x","spaces":[{"id":"i","path":"inline"}]}"#;
+        write(root.path(), ".svode/config.json", config);
+
+        repair(&cli, root.path(), false).await.unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(".svode/config.json")).unwrap(),
+            config
         );
     }
 

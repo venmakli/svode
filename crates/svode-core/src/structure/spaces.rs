@@ -73,6 +73,9 @@ impl From<SpaceConfigError> for ContentTreeError {
             SpaceConfigError::Io(error) => Self::Io(error),
             SpaceConfigError::Serde(error) => Self::Serde(error),
             SpaceConfigError::Storage(error) => Self::Invalid(format!("Storage: {error}")),
+            error @ (SpaceConfigError::Unreadable(_) | SpaceConfigError::Exists) => {
+                Self::Invalid(error.to_string())
+            }
         }
     }
 }

@@ -9,10 +9,14 @@
 //! Entries of `spaces` are matched by `id`; removing a known object or entry
 //! removes the keys inside it. The `variables` section belongs to Variables,
 //! which writes it itself.
+//!
+//! A file that exists but cannot be read is never replaced: every write
+//! refuses with the reason, and only a missing file is created anew.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -29,12 +33,42 @@ const VARIABLES_KEY: &str = "variables";
 pub enum SpaceConfigError {
     #[error("File not found: {0}")]
     Missing(String),
+    #[error(".svode/config.json cannot be read: {0}")]
+    Unreadable(Unreadable),
+    #[error(".svode/config.json already exists")]
+    Exists,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Serialization error: {0}")]
     Serde(#[from] serde_json::Error),
     #[error("Storage: {0}")]
     Storage(#[from] crate::variables::Error),
+}
+
+/// Why an existing `.svode/config.json` cannot be read. It names neither the
+/// path nor the contents of the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Unreadable {
+    /// The file holds the markers of a merge conflict.
+    Conflict,
+    /// The file is not a JSON object.
+    NotJson,
+    /// The file is a JSON object, but this field does not read as config.
+    Field { field: String },
+    /// The file cannot be opened.
+    Access,
+}
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Conflict => f.write_str("it is in a conflict after sync"),
+            Self::NotJson => f.write_str("it is not JSON"),
+            Self::Field { field } => write!(f, "Svode cannot read the field `{field}`"),
+            Self::Access => f.write_str("access to it is denied"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +125,25 @@ fn default_icon() -> String {
     "\u{1F4C1}".to_string()
 }
 
+impl SpaceConfig {
+    /// The config in memory of a project or space whose file cannot be read:
+    /// nothing but its name.
+    pub fn named(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            description: String::new(),
+            icon: String::new(),
+            spaces: None,
+            agent: None,
+            defaults: None,
+            git: None,
+            assets: None,
+            tree: None,
+            extensions: UnknownKeys::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpaceRef {
     pub id: String,
@@ -130,15 +183,75 @@ pub struct SpaceDefaults {
 /// not part of this model and every write keeps it as it is in the file.
 pub fn read(space: &Path) -> Result<SpaceConfig, SpaceConfigError> {
     let path = space.join(".svode").join("config.json");
-    if !path.exists() {
-        return Err(SpaceConfigError::Missing(
-            path.to_string_lossy().to_string(),
-        ));
-    }
-    let data = std::fs::read_to_string(&path)?;
-    let mut config: SpaceConfig = serde_json::from_str(&data)?;
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(SpaceConfigError::Missing(
+                path.to_string_lossy().to_string(),
+            ));
+        }
+        Err(_) => return Err(SpaceConfigError::Unreadable(Unreadable::Access)),
+    };
+    let mut config = parse(&bytes).map_err(SpaceConfigError::Unreadable)?;
     config.extensions.remove(VARIABLES_KEY);
     Ok(config)
+}
+
+fn parse(bytes: &[u8]) -> Result<SpaceConfig, Unreadable> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Err(Unreadable::NotJson);
+    };
+    let error = match serde_json::from_str::<SpaceConfig>(text) {
+        Ok(config) => return Ok(config),
+        Err(error) => error,
+    };
+    if has_conflict_markers(text) {
+        return Err(Unreadable::Conflict);
+    }
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(object)) => Err(Unreadable::Field {
+            field: unreadable_field(&object, &error),
+        }),
+        _ => Err(Unreadable::NotJson),
+    }
+}
+
+fn has_conflict_markers(text: &str) -> bool {
+    text.lines().any(|line| line.starts_with("<<<<<<<"))
+        && text.lines().any(|line| line.starts_with(">>>>>>>"))
+}
+
+/// The first known field whose value does not read as its type; otherwise
+/// the missing or repeated field serde names.
+fn unreadable_field(object: &serde_json::Map<String, Value>, error: &serde_json::Error) -> String {
+    fn reads<T: DeserializeOwned>(value: &Value) -> bool {
+        T::deserialize(value).is_ok()
+    }
+    let fields: [(&str, fn(&Value) -> bool); 9] = [
+        ("name", reads::<String>),
+        ("description", reads::<String>),
+        ("icon", reads::<String>),
+        ("spaces", reads::<Option<Vec<SpaceRef>>>),
+        ("agent", reads::<Option<AgentConfig>>),
+        ("defaults", reads::<Option<SpaceDefaults>>),
+        ("git", reads::<Option<GitSpaceConfig>>),
+        ("assets", reads::<Option<AssetsSpaceConfig>>),
+        ("tree", reads::<Option<TreeSpaceConfig>>),
+    ];
+    if let Some((field, _)) = fields
+        .iter()
+        .find(|(field, reads)| object.get(*field).is_some_and(|value| !reads(value)))
+    {
+        return (*field).to_string();
+    }
+    let message = error.to_string();
+    ["missing field `", "duplicate field `"]
+        .iter()
+        .find_map(|prefix| {
+            let rest = message.strip_prefix(prefix)?;
+            Some(rest[..rest.find('`')?].to_string())
+        })
+        .unwrap_or_default()
 }
 
 /// Write `config` over the known fields of the file. The unknown keys come
@@ -175,11 +288,14 @@ where
     Ok(result)
 }
 
-/// Write the config a scaffold creates. Nothing but the `variables` section
-/// is taken from a file that is already there.
+/// Write the config a scaffold creates. A file that is already there, even
+/// one that cannot be read, is left as it is.
 pub fn create(space: &Path, config: &SpaceConfig) -> Result<(), SpaceConfigError> {
     let dir = space.join(".svode");
     let _guard = files::lock(&dir)?;
+    if dir.join("config.json").symlink_metadata().is_ok() {
+        return Err(SpaceConfigError::Exists);
+    }
     persist(&dir, config.clone())
 }
 

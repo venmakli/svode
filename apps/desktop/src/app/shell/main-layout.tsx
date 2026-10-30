@@ -33,7 +33,12 @@ import {
 import { CollectionDetailPeekHost } from "@/features/collection/app-shell";
 import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
-import { SpaceFileWatcher, SpaceSidebar } from "@/features/space/app-shell";
+import { SpaceConfigChanges } from "./space-config-changes";
+import {
+  SpaceConfigRecheck,
+  SpaceFileWatcher,
+  SpaceSidebar,
+} from "@/features/space/app-shell";
 import {
   GitMissingDialog,
   SpaceGitWatcher,
@@ -244,6 +249,8 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
         </ChatChangesWindowProvider>
       </ChatAttachmentPeekProvider>
       <SpaceFileWatcher />
+      <SpaceConfigRecheck />
+      <SpaceConfigChanges />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog open={available === false} onRecheck={recheck} />
       {view === "space" ? (

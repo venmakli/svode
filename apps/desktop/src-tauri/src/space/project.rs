@@ -8,7 +8,8 @@ use svode_core::system_path;
 use super::config;
 use super::registry;
 use super::scaffold;
-use super::types::{SpaceConfig, SpaceGitType, SpaceInfo, SpaceRef, SpaceStatus};
+use super::types::{SpaceConfig, SpaceGitType, SpaceInfo, SpaceRef, SpaceStatus, Unreadable};
+use svode_core::space_config::SpaceConfigError;
 use svode_core::storage::lfs::LfsState;
 
 /// Where to register a newly created/opened space.
@@ -20,31 +21,75 @@ enum RegistrationTarget<'a> {
     ParentSpace(&'a Path, String, Option<String>, bool),
 }
 
+/// A project or space that was opened or registered.
+pub struct Registered {
+    pub id: String,
+    pub config: SpaceConfig,
+    /// Why its existing config cannot be read; `config` then holds only the
+    /// name of its folder.
+    pub config_unreadable: Option<Unreadable>,
+}
+
+/// The name of a folder, the fallback name of its project or space.
+pub fn folder_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Space".to_string())
+}
+
+/// The config of a registered project or space. A missing file is an error;
+/// one that cannot be read gives the name of its folder and the reason.
+pub fn read_registered_config(path: &Path) -> Result<(SpaceConfig, Option<Unreadable>), AppError> {
+    match svode_core::space_config::read(path) {
+        Ok(config) => Ok((config, None)),
+        Err(SpaceConfigError::Unreadable(reason)) => {
+            Ok((SpaceConfig::named(&folder_name(path)), Some(reason)))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The config of a folder being opened or registered. Only a missing file is
+/// scaffolded; a file that cannot be read stays as it is, byte for byte.
+fn read_or_scaffold(
+    path: &Path,
+    scaffold: impl FnOnce() -> Result<SpaceConfig, AppError>,
+) -> Result<(SpaceConfig, Option<Unreadable>), AppError> {
+    match svode_core::space_config::read(path) {
+        Ok(config) => {
+            scaffold::ensure_readme(path, &config.name)?;
+            Ok((config, None))
+        }
+        Err(SpaceConfigError::Missing(_)) => Ok((scaffold()?, None)),
+        Err(SpaceConfigError::Unreadable(reason)) => {
+            Ok((SpaceConfig::named(&folder_name(path)), Some(reason)))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Scaffold (if needed) + generate id + register.
 ///
-/// Returns `(id, config)`. The caller is responsible for pre-checks
-/// (path existence, slug collision, duplicate detection) before calling this.
+/// The caller is responsible for pre-checks (path existence, slug collision,
+/// duplicate detection) before calling this.
 fn create_and_register(
     path: &Path,
     name: &str,
     icon: &str,
     description: &str,
     target: RegistrationTarget,
-) -> Result<(String, SpaceConfig), AppError> {
+) -> Result<Registered, AppError> {
     let repository_owned = match &target {
         RegistrationTarget::Registry(_) => true,
         RegistrationTarget::ParentSpace(_, _, _, repository_owned) => *repository_owned,
     };
-    let cfg = match config::read_space_config(path) {
-        Ok(cfg) => {
-            scaffold::ensure_readme(path, &cfg.name)?;
-            cfg
+    let (config, config_unreadable) = read_or_scaffold(path, || {
+        if repository_owned {
+            scaffold::scaffold_repository_space(path, name, icon, description)
+        } else {
+            scaffold::scaffold_space(path, name, icon, description)
         }
-        Err(_) if repository_owned => {
-            scaffold::scaffold_repository_space(path, name, icon, description)?
-        }
-        Err(_) => scaffold::scaffold_space(path, name, icon, description)?,
-    };
+    })?;
 
     let id = ulid::Ulid::new().to_string().to_lowercase();
 
@@ -65,7 +110,11 @@ fn create_and_register(
         }
     }
 
-    Ok((id, cfg))
+    Ok(Registered {
+        id,
+        config,
+        config_unreadable,
+    })
 }
 
 pub fn normalize_space_folder(folder_name: &str) -> Result<String, AppError> {
@@ -97,7 +146,7 @@ pub fn create_project(
     icon: &str,
     description: &str,
     path: &Path,
-) -> Result<(String, SpaceConfig), AppError> {
+) -> Result<Registered, AppError> {
     if !path.exists() {
         std::fs::create_dir_all(path)?;
     }
@@ -117,10 +166,7 @@ pub fn create_project(
 }
 
 /// Register an existing folder as a root project (open folder).
-pub fn open_project_folder(
-    config_dir: &Path,
-    path: &Path,
-) -> Result<(String, SpaceConfig), AppError> {
+pub fn open_project_folder(config_dir: &Path, path: &Path) -> Result<Registered, AppError> {
     if !path.exists() || !path.is_dir() {
         return Err(AppError::PathNotAccessible(system_path::user_facing_path(
             path,
@@ -129,22 +175,20 @@ pub fn open_project_folder(
 
     let reg = registry::read_registry(config_dir)?;
     let path_str = system_path::user_facing_path(path);
-    let fallback_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "Space".to_string());
+    let fallback_name = folder_name(path);
 
     // Reopening a registered folder should follow the same contract as opening
-    // an unregistered folder: if `.svode/` is missing, recreate the scaffold.
+    // an unregistered folder: if `.svode/config.json` is missing, recreate the
+    // scaffold.
     if let Some(existing) = reg.spaces.iter().find(|w| w.path == path_str) {
-        let cfg = match config::read_space_config(path) {
-            Ok(cfg) => {
-                scaffold::ensure_readme(path, &cfg.name)?;
-                cfg
-            }
-            Err(_) => scaffold::scaffold_repository_space(path, &fallback_name, "", "")?,
-        };
-        return Ok((existing.id.clone(), cfg));
+        let (config, config_unreadable) = read_or_scaffold(path, || {
+            scaffold::scaffold_repository_space(path, &fallback_name, "", "")
+        })?;
+        return Ok(Registered {
+            id: existing.id.clone(),
+            config,
+            config_unreadable,
+        });
     }
 
     create_and_register(
@@ -273,7 +317,7 @@ pub fn create_space(
     }
     std::fs::create_dir_all(&space_dir)?;
 
-    let (id, cfg) = create_and_register(
+    let registered = create_and_register(
         &space_dir,
         name,
         icon,
@@ -286,19 +330,29 @@ pub fn create_space(
         ),
     )?;
 
-    Ok(SpaceInfo {
+    Ok(registered_space_info(registered, &space_dir))
+}
+
+fn registered_space_info(registered: Registered, space_dir: &Path) -> SpaceInfo {
+    let Registered {
         id,
-        name: cfg.name,
-        icon: cfg.icon,
-        description: cfg.description,
-        path: system_path::user_facing_path(&space_dir),
-        has_spaces: false,
-        has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
-        has_app: has_app_capability(&space_dir, SpaceStatus::Ready),
+        config,
+        config_unreadable,
+    } = registered;
+    SpaceInfo {
+        id,
+        name: config.name,
+        icon: config.icon,
+        description: config.description,
+        path: system_path::user_facing_path(space_dir),
+        has_spaces: config.spaces.as_ref().is_some_and(|s| !s.is_empty()),
+        has_schema: has_schema_capability(space_dir, SpaceStatus::Ready),
+        has_app: has_app_capability(space_dir, SpaceStatus::Ready),
         last_opened: None,
         status: SpaceStatus::Ready,
         lfs_state: LfsState::NotApplicable,
-    })
+        config_unreadable,
+    }
 }
 
 /// Register a freshly-cloned directory as a space.
@@ -325,34 +379,24 @@ pub fn register_cloned_space(
     let parent_config = config::read_space_config(parent_path)?;
     if let Some(spaces) = &parent_config.spaces {
         if let Some(existing) = spaces.iter().find(|s| s.path == folder_name) {
-            let cfg = match config::read_space_config(&space_dir) {
-                Ok(cfg) => {
-                    scaffold::ensure_readme(&space_dir, &cfg.name)?;
-                    cfg
+            let (config, config_unreadable) = read_or_scaffold(&space_dir, || {
+                if space_dir.join(".git").symlink_metadata().is_ok() {
+                    scaffold::scaffold_repository_space(&space_dir, fallback_name, icon, "")
+                } else {
+                    scaffold::scaffold_space(&space_dir, fallback_name, icon, "")
                 }
-                Err(_) if space_dir.join(".git").symlink_metadata().is_ok() => {
-                    scaffold::scaffold_repository_space(&space_dir, fallback_name, icon, "")?
-                }
-                Err(_) => scaffold::scaffold_space(&space_dir, fallback_name, icon, "")?,
-            };
-            return Ok(SpaceInfo {
+            })?;
+            let registered = Registered {
                 id: existing.id.clone(),
-                name: cfg.name,
-                icon: cfg.icon,
-                description: cfg.description,
-                path: system_path::user_facing_path(&space_dir),
-                has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
-                has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
-                has_app: has_app_capability(&space_dir, SpaceStatus::Ready),
-                last_opened: None,
-                status: SpaceStatus::Ready,
-                lfs_state: LfsState::NotApplicable,
-            });
+                config,
+                config_unreadable,
+            };
+            return Ok(registered_space_info(registered, &space_dir));
         }
     }
 
     let repository_owned = repo.is_some() || space_dir.join(".git").symlink_metadata().is_ok();
-    let (id, cfg) = create_and_register(
+    let registered = create_and_register(
         &space_dir,
         fallback_name,
         icon,
@@ -360,19 +404,7 @@ pub fn register_cloned_space(
         RegistrationTarget::ParentSpace(parent_path, folder_name.clone(), repo, repository_owned),
     )?;
 
-    Ok(SpaceInfo {
-        id,
-        name: cfg.name,
-        icon: cfg.icon,
-        description: cfg.description,
-        path: system_path::user_facing_path(&space_dir),
-        has_spaces: cfg.spaces.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
-        has_schema: has_schema_capability(&space_dir, SpaceStatus::Ready),
-        has_app: has_app_capability(&space_dir, SpaceStatus::Ready),
-        last_opened: None,
-        status: SpaceStatus::Ready,
-        lfs_state: LfsState::NotApplicable,
-    })
+    Ok(registered_space_info(registered, &space_dir))
 }
 
 /// Delete a space: remove from parent config, optionally delete files.
@@ -426,6 +458,7 @@ pub fn list_spaces(parent_path: &Path) -> Result<Vec<SpaceInfo>, AppError> {
                     svode_core::page::SpaceReadiness::Broken => SpaceStatus::Broken,
                 },
                 lfs_state: LfsState::NotApplicable,
+                config_unreadable: child.config_unreadable,
             })
             .collect(),
     )
@@ -463,12 +496,13 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 mod tests {
     use super::{
         create_project, create_space, delete_space, has_schema_capability,
-        import_existing_submodule_spaces, normalize_space_folder, open_project_folder,
-        reconcile_space_url, register_cloned_space, remove_missing_space, space_ref_status,
+        import_existing_submodule_spaces, list_spaces, normalize_space_folder, open_project_folder,
+        read_registered_config, reconcile_space_url, register_cloned_space, remove_missing_space,
+        space_ref_status,
     };
     use crate::space::registry;
     use crate::space::scaffold;
-    use crate::space::types::{SpaceGitType, SpaceRef, SpaceStatus};
+    use crate::space::types::{SpaceGitType, SpaceRef, SpaceStatus, Unreadable};
     use std::path::Path;
     use svode_core::git::ops::SubmoduleConfig;
 
@@ -505,14 +539,192 @@ mod tests {
         registry::add_space(config_dir.path(), "registered-id", &project_path_str)
             .expect("register project");
 
-        let (id, cfg) =
+        let opened =
             open_project_folder(config_dir.path(), project_path).expect("open project folder");
 
-        assert_eq!(id, "registered-id");
-        assert_eq!(cfg.name, fallback_name);
+        assert_eq!(opened.id, "registered-id");
+        assert_eq!(opened.config.name, fallback_name);
+        assert!(opened.config_unreadable.is_none());
         assert!(project_path.join(".svode/config.json").is_file());
         assert!(project_path.join(".svode/local.json").is_file());
         assert!(project_path.join("README.md").is_file());
+    }
+
+    /// Configs that exist but cannot be read, with the reason each one gives.
+    fn unreadable_configs() -> Vec<(&'static str, &'static str, Unreadable)> {
+        let field = |field: &str| Unreadable::Field {
+            field: field.to_string(),
+        };
+        vec![
+            (
+                "conflict markers",
+                "{\n<<<<<<< HEAD\n  \"name\": \"Ours\"\n=======\n  \"name\": \"Theirs\"\n>>>>>>> origin/main\n}\n",
+                Unreadable::Conflict,
+            ),
+            ("broken JSON", "{\"name\": \"Docs\",", Unreadable::NotJson),
+            (
+                "no name",
+                "{\"icon\": \"x\", \"spaces\": []}",
+                field("name"),
+            ),
+            (
+                "field of another type",
+                "{\"name\": \"Docs\", \"icon\": 7}",
+                field("icon"),
+            ),
+            (
+                "repeated key",
+                "{\"name\": \"Ours\", \"name\": \"Theirs\"}",
+                field("name"),
+            ),
+        ]
+    }
+
+    fn write_config(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.join(".svode")).expect("svode dir");
+        std::fs::write(path.join(".svode/config.json"), contents).expect("config");
+    }
+
+    fn read_config(path: &Path) -> String {
+        std::fs::read_to_string(path.join(".svode/config.json")).expect("config")
+    }
+
+    #[test]
+    fn opening_a_project_with_an_unreadable_config_keeps_the_file() {
+        for registered in [true, false] {
+            for (case, contents, reason) in unreadable_configs() {
+                let config_dir = tempfile::tempdir().expect("config dir");
+                let parent = tempfile::tempdir().expect("parent dir");
+                let project = parent.path().join("my-project");
+                write_config(&project, contents);
+                if registered {
+                    registry::add_space(
+                        config_dir.path(),
+                        "registered-id",
+                        &project.to_string_lossy(),
+                    )
+                    .expect("register project");
+                }
+
+                let opened = open_project_folder(config_dir.path(), &project).expect(case);
+
+                assert_eq!(opened.config_unreadable, Some(reason), "{case}");
+                assert_eq!(opened.config.name, "my-project", "{case}");
+                assert!(opened.config.spaces.is_none(), "{case}");
+                assert_eq!(read_config(&project), contents, "{case}");
+                assert!(!project.join("README.md").exists(), "{case}");
+                if registered {
+                    assert_eq!(opened.id, "registered-id", "{case}");
+                } else {
+                    let found = registry::find_space(config_dir.path(), &opened.id)
+                        .expect("registry")
+                        .expect("registered");
+                    assert_eq!(Path::new(&found.path), project, "{case}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn connecting_a_space_with_an_unreadable_config_keeps_the_file() {
+        for registered in [true, false] {
+            for (case, contents, reason) in unreadable_configs() {
+                let config_dir = tempfile::tempdir().expect("config dir");
+                let project_dir = tempfile::tempdir().expect("project dir");
+                let project = project_dir.path();
+                create_project(config_dir.path(), "Root", "", "", project).expect("create project");
+                let space = project.join("docs");
+                std::fs::create_dir_all(space.join(".git")).expect("space git");
+                write_config(&space, contents);
+                if registered {
+                    import_existing_submodule_spaces(
+                        project,
+                        &[SubmoduleConfig {
+                            path: "docs".to_string(),
+                            url: None,
+                        }],
+                    )
+                    .expect("register space");
+                }
+
+                let info =
+                    register_cloned_space(project, "docs", "Fallback", "", None).expect(case);
+
+                assert_eq!(info.config_unreadable, Some(reason), "{case}");
+                assert_eq!(info.name, "docs", "{case}");
+                assert_eq!(info.status, SpaceStatus::Ready, "{case}");
+                assert_eq!(read_config(&space), contents, "{case}");
+                let listed = crate::space::config::read_space_config(project)
+                    .expect("project config")
+                    .spaces
+                    .expect("spaces");
+                assert_eq!(listed.len(), 1, "{case}");
+                assert_eq!(listed[0].id, info.id, "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_registered_project_opens_with_an_unreadable_config_but_not_without_one() {
+        let parent = tempfile::tempdir().expect("parent dir");
+        let project = parent.path().join("my-project");
+        std::fs::create_dir_all(&project).expect("project dir");
+        assert!(read_registered_config(&project).is_err());
+
+        let (_, contents, reason) = unreadable_configs().remove(0);
+        write_config(&project, contents);
+        let (config, unreadable) = read_registered_config(&project).expect("open");
+
+        assert_eq!(config.name, "my-project");
+        assert_eq!(unreadable, Some(reason));
+        assert_eq!(read_config(&project), contents);
+    }
+
+    #[test]
+    fn a_listed_space_with_an_unreadable_config_carries_the_reason() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project = project_dir.path();
+        create_project(config_dir.path(), "Root", "", "", project).expect("create project");
+        create_space(project, "Docs", "", "docs", SpaceGitType::Inline).expect("create space");
+        let (_, contents, reason) = unreadable_configs().remove(0);
+        write_config(&project.join("docs"), contents);
+
+        let spaces = list_spaces(project).expect("list spaces");
+
+        assert_eq!(spaces[0].config_unreadable, Some(reason));
+        assert_eq!(spaces[0].name, "docs");
+    }
+
+    #[test]
+    fn writes_of_an_unreadable_config_refuse_without_paths() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project = project_dir.path();
+        create_project(config_dir.path(), "Root", "", "", project).expect("create project");
+        create_space(project, "Docs", "", "docs", SpaceGitType::Inline).expect("create space");
+        let (_, contents, _) = unreadable_configs().remove(0);
+        write_config(project, contents);
+
+        let refusals = [
+            create_space(project, "New", "", "new", SpaceGitType::Inline).map(|_| ()),
+            delete_space(project, "missing", false),
+            remove_missing_space(project, "missing"),
+            reconcile_space_url(project, "missing", None),
+            crate::space::config::write_space_config(
+                project,
+                &crate::space::types::SpaceConfig::named("Renamed"),
+            ),
+        ];
+
+        for refusal in refusals {
+            let message = refusal.expect_err("refused").to_string();
+            assert_eq!(
+                message,
+                ".svode/config.json cannot be read: it is in a conflict after sync"
+            );
+        }
+        assert_eq!(read_config(project), contents);
     }
 
     #[test]
@@ -700,8 +912,7 @@ mod tests {
         )
         .expect("register project");
 
-        let (_id, _cfg) =
-            open_project_folder(config_dir.path(), project_path).expect("open project folder");
+        open_project_folder(config_dir.path(), project_path).expect("open project folder");
 
         assert_eq!(
             std::fs::read_to_string(project_path.join("README.md")).expect("read readme"),

@@ -126,6 +126,9 @@ impl From<svode_core::space_config::SpaceConfigError> for AppError {
             SpaceConfigError::Io(error) => Self::Io(error),
             SpaceConfigError::Serde(error) => Self::Serde(error),
             SpaceConfigError::Storage(error) => Self::Storage(error.to_string()),
+            error @ (SpaceConfigError::Unreadable(_) | SpaceConfigError::Exists) => {
+                Self::General(error.to_string())
+            }
         }
     }
 }

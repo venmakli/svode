@@ -12,7 +12,7 @@ use tauri::{
 use crate::error::AppError;
 use crate::navigation::NavigationItem;
 use crate::space::{
-    config, registry,
+    project, registry,
     types::{LastView, RegistryEntry, SpaceRegistry},
 };
 
@@ -290,7 +290,7 @@ pub fn get_window_open_intent(app: AppHandle, window: Window) -> WindowOpenInten
     }
     let intent = match app_config_dir(&app).and_then(|dir| registry::read_registry(&dir)) {
         Ok(registry) => launch_intent(&registry, |entry| {
-            config::read_space_config(Path::new(&entry.path)).is_ok()
+            project::read_registered_config(Path::new(&entry.path)).is_ok()
         }),
         Err(error) => {
             tracing::warn!("failed to read the last view for the launch: {error}");
@@ -673,7 +673,7 @@ fn open_or_focus_project_window(
     let sp_ref = registry::find_space(&config_dir, project_id)?
         .ok_or_else(|| AppError::SpaceNotFound(project_id.to_string()))?;
     let project_path = PathBuf::from(&sp_ref.path);
-    let cfg = config::read_space_config(&project_path)?;
+    let (cfg, _) = project::read_registered_config(&project_path)?;
 
     let state = app.state::<AppWindowState>();
     if let Some(label) = state.project_window_label(project_id) {
@@ -820,8 +820,10 @@ fn recent_projects(app: &AppHandle) -> Result<Vec<RecentProject>, AppError> {
 }
 
 fn recent_project_from_entry(entry: &RegistryEntry) -> Result<RecentProject, AppError> {
-    let cfg = config::read_space_config(Path::new(&entry.path))?;
-    let label = format!("{} {}", cfg.icon, cfg.name);
+    let (cfg, _) = project::read_registered_config(Path::new(&entry.path))?;
+    let label = format!("{} {}", cfg.icon, cfg.name)
+        .trim_start()
+        .to_string();
     Ok(RecentProject {
         id: entry.id.clone(),
         label,

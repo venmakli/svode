@@ -4,6 +4,8 @@ import { SortableContext } from "@dnd-kit/sortable";
 import { createRef, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import * as m from "@/paraglide/messages.js";
 import { SpaceRow } from "./space-row";
 
 const noop = () => {};
@@ -106,4 +108,33 @@ test("uses the complete resource row as the drag source outside the Space activa
   expect(activatorStart > -1).toBe(true);
   expect(activatorEnd > activatorStart).toBe(true);
   expect(resourceStart > activatorEnd).toBe(true);
+});
+
+test("a space whose config cannot be read stays openable with a warning instead of broken actions", () => {
+  const render = (ws: ComponentProps<typeof SpaceRow>["ws"]) =>
+    renderToStaticMarkup(
+      <TooltipProvider>
+        <SidebarProvider>
+          <DndContext>
+            <SortableContext items={[ws.id]}>
+              <SpaceRow {...props} ws={ws} />
+            </SortableContext>
+          </DndContext>
+        </SidebarProvider>
+      </TooltipProvider>,
+    );
+  const label = m.space_config_unreadable_space_title();
+
+  const unreadable = render({
+    ...props.ws,
+    name: "docs",
+    configUnreadable: { kind: "conflict" },
+  });
+  expect(unreadable.includes(`aria-label="${label}"`)).toBe(true);
+  // The ready row: its activator opens the space, not the dimmed broken row.
+  expect(unreadable.includes("data-space-drag-activator")).toBe(true);
+  expect(unreadable.includes('aria-disabled="false"')).toBe(true);
+  expect(unreadable.includes('data-slot="collapsible-content"')).toBe(true);
+
+  expect(render(props.ws).includes(`aria-label="${label}"`)).toBe(false);
 });
