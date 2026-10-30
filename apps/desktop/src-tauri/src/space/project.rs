@@ -8,7 +8,7 @@ use svode_core::system_path;
 use super::config;
 use super::registry;
 use super::scaffold;
-use super::types::{SpaceConfig, SpaceInfo, SpaceRef, SpaceStatus};
+use super::types::{SpaceConfig, SpaceGitType, SpaceInfo, SpaceRef, SpaceStatus};
 use svode_core::storage::lfs::LfsState;
 
 /// Where to register a newly created/opened space.
@@ -16,8 +16,8 @@ enum RegistrationTarget<'a> {
     /// Global registry (spaces.json) — for root projects.
     Registry(&'a Path),
     /// Parent space config.json — for child spaces.
-    /// (parent_path, folder_name, repo_url)
-    ParentSpace(&'a Path, String, Option<String>),
+    /// (parent_path, folder_name, repo_url, repository_owned)
+    ParentSpace(&'a Path, String, Option<String>, bool),
 }
 
 /// Scaffold (if needed) + generate id + register.
@@ -33,9 +33,7 @@ fn create_and_register(
 ) -> Result<(String, SpaceConfig), AppError> {
     let repository_owned = match &target {
         RegistrationTarget::Registry(_) => true,
-        RegistrationTarget::ParentSpace(_, _, repo) => {
-            repo.is_some() || path.join(".git").symlink_metadata().is_ok()
-        }
+        RegistrationTarget::ParentSpace(_, _, _, repository_owned) => *repository_owned,
     };
     let cfg = match config::read_space_config(path) {
         Ok(cfg) => {
@@ -54,7 +52,7 @@ fn create_and_register(
         RegistrationTarget::Registry(config_dir) => {
             registry::add_space(config_dir, &id, &system_path::user_facing_path(path))?;
         }
-        RegistrationTarget::ParentSpace(parent_path, folder_name, repo) => {
+        RegistrationTarget::ParentSpace(parent_path, folder_name, repo, _) => {
             let mut parent_config = config::read_space_config(parent_path)?;
             let spaces = parent_config.spaces.get_or_insert_with(Vec::new);
             spaces.push(SpaceRef {
@@ -256,11 +254,15 @@ pub fn delete_project(config_dir: &Path, id: &str, delete_files: bool) -> Result
 }
 
 /// Create a space inside a parent space folder.
+///
+/// The requested Git type decides the storage scaffold: the caller runs
+/// `git init` for independent and submodule spaces only after this returns.
 pub fn create_space(
     parent_path: &Path,
     name: &str,
     icon: &str,
     folder_name: &str,
+    git_type: SpaceGitType,
 ) -> Result<SpaceInfo, AppError> {
     let folder_name = normalize_space_folder(folder_name)?;
     let space_dir = parent_path.join(&folder_name);
@@ -276,7 +278,12 @@ pub fn create_space(
         name,
         icon,
         "",
-        RegistrationTarget::ParentSpace(parent_path, folder_name.clone(), None),
+        RegistrationTarget::ParentSpace(
+            parent_path,
+            folder_name.clone(),
+            None,
+            git_type != SpaceGitType::Inline,
+        ),
     )?;
 
     Ok(SpaceInfo {
@@ -344,12 +351,13 @@ pub fn register_cloned_space(
         }
     }
 
+    let repository_owned = repo.is_some() || space_dir.join(".git").symlink_metadata().is_ok();
     let (id, cfg) = create_and_register(
         &space_dir,
         fallback_name,
         icon,
         "",
-        RegistrationTarget::ParentSpace(parent_path, folder_name.clone(), repo),
+        RegistrationTarget::ParentSpace(parent_path, folder_name.clone(), repo, repository_owned),
     )?;
 
     Ok(SpaceInfo {
@@ -454,13 +462,14 @@ pub fn remove_missing_space(parent_path: &Path, space_id: &str) -> Result<(), Ap
 #[cfg(test)]
 mod tests {
     use super::{
-        create_space, delete_space, has_schema_capability, import_existing_submodule_spaces,
-        normalize_space_folder, open_project_folder, reconcile_space_url, remove_missing_space,
-        space_ref_status,
+        create_project, create_space, delete_space, has_schema_capability,
+        import_existing_submodule_spaces, normalize_space_folder, open_project_folder,
+        reconcile_space_url, register_cloned_space, remove_missing_space, space_ref_status,
     };
     use crate::space::registry;
     use crate::space::scaffold;
-    use crate::space::types::{SpaceRef, SpaceStatus};
+    use crate::space::types::{SpaceGitType, SpaceRef, SpaceStatus};
+    use std::path::Path;
     use svode_core::git::ops::SubmoduleConfig;
 
     #[test]
@@ -582,7 +591,8 @@ mod tests {
             value
         };
 
-        create_space(project, "Inline", "", "inline").expect("register inline space");
+        create_space(project, "Inline", "", "inline", SpaceGitType::Inline)
+            .expect("register inline space");
         let value = assert_kept("registration");
         assert_eq!(entry(&value, "missing").unwrap()["futureSpace"], "missing");
 
@@ -611,6 +621,69 @@ mod tests {
         delete_space(project, "deleted", false).expect("delete space");
         let value = assert_kept("deletion");
         assert!(entry(&value, "deleted").is_none());
+    }
+
+    fn raw_config(path: &Path) -> serde_json::Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(path.join(".svode/config.json")).expect("config"),
+        )
+        .expect("json")
+    }
+
+    #[test]
+    fn create_space_scaffolds_storage_block_by_requested_git_type() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project = project_dir.path();
+        create_project(config_dir.path(), "Root", "", "", project).expect("create project");
+        let project_assets = raw_config(project)["assets"].clone();
+        assert!(project_assets.is_object());
+
+        for (folder, git_type) in [
+            ("independent", SpaceGitType::Independent),
+            ("submodule", SpaceGitType::Submodule),
+        ] {
+            create_space(project, folder, "", folder, git_type).expect("create space");
+            let space = project.join(folder);
+            assert!(space.join(".git").symlink_metadata().is_err());
+            assert_eq!(raw_config(&space)["assets"], project_assets, "{folder}");
+        }
+
+        create_space(project, "Inline", "", "inline", SpaceGitType::Inline)
+            .expect("create inline space");
+        assert!(raw_config(&project.join("inline")).get("assets").is_none());
+    }
+
+    #[test]
+    fn register_cloned_space_scaffolds_storage_block_only_without_config() {
+        let config_dir = tempfile::tempdir().expect("config dir");
+        let project_dir = tempfile::tempdir().expect("project dir");
+        let project = project_dir.path();
+        create_project(config_dir.path(), "Root", "", "", project).expect("create project");
+        let project_assets = raw_config(project)["assets"].clone();
+
+        let fresh = project.join("fresh");
+        std::fs::create_dir_all(fresh.join(".git")).expect("fresh git");
+        register_cloned_space(project, "fresh", "Fresh", "", None).expect("register fresh");
+        assert_eq!(raw_config(&fresh)["assets"], project_assets);
+
+        let existing = project.join("existing");
+        std::fs::create_dir_all(existing.join(".git")).expect("existing git");
+        std::fs::create_dir_all(existing.join(".svode")).expect("existing svode");
+        let config = r#"{"name":"Existing","icon":"x","description":""}"#;
+        std::fs::write(existing.join(".svode/config.json"), config).expect("existing config");
+        register_cloned_space(
+            project,
+            "existing",
+            "Fallback",
+            "",
+            Some("https://example.com/existing.git".to_string()),
+        )
+        .expect("register existing");
+        assert_eq!(
+            std::fs::read_to_string(existing.join(".svode/config.json")).expect("config"),
+            config
+        );
     }
 
     #[test]

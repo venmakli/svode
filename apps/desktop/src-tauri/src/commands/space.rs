@@ -734,7 +734,7 @@ pub async fn create_space(
     require_repository_mutation(&app, parent).await?;
     crate::git::delivery::require_scope_repair(&app, parent, parent).await?;
     let folder_name = project::normalize_space_folder(&folder_name)?;
-    let info = project::create_space(parent, &name, &icon, &folder_name)?;
+    let info = project::create_space(parent, &name, &icon, &folder_name, git_type)?;
     let space_dir = parent.join(&folder_name);
     let root_structural_autocommit = auto_commit_structural_enabled(parent);
     let space_structural_autocommit = auto_commit_structural_enabled(&space_dir);
