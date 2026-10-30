@@ -4,6 +4,7 @@ import {
   chatInterface,
   openInTerminalAvailability,
   sessionInterfaceAtOpen,
+  terminalToChatConfirmation,
 } from "./interface";
 
 const key = { agent: "codex", namespace: "native", sessionId: "abc" } as const;
@@ -99,5 +100,21 @@ test("open in terminal waits for the turn and needs a terminal", () => {
   expect(openInTerminalAvailability(false, false)).toEqual({
     available: false,
     reason: "no_terminal",
+  });
+});
+
+test("the chat from a live terminal confirms an interrupted agent or a closed panel tab", () => {
+  expect(terminalToChatConfirmation({ agentBusy: false, inPanel: false })).toBe(
+    null,
+  );
+  expect(terminalToChatConfirmation({ agentBusy: true, inPanel: false })).toEqual(
+    { interruptsAgent: true, closesPanelTab: false },
+  );
+  expect(terminalToChatConfirmation({ agentBusy: false, inPanel: true })).toEqual(
+    { interruptsAgent: false, closesPanelTab: true },
+  );
+  expect(terminalToChatConfirmation({ agentBusy: true, inPanel: true })).toEqual({
+    interruptsAgent: true,
+    closesPanelTab: true,
   });
 });

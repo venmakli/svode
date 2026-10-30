@@ -53,32 +53,32 @@ test("an unavailable pair action stays primary with its reason", () => {
     primaryContinuation({
       shownIn: "terminal",
       rememberedTerminal: null,
-      chat: { available: false, reason: "terminal_live" },
+      chat: { available: false, reason: "not_openable" },
       svodeTerminal: available,
     }),
   ).toEqual({
     kind: "chat",
-    availability: { available: false, reason: "terminal_live" },
+    availability: { available: false, reason: "not_openable" },
   });
 });
 
-test("the chat of a session in its terminal is unavailable with the reason", () => {
-  const openable = listedSession({
-    id: "codex:abc",
-    capabilities: { canResume: true, canOpenInChat: true },
-  });
-  expect(openInChatAvailability(openable, null)).toEqual(available);
-  expect(openInChatAvailability(openable, "pty-1")).toEqual({
-    available: false,
-    reason: "terminal_live",
-  });
+test("the chat of a session in its terminal is available unless the runtime cannot open it", () => {
+  // A live Svode terminal no longer keeps the chat away: the chat closes it.
+  expect(
+    openInChatAvailability(
+      listedSession({
+        id: "codex:abc",
+        runtime: { live: true, ptyId: "pty-1" },
+        capabilities: { canResume: true, canOpenInChat: true },
+      }),
+    ),
+  ).toEqual(available);
   expect(
     openInChatAvailability(
       listedSession({
         id: "codex:plain",
         capabilities: { canResume: true, canOpenInChat: false },
       }),
-      null,
     ),
   ).toEqual({ available: false, reason: "not_openable" });
   expect(
@@ -91,7 +91,6 @@ test("the chat of a session in its terminal is unavailable with the reason", () 
           continuesInIde: true,
         },
       }),
-      null,
     ),
   ).toEqual({ available: false, reason: "continues_in_ide" });
 });

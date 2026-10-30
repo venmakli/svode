@@ -74,9 +74,11 @@ import {
   chatInterface,
   openInTerminalAvailability,
   sessionInterfaceAtOpen,
+  terminalToChatConfirmation,
   type ChatSessionState,
   type ChatUnavailableReason,
   type SessionInterface,
+  type TerminalToChatConfirmation,
 } from "../chat/model/interface";
 import { AGENT_SESSION_CONTENT_ATTRIBUTE } from "../lib/session-content";
 import * as m from "@/paraglide/messages.js";
@@ -93,6 +95,11 @@ export interface AgentSessionChrome {
   /** The continuation group of "Open with"; null without a session. */
   openWith: OpenWithGroup | null;
 }
+
+/** What the confirmation of a session asks before closing its terminal. */
+type TerminalCloseConfirmation =
+  | { kind: "close_terminal" }
+  | { kind: "open_in_chat"; reasons: TerminalToChatConfirmation };
 
 interface AgentSessionContentProps {
   target: AgentSessionTarget;
@@ -123,11 +130,19 @@ export function AgentSessionContent({
 }: AgentSessionContentProps) {
   const view = useAgentSessionView(target, { focusTerminal });
   const routine = useSessionRoutine(view.session);
+  const panelTerminal = usePanelTerminal(view.ptyId);
   // Chosen once the session is known, then changed by the user or by a
   // terminal that starts while it is shown.
   const [chosen, setChosen] = useState<SessionInterface | null>(null);
   const atOpen = sessionInterfaceAtOpen(view.session, view.ptyId);
   if (chosen === null && atOpen !== null) setChosen(atOpen);
+  // "Chat" from a live terminal shows the chat once the catalog no longer
+  // has that terminal, so the live terminal rule below keeps the chat.
+  const [chatAfterClose, setChatAfterClose] = useState<string | null>(null);
+  if (chatAfterClose !== null && view.ptyId !== chatAfterClose) {
+    setChatAfterClose(null);
+    if (!view.ptyId && view.session) setChosen(chatInterface(view.session));
+  }
   if (view.ptyId && chosen?.kind === "chat") {
     setChosen({ kind: "terminal", chatUnavailable: null });
   }
@@ -142,7 +157,10 @@ export function AgentSessionContent({
       setChosen({ kind: "terminal", chatUnavailable: reason }),
     [],
   );
-  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    open: boolean;
+    action: TerminalCloseConfirmation;
+  }>({ open: false, action: { kind: "close_terminal" } });
   const { activeRootName, spaces } = useSpace();
   const spaceNames = useMemo(() => {
     const names = new Map<string, string>();
@@ -158,12 +176,43 @@ export function AgentSessionContent({
     ? sessionScopeMark(session, scopes, activeRootName, spaceNames)
     : null;
 
-  function closeTerminal() {
-    void view.closeTerminal().catch((error) => {
-      toast.error(m.sessions_toast_close_terminal_failed(), {
-        description: getNativeErrorMessage(error),
-      });
+  function reportCloseTerminalFailure(error: unknown) {
+    toast.error(m.sessions_toast_close_terminal_failed(), {
+      description: getNativeErrorMessage(error),
     });
+  }
+
+  function closeTerminal() {
+    void view.closeTerminal().catch(reportCloseTerminalFailure);
+  }
+
+  /** "Chat" from a live Svode terminal: closes it, then opens the chat. */
+  function closeTerminalForChat() {
+    if (!session || chatAfterClose !== null) return;
+    if (!view.ptyId) {
+      setChosen(chatInterface(session));
+      return;
+    }
+    setChatAfterClose(view.ptyId);
+    void view.closeTerminal().catch((error) => {
+      setChatAfterClose(null);
+      reportCloseTerminalFailure(error);
+    });
+  }
+
+  function openInChat() {
+    if (!session) return;
+    const reasons = view.ptyId
+      ? terminalToChatConfirmation({
+          agentBusy: view.agentBusy,
+          inPanel: panelTerminal.inPanel,
+        })
+      : null;
+    if (reasons) {
+      setConfirmation({ open: true, action: { kind: "open_in_chat", reasons } });
+    } else {
+      closeTerminalForChat();
+    }
   }
 
   function copyResumeCommand() {
@@ -210,13 +259,10 @@ export function AgentSessionContent({
   const openWith = useSessionContinuationGroup({
     session,
     shownIn: inChat ? "chat" : "terminal",
-    ptyId: view.ptyId,
     svodeTerminal: terminalAction,
     cwd: view.externalTerminalCwd,
     resumeCommand: view.resumeCommand,
-    onOpenInChat: () => {
-      if (session) setChosen(chatInterface(session));
-    },
+    onOpenInChat: openInChat,
     onOpenInSvodeTerminal: () =>
       openInTerminal(chatState?.session ?? session?.runtime?.acpSession ?? null),
     onCopyResumeCommand: copyResumeCommand,
@@ -231,8 +277,14 @@ export function AgentSessionContent({
         onCloseTerminal={
           view.ptyId
             ? () => {
-                if (view.agentBusy) setConfirmCloseOpen(true);
-                else closeTerminal();
+                if (view.agentBusy) {
+                  setConfirmation({
+                    open: true,
+                    action: { kind: "close_terminal" },
+                  });
+                } else {
+                  closeTerminal();
+                }
               }
             : null
         }
@@ -271,6 +323,7 @@ export function AgentSessionContent({
           >
             <SessionBody
               view={view}
+              panelTerminal={panelTerminal}
               scope={scope}
               surface={surface}
               composerFocus={composerFocus}
@@ -286,30 +339,76 @@ export function AgentSessionContent({
           </SessionCwdContext.Provider>
         </div>
       </div>
-      <AlertDialog open={confirmCloseOpen} onOpenChange={setConfirmCloseOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {m.sessions_close_terminal_confirm_title()}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {m.sessions_close_terminal_confirm_description()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={closeTerminal}>
-              {m.sessions_action_close_terminal()}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <TerminalCloseConfirmationDialog
+        open={confirmation.open}
+        action={confirmation.action}
+        onOpenChange={(open) =>
+          setConfirmation((current) => ({ ...current, open }))
+        }
+        onConfirm={
+          confirmation.action.kind === "open_in_chat"
+            ? closeTerminalForChat
+            : closeTerminal
+        }
+      />
     </ExternalTerminalAppProvider>
+  );
+}
+
+/**
+ * The confirmation before a session's terminal closes: "Close terminal" of
+ * a working agent, or "Chat" that closes the terminal and opens the chat.
+ */
+function TerminalCloseConfirmationDialog({
+  open,
+  action,
+  onOpenChange,
+  onConfirm,
+}: {
+  open: boolean;
+  action: TerminalCloseConfirmation;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  const toChat = action.kind === "open_in_chat" ? action.reasons : null;
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {toChat
+              ? m.sessions_open_in_chat_confirm_title()
+              : m.sessions_close_terminal_confirm_title()}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {toChat
+              ? [
+                  toChat.interruptsAgent &&
+                    m.sessions_open_in_chat_confirm_interrupt(),
+                  toChat.closesPanelTab &&
+                    m.sessions_open_in_chat_confirm_panel_tab(),
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+              : m.sessions_close_terminal_confirm_description()}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{m.project_cancel()}</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>
+            {toChat
+              ? m.sessions_open_in_chat_confirm_action()
+              : m.sessions_action_close_terminal()}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
 function SessionBody({
   view,
+  panelTerminal,
   scope,
   surface,
   composerFocus,
@@ -323,6 +422,8 @@ function SessionBody({
   onOpenAgentSettings,
 }: {
   view: AgentSessionView;
+  /** The terminal panel tab that runs the session, if any. */
+  panelTerminal: { inPanel: boolean; show: () => void };
   scope: ScopeMark | null;
   surface: SessionInterface | null;
   composerFocus: ComposerFocusRequest | null;
@@ -337,7 +438,6 @@ function SessionBody({
   onOpenAgentSettings?: () => void;
 }) {
   const session = view.session;
-  const panelTerminal = usePanelTerminal(view.ptyId);
 
   if (view.ptyId && panelTerminal.inPanel) {
     return (

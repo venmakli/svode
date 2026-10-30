@@ -40,7 +40,6 @@ import type { AgentSession } from "../model";
 export function useSessionContinuationGroup({
   session,
   shownIn,
-  ptyId,
   svodeTerminal,
   cwd,
   resumeCommand,
@@ -50,8 +49,6 @@ export function useSessionContinuationGroup({
 }: {
   session: AgentSession | null;
   shownIn: "chat" | "terminal";
-  /** A Svode terminal that runs the session keeps the chat away. */
-  ptyId: string | null;
   svodeTerminal: TerminalActionAvailability;
   /** Where an external terminal opens; none disables the terminals. */
   cwd: string | null;
@@ -80,16 +77,14 @@ export function useSessionContinuationGroup({
   const terminals = useExternalOpen(target, handleError);
   if (!session) return null;
 
-  const chat = openInChatAvailability(session, ptyId);
+  const chat = openInChatAvailability(session);
   const chatReason = chat.available
     ? null
-    : chat.reason === "terminal_live"
-      ? m.sessions_open_in_chat_terminal_live()
-      : chat.reason === "continues_in_ide"
-        ? m.sessions_chat_unavailable_continues_in_ide({
-            agent: agents.label(session.source),
-          })
-        : m.sessions_chat_unavailable_not_openable();
+    : chat.reason === "continues_in_ide"
+      ? m.sessions_chat_unavailable_continues_in_ide({
+          agent: agents.label(session.source),
+        })
+      : m.sessions_chat_unavailable_not_openable();
   const svodeTerminalReason = svodeTerminal.available
     ? null
     : svodeTerminal.reason === "turn_active"

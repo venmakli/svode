@@ -32,6 +32,24 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   installDomGlobals(dom);
 
   const closedPtys: string[] = [];
+  /** Why the next terminal closing fails, if it does. */
+  let closeTerminalFailure: Error | null = null;
+  /** Toasts shown, by message. */
+  const toasts: string[] = [];
+  const realSonner = await import("sonner");
+  const recordToast = (message: unknown) => {
+    toasts.push(String(message));
+  };
+  mock.module("sonner", () => ({
+    ...realSonner,
+    toast: Object.assign(recordToast, {
+      error: recordToast,
+      info: recordToast,
+      success: recordToast,
+      warning: recordToast,
+      dismiss: () => {},
+    }),
+  }));
   /** PTYs that are tabs of the terminal panel, and the ones asked to show. */
   const panelPtys = new Set<string>();
   const shownPanelPtys: string[] = [];
@@ -52,6 +70,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     ),
     closeManagedTerminalSurface: async (ptyId: string) => {
       closedPtys.push(ptyId);
+      if (closeTerminalFailure) throw closeTerminalFailure;
+      // The killed terminal no longer runs the session in the next list.
+      listed = listed.map((item) =>
+        item.runtime?.ptyId === ptyId ? { ...item, runtime: undefined } : item,
+      );
     },
     spawnManagedTerminalSurface: async () => ({
       ptyId: "pty-new",
@@ -748,33 +771,249 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     },
   );
 
+  /** A session of a free agent in its Svode terminal, which the chat opens. */
+  function terminalSession(
+    id: string,
+    overrides: Partial<ListedAgentSession> = {},
+  ) {
+    return session({
+      id,
+      title: "Terminal",
+      runtime: { live: true, ptyId: `pty-${id}` },
+      capabilities: { canResume: true, canOpenInChat: true },
+      ...overrides,
+    });
+  }
+
+  function opensChat(sessionId: string) {
+    const key = { agent: "codex", namespace: "native", sessionId };
+    openings.length = 0;
+    commands.length = 0;
+    closedPtys.length = 0;
+    toasts.length = 0;
+    snapshotWriter = "none";
+    openingOutcome = () => ({ outcome: "opened", session: key, liveness: "unknown" });
+  }
+
+  function confirmationDialog() {
+    return document.querySelector<HTMLElement>("[role='alertdialog']");
+  }
+
+  function dialogButton(text: string) {
+    return Array.from(confirmationDialog()!.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === text,
+    );
+  }
+
+  /** The chat of the session is shown, and no second terminal was started. */
+  function expectChatAfterTerminal(ptyId: string) {
+    expect(closedPtys).toEqual([ptyId]);
+    expect(terminal()).toBeNull();
+    expect(openings).toEqual(["read"]);
+    expect(document.body.textContent?.includes("Earlier")).toBe(true);
+    expect(commands.includes("agent_sessions_reenter")).toBe(false);
+  }
+
   peekTest(
-    "a session with a live Svode terminal does not open in the chat",
+    "Open in chat closes the terminal of a free agent without asking and opens the chat of the same session",
+    async () => {
+      listed = [terminalSession("codex:freeterm")];
+      opensChat("freeterm");
+      await mountPeek("/p-freeterm", {
+        sessionId: "codex:freeterm",
+        launchId: null,
+      });
+      expect(terminal()?.dataset.terminal).toBe("pty-codex:freeterm");
+
+      // The chat is the available primary action of a session in its terminal.
+      expect(primaryButton().getAttribute("aria-label")).toBe(
+        m.sessions_action_open_in_chat(),
+      );
+      expect(primaryButton().disabled).toBe(false);
+      await openOpenWith();
+      const item = continuationItem("chat");
+      expect(item?.getAttribute("aria-disabled")).toBe(null);
+      expect(item?.textContent?.trim()).toBe(m.sessions_open_with_chat());
+      await pressEscape(item!);
+
+      await click(primaryButton());
+      expect(confirmationDialog()).toBeNull();
+      expectChatAfterTerminal("pty-codex:freeterm");
+      expect(listed.length).toBe(1);
+    },
+  );
+
+  peekTest(
+    "Chat of Open with in the main area closes the terminal and opens the chat there",
+    async () => {
+      listed = [terminalSession("codex:mainterm")];
+      opensChat("mainterm");
+      await mountPeek(
+        "/p-mainterm",
+        { sessionId: "codex:mainterm", launchId: null },
+        false,
+        true,
+      );
+
+      await openOpenWith();
+      await click(continuationItem("chat"));
+      expect(confirmationDialog()).toBeNull();
+      expectChatAfterTerminal("pty-codex:mainterm");
+    },
+  );
+
+  peekTest(
+    "Chat from the terminal of a working agent asks first; Cancel keeps the terminal",
     async () => {
       listed = [
-        session({
-          id: "codex:busyterm",
-          title: "Terminal",
-          runtime: { live: true, ptyId: "pty-busyterm" },
-          capabilities: { canResume: true, canOpenInChat: true },
+        terminalSession("codex:workterm", {
+          status: {
+            state: "running",
+            source: "native_status_reader",
+            confidence: "approximate",
+          },
         }),
       ];
-      await mountPeek("/p-busyterm", {
-        sessionId: "codex:busyterm",
+      opensChat("workterm");
+      await mountPeek("/p-workterm", {
+        sessionId: "codex:workterm",
         launchId: null,
       });
 
-      // The chat is the primary action of a session in its terminal.
-      await expectPrimaryUnavailable(
-        m.sessions_action_open_in_chat(),
-        m.sessions_open_in_chat_terminal_live(),
-      );
-      await openOpenWith();
-      const item = continuationItem("chat");
-      expect(item?.getAttribute("aria-disabled")).toBe("true");
+      await click(primaryButton());
+      const dialog = confirmationDialog();
       expect(
-        item?.textContent?.includes(m.sessions_open_in_chat_terminal_live()),
+        dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_title()),
       ).toBe(true);
+      expect(
+        dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_interrupt()),
+      ).toBe(true);
+      expect(
+        dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_panel_tab()),
+      ).toBe(false);
+
+      await click(dialogButton(m.project_cancel()));
+      expect(closedPtys).toEqual([]);
+      expect(terminal()?.dataset.terminal).toBe("pty-codex:workterm");
+      expect(openings).toEqual([]);
+
+      await click(primaryButton());
+      await click(dialogButton(m.sessions_open_in_chat_confirm_action()));
+      expectChatAfterTerminal("pty-codex:workterm");
+    },
+  );
+
+  peekTest(
+    "Chat from a terminal panel tab asks that the tab closes with its shell, then opens the chat",
+    async () => {
+      listed = [terminalSession("claude:paneltab", { source: "claude" })];
+      opensChat("paneltab");
+      panelPtys.add("pty-claude:paneltab");
+      try {
+        await mountPeek("/p-paneltab", {
+          sessionId: "claude:paneltab",
+          launchId: null,
+        });
+        expect(
+          document.body.textContent?.includes(m.sessions_terminal_in_panel_title()),
+        ).toBe(true);
+
+        await click(primaryButton());
+        const dialog = confirmationDialog();
+        expect(
+          dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_panel_tab()),
+        ).toBe(true);
+        expect(
+          dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_interrupt()),
+        ).toBe(false);
+
+        await click(dialogButton(m.sessions_open_in_chat_confirm_action()));
+        expect(closedPtys).toEqual(["pty-claude:paneltab"]);
+        expect(
+          document.body.textContent?.includes(m.sessions_terminal_in_panel_title()),
+        ).toBe(false);
+        expect(openings).toEqual(["read"]);
+        expect(document.body.textContent?.includes("Earlier")).toBe(true);
+      } finally {
+        panelPtys.clear();
+      }
+    },
+  );
+
+  peekTest(
+    "a terminal that fails to close stays, with a toast, and the chat does not open",
+    async () => {
+      listed = [terminalSession("codex:stuckterm")];
+      opensChat("stuckterm");
+      closeTerminalFailure = new Error("kill failed");
+      try {
+        await mountPeek("/p-stuckterm", {
+          sessionId: "codex:stuckterm",
+          launchId: null,
+        });
+        await click(primaryButton());
+      } finally {
+        closeTerminalFailure = null;
+      }
+      expect(closedPtys).toEqual(["pty-codex:stuckterm"]);
+      expect(toasts).toEqual([m.sessions_toast_close_terminal_failed()]);
+      expect(terminal()?.dataset.terminal).toBe("pty-codex:stuckterm");
+      expect(openings).toEqual([]);
+
+      // The chat can be asked again.
+      closedPtys.length = 0;
+      await click(primaryButton());
+      expectChatAfterTerminal("pty-codex:stuckterm");
+    },
+  );
+
+  peekTest(
+    "a session another process holds after its terminal closed shows that with the resume command",
+    async () => {
+      listed = [terminalSession("codex:heldterm")];
+      opensChat("heldterm");
+      openingOutcome = () => ({ outcome: "external_active" });
+      await mountPeek("/p-heldterm", {
+        sessionId: "codex:heldterm",
+        launchId: null,
+      });
+
+      await click(primaryButton());
+      expect(closedPtys).toEqual(["pty-codex:heldterm"]);
+      expect(terminal()).toBeNull();
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_external_writer_title()),
+      ).toBe(true);
+      expect(Boolean(buttonByText(m.sessions_action_copy_resume_command()))).toBe(
+        true,
+      );
+      expect(commands.includes("agent_sessions_reenter")).toBe(false);
+    },
+  );
+
+  peekTest(
+    "a chat that finds a Svode terminal writing leads back to it without asking to close it",
+    async () => {
+      listed = [
+        session({
+          id: "codex:racing",
+          title: "Racing",
+          capabilities: { canResume: true, canOpenInChat: true },
+        }),
+      ];
+      openings.length = 0;
+      openingOutcome = () => ({ outcome: "terminal_active" });
+      await mountPeek("/p-racing", { sessionId: "codex:racing", launchId: null });
+
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_terminal_writer_title()),
+      ).toBe(true);
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_chat_terminal_writer_description(),
+        ),
+      ).toBe(true);
+      expect(Boolean(buttonByText(m.sessions_chat_show_terminal()))).toBe(true);
     },
   );
 

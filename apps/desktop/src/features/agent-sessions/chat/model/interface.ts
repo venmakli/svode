@@ -84,18 +84,15 @@ export function openInTerminalAvailability(
 
 export type ChatActionAvailability =
   | { available: true }
-  | {
-      available: false;
-      reason: "terminal_live" | "not_openable" | "continues_in_ide";
-    };
+  | { available: false; reason: "not_openable" | "continues_in_ide" };
 
 /**
  * "Chat" for a session shown in its terminal: only for a session the
- * agent's runtime can open, and only while no Svode terminal writes to it.
+ * agent's runtime can open. A live Svode terminal does not keep it away:
+ * the chat closes that terminal first (DF-234).
  */
 export function openInChatAvailability(
   session: AgentSession,
-  ptyId: string | null,
 ): ChatActionAvailability {
   if (!session.capabilities.canOpenInChat) {
     return {
@@ -105,6 +102,29 @@ export function openInChatAvailability(
         : "not_openable",
     };
   }
-  if (ptyId) return { available: false, reason: "terminal_live" };
   return { available: true };
+}
+
+/** What "Chat" from a live Svode terminal asks the user before closing it. */
+export interface TerminalToChatConfirmation {
+  /** The agent works or waits for the user, so closing interrupts it. */
+  interruptsAgent: boolean;
+  /** The terminal is a tab of the terminal panel, closed with its shell. */
+  closesPanelTab: boolean;
+}
+
+/**
+ * The confirmation of "Chat" from a live Svode terminal (DF-234): none for
+ * a free agent in the session's own terminal, otherwise the reasons the
+ * closing interrupts the agent or closes a panel tab with its shell.
+ */
+export function terminalToChatConfirmation({
+  agentBusy,
+  inPanel,
+}: {
+  agentBusy: boolean;
+  inPanel: boolean;
+}): TerminalToChatConfirmation | null {
+  if (!agentBusy && !inPanel) return null;
+  return { interruptsAgent: agentBusy, closesPanelTab: inPanel };
 }
