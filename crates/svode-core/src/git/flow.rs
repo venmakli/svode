@@ -6,7 +6,8 @@ use super::operations::{
 };
 use super::publication::{PublicationBlockReason, SpaceBlockClass};
 use super::state::GitRuntime;
-use super::{access, branch, ops, sync::SyncResult};
+use super::sync::{SyncMode, SyncResult};
+use super::{access, branch, ops};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
@@ -577,7 +578,7 @@ async fn sync_locked(
     if background {
         host.authorize_repository(repo).await?;
     }
-    let child = run_repository(host, cli, repo, step).await?;
+    let child = run_repository(host, cli, repo, step, background).await?;
     if !matches!(child, SyncResult::Success { .. }) {
         return Ok(SyncReport {
             child,
@@ -873,7 +874,7 @@ pub async fn parent_step_locked(
             }
         }
         super::sync::validate_transport(cli, parent, &transport?).await?;
-        let root_result = super::sync::sync(cli, parent).await?;
+        let root_result = super::sync::sync_with(cli, parent, SyncMode::of(background)).await?;
         if let SyncResult::Success { published_head, .. } = &root_result {
             let pointer = cli
                 .exec(&parent, &["rev-parse", &format!("{published_head}:{path}")])
@@ -1082,11 +1083,12 @@ async fn run_repository(
     cli: &GitCli,
     repo: &Path,
     step: Step<'_>,
+    background: bool,
 ) -> Result<SyncResult, GitError> {
     let result = match step {
         Step::Resolve(paths) => super::sync::resolve_and_continue(cli, repo, paths).await,
         Step::MergeServiceFiles(only) => super::sync::merge_service_files(cli, repo, only).await,
-        Step::Sync => super::sync::sync(cli, repo).await,
+        Step::Sync => super::sync::sync_with(cli, repo, SyncMode::of(background)).await,
     };
     let invalidate = match &result {
         Ok(SyncResult::AuthRequired { .. }) => true,

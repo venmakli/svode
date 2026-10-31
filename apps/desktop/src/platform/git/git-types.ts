@@ -80,7 +80,36 @@ export type SyncResultDto =
   | { type: "noRemote" }
   | { type: "authRequired"; challenge?: GitAuthChallengeDto | null }
   | { type: "operationInProgress"; operation: GitOperationDto }
-  | { type: "unmergedFiles"; files: string[] };
+  | { type: "unmergedFiles"; files: string[] }
+  /**
+   * The preflight of a background sync found a conflict beyond the Svode
+   * service files: nothing was merged or published.
+   */
+  | {
+      type: "incomingConflict";
+      files: GitPathConflictDto[];
+      service?: GitServiceFileDto[];
+    }
+  /** Diverged on a Git without merges in memory: only an explicit sync merges. */
+  | { type: "explicitSyncRequired" };
+
+/** The kind of a conflicted path, as the person resolves it. */
+export type GitConflictKindDto =
+  | "page_text"
+  | "page_properties"
+  | "text"
+  | "binary"
+  | "modify_delete"
+  | "add_add"
+  | "rename_rename"
+  | "rename_delete"
+  | "space_pointer";
+
+/** A conflicted path relative to the repository and its kind. */
+export interface GitPathConflictDto {
+  path: string;
+  kind: GitConflictKindDto;
+}
 
 /**
  * A conflicted Svode service file and what the rule set says about it: it

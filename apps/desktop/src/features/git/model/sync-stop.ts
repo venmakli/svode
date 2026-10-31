@@ -1,6 +1,11 @@
 import type { GitPublicationContentFinding } from "@/platform/git/publication-errors";
 import type { GitSaveFailureDto } from "@/platform/git/save-errors";
-import type { GitOperation, GitServiceFile, SyncResult } from "./types";
+import type {
+  GitOperation,
+  GitPathConflict,
+  GitServiceFile,
+  SyncResult,
+} from "./types";
 
 /** What stops sync of a repository, or only its publication. */
 export type GitSyncStop =
@@ -9,6 +14,17 @@ export type GitSyncStop =
   | { kind: "operation"; operation: GitOperation }
   /** Files left in conflict with no operation, after a failed autostash. */
   | { kind: "unmerged"; files: string[] }
+  /**
+   * «Конфликт с правками коллег»: a background sync did not start a merge
+   * that would stop with a conflict. Local work and versions go on; nothing
+   * is published until an explicit sync merges and the paths are resolved.
+   */
+  | { kind: "incoming"; files: GitPathConflict[]; service: GitServiceFile[] }
+  /**
+   * Local and incoming commits diverged and this Git cannot check a merge
+   * in memory: background sync only fast-forwards, an explicit sync merges.
+   */
+  | { kind: "explicit_sync" }
   /**
    * The publication guard kept outgoing commits local; fetch and integration
    * still run. `path` is relative to the repository.
@@ -31,10 +47,25 @@ export type GitSyncStop =
 
 /**
  * Stops that do not keep sync from running: publication and automatic
- * commits resume through it or alongside it.
+ * commits resume through it or alongside it, and an explicit sync is how
+ * the incoming changes of a background stop are merged.
  */
 export function syncStopBlocksSync(stop: GitSyncStop): boolean {
-  return stop.kind !== "publication" && stop.kind !== "commit";
+  return (
+    stop.kind !== "publication" &&
+    stop.kind !== "commit" &&
+    stop.kind !== "incoming" &&
+    stop.kind !== "explicit_sync"
+  );
+}
+
+/**
+ * Stops a background sync reports from its in-memory preflight: they are
+ * not states of the repository, so a read of the repository does not end
+ * them; the next sync does.
+ */
+export function syncStopIsBackgroundPreflight(stop: GitSyncStop): boolean {
+  return stop.kind === "incoming" || stop.kind === "explicit_sync";
 }
 
 /**
@@ -55,6 +86,14 @@ export function syncStopFromResult(
       return { kind: "operation", operation: result.operation };
     case "UnmergedFiles":
       return { kind: "unmerged", files: result.files };
+    case "IncomingConflict":
+      return {
+        kind: "incoming",
+        files: result.files,
+        service: result.service ?? [],
+      };
+    case "ExplicitSyncRequired":
+      return { kind: "explicit_sync" };
     case "Success":
     case "Resolved":
     case "AuthRequired":
@@ -78,6 +117,8 @@ export function serviceMergedFromResult(
       return result.merged ?? [];
     case "OperationInProgress":
     case "UnmergedFiles":
+    case "IncomingConflict":
+    case "ExplicitSyncRequired":
     case "Resolved":
       return [];
     case "AuthRequired":

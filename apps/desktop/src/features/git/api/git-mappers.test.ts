@@ -86,3 +86,29 @@ test("toSyncResult keeps the Svode service files a sync merged or left", () => {
     service: [{ path: "space", state: "space_diverged" }],
   });
 });
+
+test("toSyncResult keeps the files and kinds of a background stop", () => {
+  expect(
+    toSyncResult({
+      type: "incomingConflict",
+      files: [{ path: "Page.md", kind: "page_text" }],
+    }),
+  ).toEqual({
+    type: "IncomingConflict",
+    files: [{ path: "Page.md", kind: "page_text" }],
+  });
+  expect(
+    toSyncResult({
+      type: "incomingConflict",
+      files: [{ path: "space", kind: "space_pointer" }],
+      service: [{ path: "space", state: "space_unavailable" }],
+    }),
+  ).toEqual({
+    type: "IncomingConflict",
+    files: [{ path: "space", kind: "space_pointer" }],
+    service: [{ path: "space", state: "space_unavailable" }],
+  });
+  expect(toSyncResult({ type: "explicitSyncRequired" })).toEqual({
+    type: "ExplicitSyncRequired",
+  });
+});

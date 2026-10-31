@@ -62,6 +62,9 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
             : m.git_publication_partial(),
         );
       break;
+    // A background stop: the indicator shows it, work goes on.
+    case "IncomingConflict":
+    case "ExplicitSyncRequired":
     case "Resolved":
     case "NoRemote":
       break;

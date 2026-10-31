@@ -112,6 +112,7 @@ impl Fixture {
                 clone.to_str().unwrap(),
             ],
         );
+        crate::git::policy::exclude_device_local(clone);
     }
 
     fn git(&self, repo: &Path, args: &[&str]) -> String {

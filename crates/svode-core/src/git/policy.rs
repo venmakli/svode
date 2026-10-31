@@ -88,6 +88,25 @@ pub fn read_user_policy(
     Ok(crate::routines::local::read(path)?.git.unwrap_or_default())
 }
 
+/// Excludes the device-local files of `repo`, a test repository Svode
+/// never repaired, in its `.git/info/exclude`, as the local policy keeps them
+/// out of every repository Svode manages: the integration step and source
+/// writes take `.svode/write.lock`.
+#[cfg(test)]
+pub(crate) fn exclude_device_local(repo: &std::path::Path) {
+    use std::io::Write;
+    let info = repo.join(".git/info");
+    std::fs::create_dir_all(&info).expect("info dir");
+    let mut exclude = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(info.join("exclude"))
+        .expect("open exclude");
+    for entry in ENTRIES {
+        writeln!(exclude, "{entry}").expect("write exclude");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

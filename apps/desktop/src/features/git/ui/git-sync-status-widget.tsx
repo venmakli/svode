@@ -459,9 +459,11 @@ export function GitSyncStatusWidget({
                     className="animate-spin"
                   />
                 )}
-                {sync.parent.action === "sync"
-                  ? m.git_sync_action()
-                  : sync.parent.label}
+                {sync.parent.action !== "sync"
+                  ? sync.parent.label
+                  : stop?.kind === "incoming"
+                    ? m.git_sync_stop_incoming_action()
+                    : m.git_sync_action()}
               </Button>
             )}
           </DialogFooter>

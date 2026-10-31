@@ -2,6 +2,7 @@ import { abortGitMerge, getGitSyncPreflight } from "@/platform/git/git-api";
 import {
   serviceMergedFromResult,
   syncStopFromResult,
+  syncStopIsBackgroundPreflight,
   useGitStore,
   type GitSyncStop,
   type SyncResult,
@@ -34,8 +35,9 @@ export function recordPublicationStop(path: string, stop: GitSyncStop | null) {
 
 /**
  * Read the unfinished Git operation of the repository without syncing. A
- * publication stop is not a preflight state: it lasts until the next sync;
- * a commit stop lasts until the next automatic version.
+ * publication stop and the stops of a background preflight are not states
+ * of the repository: they last until the next sync; a commit stop lasts
+ * until the next automatic version.
  */
 export async function refreshGitSyncStop(path: string): Promise<void> {
   const dto = await getGitSyncPreflight(path);
@@ -48,7 +50,10 @@ export async function refreshGitSyncStop(path: string): Promise<void> {
     .setSyncStop(
       path,
       preflight ??
-        (current?.kind === "publication" || current?.kind === "commit"
+        (current &&
+        (current.kind === "publication" ||
+          current.kind === "commit" ||
+          syncStopIsBackgroundPreflight(current))
           ? current
           : null),
     );

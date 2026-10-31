@@ -133,6 +133,7 @@ impl Fixture {
                 clone.to_str().unwrap(),
             ],
         );
+        crate::git::policy::exclude_device_local(clone);
     }
 
     fn git(&self, repo: &Path, args: &[&str]) -> String {
@@ -515,6 +516,7 @@ fn a_clean_merge_tree_has_no_conflicts() {
         Some(MergeTree {
             tree: tree.into(),
             conflicts: Vec::new(),
+            messages: Vec::new(),
         })
     );
     assert_eq!(parse_merge_tree(""), None);

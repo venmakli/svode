@@ -116,6 +116,9 @@ async function runSync(
         await refreshGitStatus(spacePath);
         return result;
       case "OperationInProgress":
+      case "IncomingConflict":
+      case "ExplicitSyncRequired":
+        // Nothing changed in the repository; the stop says why.
         return result;
       case "Resolved":
         await refreshGitStatus(spacePath);

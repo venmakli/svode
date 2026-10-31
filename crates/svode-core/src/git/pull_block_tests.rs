@@ -70,6 +70,7 @@ impl Fixture {
         git(temp.path(), &["clone", url, local.to_str().unwrap()]);
         identify(&other);
         identify(&local);
+        crate::git::policy::exclude_device_local(&local);
         for (path, content) in incoming {
             std::fs::write(other.join(path), content).unwrap();
         }
@@ -89,13 +90,14 @@ impl Fixture {
         std::fs::write(self.local.join(path), content).unwrap();
     }
 
-    /// HEAD, index entries and every working tree file outside `.git`. A
+    /// HEAD, index entries and every working tree file outside `.git` and
+    /// the device-local `.svode/`. A
     /// refused merge may still refresh the stat cache of the index.
     fn snapshot(&self) -> (String, String, Vec<(String, Vec<u8>)>) {
         let mut files: Vec<_> = std::fs::read_dir(&self.local)
             .unwrap()
             .map(|entry| entry.unwrap())
-            .filter(|entry| entry.file_name() != ".git")
+            .filter(|entry| entry.file_name() != ".git" && entry.file_name() != ".svode")
             .map(|entry| {
                 (
                     entry.file_name().into_string().unwrap(),

@@ -95,6 +95,7 @@ impl MergeFixture {
             );
             git(clone, &["config", "user.name", "Fixture"]);
             git(clone, &["config", "user.email", "fixture@example.test"]);
+            crate::git::policy::exclude_device_local(clone);
         }
         write(&other, "plan.md", "# Plan\n\ntheir line\n");
         write(

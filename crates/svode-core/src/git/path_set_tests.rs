@@ -416,6 +416,7 @@ async fn clones(cli: &GitCli, count: usize) -> (TempDir, PathBuf, PathBuf, Vec<S
         ] {
             git(cli, clone, &["config", key, value]).await;
         }
+        crate::git::policy::exclude_device_local(clone);
     }
     (tmp, local, other, paths)
 }

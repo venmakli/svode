@@ -78,6 +78,16 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
       return { type: "OperationInProgress", operation: dto.operation };
     case "unmergedFiles":
       return { type: "UnmergedFiles", files: [...dto.files] };
+    case "incomingConflict":
+      return {
+        type: "IncomingConflict",
+        files: dto.files.map((file) => ({ ...file })),
+        ...(dto.service?.length
+          ? { service: dto.service.map((file) => ({ ...file })) }
+          : {}),
+      };
+    case "explicitSyncRequired":
+      return { type: "ExplicitSyncRequired" };
     default:
       throw new Error(`Unknown git sync result: ${JSON.stringify(dto)}`);
   }

@@ -10,7 +10,11 @@ import { gitPublicationStopMessage, shortCommit } from "../api/git-sync-error";
 import type { GitServiceMerge } from "../hooks/use-git-service-merge";
 import type { GitServiceFile, GitSyncStop } from "../model";
 import { gitSaveErrorDescription } from "./git-save-error-copy";
-import { gitServiceFileLabel, gitSyncStopTitle } from "./git-sync-stop-copy";
+import {
+  gitConflictKindLabel,
+  gitServiceFileLabel,
+  gitSyncStopTitle,
+} from "./git-sync-stop-copy";
 import * as m from "@/paraglide/messages.js";
 
 /**
@@ -56,6 +60,10 @@ export function GitSyncStopNotice({
             </div>
             <div>{m.git_sync_stop_commit_hint()}</div>
           </>
+        ) : stop.kind === "incoming" ? (
+          <IncomingStopDetails stop={stop} />
+        ) : stop.kind === "explicit_sync" ? (
+          <div>{m.git_sync_stop_explicit_description()}</div>
         ) : stop.kind !== "operation" ? (
           <>
             <div>
@@ -132,6 +140,52 @@ export function GitSyncStopNotice({
         )}
       </AlertDescription>
     </Alert>
+  );
+}
+
+/**
+ * The paths whose incoming changes conflict with local ones, each with its
+ * kind; nothing is merged until the user syncs.
+ */
+function IncomingStopDetails({
+  stop,
+}: {
+  stop: Extract<GitSyncStop, { kind: "incoming" }>;
+}) {
+  const service = new Map(stop.service.map((file) => [file.path, file]));
+  return (
+    <>
+      <div>{m.git_sync_stop_incoming_description()}</div>
+      {stop.files.length > 0 && (
+        <ul
+          aria-label={m.git_sync_stop_conflict_files()}
+          className="flex max-h-40 min-w-0 flex-col gap-1 overflow-y-auto"
+        >
+          {stop.files.map((file) => {
+            const serviceFile = service.get(file.path);
+            return (
+              <li
+                key={file.path}
+                className="flex min-w-0 items-baseline gap-2"
+                data-git-incoming-conflict={file.kind}
+              >
+                <span
+                  className="min-w-0 truncate text-foreground"
+                  title={file.path}
+                >
+                  {file.path}
+                </span>
+                <span className="shrink-0 text-xs">
+                  {serviceFile && serviceFile.state !== "mergeable"
+                    ? `${gitConflictKindLabel(file.kind)} · ${gitServiceFileLabel(serviceFile)}`
+                    : gitConflictKindLabel(file.kind)}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
   );
 }
 

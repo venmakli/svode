@@ -4,6 +4,7 @@ pub mod auth;
 pub mod autocommit;
 pub mod branch;
 pub mod cli;
+pub mod conflict_kind;
 pub mod diagnostics;
 pub mod flow;
 pub mod host;
@@ -13,6 +14,7 @@ mod init_tests;
 mod local_policy_tests;
 pub mod local_repair;
 pub mod markers;
+pub mod merge_preflight;
 #[cfg(test)]
 mod operation_recognition_tests;
 pub mod operations;

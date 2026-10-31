@@ -206,10 +206,16 @@ pub async fn resolves_all(
     objects: Objects,
 ) -> Result<bool, GitError> {
     let evaluated = evaluate(cli, repo, conflicts, objects).await?;
-    Ok(evaluated.len() == conflicts.len()
+    Ok(all_resolved(conflicts, &evaluated))
+}
+
+/// Whether `evaluated`, the decisions [`evaluate`] gave on `conflicts`,
+/// resolve every one of them: the conflicts are service-only.
+pub fn all_resolved(conflicts: &[ConflictedPath], evaluated: &[Evaluated]) -> bool {
+    evaluated.len() == conflicts.len()
         && evaluated
             .iter()
-            .all(|item| matches!(item.outcome, RuleOutcome::Resolved(_))))
+            .all(|item| matches!(item.outcome, RuleOutcome::Resolved(_)))
 }
 
 /// A conflicted service file as the Dialog names it.
@@ -230,7 +236,7 @@ pub enum ServiceFileState {
 }
 
 impl ServiceFile {
-    fn from_evaluated(item: &Evaluated) -> Option<Self> {
+    pub(crate) fn from_evaluated(item: &Evaluated) -> Option<Self> {
         let state = match item.outcome {
             RuleOutcome::Resolved(_) => ServiceFileState::Mergeable,
             RuleOutcome::Unresolved(UnresolvedReason::SpaceDiverged) => {
@@ -300,22 +306,50 @@ pub fn parse_staged<'a>(records: impl IntoIterator<Item = &'a str>) -> Vec<Confl
     conflicts
 }
 
-/// The result of `git merge-tree --write-tree -z`: the merged tree and the
-/// conflicted paths with their stages.
+/// The result of `git merge-tree --write-tree -z`: the merged tree, the
+/// conflicted paths with their stages and the informational messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeTree {
     pub tree: String,
     pub conflicts: Vec<ConflictedPath>,
+    pub messages: Vec<MergeMessage>,
+}
+
+/// One informational message of `git merge-tree -z`: the paths it is
+/// about and its stable type, such as `CONFLICT (rename/delete)`; the
+/// free-form text is not kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeMessage {
+    pub paths: Vec<String>,
+    pub kind: String,
 }
 
 /// Parse the output of `git merge-tree --write-tree -z` (without
 /// `--name-only`): the tree, then the conflicted file info up to an empty
-/// record, then informational messages, which are not read.
+/// record, then informational messages, each `<count>`, that many paths,
+/// its type and its text.
 pub fn parse_merge_tree(output: &str) -> Option<MergeTree> {
     let mut records = output.split('\0');
     let tree = records.next().filter(|tree| !tree.is_empty())?.to_owned();
-    let conflicts = parse_staged(records.take_while(|record| !record.is_empty()));
-    Some(MergeTree { tree, conflicts })
+    let conflicts = parse_staged(records.by_ref().take_while(|record| !record.is_empty()));
+    let mut messages = Vec::new();
+    while let Some(count) = records.next().and_then(|count| count.parse::<usize>().ok()) {
+        let paths: Vec<String> = records.by_ref().take(count).map(str::to_owned).collect();
+        let (Some(kind), Some(_text)) = (records.next(), records.next()) else {
+            break;
+        };
+        if paths.len() == count {
+            messages.push(MergeMessage {
+                paths,
+                kind: kind.to_owned(),
+            });
+        }
+    }
+    Some(MergeTree {
+        tree,
+        conflicts,
+        messages,
+    })
 }
 
 /// The conflicted paths of the index of `repo`.

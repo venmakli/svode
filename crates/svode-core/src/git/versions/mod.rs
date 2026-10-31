@@ -20,6 +20,7 @@ use std::path::Path;
 
 pub use changes::{ChangeStatus, PathChange};
 pub use facts::{ChangeFact, General, GroupFacts, Place, PlacedFact, Sensitive};
+pub(crate) use group::is_page;
 pub use group::{GroupKind, PendingOperation, VersionGroup};
 pub use message::{MessageLanguage, VersionMessage, compose};
 

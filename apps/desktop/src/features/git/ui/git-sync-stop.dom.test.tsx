@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createTestDom } from "@/shared/testing/dom";
+import type { SyncResultDto } from "@/platform/git/git-types";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
@@ -31,11 +32,13 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
   let syncReport: unknown = null;
   let syncFailure: unknown = null;
   const commands: string[] = [];
+  const syncArgs: unknown[] = [];
 
   function mockGit() {
     mockNativeIpc(
-      async (command) => {
+      async (command, args) => {
         commands.push(command);
+        if (command === "git_sync") syncArgs.push(args);
         if (command === "git_get_user_policy") return { autoSync: false };
         if (command === "git_get_remote")
           return "https://example.test/space.git";
@@ -537,15 +540,165 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       recordAutoVersionOutcome({ repository: path, error: null });
       expect(path in useGitStore.getState().syncStop).toBe(false);
       // An outcome without a stop leaves other stops alone.
-      useGitStore
-        .getState()
-        .setSyncStop(path, {
-          kind: "conflict",
-          files: ["Page.md"],
-          service: [],
-        });
+      useGitStore.getState().setSyncStop(path, {
+        kind: "conflict",
+        files: ["Page.md"],
+        service: [],
+      });
       recordAutoVersionOutcome({ repository: path, error: null });
       expect(useGitStore.getState().syncStop[path]?.kind).toBe("conflict");
+    } finally {
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+    }
+  });
+
+  test("a background conflict stops with its files and kinds until the next preflight", async () => {
+    const dom = await createTestDom();
+    mockGit();
+    preflight = null;
+    const { useGitStore } = await import("../model/git-store");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { recordGitOperationOutcome } =
+      await import("../api/git-operation-events");
+    const m = await import("@/paraglide/messages.js");
+    const incoming = {
+      repository: path,
+      active: false,
+      report: {
+        type: "incomingConflict",
+        files: [
+          { path: "Page.md", kind: "page_properties" },
+          { path: "space", kind: "space_pointer" },
+        ],
+        service: [{ path: "space", state: "space_diverged" }],
+      } satisfies SyncResultDto,
+      error: null,
+    };
+    try {
+      recordGitOperationOutcome(incoming);
+      expect(useGitStore.getState().syncStop[path]).toEqual({
+        kind: "incoming",
+        files: [
+          { path: "Page.md", kind: "page_properties" },
+          { path: "space", kind: "space_pointer" },
+        ],
+        service: [{ path: "space", state: "space_diverged" }],
+      });
+
+      await dom.render(
+        <TooltipProvider>
+          <GitSyncStatusWidget repositoryPath={path} onOpenPage={() => {}} />
+        </TooltipProvider>,
+      );
+      await settle();
+      const control = dom.document.querySelector<HTMLButtonElement>(
+        "[data-repository-control]",
+      )!;
+      // The preflight read of the repository on mount does not end it.
+      expect(useGitStore.getState().syncStop[path]?.kind).toBe("incoming");
+      expect(
+        control
+          .getAttribute("aria-label")
+          ?.includes(m.git_sync_stop_incoming_title()),
+      ).toBe(true);
+      // The existing «sync stopped» state, not an error.
+      expect(!!control.querySelector("[data-git-sync-stopped]")).toBe(true);
+      expect(control.querySelector("[data-git-sync-error]")).toBe(null);
+      await act(async () => {
+        control.click();
+      });
+      await settle();
+      const dialog = dom.document.querySelector<HTMLElement>("[role=dialog]")!;
+      const slot = dialog.querySelector<HTMLElement>(
+        "[data-git-sync-stop=incoming]",
+      )!;
+      expect(slot.textContent?.includes(m.git_sync_stop_incoming_title())).toBe(
+        true,
+      );
+      expect(
+        slot.textContent?.includes(m.git_sync_stop_incoming_description()),
+      ).toBe(true);
+      const rows = Array.from(
+        slot.querySelectorAll<HTMLElement>("[data-git-incoming-conflict]"),
+      );
+      expect(rows.map((row) => row.dataset.gitIncomingConflict)).toEqual([
+        "page_properties",
+        "space_pointer",
+      ]);
+      expect(rows[0].textContent).toBe(
+        `Page.md${m.git_conflict_kind_page_properties()}`,
+      );
+      expect(rows[1].textContent).toBe(
+        `space${m.git_conflict_kind_space_pointer()} · ${m.git_sync_service_space_diverged()}`,
+      );
+      expect(slot.querySelector("button")).toBe(null);
+      const buttons = Array.from(dialog.querySelectorAll("button"));
+      expect(
+        buttons.some(
+          (button) => button.textContent === m.git_sync_abort_action(),
+        ),
+      ).toBe(false);
+      const resolve = buttons.find(
+        (button) => button.textContent === m.git_sync_stop_incoming_action(),
+      )!;
+      expect(!!resolve).toBe(true);
+
+      // «Синхронизировать и разрешить» runs an explicit sync, which enters
+      // the merge state.
+      syncArgs.length = 0;
+      syncReport = { type: "conflict", files: ["Page.md"] };
+      await act(async () => {
+        resolve.click();
+      });
+      await settle();
+      expect(syncArgs.length).toBe(1);
+      expect((syncArgs[0] as { background?: boolean }).background).toBe(false);
+      expect(useGitStore.getState().syncStop[path]?.kind).toBe("conflict");
+
+      // The next background preflight without a conflict ends the stop.
+      await act(async () => {
+        useGitStore.getState().setSyncStop(path, null);
+        recordGitOperationOutcome(incoming);
+      });
+      expect(useGitStore.getState().syncStop[path]?.kind).toBe("incoming");
+      await act(async () => {
+        recordGitOperationOutcome({
+          repository: path,
+          active: false,
+          report: { type: "success", publishedHead: "abc" },
+          error: null,
+        });
+      });
+      expect(path in useGitStore.getState().syncStop).toBe(false);
+
+      // On a Git without merges in memory, diverged commits wait for Sync.
+      await act(async () => {
+        recordGitOperationOutcome({
+          repository: path,
+          active: false,
+          report: { type: "explicitSyncRequired" },
+          error: null,
+        });
+      });
+      await settle();
+      const explicit = dialog.querySelector<HTMLElement>(
+        "[data-git-sync-stop=explicit_sync]",
+      )!;
+      expect(
+        explicit.textContent?.includes(m.git_sync_stop_explicit_title()),
+      ).toBe(true);
+      expect(
+        explicit.textContent?.includes(m.git_sync_stop_explicit_description()),
+      ).toBe(true);
+      expect(
+        Array.from(dialog.querySelectorAll("button")).some(
+          (button) => button.textContent === m.git_sync_action(),
+        ),
+      ).toBe(true);
     } finally {
       useGitStore.getState().clear(path);
       await dom.render(null);

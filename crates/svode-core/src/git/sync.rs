@@ -6,9 +6,29 @@ use super::GitError;
 use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::branch::GitOperation;
 use super::cli::{GitCli, literal_pathspec_input, nul_paths_input, stdin_paths_input};
+use super::conflict_kind::PathConflict;
 use super::diagnostics::{GitStage, HookTrace};
+use super::merge_preflight::{self, Checked, Preflight};
 use super::path::{RootMode, normalize_repo_relative};
 use super::service_merge::{self, ServiceFile};
+
+/// Who started a sync. Background sync never starts a merge that can stop
+/// with a conflict (1.B); an explicit sync enters the ordinary merge state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncMode {
+    Explicit,
+    Background,
+}
+
+impl SyncMode {
+    pub fn of(background: bool) -> Self {
+        if background {
+            Self::Background
+        } else {
+            Self::Explicit
+        }
+    }
+}
 
 /// What the integration step did when it did not stop sync.
 #[derive(Debug, Clone)]
@@ -54,6 +74,21 @@ pub enum SyncResult {
     UnmergedFiles {
         files: Vec<String>,
     },
+    /// «Конфликт с правками коллег» (1.B): the preflight of a background
+    /// sync found incoming changes that conflict with local ones beyond what
+    /// the rule set of service files merges. Nothing was merged or
+    /// published; the working copy, the index and HEAD are as they were.
+    /// `files` are the conflicted paths with their kinds, `service` the
+    /// claimed service files the rule set leaves in conflict.
+    IncomingConflict {
+        files: Vec<PathConflict>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        service: Vec<ServiceFile>,
+    },
+    /// Local and incoming commits diverged and this Git (older than 2.38)
+    /// cannot check the merge in memory: background sync only fast-forwards,
+    /// so only an explicit sync merges the incoming changes (1.A).
+    ExplicitSyncRequired,
 }
 
 #[cfg(test)]
@@ -68,9 +103,20 @@ pub async fn sync_if_enabled(
     sync(cli, repo).await.map(Some)
 }
 
-/// Fetch, integrate the observed revision, then push. Handle conflicts,
-/// no-remote, and auth errors.
+/// Explicit sync: fetch, integrate the observed revision, then push.
+/// Handle conflicts, no-remote, and auth errors.
 pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError> {
+    sync_with(cli, space_dir, SyncMode::Explicit).await
+}
+
+/// [`sync`] started by `mode`: a background sync integrates only what its
+/// in-memory preflight admits and otherwise stops before integration and
+/// push.
+pub async fn sync_with(
+    cli: &GitCli,
+    space_dir: &Path,
+    mode: SyncMode,
+) -> Result<SyncResult, GitError> {
     if let Some(stopped) = preflight(cli, space_dir).await? {
         return Ok(stopped);
     }
@@ -84,7 +130,9 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
 
     let upstream = match super::upstream::of_current_branch(cli, space_dir).await? {
         Some(upstream) if upstream.configured => upstream,
-        upstream => return sync_without_upstream(cli, space_dir, &target, upstream).await,
+        upstream => {
+            return sync_without_upstream(cli, space_dir, &target, upstream, mode).await;
+        }
     };
     let observed = match super::upstream::fetch(cli, space_dir, upstream).await {
         Ok(observed) => observed,
@@ -99,7 +147,7 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
             observed.upstream.remote, observed.upstream.remote_ref
         )));
     };
-    let merged = match integrate(cli, space_dir, &observed.upstream, revision).await? {
+    let merged = match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
         Integration::Integrated { merged } => merged,
         Integration::Stopped(stopped) => return Ok(stopped),
     };
@@ -148,6 +196,7 @@ async fn sync_without_upstream(
     space_dir: &Path,
     target: &str,
     upstream: Option<super::upstream::Upstream>,
+    mode: SyncMode,
 ) -> Result<SyncResult, GitError> {
     let Some(upstream) = upstream else {
         if super::ops::get_remote(cli, space_dir).await?.is_none() {
@@ -171,7 +220,7 @@ async fn sync_without_upstream(
     };
     let mut merged = Vec::new();
     if let Some(revision) = observed.revision.as_deref() {
-        match integrate(cli, space_dir, &observed.upstream, revision).await? {
+        match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
             Integration::Integrated { merged: files } => merged = files,
             Integration::Stopped(stopped) => return Ok(stopped),
         }
@@ -201,12 +250,97 @@ pub async fn validate_transport(cli: &GitCli, repo: &Path, expected: &str) -> Re
     Ok(())
 }
 
-/// The integration step: merges `revision`, the one the fetch step observed
+/// The step of sync that changes the working copy (1.B): it holds the write
+/// guard of the repository, so a source write of Svode that comes meanwhile
+/// waits for it or gets «источник занят» (invariant 9), and never starts
+/// while one runs. An explicit sync merges `revision`, the one the fetch
+/// step observed for `upstream`, entering the ordinary merge state on a
+/// conflict; a background sync first merges in memory and integrates only a
+/// fast-forward, a clean merge or one with service conflicts only, else it
+/// stops with nothing changed and nothing to publish.
+///
+/// The renumbering of repeated `unique_id` (DF-237D) belongs to this step,
+/// after the fast-forward or merge and under the same guard.
+pub async fn integration_step(
+    cli: &GitCli,
+    space_dir: &Path,
+    upstream: &super::upstream::Upstream,
+    revision: &str,
+    mode: SyncMode,
+) -> Result<Integration, GitError> {
+    let repository = super::access::local_repository_root(space_dir)?;
+    let _guard =
+        super::write_guard::acquire(&std::collections::BTreeSet::from([repository]), &[]).await?;
+    if mode == SyncMode::Explicit {
+        return integrate(cli, space_dir, upstream, revision).await;
+    }
+    // HEAD moved by a Git process outside Svode between the preflight and
+    // the merge is checked again rather than merged unchecked.
+    for _ in 0..3 {
+        let checked = merge_preflight::check(cli, space_dir, revision).await?;
+        if let Some(stopped) = background_stop(&checked.outcome) {
+            return Ok(Integration::Stopped(stopped));
+        }
+        if let Some(integration) =
+            integrate_checked(cli, space_dir, upstream, revision, &checked).await?
+        {
+            return Ok(integration);
+        }
+    }
+    Err(GitError::GitCommandFailed(
+        "the branch kept changing during the integration step".to_owned(),
+    ))
+}
+
+/// The stop of a background sync for a preflight that does not integrate.
+fn background_stop(outcome: &Preflight) -> Option<SyncResult> {
+    match outcome {
+        Preflight::Conflicts { files, service } => Some(SyncResult::IncomingConflict {
+            files: files.clone(),
+            service: service.clone(),
+        }),
+        Preflight::Unchecked => Some(SyncResult::ExplicitSyncRequired),
+        _ => None,
+    }
+}
+
+/// Integrates `revision` after `checked` admitted it in the background.
+/// The working copy changed since the preflight makes Git refuse to
+/// overwrite files: that is the refusal of DF-190, not a merge state.
+/// `None` when HEAD moved since the preflight or the merge stopped with a
+/// conflict the preflight did not see; that merge is aborted, leaving the
+/// repository as it was, and the caller checks again.
+pub(crate) async fn integrate_checked(
+    cli: &GitCli,
+    space_dir: &Path,
+    upstream: &super::upstream::Upstream,
+    revision: &str,
+    checked: &Checked,
+) -> Result<Option<Integration>, GitError> {
+    let head = self::revision(
+        cli,
+        space_dir,
+        &["rev-parse", "--verify", "-q", "HEAD^{commit}"],
+    )
+    .await?;
+    if head != checked.head {
+        return Ok(None);
+    }
+    match integrate(cli, space_dir, upstream, revision).await? {
+        Integration::Stopped(SyncResult::Conflict { .. }) => {
+            merge_abort(cli, space_dir).await?;
+            Ok(None)
+        }
+        integration => Ok(Some(integration)),
+    }
+}
+
+/// Merges `revision`, the one the fetch step observed
 /// for `upstream`, into the current branch. A merge whose conflicts are only
 /// in Svode service files merges them by the rule set and is committed;
 /// otherwise the merge stops with the service files merged and the rest left
 /// to the person.
-pub async fn integrate(
+async fn integrate(
     cli: &GitCli,
     space_dir: &Path,
     upstream: &super::upstream::Upstream,

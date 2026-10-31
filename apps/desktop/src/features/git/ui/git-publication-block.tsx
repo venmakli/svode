@@ -159,6 +159,10 @@ function stepFailureText(step: GitSpacePublicationStep): string {
       return `${gitSyncStopTitle({ kind: "operation", operation: step.result.operation })}. ${m.git_sync_stop_operation_description()}`;
     case "NoRemote":
       return m.git_publication_space_no_remote();
+    case "IncomingConflict":
+      return m.git_sync_stop_incoming_title();
+    case "ExplicitSyncRequired":
+      return m.git_sync_stop_explicit_title();
     default:
       return m.git_sync_failed();
   }
