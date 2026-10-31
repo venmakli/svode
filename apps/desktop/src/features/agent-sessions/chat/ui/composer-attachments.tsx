@@ -75,9 +75,21 @@ export function insertAttachments(
 }
 
 /**
+ * Gives the field focus before the caret moves or badges go in. Slate
+ * focuses at once only while no change is pending; otherwise it retries
+ * on a timer once the changes are applied, which can come before the field
+ * renders the inserted badges and their spaces, and then fails to place
+ * the caret in a node that is not in the page yet. Focused first, the
+ * field shows the caret wherever the changes leave it as it renders them.
+ */
+function focusBeforeChanges(editor: PlateEditor) {
+  editor.tf.focus();
+}
+
+/**
  * Inserts dropped badges (`08` R5): at the drop point over the field, else
  * at the field's caret, or at the end of the draft when the field did not
- * have focus. The field then takes focus.
+ * have focus. The field then has focus.
  */
 export function insertDroppedAttachments(
   editor: PlateEditor,
@@ -95,12 +107,13 @@ export function insertDroppedAttachments(
           target,
         })
       : undefined;
+  const focused = Boolean(field?.contains(ownerDocument.activeElement));
+  focusBeforeChanges(editor);
   if (range) {
     editor.tf.select(range);
-  } else if (!field?.contains(ownerDocument.activeElement)) {
+  } else if (!focused) {
     editor.tf.select(editor.api.end([]));
   }
-  editor.tf.focus();
   insertAttachments(editor, attachments);
 }
 
@@ -213,7 +226,9 @@ export function AttachMenu({
         <DropdownMenuItem
           onSelect={() => {
             void pickDiskFiles().then((attachments) => {
-              editor.tf.focus({ edge: editor.selection ? undefined : "end" });
+              const caret = editor.selection;
+              focusBeforeChanges(editor);
+              if (!caret) editor.tf.select(editor.api.end([]));
               insertAttachments(editor, attachments);
             });
           }}

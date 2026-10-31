@@ -285,6 +285,26 @@ if (process.env.SVODE_COMPOSER_DROP_DOM !== "1") {
     expect(field().contains(document.activeElement)).toBe(true);
   });
 
+  dropTest("a drop gives the field focus without a retry that runs before its badges render", async () => {
+    kinds = { "/project/notes/plan.md": "file" };
+    await mount(chat());
+    const dataTransfer = resource({ kind: "file", relativePath: "notes/plan.md", title: "Plan" });
+    // The field renders the badge only once this act ends, as when a render
+    // comes late: a focus Slate retries on its 10 ms timer would look for the
+    // badge's space before it is in the page.
+    await act(async () => {
+      for (const type of ["dragenter", "drop"] as const) {
+        const event = new window.MouseEvent(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+        surface().dispatchEvent(event);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    await settle();
+    expect(draft()).toEqual(["[Plan|/project/notes/plan.md]", " "]);
+    expect(field().contains(document.activeElement)).toBe(true);
+  });
+
   dropTest("a collection the tree names by its README becomes a folder badge of its directory", async () => {
     kinds = {
       "/project/tasks": "directory",
