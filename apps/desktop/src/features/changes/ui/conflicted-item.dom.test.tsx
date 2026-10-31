@@ -312,17 +312,72 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
     }
   });
 
-  test("a project config and a Space pointer are left to Git until their actions", async () => {
+  test("a project and a Space config are chosen by places and a repeated key does not resolve them", async () => {
+    for (const path of [".svode/config.json", "docs/.svode/config.json"]) {
+      let refuse = true;
+      const t = await setup(conflictFile({ path }), () =>
+        refuse
+          ? {
+              type: "unresolved",
+              path,
+              finding: {
+                type: "unreadable",
+                message: "Svode cannot read the field `name`",
+              },
+            }
+          : { type: "resolved" },
+      );
+      try {
+        await t.render("text", path);
+        await t.settle();
+        expect(
+          t.dom.document.body.textContent?.includes(
+            t.m.changes_conflict_in_git(),
+          ),
+        ).toBe(false);
+        const slots = t.dom.document.querySelectorAll("[data-conflict-place]");
+        expect(slots.length).toBe(2);
+        await t.click(t.button(t.m.changes_conflict_both(), slots[0]));
+        await t.click(t.button(t.m.changes_conflict_ours(), slots[1]));
+        expect(t.resolutions).toEqual([
+          {
+            spacePath,
+            path,
+            resolution: {
+              type: "places",
+              version: "v1",
+              choices: ["both", "ours"],
+            },
+          },
+        ]);
+        expect(
+          t.dom.document
+            .querySelector("[data-conflict-problem=unreadable]")
+            ?.textContent?.includes(
+              t.m.changes_conflict_unreadable({
+                message: "Svode cannot read the field `name`",
+              }),
+            ),
+        ).toBe(true);
+        refuse = false;
+        await t.click(t.button(t.m.changes_conflict_theirs(), slots[0]));
+        expect(t.resolutions.at(-1)?.resolution).toEqual({
+          type: "places",
+          version: "v1",
+          choices: ["theirs", "ours"],
+        });
+        expect(t.dom.document.querySelector("[data-conflict-problem]")).toBe(
+          null,
+        );
+      } finally {
+        await t.dispose();
+      }
+    }
+  });
+
+  test("a Space pointer is left to Git until its actions", async () => {
     const t = await setup(conflictFile(), () => ({ type: "resolved" }));
     try {
-      await t.render("text", ".svode/config.json");
-      await t.settle();
-      expect(
-        t.dom.document.body.textContent?.includes(
-          t.m.changes_conflict_in_git(),
-        ),
-      ).toBe(true);
-      expect(t.dom.document.querySelector("[data-conflict-place]")).toBe(null);
       await t.render("space_pointer", "space");
       await t.settle();
       expect(
@@ -330,6 +385,7 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
           t.m.changes_conflict_in_git(),
         ),
       ).toBe(true);
+      expect(t.dom.document.querySelector("[data-conflict-place]")).toBe(null);
     } finally {
       await t.dispose();
     }

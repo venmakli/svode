@@ -11,7 +11,6 @@ import type { GitServiceMerge } from "../hooks/use-git-service-merge";
 import {
   conflictInPageEditor,
   conflictPartners,
-  conflictResolvable,
   type GitConflictKind,
   type GitServiceFile,
   type GitSyncStop,
@@ -216,11 +215,9 @@ function ConflictPathRow({
   onOpenPage?: (path: string) => void;
   fileResolver?: (path: string) => (() => void) | undefined;
 }) {
-  const resolve = !conflictResolvable(path)
-    ? undefined
-    : conflictInPageEditor(path, kind)
-      ? onOpenPage && (() => onOpenPage(path))
-      : fileResolver?.(path);
+  const resolve = conflictInPageEditor(path, kind)
+    ? onOpenPage && (() => onOpenPage(path))
+    : fileResolver?.(path);
   return (
     <span
       className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2"

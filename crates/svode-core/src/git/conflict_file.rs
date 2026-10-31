@@ -452,37 +452,39 @@ pub fn apply_choices(content: &[u8], size: usize, choices: &[PlaceChoice]) -> Op
 /// Why `content` cannot resolve `path` (relative to its repository), if it
 /// cannot: marker lines of `size` remain, or it does not read — a Svode
 /// service file by the reader Svode reads it with, other JSON and YAML as
-/// such, the frontmatter of Markdown by the reader of Pages.
+/// such, the frontmatter of Markdown by the reader of Pages. A JSON object
+/// that repeats a key, as «Оба» gives when both sides set it, does not read
+/// either: a reader would silently keep one of the values.
 pub fn check_result(path: &str, content: &[u8], size: usize) -> Option<ResolutionFinding> {
     if markers::has_marker_lines(content, size) {
         return Some(ResolutionFinding::Markers);
     }
     let unreadable = |message: String| Some(ResolutionFinding::Unreadable { message });
-    if let Some(parse) = super::publication::service_parser(path) {
-        return match parse(content) {
-            Ok(()) => None,
-            Err(message) => unreadable(message),
-        };
-    }
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-    if name.ends_with(".md") {
+    let json = name.ends_with(".json");
+    if let Some(parse) = super::publication::service_parser(path) {
+        if let Err(message) = parse(content) {
+            return unreadable(message);
+        }
+    } else if name.ends_with(".md") {
         return frontmatter_finding(content);
-    }
-    if name.ends_with(".json") {
-        return match serde_json::from_slice::<serde_json::Value>(content) {
-            Ok(_) => None,
-            Err(error) => unreadable(error.to_string()),
-        };
-    }
-    if name.ends_with(".yaml") || name.ends_with(".yml") {
+    } else if json {
+        if let Err(error) = serde_json::from_slice::<serde_json::Value>(content) {
+            return unreadable(error.to_string());
+        }
+    } else if name.ends_with(".yaml") || name.ends_with(".yml") {
         let text = match std::str::from_utf8(content) {
             Ok(text) => text,
             Err(error) => return unreadable(error.to_string()),
         };
-        return match serde_norway::from_str::<serde_norway::Value>(text) {
-            Ok(_) => None,
-            Err(error) => unreadable(error.to_string()),
-        };
+        if let Err(error) = serde_norway::from_str::<serde_norway::Value>(text) {
+            return unreadable(error.to_string());
+        }
+    }
+    if json {
+        if let Err(error) = serde_json::from_slice::<UniqueKeys>(content) {
+            return unreadable(error.to_string());
+        }
     }
     None
 }
@@ -503,6 +505,66 @@ pub(super) fn frontmatter_finding(content: &[u8]) -> Option<ResolutionFinding> {
             Some(ResolutionFinding::Unreadable { message })
         }
         _ => None,
+    }
+}
+
+/// A JSON value whose objects, at every level, name each key once.
+struct UniqueKeys;
+
+impl<'de> Deserialize<'de> for UniqueKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(UniqueKeys)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for UniqueKeys {
+    type Value = UniqueKeys;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self, E> {
+        Ok(self)
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self, A::Error> {
+        while seq.next_element::<UniqueKeys>()?.is_some() {}
+        Ok(self)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self, A::Error> {
+        let mut keys = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if keys.contains(&key) {
+                return Err(serde::de::Error::custom(format_args!(
+                    "the key `{key}` is repeated"
+                )));
+            }
+            map.next_value::<UniqueKeys>()?;
+            keys.insert(key);
+        }
+        Ok(self)
     }
 }
 

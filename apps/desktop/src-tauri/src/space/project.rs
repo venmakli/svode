@@ -696,6 +696,81 @@ mod tests {
         assert_eq!(spaces[0].name, "docs");
     }
 
+    fn git(repo: &Path, args: &[&str]) -> std::process::Output {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.test")
+            .env("GIT_COMMITTER_NAME", "Fixture")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.test")
+            .output()
+            .expect("git")
+    }
+
+    fn commit_config(repo: &Path, name: &str) {
+        write_config(
+            repo,
+            &format!("{{\n  \"name\": \"{name}\",\n  \"spaces\": []\n}}\n"),
+        );
+        assert!(git(repo, &["add", "-A"]).status.success());
+        assert!(git(repo, &["commit", "-qm", name]).status.success());
+    }
+
+    /// DF-235 during 1.19: a project whose `config.json` is in a merge
+    /// conflict opens, and opening it changes neither the file nor the merge,
+    /// so the conflict is still resolved by places in "Changes".
+    #[test]
+    fn opening_a_project_during_a_config_conflict_keeps_the_file_and_the_merge() {
+        for registered in [true, false] {
+            let config_dir = tempfile::tempdir().expect("config dir");
+            let parent = tempfile::tempdir().expect("parent dir");
+            let project = parent.path().join("my-project");
+            std::fs::create_dir_all(&project).expect("project dir");
+            assert!(
+                git(&project, &["init", "-q", "-b", "main"])
+                    .status
+                    .success()
+            );
+            commit_config(&project, "Base");
+            assert!(
+                git(&project, &["checkout", "-qb", "incoming"])
+                    .status
+                    .success()
+            );
+            commit_config(&project, "Theirs");
+            assert!(git(&project, &["checkout", "-q", "main"]).status.success());
+            commit_config(&project, "Ours");
+            assert!(!git(&project, &["merge", "-q", "incoming"]).status.success());
+            let contents = read_config(&project);
+            assert!(contents.contains("<<<<<<<"), "{contents}");
+            let status = git(&project, &["status", "--porcelain=v1", "-uall"]).stdout;
+            if registered {
+                registry::add_space(
+                    config_dir.path(),
+                    "registered-id",
+                    &project.to_string_lossy(),
+                )
+                .expect("register project");
+            }
+
+            let opened = open_project_folder(config_dir.path(), &project).expect("open");
+
+            assert_eq!(opened.config_unreadable, Some(Unreadable::Conflict));
+            assert_eq!(opened.config.name, "my-project");
+            assert_eq!(read_config(&project), contents);
+            assert!(project.join(".git/MERGE_HEAD").exists());
+            assert_eq!(
+                git(&project, &["status", "--porcelain=v1", "-uall"]).stdout,
+                status
+            );
+            let unmerged = git(&project, &["diff", "--name-only", "--diff-filter=U"]).stdout;
+            assert_eq!(String::from_utf8_lossy(&unmerged), ".svode/config.json\n");
+        }
+    }
+
     #[test]
     fn writes_of_an_unreadable_config_refuse_without_paths() {
         let config_dir = tempfile::tempdir().expect("config dir");

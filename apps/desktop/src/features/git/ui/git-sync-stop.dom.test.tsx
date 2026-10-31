@@ -194,10 +194,9 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
             m.git_conflict_name_schema({ name: "Задачи" }),
           ),
         ).toBe(true);
-        // Files open "Changes"; the project config is chosen by places in 1.19.
-        for (const row of rows.slice(1, 4))
+        // Files open "Changes", the project config too: it is chosen by places.
+        for (const row of rows.slice(1))
           expect(!!row.querySelector("[data-git-conflict-resolve]")).toBe(true);
-        expect(rows[4].querySelector("[data-git-conflict-resolve]")).toBe(null);
         // The stop takes the body of the Dialog; Sync is hidden in the footer.
         expect(dialog.querySelector("[data-git-sync-incoming]")).toBe(null);
         expect(
@@ -234,6 +233,24 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
         await settle();
         expect(files.at(-1)).toEqual({ spacePath: path, path: "order.json" });
         expect(dom.document.querySelector("[role=dialog]")).toBe(null);
+
+        // The project config opens "Changes" at it the same way.
+        await act(async () => {
+          control.click();
+        });
+        await settle();
+        await act(async () => {
+          dom.document
+            .querySelector<HTMLButtonElement>(
+              '[data-git-conflict-path=".svode/config.json"] [data-git-conflict-resolve]',
+            )!
+            .click();
+        });
+        await settle();
+        expect(files.at(-1)).toEqual({
+          spacePath: path,
+          path: ".svode/config.json",
+        });
         await dom.render(null);
       }
     } finally {

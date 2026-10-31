@@ -7,7 +7,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   conflictInPageEditor,
   conflictPageOpener,
-  conflictResolvable,
   type GitConflictFile,
   type GitConflictKind,
   type GitConflictUnclearReason,
@@ -68,7 +67,6 @@ export function ConflictedItem({
     );
   }
   if (
-    !conflictResolvable(path) ||
     kind === "space_pointer" ||
     kind === "page_text" ||
     kind === "page_properties"

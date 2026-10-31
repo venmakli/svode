@@ -625,5 +625,166 @@ fn places_read_marker_lines_like_the_page_editor() {
     );
 }
 
+/// A project or Space config with two places: its name and a variable.
+const CONFIG_BASE: &str = "{\n  \"name\": \"Project\",\n  \"description\": \"\",\n  \"icon\": \"x\",\n  \"first\": 1,\n  \"second\": 2,\n  \"variables\": {\n    \"region\": \"eu\",\n    \"zone\": 1\n  }\n}\n";
+
+fn config(name: &str, region: &str) -> String {
+    CONFIG_BASE
+        .replace("\"Project\"", &format!("\"{name}\""))
+        .replace("\"eu\"", &format!("\"{region}\""))
+}
+
+#[tokio::test]
+async fn a_project_config_is_resolved_by_places() {
+    let path = ".svode/config.json";
+    let merge = Merge::text(
+        path,
+        CONFIG_BASE,
+        &config("Theirs", "asia"),
+        &config("Ours", "us"),
+    )
+    .await;
+    assert_eq!(merge.kinds().await, [conflict(path, ConflictKind::Text)]);
+    let file = merge.places(path).await;
+    let Some(Places::Places { places }) = &file.places else {
+        panic!("{file:?}");
+    };
+    assert_eq!(places.len(), 2);
+    assert_eq!(places[0].ours, "  \"name\": \"Ours\",");
+    assert_eq!(places[0].theirs, "  \"name\": \"Theirs\",");
+    assert_eq!(places[1].ours, "    \"region\": \"us\",");
+    let before = text_of(&merge.local, path);
+    // «Оба» repeats a key: the name, which the config reader refuses, and a
+    // variable, which a JSON reader would silently take the last of.
+    for (choices, key) in [
+        ([PlaceChoice::Both, PlaceChoice::Ours], "name"),
+        ([PlaceChoice::Theirs, PlaceChoice::Both], "region"),
+    ] {
+        let result = merge.choose(path, &choices).await;
+        let SyncResult::Unresolved {
+            finding: ResolutionFinding::Unreadable { message },
+            ..
+        } = &result
+        else {
+            panic!("{result:?}");
+        };
+        assert!(message.contains(key), "{message}");
+        assert_eq!(text_of(&merge.local, path), before);
+        assert!(merge.merging());
+    }
+    let result = merge
+        .choose(path, &[PlaceChoice::Theirs, PlaceChoice::Ours])
+        .await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(text_of(&merge.local, path), config("Theirs", "us"));
+    assert!(!merge.merging());
+    assert_eq!(
+        crate::space_config::read(&merge.local).unwrap().name,
+        "Theirs"
+    );
+    assert_eq!(
+        git(&merge.remote, &["rev-parse", "main"]),
+        git(&merge.local, &["rev-parse", "HEAD"])
+    );
+}
+
+#[tokio::test]
+async fn a_space_config_is_resolved_by_places_from_the_space() {
+    let path = "docs/.svode/config.json";
+    let merge = Merge::text(
+        path,
+        CONFIG_BASE,
+        &config("Theirs", "asia"),
+        &config("Ours", "us"),
+    )
+    .await;
+    assert_eq!(merge.kinds().await, [conflict(path, ConflictKind::Text)]);
+    // «Изменения» of the Space name the file relative to the Space.
+    let space = merge.local.join("docs");
+    let file = read(&merge.cli, &space, ".svode/config.json")
+        .await
+        .unwrap();
+    assert_eq!(file.path, ".svode/config.json");
+    let Some(Places::Places { places }) = &file.places else {
+        panic!("{file:?}");
+    };
+    assert_eq!(places.len(), 2);
+    let resolve_with = |choices: Vec<PlaceChoice>| {
+        let version = file.version.clone();
+        let cli = &merge.cli;
+        let repo = &merge.local;
+        async move {
+            resolve(
+                cli,
+                repo,
+                path,
+                &FileResolution::Places { version, choices },
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let result = resolve_with(vec![PlaceChoice::Ours, PlaceChoice::Both]).await;
+    assert!(
+        matches!(
+            &result,
+            SyncResult::Unresolved { path: unresolved, finding: ResolutionFinding::Unreadable { .. } }
+                if unresolved == path
+        ),
+        "{result:?}"
+    );
+    assert!(merge.merging());
+    let result = resolve_with(vec![PlaceChoice::Ours, PlaceChoice::Theirs]).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(text_of(&merge.local, path), config("Ours", "asia"));
+    assert_eq!(crate::space_config::read(&space).unwrap().name, "Ours");
+}
+
+#[test]
+fn a_repeated_key_does_not_read_as_json() {
+    let unreadable = |path: &str, content: &str| {
+        matches!(
+            check_result(path, content.as_bytes(), 7),
+            Some(ResolutionFinding::Unreadable { .. })
+        )
+    };
+    for content in [
+        "{\"name\": \"A\", \"name\": \"B\"}",
+        "{\"name\": \"A\", \"variables\": {\"k\": 1, \"k\": 2}}",
+        "{\"name\": \"A\", \"extra\": 1, \"extra\": 2}",
+        "{\"name\": \"A\", \"spaces\": [{\"id\": \"a\", \"path\": \"a\", \"repo\": null, \"x\": {\"y\": 1, \"y\": 1}}]}",
+    ] {
+        assert!(unreadable(".svode/config.json", content), "{content}");
+        assert!(unreadable("docs/.svode/config.json", content), "{content}");
+    }
+    // The config reader refuses a repeated field of its own, but keeps the
+    // last value of a repeated variable or unknown key: only this check
+    // stops «Оба» from dropping one of them.
+    assert!(
+        crate::space_config::parse(b"{\"name\": \"A\", \"variables\": {\"k\": 1, \"k\": 2}}")
+            .is_ok()
+    );
+    assert!(crate::space_config::parse(b"{\"name\": \"A\", \"name\": \"B\"}").is_err());
+    assert!(unreadable("data.json", "{\"a\": [{\"b\": 1, \"b\": 2}]}"));
+    // The same key in different objects and an ordinary config read.
+    assert_eq!(
+        check_result(
+            "data.json",
+            b"{\"a\": {\"b\": 1}, \"c\": [{\"b\": 2}, {\"b\": 3}]}",
+            7
+        ),
+        None
+    );
+    let config = CONFIG_BASE.replace(
+        "\"first\": 1",
+        "\"first\": {\"b\": [1, 2.5, -3, true, null, \"s\"]}, \"spaces\": [{\"id\": \"a\", \"path\": \"a\", \"repo\": null}]",
+    );
+    assert_eq!(
+        check_result(".svode/config.json", config.as_bytes(), 7),
+        None
+    );
+    assert!(crate::space_config::parse(config.as_bytes()).is_ok());
+}
+
 #[path = "conflict_whole_file_tests.rs"]
 mod whole_file;
