@@ -204,6 +204,23 @@ export interface GitSideChangeDto {
   size: number | null;
 }
 
+/** The places of a text file in conflict, or why there are none. */
+export type GitConflictPlacesDto = NonNullable<GitConflictFileDto["places"]>;
+
+/** The frontmatter of a Page in conflict and the text after it. */
+export interface PagePropertiesConflictDto {
+  places: GitConflictPlacesDto;
+  /** The text after the frontmatter and its places. */
+  body: string;
+  /** A place takes the closing `---` and the start of the text. */
+  reachesText: boolean;
+}
+
+/** The frontmatter after a side in every place, or why it does not resolve. */
+export type PagePropertiesResolutionDto =
+  | { type: "resolved"; frontmatter: string }
+  | { type: "unresolved"; finding: GitResolutionFindingDto };
+
 export type GitPlaceChoiceDto = "ours" | "theirs" | "both";
 
 /** How the person resolves a file in conflict. */

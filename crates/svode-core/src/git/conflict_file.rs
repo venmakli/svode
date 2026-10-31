@@ -34,7 +34,7 @@ use super::sync::SyncResult;
 use super::versions::MessageLanguage;
 
 /// A text file larger than this is not shown or resolved by places.
-const MAX_TEXT: usize = 4 * 1024 * 1024;
+pub(super) const MAX_TEXT: usize = 4 * 1024 * 1024;
 /// A version of a side larger than this is not taken for the whole file.
 const MAX_SIDE: usize = 64 * 1024 * 1024;
 /// Git decides a version is binary by a NUL byte among its first bytes.
@@ -198,23 +198,23 @@ pub enum ResolutionFinding {
 }
 
 /// The working copy of a path, by lines as Git reads them.
-struct Line {
-    start: usize,
+pub(super) struct Line {
+    pub(super) start: usize,
     /// End of the line without its ending.
-    content_end: usize,
+    pub(super) content_end: usize,
     /// End of the line with its ending.
-    end: usize,
-    kind: Option<u8>,
+    pub(super) end: usize,
+    pub(super) kind: Option<u8>,
 }
 
 /// A block of a file: the indices of its marker lines; `bar` only in the
 /// `diff3` style.
 #[derive(Debug, Clone, Copy)]
-struct Split {
-    lt: usize,
-    bar: Option<usize>,
-    eq: usize,
-    gt: usize,
+pub(super) struct Split {
+    pub(super) lt: usize,
+    pub(super) bar: Option<usize>,
+    pub(super) eq: usize,
+    pub(super) gt: usize,
 }
 
 /// The marker line kind of `line` for markers of `size`: `size` copies of `<`
@@ -238,7 +238,7 @@ fn marker_kind(line: &[u8], size: usize) -> Option<u8> {
 }
 
 /// Lines as Git reads them: up to `\n`, with a `\r` before it in the ending.
-fn split_lines(content: &[u8], size: usize) -> Vec<Line> {
+pub(super) fn split_lines(content: &[u8], size: usize) -> Vec<Line> {
     let mut lines = Vec::new();
     let mut start = 0;
     while start < content.len() {
@@ -263,7 +263,7 @@ fn split_lines(content: &[u8], size: usize) -> Vec<Line> {
 }
 
 /// The blocks of `lines` and whether they are in the `diff3` style.
-fn find_splits(lines: &[Line]) -> (Vec<Split>, bool) {
+pub(super) fn find_splits(lines: &[Line]) -> (Vec<Split>, bool) {
     let find = |kind: u8, from: usize, to: usize| {
         (from..to.min(lines.len())).find(|index| lines[*index].kind == Some(kind))
     };
@@ -317,27 +317,51 @@ pub fn places(content: &[u8], size: usize) -> Places {
         };
         return Places::Unclear { reason };
     }
+    if (0..splits.len()).any(|index| ambiguous(&lines, &splits, index)) {
+        return Places::Unclear {
+            reason: UnclearReason::Ambiguous,
+        };
+    }
+    if unowned_marker(&lines, &splits, 0..lines.len()) {
+        return Places::Unclear {
+            reason: UnclearReason::Broken,
+        };
+    }
+    Places::Places {
+        places: splits
+            .iter()
+            .map(|split| conflict_place(content, &lines, split))
+            .collect(),
+    }
+}
+
+/// Whether the marker lines of block `index` of `splits` allow another
+/// split: a `<` line before its sides, a second `|` line in the `diff3`
+/// style, a second `=` line, or a `>` line after it before the next block.
+pub(super) fn ambiguous(lines: &[Line], splits: &[Split], index: usize) -> bool {
     let find = |kind: u8, from: usize, to: usize| {
         (from..to.min(lines.len())).find(|index| lines[*index].kind == Some(kind))
     };
-    for (index, split) in splits.iter().enumerate() {
-        let limit = splits.get(index + 1).map_or(lines.len(), |next| next.lt);
-        let ours_end = split.bar.unwrap_or(split.eq);
-        let ambiguous = find(b'<', split.lt + 1, ours_end).is_some()
-            || split
-                .bar
-                .is_some_and(|bar| find(b'|', bar + 1, split.eq).is_some())
-            || find(b'=', split.eq + 1, split.gt).is_some()
-            || find(b'>', split.gt + 1, limit).is_some();
-        if ambiguous {
-            return Places::Unclear {
-                reason: UnclearReason::Ambiguous,
-            };
-        }
-    }
-    // Every marker line Git would still see after a choice belongs to a block.
+    let split = splits[index];
+    let limit = splits.get(index + 1).map_or(lines.len(), |next| next.lt);
+    let ours_end = split.bar.unwrap_or(split.eq);
+    find(b'<', split.lt + 1, ours_end).is_some()
+        || split
+            .bar
+            .is_some_and(|bar| find(b'|', bar + 1, split.eq).is_some())
+        || find(b'=', split.eq + 1, split.gt).is_some()
+        || find(b'>', split.gt + 1, limit).is_some()
+}
+
+/// Whether a marker line Git would still see after a choice in every block
+/// of `splits` lies in `range` of `lines` outside those blocks.
+pub(super) fn unowned_marker(
+    lines: &[Line],
+    splits: &[Split],
+    range: std::ops::Range<usize>,
+) -> bool {
     let mut owned = vec![false; lines.len()];
-    for split in &splits {
+    for split in splits {
         owned[split.lt] = true;
         owned[split.eq] = true;
         owned[split.gt] = true;
@@ -348,15 +372,13 @@ pub fn places(content: &[u8], size: usize) -> Places {
                 .for_each(|line| *line = true);
         }
     }
-    if lines
-        .iter()
-        .zip(&owned)
-        .any(|(line, owned)| !owned && is_resolvable_marker(line.kind))
-    {
-        return Places::Unclear {
-            reason: UnclearReason::Broken,
-        };
-    }
+    range
+        .into_iter()
+        .any(|index| !owned[index] && is_resolvable_marker(lines[index].kind))
+}
+
+/// The place of block `split`: its marker lines and the text of each side.
+pub(super) fn conflict_place(content: &[u8], lines: &[Line], split: &Split) -> ConflictPlace {
     let side = |from: usize, to: usize| -> String {
         if to - from > 1 {
             String::from_utf8_lossy(&content[lines[from + 1].start..lines[to - 1].content_end])
@@ -365,22 +387,33 @@ pub fn places(content: &[u8], size: usize) -> Places {
             String::new()
         }
     };
-    Places::Places {
-        places: splits
-            .iter()
-            .map(|split| ConflictPlace {
-                start_line: split.lt,
-                end_line: split.gt,
-                ours: side(split.lt, split.bar.unwrap_or(split.eq)),
-                theirs: side(split.eq, split.gt),
-            })
-            .collect(),
+    ConflictPlace {
+        start_line: split.lt,
+        end_line: split.gt,
+        ours: side(split.lt, split.bar.unwrap_or(split.eq)),
+        theirs: side(split.eq, split.gt),
     }
+}
+
+/// The lines of the side `ours` (or the incoming one) of block `split` with
+/// their endings: each is followed by a marker line.
+pub(super) fn raw_side<'a>(
+    content: &'a [u8],
+    lines: &[Line],
+    split: &Split,
+    ours: bool,
+) -> &'a [u8] {
+    let (from, to) = if ours {
+        (split.lt, split.bar.unwrap_or(split.eq))
+    } else {
+        (split.eq, split.gt)
+    };
+    &content[lines[from].end..lines[to].start]
 }
 
 /// A `<`, `|` or `>` marker line: Git counts it as a conflict left in the
 /// file. A lone `=` line is valid text.
-fn is_resolvable_marker(kind: Option<u8>) -> bool {
+pub(super) fn is_resolvable_marker(kind: Option<u8>) -> bool {
     matches!(kind, Some(b'<' | b'|' | b'>'))
 }
 
@@ -399,10 +432,8 @@ pub fn apply_choices(content: &[u8], size: usize, choices: &[PlaceChoice]) -> Op
     let mut result = Vec::with_capacity(content.len());
     let mut cursor = 0;
     for (split, choice) in splits.iter().zip(choices) {
-        // The lines of a side with their endings: each is followed by a marker line.
-        let raw = |from: usize, to: usize| &content[lines[from].end..lines[to].start];
-        let ours = raw(split.lt, split.bar.unwrap_or(split.eq));
-        let theirs = raw(split.eq, split.gt);
+        let ours = raw_side(content, &lines, split, true);
+        let theirs = raw_side(content, &lines, split, false);
         result.extend_from_slice(&content[cursor..lines[split.lt].start]);
         match choice {
             PlaceChoice::Ours => result.extend_from_slice(ours),
@@ -421,7 +452,7 @@ pub fn apply_choices(content: &[u8], size: usize, choices: &[PlaceChoice]) -> Op
 /// Why `content` cannot resolve `path` (relative to its repository), if it
 /// cannot: marker lines of `size` remain, or it does not read — a Svode
 /// service file by the reader Svode reads it with, other JSON and YAML as
-/// such.
+/// such, the frontmatter of Markdown by the reader of Pages.
 pub fn check_result(path: &str, content: &[u8], size: usize) -> Option<ResolutionFinding> {
     if markers::has_marker_lines(content, size) {
         return Some(ResolutionFinding::Markers);
@@ -434,6 +465,9 @@ pub fn check_result(path: &str, content: &[u8], size: usize) -> Option<Resolutio
         };
     }
     let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    if name.ends_with(".md") {
+        return frontmatter_finding(content);
+    }
     if name.ends_with(".json") {
         return match serde_json::from_slice::<serde_json::Value>(content) {
             Ok(_) => None,
@@ -451,6 +485,25 @@ pub fn check_result(path: &str, content: &[u8], size: usize) -> Option<Resolutio
         };
     }
     None
+}
+
+/// Why the frontmatter of the Markdown `content` does not read, if it does
+/// not; Markdown without frontmatter reads.
+pub(super) fn frontmatter_finding(content: &[u8]) -> Option<ResolutionFinding> {
+    let text = match std::str::from_utf8(content) {
+        Ok(text) => text,
+        Err(error) => {
+            return Some(ResolutionFinding::Unreadable {
+                message: error.to_string(),
+            });
+        }
+    };
+    match crate::page::frontmatter::parse_status(text) {
+        crate::page::frontmatter::ParseStatus::Malformed { message, .. } => {
+            Some(ResolutionFinding::Unreadable { message })
+        }
+        _ => None,
+    }
 }
 
 /// The conflicted path `path` (relative to `requested`, a path in its

@@ -6,6 +6,7 @@ pub mod branch;
 pub mod cli;
 pub mod conflict_file;
 pub mod conflict_kind;
+pub mod conflict_properties;
 pub mod diagnostics;
 pub mod flow;
 pub mod host;

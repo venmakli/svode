@@ -58,6 +58,10 @@ interface UsePlateDocumentSessionResult {
   spacePath: string;
   flushPendingSource: () => Promise<void>;
   discardPendingSource: () => Promise<void>;
+  /** The loaded document, for its properties block; null while it loads. */
+  documentKey: string | null;
+  /** The properties block of the document is resolved: it awaits a write. */
+  handlePropertiesResolved: () => void;
 }
 
 export function usePlateDocumentSession({
@@ -312,6 +316,13 @@ export function usePlateDocumentSession({
     ],
   );
 
+  const handlePropertiesResolved = useCallback(() => {
+    const currentPath = currentPathRef.current;
+    if (readOnly || !currentPath) return;
+    markUnsaved(spacePath, currentPath);
+    scheduleAutoSave();
+  }, [markUnsaved, readOnly, scheduleAutoSave, spacePath]);
+
   const deserializeToolbarMarkdown = useCallback(
     (text: string) =>
       editor ? deserializeEditorMarkdownInsertion(editor, text) : [],
@@ -330,5 +341,7 @@ export function usePlateDocumentSession({
     spacePath,
     flushPendingSource,
     discardPendingSource,
+    documentKey: linkValidationDocumentKey,
+    handlePropertiesResolved,
   };
 }

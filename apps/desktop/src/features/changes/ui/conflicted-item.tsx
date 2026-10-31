@@ -216,7 +216,7 @@ function ConflictFileBody({
  * «Оставить моё» or «Взять входящее» for the whole file, with the
  * confirmation that names what is lost; unavailable without that side.
  */
-function WholeFileAction({
+export function WholeFileAction({
   file,
   side,
   disabled,
@@ -370,7 +370,7 @@ function WholeFile({
   );
 }
 
-function ProblemAlert({ problem }: { problem: ConflictFileProblem }) {
+export function ProblemAlert({ problem }: { problem: ConflictFileProblem }) {
   if (problem.kind === "finding" && problem.finding.type === "changed")
     return (
       <Alert data-conflict-problem="changed">
@@ -434,7 +434,7 @@ function Message({ children }: { children: React.ReactNode }) {
   );
 }
 
-function unclearReason(reason: GitConflictUnclearReason) {
+export function unclearReason(reason: GitConflictUnclearReason) {
   switch (reason) {
     case "ambiguous":
       return m.changes_conflict_unclear_ambiguous();

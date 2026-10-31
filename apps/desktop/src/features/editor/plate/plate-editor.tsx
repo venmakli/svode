@@ -11,6 +11,7 @@ import { detailPageBodyClassName } from "@/shared/ui/page-layout";
 
 import { usePlateDocumentSession } from "../hooks/use-plate-document-session";
 import { EditorMediaAdapterProvider } from "../ui/editor-media-adapter-provider";
+import { PropertiesConflictBlock } from "../ui/properties-conflict-block";
 import { TocSidebar } from "../ui/toc-sidebar";
 import { EditorKit } from "./editor-kit";
 import * as m from "@/paraglide/messages.js";
@@ -85,6 +86,8 @@ export function PlateDocumentEditor({
     spacePath,
     flushPendingSource,
     discardPendingSource,
+    documentKey,
+    handlePropertiesResolved,
   } = usePlateDocumentSession({
     bodyOnly,
     bodyOnlyMeta,
@@ -154,6 +157,20 @@ export function PlateDocumentEditor({
                 documentLoading && "hidden",
               )}
             >
+              {documentKey && currentDocument ? (
+                <PropertiesConflictBlock
+                  documentKey={documentKey}
+                  spacePath={spacePath}
+                  path={currentDocument}
+                  readOnly={readOnly}
+                  onResolved={handlePropertiesResolved}
+                  className={
+                    usePageScroll
+                      ? "px-6"
+                      : "px-16 sm:px-[max(64px,calc(50%-350px))]"
+                  }
+                />
+              ) : null}
               <Editor
                 variant={usePageScroll ? "none" : "default"}
                 className={cn(usePageScroll && detailPageBodyClassName)}

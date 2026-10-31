@@ -29,7 +29,7 @@ import {
   type GitSaveScopeTreeNode,
 } from "@/features/git/editor";
 
-import { readConflictMarkerSize } from "../api/conflict-marker-api";
+import { readPageConflicts } from "../api/properties-conflict-api";
 import {
   deserializeWithConflicts,
   hasUnresolvedConflicts,
@@ -42,6 +42,11 @@ import {
   setCachedDocumentValue,
   setDocumentBaseline,
 } from "../model/plate-document-cache";
+import {
+  getPropertiesConflict,
+  resolvedFrontmatter,
+  setPropertiesConflict,
+} from "../model/properties-conflict";
 import { retryWhileSourceBusy } from "../model/source-sync";
 import { useEditorSaveResultHandler } from "./use-editor-save-result-handler";
 import { useEditorSourceSync } from "./use-editor-source-sync";
@@ -138,6 +143,9 @@ export function useEditorDocumentWriter({
 }: UseEditorDocumentWriterInput): UseEditorDocumentWriterResult {
   const sourceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   const autoSavePausedRef = useRef(false);
+  const reloadSourceRef = useRef<(path: string) => Promise<void>>(
+    async () => {},
+  );
   const {
     applyAutoSaveResult,
     applySavedDocumentResult,
@@ -171,6 +179,17 @@ export function useEditorDocumentWriter({
       const write = async () => {
         if (!editor || !spacePath) return null;
 
+        // Until the properties block is resolved the frontmatter is not
+        // written; its lines go before the body as they were chosen (1.F).
+        const properties = getPropertiesConflict(baselineKey(path));
+        const frontmatter = resolvedFrontmatter(properties);
+        if (properties && frontmatter === null) {
+          if (explicitSave) {
+            toast.error(m.editor_properties_conflict_save_blocked());
+          }
+          return null;
+        }
+
         if (hasUnresolvedConflicts(editor.children)) {
           if (explicitSave) {
             toast.error(m.git_sync_conflict({ count: "1" }));
@@ -180,14 +199,16 @@ export function useEditorDocumentWriter({
 
         const markdown = editor.getApi(MarkdownPlugin).markdown.serialize();
         const body = bodyWithSourceLeadingBlankLines(
-          getDocumentBaseline(baselineKey(path))?.body ?? "",
+          properties
+            ? properties.conflict.body
+            : (getDocumentBaseline(baselineKey(path))?.body ?? ""),
           markdown,
         );
         const result = await retryWhileSourceBusy(() =>
           writePage({
             spacePath,
             path,
-            content: body,
+            content: (frontmatter ?? "") + body,
             projectPath: projectPath ?? null,
             sourceVersion,
           }),
@@ -201,6 +222,13 @@ export function useEditorDocumentWriter({
             version: result.sourceVersion,
             body,
           });
+        }
+        if (properties) {
+          setPropertiesConflict(baselineKey(path), null);
+          // Text lines of a place through the closing `---` now open the
+          // body, which the editor reads again.
+          if (properties.conflict.reachesText)
+            await reloadSourceRef.current(path);
         }
 
         return result;
@@ -226,15 +254,20 @@ export function useEditorDocumentWriter({
   const loadSource = useCallback(
     async (path: string, page: Page) => {
       if (!editor) return;
-      const markerSize = await readConflictMarkerSize(
+      const { markerSize, properties } = await readPageConflicts(
         spacePath,
         path,
-        page.body,
+        page,
       );
       isLoadingRef.current = true;
       try {
+        setPropertiesConflict(baselineKey(path), properties);
         const loadedValue = loadEditorValue(
-          deserializeWithConflicts(editor, page.body, markerSize),
+          deserializeWithConflicts(
+            editor,
+            properties?.body ?? page.body,
+            markerSize,
+          ),
         );
         setCachedDocumentValue(spacePath, path, loadedValue);
         if (page.source_version) {
@@ -259,6 +292,11 @@ export function useEditorDocumentWriter({
       spacePath,
     ],
   );
+
+  useEffect(() => {
+    reloadSourceRef.current = async (path) =>
+      loadSource(path, await readPage({ spacePath, path }));
+  }, [loadSource, spacePath]);
 
   const sourceSync = useEditorSourceSync({
     baseline: (path) => getDocumentBaseline(baselineKey(path)),

@@ -10,6 +10,8 @@ import type {
   GitFileResolutionDto,
   GitPathConflictDto,
   GitUncommittedGroupsDto,
+  PagePropertiesConflictDto,
+  PagePropertiesResolutionDto,
   PublicationStatusDto,
   GitAvailabilityDto,
   GitStatusDto,
@@ -224,6 +226,33 @@ export function resolveGitConflictFile(input: {
   resolution: GitFileResolutionDto;
 }): Promise<SyncResultDto> {
   return invokeCommand<SyncResultDto>("git_resolve_conflict_file", input);
+}
+
+/**
+ * The properties conflict of the Page `content` with conflict markers of
+ * `markerSize`: the places of its frontmatter and the text after it, `null`
+ * when no marker opens in the frontmatter.
+ */
+export function getPagePropertiesConflict(input: {
+  content: string;
+  markerSize: number;
+}): Promise<PagePropertiesConflictDto | null> {
+  return invokeCommand<PagePropertiesConflictDto | null>(
+    "git_page_properties_conflict",
+    input,
+  );
+}
+
+/** The frontmatter of the Page `content` with a side in every place. */
+export function resolvePagePropertiesConflict(input: {
+  content: string;
+  markerSize: number;
+  choices: ("ours" | "theirs")[];
+}): Promise<PagePropertiesResolutionDto> {
+  return invokeCommand<PagePropertiesResolutionDto>(
+    "git_resolve_page_properties",
+    input,
+  );
 }
 
 /**

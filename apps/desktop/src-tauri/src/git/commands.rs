@@ -18,7 +18,9 @@ use svode_core::git::ops::{GitStatus, UnpushedCommit};
 use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use svode_core::git::save::save;
 use svode_core::git::versions::{self, MessageLanguage};
-use svode_core::git::{conflict_file, conflict_kind, flow, markers, ops, sync};
+use svode_core::git::{
+    conflict_file, conflict_kind, conflict_properties, flow, markers, ops, sync,
+};
 use svode_core::system_path;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
@@ -793,6 +795,28 @@ pub async fn git_conflict_file(
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     Ok(conflict_file::read(state.cli()?, &space, &path).await?)
+}
+
+/// The properties conflict of the Page `content` the editor read, with
+/// conflict markers of `marker_size`: the places of its frontmatter and the
+/// text after it, `None` when no marker opens in the frontmatter.
+#[tauri::command]
+pub async fn git_page_properties_conflict(
+    content: String,
+    marker_size: usize,
+) -> Option<conflict_properties::PropertiesConflict> {
+    conflict_properties::properties(content.as_bytes(), marker_size)
+}
+
+/// The frontmatter of the Page `content` with the chosen side in every
+/// place of its properties, or why it does not resolve them.
+#[tauri::command]
+pub async fn git_resolve_page_properties(
+    content: String,
+    marker_size: usize,
+    choices: Vec<conflict_file::Side>,
+) -> conflict_properties::PropertiesResolution {
+    conflict_properties::resolve_properties(content.as_bytes(), marker_size, &choices)
 }
 
 /// Resolve the conflicted file at `path` (relative to `space_path`) by the

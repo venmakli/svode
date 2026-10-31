@@ -433,6 +433,8 @@ pub fn run() {
             git::commands::git_uncommitted_groups,
             git::commands::git_conflict_file,
             git::commands::git_resolve_conflict_file,
+            git::commands::git_page_properties_conflict,
+            git::commands::git_resolve_page_properties,
             git::commands::git_merge_abort,
             git::commands::git_get_remote,
             git::commands::git_set_remote,
