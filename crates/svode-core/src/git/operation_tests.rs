@@ -599,7 +599,7 @@ async fn native_ssh_dns_failure_keeps_configured_remote_error() {
         Err(GitError::GitCommandFailed(_))
     ));
     assert!(matches!(
-        crate::git::ops::fetch_remote(&f.cli, &f.root).await,
+        crate::git::upstream::fetch_counted(&f.cli, &f.root).await,
         Err(GitError::GitCommandFailed(_))
     ));
     git(&f.root, &["remote", "remove", "origin"]);

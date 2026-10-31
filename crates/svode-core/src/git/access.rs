@@ -1442,7 +1442,15 @@ async fn find_routine_claim(
     let fetch = cli
         .exec_sensitive_with_stdin(
             repository,
-            &["fetch", "--no-tags", "--quiet", push_url, reference],
+            &[
+                "fetch",
+                "--no-tags",
+                "--quiet",
+                "--no-recurse-submodules",
+                "--no-write-fetch-head",
+                push_url,
+                reference,
+            ],
             &[],
             None,
             PROBE_TIMEOUT,
@@ -2360,6 +2368,13 @@ mod tests {
                 .stdout
                 .is_empty()
         );
+        // Reading existing claims fetches their history without FETCH_HEAD.
+        for repository in [&first, &second] {
+            let fetch_head = git_ok(&cli, repository, &["rev-parse", "--git-path", "FETCH_HEAD"])
+                .await
+                .stdout;
+            assert!(!repository.join(fetch_head.trim()).exists());
+        }
     }
 
     #[test]

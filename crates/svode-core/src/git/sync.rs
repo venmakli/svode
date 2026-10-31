@@ -24,7 +24,7 @@ pub enum SyncResult {
     },
     /// The last conflicted file was resolved while no merge was in progress.
     Resolved,
-    /// Sync stopped before pull and push: the operation is finished in Git.
+    /// Sync stopped before integration and push: the operation is finished in Git.
     OperationInProgress {
         operation: GitOperation,
     },
@@ -47,7 +47,8 @@ pub async fn sync_if_enabled(
     sync(cli, repo).await.map(Some)
 }
 
-/// Pull then push. Handle conflicts, no-remote, and auth errors.
+/// Fetch, integrate the observed revision, then push. Handle conflicts,
+/// no-remote, and auth errors.
 pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError> {
     if let Some(stopped) = preflight(cli, space_dir).await? {
         return Ok(stopped);
@@ -60,41 +61,24 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
     }
     let target = super::operations::read_transport(cli, space_dir).await?;
 
-    if upstream_ref(cli, space_dir).await?.is_none() {
-        return sync_without_upstream(cli, space_dir, &target).await;
-    }
-
-    // Pull
-    let pull_out = cli
-        .exec(
-            space_dir,
-            &[
-                "-c",
-                "submodule.recurse=false",
-                "-c",
-                "rebase.autoStash=false",
-                "-c",
-                "merge.autoStash=false",
-                // Overrides both settings above since Git 2.51; older Git ignores it.
-                "-c",
-                "pull.autoStash=false",
-                "pull",
-                "--no-rebase",
-                "--no-recurse-submodules",
-            ],
-        )
-        .await?;
-
-    if pull_out.exit_code != 0 {
-        if let Some(stopped) =
-            handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await?
-        {
-            return Ok(stopped);
+    let upstream = match super::upstream::of_current_branch(cli, space_dir).await? {
+        Some(upstream) if upstream.configured => upstream,
+        upstream => return sync_without_upstream(cli, space_dir, &target, upstream).await,
+    };
+    let observed = match super::upstream::fetch(cli, space_dir, upstream).await {
+        Ok(observed) => observed,
+        Err(error) => {
+            return remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error)
+                .await;
         }
-    }
-    // A pull that succeeds, or the merge retried after setting matching
-    // edits aside, may still leave files in conflict.
-    if let Some(stopped) = preflight(cli, space_dir).await? {
+    };
+    let Some(revision) = observed.revision.as_deref() else {
+        return Err(GitError::GitCommandFailed(format!(
+            "git fetch failed: {} has no {}",
+            observed.upstream.remote, observed.upstream.remote_ref
+        )));
+    };
+    if let Some(stopped) = integrate(cli, space_dir, &observed.upstream, revision).await? {
         return Ok(stopped);
     }
 
@@ -119,7 +103,7 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
     })
 }
 
-/// The state that stops sync before branch preparation, pull and push.
+/// The state that stops sync before branch preparation, integration and push.
 /// A merge in progress is the sync conflict with its files; any other
 /// operation is named and left to Git; conflicted files without an operation
 /// are left to the user, with no stash applied or dropped.
@@ -142,61 +126,32 @@ async fn sync_without_upstream(
     cli: &GitCli,
     space_dir: &Path,
     target: &str,
+    upstream: Option<super::upstream::Upstream>,
 ) -> Result<SyncResult, GitError> {
-    match super::ops::fetch_remote(cli, space_dir).await {
-        Ok(false) => return Ok(SyncResult::NoRemote),
-        Ok(true) => {}
-        Err(GitError::AuthRequired(detail)) => {
-            return auth_required(
-                cli,
-                space_dir,
-                GitRemoteOperation::FirstPush,
-                Some(detail.as_str()),
-            )
-            .await;
+    let Some(upstream) = upstream else {
+        if super::ops::get_remote(cli, space_dir).await?.is_none() {
+            return Ok(SyncResult::NoRemote);
         }
-        Err(GitError::NoRemote) => return Ok(SyncResult::NoRemote),
-        Err(err) => return Err(err),
-    }
-
-    let branch = super::ops::current_branch(cli, space_dir).await?;
-    if branch == "HEAD" || branch.is_empty() {
         return Err(GitError::GitCommandFailed(
             "Cannot sync detached HEAD without an upstream".to_string(),
         ));
-    }
-
-    if super::ops::remote_branch_exists(cli, space_dir, &branch).await? {
-        let pull_out = cli
-            .exec(
+    };
+    let observed = match super::upstream::fetch(cli, space_dir, upstream).await {
+        Ok(observed) => observed,
+        Err(error) => {
+            return remote_error_to_sync_result(
+                cli,
                 space_dir,
-                &[
-                    "-c",
-                    "submodule.recurse=false",
-                    "-c",
-                    "rebase.autoStash=false",
-                    "-c",
-                    "merge.autoStash=false",
-                    "-c",
-                    "pull.autoStash=false",
-                    "pull",
-                    "--no-rebase",
-                    "--no-recurse-submodules",
-                    "origin",
-                    &branch,
-                ],
+                GitRemoteOperation::FirstPush,
+                error,
             )
-            .await?;
-        if pull_out.exit_code != 0 {
-            if let Some(stopped) =
-                handle_pull_failure(cli, space_dir, &pull_out.stderr, &pull_out.stdout).await?
-            {
-                return Ok(stopped);
-            }
+            .await;
         }
-        if let Some(stopped) = preflight(cli, space_dir).await? {
-            return Ok(stopped);
-        }
+    };
+    if let Some(revision) = observed.revision.as_deref()
+        && let Some(stopped) = integrate(cli, space_dir, &observed.upstream, revision).await?
+    {
+        return Ok(stopped);
     }
 
     validate_transport(cli, space_dir, target).await?;
@@ -222,42 +177,56 @@ pub async fn validate_transport(cli: &GitCli, repo: &Path, expected: &str) -> Re
     Ok(())
 }
 
-async fn upstream_ref(cli: &GitCli, space_dir: &Path) -> Result<Option<String>, GitError> {
-    let out = cli
-        .exec(
-            space_dir,
-            &[
-                "rev-parse",
-                "--abbrev-ref",
-                "--symbolic-full-name",
-                "@{upstream}",
-            ],
-        )
-        .await?;
-    if out.exit_code != 0 {
-        return Ok(None);
-    }
-    let upstream = out.stdout.trim().to_string();
-    if upstream.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(upstream))
+/// The integration step: merges `revision`, the one the fetch step observed
+/// for `upstream`, into the current branch. `None` when the branch now
+/// contains it and no file is left in conflict; otherwise the state that stops
+/// sync before push.
+pub async fn integrate(
+    cli: &GitCli,
+    space_dir: &Path,
+    upstream: &super::upstream::Upstream,
+    revision: &str,
+) -> Result<Option<SyncResult>, GitError> {
+    let mut retried = false;
+    loop {
+        let merge = super::upstream::merge(cli, space_dir, upstream, revision).await?;
+        if merge.exit_code == 0 {
+            // A merge that succeeds, or the merge retried after setting
+            // matching edits aside, may still leave files in conflict.
+            return preflight(cli, space_dir).await;
+        }
+        if blocked_by_local_files(&merge.stderr) {
+            match set_aside_matching_edits(cli, space_dir, revision).await {
+                Ok(files) if !files.is_empty() => {
+                    return Err(GitError::PullBlocked {
+                        repository: space_dir.to_string_lossy().into_owned(),
+                        files,
+                    });
+                }
+                Ok(_) if !retried => {
+                    retried = true;
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!("interfering local files unavailable: {error}"),
+            }
+        }
+        return merge_failure(cli, space_dir, &merge.stderr, &merge.stdout)
+            .await
+            .map(Some);
     }
 }
 
-/// `None` when the merge completed after matching edits were set aside.
-async fn handle_pull_failure(
+async fn merge_failure(
     cli: &GitCli,
     space_dir: &Path,
     stderr: &str,
     stdout: &str,
-) -> Result<Option<SyncResult>, GitError> {
+) -> Result<SyncResult, GitError> {
     let stderr = stderr.trim();
 
     if super::ops::is_git_auth_error(stderr) {
-        return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr))
-            .await
-            .map(Some);
+        return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
     }
 
     if stderr.contains("CONFLICT")
@@ -266,83 +235,35 @@ async fn handle_pull_failure(
         || stdout.contains("Automatic merge failed")
     {
         let files = conflict_files(cli, space_dir).await?;
-        return Ok(Some(SyncResult::Conflict { files }));
+        return Ok(SyncResult::Conflict { files });
     }
 
-    if blocked_by_local_files(stderr) {
-        match set_aside_matching_edits(cli, space_dir).await {
-            Ok(files) if !files.is_empty() => {
-                return Err(GitError::PullBlocked {
-                    repository: space_dir.to_string_lossy().into_owned(),
-                    files,
-                });
-            }
-            Ok(_) => {
-                // The revision pull fetched and checked above.
-                let merge = cli
-                    .exec(
-                        space_dir,
-                        &[
-                            "-c",
-                            "submodule.recurse=false",
-                            "-c",
-                            "merge.autoStash=false",
-                            "merge",
-                            "--no-edit",
-                            "FETCH_HEAD",
-                        ],
-                    )
-                    .await?;
-                if merge.exit_code == 0 {
-                    return Ok(None);
-                }
-                return Box::pin(handle_pull_failure(
-                    cli,
-                    space_dir,
-                    &merge.stderr,
-                    &merge.stdout,
-                ))
-                .await;
-            }
-            Err(error) => tracing::warn!("interfering local files unavailable: {error}"),
-        }
-    }
-
-    let error = super::ops::git_remote_command_error("git pull", stderr);
-    remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error)
-        .await
-        .map(Some)
+    let error = super::ops::git_remote_command_error("git merge", stderr);
+    remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await
 }
 
-/// Interim measure of pull (DF-190 R2), removed together with pull once a
-/// merge engine replaces it.
+/// Interim measure of the integration step (DF-190 R2), removed once a merge
+/// engine replaces it.
 ///
-/// Returns the paths that keep the fetched revision from merging. A path
-/// whose edit is no user work does not: the blob Git would store for the
-/// working file (with the filters and eol of the path) equals the incoming
-/// one, local commits left the path as in the merge base, and the index holds
-/// HEAD or the incoming version. Only when every interfering path is such,
+/// Returns the paths that keep `incoming`, the observed revision, from
+/// merging. A path whose edit is no user work does not: the blob Git would
+/// store for the working file (with the filters and eol of the path) equals
+/// the incoming one, local commits left the path as in the merge base, and
+/// the index holds HEAD or the incoming version. Only when every interfering path is such,
 /// they are brought back to HEAD and the merge writes the same content;
 /// otherwise nothing changes.
-async fn set_aside_matching_edits(cli: &GitCli, repo: &Path) -> Result<Vec<String>, GitError> {
-    // A refused merge leaves FETCH_HEAD at the revision it would have merged.
-    let fetched = revision(
-        cli,
-        repo,
-        &["rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}"],
-    );
-    let Some(incoming) = fetched.await? else {
-        return Err(GitError::GitCommandFailed(
-            "fetched revision unavailable".into(),
-        ));
-    };
-    let paths = interfering_paths(cli, repo, &incoming).await?;
+async fn set_aside_matching_edits(
+    cli: &GitCli,
+    repo: &Path,
+    incoming: &str,
+) -> Result<Vec<String>, GitError> {
+    let paths = interfering_paths(cli, repo, incoming).await?;
     if paths.is_empty() {
         return Err(GitError::GitCommandFailed(
-            "git pull refused without interfering local files".into(),
+            "git merge refused without interfering local files".into(),
         ));
     }
-    let Some(base) = revision(cli, repo, &["merge-base", "HEAD", &incoming]).await? else {
+    let Some(base) = revision(cli, repo, &["merge-base", "HEAD", incoming]).await? else {
         return Ok(paths);
     };
     let mut committed = Vec::new();
@@ -353,7 +274,7 @@ async fn set_aside_matching_edits(cli: &GitCli, repo: &Path) -> Result<Vec<Strin
     ) {
         committed.extend(path_list(cli, repo, &args).await?);
     }
-    let incoming_blobs = entries(cli, repo, &["ls-tree", "-z", &incoming], &paths).await?;
+    let incoming_blobs = entries(cli, repo, &["ls-tree", "-z", incoming], &paths).await?;
     let head_blobs = entries(cli, repo, &["ls-tree", "-z", "HEAD"], &paths).await?;
     let index_blobs = entries(cli, repo, &["ls-files", "-z", "--stage"], &paths).await?;
     let candidates: Vec<&str> = paths

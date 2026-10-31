@@ -55,21 +55,6 @@ pub fn git_remote_command_error(command: &str, stderr: &str) -> GitError {
     GitError::GitCommandFailed(format!("{command} failed: {stderr}"))
 }
 
-/// Fetch origin refs without touching the working tree.
-/// Returns `false` when no origin remote is configured.
-pub async fn fetch_remote(cli: &GitCli, space_dir: &Path) -> Result<bool, GitError> {
-    if get_remote(cli, space_dir).await?.is_none() {
-        return Ok(false);
-    }
-
-    let out = cli.exec(space_dir, &["fetch", "--prune", "origin"]).await?;
-    if out.exit_code != 0 {
-        let stderr = out.stderr.trim();
-        return Err(git_remote_command_error("git fetch", stderr));
-    }
-    Ok(true)
-}
-
 /// List submodules declared in `.gitmodules`.
 pub async fn list_submodules(
     cli: &GitCli,
@@ -203,15 +188,6 @@ pub async fn init_with_optional_scaffold_commit(
 
     tracing::info!("Initialized git repo at {}", space_dir.display());
     Ok(())
-}
-
-pub async fn remote_branch_exists(
-    cli: &GitCli,
-    space_dir: &Path,
-    branch: &str,
-) -> Result<bool, GitError> {
-    let remote_ref = format!("refs/remotes/origin/{branch}");
-    ref_exists(cli, space_dir, &remote_ref).await
 }
 
 fn is_local_variable_path(path: &str) -> bool {

@@ -123,7 +123,7 @@ pub async fn fetch_status(
     let fetched = if observed {
         false
     } else {
-        ops::fetch_remote(cli, repo).await?
+        super::upstream::fetch_counted(cli, repo).await?.is_some()
     };
     Ok((ops::status_with_remote_counts(cli, repo).await?, fetched))
 }

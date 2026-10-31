@@ -34,6 +34,7 @@ pub(crate) mod staging_tests;
 pub mod state;
 pub mod status;
 pub mod sync;
+pub mod upstream;
 pub mod write_guard;
 
 #[derive(Debug, thiserror::Error)]
