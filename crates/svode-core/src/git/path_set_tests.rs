@@ -454,7 +454,7 @@ async fn conflicting_edits(cli: &GitCli, count: usize) -> (TempDir, PathBuf, Vec
 /// Sync of `local` stops on a conflict in exactly `paths`.
 async fn conflict(cli: &GitCli, local: &Path, paths: &[String]) -> Vec<String> {
     let result = sync(cli, local).await;
-    let Ok(SyncResult::Conflict { mut files }) = result else {
+    let Ok(SyncResult::Conflict { mut files, .. }) = result else {
         panic!("{result:?}");
     };
     files.sort();

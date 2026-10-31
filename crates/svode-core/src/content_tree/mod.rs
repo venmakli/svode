@@ -1,4 +1,5 @@
 pub mod children;
+pub(crate) mod order_merge;
 pub mod owner;
 pub mod policy;
 
@@ -581,9 +582,13 @@ pub fn replace_order(
 fn write_order(space: &Path, order: &SpaceOrder) -> Result<(), ContentTreeError> {
     let svode_dir = space.join(".svode");
     fs::create_dir_all(&svode_dir)?;
-    let data = serde_json::to_string_pretty(&order.sections)?;
-    fs::write(svode_dir.join("order.json"), data)?;
+    fs::write(svode_dir.join("order.json"), render_order(order)?)?;
     Ok(())
+}
+
+/// The text of order.json for `order`, as its writer and its merge write it.
+fn render_order(order: &SpaceOrder) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&order.sections)
 }
 
 /// Markdown files under `root` that the Space tree policy does not ignore.

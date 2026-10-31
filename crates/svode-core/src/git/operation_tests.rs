@@ -124,7 +124,7 @@ async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Co
             _ => sync::sync(&cli, &request.repo).await?,
         };
         let mut parent_outcome = None;
-        if let (SyncResult::Success { published_head }, Some((parent, _))) =
+        if let (SyncResult::Success { published_head, .. }, Some((parent, _))) =
             (&child, &request.parent)
         {
             let _parent_guard = run.parent_lock.lock().await;

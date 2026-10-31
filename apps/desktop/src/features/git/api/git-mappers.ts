@@ -46,13 +46,21 @@ export function toGitStatus(dto: GitStatusDto): GitStatus {
 export function toSyncResult(dto: SyncResultDto): SyncResult {
   switch (dto.type) {
     case "conflict":
-      return { type: "Conflict", files: [...dto.files] };
+      return {
+        type: "Conflict",
+        files: [...dto.files],
+        ...(dto.merged?.length ? { merged: [...dto.merged] } : {}),
+        ...(dto.service?.length
+          ? { service: dto.service.map((file) => ({ ...file })) }
+          : {}),
+      };
     case "resolved":
       return { type: "Resolved" };
     case "success":
       return {
         type: "Success",
         ...(dto.publishedHead ? { publishedHead: dto.publishedHead } : {}),
+        ...(dto.merged?.length ? { merged: [...dto.merged] } : {}),
         ...(dto.parent
           ? {
               parent: toParentPublication(dto.parent),

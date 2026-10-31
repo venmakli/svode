@@ -59,3 +59,30 @@ test("child publication retains a separately targeted parent failure", () => {
   expect(result.parent?.error?.kind).toBe("git_publication_blocked");
   expect(result.parent?.pointer).toBe("local");
 });
+
+test("toSyncResult keeps the Svode service files a sync merged or left", () => {
+  expect(
+    toSyncResult({
+      type: "success",
+      publishedHead: "abc",
+      merged: [".svode/order.json"],
+    }),
+  ).toEqual({
+    type: "Success",
+    publishedHead: "abc",
+    merged: [".svode/order.json"],
+  });
+  expect(
+    toSyncResult({
+      type: "conflict",
+      files: ["space", "Page.md"],
+      merged: [".svode/order.json"],
+      service: [{ path: "space", state: "space_diverged" }],
+    }),
+  ).toEqual({
+    type: "Conflict",
+    files: ["space", "Page.md"],
+    merged: [".svode/order.json"],
+    service: [{ path: "space", state: "space_diverged" }],
+  });
+});

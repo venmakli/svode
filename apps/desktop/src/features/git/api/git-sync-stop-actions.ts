@@ -1,5 +1,6 @@
 import { abortGitMerge, getGitSyncPreflight } from "@/platform/git/git-api";
 import {
+  serviceMergedFromResult,
   syncStopFromResult,
   useGitStore,
   type GitSyncStop,
@@ -8,10 +9,16 @@ import {
 import { toGitStatus, toSyncResult } from "./git-mappers";
 import { refreshGitRemoteStatus } from "./git-status-actions";
 
-/** Keep the repository's sync stop in step with what a sync reported. */
+/**
+ * Keep the repository's sync stop and the service files it names as merged
+ * in step with what a sync reported.
+ */
 export function recordSyncStop(path: string, result: SyncResult) {
+  const git = useGitStore.getState();
   const stop = syncStopFromResult(result);
-  if (stop !== undefined) useGitStore.getState().setSyncStop(path, stop);
+  if (stop !== undefined) git.setSyncStop(path, stop);
+  const merged = serviceMergedFromResult(result);
+  if (merged !== undefined) git.setServiceMerged(path, merged);
 }
 
 /**

@@ -25,6 +25,7 @@ import {
  * - `cloning` tracks in-progress `git clone` operations and their percent.
  * - `syncError` is set when sync fails (auth/network) → indicator goes to `✕`.
  * - `syncStop` is the unfinished Git operation that stops sync.
+ * - `serviceMerged` are the Svode service files the last sync merged.
  * - `publicationBlock` lists the Spaces that stopped the project publication;
  *   like a stop, it is not a sync error.
  */
@@ -42,6 +43,7 @@ interface GitState {
   updateBackendSyncing: (path: string, active: boolean) => void;
   syncError: Record<string, string>;
   syncStop: Record<string, GitSyncStop>;
+  serviceMerged: Record<string, string[]>;
   publicationBlock: Record<string, GitPublicationBlock>;
   remoteError: Record<string, string>;
   remoteChecked: Record<string, boolean>;
@@ -71,6 +73,7 @@ interface GitState {
   setSyncing: (spacePath: string, syncing: boolean) => void;
   setSyncError: (spacePath: string, error: string | null) => void;
   setSyncStop: (spacePath: string, stop: GitSyncStop | null) => void;
+  setServiceMerged: (spacePath: string, files: string[]) => void;
   setPublicationBlock: (
     spacePath: string,
     block: GitPublicationBlock | null,
@@ -131,6 +134,7 @@ export const useGitStore = create<GitState>((set, get) => {
     },
     syncError: {},
     syncStop: {},
+    serviceMerged: {},
     publicationBlock: {},
     remoteError: {},
     remoteChecked: {},
@@ -223,6 +227,11 @@ export const useGitStore = create<GitState>((set, get) => {
         ),
         syncError: repositoryState(s.syncError, spacePath, status.repository),
         syncStop: repositoryState(s.syncStop, spacePath, status.repository),
+        serviceMerged: repositoryState(
+          s.serviceMerged,
+          spacePath,
+          status.repository,
+        ),
         publicationBlock: repositoryState(
           s.publicationBlock,
           spacePath,
@@ -284,6 +293,7 @@ export const useGitStore = create<GitState>((set, get) => {
         const { [spacePath]: _rmSync, ...syncing } = s.syncing;
         const { [spacePath]: _rmError, ...syncError } = s.syncError;
         const { [spacePath]: _rmStop, ...syncStop } = s.syncStop;
+        const { [spacePath]: _rmMerged, ...serviceMerged } = s.serviceMerged;
         const { [spacePath]: _rmBlock, ...publicationBlock } =
           s.publicationBlock;
         const { [spacePath]: _rmRemoteError, ...remoteError } = s.remoteError;
@@ -301,6 +311,7 @@ export const useGitStore = create<GitState>((set, get) => {
           backendSyncing,
           syncError,
           syncStop,
+          serviceMerged,
           publicationBlock,
           remoteError,
           remoteChecked,
@@ -334,6 +345,16 @@ export const useGitStore = create<GitState>((set, get) => {
         if (stop) next[repository] = stop;
         else delete next[repository];
         return { syncStop: next };
+      }),
+
+    setServiceMerged: (spacePath, files) =>
+      set((s) => {
+        const repository = s.statuses[spacePath]?.repository ?? spacePath;
+        if (!files.length && !s.serviceMerged[repository]) return s;
+        const next = { ...s.serviceMerged };
+        if (files.length) next[repository] = files;
+        else delete next[repository];
+        return { serviceMerged: next };
       }),
 
     setPublicationBlock: (spacePath, block) =>

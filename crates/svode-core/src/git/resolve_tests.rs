@@ -49,7 +49,7 @@ fn test_cli(temp: &Path) -> GitCli {
 }
 
 /// Two clones of one remote; pulling into `local` conflicts in `plan.md`,
-/// `.svode/order.json` and `old.md` (modify/delete) while `notes.md` and
+/// `data.json` and `old.md` (modify/delete) while `notes.md` and
 /// `stray.md` carry unrelated uncommitted work.
 struct MergeFixture {
     _temp: tempfile::TempDir,
@@ -72,7 +72,7 @@ impl MergeFixture {
         write(&seed, "plan.md", "# Plan\n\nshared line\n");
         write(&seed, "old.md", "old\n");
         write(&seed, "notes.md", "notes\n");
-        write(&seed, ".svode/order.json", "{\"order\":[\"plan.md\"]}\n");
+        write(&seed, "data.json", "{\"order\":[\"plan.md\"]}\n");
         git(&seed, &["add", "."]);
         git(&seed, &["commit", "-m", "base"]);
         let remote = temp.path().join("remote.git");
@@ -99,7 +99,7 @@ impl MergeFixture {
         write(&other, "plan.md", "# Plan\n\ntheir line\n");
         write(
             &other,
-            ".svode/order.json",
+            "data.json",
             "{\"order\":[\"plan.md\",\"theirs.md\"]}\n",
         );
         git(&other, &["rm", "-q", "old.md"]);
@@ -109,7 +109,7 @@ impl MergeFixture {
         write(&local, "plan.md", "# Plan\n\nour line\n");
         write(
             &local,
-            ".svode/order.json",
+            "data.json",
             "{\"order\":[\"plan.md\",\"ours.md\"]}\n",
         );
         write(&local, "old.md", "old, kept\n");
@@ -120,11 +120,11 @@ impl MergeFixture {
 
         let cli = test_cli(temp.path());
         let result = sync(&cli, &local).await.unwrap();
-        let SyncResult::Conflict { mut files } = result else {
+        let SyncResult::Conflict { mut files, .. } = result else {
             panic!("{result:?}");
         };
         files.sort();
-        assert_eq!(files, [".svode/order.json", "old.md", "plan.md"]);
+        assert_eq!(files, ["data.json", "old.md", "plan.md"]);
         Self {
             _temp: temp,
             remote,
@@ -169,7 +169,7 @@ async fn resolving_one_path_keeps_the_merge_open_and_unrelated_work_unstaged() {
     );
     // A passed path that still carries markers is refused without touching the index.
     let index = git(&f.local, &["ls-files", "--stage"]);
-    let refused = f.resolve(&["plan.md", ".svode/order.json"]).await;
+    let refused = f.resolve(&["plan.md", "data.json"]).await;
     assert!(matches!(refused, Err(GitError::Conflict(_))), "{refused:?}");
     assert_eq!(git(&f.local, &["ls-files", "--stage"]), index);
 
@@ -177,12 +177,12 @@ async fn resolving_one_path_keeps_the_merge_open_and_unrelated_work_unstaged() {
         .resolve(&["plan.md", "notes.md", "stray.md"])
         .await
         .unwrap();
-    let SyncResult::Conflict { mut files } = result else {
+    let SyncResult::Conflict { mut files, .. } = result else {
         panic!("{result:?}");
     };
     files.sort();
-    assert_eq!(files, [".svode/order.json", "old.md"]);
-    assert_eq!(f.unmerged(), [".svode/order.json", "old.md"]);
+    assert_eq!(files, ["data.json", "old.md"]);
+    assert_eq!(f.unmerged(), ["data.json", "old.md"]);
     assert_eq!(git(&f.local, &["rev-parse", "HEAD"]), head);
     // The merge stays in progress.
     git(&f.local, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
@@ -204,11 +204,11 @@ async fn merge_commit_holds_only_the_merge_and_resolved_paths_and_is_pushed() {
     ));
     write(
         &f.local,
-        ".svode/order.json",
+        "data.json",
         "{\"order\":[\"plan.md\",\"ours.md\",\"theirs.md\"]}\n",
     );
-    let result = f.resolve(&[".svode/order.json", "old.md"]).await.unwrap();
-    let SyncResult::Success { published_head } = result else {
+    let result = f.resolve(&["data.json", "old.md"]).await.unwrap();
+    let SyncResult::Success { published_head, .. } = result else {
         panic!("{result:?}");
     };
 
@@ -219,7 +219,7 @@ async fn merge_commit_holds_only_the_merge_and_resolved_paths_and_is_pushed() {
     assert!(f.unmerged().is_empty());
     let mut committed = lines(git(&f.local, &["diff", "--name-only", "HEAD^1", "HEAD"]));
     committed.sort();
-    assert_eq!(committed, [".svode/order.json", "plan.md"]);
+    assert_eq!(committed, ["data.json", "plan.md"]);
     assert_eq!(git(&f.local, &["show", "HEAD:old.md"]), "old, kept");
     assert_eq!(git(&f.local, &["show", "HEAD:notes.md"]), "notes");
     assert!(
@@ -263,7 +263,7 @@ async fn conflicts_without_a_merge_never_commit() {
         .await
         .unwrap();
     assert!(
-        matches!(&result, SyncResult::Conflict { files } if files == &["old.md"]),
+        matches!(&result, SyncResult::Conflict { files, .. } if files == &["old.md"]),
         "{result:?}"
     );
 
@@ -353,7 +353,7 @@ async fn marker_like_lines_of_another_size_and_lone_separators_resolve() {
         write(&f.local, "plan.md", content);
         let result = f.resolve(&["plan.md"]).await.unwrap();
         assert!(
-            matches!(&result, SyncResult::Conflict { files } if !files.contains(&"plan.md".to_string())),
+            matches!(&result, SyncResult::Conflict { files, .. } if !files.contains(&"plan.md".to_string())),
             "{attributes:?}: {result:?}"
         );
         let staged = lines(git(&f.local, &["diff", "--cached", "--name-only"]));

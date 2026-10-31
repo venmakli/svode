@@ -33,13 +33,17 @@ import { cn } from "@/shared/lib/utils";
 import { useEffect, useRef } from "react";
 import { usePublishSpaces } from "../hooks/use-publish-spaces";
 import { useGitSyncAbort } from "../hooks/use-git-sync-abort";
+import { useGitServiceMerge } from "../hooks/use-git-service-merge";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
 import { isParentPointerPending } from "../model/publication";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
 import { GitSyncAbortButton } from "./git-sync-abort-button";
-import { gitSyncStopTitle } from "./git-sync-stop-copy";
+import {
+  gitServiceMergedMessage,
+  gitSyncStopTitle,
+} from "./git-sync-stop-copy";
 import { GitSyncStopNotice } from "./git-sync-stop-notice";
 import {
   repositoryAccessPresentation,
@@ -91,6 +95,10 @@ export function GitSyncStatusWidget({
     if (target && target === spacePath) void openDialog();
   }, [openDialog, spacePath]);
   const abort = useGitSyncAbort(sync.spacePath, sync.stop?.kind === "conflict");
+  const serviceMerge = useGitServiceMerge(
+    sync.repositoryPath,
+    sync.stop?.kind === "conflict",
+  );
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
   const access = useRepositoryAccess(sync.spacePath);
   const presentation = repositoryAccessPresentation(access);
@@ -281,8 +289,29 @@ export function GitSyncStatusWidget({
                     </AlertDescription>
                   </Alert>
                 )}
+                {stop?.kind === "conflict" && serviceMerge.error && (
+                  <Alert variant="destructive" data-git-service-merge-error>
+                    <AlertTriangle />
+                    <AlertTitle>{m.git_sync_service_merge_failed()}</AlertTitle>
+                    <AlertDescription className="whitespace-pre-wrap break-words">
+                      {serviceMerge.error}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 {stop && (
-                  <GitSyncStopNotice stop={stop} onOpenPage={openPage} />
+                  <GitSyncStopNotice
+                    stop={stop}
+                    onOpenPage={openPage}
+                    serviceMerge={serviceMerge}
+                  />
+                )}
+                {sync.serviceMerged.length > 0 && (
+                  <p
+                    className="break-words text-sm text-muted-foreground"
+                    data-git-service-merged
+                  >
+                    {gitServiceMergedMessage(sync.serviceMerged)}
+                  </p>
                 )}
                 {!parentBlock && publish.block && (
                   <GitPublicationBlockNotice

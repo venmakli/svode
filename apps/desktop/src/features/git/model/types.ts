@@ -64,13 +64,35 @@ export interface GitRemoteAuthCredentials {
 }
 
 export type SyncResult =
-  | { type: "Success"; publishedHead?: string; parent?: ParentPublication }
-  | { type: "Conflict"; files: string[] }
+  | {
+      type: "Success";
+      publishedHead?: string;
+      /** Svode service files this sync merged. */
+      merged?: string[];
+      parent?: ParentPublication;
+    }
+  | {
+      type: "Conflict";
+      files: string[];
+      /** Svode service files this sync merged; the rest stay in `files`. */
+      merged?: string[];
+      service?: GitServiceFile[];
+    }
   | { type: "Resolved" }
   | { type: "NoRemote" }
   | { type: "AuthRequired"; challenge: GitAuthChallenge | null }
   | { type: "OperationInProgress"; operation: GitOperation }
   | { type: "UnmergedFiles"; files: string[] };
+
+/**
+ * A conflicted Svode service file: the rule set merges it, or a Space
+ * pointer stays in conflict because the Space histories diverged or its
+ * revision is unavailable. `path` is relative to the repository.
+ */
+export interface GitServiceFile {
+  path: string;
+  state: "mergeable" | "space_diverged" | "space_unavailable";
+}
 
 /** Unfinished Git operation other than a merge, which is a sync conflict. */
 export type GitOperation = "rebase" | "cherry_pick" | "revert" | "sequencer";

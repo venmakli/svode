@@ -15,6 +15,7 @@ import {
   commitGitPaths,
   continueGitResolve as continuePlatformGitResolve,
   getGitUserPolicy,
+  mergeGitServiceFiles as mergePlatformGitServiceFiles,
   saveGitHttpCredentials,
   syncGit,
 } from "@/platform/git/git-api";
@@ -306,6 +307,41 @@ export async function continueGitResolve(
     continuePlatformGitResolve({ spacePath, paths }),
   );
   options?.onSyncOutcome?.(outcome);
+}
+
+/**
+ * «Слить служебные файлы Svode»: merge the conflicted Svode service files of
+ * the merge in the repository by the rule set (all, or the
+ * repository-relative `paths`), then continue the merge.
+ */
+export function mergeGitServiceFiles(
+  repositoryPath: string,
+  paths?: string[],
+): Promise<GitSyncOutcome> {
+  return runSync(repositoryPath, () =>
+    mergePlatformGitServiceFiles({ spacePath: repositoryPath, paths }),
+  );
+}
+
+/**
+ * «Синхронизировать пространство» for a Space pointer the project merge left
+ * in conflict: sync the Space at `pointerPath`, whose new revision then
+ * contains both sides, and let the merge take it. The Space outcome comes
+ * back when its own sync did not finish.
+ */
+export async function syncGitPointerSpace(
+  repositoryPath: string,
+  pointerPath: string,
+): Promise<{ space: GitSyncOutcome; project?: GitSyncOutcome }> {
+  const root = repositoryPath.replace(/[\\/]+$/, "");
+  const space = await syncSpace(
+    `${root}/${normalizeGitStatusPath(pointerPath)}`,
+  );
+  if (space.type !== "Success") return { space };
+  return {
+    space,
+    project: await mergeGitServiceFiles(repositoryPath, [pointerPath]),
+  };
 }
 
 /**

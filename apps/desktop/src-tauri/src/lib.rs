@@ -421,6 +421,7 @@ pub fn run() {
             git::commands::git_conflict_files,
             git::commands::git_conflict_marker_size,
             git::commands::git_resolve_continue,
+            git::commands::git_merge_service_files,
             git::commands::git_merge_abort,
             git::commands::git_get_remote,
             git::commands::git_set_remote,

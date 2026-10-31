@@ -228,6 +228,18 @@ async fn publish_taken(
     publication
 }
 
+/// «Слить служебные файлы Svode»: merges the conflicted service files of the
+/// merge in `repo` by the rule set (all, or the repository-relative `paths`),
+/// then continues the merge and publishes once no path is left in conflict.
+pub async fn merge_service_files(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    repo: &Path,
+    paths: Option<Vec<String>>,
+) -> Result<SyncReport, SharedError> {
+    sync_report(runtime, host, repo, Intent::MergeServiceFiles { paths }).await
+}
+
 /// Continues a sync merge with the paths the user resolved (relative to `repo`).
 pub async fn resolve(
     runtime: &Arc<GitRuntime>,
@@ -364,7 +376,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 &cli,
                 repo,
                 *background,
-                None,
+                Step::Sync,
                 true,
                 &request,
                 &mut parent_evidence,
@@ -377,7 +389,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 &cli,
                 repo,
                 *background,
-                None,
+                Step::Sync,
                 false,
                 &request,
                 &mut parent_evidence,
@@ -390,7 +402,20 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 &cli,
                 repo,
                 false,
-                Some(paths.as_slice()),
+                Step::Resolve(paths),
+                true,
+                &request,
+                &mut parent_evidence,
+            )
+            .await
+            .map(Output::Sync),
+            Intent::MergeServiceFiles { paths } => sync_locked(
+                runtime,
+                host,
+                &cli,
+                repo,
+                false,
+                Step::MergeServiceFiles(paths.as_deref()),
                 true,
                 &request,
                 &mut parent_evidence,
@@ -465,7 +490,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
             }
         }
         if let Ok(Output::Sync(report)) = &mut result {
-            if let SyncResult::Success { published_head } = &report.child {
+            if let SyncResult::Success { published_head, .. } = &report.child {
                 if !after.publication_covers(&before, published_head) {
                     report.remote_status = None;
                 }
@@ -537,7 +562,7 @@ async fn sync_locked(
     cli: &GitCli,
     repo: &Path,
     background: bool,
-    resolve: Option<&[String]>,
+    step: Step<'_>,
     publish_parent: bool,
     request: &Request,
     parent_evidence: &mut Option<ParentEvidence>,
@@ -552,7 +577,7 @@ async fn sync_locked(
     if background {
         host.authorize_repository(repo).await?;
     }
-    let child = run_repository(host, cli, repo, resolve).await?;
+    let child = run_repository(host, cli, repo, step).await?;
     if !matches!(child, SyncResult::Success { .. }) {
         return Ok(SyncReport {
             child,
@@ -589,7 +614,7 @@ async fn sync_locked(
         }
     };
     let expected = match &child {
-        SyncResult::Success { published_head } => published_head.clone(),
+        SyncResult::Success { published_head, .. } => published_head.clone(),
         _ => unreachable!(),
     };
     let expected_target = request
@@ -728,7 +753,7 @@ async fn parent_step_recorded(
         None => None,
     };
     let evidence = match (&outcome.result, before) {
-        (Some(result @ SyncResult::Success { published_head }), Ok(before)) => {
+        (Some(result @ SyncResult::Success { published_head, .. }), Ok(before)) => {
             Snapshot::read(cli, parent)
                 .await
                 .ok()
@@ -849,7 +874,7 @@ pub async fn parent_step_locked(
         }
         super::sync::validate_transport(cli, parent, &transport?).await?;
         let root_result = super::sync::sync(cli, parent).await?;
-        if let SyncResult::Success { published_head } = &root_result {
+        if let SyncResult::Success { published_head, .. } = &root_result {
             let pointer = cli
                 .exec(&parent, &["rev-parse", &format!("{published_head}:{path}")])
                 .await?;
@@ -1042,15 +1067,26 @@ async fn retry_parent_locked(
     })
 }
 
+/// What a sync operation does in its own repository before the parent step.
+#[derive(Clone, Copy)]
+enum Step<'a> {
+    Sync,
+    /// Continue a merge with the paths the user resolved.
+    Resolve(&'a [String]),
+    /// Merge the conflicted service files by the rule set, then continue.
+    MergeServiceFiles(Option<&'a [String]>),
+}
+
 async fn run_repository(
     host: &dyn GitHost,
     cli: &GitCli,
     repo: &Path,
-    resolve: Option<&[String]>,
+    step: Step<'_>,
 ) -> Result<SyncResult, GitError> {
-    let result = match resolve {
-        Some(paths) => super::sync::resolve_and_continue(cli, repo, paths).await,
-        None => super::sync::sync(cli, repo).await,
+    let result = match step {
+        Step::Resolve(paths) => super::sync::resolve_and_continue(cli, repo, paths).await,
+        Step::MergeServiceFiles(only) => super::sync::merge_service_files(cli, repo, only).await,
+        Step::Sync => super::sync::sync(cli, repo).await,
     };
     let invalidate = match &result {
         Ok(SyncResult::AuthRequired { .. }) => true,

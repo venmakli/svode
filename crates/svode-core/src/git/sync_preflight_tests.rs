@@ -131,7 +131,7 @@ async fn sync_during_merge_returns_the_conflict_with_its_files() {
     let merge_head = git(&f.local, &["rev-parse", "MERGE_HEAD"]);
     let remote = f.remote_head();
 
-    let SyncResult::Conflict { mut files } = sync(&f.cli, &f.local).await.unwrap() else {
+    let SyncResult::Conflict { mut files, .. } = sync(&f.cli, &f.local).await.unwrap() else {
         panic!("sync during a merge must return the sync conflict");
     };
     files.sort();
@@ -149,7 +149,7 @@ async fn preflight_reads_a_merge_without_conflicted_files_and_a_clean_repository
     git(&f.local, &["add", "-A"]);
     assert!(matches!(
         preflight(&f.cli, &f.local).await.unwrap(),
-        Some(SyncResult::Conflict { files }) if files.is_empty()
+        Some(SyncResult::Conflict { files, .. }) if files.is_empty()
     ));
     git(&f.local, &["merge", "--abort"]);
     assert!(preflight(&f.cli, &f.local).await.unwrap().is_none());

@@ -1,9 +1,10 @@
-import { CloudUpload, GitMerge } from "lucide-react";
+import { CloudUpload, GitMerge, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { gitPublicationStopMessage, shortCommit } from "../api/git-sync-error";
-import type { GitSyncStop } from "../model";
-import { gitSyncStopTitle } from "./git-sync-stop-copy";
+import type { GitServiceMerge } from "../hooks/use-git-service-merge";
+import type { GitServiceFile, GitSyncStop } from "../model";
+import { gitServiceFileLabel, gitSyncStopTitle } from "./git-sync-stop-copy";
 import * as m from "@/paraglide/messages.js";
 
 /**
@@ -13,10 +14,22 @@ import * as m from "@/paraglide/messages.js";
 export function GitSyncStopNotice({
   stop,
   onOpenPage,
+  serviceMerge,
 }: {
   stop: GitSyncStop;
   onOpenPage?: (path: string) => void;
+  /** The service-file actions of a merge stop. */
+  serviceMerge?: GitServiceMerge;
 }) {
+  const service = new Map(
+    (stop.kind === "conflict" ? stop.service : []).map((file) => [
+      file.path,
+      file,
+    ]),
+  );
+  const mergeable =
+    !!serviceMerge &&
+    [...service.values()].some((file) => file.state === "mergeable");
   return (
     <Alert data-git-sync-stop={stop.kind}>
       {stop.kind === "publication" ? <CloudUpload /> : <GitMerge />}
@@ -38,7 +51,12 @@ export function GitSyncStopNotice({
               >
                 {stop.files.map((path) => (
                   <li key={path} className="flex min-w-0 items-baseline gap-2">
-                    {onOpenPage && isMarkdownPage(path) ? (
+                    {service.has(path) ? (
+                      <ServiceFileRow
+                        file={service.get(path)!}
+                        serviceMerge={serviceMerge}
+                      />
+                    ) : onOpenPage && isMarkdownPage(path) ? (
                       <Button
                         type="button"
                         variant="link"
@@ -68,6 +86,26 @@ export function GitSyncStopNotice({
                   </li>
                 ))}
               </ul>
+            )}
+            {mergeable && (
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!!serviceMerge.running}
+                  onClick={() => void serviceMerge.mergeAll()}
+                  data-git-service-merge-action
+                >
+                  {serviceMerge.running?.kind === "merge" && (
+                    <RefreshCw
+                      data-icon="inline-start"
+                      className="animate-spin"
+                    />
+                  )}
+                  {m.git_sync_service_merge_action()}
+                </Button>
+              </div>
             )}
           </>
         ) : (
@@ -107,6 +145,49 @@ function PublicationStopDetails({
       </dl>
       <div>{m.git_sync_stop_publication_hint()}</div>
     </>
+  );
+}
+
+/**
+ * A conflicted Svode service file: what the rule set says about it and, for
+ * a Space pointer it cannot resolve, the Space sync after which it does.
+ */
+function ServiceFileRow({
+  file,
+  serviceMerge,
+}: {
+  file: GitServiceFile;
+  serviceMerge?: GitServiceMerge;
+}) {
+  const syncing =
+    serviceMerge?.running?.kind === "space" &&
+    serviceMerge.running.path === file.path;
+  return (
+    <span
+      className="flex min-w-0 flex-wrap items-baseline gap-x-2"
+      data-git-service-file={file.state}
+    >
+      <span className="min-w-0 truncate text-foreground" title={file.path}>
+        {file.path}
+      </span>
+      <span className="text-xs">{gitServiceFileLabel(file)}</span>
+      {serviceMerge && file.state !== "mergeable" && (
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          className="h-auto p-0 text-xs"
+          disabled={!!serviceMerge.running}
+          onClick={() => void serviceMerge.syncSpace(file.path)}
+          data-git-service-space-sync
+        >
+          {syncing && (
+            <RefreshCw data-icon="inline-start" className="animate-spin" />
+          )}
+          {m.git_sync_service_space_sync_action()}
+        </Button>
+      )}
+    </span>
   );
 }
 

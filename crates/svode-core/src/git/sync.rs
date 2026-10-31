@@ -8,6 +8,17 @@ use super::branch::GitOperation;
 use super::cli::{GitCli, literal_pathspec_input, nul_paths_input, stdin_paths_input};
 use super::diagnostics::{GitStage, HookTrace};
 use super::path::{RootMode, normalize_repo_relative};
+use super::service_merge::{self, ServiceFile};
+
+/// What the integration step did when it did not stop sync.
+#[derive(Debug, Clone)]
+pub enum Integration {
+    /// The branch contains the observed revision. `merged` names the Svode
+    /// service files the merge merged.
+    Integrated { merged: Vec<String> },
+    /// The state that stops sync before push.
+    Stopped(SyncResult),
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
@@ -15,9 +26,18 @@ pub enum SyncResult {
     Success {
         #[serde(rename = "publishedHead")]
         published_head: String,
+        /// Svode service files this sync merged (1.C).
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        merged: Vec<String>,
     },
     Conflict {
         files: Vec<String>,
+        /// Svode service files this sync merged; the others stay in `files`.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        merged: Vec<String>,
+        /// Conflicted service files and what the rule set says about them.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        service: Vec<ServiceFile>,
     },
     NoRemote,
     AuthRequired {
@@ -79,9 +99,10 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
             observed.upstream.remote, observed.upstream.remote_ref
         )));
     };
-    if let Some(stopped) = integrate(cli, space_dir, &observed.upstream, revision).await? {
-        return Ok(stopped);
-    }
+    let merged = match integrate(cli, space_dir, &observed.upstream, revision).await? {
+        Integration::Integrated { merged } => merged,
+        Integration::Stopped(stopped) => return Ok(stopped),
+    };
 
     // Push
     validate_transport(cli, space_dir, &target).await?;
@@ -101,6 +122,7 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
     tracing::info!("Synced space {}", space_dir.display());
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
+        merged,
     })
 }
 
@@ -115,9 +137,7 @@ pub async fn preflight(cli: &GitCli, repo: &Path) -> Result<Option<SyncResult>, 
                 let files = conflict_files(cli, repo).await?;
                 (!files.is_empty()).then_some(SyncResult::UnmergedFiles { files })
             }
-            Some(GitOperation::Merge) => Some(SyncResult::Conflict {
-                files: conflict_files(cli, repo).await?,
-            }),
+            Some(GitOperation::Merge) => Some(merge_conflict(cli, repo, Vec::new()).await?),
             Some(operation) => Some(SyncResult::OperationInProgress { operation }),
         },
     )
@@ -149,10 +169,12 @@ async fn sync_without_upstream(
             .await;
         }
     };
-    if let Some(revision) = observed.revision.as_deref()
-        && let Some(stopped) = integrate(cli, space_dir, &observed.upstream, revision).await?
-    {
-        return Ok(stopped);
+    let mut merged = Vec::new();
+    if let Some(revision) = observed.revision.as_deref() {
+        match integrate(cli, space_dir, &observed.upstream, revision).await? {
+            Integration::Integrated { merged: files } => merged = files,
+            Integration::Stopped(stopped) => return Ok(stopped),
+        }
     }
 
     validate_transport(cli, space_dir, target).await?;
@@ -168,6 +190,7 @@ async fn sync_without_upstream(
     }
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
+        merged,
     })
 }
 
@@ -179,15 +202,16 @@ pub async fn validate_transport(cli: &GitCli, repo: &Path, expected: &str) -> Re
 }
 
 /// The integration step: merges `revision`, the one the fetch step observed
-/// for `upstream`, into the current branch. `None` when the branch now
-/// contains it and no file is left in conflict; otherwise the state that stops
-/// sync before push.
+/// for `upstream`, into the current branch. A merge whose conflicts are only
+/// in Svode service files merges them by the rule set and is committed;
+/// otherwise the merge stops with the service files merged and the rest left
+/// to the person.
 pub async fn integrate(
     cli: &GitCli,
     space_dir: &Path,
     upstream: &super::upstream::Upstream,
     revision: &str,
-) -> Result<Option<SyncResult>, GitError> {
+) -> Result<Integration, GitError> {
     let mut retried = false;
     loop {
         let trace = HookTrace::new();
@@ -195,7 +219,10 @@ pub async fn integrate(
         if merge.exit_code == 0 {
             // A merge that succeeds, or the merge retried after setting
             // matching edits aside, may still leave files in conflict.
-            return preflight(cli, space_dir).await;
+            return Ok(match preflight(cli, space_dir).await? {
+                Some(stopped) => Integration::Stopped(stopped),
+                None => Integration::Integrated { merged: Vec::new() },
+            });
         }
         if blocked_by_local_files(&merge.stderr) {
             match set_aside_matching_edits(cli, space_dir, revision).await {
@@ -220,8 +247,7 @@ pub async fn integrate(
             &merge.stdout,
             trace.hook_failed(),
         )
-        .await
-        .map(Some);
+        .await;
     }
 }
 
@@ -231,11 +257,13 @@ async fn merge_failure(
     stderr: &str,
     stdout: &str,
     hook_failed: bool,
-) -> Result<SyncResult, GitError> {
+) -> Result<Integration, GitError> {
     let stderr = stderr.trim();
 
     if super::ops::is_git_auth_error(stderr) {
-        return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
+        return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr))
+            .await
+            .map(Integration::Stopped);
     }
 
     if stderr.contains("CONFLICT")
@@ -243,8 +271,18 @@ async fn merge_failure(
         || stdout.contains("CONFLICT")
         || stdout.contains("Automatic merge failed")
     {
-        let files = conflict_files(cli, space_dir).await?;
-        return Ok(SyncResult::Conflict { files });
+        // Svode started this merge: its service files are merged without
+        // the person (1.C).
+        let service = service_merge::merge_in_index(cli, space_dir, None).await?;
+        if !conflict_files(cli, space_dir).await?.is_empty() {
+            return merge_conflict(cli, space_dir, service.merged)
+                .await
+                .map(Integration::Stopped);
+        }
+        commit_service_merge(cli, space_dir).await?;
+        return Ok(Integration::Integrated {
+            merged: service.merged,
+        });
     }
 
     // The merge commit of the step runs the hooks of the repository.
@@ -253,7 +291,64 @@ async fn merge_failure(
     } else {
         super::ops::git_remote_command_error(space_dir, GitStage::Integrate, stderr)
     };
-    remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await
+    remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error)
+        .await
+        .map(Integration::Stopped)
+}
+
+/// Concludes the merge of the integration step once Svode merged every
+/// conflicted path, with the message of the merge and without the list of
+/// conflicts Git adds to it. Hooks and signing of the user apply.
+async fn commit_service_merge(cli: &GitCli, repo: &Path) -> Result<(), GitError> {
+    let trace = HookTrace::new();
+    let out = cli
+        .exec_with_env(
+            repo,
+            &[
+                "-c",
+                "rerere.enabled=false",
+                "commit",
+                "--no-edit",
+                "--cleanup=strip",
+            ],
+            &trace.env(&[]),
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(super::ops::sync_failure(
+            repo,
+            GitStage::Integrate,
+            &out.stderr,
+            trace.hook_failed(),
+        ));
+    }
+    Ok(())
+}
+
+/// The stop of a merge in progress: the paths left in conflict, the service
+/// files this step merged and what the rule set says about the conflicted
+/// service files now, from local objects only.
+pub(crate) async fn merge_conflict(
+    cli: &GitCli,
+    repo: &Path,
+    merged: Vec<String>,
+) -> Result<SyncResult, GitError> {
+    let files = conflict_files(cli, repo).await?;
+    let service = if files.is_empty() {
+        Vec::new()
+    } else {
+        service_merge::inspect_in_index(cli, repo)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!("conflicted service files unavailable: {error}");
+                Vec::new()
+            })
+    };
+    Ok(SyncResult::Conflict {
+        files,
+        merged,
+        service,
+    })
 }
 
 /// Interim measure of the integration step (DF-190 R2), removed once a merge
@@ -690,9 +785,40 @@ pub async fn resolve_and_continue(
         }
     }
 
-    let files = conflict_files(cli, space_dir).await?;
-    if !files.is_empty() {
-        return Ok(SyncResult::Conflict { files });
+    continue_merge(cli, space_dir, &target, Vec::new()).await
+}
+
+/// «Слить служебные файлы Svode» for a merge started outside Svode: merges
+/// the conflicted service files (all, or the repository-relative `only`) by
+/// the rule set Svode's own merge applies, then continues the merge as
+/// resolving its last path does.
+pub async fn merge_service_files(
+    cli: &GitCli,
+    space_dir: &Path,
+    only: Option<&[String]>,
+) -> Result<SyncResult, GitError> {
+    // Another operation gives its index stages other sides.
+    if let Some(operation) = super::branch::operation_in_progress(cli, space_dir)
+        .await?
+        .filter(|operation| *operation != GitOperation::Merge)
+    {
+        return Ok(SyncResult::OperationInProgress { operation });
+    }
+    let target = super::operations::read_transport(cli, space_dir).await?;
+    let service = service_merge::merge_in_index(cli, space_dir, only).await?;
+    continue_merge(cli, space_dir, &target, service.merged).await
+}
+
+/// With no path left in conflict, commit the merge and push; `merged` names
+/// the service files Svode merged on the way.
+async fn continue_merge(
+    cli: &GitCli,
+    space_dir: &Path,
+    target: &str,
+    merged: Vec<String>,
+) -> Result<SyncResult, GitError> {
+    if !conflict_files(cli, space_dir).await?.is_empty() {
+        return merge_conflict(cli, space_dir, merged).await;
     }
     let merge_head = cli
         .exec(space_dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])
@@ -717,7 +843,7 @@ pub async fn resolve_and_continue(
     }
 
     // Push
-    validate_transport(cli, space_dir, &target).await?;
+    validate_transport(cli, space_dir, target).await?;
     let (push_out, published_head) =
         super::publication::push_snapshot(cli, space_dir, false).await?;
     if push_out.exit_code != 0 {
@@ -735,6 +861,7 @@ pub async fn resolve_and_continue(
     tracing::info!("Resolved conflicts and pushed in {}", space_dir.display());
     Ok(SyncResult::Success {
         published_head: published_head.unwrap_or_default(),
+        merged,
     })
 }
 

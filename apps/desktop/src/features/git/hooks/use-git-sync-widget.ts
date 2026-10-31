@@ -45,6 +45,8 @@ export interface GitSyncWidget {
   remoteError: string | null;
   branchError: string | null;
   stop: GitSyncStop | null;
+  /** Svode service files the last sync merged, relative to the repository. */
+  serviceMerged: string[];
   /** Spaces that stopped the project publication; replaces the sync error. */
   publicationBlock: GitPublicationBlock | null;
   syncing: boolean;
@@ -140,6 +142,9 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   );
   const publicationBlock = useGitStore((state) =>
     repository ? (state.publicationBlock[repository] ?? null) : null,
+  );
+  const serviceMerged = useGitStore((state) =>
+    repository ? (state.serviceMerged[repository] ?? NO_FILES) : NO_FILES,
   );
 
   const [hasRemote, setHasRemote] = useState(false);
@@ -407,6 +412,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     remoteError,
     branchError,
     stop,
+    serviceMerged,
     publicationBlock,
     syncing,
     autoSync,
@@ -431,6 +437,8 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     setAutoSync,
   };
 }
+
+const NO_FILES: string[] = [];
 
 function branchLabel(status: GitStatus | undefined): string {
   const branch = status?.branch?.trim();

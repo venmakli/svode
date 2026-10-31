@@ -150,6 +150,21 @@ export function continueGitResolve(input: {
 }
 
 /**
+ * Merge the conflicted Svode service files of the merge in the repository by
+ * the rule set (all, or the repository-relative `paths`), then continue the
+ * merge.
+ */
+export function mergeGitServiceFiles(input: {
+  spacePath: string;
+  paths?: string[] | null;
+}): Promise<SyncResultDto> {
+  return invokeCommand<SyncResultDto>("git_merge_service_files", {
+    spacePath: input.spacePath,
+    paths: input.paths ?? null,
+  });
+}
+
+/**
  * Size of the conflict markers Git writes for the Page at `path`: its
  * `conflict-marker-size` attribute, otherwise 7. Spawns Git, so call it only
  * for a body with a line starting with a run of `<` and a space.

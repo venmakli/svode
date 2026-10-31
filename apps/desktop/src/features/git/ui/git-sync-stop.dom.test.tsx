@@ -316,6 +316,7 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       expect(useGitStore.getState().syncStop[path]).toEqual({
         kind: "conflict",
         files: ["Page.md"],
+        service: [],
       });
       expect(path in useGitStore.getState().syncError).toBe(false);
 

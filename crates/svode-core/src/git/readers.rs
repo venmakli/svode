@@ -208,9 +208,7 @@ pub async fn inspect(
                 .exit_code
                 == 0
             {
-                Some(SyncResult::Conflict {
-                    files: super::sync::conflict_files(cli, parent).await?,
-                })
+                Some(super::sync::merge_conflict(cli, parent, Vec::new()).await?)
             } else {
                 None
             },

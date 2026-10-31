@@ -64,15 +64,33 @@ export type SyncResultDto =
   | {
       type: "success";
       publishedHead?: string;
+      /** Svode service files this sync merged. */
+      merged?: string[];
       parent?: ParentPublicationDto;
       remoteStatus?: GitStatusDto;
     }
-  | { type: "conflict"; files: string[] }
+  | {
+      type: "conflict";
+      files: string[];
+      /** Svode service files this sync merged; the rest stay in `files`. */
+      merged?: string[];
+      service?: GitServiceFileDto[];
+    }
   | { type: "resolved" }
   | { type: "noRemote" }
   | { type: "authRequired"; challenge?: GitAuthChallengeDto | null }
   | { type: "operationInProgress"; operation: GitOperationDto }
   | { type: "unmergedFiles"; files: string[] };
+
+/**
+ * A conflicted Svode service file and what the rule set says about it: it
+ * merges, or a Space pointer stays with its reason. Paths are relative to
+ * the repository.
+ */
+export interface GitServiceFileDto {
+  path: string;
+  state: "mergeable" | "space_diverged" | "space_unavailable";
+}
 
 /** A merge in progress arrives as `conflict` with its files. */
 export type GitOperationDto = "rebase" | "cherry_pick" | "revert" | "sequencer";

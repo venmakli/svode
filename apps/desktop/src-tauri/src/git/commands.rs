@@ -680,6 +680,24 @@ pub async fn git_resolve_continue(
     .await
 }
 
+/// «Слить служебные файлы Svode»: merge the conflicted Svode service files
+/// of the merge in the repository by the rule set (all, or the
+/// repository-relative `paths`), then continue the merge.
+#[tauri::command]
+pub async fn git_merge_service_files(
+    app: AppHandle,
+    space_path: String,
+    paths: Option<Vec<String>>,
+) -> Result<flow::SyncReport, SharedError> {
+    flow::merge_service_files(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+        paths,
+    )
+    .await
+}
+
 async fn emit_sync_domain_invalidations(
     app: &AppHandle,
     index_state: &IndexState,

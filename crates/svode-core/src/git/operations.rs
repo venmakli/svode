@@ -61,6 +61,11 @@ pub enum Intent {
     Resolve {
         paths: Vec<String>,
     },
+    /// Merge the conflicted Svode service files of a merge by the rule set
+    /// (all, or the repository-relative `paths`), then continue the merge.
+    MergeServiceFiles {
+        paths: Option<Vec<String>>,
+    },
     FetchStatus,
     InspectPublication,
     RetryParent {
@@ -106,6 +111,7 @@ impl Intent {
             Self::Sync { .. }
                 | Self::PublishSpace { .. }
                 | Self::Resolve { .. }
+                | Self::MergeServiceFiles { .. }
                 | Self::RetryParent { .. }
         )
     }
@@ -553,7 +559,7 @@ impl Operations {
                         || snapshot == flight.request.snapshot
                         || (snapshot == done.after
                             && matches!(&done.result,
-                            Ok(Output::Sync(SyncReport { child: super::sync::SyncResult::Success { published_head }, .. }))
+                            Ok(Output::Sync(SyncReport { child: super::sync::SyncResult::Success { published_head, .. }, .. }))
                                 if done.after.publication_covers(&done.before, published_head))))
                 {
                     return done.result.clone();
@@ -580,7 +586,7 @@ impl Operations {
                     let covers_start = evidence.iter().any(|e| e.before == snapshot);
                     if permitted && covers_start {
                         if let Some(last) = evidence.iter().find(|e| e.after == current) {
-                            if let super::sync::SyncResult::Success { published_head } =
+                            if let super::sync::SyncResult::Success { published_head, .. } =
                                 &last.result
                             {
                                 if current.publication_covers(&last.before, published_head) {

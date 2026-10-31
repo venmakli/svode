@@ -3,7 +3,10 @@ import * as m from "@/paraglide/messages.js";
 import { toGitPublicationBlock } from "../api/git-sync-error";
 import { syncStopFromResult, type GitSyncOutcome } from "../model";
 import type { GitCommitRefusal } from "../model/page-save-owner";
-import { gitSyncStopTitle } from "../ui/git-sync-stop-copy";
+import {
+  gitServiceMergedMessage,
+  gitSyncStopTitle,
+} from "../ui/git-sync-stop-copy";
 
 export function notifyGitSyncConflict(fileCount: number): void {
   toast.error(m.git_sync_conflict({ count: String(fileCount) }));
@@ -17,7 +20,14 @@ export function notifyGitSyncFailed(): void {
   toast.error(m.git_sync_failed());
 }
 
+/** The sync result names the Svode service files it merged. */
+function notifyGitServiceMerged(files: string[] | undefined): void {
+  if (files?.length) toast.info(gitServiceMergedMessage(files));
+}
+
 export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
+  if (outcome.type === "Success" || outcome.type === "Conflict")
+    notifyGitServiceMerged(outcome.merged);
   switch (outcome.type) {
     case "Conflict":
     case "UnmergedFiles":

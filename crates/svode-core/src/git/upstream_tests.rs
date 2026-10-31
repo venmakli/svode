@@ -243,7 +243,7 @@ async fn conflict_is_the_same_under_every_user_config() {
 
         let result = sync(&f.cli, &f.local).await.unwrap();
         assert!(
-            matches!(&result, SyncResult::Conflict { files } if files == &["q.md"]),
+            matches!(&result, SyncResult::Conflict { files, .. } if files == &["q.md"]),
             "{config:?}: {result:?}"
         );
         assert_eq!(f.head(), local, "{config:?}");
