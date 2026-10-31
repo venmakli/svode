@@ -19,6 +19,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
+import { useVersionGroupClosing } from "./hooks/use-version-group-closing";
 import { ShellChrome, WindowHeader } from "./window-header";
 import {
   SpaceCommandPalette,
@@ -138,6 +139,7 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
   useKeyboardShortcuts();
   useKeepEditedObjects();
   useAppGitFocus();
+  useVersionGroupClosing();
   const {
     activeRootIcon,
     activeRootId,

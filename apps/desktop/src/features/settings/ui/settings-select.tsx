@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { LoaderCircle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -14,6 +15,8 @@ export interface SettingsSelectOption {
   value: string;
   label: string;
   description?: string;
+  /** A short marker beside the label, such as "Experimental". */
+  badge?: string;
   disabled?: boolean;
 }
 
@@ -27,6 +30,7 @@ export function SettingsSelect({
   pending = false,
   invalid = false,
   describedBy,
+  ariaLabel,
   className,
 }: {
   id?: string;
@@ -38,6 +42,7 @@ export function SettingsSelect({
   pending?: boolean;
   invalid?: boolean;
   describedBy?: string;
+  ariaLabel?: string;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -60,6 +65,7 @@ export function SettingsSelect({
         aria-disabled={pending || undefined}
         aria-invalid={invalid || undefined}
         aria-describedby={describedBy}
+        aria-label={ariaLabel}
         className={cn(
           "w-44 max-w-full aria-disabled:cursor-not-allowed aria-disabled:opacity-50",
           className,
@@ -88,7 +94,12 @@ export function SettingsSelect({
             >
               {option.description ? (
                 <span className="flex min-w-0 flex-col gap-0.5">
-                  <span>{option.label}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    {option.label}
+                    {option.badge ? (
+                      <Badge variant="outline">{option.badge}</Badge>
+                    ) : null}
+                  </span>
                   <span className="text-xs text-muted-foreground">
                     {option.description}
                   </span>

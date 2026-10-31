@@ -21,6 +21,7 @@ fn policy(repo: &Path, auto_sync: bool, structural: bool) {
             auto_sync,
             auto_commit_structural: structural,
             auto_commit_system: false,
+            auto_commit_content: false,
         },
     )
     .unwrap();

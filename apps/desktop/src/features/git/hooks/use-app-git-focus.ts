@@ -1,5 +1,6 @@
 import { listenPublicationOutcomes } from "../api/git-publication-actions";
 import { listenGitOperationOutcomes } from "../api/git-operation-events";
+import { listenAutoVersionOutcomes } from "../api/git-auto-version-actions";
 import { useEffect } from "react";
 import {
   getSpaceSnapshot,
@@ -28,6 +29,7 @@ export function useAppGitFocus() {
     for (const listen of [
       listenPublicationOutcomes,
       listenGitOperationOutcomes,
+      listenAutoVersionOutcomes,
     ]) {
       void listen().then((unlisten) => {
         if (disposed) unlisten();

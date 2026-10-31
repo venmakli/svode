@@ -297,6 +297,30 @@ export function listenGitPublication(
   );
 }
 
+/**
+ * The result of automatic content versions of a repository (Stage 11 1.E):
+ * the refused commit as the error of a save, or `null` when versions land
+ * again.
+ */
+export function listenGitAutoVersion(
+  handler: (event: { repository: string; error: unknown }) => void,
+) {
+  return listen<Parameters<typeof handler>[0]>("git:auto-version", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Close open content groups: the one the user left, or all of the Spaces. */
+export function closeGitVersionGroups(input: {
+  spacePaths: string[];
+  left?: string | null;
+}): Promise<void> {
+  return invokeCommand<void>("git_close_version_groups", {
+    spacePaths: input.spacePaths,
+    left: input.left ?? null,
+  });
+}
+
 export function listenGitSyncState(
   handler: (event: {
     repository: string;

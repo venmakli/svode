@@ -2,6 +2,7 @@ import { useId, useRef, type ReactNode } from "react";
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { RepositoryAccessBadge, RepositoryAccessSummary } from "@/features/git";
@@ -10,6 +11,11 @@ import type {
   SpaceSettingsGit,
 } from "../hooks/use-space-settings-git";
 import type { SpaceSettingsIdentity } from "../hooks/use-space-settings-identity";
+import {
+  gitAutomationLeavesStructureUncommitted,
+  gitAutomationPresetOptions,
+  type GitAutomationPreset,
+} from "../model/git-automation";
 import { IdentitySection } from "./identity-section";
 import {
   SettingsGroup,
@@ -17,6 +23,7 @@ import {
   SettingsRow,
   SettingsRowSkeleton,
 } from "./settings-layout";
+import { SettingsSelect } from "./settings-select";
 
 const pendingClassName =
   "aria-disabled:cursor-not-allowed aria-disabled:opacity-50";
@@ -187,34 +194,67 @@ export function SpaceGitSection({
       <SettingsGroup
         title={m.settings_git_automation_title()}
         description={m.settings_git_automation_description()}
-        aria-busy={!git.loaded}
+        aria-busy={!git.loaded || git.presetPending}
+        action={
+          git.loaded ? (
+            <SettingsSelect
+              value={git.preset}
+              options={gitAutomationPresetOptions(hasRemote)}
+              ariaLabel={m.settings_git_automation_preset()}
+              pending={git.presetPending}
+              onValueChange={(value) =>
+                void git.handlePresetChange(value as GitAutomationPreset)
+              }
+            />
+          ) : null
+        }
+        footer={
+          git.loaded &&
+          git.preset === "custom" &&
+          gitAutomationLeavesStructureUncommitted(git) ? (
+            <Alert data-git-automation-warning>
+              <TriangleAlert />
+              <AlertDescription>
+                {m.settings_git_structure_uncommitted()}
+              </AlertDescription>
+            </Alert>
+          ) : null
+        }
       >
-        {git.loaded
-          ? [
-              policyRow(
-                "autoSync",
-                m.git_auto_sync_checkbox(),
-                hasRemote
-                  ? m.git_auto_sync_hint()
-                  : m.settings_git_auto_sync_no_remote(),
-                !hasRemote,
-              ),
-              policyRow(
-                "autoCommitStructural",
-                m.git_auto_commit_structural_checkbox(),
-                m.git_auto_commit_structural_hint(),
-              ),
-              policyRow(
-                "autoCommitSystem",
-                m.git_auto_commit_system_checkbox(),
-                m.git_auto_commit_system_hint(),
-              ),
-            ]
-          : [
-              <SettingsRowSkeleton key="loading-sync" />,
-              <SettingsRowSkeleton key="loading-structural" />,
-              <SettingsRowSkeleton key="loading-system" />,
-            ]}
+        {!git.loaded
+          ? [<SettingsRowSkeleton key="loading-preset" />]
+          : git.preset === "custom"
+            ? [
+                policyRow(
+                  "autoCommitContent",
+                  <span className="flex flex-wrap items-center gap-2">
+                    {m.git_auto_commit_content_checkbox()}
+                    <Badge variant="outline">
+                      {m.settings_git_experimental()}
+                    </Badge>
+                  </span>,
+                  m.git_auto_commit_content_hint(),
+                ),
+                policyRow(
+                  "autoCommitStructural",
+                  m.git_auto_commit_structural_checkbox(),
+                  m.git_auto_commit_structural_hint(),
+                ),
+                policyRow(
+                  "autoCommitSystem",
+                  m.git_auto_commit_system_checkbox(),
+                  m.git_auto_commit_system_hint(),
+                ),
+                policyRow(
+                  "autoSync",
+                  m.git_auto_sync_checkbox(),
+                  hasRemote
+                    ? m.git_auto_sync_hint()
+                    : m.settings_git_auto_sync_no_remote(),
+                  !hasRemote,
+                ),
+              ]
+            : null}
       </SettingsGroup>
 
       <IdentitySection isRoot={isRoot} identity={identity} />

@@ -17,7 +17,6 @@ const FLUSH_ALL_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Copy)]
 enum CommitIntent {
-    ContentWorkspace,
     StructuralLifecycle,
     SystemConfig,
     ManualExplicit,
@@ -110,13 +109,12 @@ impl AutocommitService {
         }
     }
 
-    /// Register path-scoped content/workspace changes for the next explicit
-    /// manual commit. Stage 6 keeps these dirty by default: no debounce timer
-    /// and no background commit are created from this path.
+    /// Register path-scoped content/workspace changes for the next commit:
+    /// an explicit one, or an automatic version when content commits are on
+    /// (Stage 11 1.E). No commit is created here.
     ///
     /// The op is pushed into `pending` synchronously, before returning — this
-    /// way any explicit manual commit invoked afterwards sees the effect
-    /// immediately.
+    /// way any commit invoked afterwards sees the effect immediately.
     pub fn schedule_structural_paths(
         &self,
         _project_path: PathBuf,
@@ -124,9 +122,8 @@ impl AutocommitService {
         change: StructuralChange,
         paths: Vec<PathBuf>,
     ) {
-        if !background_commit_allowed(&space_path, CommitIntent::ContentWorkspace) {
-            self.pending.record(&space_path, Some(change), paths);
-        }
+        self.pending.record(&space_path, Some(change), paths);
+        self.host.content_recorded(&space_path);
     }
 }
 
@@ -297,9 +294,8 @@ impl AutocommitService {
             return Ok(());
         }
 
-        if !background_commit_allowed(&space_path, CommitIntent::ContentWorkspace) {
-            self.pending.record(&space_path, None, paths);
-        }
+        self.pending.record(&space_path, None, paths);
+        self.host.content_recorded(&space_path);
         Ok(())
     }
 
@@ -909,6 +905,50 @@ async fn finish_commit(
     Ok(())
 }
 
+/// Deliver the automatic content versions that landed in `repo` and start
+/// the sync its policy allows. For a Submodule Space the project pointer is
+/// a structural change: it is committed right away only where structural
+/// commits are on in the project (Stage 11 1.E).
+pub(crate) async fn finish_content_version(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    cli: &GitCli,
+    repo: &Path,
+) {
+    // The project in the form `repo` was given, which pointer paths need.
+    let project = super::branch::parent(cli, repo)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|root| {
+            repo.ancestors()
+                .skip(1)
+                .find(|dir| std::fs::canonicalize(dir).is_ok_and(|dir| dir == root))
+                .map(Path::to_path_buf)
+        });
+    match project {
+        Some(project) => {
+            if let Err(error) = finish_commit(
+                runtime,
+                host,
+                cli,
+                &project,
+                repo,
+                repo,
+                Some(CommitIntent::StructuralLifecycle),
+            )
+            .await
+            {
+                tracing::warn!(kind = error.kind(), "content version delivered partly");
+            }
+        }
+        None => {
+            host.publish_commit(repo, repo);
+            schedule_auto_sync(host, repo);
+        }
+    }
+}
+
 /// A commit only starts a background sync where the user enabled it.
 pub fn schedule_auto_sync(host: &dyn GitHost, repo: &Path) {
     if super::policy::effective_user_policy(repo).auto_sync {
@@ -918,7 +958,6 @@ pub fn schedule_auto_sync(host: &dyn GitHost, repo: &Path) {
 
 fn background_commit_allowed(config_path: &Path, intent: CommitIntent) -> bool {
     match intent {
-        CommitIntent::ContentWorkspace => false,
         CommitIntent::ManualExplicit => true,
         CommitIntent::StructuralLifecycle => {
             super::policy::effective_user_policy(config_path).auto_commit_structural
@@ -1324,6 +1363,7 @@ mod tests {
                                 auto_sync: sync,
                                 auto_commit_structural: structural,
                                 auto_commit_system: system,
+                                auto_commit_content: false,
                             },
                         );
                         for (intent, name, expected) in [
@@ -1336,11 +1376,6 @@ mod tests {
                                 CommitIntent::SystemConfig,
                                 "Исследования/.svode/config.json",
                                 system,
-                            ),
-                            (
-                                CommitIntent::ContentWorkspace,
-                                "documents/content.md",
-                                false,
                             ),
                             (CommitIntent::ManualExplicit, "manual.md", true),
                         ] {
@@ -1395,6 +1430,7 @@ mod tests {
                                 auto_sync: sync,
                                 auto_commit_structural: false,
                                 auto_commit_system: false,
+                                auto_commit_content: false,
                             },
                         );
                         assert!(
@@ -1415,6 +1451,7 @@ mod tests {
                                 auto_sync: sync,
                                 auto_commit_structural: false,
                                 auto_commit_system: true,
+                                auto_commit_content: false,
                             },
                         );
                         assert!(
@@ -1452,6 +1489,7 @@ mod tests {
                     auto_sync: true,
                     auto_commit_structural: true,
                     auto_commit_system: true,
+                    auto_commit_content: false,
                 },
             );
             write(root, "sibling.md", "staged sibling\n");
@@ -1539,6 +1577,7 @@ mod tests {
                     auto_sync: false,
                     auto_commit_structural: false,
                     auto_commit_system: true,
+                    auto_commit_content: false,
                 },
             );
             // Other strategies commit without a `.lfsconfig` to stage.
@@ -1598,6 +1637,7 @@ mod tests {
                 auto_sync: false,
                 auto_commit_structural: true,
                 auto_commit_system: true,
+                auto_commit_content: false,
             },
         );
         let service =
@@ -1659,6 +1699,7 @@ mod tests {
                 auto_sync: false,
                 auto_commit_structural: false,
                 auto_commit_system: true,
+                auto_commit_content: false,
             },
         );
         write(root, ".gitattributes", "*.png filter=lfs\n");
@@ -1746,6 +1787,7 @@ mod tests {
                     auto_sync: true,
                     auto_commit_structural: root_on,
                     auto_commit_system: false,
+                    auto_commit_content: false,
                 },
             );
             write_local_git_policy(
@@ -1754,6 +1796,7 @@ mod tests {
                     auto_sync: false,
                     auto_commit_structural: false,
                     auto_commit_system: true,
+                    auto_commit_content: false,
                 },
             );
             write(&child, ".svode/config.json", "child config\n");
@@ -1828,6 +1871,7 @@ mod tests {
                     auto_sync: sync,
                     auto_commit_structural: false,
                     auto_commit_system: false,
+                    auto_commit_content: false,
                 },
             );
             write(root, "manual.md", "manual\n");
@@ -1867,6 +1911,7 @@ mod tests {
                         auto_sync: false,
                         auto_commit_structural: enabled,
                         auto_commit_system: !enabled,
+                        auto_commit_content: false,
                     },
                 );
                 write(root, &format!("{prefix}.svode/config.json"), "config\n");
@@ -2003,6 +2048,7 @@ mod tests {
                 auto_sync: true,
                 auto_commit_structural: true,
                 auto_commit_system: true,
+                auto_commit_content: false,
             },
         );
 
@@ -2041,10 +2087,10 @@ mod tests {
                             auto_sync: bits & 4 != 0,
                             auto_commit_structural: bits & 2 != 0,
                             auto_commit_system: bits & 1 != 0,
+                            auto_commit_content: false,
                         },
                     );
                     for (intent, expected) in [
-                        (CommitIntent::ContentWorkspace, false),
                         (CommitIntent::ManualExplicit, true),
                         (CommitIntent::StructuralLifecycle, bits & 2 != 0),
                         (CommitIntent::SystemConfig, bits & 1 != 0),

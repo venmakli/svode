@@ -19,6 +19,7 @@ pub(super) struct TestHost {
     pub(super) sync_states: Mutex<Vec<(PathBuf, bool)>>,
     pub(super) publications: Mutex<Vec<(PathBuf, String)>>,
     pub(super) refreshed: Mutex<Vec<PathBuf>>,
+    pub(super) content_recorded: Mutex<Vec<PathBuf>>,
 }
 
 impl TestHost {
@@ -109,6 +110,13 @@ impl GitHost for TestHost {
             .lock()
             .unwrap()
             .push((space.to_path_buf(), repository.to_path_buf()));
+    }
+
+    fn content_recorded(&self, space: &Path) {
+        self.content_recorded
+            .lock()
+            .unwrap()
+            .push(space.to_path_buf());
     }
 
     fn schedule_auto_sync(&self, repository: &Path) {

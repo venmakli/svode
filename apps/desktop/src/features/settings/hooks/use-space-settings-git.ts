@@ -14,6 +14,11 @@ import {
   setGitRemote,
   type GitSetRemoteResult,
 } from "../api";
+import {
+  gitAutomationPolicy,
+  gitAutomationPreset,
+  type GitAutomationPreset,
+} from "../model/git-automation";
 
 interface UseSpaceSettingsGitOptions {
   open: boolean;
@@ -41,6 +46,11 @@ export function useSpaceSettingsGit({
   const [autoSync, setAutoSync] = useState(false);
   const [autoCommitStructural, setAutoCommitStructural] = useState(false);
   const [autoCommitSystem, setAutoCommitSystem] = useState(false);
+  const [autoCommitContent, setAutoCommitContent] = useState(false);
+  // "Custom" chosen in the preset select keeps the switches shown even
+  // while they match a preset.
+  const [customChosen, setCustomChosen] = useState(false);
+  const [presetPending, setPresetPending] = useState(false);
   const [policyPending, setPolicyPending] = useState<
     ReadonlySet<GitPolicyField>
   >(() => new Set());
@@ -52,6 +62,7 @@ export function useSpaceSettingsGit({
     autoSync: false,
     autoCommitStructural: false,
     autoCommitSystem: false,
+    autoCommitContent: false,
   });
   const gitInfoGenerationRef = useRef(0);
 
@@ -60,6 +71,7 @@ export function useSpaceSettingsGit({
     setAutoSync(policy.autoSync);
     setAutoCommitStructural(policy.autoCommitStructural);
     setAutoCommitSystem(policy.autoCommitSystem);
+    setAutoCommitContent(policy.autoCommitContent);
   }, []);
 
   const loadGitConfig = useCallback(async () => {
@@ -119,6 +131,7 @@ export function useSpaceSettingsGit({
 
   useEffect(() => {
     if (!open || !spacePath) return;
+    setCustomChosen(false);
     let cancelled = false;
     const preload = window.setTimeout(() => {
       void Promise.all([loadGitConfig(), loadGitInfo()]).then(() => {
@@ -189,12 +202,9 @@ export function useSpaceSettingsGit({
     setRemoteUrl(value);
   }
 
-  // Each switch applies at once; the field stays pending until its write ends.
-  async function handlePolicyChange(field: GitPolicyField, value: boolean) {
+  async function writePolicy(next: GitUserPolicy, label: string) {
     const previous = gitPolicyRef.current;
-    const next: GitUserPolicy = { ...previous, [field]: value };
     applyGitPolicyState(next);
-    setPolicyPending((current) => new Set(current).add(field));
     try {
       await setSettingsGitUserPolicy({
         spacePath,
@@ -202,11 +212,21 @@ export function useSpaceSettingsGit({
         policy: next,
       });
     } catch (err) {
-      console.error(`Failed to save git ${field} policy:`, err);
+      console.error(`Failed to save git ${label} policy:`, err);
       if (gitPolicyRef.current === next) {
         applyGitPolicyState(previous);
       }
       toast.error(m.toast_error());
+    }
+  }
+
+  // Each switch applies at once; the field stays pending until its write ends.
+  // A changed switch shows the custom combination from then on.
+  async function handlePolicyChange(field: GitPolicyField, value: boolean) {
+    setCustomChosen(true);
+    setPolicyPending((current) => new Set(current).add(field));
+    try {
+      await writePolicy({ ...gitPolicyRef.current, [field]: value }, field);
     } finally {
       setPolicyPending((current) => {
         const rest = new Set(current);
@@ -215,6 +235,31 @@ export function useSpaceSettingsGit({
       });
     }
   }
+
+  // "Manual" and "Automatic" set all four switches in one write; "Custom"
+  // only shows them.
+  async function handlePresetChange(next: GitAutomationPreset) {
+    setCustomChosen(next === "custom");
+    if (next === "custom") return;
+    setPresetPending(true);
+    try {
+      await writePolicy(
+        gitAutomationPolicy(next, gitPolicyRef.current),
+        "preset",
+      );
+    } finally {
+      setPresetPending(false);
+    }
+  }
+
+  const preset: GitAutomationPreset = customChosen
+    ? "custom"
+    : gitAutomationPreset({
+        autoSync,
+        autoCommitStructural,
+        autoCommitSystem,
+        autoCommitContent,
+      });
 
   function cancelPendingRemote() {
     setPendingRemote(null);
@@ -237,6 +282,9 @@ export function useSpaceSettingsGit({
     autoSync,
     autoCommitStructural,
     autoCommitSystem,
+    autoCommitContent,
+    preset,
+    presetPending,
     policyPending,
     pendingRemote,
     applyingRemote,
@@ -244,6 +292,7 @@ export function useSpaceSettingsGit({
     setRemoteUrl: handleRemoteChange,
     handleRemoteBlur,
     handlePolicyChange,
+    handlePresetChange,
     cancelPendingRemote,
     confirmPendingRemote,
   };

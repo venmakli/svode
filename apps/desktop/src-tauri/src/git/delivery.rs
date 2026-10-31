@@ -211,6 +211,10 @@ impl GitHost for DesktopGitHost {
         });
     }
 
+    fn content_recorded(&self, space: &Path) {
+        super::auto_versions::operation(&self.app, space);
+    }
+
     fn publish_sync_state(
         &self,
         repository: &Path,

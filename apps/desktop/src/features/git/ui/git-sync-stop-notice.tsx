@@ -1,9 +1,15 @@
-import { CloudUpload, GitMerge, RefreshCw } from "lucide-react";
+import {
+  CloudUpload,
+  GitCommitHorizontal,
+  GitMerge,
+  RefreshCw,
+} from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { gitPublicationStopMessage, shortCommit } from "../api/git-sync-error";
 import type { GitServiceMerge } from "../hooks/use-git-service-merge";
 import type { GitServiceFile, GitSyncStop } from "../model";
+import { gitSaveErrorDescription } from "./git-save-error-copy";
 import { gitServiceFileLabel, gitSyncStopTitle } from "./git-sync-stop-copy";
 import * as m from "@/paraglide/messages.js";
 
@@ -32,11 +38,24 @@ export function GitSyncStopNotice({
     [...service.values()].some((file) => file.state === "mergeable");
   return (
     <Alert data-git-sync-stop={stop.kind}>
-      {stop.kind === "publication" ? <CloudUpload /> : <GitMerge />}
+      {stop.kind === "publication" ? (
+        <CloudUpload />
+      ) : stop.kind === "commit" ? (
+        <GitCommitHorizontal />
+      ) : (
+        <GitMerge />
+      )}
       <AlertTitle className="break-words">{gitSyncStopTitle(stop)}</AlertTitle>
       <AlertDescription className="flex min-w-0 flex-col gap-2">
         {stop.kind === "publication" ? (
           <PublicationStopDetails stop={stop} />
+        ) : stop.kind === "commit" ? (
+          <>
+            <div data-commit-stop-cause>
+              {gitSaveErrorDescription({ outcome: "failed", ...stop })}
+            </div>
+            <div>{m.git_sync_stop_commit_hint()}</div>
+          </>
         ) : stop.kind !== "operation" ? (
           <>
             <div>

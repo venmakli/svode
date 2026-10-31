@@ -1,4 +1,5 @@
 pub mod access;
+pub mod auto_versions;
 pub mod clone;
 pub mod commands;
 pub mod dates;

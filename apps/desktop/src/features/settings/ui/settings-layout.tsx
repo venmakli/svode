@@ -170,6 +170,7 @@ export function SettingsGroup({
   description,
   action,
   callout,
+  footer,
   children,
   className,
   ...props
@@ -178,6 +179,8 @@ export function SettingsGroup({
   description?: ReactNode;
   action?: ReactNode;
   callout?: ReactNode;
+  /** A note under the rows that is about their combination. */
+  footer?: ReactNode;
   children?: ReactNode;
 } & Omit<ComponentProps<"section">, "title" | "children">) {
   const titleId = useId();
@@ -230,6 +233,7 @@ export function SettingsGroup({
           <SettingsRows>{rows}</SettingsRows>
         </Card>
       ) : null}
+      {footer}
     </section>
   );
 }

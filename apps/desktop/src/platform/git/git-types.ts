@@ -125,6 +125,7 @@ export interface GitUserPolicyDto {
   autoSync: boolean;
   autoCommitStructural: boolean;
   autoCommitSystem: boolean;
+  autoCommitContent: boolean;
 }
 
 export interface CloneProgressDto {

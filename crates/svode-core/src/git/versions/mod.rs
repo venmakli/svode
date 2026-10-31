@@ -2,9 +2,12 @@
 //! into groups — one reason, one commit — each with a message composed of
 //! the facts Svode recognizes, in the author's interface language. Manual
 //! commits (⌘S, ⇧⌘S, «Commit all») and later automatic versions share this
-//! owner; the author is always the person of the device, and no agent,
-//! session or Routine is written into a message.
+//! owner ([`auto`]); the author is always the person of the device, and no
+//! agent, session or Routine is written into a message.
 
+pub mod auto;
+#[cfg(test)]
+mod auto_tests;
 mod changes;
 mod facts;
 mod group;

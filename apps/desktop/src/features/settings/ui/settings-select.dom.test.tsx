@@ -7,7 +7,12 @@ import { JSDOM } from "jsdom";
 import type { SettingsSelectOption } from "./settings-select";
 
 const options: SettingsSelectOption[] = [
-  { value: "system", label: "System", description: "Matches your system" },
+  {
+    value: "system",
+    label: "System",
+    description: "Matches your system",
+    badge: "Experimental",
+  },
   { value: "light", label: "Light" },
   {
     value: "dark",
@@ -83,7 +88,7 @@ if (process.env.SVODE_SETTINGS_SELECT_DOM !== "1") {
         document.querySelectorAll<HTMLElement>('[role="option"]'),
       );
       expect(items.map((item) => item.textContent)).toEqual([
-        "SystemMatches your system",
+        "SystemExperimentalMatches your system",
         "Light",
         "DarkUnavailable here",
         "Sepia",

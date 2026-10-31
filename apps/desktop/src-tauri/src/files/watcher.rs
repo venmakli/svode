@@ -90,11 +90,17 @@ impl FileWatcher {
                         }
                     },
                     move |repository| {
-                        crate::git::delivery::emit_committed(&git_app, &watched_space, repository)
+                        crate::git::delivery::emit_committed(&git_app, &watched_space, repository);
+                        // Leaving a merge or a detached HEAD lets waiting
+                        // edits become versions (Stage 11 1.E).
+                        crate::git::auto_versions::touched(&git_app, &watched_space);
                     },
                 )
             })?
         };
+
+        // Edits left from an earlier run become versions after the pause.
+        crate::git::auto_versions::touched(&app, &space_path);
 
         // Spawn debounce thread
         let sp = space.clone();
@@ -387,6 +393,7 @@ fn process_published_events(
         );
     }
     if any_dirty {
+        crate::git::auto_versions::touched(app, space_root);
         let _ = app.emit(
             "space:dirty",
             serde_json::json!({ "space": space, "affectsTree": any_tree_changed }),

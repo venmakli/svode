@@ -57,6 +57,11 @@ pub trait GitHost: Send + Sync {
     /// Start the background sync that follows a commit when policy allows it.
     fn schedule_auto_sync(&self, repository: &Path);
 
+    /// A managed operation registered content changes of `space` for the
+    /// next commit; with automatic versions on, the host closes the groups
+    /// that close right after their operation (Stage 11 1.E).
+    fn content_recorded(&self, _space: &Path) {}
+
     /// Publish the active/finished state of one publication operation.
     fn publish_sync_state(
         &self,

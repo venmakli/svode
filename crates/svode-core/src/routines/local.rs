@@ -45,6 +45,9 @@ pub struct GitUserPolicy {
     pub auto_commit_structural: bool,
     #[serde(default)]
     pub auto_commit_system: bool,
+    /// Automatic versions of content edits (Stage 11 1.E), off by default.
+    #[serde(default)]
+    pub auto_commit_content: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

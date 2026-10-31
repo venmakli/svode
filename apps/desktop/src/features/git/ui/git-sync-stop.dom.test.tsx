@@ -17,7 +17,7 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
     );
     if (child.status !== 0) throw new Error(child.stdout + child.stderr);
     expect(child.status).toBe(0);
-  });
+  }, 20000);
 } else {
   const space = { activeRootPath: "/project" };
   mock.module("@/features/space", () => ({
@@ -460,6 +460,93 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       expect(path in useGitStore.getState().syncStop).toBe(false);
     } finally {
       syncFailure = null;
+      useGitStore.getState().clear(path);
+      await dom.render(null);
+      clearNativeMocks();
+      await dom.dispose();
+    }
+  });
+  test("a refused automatic commit stops with its cause until the next version", async () => {
+    const dom = await createTestDom();
+    mockGit();
+    preflight = null;
+    const refusal = {
+      kind: "git_save_failed",
+      repository: "Исследования",
+      stage: "commit",
+      cause: "hook",
+      reason: "command_failed",
+      exitCode: 1,
+      pathCount: 1,
+      pathSample: "Page.md",
+    };
+    const { useGitStore } = await import("../model/git-store");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { syncSpace } = await import("../api/git-actions");
+    const { recordAutoVersionOutcome } =
+      await import("../api/git-auto-version-actions");
+    const m = await import("@/paraglide/messages.js");
+    try {
+      recordAutoVersionOutcome({ repository: path, error: refusal });
+      expect(useGitStore.getState().syncStop[path]?.kind).toBe("commit");
+
+      await dom.render(
+        <TooltipProvider>
+          <GitSyncStatusWidget repositoryPath={path} onOpenPage={() => {}} />
+        </TooltipProvider>,
+      );
+      await settle();
+      const control = dom.document.querySelector<HTMLButtonElement>(
+        "[data-repository-control]",
+      )!;
+      // The preflight read on mount finds nothing and keeps the stop.
+      expect(useGitStore.getState().syncStop[path]?.kind).toBe("commit");
+      expect(
+        control
+          .getAttribute("aria-label")
+          ?.includes(m.git_sync_stop_commit_title()),
+      ).toBe(true);
+      expect(!!control.querySelector("[data-git-sync-stopped]")).toBe(true);
+      await act(async () => {
+        control.click();
+      });
+      await settle();
+      const dialog = dom.document.querySelector<HTMLElement>("[role=dialog]")!;
+      const slot = dialog.querySelector<HTMLElement>(
+        "[data-git-sync-stop=commit]",
+      )!;
+      for (const text of [
+        m.git_sync_stop_commit_title(),
+        m.git_failure_cause_hook(),
+        m.git_sync_stop_commit_hint(),
+      ])
+        expect(slot.textContent?.includes(text)).toBe(true);
+      expect(slot.querySelector("button")).toBe(null);
+      // Sync still runs and does not end the stop: only the next automatic
+      // version does.
+      expect(
+        Array.from(dialog.querySelectorAll("button")).some(
+          (button) => button.textContent === m.git_sync_action(),
+        ),
+      ).toBe(true);
+      syncReport = { type: "success", publishedHead: "abc" };
+      expect((await syncSpace(path)).type).toBe("Success");
+      expect(useGitStore.getState().syncStop[path]?.kind).toBe("commit");
+
+      recordAutoVersionOutcome({ repository: path, error: null });
+      expect(path in useGitStore.getState().syncStop).toBe(false);
+      // An outcome without a stop leaves other stops alone.
+      useGitStore
+        .getState()
+        .setSyncStop(path, {
+          kind: "conflict",
+          files: ["Page.md"],
+          service: [],
+        });
+      recordAutoVersionOutcome({ repository: path, error: null });
+      expect(useGitStore.getState().syncStop[path]?.kind).toBe("conflict");
+    } finally {
       useGitStore.getState().clear(path);
       await dom.render(null);
       clearNativeMocks();

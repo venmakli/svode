@@ -234,6 +234,39 @@ impl PendingPaths {
     pub fn clear(&self) {
         self.pending.lock().unwrap().clear();
     }
+
+    /// The Spaces at or under `root` with registrations waiting for a
+    /// commit, and those registrations in order, without taking them.
+    pub fn peek_under(&self, root: &Path) -> Vec<PeekedRegistration> {
+        let map = self.pending.lock().unwrap();
+        let mut peeked = Vec::new();
+        for (space, batch) in map.iter() {
+            if !space.starts_with(root) && !canonical(space).starts_with(root) {
+                continue;
+            }
+            for item in &batch.items {
+                peeked.push(PeekedRegistration {
+                    space: space.clone(),
+                    change: item.change.clone(),
+                    paths: item.paths.clone(),
+                });
+            }
+        }
+        peeked
+    }
+}
+
+/// One registration [`PendingPaths::peek_under`] saw, with the Space it
+/// waits in.
+#[derive(Debug, Clone)]
+pub struct PeekedRegistration {
+    pub space: PathBuf,
+    pub change: Option<StructuralChange>,
+    pub paths: Vec<PathBuf>,
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Grow the anchored selection to a fixed point over operation identity and

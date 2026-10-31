@@ -201,6 +201,7 @@ mod tests {
                 auto_sync: true,
                 auto_commit_structural: false,
                 auto_commit_system: true,
+                auto_commit_content: false,
             },
         )
         .unwrap();

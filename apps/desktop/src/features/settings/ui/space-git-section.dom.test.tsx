@@ -33,6 +33,9 @@ function gitFixture(
     autoSync: false,
     autoCommitStructural: true,
     autoCommitSystem: false,
+    autoCommitContent: false,
+    preset: "custom",
+    presetPending: false,
     policyPending: new Set<GitPolicyField>(),
     pendingRemote: null,
     applyingRemote: false,
@@ -40,6 +43,7 @@ function gitFixture(
     setRemoteUrl: noop,
     handleRemoteBlur: noop,
     handlePolicyChange: async () => undefined,
+    handlePresetChange: async () => undefined,
     cancelPendingRemote: noop,
     confirmPendingRemote: async () => undefined,
     ...overrides,
@@ -223,7 +227,7 @@ if (!isolatedProcess) {
 
       // Switches apply at once; a pending one keeps focus, shows progress and
       // ignores a second change.
-      const [autoSync] = inputFor("Sync after commit");
+      const [autoSync] = inputFor("Sync automatically");
       const [structural] = inputFor("Commit structural changes");
       const [system] = inputFor("Commit system settings");
       expect(autoSync?.getAttribute("role")).toBe("switch");
@@ -254,7 +258,7 @@ if (!isolatedProcess) {
         );
         await settle();
       });
-      expect(inputFor("Sync after commit")[0]?.hasAttribute("disabled")).toBe(
+      expect(inputFor("Sync automatically")[0]?.hasAttribute("disabled")).toBe(
         true,
       );
       expect(
@@ -277,7 +281,7 @@ if (!isolatedProcess) {
         await settle();
       });
       expect(inputFor("Remote URL")).toEqual([]);
-      expect(inputFor("Sync after commit")).toEqual([]);
+      expect(inputFor("Sync automatically")).toEqual([]);
       expect(
         group("Commit author").querySelector("[data-slot=skeleton]") === null,
       ).toBe(false);
@@ -509,6 +513,126 @@ if (!isolatedProcess) {
       await setLocale(originalLocale, { reload: false });
     }
   });
+
+  test("automation presets show the switches only for a custom combination", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const dom = createDom();
+    dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+    const restoreGlobals = installDomGlobals(dom);
+    mockNativeIpc(
+      () => ({
+        checkedAt: null,
+        expiresAt: null,
+        generation: 1,
+        lastKnownStatus: null,
+        reason: null,
+        repositoryId: "repo",
+        status: "local",
+      }),
+      { shouldMockEvents: true },
+    );
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    const document = dom.window.document;
+    const automation = () =>
+      Array.from(document.querySelectorAll<HTMLElement>("section")).find(
+        (section) =>
+          section.querySelector("h3")?.textContent ===
+          "Automation on this device",
+      )!;
+    const labels = () =>
+      Array.from(automation().querySelectorAll("label")).map(
+        (label) => label.textContent,
+      );
+    const draw = async (overrides: Partial<SpaceSettingsGit>) => {
+      await act(async () => {
+        root.render(
+          <SpaceGitSection
+            spacePath="/project"
+            isRoot
+            projectName="Knowledge Base"
+            git={gitFixture({
+              gitType: null,
+              submoduleUrl: null,
+              ...overrides,
+            })}
+            identity={identityFixture()}
+          />,
+        );
+        await settle();
+      });
+    };
+    try {
+      // "Manual": the group says what it is about, the select names the
+      // preset and no switches show.
+      await draw({ preset: "manual" });
+      const trigger =
+        automation().querySelector<HTMLElement>('[role="combobox"]')!;
+      expect(trigger.getAttribute("aria-label")).toBe("Automation");
+      expect(trigger.textContent).toBe("Manual");
+      expect(
+        automation().textContent?.includes(
+          "What Svode commits and syncs on its own.",
+        ),
+      ).toBe(true);
+      expect(labels()).toEqual([]);
+      expect(automation().querySelector("[data-slot=card]")).toBeNull();
+
+      // "Custom": four switches in their order, the content one marked
+      // experimental; content and sync without structural commits warn
+      // under the switches.
+      await draw({
+        preset: "custom",
+        autoCommitContent: true,
+        autoSync: true,
+        autoCommitStructural: false,
+      });
+      expect(automation().querySelector('[role="combobox"]')?.textContent).toBe(
+        "Custom",
+      );
+      expect(labels()).toEqual([
+        "Commit content editsExperimental",
+        "Commit structural changes",
+        "Commit system settings",
+        "Sync automatically",
+      ]);
+      expect(
+        automation().textContent?.includes(
+          "After a pause and when you leave a page.",
+        ),
+      ).toBe(true);
+      expect(
+        automation().textContent?.includes(
+          "After a commit, on opening and regularly while the window is open.",
+        ),
+      ).toBe(true);
+      const warning = automation().querySelector<HTMLElement>(
+        "[data-git-automation-warning]",
+      );
+      expect(warning?.textContent).toBe(
+        "Spaces you create and their pointers stay uncommitted until you commit them by hand and may hold up publishing the project.",
+      );
+      expect(warning?.previousElementSibling?.getAttribute("data-slot")).toBe(
+        "card",
+      );
+
+      await draw({
+        preset: "custom",
+        autoCommitContent: true,
+        autoSync: true,
+        autoCommitStructural: true,
+      });
+      expect(
+        automation().querySelector("[data-git-automation-warning]"),
+      ).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      clearNativeMocks();
+      restoreGlobals();
+      dom.window.close();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
 }
 
 function createDom() {
@@ -538,6 +662,9 @@ function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
     CustomEvent: dom.window.CustomEvent,
     DOMRect: dom.window.DOMRect,
+    DocumentFragment: dom.window.DocumentFragment,
+    NodeFilter: dom.window.NodeFilter,
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     Element: dom.window.Element,
     Event: dom.window.Event,
     HTMLElement: dom.window.HTMLElement,

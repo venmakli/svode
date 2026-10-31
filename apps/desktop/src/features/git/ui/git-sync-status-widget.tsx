@@ -36,6 +36,7 @@ import { useGitSyncAbort } from "../hooks/use-git-sync-abort";
 import { useGitServiceMerge } from "../hooks/use-git-service-merge";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
 import { isParentPointerPending } from "../model/publication";
+import { syncStopBlocksSync } from "../model/sync-stop";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
@@ -154,7 +155,7 @@ export function GitSyncStatusWidget({
     sync.visible &&
     !publishAction &&
     sync.parent.action !== "none" &&
-    !(stop && stop.kind !== "publication" && sync.parent.action === "sync");
+    !(stop && syncStopBlocksSync(stop) && sync.parent.action === "sync");
   const openPage = onOpenPage
     ? (path: string) => {
         sync.setOpen(false);

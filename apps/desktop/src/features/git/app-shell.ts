@@ -1,5 +1,9 @@
 export { gitSaveShortcuts } from "./model/shortcut-descriptions";
 export { useAppGitFocus } from "./hooks/use-app-git-focus";
+export {
+  closeAllVersionGroups,
+  closeLeftVersionGroup,
+} from "./api/git-auto-version-actions";
 export { useGitAvailability } from "./hooks/use-git-availability";
 export { GitSyncStatusWidget } from "./ui/git-sync-status-widget";
 export { GitMissingDialog } from "./ui/git-missing-dialog";

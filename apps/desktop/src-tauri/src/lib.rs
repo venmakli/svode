@@ -79,6 +79,7 @@ pub fn run() {
         .manage(agent_runtime_state)
         .manage(Arc::new(svode_core::page::nonce::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
+        .manage(git::auto_versions::AutoVersionState::new())
         .manage(identity::IdentityState::new())
         .manage(routines::RoutineSchedulerState::new())
         .manage(project_runtime::ProjectRuntimeState::new())
@@ -414,6 +415,7 @@ pub fn run() {
             git::commands::git_commit_all,
             git::commands::git_commit_paths,
             git::commands::git_sync,
+            git::commands::git_close_version_groups,
             git::commands::git_publish_spaces,
             git::commands::git_publication_status,
             git::commands::git_retry_parent,
@@ -530,6 +532,7 @@ fn shutdown_desktop(app_handle: &tauri::AppHandle) {
     let autocommit = app_handle.state::<Arc<svode_core::git::autocommit::AutocommitService>>();
     let project_sessions = app_handle.state::<project_sessions::ProjectSessions>();
     tauri::async_runtime::block_on(async {
+        git::auto_versions::close_on_quit(app_handle).await;
         autocommit.flush_all().await;
         project_sessions.close_all().await;
     });

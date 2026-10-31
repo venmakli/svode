@@ -1,4 +1,5 @@
 import type { GitPublicationContentFinding } from "@/platform/git/publication-errors";
+import type { GitSaveFailureDto } from "@/platform/git/save-errors";
 import type { GitOperation, GitServiceFile, SyncResult } from "./types";
 
 /** What stops sync of a repository, or only its publication. */
@@ -17,7 +18,24 @@ export type GitSyncStop =
       path: string;
       commit: string;
       finding: GitPublicationContentFinding;
+    }
+  /**
+   * A background commit of automatic versions was refused; the edits stay
+   * in the working copy until the next closing of a group tries again.
+   */
+  | {
+      kind: "commit";
+      cause: GitSaveFailureDto | null;
+      branchMessage: string | null;
     };
+
+/**
+ * Stops that do not keep sync from running: publication and automatic
+ * commits resume through it or alongside it.
+ */
+export function syncStopBlocksSync(stop: GitSyncStop): boolean {
+  return stop.kind !== "publication" && stop.kind !== "commit";
+}
 
 /**
  * The stop a sync result reports: `null` when sync got past its preflight,

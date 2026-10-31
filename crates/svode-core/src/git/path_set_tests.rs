@@ -140,6 +140,7 @@ async fn a_structural_commit_of_a_moved_folder_beyond_the_command_line_limit_is_
             auto_sync: false,
             auto_commit_structural: true,
             auto_commit_system: false,
+            auto_commit_content: false,
         },
     )
     .unwrap();

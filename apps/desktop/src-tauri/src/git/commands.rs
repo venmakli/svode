@@ -406,7 +406,7 @@ pub async fn git_fetch_status(
 
 /// The interface language of the author now: version messages are written
 /// in it (Stage 11 1.G); English when the preference cannot be read.
-fn message_language(app: &AppHandle) -> MessageLanguage {
+pub(crate) fn message_language(app: &AppHandle) -> MessageLanguage {
     app.path()
         .app_config_dir()
         .ok()
@@ -515,6 +515,8 @@ pub async fn git_sync(
     space_path: String,
     background: Option<bool>,
 ) -> Result<flow::SyncReport, SharedError> {
+    // Open content groups close before a sync (Stage 11 1.E).
+    super::auto_versions::close_all(&app, &[PathBuf::from(&space_path)]).await;
     flow::sync(
         app.state::<GitState>().runtime(),
         &host(&app),
@@ -522,6 +524,28 @@ pub async fn git_sync(
         background.unwrap_or(false),
     )
     .await
+}
+
+/// Close open content groups of automatic versions (Stage 11 1.E): the
+/// group at `left` of the Space the user left, or with no `left` every
+/// group of the given Spaces, when the window loses focus.
+#[tauri::command]
+pub async fn git_close_version_groups(
+    app: AppHandle,
+    space_paths: Vec<String>,
+    left: Option<String>,
+) -> Result<(), AppError> {
+    let spaces = space_paths.iter().map(PathBuf::from).collect::<Vec<_>>();
+    match left {
+        Some(left) => {
+            let path = normalize_repo_relative(&left, RootMode::Reject)?;
+            for space in &spaces {
+                super::auto_versions::left(&app, space, &path)?;
+            }
+        }
+        None => super::auto_versions::close_all(&app, &spaces).await,
+    }
+    Ok(())
 }
 
 /// Publish the shown Spaces that still block the project, then sync it.

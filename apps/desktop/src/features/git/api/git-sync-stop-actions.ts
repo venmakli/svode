@@ -11,12 +11,14 @@ import { refreshGitRemoteStatus } from "./git-status-actions";
 
 /**
  * Keep the repository's sync stop and the service files it names as merged
- * in step with what a sync reported.
+ * in step with what a sync reported. A refused automatic commit is not a
+ * sync state: it lasts until the next automatic version.
  */
 export function recordSyncStop(path: string, result: SyncResult) {
   const git = useGitStore.getState();
   const stop = syncStopFromResult(result);
-  if (stop !== undefined) git.setSyncStop(path, stop);
+  const keepCommitStop = stop === null && currentStop(path)?.kind === "commit";
+  if (stop !== undefined && !keepCommitStop) git.setSyncStop(path, stop);
   const merged = serviceMergedFromResult(result);
   if (merged !== undefined) git.setServiceMerged(path, merged);
 }
@@ -32,7 +34,8 @@ export function recordPublicationStop(path: string, stop: GitSyncStop | null) {
 
 /**
  * Read the unfinished Git operation of the repository without syncing. A
- * publication stop is not a preflight state: it lasts until the next sync.
+ * publication stop is not a preflight state: it lasts until the next sync;
+ * a commit stop lasts until the next automatic version.
  */
 export async function refreshGitSyncStop(path: string): Promise<void> {
   const dto = await getGitSyncPreflight(path);
@@ -44,7 +47,10 @@ export async function refreshGitSyncStop(path: string): Promise<void> {
     .getState()
     .setSyncStop(
       path,
-      preflight ?? (current?.kind === "publication" ? current : null),
+      preflight ??
+        (current?.kind === "publication" || current?.kind === "commit"
+          ? current
+          : null),
     );
 }
 

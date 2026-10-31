@@ -23,6 +23,7 @@ fn policy(repo: &Path, bits: u8) {
             auto_sync: bits & 4 != 0,
             auto_commit_structural: bits & 2 != 0,
             auto_commit_system: bits & 1 != 0,
+            auto_commit_content: false,
         },
     )
     .unwrap();

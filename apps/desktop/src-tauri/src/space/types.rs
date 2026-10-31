@@ -180,6 +180,7 @@ mod tests {
                 auto_sync: true,
                 auto_commit_structural: true,
                 auto_commit_system: false,
+                auto_commit_content: false,
             })
         );
     }

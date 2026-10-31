@@ -140,6 +140,7 @@ impl Fixture {
             &GitUserPolicy {
                 auto_sync: true,
                 auto_commit_system: if separate { root_system } else { system },
+                auto_commit_content: false,
                 auto_commit_structural: structural,
             },
         )
@@ -150,6 +151,7 @@ impl Fixture {
                 &GitUserPolicy {
                     auto_sync: true,
                     auto_commit_system: system,
+                    auto_commit_content: false,
                     auto_commit_structural: child_structural,
                 },
             )
@@ -904,6 +906,7 @@ async fn sync_dispatch_follows_real_commits_and_independent_repo_policy() {
                     &GitUserPolicy {
                         auto_sync: child_sync,
                         auto_commit_system: system,
+                        auto_commit_content: false,
                         auto_commit_structural: false,
                     },
                 )
@@ -913,6 +916,7 @@ async fn sync_dispatch_follows_real_commits_and_independent_repo_policy() {
                     &GitUserPolicy {
                         auto_sync: root_sync,
                         auto_commit_system: false,
+                        auto_commit_content: false,
                         auto_commit_structural: true,
                     },
                 )

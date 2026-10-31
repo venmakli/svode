@@ -123,6 +123,7 @@ export interface GitUserPolicy {
   autoSync: boolean;
   autoCommitStructural: boolean;
   autoCommitSystem: boolean;
+  autoCommitContent: boolean;
 }
 
 export interface CloneProgress {

@@ -12,6 +12,7 @@ fn auto_sync(repo: &Path, enabled: bool) {
             auto_sync: enabled,
             auto_commit_structural: true,
             auto_commit_system: false,
+            auto_commit_content: false,
         },
     )
     .unwrap();

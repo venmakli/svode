@@ -3,6 +3,7 @@ import type { GitServiceFile, GitSyncStop } from "../model";
 
 export function gitSyncStopTitle(stop: GitSyncStop): string {
   if (stop.kind === "publication") return m.git_sync_stop_publication_title();
+  if (stop.kind === "commit") return m.git_sync_stop_commit_title();
   if (stop.kind !== "operation") return m.git_sync_stop_conflict_title();
   // Git names its operations; only the sequencer has no command of its own.
   const operation = {
