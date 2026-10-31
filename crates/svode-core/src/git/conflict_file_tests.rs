@@ -169,6 +169,7 @@ fn conflict(path: &str, kind: ConflictKind) -> PathConflict {
     PathConflict {
         path: path.into(),
         kind,
+        also: Vec::new(),
     }
 }
 
@@ -236,9 +237,11 @@ async fn kinds_follow_the_index_stages() {
             conflict("gone.txt", ConflictKind::ModifyDelete),
             conflict("image.png", ConflictKind::Binary),
             conflict("lfs.bin", ConflictKind::Binary),
-            conflict("moved-ours.txt", ConflictKind::RenameRename),
-            conflict("moved-theirs.txt", ConflictKind::RenameRename),
-            conflict("moved.txt", ConflictKind::RenameRename),
+            // One rename/rename conflict, at my name with the other two.
+            PathConflict {
+                also: vec!["moved.txt".into(), "moved-theirs.txt".into()],
+                ..conflict("moved-ours.txt", ConflictKind::RenameRename)
+            },
             conflict("notes.txt", ConflictKind::Text),
             conflict("page.md", ConflictKind::PageProperties),
             conflict("renamed-ours.txt", ConflictKind::RenameDelete),
@@ -621,3 +624,6 @@ fn places_read_marker_lines_like_the_page_editor() {
         None
     );
 }
+
+#[path = "conflict_whole_file_tests.rs"]
+mod whole_file;

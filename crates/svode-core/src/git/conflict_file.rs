@@ -11,6 +11,11 @@
 //! first `>` line after that. A block whose marker lines allow another split
 //! is ambiguous, and so are marker lines that do not fold into blocks: such a
 //! file has no places, only the version of a side for the whole file.
+//!
+//! A file without markers — binary or LFS, modify/delete, add/add of a
+//! binary file, rename/rename and rename/delete — is resolved as a whole:
+//! the version of a side, the deletion of the path, or my version in place
+//! with the incoming one beside it as a copy.
 
 use std::path::Path;
 
@@ -19,18 +24,23 @@ use sha2::{Digest, Sha256};
 
 use super::GitError;
 use super::branch::GitOperation;
-use super::cli::{GitCli, literal_pathspec_input};
-use super::conflict_kind::{self, ConflictKind};
+use super::cli::{GitCli, literal_pathspec_input, nul_paths_input};
+use super::conflict_kind::{self, ConflictKind, RenameGroup};
 use super::diagnostics::GitStage;
 use super::markers;
 use super::path::{RootMode, normalize_repo_relative};
 use super::service_merge::{self, ConflictedPath};
 use super::sync::SyncResult;
+use super::versions::MessageLanguage;
 
 /// A text file larger than this is not shown or resolved by places.
 const MAX_TEXT: usize = 4 * 1024 * 1024;
 /// A version of a side larger than this is not taken for the whole file.
 const MAX_SIDE: usize = 64 * 1024 * 1024;
+/// Git decides a version is binary by a NUL byte among its first bytes.
+const BINARY_PROBE: usize = 8000;
+/// A Git LFS pointer file is never larger than this.
+const LFS_POINTER_MAX: usize = 1024;
 
 /// One place of dispute: the lines of its block in the file and the text of
 /// each side, without the line ending of its last line.
@@ -84,6 +94,40 @@ pub struct ConflictFile {
     /// The versions of the sides before the merge that the index holds.
     pub ours: bool,
     pub theirs: bool,
+    /// Git does not merge the sides as text: a binary or LFS file.
+    pub binary: bool,
+    /// For a file without markers: what each side did with it.
+    pub changes: Option<SideChanges>,
+}
+
+/// What each side of the merge did with a file without markers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SideChanges {
+    pub ours: SideChange,
+    pub theirs: SideChange,
+}
+
+/// What one side did with the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SideChange {
+    pub change: Change,
+    /// The name the side renamed the file to, relative to the requested path.
+    pub path: Option<String>,
+    /// The size of the version of the side in bytes, for a binary file; the
+    /// size of the object of an LFS file.
+    pub size: Option<u64>,
+}
+
+/// A change of a side to a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Change {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
 }
 
 /// The side chosen in a place.
@@ -104,7 +148,7 @@ pub enum Side {
     Theirs,
 }
 
-/// How the person resolves a text file.
+/// How the person resolves a conflicted file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum FileResolution {
@@ -113,8 +157,29 @@ pub enum FileResolution {
         version: String,
         choices: Vec<PlaceChoice>,
     },
-    /// The version of `side` before the merge for the whole file.
+    /// The version of `side` before the merge for the whole file; for a
+    /// rename/rename conflict the file under the name of `side`.
     Side { side: Side },
+    /// Remove the path, as the side that deleted the file did.
+    Delete,
+    /// My version stays at the path and the incoming one goes beside it as a
+    /// copy named with the suffix of `language`, the interface language of
+    /// the author, which the host fills in.
+    KeepBoth {
+        #[serde(skip)]
+        language: MessageLanguage,
+    },
+}
+
+impl FileResolution {
+    /// The resolution in the interface language of the author: it names the
+    /// copy of «Сохранить обе».
+    pub fn in_language(self, language: MessageLanguage) -> Self {
+        match self {
+            Self::KeepBoth { .. } => Self::KeepBoth { language },
+            other => other,
+        }
+    }
 }
 
 /// Why a chosen result does not resolve its path; nothing was written.
@@ -127,6 +192,9 @@ pub enum ResolutionFinding {
     Unreadable { message: String },
     /// The file changed after its places were read.
     Changed,
+    /// The incoming version of an LFS file has no object here and Git LFS
+    /// did not fetch it; `message` says why.
+    LfsObject { message: String },
 }
 
 /// The working copy of a path, by lines as Git reads them.
@@ -394,12 +462,42 @@ pub async fn read(cli: &GitCli, requested: &Path, path: &str) -> Result<Conflict
     let kind = conflict_kind::unresolved(cli, &repo)
         .await?
         .into_iter()
-        .find(|item| item.path == relative)
+        .find(|item| item.holds(&relative))
         .map(|item| item.kind)
         .ok_or_else(|| not_in_conflict(&relative))?;
+    let binary = conflict.ours.is_some()
+        && conflict.theirs.is_some()
+        && (kind == ConflictKind::Binary
+            || conflict_kind::is_binary(cli, &repo, &conflict).await?);
+    let changes = if without_markers(kind, binary) {
+        let group = if kind == ConflictKind::RenameRename {
+            let conflicts = service_merge::index_conflicts(cli, &repo).await?;
+            conflict_kind::rename_groups(cli, &repo, &conflicts)
+                .await?
+                .into_iter()
+                .find(|group| group.holds(&relative))
+        } else {
+            None
+        };
+        Some(
+            side_changes(
+                cli,
+                &repo,
+                &prefix,
+                &relative,
+                kind,
+                binary,
+                &conflict,
+                group.as_ref(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let content = read_working(&repo.join(&relative))?;
     let version = content.as_deref().map(version_of).unwrap_or_default();
-    let text_kind = matches!(kind, ConflictKind::Text | ConflictKind::AddAdd);
+    let text_kind = matches!(kind, ConflictKind::Text | ConflictKind::AddAdd) && !binary;
     let (content, places) = match content {
         Some(content) if text_kind && !content.contains(&0) => {
             let size = markers::marker_sizes(cli, &repo, std::slice::from_ref(&relative))
@@ -422,7 +520,114 @@ pub async fn read(cli: &GitCli, requested: &Path, path: &str) -> Result<Conflict
         places,
         ours: conflict.ours.is_some(),
         theirs: conflict.theirs.is_some(),
+        binary,
+        changes,
     })
+}
+
+/// Whether a conflict of `kind` is resolved as a whole file, without places.
+fn without_markers(kind: ConflictKind, binary: bool) -> bool {
+    match kind {
+        ConflictKind::Binary
+        | ConflictKind::ModifyDelete
+        | ConflictKind::RenameRename
+        | ConflictKind::RenameDelete => true,
+        ConflictKind::AddAdd => binary,
+        _ => false,
+    }
+}
+
+/// What each side did with the file without markers at the
+/// repository-relative `path`; names are relative to `prefix`.
+#[allow(clippy::too_many_arguments)]
+async fn side_changes(
+    cli: &GitCli,
+    repo: &Path,
+    prefix: &str,
+    path: &str,
+    kind: ConflictKind,
+    binary: bool,
+    conflict: &ConflictedPath,
+    group: Option<&RenameGroup>,
+) -> Result<SideChanges, GitError> {
+    let shown = |name: &str| {
+        let under = format!("{prefix}/");
+        if prefix.is_empty() {
+            name.to_owned()
+        } else {
+            name.strip_prefix(&under).unwrap_or(name).to_owned()
+        }
+    };
+    let mut sides = Vec::with_capacity(2);
+    for (stage, renamed) in [
+        (&conflict.ours, group.map(|group| group.ours.as_str())),
+        (&conflict.theirs, group.map(|group| group.theirs.as_str())),
+    ] {
+        let change = match (kind, stage) {
+            (ConflictKind::RenameRename, _) => Change::Renamed,
+            (_, None) => Change::Deleted,
+            (ConflictKind::AddAdd, Some(_)) => Change::Added,
+            (ConflictKind::RenameDelete, Some(_)) => Change::Renamed,
+            _ => Change::Modified,
+        };
+        let name = match change {
+            Change::Renamed => renamed.or(stage.as_ref().map(|_| path)).map(shown),
+            _ => None,
+        };
+        let size = match stage {
+            Some(stage) if binary => Some(stage_facts(cli, repo, stage).await?.size),
+            _ => None,
+        };
+        sides.push(SideChange {
+            change,
+            path: name,
+            size,
+        });
+    }
+    let theirs = sides.pop().expect("two sides");
+    let ours = sides.pop().expect("two sides");
+    Ok(SideChanges { ours, theirs })
+}
+
+/// What decides how a version of a side is written.
+struct StageFacts {
+    /// The version is a Git LFS pointer.
+    lfs: bool,
+    /// Bytes of the version; of the object of an LFS pointer.
+    size: u64,
+}
+
+async fn stage_facts(
+    cli: &GitCli,
+    repo: &Path,
+    stage: &service_merge::StageEntry,
+) -> Result<StageFacts, GitError> {
+    let (_, head) = super::cli::read_bounded(
+        cli,
+        repo,
+        &["cat-file", "blob", &stage.oid],
+        LFS_POINTER_MAX,
+    )
+    .await?;
+    if head.starts_with(conflict_kind::LFS_POINTER) {
+        let size = String::from_utf8_lossy(&head)
+            .lines()
+            .find_map(|line| line.strip_prefix("size ")?.trim().parse().ok());
+        if let Some(size) = size {
+            return Ok(StageFacts { lfs: true, size });
+        }
+    }
+    let out = cli.exec(repo, &["cat-file", "-s", &stage.oid]).await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git cat-file failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    let size = out.stdout.trim().parse().map_err(|_| {
+        GitError::GitCommandFailed(format!("git cat-file gave no size: {}", out.stdout.trim()))
+    })?;
+    Ok(StageFacts { lfs: false, size })
 }
 
 /// Resolve the conflicted text file at the repository-relative `path` of
@@ -458,6 +663,35 @@ pub async fn resolve(
             finding,
         })
     };
+    if !matches!(resolution, FileResolution::Places { .. }) {
+        let kind = conflict_kind::unresolved(cli, repo)
+            .await?
+            .into_iter()
+            .find(|item| item.holds(&path))
+            .map(|item| item.kind)
+            .ok_or_else(|| not_in_conflict(&path))?;
+        let binary = conflict.ours.is_some()
+            && conflict.theirs.is_some()
+            && (kind == ConflictKind::Binary
+                || conflict_kind::is_binary(cli, repo, &conflict).await?);
+        let finding = match resolution {
+            FileResolution::Side { side } if without_markers(kind, binary) => {
+                Some(take_side(cli, repo, &path, &conflict, kind, *side, size).await?)
+            }
+            FileResolution::Delete => Some(delete(cli, repo, &path, &conflict, kind).await?),
+            FileResolution::KeepBoth { language } => {
+                Some(keep_both(cli, repo, &path, &conflict, kind, *language, size).await?)
+            }
+            _ => None,
+        };
+        match finding {
+            Some(Some(finding)) => return unresolved(finding),
+            Some(None) => {
+                return super::sync::continue_merge(cli, repo, &target, Vec::new()).await;
+            }
+            None => {}
+        }
+    }
     let result = match resolution {
         FileResolution::Places { version, choices } => {
             let Some(content) = read_working(&repo.join(&path))? else {
@@ -495,6 +729,11 @@ pub async fn resolve(
             }
             bytes
         }
+        FileResolution::Delete | FileResolution::KeepBoth { .. } => {
+            return Err(GitError::Conflict(format!(
+                "{path} is resolved as a whole file"
+            )));
+        }
     };
     if let Some(finding) = check_result(&path, &result, size) {
         return unresolved(finding);
@@ -521,6 +760,377 @@ pub async fn resolve(
         ));
     }
     super::sync::continue_merge(cli, repo, &target, Vec::new()).await
+}
+
+/// Temporary files of versions Git wrote into the repository, removed when
+/// they were not moved into place.
+#[derive(Default)]
+struct Temporary(Vec<std::path::PathBuf>);
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        for file in &self.0 {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
+/// A version of a side written by Git to a temporary file, with the facts of
+/// its stage.
+struct Version {
+    file: std::path::PathBuf,
+    facts: StageFacts,
+}
+
+/// The version of stage `stage` (2 mine, 3 incoming) of the
+/// repository-relative `path`, written by Git with the filters of the path:
+/// an LFS file gets its object, which Git LFS fetches when it is missing. An
+/// object Git LFS cannot give, or an incoming pointer it left as is, is a
+/// [`ResolutionFinding::LfsObject`].
+async fn checkout_stage(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+    stage: &service_merge::StageEntry,
+    number: u8,
+    temporary: &mut Temporary,
+) -> Result<Result<Version, ResolutionFinding>, GitError> {
+    if !stage.is_regular_file() {
+        return Err(GitError::Conflict(format!(
+            "A version of {path} in the index is not a file"
+        )));
+    }
+    let facts = stage_facts(cli, repo, stage).await?;
+    let stage_arg = format!("--stage={number}");
+    let out = cli
+        .exec_with_input(
+            repo,
+            &["checkout-index", &stage_arg, "--temp", "-z", "--stdin"],
+            &[],
+            &nul_paths_input([&path.to_owned()]),
+        )
+        .await?;
+    if out.exit_code != 0 {
+        let message = out.stderr.trim().to_owned();
+        if facts.lfs {
+            return Ok(Err(ResolutionFinding::LfsObject { message }));
+        }
+        return Err(GitError::GitCommandFailed(format!(
+            "git checkout-index failed: {message}"
+        )));
+    }
+    let name = out
+        .stdout
+        .split(['\t', '\0'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| GitError::GitCommandFailed("git checkout-index wrote no version".into()))?;
+    let file = repo.join(name);
+    temporary.0.push(file.clone());
+    if facts.lfs && number == 3 {
+        let mut head = vec![0; conflict_kind::LFS_POINTER.len()];
+        let read = std::fs::File::open(&file)
+            .and_then(|mut opened| std::io::Read::read(&mut opened, &mut head))?;
+        if head[..read] == *conflict_kind::LFS_POINTER {
+            return Ok(Err(ResolutionFinding::LfsObject {
+                message: "Git LFS did not fetch the object of the incoming version".into(),
+            }));
+        }
+    }
+    Ok(Ok(Version { file, facts }))
+}
+
+/// Why the text `version` cannot resolve `path`, if it is text and cannot;
+/// binary and LFS versions are not read.
+fn check_version(
+    path: &str,
+    version: &Version,
+    size: usize,
+) -> Result<Option<ResolutionFinding>, GitError> {
+    if version.facts.lfs || version.facts.size > MAX_SIDE as u64 {
+        return Ok(None);
+    }
+    let content = std::fs::read(&version.file)?;
+    let probe = &content[..content.len().min(BINARY_PROBE)];
+    if probe.contains(&0) {
+        return Ok(None);
+    }
+    Ok(check_result(path, &content, size))
+}
+
+/// Move the version Git wrote into place at the repository-relative `path`.
+fn place(repo: &Path, version: &Version, path: &str) -> Result<(), GitError> {
+    let file = repo.join(path);
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(&version.file, &file)?;
+    Ok(())
+}
+
+/// The version of `side` for a file without markers: under the name of the
+/// side for a rename/rename conflict, the other names removed.
+async fn take_side(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+    conflict: &ConflictedPath,
+    kind: ConflictKind,
+    side: Side,
+    size: usize,
+) -> Result<Option<ResolutionFinding>, GitError> {
+    let number = match side {
+        Side::Ours => 2,
+        Side::Theirs => 3,
+    };
+    let (keep, stage, drop) = if kind == ConflictKind::RenameRename {
+        let conflicts = service_merge::index_conflicts(cli, repo).await?;
+        let group = conflict_kind::rename_groups(cli, repo, &conflicts)
+            .await?
+            .into_iter()
+            .find(|group| group.holds(path))
+            .ok_or_else(|| {
+                GitError::Conflict(format!("The names of the renames of {path} are not known"))
+            })?;
+        let (keep, other) = match side {
+            Side::Ours => (group.ours, group.theirs),
+            Side::Theirs => (group.theirs, group.ours),
+        };
+        let stage = conflicts
+            .iter()
+            .find(|conflict| conflict.path == keep)
+            .and_then(|conflict| match side {
+                Side::Ours => conflict.ours.clone(),
+                Side::Theirs => conflict.theirs.clone(),
+            });
+        (keep, stage, vec![group.original, other])
+    } else {
+        let stage = match side {
+            Side::Ours => conflict.ours.clone(),
+            Side::Theirs => conflict.theirs.clone(),
+        };
+        (path.to_owned(), stage, Vec::new())
+    };
+    let Some(stage) = stage else {
+        return Err(GitError::Conflict(format!(
+            "The {} version of {keep} is not in the index",
+            match side {
+                Side::Ours => "local",
+                Side::Theirs => "incoming",
+            }
+        )));
+    };
+    let mut temporary = Temporary::default();
+    let version = match checkout_stage(cli, repo, &keep, &stage, number, &mut temporary).await? {
+        Ok(version) => version,
+        Err(finding) => return Ok(Some(finding)),
+    };
+    if let Some(finding) = check_version(&keep, &version, size)? {
+        return Ok(Some(finding));
+    }
+    place(repo, &version, &keep)?;
+    remove_paths(cli, repo, &drop).await?;
+    add_paths(cli, repo, &[keep]).await?;
+    Ok(None)
+}
+
+/// «Удалить»: the path goes, as the side that deleted the file did.
+async fn delete(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+    conflict: &ConflictedPath,
+    kind: ConflictKind,
+) -> Result<Option<ResolutionFinding>, GitError> {
+    let deleted = conflict.ours.is_none() || conflict.theirs.is_none();
+    if !deleted
+        || !matches!(
+            kind,
+            ConflictKind::ModifyDelete | ConflictKind::RenameDelete
+        )
+    {
+        return Err(GitError::Conflict(format!(
+            "{path} is not deleted on either side"
+        )));
+    }
+    remove_paths(cli, repo, &[path.to_owned()]).await?;
+    Ok(None)
+}
+
+/// «Сохранить обе»: my version stays at the path, the incoming one goes
+/// beside it as a copy named with the suffix of `language` and a number when
+/// the name is taken; a Page copy is a new Page right after the original.
+#[allow(clippy::too_many_arguments)]
+async fn keep_both(
+    cli: &GitCli,
+    repo: &Path,
+    path: &str,
+    conflict: &ConflictedPath,
+    kind: ConflictKind,
+    language: MessageLanguage,
+    size: usize,
+) -> Result<Option<ResolutionFinding>, GitError> {
+    let (Some(ours), Some(theirs)) = (&conflict.ours, &conflict.theirs) else {
+        return Err(GitError::Conflict(format!(
+            "{path} has no version on one side"
+        )));
+    };
+    if !matches!(kind, ConflictKind::Binary | ConflictKind::AddAdd) {
+        return Err(GitError::Conflict(format!(
+            "Both versions of {path} cannot be kept"
+        )));
+    }
+    let mut temporary = Temporary::default();
+    let mine = match checkout_stage(cli, repo, path, ours, 2, &mut temporary).await? {
+        Ok(version) => version,
+        Err(finding) => return Ok(Some(finding)),
+    };
+    let incoming = match checkout_stage(cli, repo, path, theirs, 3, &mut temporary).await? {
+        Ok(version) => version,
+        Err(finding) => return Ok(Some(finding)),
+    };
+    if let Some(finding) = check_version(path, &mine, size)? {
+        return Ok(Some(finding));
+    }
+    let suffix = incoming_suffix(language);
+    let mut staged = vec![path.to_owned()];
+    if super::versions::is_page(path) {
+        let content = std::fs::read(&incoming.file)?;
+        let space = space_of(repo, path);
+        let prefix = space
+            .strip_prefix(repo)
+            .unwrap_or(Path::new(""))
+            .to_string_lossy()
+            .replace('\\', "/");
+        let within = if prefix.is_empty() {
+            path.to_owned()
+        } else {
+            path.strip_prefix(&format!("{prefix}/"))
+                .unwrap_or(path)
+                .to_owned()
+        };
+        let order = space.join(".svode").join("order.json");
+        let order_path = if prefix.is_empty() {
+            ".svode/order.json".to_owned()
+        } else {
+            format!("{prefix}/.svode/order.json")
+        };
+        let order_conflicted = service_merge::index_conflicts(cli, repo)
+            .await?
+            .iter()
+            .any(|conflict| conflict.path == order_path);
+        let before = std::fs::read(&order).ok();
+        place(repo, &mine, path)?;
+        let copy = crate::page::entry::write_incoming_copy(&space, &within, &content, suffix)
+            .map_err(|error| GitError::GitCommandFailed(error.to_string()))?;
+        staged.push(repository_path(&prefix, &copy)?);
+        if !order_conflicted && std::fs::read(&order).ok() != before && order.exists() {
+            staged.push(order_path);
+        }
+    } else {
+        let copy = copy_path(repo, path, suffix)?;
+        place(repo, &mine, path)?;
+        place(repo, &incoming, &copy)?;
+        staged.push(copy);
+    }
+    add_paths(cli, repo, &staged).await?;
+    Ok(None)
+}
+
+/// The suffix of the incoming copy of «Сохранить обе» in `language`.
+pub fn incoming_suffix(language: MessageLanguage) -> &'static str {
+    match language {
+        MessageLanguage::Ru => "(входящая)",
+        MessageLanguage::En => "(incoming)",
+    }
+}
+
+/// The repository-relative path of the incoming copy of `path`: its name
+/// with `suffix` before the extension, numbered when the name is taken, as
+/// Svode numbers the names of Pages.
+fn copy_path(repo: &Path, path: &str, suffix: &str) -> Result<String, GitError> {
+    let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let (stem, extension) = match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, Some(extension)),
+        _ => (name, None),
+    };
+    let projection = crate::page::filename::project(&format!("{stem} {suffix}"));
+    let (file, _) =
+        crate::page::filename::allocate_available_path(&repo.join(parent), &projection, extension)
+            .map_err(|error| GitError::GitCommandFailed(error.to_string()))?;
+    let name = file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(if parent.is_empty() {
+        name
+    } else {
+        format!("{parent}/{name}")
+    })
+}
+
+/// The Space of the repository-relative `path`: the nearest folder above it
+/// within `repo` with a Space config, else the repository.
+fn space_of(repo: &Path, path: &str) -> std::path::PathBuf {
+    let file = repo.join(path);
+    file.ancestors()
+        .skip(1)
+        .take_while(|folder| folder.starts_with(repo))
+        .find(|folder| folder.join(".svode").join("config.json").is_file())
+        .unwrap_or(repo)
+        .to_path_buf()
+}
+
+/// Stage the repository-relative `paths` as resolved.
+async fn add_paths(cli: &GitCli, repo: &Path, paths: &[String]) -> Result<(), GitError> {
+    let out = cli
+        .exec_with_input(
+            repo,
+            &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            &[],
+            &literal_pathspec_input(paths),
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(super::ops::sync_failure(
+            repo,
+            GitStage::Commit,
+            &out.stderr,
+            false,
+        ));
+    }
+    Ok(())
+}
+
+/// Remove the repository-relative `paths` from the index, every stage, and
+/// from the working tree.
+async fn remove_paths(cli: &GitCli, repo: &Path, paths: &[String]) -> Result<(), GitError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let out = cli
+        .exec_with_input(
+            repo,
+            &[
+                "rm",
+                "-q",
+                "--ignore-unmatch",
+                "--pathspec-from-file=-",
+                "--pathspec-file-nul",
+            ],
+            &[],
+            &literal_pathspec_input(paths),
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(super::ops::sync_failure(
+            repo,
+            GitStage::Commit,
+            &out.stderr,
+            false,
+        ));
+    }
+    Ok(())
 }
 
 /// The repository top level of `requested` and the prefix of `requested`

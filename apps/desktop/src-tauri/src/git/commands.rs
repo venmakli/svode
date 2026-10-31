@@ -795,8 +795,8 @@ pub async fn git_conflict_file(
     Ok(conflict_file::read(state.cli()?, &space, &path).await?)
 }
 
-/// Resolve the conflicted text file at `path` (relative to `space_path`) by
-/// the person's choice, then continue the merge.
+/// Resolve the conflicted file at `path` (relative to `space_path`) by the
+/// person's choice, then continue the merge.
 #[tauri::command]
 pub async fn git_resolve_conflict_file(
     app: AppHandle,
@@ -809,7 +809,7 @@ pub async fn git_resolve_conflict_file(
         &host(&app),
         Path::new(&space_path),
         &path,
-        resolution,
+        resolution.in_language(message_language(&app)),
     )
     .await
 }

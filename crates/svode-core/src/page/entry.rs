@@ -1847,6 +1847,57 @@ fn convert_bare_folder_to_collection_inner(
     read(&space.to_string_lossy(), &format!("{rel}/README.md"))
 }
 
+/// «Сохранить обе» of a Page in conflict (Stage 11 1.F): writes `content`,
+/// the incoming version of the Page `original` (relative to `space`), as a
+/// new Page in the same folder named after the original with `suffix` and
+/// numbered when the name is taken, right after the original in the order of
+/// the folder. A title in its frontmatter takes the suffix too, so the two
+/// Pages are told apart. Returns the path of the copy relative to `space`.
+pub fn write_incoming_copy(
+    space: &Path,
+    original: &str,
+    content: &[u8],
+    suffix: &str,
+) -> Result<String, PageError> {
+    let rel = original.trim_matches('/').replace('\\', "/");
+    let source = space.join(&rel);
+    let parent = source.parent().unwrap_or(space).to_path_buf();
+    let stem = source
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let extension = source
+        .extension()
+        .map(|extension| extension.to_string_lossy().into_owned());
+    let projection = filename::project(&format!("{stem} {suffix}"));
+    let (dest, _) = filename::allocate_available_path(&parent, &projection, extension.as_deref())?;
+    let titled = std::str::from_utf8(content)
+        .ok()
+        .and_then(|text| frontmatter::try_parse(text).ok().flatten())
+        .filter(|(meta, _)| meta.frontmatter_keys.title);
+    match titled {
+        Some((mut meta, body)) => {
+            meta.title = format!("{} {suffix}", meta.title);
+            fs::write(&dest, frontmatter::serialize(&meta, &body))?;
+        }
+        None => fs::write(&dest, content)?,
+    }
+    let original_name = source
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let copy_name = dest
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let dir_key = dir_key_for(Path::new(&rel_from_abs(space, &parent)));
+    order_insert_after(space, &dir_key, &original_name, &copy_name);
+    Ok(rel_from_abs(space, &dest))
+}
+
 pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, PageError> {
     crate::page::naming::with_document_name_lock(&space.to_string_lossy(), || {
         duplicate_entry_inner(space, file_path)

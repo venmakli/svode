@@ -171,6 +171,7 @@ async fn merge_in_memory(
                     .copied()
                     .unwrap_or_default(),
             ),
+            also: Vec::new(),
         })
         .collect();
     Ok(Preflight::Conflicts { files, service })

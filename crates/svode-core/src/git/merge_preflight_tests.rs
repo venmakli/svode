@@ -674,6 +674,7 @@ fn the_stop_keeps_its_transport_shape() {
         files: vec![PathConflict {
             path: "page.md".into(),
             kind: ConflictKind::PageProperties,
+            also: Vec::new(),
         }],
         service: vec![ServiceFile {
             path: "space".into(),

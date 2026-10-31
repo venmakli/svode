@@ -10,6 +10,7 @@ import { gitPublicationStopMessage, shortCommit } from "../api/git-sync-error";
 import type { GitServiceMerge } from "../hooks/use-git-service-merge";
 import {
   conflictInPageEditor,
+  conflictPartners,
   conflictResolvable,
   type GitConflictKind,
   type GitServiceFile,
@@ -53,12 +54,11 @@ export function GitSyncStopNotice({
       file,
     ]),
   );
-  const kinds = new Map(
-    (stop.kind === "conflict" || stop.kind === "unmerged"
-      ? stop.kinds
-      : []
-    ).map((file) => [file.path, file.kind]),
-  );
+  const conflicts =
+    stop.kind === "conflict" || stop.kind === "unmerged" ? stop.kinds : [];
+  const kinds = new Map(conflicts.map((file) => [file.path, file.kind]));
+  // A conflict of several paths is one row, at its entry.
+  const partners = conflictPartners(conflicts);
   const mergeable =
     !!serviceMerge &&
     [...service.values()].some((file) => file.state === "mergeable");
@@ -98,24 +98,29 @@ export function GitSyncStopNotice({
                 aria-label={m.git_sync_stop_conflict_files()}
                 className="flex max-h-40 min-w-0 flex-col gap-1 overflow-y-auto"
               >
-                {stop.files.map((path) => (
-                  <li key={path} className="flex min-w-0 items-baseline gap-2">
-                    {service.has(path) ? (
-                      <ServiceFileRow
-                        file={service.get(path)!}
-                        serviceMerge={serviceMerge}
-                      />
-                    ) : (
-                      <ConflictPathRow
-                        path={path}
-                        name={nameOf?.(path) ?? path}
-                        kind={kinds.get(path)}
-                        onOpenPage={onOpenPage}
-                        fileResolver={fileResolver}
-                      />
-                    )}
-                  </li>
-                ))}
+                {stop.files
+                  .filter((path) => !partners.has(path))
+                  .map((path) => (
+                    <li
+                      key={path}
+                      className="flex min-w-0 items-baseline gap-2"
+                    >
+                      {service.has(path) ? (
+                        <ServiceFileRow
+                          file={service.get(path)!}
+                          serviceMerge={serviceMerge}
+                        />
+                      ) : (
+                        <ConflictPathRow
+                          path={path}
+                          name={nameOf?.(path) ?? path}
+                          kind={kinds.get(path)}
+                          onOpenPage={onOpenPage}
+                          fileResolver={fileResolver}
+                        />
+                      )}
+                    </li>
+                  ))}
               </ul>
             )}
             {mergeable && (

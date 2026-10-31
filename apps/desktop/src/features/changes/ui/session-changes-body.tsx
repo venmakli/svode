@@ -211,9 +211,11 @@ function SessionPart({
     () => ({ kind: "repository", spacePath: part.spacePath, path: "" }),
     [part.spacePath],
   );
-  const accordion = useChangesAccordion(part.paths, body);
-  const stats = useChangesStats(scope, status, part.paths);
-  const conflictKinds = useGitConflictKinds(part.spacePath, status);
+  const conflicts = useGitConflictKinds(part.spacePath, status);
+  // A conflict of several paths is one item, at its entry.
+  const paths = part.paths.filter((path) => !conflicts.partners.has(path));
+  const accordion = useChangesAccordion(paths, body);
+  const stats = useChangesStats(scope, status, paths);
   return (
     <div
       data-changes-session-part={part.spacePath}
@@ -227,7 +229,7 @@ function SessionPart({
         stats={stats}
         reader={reader}
         ownerName={name}
-        conflictKinds={conflictKinds}
+        conflictKinds={conflicts.kinds}
       />
     </div>
   );

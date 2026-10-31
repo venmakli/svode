@@ -39,6 +39,10 @@ export async function readGitConflictFile(
       : null,
     ours: dto.ours,
     theirs: dto.theirs,
+    binary: dto.binary,
+    changes: dto.changes
+      ? { ours: { ...dto.changes.ours }, theirs: { ...dto.changes.theirs } }
+      : null,
   };
 }
 

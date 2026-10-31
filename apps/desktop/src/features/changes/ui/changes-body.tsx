@@ -37,7 +37,7 @@ export function ChangesBody({
   scope,
   status,
   error,
-  paths,
+  paths: statusPaths,
   reader,
   name,
   after,
@@ -55,7 +55,12 @@ export function ChangesBody({
   const body = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<ChangesFilter>("all");
   const files = new Map(status?.files.map((file) => [file.path, file]));
-  const conflictKinds = useGitConflictKinds(scope.spacePath, status);
+  const conflicts = useGitConflictKinds(scope.spacePath, status);
+  // A conflict of several paths is one item of a list, at its entry.
+  const paths =
+    scope.kind === "file"
+      ? statusPaths
+      : statusPaths.filter((path) => !conflicts.partners.has(path));
   const filtered = filterChanges(paths, files, filter);
   const accordion = useChangesAccordion(paths, body, filtered.paths);
   const stats = useChangesStats(scope, status, paths);
@@ -153,7 +158,7 @@ export function ChangesBody({
               state={files.get(paths[0])!.state}
               status={status}
               expanded
-              conflictKind={conflictKinds.get(paths[0])}
+              conflictKind={conflicts.kinds.get(paths[0])}
             />
           ) : (
             <>
@@ -165,7 +170,7 @@ export function ChangesBody({
                 </Empty>
               ) : null}
               <ChangesItemList
-                conflictKinds={conflictKinds}
+                conflictKinds={conflicts.kinds}
                 accordion={accordion}
                 scope={scope}
                 status={status}

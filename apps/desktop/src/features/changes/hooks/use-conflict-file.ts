@@ -14,9 +14,10 @@ export type ConflictFileProblem =
   | { kind: "failed"; message: string };
 
 /**
- * A text file in conflict as "Changes" resolve it (1.F): its places, the
- * choices made in them so far — kept here and applied to the file at once
- * when every place has one — and the version of a side for the whole file.
+ * A file in conflict as "Changes" resolve it (1.F): the places of a text
+ * file, the choices made in them so far — kept here and applied to the file
+ * at once when every place has one — and the actions on the whole file:
+ * the version of a side, the deletion of the path and both versions.
  */
 export function useConflictFile(spacePath: string, path: string) {
   const [reload, setReload] = useState(0);
@@ -112,5 +113,9 @@ export function useConflictFile(spacePath: string, path: string) {
       applyChoices(chosen.map((value) => value ?? choice)),
     /** The version of a side before the merge for the whole file. */
     takeSide: (side: "ours" | "theirs") => resolve({ type: "side", side }),
+    /** «Удалить»: the path goes, as the side that deleted the file did. */
+    remove: () => resolve({ type: "delete" }),
+    /** «Сохранить обе»: mine stays, the incoming version becomes a copy. */
+    keepBoth: () => resolve({ type: "keepBoth" }),
   };
 }

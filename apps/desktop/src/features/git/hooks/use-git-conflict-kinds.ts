@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
 import { readGitConflictKinds } from "../api/git-conflict-actions";
 import type { GitConflictKind, GitStatus } from "../model";
+import { conflictPartners } from "../model/conflict-paths";
+
+/**
+ * The kinds of the conflicted paths of a status, by their paths, and the
+ * paths a list shows with another path of their conflict instead of on
+ * their own.
+ */
+export interface GitConflictKinds {
+  kinds: ReadonlyMap<string, GitConflictKind>;
+  partners: ReadonlySet<string>;
+}
 
 /**
  * The kinds of the conflicted paths of `status`, the status of `spacePath`,
@@ -9,7 +20,7 @@ import type { GitConflictKind, GitStatus } from "../model";
 export function useGitConflictKinds(
   spacePath: string,
   status: GitStatus | undefined,
-): ReadonlyMap<string, GitConflictKind> {
+): GitConflictKinds {
   const conflicts = (status?.files ?? [])
     .filter((file) => file.state === "conflict")
     .map((file) => file.path)
@@ -17,7 +28,7 @@ export function useGitConflictKinds(
     .join("\0");
   const [kinds, setKinds] = useState<{
     key: string;
-    kinds: ReadonlyMap<string, GitConflictKind>;
+    kinds: GitConflictKinds;
   } | null>(null);
   const key = `${spacePath}\0\0${conflicts}`;
   useEffect(() => {
@@ -28,7 +39,10 @@ export function useGitConflictKinds(
         if (active)
           setKinds({
             key,
-            kinds: new Map(files.map((file) => [file.path, file.kind])),
+            kinds: {
+              kinds: new Map(files.map((file) => [file.path, file.kind])),
+              partners: conflictPartners(files),
+            },
           });
       },
       () => {},
@@ -40,4 +54,4 @@ export function useGitConflictKinds(
   return kinds?.key === key ? kinds.kinds : EMPTY;
 }
 
-const EMPTY: ReadonlyMap<string, GitConflictKind> = new Map();
+const EMPTY: GitConflictKinds = { kinds: new Map(), partners: new Set() };

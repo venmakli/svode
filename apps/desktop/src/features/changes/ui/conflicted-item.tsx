@@ -1,17 +1,6 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,6 +17,8 @@ import {
   useConflictFile,
   type ConflictFileProblem,
 } from "../hooks/use-conflict-file";
+import { conflictSidesText } from "../lib/conflict-sides";
+import { ConflictResolveButton } from "./conflict-resolve-button";
 
 const ConflictPlaces = lazy(() =>
   import("./conflict-places").then((module) => ({
@@ -38,7 +29,8 @@ const ConflictPlaces = lazy(() =>
 /**
  * The body of a conflicted file in "Changes" (1.F): a Page leads to its
  * editor, a text file is resolved by places or, when they are not told
- * apart, by the version of a side for the whole file.
+ * apart, by the version of a side for the whole file, and a file without
+ * markers by the actions of its kind.
  */
 export function ConflictedItem({
   spacePath,
@@ -54,33 +46,64 @@ export function ConflictedItem({
   if (conflictInPageEditor(path, kind)) {
     const open = conflictPageOpener({ spacePath, path });
     return (
-      <Message>
-        {m.changes_conflict_page()}
-        {open ? (
-          <Button
-            variant="link"
-            size="sm"
-            className="h-auto p-0"
-            onClick={open}
-            data-conflict-open-editor
-          >
-            {m.changes_conflict_open_editor()}
-          </Button>
+      <>
+        <Message>
+          {m.changes_conflict_page()}
+          {open ? (
+            <Button
+              variant="link"
+              size="sm"
+              className="h-auto p-0"
+              onClick={open}
+              data-conflict-open-editor
+            >
+              {m.changes_conflict_open_editor()}
+            </Button>
+          ) : null}
+        </Message>
+        {kind === "add_add" ? (
+          <PageKeepBoth spacePath={spacePath} path={path} />
         ) : null}
-      </Message>
+      </>
     );
   }
   if (
     !conflictResolvable(path) ||
-    (kind !== undefined && kind !== "text" && kind !== "add_add")
+    kind === "space_pointer" ||
+    kind === "page_text" ||
+    kind === "page_properties"
   )
     return <InGit onReveal={onReveal} />;
   return (
-    <ConflictTextFile spacePath={spacePath} path={path} onReveal={onReveal} />
+    <ConflictFileBody spacePath={spacePath} path={path} onReveal={onReveal} />
   );
 }
 
-function ConflictTextFile({
+/** «Сохранить обе» of a Page both sides added; its text is chosen in the editor. */
+function PageKeepBoth({
+  spacePath,
+  path,
+}: {
+  spacePath: string;
+  path: string;
+}) {
+  const conflict = useConflictFile(spacePath, path);
+  return (
+    <div className="flex min-w-0 flex-col gap-3 px-4">
+      {conflict.problem ? <ProblemAlert problem={conflict.problem} /> : null}
+      <div>
+        <ConflictResolveButton
+          label={m.changes_conflict_keep_both()}
+          disabled={conflict.pending || !conflict.file}
+          onRun={() => void conflict.keepBoth()}
+          data-conflict-action="keep_both"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ConflictFileBody({
   spacePath,
   path,
   onReveal,
@@ -101,8 +124,19 @@ function ConflictTextFile({
       </Alert>
     );
   if (conflict.loading || !file) return <Skeleton className="m-4 h-32" />;
+  if (file.changes)
+    return <WholeFile file={file} changes={file.changes} conflict={conflict} />;
   if (!file.places || (file.content === null && file.places.type === "places"))
     return <InGit onReveal={onReveal} />;
+  const keepBoth =
+    file.kind === "add_add" ? (
+      <ConflictResolveButton
+        label={m.changes_conflict_keep_both()}
+        disabled={conflict.pending}
+        onRun={() => void conflict.keepBoth()}
+        data-conflict-action="keep_both"
+      />
+    ) : null;
   const problem = conflict.problem ? (
     <ProblemAlert problem={conflict.problem} />
   ) : null;
@@ -131,6 +165,7 @@ function ConflictTextFile({
             disabled={conflict.pending}
             onConfirm={() => void conflict.takeSide("theirs")}
           />
+          {keepBoth}
         </div>
       </div>
     );
@@ -159,6 +194,7 @@ function ConflictTextFile({
         >
           {m.changes_conflict_take_theirs()}
         </Button>
+        {keepBoth}
       </div>
       {problem ? <div className="px-4">{problem}</div> : null}
       <Suspense fallback={<Skeleton className="m-4 h-32" />}>
@@ -191,46 +227,146 @@ function WholeFileAction({
   disabled: boolean;
   onConfirm: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const available = side === "ours" ? file.ours : file.theirs;
-  const copy =
-    side === "ours"
-      ? {
-          action: m.changes_conflict_keep_ours(),
-          title: m.changes_conflict_keep_ours_title(),
-          description: m.changes_conflict_keep_ours_description(),
-        }
-      : {
-          action: m.changes_conflict_take_theirs(),
-          title: m.changes_conflict_take_theirs_title(),
-          description: m.changes_conflict_take_theirs_description(),
-        };
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
-      <AlertDialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={disabled || !available}
-          title={available ? undefined : m.changes_conflict_side_missing()}
-          data-conflict-whole={side}
-        >
-          {copy.action}
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
-          <AlertDialogDescription>{copy.description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>{m.changes_conflict_back()}</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onConfirm}>
-            {copy.action}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConflictResolveButton
+      label={
+        side === "ours"
+          ? m.changes_conflict_keep_ours()
+          : m.changes_conflict_take_theirs()
+      }
+      confirm={
+        side === "ours"
+          ? {
+              title: m.changes_conflict_keep_ours_title(),
+              description: m.changes_conflict_keep_ours_description(),
+            }
+          : {
+              title: m.changes_conflict_take_theirs_title(),
+              description: m.changes_conflict_take_theirs_description(),
+            }
+      }
+      disabled={disabled || !available}
+      title={available ? undefined : m.changes_conflict_side_missing()}
+      onRun={onConfirm}
+      data-conflict-whole={side}
+    />
+  );
+}
+
+/**
+ * A file without markers (1.F): a line on what each side did with it and
+ * the actions of its kind; an action that discards my version confirms.
+ */
+function WholeFile({
+  file,
+  changes,
+  conflict,
+}: {
+  file: GitConflictFile;
+  changes: NonNullable<GitConflictFile["changes"]>;
+  conflict: ReturnType<typeof useConflictFile>;
+}) {
+  const disabled = conflict.pending;
+  // The side that still has the file in an edit or rename against a deletion.
+  const kept = file.ours ? "ours" : "theirs";
+  const remove = (
+    <ConflictResolveButton
+      label={m.changes_conflict_delete()}
+      // Only my edited or renamed file is lost by the deletion.
+      confirm={
+        file.ours
+          ? {
+              title: m.changes_conflict_delete_title(),
+              description: m.changes_conflict_delete_description(),
+            }
+          : undefined
+      }
+      disabled={disabled}
+      onRun={() => void conflict.remove()}
+      data-conflict-action="delete"
+    />
+  );
+  const actions =
+    file.kind === "modify_delete" ? (
+      <>
+        <ConflictResolveButton
+          label={m.changes_conflict_keep_edited()}
+          disabled={disabled}
+          onRun={() => void conflict.takeSide(kept)}
+          data-conflict-action="keep_edited"
+        />
+        {remove}
+      </>
+    ) : file.kind === "rename_delete" ? (
+      <>
+        <ConflictResolveButton
+          label={m.changes_conflict_keep_new_name()}
+          disabled={disabled}
+          onRun={() => void conflict.takeSide(kept)}
+          data-conflict-action="keep_new_name"
+        />
+        {remove}
+      </>
+    ) : file.kind === "rename_rename" ? (
+      <>
+        <ConflictResolveButton
+          label={m.changes_conflict_keep_my_name()}
+          disabled={disabled}
+          onRun={() => void conflict.takeSide("ours")}
+          data-conflict-action="keep_my_name"
+        />
+        <ConflictResolveButton
+          label={m.changes_conflict_take_incoming_name()}
+          confirm={{
+            title: m.changes_conflict_take_incoming_name_title(),
+            description: m.changes_conflict_take_incoming_name_description({
+              ours: changes.ours.path ?? "",
+              theirs: changes.theirs.path ?? "",
+            }),
+          }}
+          disabled={disabled}
+          onRun={() => void conflict.takeSide("theirs")}
+          data-conflict-action="take_incoming_name"
+        />
+      </>
+    ) : (
+      <>
+        <ConflictResolveButton
+          label={m.changes_conflict_keep_ours()}
+          disabled={disabled}
+          onRun={() => void conflict.takeSide("ours")}
+          data-conflict-action="keep_ours"
+        />
+        <ConflictResolveButton
+          label={m.changes_conflict_take_theirs()}
+          confirm={{
+            title: m.changes_conflict_take_theirs_title(),
+            description: m.changes_conflict_take_theirs_whole_description(),
+          }}
+          disabled={disabled}
+          onRun={() => void conflict.takeSide("theirs")}
+          data-conflict-action="take_theirs"
+        />
+        <ConflictResolveButton
+          label={m.changes_conflict_keep_both()}
+          disabled={disabled}
+          onRun={() => void conflict.keepBoth()}
+          data-conflict-action="keep_both"
+        />
+      </>
+    );
+  return (
+    <div className="flex min-w-0 flex-col gap-3 px-4" aria-busy={disabled}>
+      <p
+        className="break-words text-sm text-muted-foreground"
+        data-conflict-sides
+      >
+        {conflictSidesText(changes)}
+      </p>
+      {conflict.problem ? <ProblemAlert problem={conflict.problem} /> : null}
+      <div className="flex flex-wrap gap-2">{actions}</div>
+    </div>
   );
 }
 
@@ -252,7 +388,9 @@ function ProblemAlert({ problem }: { problem: ConflictFileProblem }) {
       <AlertTitle>
         {problem.kind === "failed"
           ? m.changes_conflict_failed()
-          : m.changes_conflict_unreadable_title()}
+          : problem.finding.type === "lfs_object"
+            ? m.changes_conflict_lfs_object_title()
+            : m.changes_conflict_unreadable_title()}
       </AlertTitle>
       <AlertDescription className="whitespace-pre-wrap break-words">
         {problem.kind === "failed"
@@ -261,7 +399,11 @@ function ProblemAlert({ problem }: { problem: ConflictFileProblem }) {
             ? m.changes_conflict_unreadable({
                 message: problem.finding.message,
               })
-            : m.changes_conflict_markers()}
+            : problem.finding.type === "lfs_object"
+              ? m.changes_conflict_lfs_object({
+                  message: problem.finding.message,
+                })
+              : m.changes_conflict_markers()}
       </AlertDescription>
     </Alert>
   );

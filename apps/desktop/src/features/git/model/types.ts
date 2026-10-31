@@ -124,7 +124,9 @@ export type GitConflictKind =
 export type GitResolutionFinding =
   | { type: "markers" }
   | { type: "unreadable"; message: string }
-  | { type: "changed" };
+  | { type: "changed" }
+  /** The incoming version of an LFS file has no object; the message says why. */
+  | { type: "lfs_object"; message: string };
 
 /** A place of dispute of a text file: its marker lines and the sides. */
 export interface GitConflictPlace {
@@ -157,19 +159,42 @@ export interface GitConflictFile {
   /** The versions of the sides before the merge that the index holds. */
   ours: boolean;
   theirs: boolean;
+  /** Git does not merge the sides as text: a binary or LFS file. */
+  binary: boolean;
+  /** For a file without markers: what each side did with it. */
+  changes: { ours: GitSideChange; theirs: GitSideChange } | null;
+}
+
+/** What one side of a merge did with a file without markers. */
+export interface GitSideChange {
+  change: "modified" | "added" | "deleted" | "renamed";
+  /** The name the side renamed the file to, relative to the Space. */
+  path: string | null;
+  /** Bytes of the version of the side, for a binary file. */
+  size: number | null;
 }
 
 export type GitPlaceChoice = "ours" | "theirs" | "both";
 
-/** How the person resolves a text file in conflict. */
+/** How the person resolves a file in conflict. */
 export type GitFileResolution =
   | { type: "places"; version: string; choices: GitPlaceChoice[] }
-  | { type: "side"; side: "ours" | "theirs" };
+  /** The version of a side; for rename/rename the file under its name. */
+  | { type: "side"; side: "ours" | "theirs" }
+  /** Remove the path, as the side that deleted the file did. */
+  | { type: "delete" }
+  /** Mine stays, the incoming version goes beside it as a copy. */
+  | { type: "keepBoth" };
 
 /** A conflicted path relative to the repository and its kind. */
 export interface GitPathConflict {
   path: string;
   kind: GitConflictKind;
+  /**
+   * The other paths of the same conflict, resolved with it: the original
+   * and the incoming name of a rename/rename conflict at my name.
+   */
+  also?: string[];
 }
 
 /**

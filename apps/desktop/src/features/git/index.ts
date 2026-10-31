@@ -20,15 +20,20 @@ export type {
   GitFileResolution,
   GitPlaceChoice,
   GitResolutionFinding,
+  GitSideChange,
 } from "./model/types";
 export {
   readGitConflictFile,
   resolveGitConflictFile,
 } from "./api/git-conflict-actions";
-export { useGitConflictKinds } from "./hooks/use-git-conflict-kinds";
+export {
+  useGitConflictKinds,
+  type GitConflictKinds,
+} from "./hooks/use-git-conflict-kinds";
 export { gitConflictKindLabel } from "./ui/git-sync-stop-copy";
 export {
   conflictInPageEditor,
+  conflictPartners,
   conflictResolvable,
 } from "./model/conflict-paths";
 export { conflictPageOpener } from "./model/conflict-navigation";

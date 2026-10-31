@@ -19,7 +19,7 @@ const BINARY_PROBE: usize = 8000;
 /// A merged Page larger than this is not read for the place of its markers.
 const MAX_PAGE: usize = 4 * 1024 * 1024;
 /// The first line of a Git LFS pointer file.
-const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/v1";
+pub(crate) const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 
 /// What kind of conflict a path holds, as the person resolves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -51,6 +51,34 @@ pub enum ConflictKind {
 pub struct PathConflict {
     pub path: String,
     pub kind: ConflictKind,
+    /// The other paths of the same conflict, resolved with it: the original
+    /// name and the incoming name of a rename/rename conflict, whose entry
+    /// stands at my name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub also: Vec<String>,
+}
+
+impl PathConflict {
+    /// Whether the conflict holds `path`, at its entry or among [`Self::also`].
+    pub fn holds(&self, path: &str) -> bool {
+        self.path == path || self.also.iter().any(|other| other == path)
+    }
+}
+
+/// The paths of one rename/rename conflict: a file of the merge base that my
+/// side and the incoming side renamed differently. Each name holds one
+/// index stage: the original the base, mine my side, the incoming one theirs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameGroup {
+    pub original: String,
+    pub ours: String,
+    pub theirs: String,
+}
+
+impl RenameGroup {
+    pub fn holds(&self, path: &str) -> bool {
+        self.original == path || self.ours == path || self.theirs == path
+    }
 }
 
 /// What decides a kind besides the stages of the path.
@@ -145,13 +173,132 @@ pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, 
             facts.frontmatter = markers_in_frontmatter(&content, *size);
         }
     }
-    Ok(conflicts
+    let kinds: Vec<PathConflict> = conflicts
         .iter()
         .zip(facts)
         .map(|(conflict, facts)| PathConflict {
             path: conflict.path.clone(),
             kind: classify(conflict, facts),
+            also: Vec::new(),
         })
+        .collect();
+    let groups = if kinds
+        .iter()
+        .any(|conflict| conflict.kind == ConflictKind::RenameRename)
+    {
+        rename_groups(cli, repo, &conflicts).await?
+    } else {
+        Vec::new()
+    };
+    Ok(group_renames(kinds, &groups))
+}
+
+/// `kinds` with the paths of every rename/rename conflict of `groups` in one
+/// entry at my name; a path of no group keeps its own entry.
+fn group_renames(kinds: Vec<PathConflict>, groups: &[RenameGroup]) -> Vec<PathConflict> {
+    kinds
+        .into_iter()
+        .filter_map(|mut conflict| {
+            if conflict.kind != ConflictKind::RenameRename {
+                return Some(conflict);
+            }
+            match groups.iter().find(|group| group.holds(&conflict.path)) {
+                Some(group) if group.ours == conflict.path => {
+                    conflict.also = vec![group.original.clone(), group.theirs.clone()];
+                    Some(conflict)
+                }
+                Some(_) => None,
+                None => Some(conflict),
+            }
+        })
+        .collect()
+}
+
+/// The rename/rename conflicts among `conflicts` of a merge in progress in
+/// `repo`, paired by the renames each side made since the merge base, as
+/// Git found them in the merge. A path the renames do not pair stays out of
+/// every group; without a merge nothing is paired.
+pub async fn rename_groups(
+    cli: &GitCli,
+    repo: &Path,
+    conflicts: &[ConflictedPath],
+) -> Result<Vec<RenameGroup>, GitError> {
+    let only = |stage: fn(&ConflictedPath) -> bool| -> HashSet<&str> {
+        conflicts
+            .iter()
+            .filter(|conflict| stage(conflict))
+            .map(|conflict| conflict.path.as_str())
+            .collect()
+    };
+    let originals = only(|c| c.base.is_some() && c.ours.is_none() && c.theirs.is_none());
+    let ours = only(|c| c.base.is_none() && c.ours.is_some() && c.theirs.is_none());
+    let theirs = only(|c| c.base.is_none() && c.ours.is_none() && c.theirs.is_some());
+    if originals.is_empty() || ours.is_empty() || theirs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let out = cli
+        .exec(repo, &["merge-base", "HEAD", "MERGE_HEAD"])
+        .await?;
+    let base = out.stdout.lines().next().unwrap_or("").trim().to_owned();
+    if out.exit_code != 0 || base.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mine = renames(cli, repo, &base, "HEAD").await?;
+    let incoming = renames(cli, repo, &base, "MERGE_HEAD").await?;
+    Ok(originals
+        .into_iter()
+        .filter_map(|original| {
+            let ours_name = mine
+                .iter()
+                .find(|(from, to)| from == original && ours.contains(to.as_str()))?;
+            let theirs_name = incoming
+                .iter()
+                .find(|(from, to)| from == original && theirs.contains(to.as_str()))?;
+            Some(RenameGroup {
+                original: original.to_owned(),
+                ours: ours_name.1.clone(),
+                theirs: theirs_name.1.clone(),
+            })
+        })
+        .collect())
+}
+
+/// The renames between the commits `from` and `to`, as `(old, new)` paths.
+async fn renames(
+    cli: &GitCli,
+    repo: &Path,
+    from: &str,
+    to: &str,
+) -> Result<Vec<(String, String)>, GitError> {
+    let out = cli
+        .exec(
+            repo,
+            &[
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-relative",
+                "--name-status",
+                "-z",
+                "--find-renames",
+                "--diff-filter=R",
+                from,
+                to,
+            ],
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git diff failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    let fields: Vec<&str> = out.stdout.split_terminator('\0').collect();
+    Ok(fields
+        .chunks_exact(3)
+        .filter(|record| record[0].starts_with('R'))
+        .map(|record| (record[1].to_owned(), record[2].to_owned()))
         .collect())
 }
 
@@ -172,7 +319,16 @@ pub async fn unresolved_under(
         .into_iter()
         .filter_map(|conflict| {
             let path = conflict.path.strip_prefix(&under)?.to_owned();
-            Some(PathConflict { path, ..conflict })
+            let also = conflict
+                .also
+                .iter()
+                .filter_map(|other| other.strip_prefix(&under).map(str::to_owned))
+                .collect();
+            Some(PathConflict {
+                path,
+                also,
+                ..conflict
+            })
         })
         .collect())
 }
@@ -264,6 +420,19 @@ async fn merge_unset(
         .filter(|record| record[2] == "unset" || record[2] == "binary")
         .map(|record| record[0].to_owned())
         .collect())
+}
+
+/// Whether Git does not merge the sides of `conflict` as text: its `merge`
+/// attribute is unset or a side is binary or an LFS pointer.
+pub async fn is_binary(
+    cli: &GitCli,
+    repo: &Path,
+    conflict: &ConflictedPath,
+) -> Result<bool, GitError> {
+    Ok(merge_unset(cli, repo, std::slice::from_ref(conflict))
+        .await?
+        .contains(conflict.path.as_str())
+        || binary_side(cli, repo, conflict).await?)
 }
 
 /// Whether a side of `conflict` is binary to Git or an LFS pointer.

@@ -121,6 +121,8 @@ export type GitConflictKindDto =
 export interface GitPathConflictDto {
   path: string;
   kind: GitConflictKindDto;
+  /** The other paths of the same conflict, resolved with it. */
+  also?: string[];
 }
 
 /** What a version group is about (Stage 11 1.G). */
@@ -159,7 +161,8 @@ export interface GitUncommittedGroupsDto {
 export type GitResolutionFindingDto =
   | { type: "markers" }
   | { type: "unreadable"; message: string }
-  | { type: "changed" };
+  | { type: "changed" }
+  | { type: "lfs_object"; message: string };
 
 /** A place of dispute of a text file: its marker lines and the sides. */
 export interface GitConflictPlaceDto {
@@ -186,14 +189,29 @@ export interface GitConflictFileDto {
   /** The versions of the sides before the merge that the index holds. */
   ours: boolean;
   theirs: boolean;
+  /** Git does not merge the sides as text: a binary or LFS file. */
+  binary: boolean;
+  /** For a file without markers: what each side did with it. */
+  changes: { ours: GitSideChangeDto; theirs: GitSideChangeDto } | null;
+}
+
+/** What one side of a merge did with a file without markers. */
+export interface GitSideChangeDto {
+  change: "modified" | "added" | "deleted" | "renamed";
+  /** The name the side renamed the file to. */
+  path: string | null;
+  /** Bytes of the version of the side, for a binary file. */
+  size: number | null;
 }
 
 export type GitPlaceChoiceDto = "ours" | "theirs" | "both";
 
-/** How the person resolves a text file in conflict. */
+/** How the person resolves a file in conflict. */
 export type GitFileResolutionDto =
   | { type: "places"; version: string; choices: GitPlaceChoiceDto[] }
-  | { type: "side"; side: "ours" | "theirs" };
+  | { type: "side"; side: "ours" | "theirs" }
+  | { type: "delete" }
+  | { type: "keepBoth" };
 
 /**
  * A conflicted Svode service file and what the rule set says about it: it
