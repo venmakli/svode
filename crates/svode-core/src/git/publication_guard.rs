@@ -128,7 +128,7 @@ async fn inspect(
             MAX_SERVICE_FILE,
         )
         .await?;
-        if !complete || !parse(&bytes) {
+        if !complete || parse(&bytes).is_err() {
             return Ok(Some((path.to_owned(), ContentFinding::Unreadable)));
         }
     }
@@ -138,22 +138,29 @@ async fn inspect(
 /// A service file larger than this is not one Svode wrote.
 const MAX_SERVICE_FILE: usize = 16 * 1024 * 1024;
 
-/// The reader Svode applies to a service file at `path`, if it is one.
-/// Collection views live in their `schema.yaml` and are parsed with it.
-fn service_parser(path: &str) -> Option<fn(&[u8]) -> bool> {
+/// The reader Svode applies to a service file at `path`, if it is one: it
+/// says why the bytes do not read. Collection views live in their
+/// `schema.yaml` and are parsed with it.
+pub(crate) fn service_parser(path: &str) -> Option<fn(&[u8]) -> Result<(), String>> {
     let mut components = path.rsplit('/');
     let name = components.next()?;
     let parent = components.next();
     match (parent, name) {
-        (Some(".svode"), "config.json") => Some(|bytes| crate::space_config::parse(bytes).is_ok()),
+        (Some(".svode"), "config.json") => Some(|bytes| {
+            crate::space_config::parse(bytes)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        }),
         (Some(".svode"), "order.json") => Some(|bytes| {
-            std::str::from_utf8(bytes)
-                .is_ok_and(|text| crate::content_tree::parse_order(text).is_ok())
+            let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+            crate::content_tree::parse_order(text)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
         }),
         // Hidden folders, such as `.templates`, hold no Collection.
         (_, "schema.yaml") if !path.split('/').any(|part| part.starts_with('.')) => Some(|bytes| {
-            std::str::from_utf8(bytes)
-                .is_ok_and(|text| crate::collections::schema::parse_schema(text).is_ok())
+            let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+            crate::collections::schema::parse_schema(text).map(|_| ())
         }),
         _ => None,
     }

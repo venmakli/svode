@@ -6,7 +6,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { refreshGitStatus, useGitStore, type GitStatus } from "@/features/git";
+import {
+  refreshGitStatus,
+  useGitConflictKinds,
+  useGitStore,
+  type GitStatus,
+} from "@/features/git";
 import { useSpace } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 import { useChangesAccordion } from "../hooks/use-changes-accordion";
@@ -208,6 +213,7 @@ function SessionPart({
   );
   const accordion = useChangesAccordion(part.paths, body);
   const stats = useChangesStats(scope, status, part.paths);
+  const conflictKinds = useGitConflictKinds(part.spacePath, status);
   return (
     <div
       data-changes-session-part={part.spacePath}
@@ -221,6 +227,7 @@ function SessionPart({
         stats={stats}
         reader={reader}
         ownerName={name}
+        conflictKinds={conflictKinds}
       />
     </div>
   );

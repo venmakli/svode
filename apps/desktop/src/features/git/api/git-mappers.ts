@@ -49,6 +49,7 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
       return {
         type: "Conflict",
         files: [...dto.files],
+        kinds: (dto.kinds ?? []).map((file) => ({ ...file })),
         ...(dto.merged?.length ? { merged: [...dto.merged] } : {}),
         ...(dto.service?.length
           ? { service: dto.service.map((file) => ({ ...file })) }
@@ -77,7 +78,17 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
     case "operationInProgress":
       return { type: "OperationInProgress", operation: dto.operation };
     case "unmergedFiles":
-      return { type: "UnmergedFiles", files: [...dto.files] };
+      return {
+        type: "UnmergedFiles",
+        files: [...dto.files],
+        kinds: (dto.kinds ?? []).map((file) => ({ ...file })),
+      };
+    case "unresolved":
+      return {
+        type: "Unresolved",
+        path: dto.path,
+        finding: { ...dto.finding },
+      };
     case "incomingConflict":
       return {
         type: "IncomingConflict",

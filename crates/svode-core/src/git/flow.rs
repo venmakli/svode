@@ -241,6 +241,28 @@ pub async fn merge_service_files(
     sync_report(runtime, host, repo, Intent::MergeServiceFiles { paths }).await
 }
 
+/// Resolves the conflicted text file at `path` (relative to `requested`, a
+/// path in its repository) by the person's choice, then continues the
+/// merge as resolving a path does (1.F).
+pub async fn resolve_file(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    requested: &Path,
+    path: &str,
+    resolution: super::conflict_file::FileResolution,
+) -> Result<SyncReport, SharedError> {
+    let cli = runtime.require_cli()?;
+    let (_, prefix) = super::conflict_file::repository_of(&cli, requested).await?;
+    let path = super::conflict_file::repository_path(&prefix, path)?;
+    sync_report(
+        runtime,
+        host,
+        requested,
+        Intent::ResolveFile { path, resolution },
+    )
+    .await
+}
+
 /// Continues a sync merge with the paths the user resolved (relative to `repo`).
 pub async fn resolve(
     runtime: &Arc<GitRuntime>,
@@ -417,6 +439,19 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 repo,
                 false,
                 Step::MergeServiceFiles(paths.as_deref()),
+                true,
+                &request,
+                &mut parent_evidence,
+            )
+            .await
+            .map(Output::Sync),
+            Intent::ResolveFile { path, resolution } => sync_locked(
+                runtime,
+                host,
+                &cli,
+                repo,
+                false,
+                Step::ResolveFile(path, resolution),
                 true,
                 &request,
                 &mut parent_evidence,
@@ -1076,6 +1111,8 @@ enum Step<'a> {
     Resolve(&'a [String]),
     /// Merge the conflicted service files by the rule set, then continue.
     MergeServiceFiles(Option<&'a [String]>),
+    /// Resolve one conflicted text file, then continue.
+    ResolveFile(&'a str, &'a super::conflict_file::FileResolution),
 }
 
 async fn run_repository(
@@ -1088,6 +1125,9 @@ async fn run_repository(
     let result = match step {
         Step::Resolve(paths) => super::sync::resolve_and_continue(cli, repo, paths).await,
         Step::MergeServiceFiles(only) => super::sync::merge_service_files(cli, repo, only).await,
+        Step::ResolveFile(path, resolution) => {
+            super::conflict_file::resolve(cli, repo, path, resolution).await
+        }
         Step::Sync => super::sync::sync_with(cli, repo, SyncMode::of(background)).await,
     };
     let invalidate = match &result {

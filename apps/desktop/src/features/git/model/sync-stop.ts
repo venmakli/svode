@@ -9,11 +9,19 @@ import type {
 
 /** What stops sync of a repository, or only its publication. */
 export type GitSyncStop =
-  /** A merge in progress; `service` are its conflicted Svode service files. */
-  | { kind: "conflict"; files: string[]; service: GitServiceFile[] }
+  /**
+   * A merge in progress; `kinds` name the kind of each of `files`, `service`
+   * are its conflicted Svode service files.
+   */
+  | {
+      kind: "conflict";
+      files: string[];
+      kinds: GitPathConflict[];
+      service: GitServiceFile[];
+    }
   | { kind: "operation"; operation: GitOperation }
   /** Files left in conflict with no operation, after a failed autostash. */
-  | { kind: "unmerged"; files: string[] }
+  | { kind: "unmerged"; files: string[]; kinds: GitPathConflict[] }
   /**
    * «Конфликт с правками коллег»: a background sync did not start a merge
    * that would stop with a conflict. Local work and versions go on; nothing
@@ -80,12 +88,13 @@ export function syncStopFromResult(
       return {
         kind: "conflict",
         files: result.files,
+        kinds: result.kinds,
         service: result.service ?? [],
       };
     case "OperationInProgress":
       return { kind: "operation", operation: result.operation };
     case "UnmergedFiles":
-      return { kind: "unmerged", files: result.files };
+      return { kind: "unmerged", files: result.files, kinds: result.kinds };
     case "IncomingConflict":
       return {
         kind: "incoming",
@@ -101,8 +110,10 @@ export function syncStopFromResult(
     case "NoRemote":
       // A background sync skipped by policy never reaches the preflight.
       return undefined;
+    // Not a stop: the integration runs after the agent's turn, and a refused
+    // choice leaves the merge stop as it was.
     case "IntegrationAfterTurn":
-      // Not a stop: the integration runs after the agent's turn.
+    case "Unresolved":
       return undefined;
   }
 }
@@ -127,6 +138,7 @@ export function serviceMergedFromResult(
     case "AuthRequired":
     case "NoRemote":
     case "IntegrationAfterTurn":
+    case "Unresolved":
       return undefined;
   }
 }

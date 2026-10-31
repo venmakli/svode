@@ -5,7 +5,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { FileGitState } from "@/features/git";
+import { Badge } from "@/components/ui/badge";
+import {
+  gitConflictKindLabel,
+  type FileGitState,
+  type GitConflictKind,
+} from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 import type { InspectionItemStats } from "../api/inspection";
 import { ChangeStateIcon } from "./change-state-icon";
@@ -15,11 +20,13 @@ export function ChangedItemHeader({
   name,
   state,
   stats,
+  conflictKind,
 }: {
   path: string;
   name: string;
   state: FileGitState;
   stats?: InspectionItemStats;
+  conflictKind?: GitConflictKind;
 }) {
   const label = stateLabel(state);
   return (
@@ -49,7 +56,13 @@ export function ChangedItemHeader({
               </span>
             </span>
           ) : state === "conflict" ? (
-            <span className="shrink-0 text-xs text-destructive">{label}</span>
+            <Badge
+              variant="outline"
+              className="shrink-0 font-normal"
+              data-changes-conflict-kind={conflictKind}
+            >
+              {conflictKind ? gitConflictKindLabel(conflictKind) : label}
+            </Badge>
           ) : null}
         </AccordionTrigger>
       </TooltipTrigger>

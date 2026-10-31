@@ -261,6 +261,7 @@ async fn explicit_sync_merges_the_order_and_leaves_the_page_to_the_person() {
             files,
             merged,
             service,
+            ..
         } => {
             assert_eq!(files, &["page.md"]);
             assert_eq!(merged, &[ORDER]);
@@ -331,6 +332,7 @@ async fn an_unreadable_order_side_stays_with_the_person() {
             files,
             merged,
             service,
+            ..
         } => {
             assert_eq!(files, &[ORDER]);
             assert!(merged.is_empty() && service.is_empty(), "{result:?}");
@@ -359,6 +361,7 @@ async fn a_merge_started_outside_svode_is_left_until_the_action_applies_the_same
             files,
             merged,
             service,
+            ..
         }) => {
             assert_eq!(files, &[ORDER]);
             assert!(merged.is_empty());
@@ -636,6 +639,7 @@ async fn a_diverged_pointer_resolves_after_the_space_is_synced() {
             files,
             merged,
             service,
+            ..
         } => {
             assert_eq!(files, &["space"]);
             assert!(merged.is_empty());

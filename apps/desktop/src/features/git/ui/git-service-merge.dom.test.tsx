@@ -136,6 +136,7 @@ if (process.env.SVODE_SERVICE_MERGE_DOM !== "1") {
       expect(useGitStore.getState().syncStop[path]).toEqual({
         kind: "conflict",
         files: ["Page.md"],
+        kinds: [],
         service: [],
       });
       // The Dialog names the merged file; only the Page is left.

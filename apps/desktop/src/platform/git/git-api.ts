@@ -6,6 +6,9 @@ import {
 } from "@/platform/native/events";
 import type {
   CloneProgressDto,
+  GitConflictFileDto,
+  GitFileResolutionDto,
+  GitPathConflictDto,
   PublicationStatusDto,
   GitAvailabilityDto,
   GitStatusDto,
@@ -162,6 +165,32 @@ export function mergeGitServiceFiles(input: {
     spacePath: input.spacePath,
     paths: input.paths ?? null,
   });
+}
+
+/** The unresolved paths under `spacePath`, relative to it, with their kinds. */
+export function getGitConflictKinds(
+  spacePath: string,
+): Promise<GitPathConflictDto[]> {
+  return invokeCommand<GitPathConflictDto[]>("git_conflict_kinds", {
+    spacePath,
+  });
+}
+
+/** The conflicted file at `path` (relative to `spacePath`) with its places. */
+export function getGitConflictFile(input: {
+  spacePath: string;
+  path: string;
+}): Promise<GitConflictFileDto> {
+  return invokeCommand<GitConflictFileDto>("git_conflict_file", input);
+}
+
+/** Resolve a conflicted text file by the person's choice, then continue the merge. */
+export function resolveGitConflictFile(input: {
+  spacePath: string;
+  path: string;
+  resolution: GitFileResolutionDto;
+}): Promise<SyncResultDto> {
+  return invokeCommand<SyncResultDto>("git_resolve_conflict_file", input);
 }
 
 /**

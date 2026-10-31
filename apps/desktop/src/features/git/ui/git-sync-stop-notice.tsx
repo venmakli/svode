@@ -8,7 +8,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { gitPublicationStopMessage, shortCommit } from "../api/git-sync-error";
 import type { GitServiceMerge } from "../hooks/use-git-service-merge";
-import type { GitServiceFile, GitSyncStop } from "../model";
+import {
+  conflictInPageEditor,
+  conflictResolvable,
+  type GitConflictKind,
+  type GitServiceFile,
+  type GitSyncStop,
+} from "../model";
 import { gitSaveErrorDescription } from "./git-save-error-copy";
 import {
   gitConflictKindLabel,
@@ -24,10 +30,20 @@ import * as m from "@/paraglide/messages.js";
 export function GitSyncStopNotice({
   stop,
   onOpenPage,
+  fileResolver,
+  nameOf,
   serviceMerge,
 }: {
   stop: GitSyncStop;
+  /** Open a conflicted Page in its editor; `path` is relative to the repository. */
   onOpenPage?: (path: string) => void;
+  /**
+   * Opens "Changes" at a conflicted file, when they can be opened; `path` is
+   * relative to the repository.
+   */
+  fileResolver?: (path: string) => (() => void) | undefined;
+  /** The name the person knows a path of the repository by. */
+  nameOf?: (path: string) => string;
   /** The service-file actions of a merge stop. */
   serviceMerge?: GitServiceMerge;
 }) {
@@ -36,6 +52,12 @@ export function GitSyncStopNotice({
       file.path,
       file,
     ]),
+  );
+  const kinds = new Map(
+    (stop.kind === "conflict" || stop.kind === "unmerged"
+      ? stop.kinds
+      : []
+    ).map((file) => [file.path, file.kind]),
   );
   const mergeable =
     !!serviceMerge &&
@@ -83,32 +105,14 @@ export function GitSyncStopNotice({
                         file={service.get(path)!}
                         serviceMerge={serviceMerge}
                       />
-                    ) : onOpenPage && isMarkdownPage(path) ? (
-                      <Button
-                        type="button"
-                        variant="link"
-                        size="xs"
-                        className="h-auto min-w-0 max-w-full shrink justify-start p-0 text-sm"
-                        title={path}
-                        aria-label={m.git_sync_stop_open_page({ path })}
-                        onClick={() => onOpenPage(path)}
-                      >
-                        <span className="min-w-0 truncate">{path}</span>
-                      </Button>
                     ) : (
-                      <>
-                        <span
-                          className="min-w-0 truncate text-foreground"
-                          title={path}
-                        >
-                          {path}
-                        </span>
-                        {!isMarkdownPage(path) && (
-                          <span className="shrink-0 text-xs">
-                            {m.git_sync_stop_resolved_in_git()}
-                          </span>
-                        )}
-                      </>
+                      <ConflictPathRow
+                        path={path}
+                        name={nameOf?.(path) ?? path}
+                        kind={kinds.get(path)}
+                        onOpenPage={onOpenPage}
+                        fileResolver={fileResolver}
+                      />
                     )}
                   </li>
                 ))}
@@ -189,6 +193,58 @@ function IncomingStopDetails({
   );
 }
 
+/**
+ * An unresolved path of a merge or of files in conflict without an
+ * operation: its name, its kind and «Разрешить», which opens a Page in its
+ * editor and any other file in "Changes".
+ */
+function ConflictPathRow({
+  path,
+  name,
+  kind,
+  onOpenPage,
+  fileResolver,
+}: {
+  path: string;
+  name: string;
+  kind: GitConflictKind | undefined;
+  onOpenPage?: (path: string) => void;
+  fileResolver?: (path: string) => (() => void) | undefined;
+}) {
+  const resolve = !conflictResolvable(path)
+    ? undefined
+    : conflictInPageEditor(path, kind)
+      ? onOpenPage && (() => onOpenPage(path))
+      : fileResolver?.(path);
+  return (
+    <span
+      className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2"
+      data-git-conflict-path={path}
+      data-git-conflict-kind={kind}
+    >
+      <span className="min-w-0 truncate text-foreground" title={path}>
+        {name}
+      </span>
+      {kind && (
+        <span className="shrink-0 text-xs">{gitConflictKindLabel(kind)}</span>
+      )}
+      {resolve && (
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          className="h-auto shrink-0 p-0 text-xs"
+          aria-label={m.git_sync_stop_resolve_path({ name })}
+          onClick={resolve}
+          data-git-conflict-resolve
+        >
+          {m.git_sync_stop_resolve()}
+        </Button>
+      )}
+    </span>
+  );
+}
+
 /** The file and commit the guard kept local, and how publication resumes. */
 function PublicationStopDetails({
   stop,
@@ -262,8 +318,4 @@ function ServiceFileRow({
       )}
     </span>
   );
-}
-
-function isMarkdownPage(path: string) {
-  return path.toLowerCase().endsWith(".md");
 }

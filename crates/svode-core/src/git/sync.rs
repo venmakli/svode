@@ -6,7 +6,8 @@ use super::GitError;
 use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::branch::GitOperation;
 use super::cli::{GitCli, literal_pathspec_input, nul_paths_input, stdin_paths_input};
-use super::conflict_kind::PathConflict;
+use super::conflict_file::ResolutionFinding;
+use super::conflict_kind::{self, PathConflict};
 use super::diagnostics::{GitStage, HookTrace};
 use super::merge_preflight::{self, Checked, Preflight};
 use super::path::{RootMode, normalize_repo_relative};
@@ -52,6 +53,8 @@ pub enum SyncResult {
     },
     Conflict {
         files: Vec<String>,
+        /// The kind of each unresolved path of `files` (1.F).
+        kinds: Vec<PathConflict>,
         /// Svode service files this sync merged; the others stay in `files`.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         merged: Vec<String>,
@@ -73,6 +76,8 @@ pub enum SyncResult {
     /// that failed to apply leaves them; sync stops before push.
     UnmergedFiles {
         files: Vec<String>,
+        /// The kind of each path of `files` (1.F).
+        kinds: Vec<PathConflict>,
     },
     /// «Конфликт с правками коллег» (1.B): the preflight of a background
     /// sync found incoming changes that conflict with local ones beyond what
@@ -84,6 +89,13 @@ pub enum SyncResult {
         files: Vec<PathConflict>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         service: Vec<ServiceFile>,
+    },
+    /// The result the person chose for a conflicted file has marker lines
+    /// or does not read (1.F, item 3): nothing was written and the path
+    /// stays in conflict. `path` is relative to the repository.
+    Unresolved {
+        path: String,
+        finding: ResolutionFinding,
     },
     /// Local and incoming commits diverged and this Git (older than 2.38)
     /// cannot check the merge in memory: background sync only fast-forwards,
@@ -188,7 +200,12 @@ pub async fn preflight(cli: &GitCli, repo: &Path) -> Result<Option<SyncResult>, 
         match super::branch::operation_in_progress(cli, repo).await? {
             None => {
                 let files = conflict_files(cli, repo).await?;
-                (!files.is_empty()).then_some(SyncResult::UnmergedFiles { files })
+                if files.is_empty() {
+                    None
+                } else {
+                    let kinds = conflict_kinds(cli, repo).await;
+                    Some(SyncResult::UnmergedFiles { files, kinds })
+                }
             }
             Some(GitOperation::Merge) => Some(merge_conflict(cli, repo, Vec::new()).await?),
             Some(operation) => Some(SyncResult::OperationInProgress { operation }),
@@ -480,21 +497,34 @@ pub(crate) async fn merge_conflict(
     merged: Vec<String>,
 ) -> Result<SyncResult, GitError> {
     let files = conflict_files(cli, repo).await?;
-    let service = if files.is_empty() {
-        Vec::new()
+    let (service, kinds) = if files.is_empty() {
+        (Vec::new(), Vec::new())
     } else {
-        service_merge::inspect_in_index(cli, repo)
+        let service = service_merge::inspect_in_index(cli, repo)
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!("conflicted service files unavailable: {error}");
                 Vec::new()
-            })
+            });
+        (service, conflict_kinds(cli, repo).await)
     };
     Ok(SyncResult::Conflict {
         files,
+        kinds,
         merged,
         service,
     })
+}
+
+/// The kinds of the unresolved paths of `repo`; a stop still names its
+/// files when they cannot be read.
+async fn conflict_kinds(cli: &GitCli, repo: &Path) -> Vec<PathConflict> {
+    conflict_kind::unresolved(cli, repo)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!("kinds of conflicted paths unavailable: {error}");
+            Vec::new()
+        })
 }
 
 /// Interim measure of the integration step (DF-190 R2), removed once a merge
@@ -957,7 +987,7 @@ pub async fn merge_service_files(
 
 /// With no path left in conflict, commit the merge and push; `merged` names
 /// the service files Svode merged on the way.
-async fn continue_merge(
+pub(crate) async fn continue_merge(
     cli: &GitCli,
     space_dir: &Path,
     target: &str,

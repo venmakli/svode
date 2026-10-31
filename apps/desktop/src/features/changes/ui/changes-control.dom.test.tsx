@@ -2087,6 +2087,176 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       dom.window.close();
     }
   });
+
+  test("a session's Changes name the kind of a conflicted file in every repository", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    const base = {
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      hasStaged: false,
+      hasUnstaged: true,
+      tracking: null,
+    };
+    const files: Record<string, { path: string; state: string }[]> = {
+      "/p": [{ path: "notes/a.md", state: "modified" }],
+      "/p/docs": [{ path: "data.yaml", state: "conflict" }],
+    };
+    const kindReads: string[] = [];
+    mockNativeIpc(
+      (command, args) => {
+        const input = args as {
+          spacePath: string;
+          paths: string[];
+          generation: string;
+        };
+        if (command === "git_status")
+          return {
+            ...base,
+            hasConflicts: input.spacePath === "/p/docs",
+            files: files[input.spacePath] ?? [],
+          };
+        if (command === "git_inspection_stats")
+          return {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: null,
+              deletions: null,
+            })),
+          };
+        if (command === "git_conflict_kinds") {
+          kindReads.push(input.spacePath);
+          return input.spacePath === "/p/docs"
+            ? [{ path: "data.yaml", kind: "text" }]
+            : [];
+        }
+        if (command === "git_conflict_file")
+          return {
+            path: "data.yaml",
+            kind: "text",
+            version: "v1",
+            content: "a\n",
+            places: { type: "unclear", reason: "no_markers" },
+            ours: true,
+            theirs: true,
+          };
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId:
+              input.spacePath === "/p/docs" ? "repo-docs" : "repo-root",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_get_user_policy") return { autoSync: false };
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const m = await import("@/paraglide/messages.js");
+    const doc = dom.window.document;
+    const root = createRoot(doc.getElementById("app")!);
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl
+              target={{
+                kind: "session",
+                sourceShape: "directory",
+                spacePath: "/p",
+                projectPath: "/p",
+                path: "",
+                name: "Project",
+                work: {
+                  files: [
+                    { spaceId: "root", spacePath: "/p", path: "notes/a.md" },
+                    {
+                      spaceId: "docs",
+                      spacePath: "/p/docs",
+                      path: "data.yaml",
+                    },
+                  ],
+                  spaceKind: "project",
+                },
+              }}
+            />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+      const trigger = doc.querySelector<HTMLElement>("[data-changes-trigger]")!;
+      for (
+        let frame = 0;
+        frame < 20 &&
+        trigger.getAttribute("aria-label") !== "Session changes: 2";
+        frame++
+      ) {
+        await act(async () => {
+          await nextFrame(dom);
+        });
+      }
+      await act(async () => {
+        trigger.click();
+        await nextFrame(dom);
+      });
+      for (
+        let frame = 0;
+        frame < 20 && !doc.querySelector("[data-changes-conflict-kind]");
+        frame++
+      ) {
+        await act(async () => {
+          await nextFrame(dom);
+        });
+      }
+      expect(
+        doc.querySelectorAll("[data-changes-session-section]").length,
+      ).toBe(2);
+      assert.ok(kindReads.includes("/p/docs"));
+      const badge = doc.querySelector<HTMLElement>(
+        "[data-changes-conflict-kind=text]",
+      )!;
+      expect(badge.textContent).toBe(m.git_conflict_kind_text());
+      // The conflicted file opens as in the list of a scope.
+      await act(async () => {
+        doc
+          .querySelector<HTMLElement>(
+            "[data-changes-item-trigger='data.yaml']",
+          )!
+          .click();
+        await nextFrame(dom);
+      });
+      for (
+        let frame = 0;
+        frame < 20 && !doc.querySelector("[data-conflict-unclear]");
+        frame++
+      ) {
+        await act(async () => {
+          await nextFrame(dom);
+        });
+      }
+      expect(
+        doc
+          .querySelector("[data-conflict-unclear]")
+          ?.getAttribute("data-conflict-unclear"),
+      ).toBe("no_markers");
+    } finally {
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
 }
 
 function createDom() {

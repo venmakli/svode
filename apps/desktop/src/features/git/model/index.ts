@@ -7,3 +7,5 @@ export * from "./git-paths";
 export * from "./save-scope";
 export * from "./save-shortcuts";
 export * from "./remote-auth";
+export * from "./conflict-paths";
+export * from "./conflict-navigation";

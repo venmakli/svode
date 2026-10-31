@@ -65,11 +65,13 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
     case "IntegrationAfterTurn":
       toast.info(m.git_sync_integration_after_turn());
       break;
-    // A background stop: the indicator shows it, work goes on.
+    // A background stop: the indicator shows it, work goes on; a file that
+    // refused the choice shows why.
     case "IncomingConflict":
     case "ExplicitSyncRequired":
     case "Resolved":
     case "NoRemote":
+    case "Unresolved":
       break;
   }
 }

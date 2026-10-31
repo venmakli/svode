@@ -66,6 +66,12 @@ pub enum Intent {
     MergeServiceFiles {
         paths: Option<Vec<String>>,
     },
+    /// Resolve the conflicted text file at the repository-relative `path`
+    /// by the person's choice, then continue the merge (1.F).
+    ResolveFile {
+        path: String,
+        resolution: super::conflict_file::FileResolution,
+    },
     FetchStatus,
     InspectPublication,
     RetryParent {
@@ -112,6 +118,7 @@ impl Intent {
                 | Self::PublishSpace { .. }
                 | Self::Resolve { .. }
                 | Self::MergeServiceFiles { .. }
+                | Self::ResolveFile { .. }
                 | Self::RetryParent { .. }
         )
     }

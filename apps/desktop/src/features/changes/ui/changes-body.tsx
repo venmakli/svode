@@ -10,6 +10,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   refreshGitStatus,
+  useGitConflictKinds,
   type GitStatus,
   type GitStatusFailure,
 } from "@/features/git";
@@ -54,6 +55,7 @@ export function ChangesBody({
   const body = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<ChangesFilter>("all");
   const files = new Map(status?.files.map((file) => [file.path, file]));
+  const conflictKinds = useGitConflictKinds(scope.spacePath, status);
   const filtered = filterChanges(paths, files, filter);
   const accordion = useChangesAccordion(paths, body, filtered.paths);
   const stats = useChangesStats(scope, status, paths);
@@ -151,6 +153,7 @@ export function ChangesBody({
               state={files.get(paths[0])!.state}
               status={status}
               expanded
+              conflictKind={conflictKinds.get(paths[0])}
             />
           ) : (
             <>
@@ -162,6 +165,7 @@ export function ChangesBody({
                 </Empty>
               ) : null}
               <ChangesItemList
+                conflictKinds={conflictKinds}
                 accordion={accordion}
                 scope={scope}
                 status={status}

@@ -37,6 +37,8 @@ import { useGitServiceMerge } from "../hooks/use-git-service-merge";
 import { useGitSyncWidget } from "../hooks/use-git-sync-widget";
 import { isParentPointerPending } from "../model/publication";
 import { syncStopBlocksSync } from "../model/sync-stop";
+import { conflictFileOpener } from "../model/conflict-navigation";
+import { useConflictPathNames } from "../hooks/use-conflict-path-names";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
@@ -100,6 +102,7 @@ export function GitSyncStatusWidget({
     sync.repositoryPath,
     sync.stop?.kind === "conflict",
   );
+  const nameOf = useConflictPathNames(sync.repositoryPath);
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
   const access = useRepositoryAccess(sync.spacePath);
   const presentation = repositoryAccessPresentation(access);
@@ -166,6 +169,14 @@ export function GitSyncStatusWidget({
         });
       }
     : undefined;
+  const fileResolver = (path: string) => {
+    const open = conflictFileOpener({ spacePath: sync.repositoryPath, path });
+    if (!open) return undefined;
+    return () => {
+      sync.setOpen(false);
+      open();
+    };
+  };
   const openSpace = onOpenSpace
     ? (target: string) => {
         if (target === sync.spacePath) return;
@@ -303,6 +314,8 @@ export function GitSyncStatusWidget({
                   <GitSyncStopNotice
                     stop={stop}
                     onOpenPage={openPage}
+                    fileResolver={fileResolver}
+                    nameOf={nameOf}
                     serviceMerge={serviceMerge}
                   />
                 )}

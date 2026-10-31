@@ -4,13 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { FileGitState, GitStatus } from "@/features/git";
+import { Badge } from "@/components/ui/badge";
+import {
+  gitConflictKindLabel,
+  type FileGitState,
+  type GitConflictKind,
+  type GitStatus,
+} from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 import { useWorkingTreeItem } from "../hooks/use-working-tree-item";
 import type { InspectionScope } from "../model/scope";
 import type { ItemReader } from "../model/item-reader";
 import type { InspectionItemStats } from "../api/inspection";
 import { ChangedItemHeader } from "./changed-item-header";
+import { ConflictedItem } from "./conflicted-item";
 
 const TextDiff = lazy(() =>
   import("./text-diff").then((module) => ({ default: module.TextDiff })),
@@ -26,6 +33,7 @@ export function ChangedItem({
   reader,
   exact = false,
   stats,
+  conflictKind,
 }: {
   scope: InspectionScope;
   path: string;
@@ -36,6 +44,8 @@ export function ChangedItem({
   reader: ItemReader;
   exact?: boolean;
   stats?: InspectionItemStats;
+  /** The kind of a conflicted file, once read. */
+  conflictKind?: GitConflictKind;
 }) {
   const patch = useWorkingTreeItem(
     reader,
@@ -53,7 +63,12 @@ export function ChangedItem({
         </p>
       ) : null}
       {state === "conflict" ? (
-        <ItemMessage>{m.changes_conflict()}</ItemMessage>
+        <ConflictedItem
+          spacePath={scope.spacePath}
+          path={path}
+          kind={conflictKind}
+          onReveal={() => void patch.reveal()}
+        />
       ) : patch.error ? (
         <Alert>
           <AlertDescription>{m.changes_load_failed()}</AlertDescription>
@@ -98,8 +113,8 @@ export function ChangedItem({
       item?.state !== "disappeared" &&
       item?.state !== "gitlink" &&
       item?.state !== "metadata" &&
-      (state === "conflict" ||
-        patch.error ||
+      state !== "conflict" &&
+      (patch.error ||
         (item && item.state !== "text" && item.state !== "no_content_diff")) ? (
         <div className="px-4">
           <Button
@@ -118,7 +133,19 @@ export function ChangedItem({
       ) : null}
     </div>
   );
-  if (exact) return content;
+  if (exact)
+    return state === "conflict" && conflictKind ? (
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="px-4">
+          <Badge variant="outline" data-changes-conflict-kind={conflictKind}>
+            {gitConflictKindLabel(conflictKind)}
+          </Badge>
+        </div>
+        {content}
+      </div>
+    ) : (
+      content
+    );
   return (
     <AccordionItem value={path} data-changes-item={path}>
       <div className="sticky top-0 z-10 bg-background">
@@ -127,6 +154,7 @@ export function ChangedItem({
           name={item?.title || name}
           state={state}
           stats={stats}
+          conflictKind={conflictKind}
         />
       </div>
       <AccordionContent className="h-auto">
@@ -163,8 +191,6 @@ function itemMessage(
       return m.changes_gitlink();
     case "metadata":
       return m.changes_metadata();
-    case "conflict":
-      return m.changes_conflict();
     default:
       return m.changes_not_text();
   }

@@ -18,7 +18,7 @@ use svode_core::git::ops::{GitStatus, UnpushedCommit};
 use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use svode_core::git::save::save;
 use svode_core::git::versions::MessageLanguage;
-use svode_core::git::{flow, markers, ops, sync};
+use svode_core::git::{conflict_file, conflict_kind, flow, markers, ops, sync};
 use svode_core::system_path;
 
 /// Emit `space:synced` after a successful `git_sync(space)` finishes (and any
@@ -700,6 +700,53 @@ pub async fn git_resolve_continue(
         &host(&app),
         Path::new(&space_path),
         paths,
+    )
+    .await
+}
+
+/// The unresolved paths under `space_path`, relative to it, with their kinds.
+#[tauri::command]
+pub async fn git_conflict_kinds(
+    state: State<'_, GitState>,
+    space_path: String,
+) -> Result<Vec<conflict_kind::PathConflict>, AppError> {
+    let path = PathBuf::from(&space_path);
+    let repository = super::access::resolve_repository(state.cli()?, &path).await?;
+    let lock = state.get_lock(&repository).await;
+    let _guard = lock.lock().await;
+    Ok(conflict_kind::unresolved_under(state.cli()?, &path).await?)
+}
+
+/// The conflicted file at `path` (relative to `space_path`) as «Изменения»
+/// resolve it: its kind and, for a text file, its places.
+#[tauri::command]
+pub async fn git_conflict_file(
+    state: State<'_, GitState>,
+    space_path: String,
+    path: String,
+) -> Result<conflict_file::ConflictFile, AppError> {
+    let space = PathBuf::from(&space_path);
+    let repository = super::access::resolve_repository(state.cli()?, &space).await?;
+    let lock = state.get_lock(&repository).await;
+    let _guard = lock.lock().await;
+    Ok(conflict_file::read(state.cli()?, &space, &path).await?)
+}
+
+/// Resolve the conflicted text file at `path` (relative to `space_path`) by
+/// the person's choice, then continue the merge.
+#[tauri::command]
+pub async fn git_resolve_conflict_file(
+    app: AppHandle,
+    space_path: String,
+    path: String,
+    resolution: conflict_file::FileResolution,
+) -> Result<flow::SyncReport, SharedError> {
+    flow::resolve_file(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+        &path,
+        resolution,
     )
     .await
 }

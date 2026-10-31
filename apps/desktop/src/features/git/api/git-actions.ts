@@ -84,7 +84,7 @@ export async function syncSpace(
   return runSync(spacePath, () => syncGit(spacePath, background));
 }
 
-async function runSync(
+export async function runSync(
   spacePath: string,
   execute: () => ReturnType<typeof syncGit>,
 ): Promise<GitSyncOutcome> {
@@ -118,7 +118,8 @@ async function runSync(
       case "OperationInProgress":
       case "IncomingConflict":
       case "ExplicitSyncRequired":
-        // Nothing changed in the repository; the stop says why.
+      case "Unresolved":
+        // Nothing changed in the repository; the stop or finding says why.
         return result;
       case "IntegrationAfterTurn":
         // Fetched only: the counters show the incoming changes.

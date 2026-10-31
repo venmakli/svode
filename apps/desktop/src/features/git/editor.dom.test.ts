@@ -93,6 +93,7 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
       expect(state.syncStop[spacePath]).toEqual({
         kind: "conflict",
         files: remaining,
+        kinds: [],
         service: [],
       });
       expect(state.statuses[spacePath]?.files.map((file) => file.path)).toEqual(
@@ -139,6 +140,7 @@ if (process.env.SVODE_GIT_RESOLVE_TEST !== "1") {
       useGitStore.getState().setSyncStop(spacePath, {
         kind: "conflict",
         files: ["old.md"],
+        kinds: [],
         service: [],
       });
       await continueGitResolve(spacePath, "old.md", "Old");

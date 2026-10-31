@@ -20,7 +20,20 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
     expect(child.status).toBe(0);
   }, 20000);
 } else {
-  const space = { activeRootPath: "/project" };
+  const space = {
+    activeRootPath: "/project",
+    rootSpaces: [],
+    spaces: [{ id: "space", path: "/project/space", name: "Space" }],
+    fileTrees: {
+      space: [
+        {
+          path: "tasks",
+          title: "Задачи",
+          children: [],
+        },
+      ],
+    },
+  };
   mock.module("@/features/space", () => ({
     selectActiveSpacePath: () => "/project/space",
     useSpace: (select: (value: typeof space) => unknown) => select(space),
@@ -77,7 +90,20 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
     mockGit();
     preflight = {
       type: "conflict",
-      files: [longPage, "order.json", "Removed.md"],
+      files: [
+        longPage,
+        "order.json",
+        "Removed.md",
+        "tasks/schema.yaml",
+        ".svode/config.json",
+      ],
+      kinds: [
+        { path: longPage, kind: "page_text" },
+        { path: "order.json", kind: "text" },
+        { path: "Removed.md", kind: "modify_delete" },
+        { path: "tasks/schema.yaml", kind: "text" },
+        { path: ".svode/config.json", kind: "text" },
+      ],
     };
     const { useGitStore } = await import("../model/git-store");
     const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
@@ -86,6 +112,13 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
     const m = await import("@/paraglide/messages.js");
     const previousLocale = getLocale();
     const opened: unknown[] = [];
+    const files: unknown[] = [];
+    const { registerConflictNavigation } =
+      await import("../model/conflict-navigation");
+    const unregister = registerConflictNavigation({
+      openFile: (target) => files.push(target),
+      openPage: () => {},
+    });
     try {
       for (const locale of ["en", "ru"] as const) {
         await setLocale(locale, { reload: false });
@@ -134,15 +167,37 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
         expect(list.className?.includes("max-h-40")).toBe(true);
         expect(list.className?.includes("overflow-y-auto")).toBe(true);
         const rows = Array.from(list.querySelectorAll("li"));
-        expect(rows.length).toBe(3);
-        const pageLink = rows[0].querySelector("button")!;
-        expect(pageLink.title).toBe(longPage);
-        expect(pageLink.querySelector(".truncate")?.textContent).toBe(longPage);
-        expect(rows[1].querySelector("button")).toBe(null);
+        expect(rows.length).toBe(5);
+        // Each row: its name, its kind and «Разрешить» by the kind.
+        const name = rows[0].querySelector<HTMLElement>(".truncate")!;
+        expect(name.title).toBe(longPage);
+        expect(name.textContent).toBe(longPage);
         expect(
-          rows[1].textContent?.includes(m.git_sync_stop_resolved_in_git()),
+          rows[0].textContent?.includes(m.git_conflict_kind_page_text()),
         ).toBe(true);
-        expect(rows[2].querySelector("button") === null).toBe(false);
+        const pageLink = rows[0].querySelector<HTMLButtonElement>(
+          "[data-git-conflict-resolve]",
+        )!;
+        expect(pageLink.textContent).toBe(m.git_sync_stop_resolve());
+        expect(pageLink.getAttribute("aria-label")).toBe(
+          m.git_sync_stop_resolve_path({ name: longPage }),
+        );
+        expect(rows[1].textContent?.includes(m.git_conflict_kind_text())).toBe(
+          true,
+        );
+        expect(
+          rows[2].textContent?.includes(m.git_conflict_kind_modify_delete()),
+        ).toBe(true);
+        // A Collection schema is named by its Collection.
+        expect(
+          rows[3].textContent?.includes(
+            m.git_conflict_name_schema({ name: "Задачи" }),
+          ),
+        ).toBe(true);
+        // Files open "Changes"; the project config is chosen by places in 1.19.
+        for (const row of rows.slice(1, 4))
+          expect(!!row.querySelector("[data-git-conflict-resolve]")).toBe(true);
+        expect(rows[4].querySelector("[data-git-conflict-resolve]")).toBe(null);
         // Counters stay below the slot; Sync is hidden in the footer.
         expect(
           dialog.textContent?.includes(
@@ -167,9 +222,26 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
           path: longPage,
         });
         expect(dom.document.querySelector("[role=dialog]")).toBe(null);
+
+        // «Разрешить» of a file opens "Changes" at it and closes the Dialog.
+        await act(async () => {
+          control.click();
+        });
+        await settle();
+        await act(async () => {
+          dom.document
+            .querySelectorAll<HTMLButtonElement>(
+              "[data-git-conflict-resolve]",
+            )[1]
+            .click();
+        });
+        await settle();
+        expect(files.at(-1)).toEqual({ spacePath: path, path: "order.json" });
+        expect(dom.document.querySelector("[role=dialog]")).toBe(null);
         await dom.render(null);
       }
     } finally {
+      unregister();
       useGitStore.getState().clear(path);
       await dom.render(null);
       clearNativeMocks();
@@ -228,7 +300,14 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
   test("conflicted files without an operation show where the local version went, with no cancel", async () => {
     const dom = await createTestDom();
     mockGit();
-    preflight = { type: "unmergedFiles", files: ["q.md", "order.json"] };
+    preflight = {
+      type: "unmergedFiles",
+      files: ["q.md", "order.json"],
+      kinds: [
+        { path: "q.md", kind: "page_text" },
+        { path: "order.json", kind: "text" },
+      ],
+    };
     const { useGitStore } = await import("../model/git-store");
     const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
     const { TooltipProvider } = await import("@/components/ui/tooltip");
@@ -259,10 +338,10 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       ).toBe(false);
       const rows = Array.from(slot.querySelectorAll("li"));
       expect(rows.map((row) => row.textContent)).toEqual([
-        "q.md",
-        `order.json${m.git_sync_stop_resolved_in_git()}`,
+        `q.md${m.git_conflict_kind_page_text()}${m.git_sync_stop_resolve()}`,
+        // Without the app shell "Changes" cannot open, so files have no action.
+        `order.json${m.git_conflict_kind_text()}`,
       ]);
-      expect(rows[0].querySelector("button")?.title).toBe("q.md");
       // Neither Sync nor any other action: the stash is left to the user.
       const buttons = Array.from(dialog.querySelectorAll("button")).map(
         (button) => button.textContent,
@@ -277,10 +356,12 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       expect(await syncSpace(path)).toEqual({
         type: "UnmergedFiles",
         files: ["q.md"],
+        kinds: [],
       });
       expect(useGitStore.getState().syncStop[path]).toEqual({
         kind: "unmerged",
         files: ["q.md"],
+        kinds: [],
       });
       expect(path in useGitStore.getState().syncError).toBe(false);
     } finally {
@@ -319,6 +400,7 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       expect(useGitStore.getState().syncStop[path]).toEqual({
         kind: "conflict",
         files: ["Page.md"],
+        kinds: [],
         service: [],
       });
       expect(path in useGitStore.getState().syncError).toBe(false);
@@ -543,6 +625,7 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       useGitStore.getState().setSyncStop(path, {
         kind: "conflict",
         files: ["Page.md"],
+        kinds: [],
         service: [],
       });
       recordAutoVersionOutcome({ repository: path, error: null });

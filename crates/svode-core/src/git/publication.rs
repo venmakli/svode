@@ -138,6 +138,7 @@ use discovery::{Snapshot, snapshot};
 
 #[path = "publication_guard.rs"]
 mod guard;
+pub(crate) use guard::service_parser;
 
 struct NativeEvidence {
     git: PathBuf,

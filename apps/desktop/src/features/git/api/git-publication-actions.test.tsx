@@ -425,7 +425,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
         [
           {
             ...publication.parent,
-            result: { type: "Conflict", files: ["note"] },
+            result: { type: "Conflict", files: ["note"], kinds: [] },
           },
           "resolve",
         ],

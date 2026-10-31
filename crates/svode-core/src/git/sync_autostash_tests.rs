@@ -177,7 +177,7 @@ async fn pull_that_succeeds_with_conflicted_files_is_not_pushed() {
 
         let result = sync(&f.cli, &f.local).await.unwrap();
         assert!(
-            matches!(&result, SyncResult::UnmergedFiles { files } if files == &["q.md"]),
+            matches!(&result, SyncResult::UnmergedFiles { files, .. } if files == &["q.md"]),
             "{case}: {result:?}"
         );
         assert_eq!(
@@ -201,7 +201,7 @@ async fn conflicted_files_without_an_operation_stop_sync_before_pull_and_keep_th
     let head = f.git(&f.local, &["rev-parse", "HEAD"]);
     let remote = f.remote_main();
 
-    let expected = |result: &SyncResult| matches!(result, SyncResult::UnmergedFiles { files } if files == &["q.md"]);
+    let expected = |result: &SyncResult| matches!(result, SyncResult::UnmergedFiles { files, .. } if files == &["q.md"]);
     let stopped = preflight(&f.cli, &f.local).await.unwrap();
     assert!(stopped.as_ref().is_some_and(expected), "{stopped:?}");
     let result = sync(&f.cli, &f.local).await.unwrap();
@@ -211,6 +211,10 @@ async fn conflicted_files_without_an_operation_stop_sync_before_pull_and_keep_th
     assert_eq!(f.remote_main(), remote);
     assert_eq!(
         serde_json::to_value(result).unwrap(),
-        serde_json::json!({ "type": "unmergedFiles", "files": ["q.md"] })
+        serde_json::json!({
+            "type": "unmergedFiles",
+            "files": ["q.md"],
+            "kinds": [{ "path": "q.md", "kind": "page_text" }]
+        })
     );
 }

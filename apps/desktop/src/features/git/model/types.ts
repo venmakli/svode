@@ -74,6 +74,8 @@ export type SyncResult =
   | {
       type: "Conflict";
       files: string[];
+      /** The kind of each unresolved path of `files`. */
+      kinds: GitPathConflict[];
       /** Svode service files this sync merged; the rest stay in `files`. */
       merged?: string[];
       service?: GitServiceFile[];
@@ -82,7 +84,12 @@ export type SyncResult =
   | { type: "NoRemote" }
   | { type: "AuthRequired"; challenge: GitAuthChallenge | null }
   | { type: "OperationInProgress"; operation: GitOperation }
-  | { type: "UnmergedFiles"; files: string[] }
+  | { type: "UnmergedFiles"; files: string[]; kinds: GitPathConflict[] }
+  /**
+   * The result chosen for a conflicted file has marker lines or does not
+   * read: nothing was written, the path stays in conflict.
+   */
+  | { type: "Unresolved"; path: string; finding: GitResolutionFinding }
   /**
    * «Конфликт с правками коллег»: the preflight of a background sync found
    * a conflict beyond the Svode service files; nothing was merged or
@@ -112,6 +119,52 @@ export type GitConflictKind =
   | "rename_rename"
   | "rename_delete"
   | "space_pointer";
+
+/** Why a chosen result does not resolve its path. */
+export type GitResolutionFinding =
+  | { type: "markers" }
+  | { type: "unreadable"; message: string }
+  | { type: "changed" };
+
+/** A place of dispute of a text file: its marker lines and the sides. */
+export interface GitConflictPlace {
+  startLine: number;
+  endLine: number;
+  ours: string;
+  theirs: string;
+}
+
+/** Why the places of a text file in conflict are not told apart. */
+export type GitConflictUnclearReason =
+  | "ambiguous"
+  | "broken"
+  | "no_markers"
+  | "too_large";
+
+/** A conflicted path as "Changes" resolve it. */
+export interface GitConflictFile {
+  /** Relative to the Space it was read for. */
+  path: string;
+  kind: GitConflictKind;
+  /** The version of the working file its places come from. */
+  version: string;
+  content: string | null;
+  /** For a text file: its places or why there are none. */
+  places:
+    | { type: "places"; places: GitConflictPlace[] }
+    | { type: "unclear"; reason: GitConflictUnclearReason }
+    | null;
+  /** The versions of the sides before the merge that the index holds. */
+  ours: boolean;
+  theirs: boolean;
+}
+
+export type GitPlaceChoice = "ours" | "theirs" | "both";
+
+/** How the person resolves a text file in conflict. */
+export type GitFileResolution =
+  | { type: "places"; version: string; choices: GitPlaceChoice[] }
+  | { type: "side"; side: "ours" | "theirs" };
 
 /** A conflicted path relative to the repository and its kind. */
 export interface GitPathConflict {

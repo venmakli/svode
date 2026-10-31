@@ -238,7 +238,7 @@ function openRepositorySpace(spacePath: string) {
 }
 
 /** Open a Page by its path in a repository: the root project or a Space. */
-function openRepositoryPage({
+export function openRepositoryPage({
   spacePath,
   repositoryPath,
   path,

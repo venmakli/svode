@@ -37,9 +37,33 @@ test("toSyncResult maps backend camelCase sync results", () => {
       detail: "Authentication failed",
     },
   });
-  expect(toSyncResult({ type: "conflict", files: ["README.md"] })).toEqual({
+  expect(
+    toSyncResult({
+      type: "conflict",
+      files: ["README.md", "data.json"],
+      kinds: [
+        { path: "README.md", kind: "page_text" },
+        { path: "data.json", kind: "text" },
+      ],
+    }),
+  ).toEqual({
     type: "Conflict",
-    files: ["README.md"],
+    files: ["README.md", "data.json"],
+    kinds: [
+      { path: "README.md", kind: "page_text" },
+      { path: "data.json", kind: "text" },
+    ],
+  });
+  expect(
+    toSyncResult({
+      type: "unresolved",
+      path: "data.json",
+      finding: { type: "unreadable", message: "expected value" },
+    }),
+  ).toEqual({
+    type: "Unresolved",
+    path: "data.json",
+    finding: { type: "unreadable", message: "expected value" },
   });
 });
 
@@ -86,6 +110,7 @@ test("toSyncResult keeps the Svode service files a sync merged or left", () => {
   ).toEqual({
     type: "Conflict",
     files: ["space", "Page.md"],
+    kinds: [],
     merged: [".svode/order.json"],
     service: [{ path: "space", state: "space_diverged" }],
   });

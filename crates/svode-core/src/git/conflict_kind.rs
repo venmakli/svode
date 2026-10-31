@@ -4,9 +4,22 @@
 //! and whether Git merged it as text, not its extension; a Page is told
 //! apart by where its conflict markers stand.
 
+use std::collections::HashSet;
+use std::path::Path;
+
 use serde::Serialize;
 
-use super::service_merge::{ConflictedPath, StageEntry};
+use super::GitError;
+use super::cli::GitCli;
+use super::markers;
+use super::service_merge::{self, ConflictedPath, StageEntry};
+
+/// Git decides a side is binary by a NUL byte among its first bytes.
+const BINARY_PROBE: usize = 8000;
+/// A merged Page larger than this is not read for the place of its markers.
+const MAX_PAGE: usize = 4 * 1024 * 1024;
+/// The first line of a Git LFS pointer file.
+const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 
 /// What kind of conflict a path holds, as the person resolves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -72,6 +85,220 @@ pub fn classify(conflict: &ConflictedPath, facts: KindFacts) -> ConflictKind {
         }
         (Some(_), Some(_), Some(_)) => ConflictKind::Text,
         _ => ConflictKind::ModifyDelete,
+    }
+}
+
+/// The unresolved paths of the index of the repository `repo` (its top
+/// level) with their kinds, in the order of the index; the paths are
+/// relative to `repo`. The kinds follow the index stages: a path with one
+/// stage is a side of a rename/rename conflict, a path with the base and one
+/// side that the merge base lacks is the renamed side of a rename/delete
+/// conflict (known only while a merge is in progress); a side Git does not
+/// merge as text — a NUL byte among its first bytes, an LFS pointer or the
+/// `merge` attribute unset — makes the path binary; where the markers of a
+/// Page stand in its working file tells its properties from its text.
+pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, GitError> {
+    let conflicts = service_merge::index_conflicts(cli, repo).await?;
+    if conflicts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let absent = absent_from_merge_base(cli, repo, &conflicts).await?;
+    let unmergeable = merge_unset(cli, repo, &conflicts).await?;
+    let mut facts = Vec::with_capacity(conflicts.len());
+    for conflict in &conflicts {
+        let stages = [&conflict.base, &conflict.ours, &conflict.theirs]
+            .iter()
+            .filter(|stage| stage.is_some())
+            .count();
+        let rename = if stages == 1 {
+            Some(ConflictKind::RenameRename)
+        } else if conflict.base.is_some()
+            && (conflict.ours.is_none() || conflict.theirs.is_none())
+            && absent.contains(conflict.path.as_str())
+        {
+            Some(ConflictKind::RenameDelete)
+        } else {
+            None
+        };
+        let binary = conflict.ours.is_some()
+            && conflict.theirs.is_some()
+            && (unmergeable.contains(conflict.path.as_str())
+                || binary_side(cli, repo, conflict).await?);
+        facts.push(KindFacts {
+            binary,
+            rename,
+            frontmatter: false,
+        });
+    }
+    let pages: Vec<String> = conflicts
+        .iter()
+        .zip(&facts)
+        .filter(|(conflict, facts)| classify(conflict, **facts) == ConflictKind::PageText)
+        .map(|(conflict, _)| conflict.path.clone())
+        .collect();
+    let sizes = markers::marker_sizes(cli, repo, &pages).await?;
+    for (conflict, facts) in conflicts.iter().zip(facts.iter_mut()) {
+        let Some(size) = sizes.get(&conflict.path) else {
+            continue;
+        };
+        if let Some(content) = read_page(&repo.join(&conflict.path))? {
+            facts.frontmatter = markers_in_frontmatter(&content, *size);
+        }
+    }
+    Ok(conflicts
+        .iter()
+        .zip(facts)
+        .map(|(conflict, facts)| PathConflict {
+            path: conflict.path.clone(),
+            kind: classify(conflict, facts),
+        })
+        .collect())
+}
+
+/// [`unresolved`] of the repository holding `requested`, for the paths under
+/// it and relative to it, as its status names them.
+pub async fn unresolved_under(
+    cli: &GitCli,
+    requested: &Path,
+) -> Result<Vec<PathConflict>, GitError> {
+    let (repo, prefix) = super::conflict_file::repository_of(cli, requested).await?;
+    let under = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix}/")
+    };
+    Ok(unresolved(cli, &repo)
+        .await?
+        .into_iter()
+        .filter_map(|conflict| {
+            let path = conflict.path.strip_prefix(&under)?.to_owned();
+            Some(PathConflict { path, ..conflict })
+        })
+        .collect())
+}
+
+/// The paths among `conflicts` with a base stage and one side that the
+/// merge base of a merge in progress does not hold. Without a merge
+/// nothing is known, so nothing is absent.
+async fn absent_from_merge_base(
+    cli: &GitCli,
+    repo: &Path,
+    conflicts: &[ConflictedPath],
+) -> Result<HashSet<String>, GitError> {
+    let candidates: Vec<&ConflictedPath> = conflicts
+        .iter()
+        .filter(|conflict| {
+            conflict.base.is_some() && (conflict.ours.is_none() || conflict.theirs.is_none())
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let out = cli
+        .exec(repo, &["merge-base", "HEAD", "MERGE_HEAD"])
+        .await?;
+    let base = out.stdout.lines().next().unwrap_or("").trim();
+    if out.exit_code != 0 || base.is_empty() {
+        return Ok(HashSet::new());
+    }
+    // One `<base>:<path>` object name per line; a path with a newline cannot
+    // be named so and stays a modify/delete conflict.
+    let named: Vec<&ConflictedPath> = candidates
+        .into_iter()
+        .filter(|conflict| !conflict.path.contains('\n'))
+        .collect();
+    let input: String = named
+        .iter()
+        .map(|conflict| format!("{base}:{}\n", conflict.path))
+        .collect();
+    let out = cli
+        .exec_with_input(
+            repo,
+            &["cat-file", "--batch-check=%(objecttype)"],
+            &[],
+            input.as_bytes(),
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git cat-file failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    Ok(named
+        .iter()
+        .zip(out.stdout.lines())
+        .filter(|(_, line)| line.ends_with(" missing"))
+        .map(|(conflict, _)| conflict.path.clone())
+        .collect())
+}
+
+/// The paths among `conflicts` whose `merge` attribute is unset, as the
+/// `binary` macro sets it: Git keeps a side of them instead of merging.
+async fn merge_unset(
+    cli: &GitCli,
+    repo: &Path,
+    conflicts: &[ConflictedPath],
+) -> Result<HashSet<String>, GitError> {
+    let paths: Vec<String> = conflicts
+        .iter()
+        .map(|conflict| conflict.path.clone())
+        .collect();
+    let out = cli
+        .exec_with_input(
+            repo,
+            &["check-attr", "-z", "--stdin", "merge"],
+            &[],
+            &super::cli::nul_paths_input(&paths),
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git check-attr failed: {}",
+            out.stderr.trim()
+        )));
+    }
+    let fields: Vec<&str> = out.stdout.split_terminator('\0').collect();
+    Ok(fields
+        .chunks_exact(3)
+        .filter(|record| record[2] == "unset" || record[2] == "binary")
+        .map(|record| record[0].to_owned())
+        .collect())
+}
+
+/// Whether a side of `conflict` is binary to Git or an LFS pointer.
+async fn binary_side(
+    cli: &GitCli,
+    repo: &Path,
+    conflict: &ConflictedPath,
+) -> Result<bool, GitError> {
+    for side in conflict.sides() {
+        if !side.is_regular_file() {
+            continue;
+        }
+        let (_, bytes) =
+            super::cli::read_bounded(cli, repo, &["cat-file", "blob", &side.oid], BINARY_PROBE)
+                .await?;
+        let probe = &bytes[..bytes.len().min(BINARY_PROBE)];
+        if probe.contains(&0) || probe.starts_with(LFS_POINTER) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The working file of a Page, `None` when it is gone or too large to read.
+fn read_page(file: &Path) -> Result<Option<Vec<u8>>, GitError> {
+    match std::fs::metadata(file) {
+        Ok(meta) if meta.len() as usize > MAX_PAGE => return Ok(None),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
+    match std::fs::read(file) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 

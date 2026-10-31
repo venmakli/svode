@@ -16,7 +16,11 @@ import { useOpenScopeOwner } from "@/features/artifact";
 import type { Page } from "@/features/page";
 import { useOptionalPageDetailContext } from "@/features/page/scope-surface";
 import type { ScopePeekRenderer } from "@/features/scope-surfaces";
-import type { GitSaveScopeTreeNode } from "@/features/git/app-shell";
+import {
+  useGitPathInConflict,
+  type GitSaveScopeTreeNode,
+} from "@/features/git/app-shell";
+import { SchemaConflict } from "./schema-conflict";
 import { useSignalUserEdit } from "@/features/navigation";
 import { useSpace } from "@/features/space";
 import { ContentDeleteDialog } from "@/features/content-actions";
@@ -88,6 +92,10 @@ export function CollectionViewsSurface({
     collectionPath,
   );
   const readmePath = readmePathFor(collectionPath);
+  const schemaPath = collectionPath
+    ? `${collectionPath}/schema.yaml`
+    : "schema.yaml";
+  const schemaInConflict = useGitPathInConflict(spacePath, schemaPath);
   const openPage = useOpenPage();
   const openScopeOwner = useOpenScopeOwner();
   const openPath = useCallback(
@@ -319,6 +327,10 @@ export function CollectionViewsSurface({
         <CollectionSkeleton />
       </div>
     );
+  }
+
+  if (schemaInConflict) {
+    return <SchemaConflict spacePath={spacePath} schemaPath={schemaPath} />;
   }
 
   if (schemaError || !schema) {

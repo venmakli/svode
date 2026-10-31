@@ -35,6 +35,7 @@ import { CollectionDetailPeekHost } from "@/features/collection/app-shell";
 import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceConfigChanges } from "./space-config-changes";
+import { ConflictFileChanges } from "./conflict-file-changes";
 import {
   SpaceConfigRecheck,
   SpaceFileWatcher,
@@ -253,6 +254,7 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
       <SpaceFileWatcher />
       <SpaceConfigRecheck />
       <SpaceConfigChanges />
+      <ConflictFileChanges />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog
         open={available === false}

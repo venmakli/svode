@@ -72,6 +72,8 @@ export type SyncResultDto =
   | {
       type: "conflict";
       files: string[];
+      /** The kind of each unresolved path of `files`. */
+      kinds?: GitPathConflictDto[];
       /** Svode service files this sync merged; the rest stay in `files`. */
       merged?: string[];
       service?: GitServiceFileDto[];
@@ -80,7 +82,12 @@ export type SyncResultDto =
   | { type: "noRemote" }
   | { type: "authRequired"; challenge?: GitAuthChallengeDto | null }
   | { type: "operationInProgress"; operation: GitOperationDto }
-  | { type: "unmergedFiles"; files: string[] }
+  | { type: "unmergedFiles"; files: string[]; kinds?: GitPathConflictDto[] }
+  /**
+   * The result chosen for a conflicted file has marker lines or does not
+   * read: nothing was written, the path stays in conflict.
+   */
+  | { type: "unresolved"; path: string; finding: GitResolutionFindingDto }
   /**
    * The preflight of a background sync found a conflict beyond the Svode
    * service files: nothing was merged or published.
@@ -115,6 +122,46 @@ export interface GitPathConflictDto {
   path: string;
   kind: GitConflictKindDto;
 }
+
+/** Why a chosen result does not resolve its path. */
+export type GitResolutionFindingDto =
+  | { type: "markers" }
+  | { type: "unreadable"; message: string }
+  | { type: "changed" };
+
+/** A place of dispute of a text file: its marker lines and the sides. */
+export interface GitConflictPlaceDto {
+  startLine: number;
+  endLine: number;
+  ours: string;
+  theirs: string;
+}
+
+/** A conflicted path as "Changes" resolve it. */
+export interface GitConflictFileDto {
+  /** Relative to the requested path. */
+  path: string;
+  kind: GitConflictKindDto;
+  version: string;
+  content: string | null;
+  places:
+    | { type: "places"; places: GitConflictPlaceDto[] }
+    | {
+        type: "unclear";
+        reason: "ambiguous" | "broken" | "no_markers" | "too_large";
+      }
+    | null;
+  /** The versions of the sides before the merge that the index holds. */
+  ours: boolean;
+  theirs: boolean;
+}
+
+export type GitPlaceChoiceDto = "ours" | "theirs" | "both";
+
+/** How the person resolves a text file in conflict. */
+export type GitFileResolutionDto =
+  | { type: "places"; version: string; choices: GitPlaceChoiceDto[] }
+  | { type: "side"; side: "ours" | "theirs" };
 
 /**
  * A conflicted Svode service file and what the rule set says about it: it

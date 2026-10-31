@@ -22,3 +22,9 @@ export {
   type GitSaveScopeTreeNode,
 } from "./editor";
 export { registerRepositorySettingsOpener } from "./model/repository-owner";
+export {
+  conflictFileOpener,
+  registerConflictNavigation,
+  type ConflictFileTarget,
+} from "./model/conflict-navigation";
+export { useGitPathInConflict } from "./hooks/use-git-path-in-conflict";

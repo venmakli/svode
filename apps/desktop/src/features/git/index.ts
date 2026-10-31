@@ -13,7 +13,25 @@ export type {
   GitUserPolicy,
   GitUnpushedCommit,
   SyncResult,
+  GitConflictFile,
+  GitConflictKind,
+  GitConflictPlace,
+  GitConflictUnclearReason,
+  GitFileResolution,
+  GitPlaceChoice,
+  GitResolutionFinding,
 } from "./model/types";
+export {
+  readGitConflictFile,
+  resolveGitConflictFile,
+} from "./api/git-conflict-actions";
+export { useGitConflictKinds } from "./hooks/use-git-conflict-kinds";
+export { gitConflictKindLabel } from "./ui/git-sync-stop-copy";
+export {
+  conflictInPageEditor,
+  conflictResolvable,
+} from "./model/conflict-paths";
+export { conflictPageOpener } from "./model/conflict-navigation";
 export { gitBranchErrorMessage } from "./api/git-branch-error";
 export { getGitAvailability } from "./api/git-availability-actions";
 export { trackSpaceCloneProgress } from "./api/git-clone-progress-actions";
