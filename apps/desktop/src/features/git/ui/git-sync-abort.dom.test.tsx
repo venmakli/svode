@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createTestDom } from "@/shared/testing/dom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
+import type { GitOperation, GitOperationStep } from "../model";
 
 if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
   test("Git sync Dialog cancels a sync stopped by a merge conflict", () => {
@@ -58,7 +59,8 @@ if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
             reason: null,
           };
         if (command === "git_sync_preflight") return preflight;
-        if (command === "git_merge_abort") return abort();
+        if (command === "git_merge_abort" || command === "git_operation_abort")
+          return abort();
         if (command === "git_fetch_status" || command === "git_status")
           return { branch: "main", ahead: 1, behind, files: [] };
         if (command === "git_unpushed_commits") return [];
@@ -233,21 +235,155 @@ if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
     }
   });
 
-  test("another Git operation or conflicted files without a merge offer no cancellation", async () => {
-    for (const [stop, kind] of [
-      [{ type: "operationInProgress", operation: "rebase" }, "operation"],
-      [{ type: "unmergedFiles", files: ["Page.md"] }, "unmerged"],
-    ] as const) {
-      preflight = stop;
+  test("conflicted files without a merge offer no cancellation", async () => {
+    preflight = { type: "unmergedFiles", files: ["Page.md"] };
+    const ui = await openDialog();
+    try {
+      expect(
+        ui.dialog().querySelector("[data-git-sync-stop=unmerged]") === null,
+      ).toBe(false);
+      expect(ui.cancelSync()).toBe(null);
+    } finally {
+      await ui.close();
+    }
+  });
+
+  test("an operation stop cancels the operation after a confirmation that names what is lost", async () => {
+    const { gitOperationAbortCopy } = await import("./git-sync-stop-copy");
+    const stops: {
+      operation: GitOperation;
+      step: GitOperationStep | null;
+    }[] = [
+      { operation: "rebase", step: { kind: "position", current: 1, total: 2 } },
+      { operation: "cherry_pick", step: null },
+      { operation: "revert", step: { kind: "remaining", count: 2 } },
+      { operation: "sequencer", step: { kind: "remaining", count: 1 } },
+    ];
+    for (const stop of stops) {
+      preflight = { type: "operationInProgress", ...stop };
+      toasts.length = 0;
+      calls.length = 0;
+      abort = async () => ({ branch: "main", ahead: 1, behind: 0, files: [] });
       const ui = await openDialog();
+      const { m } = ui;
       try {
+        const copy = gitOperationAbortCopy(stop.operation, stop.step);
         expect(
-          ui.dialog().querySelector(`[data-git-sync-stop=${kind}]`) === null,
+          ui
+            .dialog()
+            .querySelector("[data-git-sync-stop=operation]")
+            ?.textContent?.includes(m.git_sync_stop_operation_actions()),
+        ).toBe(true);
+        expect(
+          Array.from(
+            ui
+              .dialog()
+              .querySelectorAll<HTMLButtonElement>(
+                "[data-slot=dialog-footer] button",
+              ),
+          ).map((button) => button.textContent),
+        ).toEqual([m.git_operation_agent(), copy.action]);
+        await act(async () => ui.cancelSync()!.click());
+        await settle();
+        expect(ui.confirm()?.textContent?.includes(copy.title)).toBe(true);
+        expect(ui.confirm()?.textContent?.includes(copy.description)).toBe(
+          true,
+        );
+        await act(async () =>
+          ui
+            .buttons(ui.confirm()!)
+            .find((b) => b.textContent === m.git_sync_abort_back())!
+            .click(),
+        );
+        await settle();
+        expect(
+          calls.some((call) => call.command === "git_operation_abort"),
         ).toBe(false);
+
+        await act(async () => ui.cancelSync()!.click());
+        await settle();
+        await act(async () =>
+          ui
+            .buttons(ui.confirm()!)
+            .find((b) => b.textContent === copy.action)!
+            .click(),
+        );
+        await settle();
+        expect(calls.filter((call) => call.command.endsWith("_abort"))).toEqual(
+          [{ command: "git_operation_abort", args: { spacePath: path } }],
+        );
+        expect(toasts).toEqual([
+          { kind: "success", message: m.git_operation_abort_success() },
+        ]);
+        expect(ui.dialog().querySelector("[data-git-sync-stop]")).toBe(null);
         expect(ui.cancelSync()).toBe(null);
       } finally {
         await ui.close();
       }
+    }
+  });
+
+  test("a refused operation cancellation names its cause and can be retried", async () => {
+    preflight = { type: "operationInProgress", operation: "cherry_pick" };
+    toasts.length = 0;
+    calls.length = 0;
+    abort = async () => {
+      throw {
+        kind: "git_sync_failed",
+        repository: "Space",
+        stage: "abort",
+        cause: "local_changes",
+      };
+    };
+    const ui = await openDialog();
+    const { m } = ui;
+    const confirm = async () => {
+      await act(async () => ui.cancelSync()!.click());
+      await settle();
+      await act(async () =>
+        ui
+          .buttons(ui.confirm()!)
+          .find(
+            (b) =>
+              b.textContent ===
+              m.git_operation_abort_action({ operation: "cherry-pick" }),
+          )!
+          .click(),
+      );
+      await settle();
+    };
+    try {
+      await confirm();
+      const alerts = Array.from(
+        ui.dialog().querySelectorAll<HTMLElement>("[role=alert]"),
+      );
+      expect(
+        alerts.map((alert) => alert.dataset.gitSyncStop ?? "error"),
+      ).toEqual(["error", "operation"]);
+      expect(
+        alerts[0].textContent?.includes(m.git_operation_abort_failed()),
+      ).toBe(true);
+      expect(alerts[0].textContent?.includes(m.git_sync_stage_abort())).toBe(
+        true,
+      );
+      expect(
+        alerts[0].textContent?.includes(m.git_failure_cause_local_changes()),
+      ).toBe(true);
+      expect(toasts).toEqual([]);
+      expect(ui.cancelSync()?.disabled).toBe(false);
+
+      // The retry after the person sets the edits aside succeeds.
+      abort = async () => ({ branch: "main", ahead: 1, behind: 0, files: [] });
+      await confirm();
+      expect(ui.dialog().querySelector("[data-git-sync-abort-error]")).toBe(
+        null,
+      );
+      expect(ui.dialog().querySelector("[data-git-sync-stop]")).toBe(null);
+      expect(toasts).toEqual([
+        { kind: "success", message: m.git_operation_abort_success() },
+      ]);
+    } finally {
+      await ui.close();
     }
   });
 }

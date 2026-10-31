@@ -9,15 +9,18 @@ import type { ResolveWithAgent } from "../hooks/use-resolve-with-agent";
 import * as m from "@/paraglide/messages.js";
 
 /**
- * «Разрешить с агентом» of the Git sync Dialog footer (Stage 11 1.F). Where
- * no chat session can open, it is unavailable and says why.
+ * «Разрешить с агентом» of the Git sync Dialog footer (Stage 11 1.F), or
+ * the `label` of the stop it serves («Разобраться с агентом» at an
+ * operation). Where no chat session can open, it is unavailable and says why.
  */
 export function GitResolveWithAgentButton({
   agent,
   disabled,
+  label = m.git_resolve_with_agent(),
 }: {
   agent: ResolveWithAgent;
   disabled: boolean;
+  label?: string;
 }) {
   const reason =
     agent.available === false ? m.git_resolve_with_agent_unavailable() : null;
@@ -34,7 +37,7 @@ export function GitResolveWithAgentButton({
       {agent.preparing && (
         <LoaderCircle data-icon="inline-start" className="animate-spin" />
       )}
-      {m.git_resolve_with_agent()}
+      {label}
     </Button>
   );
   if (!reason) return button;
@@ -44,7 +47,7 @@ export function GitResolveWithAgentButton({
         <span
           tabIndex={0}
           className="inline-flex w-full sm:w-auto"
-          aria-label={`${m.git_resolve_with_agent()}. ${reason}`}
+          aria-label={`${label}. ${reason}`}
           data-git-resolve-with-agent-reason
         >
           {button}

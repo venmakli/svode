@@ -20,6 +20,7 @@ pub mod markers;
 pub mod merge_preflight;
 #[cfg(test)]
 mod operation_recognition_tests;
+pub mod operation_stop;
 pub mod operations;
 pub mod ops;
 pub mod path;

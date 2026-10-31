@@ -14,17 +14,27 @@ import {
 import { Button } from "@/components/ui/button";
 import * as m from "@/paraglide/messages.js";
 
-/** "Cancel sync" of the Git sync Dialog footer with its confirmation. */
+/**
+ * "Cancel sync" of the Git sync Dialog footer with its confirmation; `copy`
+ * gives «Отменить <операцию>» at an operation stop.
+ */
 export function GitSyncAbortButton({
   aborting,
   disabled,
   onConfirm,
+  copy,
 }: {
   aborting: boolean;
   disabled: boolean;
   onConfirm: () => void;
+  copy?: { action: string; title: string; description: string };
 }) {
   const [confirming, setConfirming] = useState(false);
+  const { action, title, description } = copy ?? {
+    action: m.git_sync_abort_action(),
+    title: m.git_sync_abort_title(),
+    description: m.git_sync_abort_description(),
+  };
   return (
     <AlertDialog open={confirming} onOpenChange={setConfirming}>
       <AlertDialogTrigger asChild>
@@ -39,20 +49,18 @@ export function GitSyncAbortButton({
           {aborting && (
             <LoaderCircle data-icon="inline-start" className="animate-spin" />
           )}
-          {m.git_sync_abort_action()}
+          {action}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{m.git_sync_abort_title()}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {m.git_sync_abort_description()}
-          </AlertDialogDescription>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{m.git_sync_abort_back()}</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={onConfirm}>
-            {m.git_sync_abort_action()}
+            {action}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

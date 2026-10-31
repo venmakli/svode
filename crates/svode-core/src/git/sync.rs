@@ -68,9 +68,17 @@ pub enum SyncResult {
     },
     /// The last conflicted file was resolved while no merge was in progress.
     Resolved,
-    /// Sync stopped before integration and push: the operation is finished in Git.
+    /// Sync stopped before integration and push: the operation is finished
+    /// or aborted in Git (1.F). `step` is where Git reports it stopped,
+    /// `files` its paths in conflict with their `kinds`.
     OperationInProgress {
         operation: GitOperation,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        step: Option<super::operation_stop::OperationStep>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        files: Vec<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        kinds: Vec<PathConflict>,
     },
     /// Files left in conflict while no Git operation runs, as an autostash
     /// that failed to apply leaves them; sync stops before push.
@@ -234,7 +242,7 @@ pub async fn preflight(cli: &GitCli, repo: &Path) -> Result<Option<SyncResult>, 
                 }
             }
             Some(GitOperation::Merge) => Some(merge_conflict(cli, repo, Vec::new()).await?),
-            Some(operation) => Some(SyncResult::OperationInProgress { operation }),
+            Some(operation) => Some(operation_stopped(cli, repo, operation).await?),
         },
     )
 }
@@ -539,6 +547,33 @@ pub(crate) async fn merge_conflict(
         kinds,
         merged,
         service,
+    })
+}
+
+/// The stop of a rebase, cherry-pick, revert or sequencer: the operation,
+/// the step Git reports and its paths in conflict with their kinds.
+pub(crate) async fn operation_stopped(
+    cli: &GitCli,
+    repo: &Path,
+    operation: GitOperation,
+) -> Result<SyncResult, GitError> {
+    let step = super::operation_stop::step(cli, repo, operation)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!("step of the Git operation unavailable: {error}");
+            None
+        });
+    let files = conflict_files(cli, repo).await?;
+    let kinds = if files.is_empty() {
+        Vec::new()
+    } else {
+        conflict_kinds(cli, repo).await
+    };
+    Ok(SyncResult::OperationInProgress {
+        operation,
+        step,
+        files,
+        kinds,
     })
 }
 
@@ -1021,7 +1056,7 @@ pub async fn merge_service_files(
         .await?
         .filter(|operation| *operation != GitOperation::Merge)
     {
-        return Ok(SyncResult::OperationInProgress { operation });
+        return operation_stopped(cli, space_dir, operation).await;
     }
     let target = super::operations::read_transport(cli, space_dir).await?;
     let service = service_merge::merge_in_index(cli, space_dir, only).await?;

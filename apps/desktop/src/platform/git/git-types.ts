@@ -81,7 +81,17 @@ export type SyncResultDto =
   | { type: "resolved" }
   | { type: "noRemote" }
   | { type: "authRequired"; challenge?: GitAuthChallengeDto | null }
-  | { type: "operationInProgress"; operation: GitOperationDto }
+  /**
+   * A rebase, cherry-pick, revert or sequencer stopped: its step when Git
+   * reports one and its paths in conflict with their kinds.
+   */
+  | {
+      type: "operationInProgress";
+      operation: GitOperationDto;
+      step?: GitOperationStepDto;
+      files?: string[];
+      kinds?: GitPathConflictDto[];
+    }
   | { type: "unmergedFiles"; files: string[]; kinds?: GitPathConflictDto[] }
   /**
    * The result chosen for a conflicted file has marker lines or does not
@@ -242,6 +252,15 @@ export interface GitServiceFileDto {
 
 /** A merge in progress arrives as `conflict` with its files. */
 export type GitOperationDto = "rebase" | "cherry_pick" | "revert" | "sequencer";
+
+/**
+ * Where a stopped operation is, as Git reports it: a rebase at commit
+ * `current` of `total`, a cherry-pick or revert sequence with `count`
+ * commits left, the stopped one included.
+ */
+export type GitOperationStepDto =
+  | { kind: "position"; current: number; total: number }
+  | { kind: "remaining"; count: number };
 
 export interface ParentPublicationDto {
   repository: string;

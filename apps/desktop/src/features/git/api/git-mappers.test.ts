@@ -142,6 +142,34 @@ test("toSyncResult keeps the files and kinds of a background stop", () => {
   });
 });
 
+test("toSyncResult keeps the step and the files in conflict of a stopped operation", () => {
+  expect(
+    toSyncResult({
+      type: "operationInProgress",
+      operation: "rebase",
+      step: { kind: "position", current: 2, total: 5 },
+      files: ["Page.md"],
+      kinds: [{ path: "Page.md", kind: "page_text" }],
+    }),
+  ).toEqual({
+    type: "OperationInProgress",
+    operation: "rebase",
+    step: { kind: "position", current: 2, total: 5 },
+    files: ["Page.md"],
+    kinds: [{ path: "Page.md", kind: "page_text" }],
+  });
+  // A single pick reports no step; a stop with no file in conflict has none.
+  expect(
+    toSyncResult({ type: "operationInProgress", operation: "cherry_pick" }),
+  ).toEqual({
+    type: "OperationInProgress",
+    operation: "cherry_pick",
+    step: null,
+    files: [],
+    kinds: [],
+  });
+});
+
 test("a sync during an agent turn fetches and reports the integration after it, not a stop", () => {
   const result = toSyncResult({ type: "integrationAfterTurn" });
   expect(result).toEqual({ type: "IntegrationAfterTurn" });

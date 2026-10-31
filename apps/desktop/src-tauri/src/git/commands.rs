@@ -945,6 +945,20 @@ pub async fn git_merge_abort(app: AppHandle, space_path: String) -> Result<GitSt
     .await
 }
 
+/// «Отменить <операцию>» of the stop «Идёт операция Git».
+#[tauri::command]
+pub async fn git_operation_abort(
+    app: AppHandle,
+    space_path: String,
+) -> Result<GitStatus, SharedError> {
+    flow::abort_operation(
+        app.state::<GitState>().runtime(),
+        &host(&app),
+        Path::new(&space_path),
+    )
+    .await
+}
+
 #[tauri::command]
 pub async fn get_space_git_type(
     state: State<'_, GitState>,

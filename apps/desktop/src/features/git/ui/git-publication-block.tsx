@@ -7,7 +7,7 @@ import type {
   GitPublicationBlockedSpace,
   GitSpacePublicationStep,
 } from "../model";
-import { gitSyncStopTitle } from "./git-sync-stop-copy";
+import { gitOperationStopTitle } from "./git-sync-stop-copy";
 import * as m from "@/paraglide/messages.js";
 
 /**
@@ -156,7 +156,7 @@ function stepFailureText(step: GitSpacePublicationStep): string {
     case "AuthRequired":
       return m.git_sync_auth_required();
     case "OperationInProgress":
-      return `${gitSyncStopTitle({ kind: "operation", operation: step.result.operation })}. ${m.git_sync_stop_operation_description()}`;
+      return `${gitOperationStopTitle(step.result.operation)}. ${m.git_sync_stop_operation_description()}`;
     case "NoRemote":
       return m.git_publication_space_no_remote();
     case "IncomingConflict":

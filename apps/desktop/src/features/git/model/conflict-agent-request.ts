@@ -1,11 +1,26 @@
 import { conflictPartners } from "./conflict-paths";
-import type { GitConflictKind, GitPathConflict, GitServiceFile } from "./types";
+import type {
+  GitConflictKind,
+  GitOperation,
+  GitOperationStep,
+  GitPathConflict,
+  GitServiceFile,
+} from "./types";
 
 /**
- * What Svode hands an agent to resolve (Stage 11 1.F): a merge stopped at
- * conflicts, or files left in conflict with no Git operation.
+ * What Svode hands an agent (Stage 11 1.F): a merge stopped at conflicts,
+ * files left in conflict with no Git operation, or a rebase, cherry-pick,
+ * revert or sequencer stopped at the step Git reports, which the person
+ * tells the agent to finish or abort.
  */
-export type ConflictAgentSituation = { kind: "merge" } | { kind: "unmerged" };
+export type ConflictAgentSituation =
+  | { kind: "merge" }
+  | { kind: "unmerged" }
+  | {
+      kind: "operation";
+      operation: GitOperation;
+      step: GitOperationStep | null;
+    };
 
 /**
  * A conflict the agent resolves: its path, the other paths of the same

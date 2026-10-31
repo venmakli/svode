@@ -366,9 +366,86 @@ if (process.env.SVODE_RESOLVE_WITH_AGENT_DOM !== "1") {
     }
   });
 
+  test("an operation stop hands the operation, its step and its files to a new chat session with «Разобраться с агентом»", async () => {
+    for (const [stop, lines] of [
+      [
+        {
+          type: "operationInProgress",
+          operation: "rebase",
+          step: { kind: "position", current: 2, total: 5 },
+          files: ["Onboarding.md"],
+          kinds: [{ path: "Onboarding.md", kind: "page_text" }],
+        },
+        (m: typeof import("@/paraglide/messages.js")) => [
+          m.agent_operation_request({
+            operation: "rebase",
+            path: "/project/space",
+          }),
+          m.agent_operation_request_position({ current: "2", total: "5" }),
+          "",
+          m.agent_conflict_request_files(),
+          `- Onboarding: \`Onboarding.md\` (${m.git_conflict_kind_page_text()})`,
+        ],
+      ],
+      [
+        // A sequence stopped with no file left in conflict is handed over too.
+        {
+          type: "operationInProgress",
+          operation: "sequencer",
+          step: { kind: "remaining", count: 3 },
+        },
+        (m: typeof import("@/paraglide/messages.js")) => [
+          m.agent_operation_request({
+            operation: m.git_sync_stop_operation_sequencer(),
+            path: "/project/space",
+          }),
+          m.agent_operation_request_remaining({ count: "3" }),
+        ],
+      ],
+    ] as const) {
+      path = "/project/space";
+      repository = undefined;
+      preflight = stop;
+      const { m, submitted, openDialog, dispose, dom } = await harness(true);
+      try {
+        const dialog = await openDialog();
+        expect(!!dialog.querySelector("[data-git-sync-stop=operation]")).toBe(
+          true,
+        );
+        const agent = dialog.querySelector<HTMLButtonElement>(
+          "[data-git-resolve-with-agent]",
+        )!;
+        expect(agent.textContent).toBe(m.git_operation_agent());
+        expect(agent.dataset.variant).toBe("outline");
+        await act(async () => {
+          agent.click();
+        });
+        await settle();
+        expect(submitted.length).toBe(1);
+        expect(submitted[0].spacePath).toBe("/project/space");
+        expect(submitted[0].mark).toBe("agent_commits");
+        expect(submitted[0].text.split("\n")).toEqual([
+          ...lines(m),
+          "",
+          "Git in a Svode project:",
+          "- Svode rules.",
+        ]);
+        // Svode does not continue the operation: nothing runs in Git.
+        expect(dom.document.querySelector("[role=dialog]")).toBe(null);
+        expect(
+          commands.some(
+            (command) =>
+              command === "git_sync" || command === "git_operation_abort",
+          ),
+        ).toBe(false);
+      } finally {
+        await dispose();
+      }
+    }
+  });
+
   test("other stops do not offer it, nor a merge left only with Svode service files", async () => {
     for (const stop of [
-      { type: "operationInProgress", operation: "rebase" },
       {
         type: "conflict",
         files: [".svode/order.json"],

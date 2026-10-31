@@ -144,7 +144,7 @@ export function GitSyncStopNotice({
             )}
           </>
         ) : (
-          <div>{m.git_sync_stop_operation_description()}</div>
+          <div>{m.git_sync_stop_operation_actions()}</div>
         )}
       </AlertDescription>
     </Alert>

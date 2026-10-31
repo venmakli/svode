@@ -208,7 +208,10 @@ export function getGitUncommittedGroups(input: {
   spacePath: string;
   paths: string[];
 }): Promise<GitUncommittedGroupsDto> {
-  return invokeCommand<GitUncommittedGroupsDto>("git_uncommitted_groups", input);
+  return invokeCommand<GitUncommittedGroupsDto>(
+    "git_uncommitted_groups",
+    input,
+  );
 }
 
 /** The Git rules for agents, as the guide and the Svode skill state them. */
@@ -275,6 +278,14 @@ export function getGitConflictMarkerSize(input: {
 /** Abandon the merge a sync stopped in; returns the status after it. */
 export function abortGitMerge(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_merge_abort", { spacePath });
+}
+
+/**
+ * Abort the stopped rebase, cherry-pick, revert or sequencer; returns the
+ * status after it.
+ */
+export function abortGitOperation(spacePath: string): Promise<GitStatusDto> {
+  return invokeCommand<GitStatusDto>("git_operation_abort", { spacePath });
 }
 
 export function publishGit(spacePath: string): Promise<GitStatusDto> {

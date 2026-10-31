@@ -32,6 +32,8 @@ export function gitFailureCauseMessage(cause: GitFailureCauseDto): string {
     index_locked: m.git_failure_cause_index_locked,
     file_system_denied: m.git_failure_cause_file_system_denied,
     network: m.git_failure_cause_network,
+    local_changes: m.git_failure_cause_local_changes,
+    head_moved: m.git_failure_cause_head_moved,
   }[cause]();
 }
 
@@ -43,6 +45,7 @@ function gitSyncStageMessage(stage: GitFailureStageDto): string {
     fetch: m.git_sync_stage_fetch,
     integrate: m.git_sync_stage_integrate,
     push: m.git_sync_stage_push,
+    abort: m.git_sync_stage_abort,
   }[stage]();
 }
 

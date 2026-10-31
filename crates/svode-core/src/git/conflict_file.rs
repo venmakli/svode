@@ -762,7 +762,7 @@ pub async fn resolve(
         .await?
         .filter(|operation| *operation != GitOperation::Merge)
     {
-        return Ok(SyncResult::OperationInProgress { operation });
+        return super::sync::operation_stopped(cli, repo, operation).await;
     }
     let path = normalize_repo_relative(path, RootMode::Reject)?;
     let target = super::operations::read_transport(cli, repo).await?;

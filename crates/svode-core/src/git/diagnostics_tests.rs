@@ -36,6 +36,14 @@ fn causes_are_recognized_from_git_output() {
             "fatal: unable to access 'https://example.test/r.git/': Could not resolve host: example.test",
             Some(GitFailureCause::Network),
         ),
+        (
+            "error: Entry 'shared.md' not uptodate. Cannot merge.\nfatal: Could not reset index file to revision 'HEAD'.",
+            Some(GitFailureCause::LocalChanges),
+        ),
+        (
+            "error: The following untracked working tree files would be overwritten by checkout:\n\tnew.md",
+            Some(GitFailureCause::LocalChanges),
+        ),
         ("fatal: refusing to merge unrelated histories", None),
         ("", None),
     ];

@@ -5,7 +5,9 @@ export type GitFailureCauseDto =
   | "identity"
   | "index_locked"
   | "file_system_denied"
-  | "network";
+  | "network"
+  | "local_changes"
+  | "head_moved";
 
 export type GitFailureStageDto =
   | "prepare"
@@ -13,7 +15,8 @@ export type GitFailureStageDto =
   | "commit"
   | "fetch"
   | "integrate"
-  | "push";
+  | "push"
+  | "abort";
 
 /** A failed sync step: the repository by its name, the stage and the cause. */
 export interface GitSyncFailureDto {
@@ -30,6 +33,8 @@ const CAUSES: readonly string[] = [
   "index_locked",
   "file_system_denied",
   "network",
+  "local_changes",
+  "head_moved",
 ] satisfies GitFailureCauseDto[];
 
 const STAGES: readonly string[] = [
@@ -39,6 +44,7 @@ const STAGES: readonly string[] = [
   "fetch",
   "integrate",
   "push",
+  "abort",
 ] satisfies GitFailureStageDto[];
 
 export function toGitFailureCause(value: unknown): GitFailureCauseDto | null {

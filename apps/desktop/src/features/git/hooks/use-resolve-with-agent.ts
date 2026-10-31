@@ -14,7 +14,10 @@ import { useAgentRequestAvailability } from "./use-agent-request-availability";
 import type { GitSyncWidget } from "./use-git-sync-widget";
 
 export interface ResolveWithAgent {
-  /** The stop of the Dialog offers «Разрешить с агентом». */
+  /**
+   * The stop of the Dialog offers «Разрешить с агентом», or «Разобраться с
+   * агентом» at an operation.
+   */
   shown: boolean;
   /** A chat session can take the request; null while unknown. */
   available: boolean | null;
@@ -26,10 +29,12 @@ export interface ResolveWithAgent {
  * «Разрешить с агентом» of the Git sync Dialog (Stage 11 1.F) at a merge
  * stop, at files in conflict without an operation and at «Конфликт с
  * правками коллег», where it first runs the explicit sync that enters the
- * merge. The request names the unresolved paths and the Git rules and goes
- * into a new chat session of the Space's default agent in the repository's
- * directory, marked so that the turn is not wrapped in a version. The
- * Dialog closes; the user sends the request.
+ * merge; «Разобраться с агентом» at a rebase, cherry-pick, revert or
+ * sequencer, whose request names the operation and its step. The request
+ * names the unresolved paths and the Git rules and goes into a new chat
+ * session of the Space's default agent in the repository's directory,
+ * marked so that the turn is not wrapped in a version. The Dialog closes;
+ * the user sends the request.
  */
 export function useResolveWithAgent(
   sync: GitSyncWidget,
@@ -38,7 +43,9 @@ export function useResolveWithAgent(
   const { stop, repositoryPath } = sync;
   const stopped = useMemo(() => stoppedConflicts(stop), [stop]);
   const shown =
-    stop?.kind === "incoming" || (!!stopped && stopped.conflicts.length > 0);
+    stop?.kind === "incoming" ||
+    (!!stopped &&
+      (stopped.situation.kind === "operation" || stopped.conflicts.length > 0));
   const place = useRepositoryPlace(repositoryPath, sync.spacePath);
   const available = useAgentRequestAvailability(
     { spacePath: place },
@@ -69,7 +76,15 @@ export function useResolveWithAgent(
             : null;
       }
       const requests = agentRequests();
-      if (!handed || handed.conflicts.length === 0 || !requests) return;
+      // An operation is handed over even with no file in conflict: the
+      // person decides whether the agent finishes or aborts it.
+      if (
+        !handed ||
+        (handed.situation.kind !== "operation" &&
+          handed.conflicts.length === 0) ||
+        !requests
+      )
+        return;
       const text = conflictAgentRequest({
         repository: repositoryPath,
         situation: handed.situation,
@@ -95,7 +110,10 @@ interface HandedConflicts {
   conflicts: ConflictForAgent[];
 }
 
-/** The unresolved conflicts of a stop that is a state of the repository. */
+/**
+ * What a stop that is a state of the repository hands the agent: the
+ * situation and its unresolved conflicts.
+ */
 function stoppedConflicts(stop: GitSyncWidget["stop"]): HandedConflicts | null {
   if (stop?.kind === "conflict")
     return {
@@ -105,6 +123,15 @@ function stoppedConflicts(stop: GitSyncWidget["stop"]): HandedConflicts | null {
   if (stop?.kind === "unmerged")
     return {
       situation: { kind: "unmerged" },
+      conflicts: conflictsForAgent(stop.files, stop.kinds),
+    };
+  if (stop?.kind === "operation")
+    return {
+      situation: {
+        kind: "operation",
+        operation: stop.operation,
+        step: stop.step,
+      },
       conflicts: conflictsForAgent(stop.files, stop.kinds),
     };
   return null;

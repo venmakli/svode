@@ -76,7 +76,13 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
         challenge: dto.challenge ? toGitAuthChallenge(dto.challenge) : null,
       };
     case "operationInProgress":
-      return { type: "OperationInProgress", operation: dto.operation };
+      return {
+        type: "OperationInProgress",
+        operation: dto.operation,
+        step: dto.step ? { ...dto.step } : null,
+        files: [...(dto.files ?? [])],
+        kinds: (dto.kinds ?? []).map((file) => ({ ...file })),
+      };
     case "unmergedFiles":
       return {
         type: "UnmergedFiles",

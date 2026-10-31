@@ -263,7 +263,7 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
     }
   });
 
-  test("another operation is named with no Svode action", async () => {
+  test("another operation is named and Svode does not continue it", async () => {
     const dom = await createTestDom();
     mockGit();
     preflight = { type: "operationInProgress", operation: "cherry_pick" };
@@ -294,14 +294,26 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
         ),
       ).toBe(true);
       expect(
-        slot.textContent?.includes(m.git_sync_stop_operation_description()),
+        slot.textContent?.includes(m.git_sync_stop_operation_actions()),
       ).toBe(true);
+      // Its actions are in the footer; nothing continues the operation.
       expect(slot.querySelector("button, ul")).toBe(null);
       expect(
         Array.from(dialog.querySelectorAll("button")).some(
           (button) => button.textContent === m.git_sync_action(),
         ),
       ).toBe(false);
+
+      // Finished from a terminal: Git no longer reports it, and the commit
+      // Svode observes outside it ends the stop.
+      preflight = null;
+      const { emit } = await import("@/platform/native/events");
+      await act(async () => {
+        await emit("git:committed", { spacePath: path });
+      });
+      await settle();
+      expect(dialog.querySelector("[data-git-sync-stop]")).toBe(null);
+      expect(path in useGitStore.getState().syncStop).toBe(false);
     } finally {
       useGitStore.getState().clear(path);
       await dom.render(null);
@@ -397,10 +409,16 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       expect(await syncSpace(path)).toEqual({
         type: "OperationInProgress",
         operation: "rebase",
+        step: null,
+        files: [],
+        kinds: [],
       });
       expect(useGitStore.getState().syncStop[path]).toEqual({
         kind: "operation",
         operation: "rebase",
+        step: null,
+        files: [],
+        kinds: [],
       });
       expect(path in useGitStore.getState().syncError).toBe(false);
 

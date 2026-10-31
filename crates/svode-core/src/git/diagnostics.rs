@@ -23,6 +23,8 @@ pub enum GitStage {
     Integrate,
     /// Publishing the current branch.
     Push,
+    /// Aborting a stopped rebase, cherry-pick, revert or sequencer (1.F).
+    Abort,
 }
 
 impl GitStage {
@@ -34,6 +36,7 @@ impl GitStage {
             Self::Fetch => "fetch",
             Self::Integrate => "integrate",
             Self::Push => "push",
+            Self::Abort => "abort",
         }
     }
 }
@@ -61,6 +64,12 @@ pub enum GitFailureCause {
     FileSystemDenied,
     /// The remote could not be reached.
     Network,
+    /// Git refused to overwrite changes of the working tree: files edited
+    /// after an operation stopped, or untracked files in its way.
+    LocalChanges,
+    /// HEAD moved after a sequence of cherry-picks or reverts stopped, so
+    /// Git would not rewind the branch; found by Svode before Git runs.
+    HeadMoved,
 }
 
 impl GitFailureCause {
@@ -72,6 +81,8 @@ impl GitFailureCause {
             Self::IndexLocked => "index_locked",
             Self::FileSystemDenied => "file_system_denied",
             Self::Network => "network",
+            Self::LocalChanges => "local_changes",
+            Self::HeadMoved => "head_moved",
         }
     }
 
@@ -173,6 +184,15 @@ pub fn cause(stderr: &str, hook_failed: bool) -> Option<GitFailureCause> {
         Some(GitFailureCause::Signing)
     } else if is_network_failure(&lower) {
         Some(GitFailureCause::Network)
+    } else if [
+        "not uptodate. cannot merge",
+        "would be overwritten by",
+        "would be removed by",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        Some(GitFailureCause::LocalChanges)
     } else {
         None
     }

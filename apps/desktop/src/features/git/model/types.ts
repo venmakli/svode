@@ -83,7 +83,17 @@ export type SyncResult =
   | { type: "Resolved" }
   | { type: "NoRemote" }
   | { type: "AuthRequired"; challenge: GitAuthChallenge | null }
-  | { type: "OperationInProgress"; operation: GitOperation }
+  /**
+   * A rebase, cherry-pick, revert or sequencer stopped: its step when Git
+   * reports one and its paths in conflict with their kinds.
+   */
+  | {
+      type: "OperationInProgress";
+      operation: GitOperation;
+      step: GitOperationStep | null;
+      files: string[];
+      kinds: GitPathConflict[];
+    }
   | { type: "UnmergedFiles"; files: string[]; kinds: GitPathConflict[] }
   /**
    * The result chosen for a conflicted file has marker lines or does not
@@ -209,6 +219,15 @@ export interface GitServiceFile {
 
 /** Unfinished Git operation other than a merge, which is a sync conflict. */
 export type GitOperation = "rebase" | "cherry_pick" | "revert" | "sequencer";
+
+/**
+ * Where a stopped operation is, as Git reports it: a rebase at commit
+ * `current` of `total`, a cherry-pick or revert sequence with `count`
+ * commits left, the stopped one included.
+ */
+export type GitOperationStep =
+  | { kind: "position"; current: number; total: number }
+  | { kind: "remaining"; count: number };
 
 export interface ParentPublication {
   repository: string;

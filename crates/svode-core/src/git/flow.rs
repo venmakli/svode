@@ -9,6 +9,7 @@ use super::state::GitRuntime;
 use super::sync::{SyncMode, SyncResult};
 use super::{access, branch, ops};
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -356,6 +357,20 @@ pub async fn abort_merge(
     caller_status(runtime, path, status).await
 }
 
+/// «Отменить <операцию>» of the stop «Идёт операция Git» (1.F): the stopped
+/// rebase, cherry-pick, revert or sequencer is aborted by Git, and the branch
+/// and the files return to the state before it.
+pub async fn abort_operation(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    path: &Path,
+) -> Result<ops::GitStatus, SharedError> {
+    let Output::Status(status) = request(runtime, host, path, Intent::AbortOperation).await? else {
+        unreachable!("abort result")
+    };
+    caller_status(runtime, path, status).await
+}
+
 async fn caller_status(
     runtime: &Arc<GitRuntime>,
     path: &Path,
@@ -471,6 +486,9 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                     .map(Output::Status)
             }
             Intent::AbortMerge => abort_merge_locked(host, &cli, repo)
+                .await
+                .map(Output::Status),
+            Intent::AbortOperation => abort_operation_locked(host, &cli, repo)
                 .await
                 .map(Output::Status),
             Intent::RetryParent {
@@ -596,6 +614,20 @@ async fn abort_merge_locked(
 ) -> Result<ops::GitStatus, GitError> {
     host.authorize_repository(repo).await?;
     super::sync::merge_abort(cli, repo).await?;
+    ops::status(cli, repo).await
+}
+
+/// The abort changes the working copy, so Svode's own source writes wait for
+/// it as for the integration step (invariant 9).
+async fn abort_operation_locked(
+    host: &dyn GitHost,
+    cli: &GitCli,
+    repo: &Path,
+) -> Result<ops::GitStatus, GitError> {
+    host.authorize_repository(repo).await?;
+    let repository = access::local_repository_root(repo)?;
+    let _writes = super::write_guard::acquire(&BTreeSet::from([repository]), &[]).await?;
+    super::operation_stop::abort(cli, repo).await?;
     ops::status(cli, repo).await
 }
 

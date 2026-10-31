@@ -46,6 +46,7 @@ import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
 import { GitResolveWithAgentButton } from "./git-resolve-with-agent-button";
 import { GitSyncAbortButton } from "./git-sync-abort-button";
 import {
+  gitOperationAbortCopy,
   gitServiceMergedMessage,
   gitSyncStopTitle,
 } from "./git-sync-stop-copy";
@@ -100,7 +101,7 @@ export function GitSyncStatusWidget({
     pendingSpace.current = null;
     if (target && target === spacePath) void openDialog();
   }, [openDialog, spacePath]);
-  const abort = useGitSyncAbort(sync.spacePath, sync.stop?.kind === "conflict");
+  const abort = useGitSyncAbort(sync.spacePath, sync.stop);
   const serviceMerge = useGitServiceMerge(
     sync.repositoryPath,
     sync.stop?.kind === "conflict",
@@ -305,15 +306,20 @@ export function GitSyncStatusWidget({
                     onOpenSpace={openSpace}
                   />
                 )}
-                {stop?.kind === "conflict" && abort.error && (
-                  <Alert variant="destructive" data-git-sync-abort-error>
-                    <AlertTriangle />
-                    <AlertTitle>{m.git_sync_abort_failed()}</AlertTitle>
-                    <AlertDescription className="whitespace-pre-wrap break-words">
-                      {abort.error}
-                    </AlertDescription>
-                  </Alert>
-                )}
+                {(stop?.kind === "conflict" || stop?.kind === "operation") &&
+                  abort.error && (
+                    <Alert variant="destructive" data-git-sync-abort-error>
+                      <AlertTriangle />
+                      <AlertTitle>
+                        {stop.kind === "operation"
+                          ? m.git_operation_abort_failed()
+                          : m.git_sync_abort_failed()}
+                      </AlertTitle>
+                      <AlertDescription className="whitespace-pre-wrap break-words">
+                        {abort.error}
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 {stop?.kind === "conflict" && serviceMerge.error && (
                   <Alert variant="destructive" data-git-service-merge-error>
                     <AlertTriangle />
@@ -403,15 +409,26 @@ export function GitSyncStatusWidget({
               <GitResolveWithAgentButton
                 agent={resolveWithAgent}
                 disabled={busy || abort.aborting}
+                label={
+                  stop?.kind === "operation"
+                    ? m.git_operation_agent()
+                    : undefined
+                }
               />
             )}
-            {sync.visible && stop?.kind === "conflict" && (
-              <GitSyncAbortButton
-                aborting={abort.aborting}
-                disabled={busy}
-                onConfirm={() => void abort.abort()}
-              />
-            )}
+            {sync.visible &&
+              (stop?.kind === "conflict" || stop?.kind === "operation") && (
+                <GitSyncAbortButton
+                  aborting={abort.aborting}
+                  disabled={busy}
+                  onConfirm={() => void abort.abort()}
+                  copy={
+                    stop.kind === "operation"
+                      ? gitOperationAbortCopy(stop.operation, stop.step)
+                      : undefined
+                  }
+                />
+              )}
             {publishAction && (
               <Button
                 className="w-full sm:w-auto"

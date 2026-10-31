@@ -178,7 +178,7 @@ async fn sync_names_other_operations_without_pull_or_push() {
         assert!(
             matches!(
                 sync(&f.cli, &f.local).await.unwrap(),
-                SyncResult::OperationInProgress { operation: actual } if actual == operation
+                SyncResult::OperationInProgress { operation: actual, .. } if actual == operation
             ),
             "{operation:?}"
         );
@@ -193,9 +193,35 @@ fn operation_result_serializes_with_the_operation_name() {
     assert_eq!(
         serde_json::to_value(SyncResult::OperationInProgress {
             operation: GitOperation::CherryPick,
+            step: None,
+            files: Vec::new(),
+            kinds: Vec::new(),
         })
         .unwrap(),
         serde_json::json!({ "type": "operationInProgress", "operation": "cherry_pick" })
+    );
+    assert_eq!(
+        serde_json::to_value(SyncResult::OperationInProgress {
+            operation: GitOperation::Rebase,
+            step: Some(crate::git::operation_stop::OperationStep::Position {
+                current: 2,
+                total: 3,
+            }),
+            files: vec!["Page.md".into()],
+            kinds: vec![PathConflict {
+                path: "Page.md".into(),
+                kind: crate::git::conflict_kind::ConflictKind::PageText,
+                also: Vec::new(),
+            }],
+        })
+        .unwrap(),
+        serde_json::json!({
+            "type": "operationInProgress",
+            "operation": "rebase",
+            "step": { "kind": "position", "current": 2, "total": 3 },
+            "files": ["Page.md"],
+            "kinds": [{ "path": "Page.md", "kind": "page_text" }],
+        })
     );
 }
 

@@ -2,6 +2,7 @@ import type { GitPublicationContentFinding } from "@/platform/git/publication-er
 import type { GitSaveFailureDto } from "@/platform/git/save-errors";
 import type {
   GitOperation,
+  GitOperationStep,
   GitPathConflict,
   GitServiceFile,
   SyncResult,
@@ -19,7 +20,17 @@ export type GitSyncStop =
       kinds: GitPathConflict[];
       service: GitServiceFile[];
     }
-  | { kind: "operation"; operation: GitOperation }
+  /**
+   * A rebase, cherry-pick, revert or sequencer Svode does not continue:
+   * `step` is where Git reports it stopped, `files` its paths in conflict.
+   */
+  | {
+      kind: "operation";
+      operation: GitOperation;
+      step: GitOperationStep | null;
+      files: string[];
+      kinds: GitPathConflict[];
+    }
   /** Files left in conflict with no operation, after a failed autostash. */
   | { kind: "unmerged"; files: string[]; kinds: GitPathConflict[] }
   /**
@@ -92,7 +103,13 @@ export function syncStopFromResult(
         service: result.service ?? [],
       };
     case "OperationInProgress":
-      return { kind: "operation", operation: result.operation };
+      return {
+        kind: "operation",
+        operation: result.operation,
+        step: result.step,
+        files: result.files,
+        kinds: result.kinds,
+      };
     case "UnmergedFiles":
       return { kind: "unmerged", files: result.files, kinds: result.kinds };
     case "IncomingConflict":

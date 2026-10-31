@@ -1,9 +1,14 @@
-import { abortGitMerge, getGitSyncPreflight } from "@/platform/git/git-api";
+import {
+  abortGitMerge,
+  abortGitOperation,
+  getGitSyncPreflight,
+} from "@/platform/git/git-api";
 import {
   serviceMergedFromResult,
   syncStopFromResult,
   syncStopIsBackgroundPreflight,
   useGitStore,
+  type GitStatus,
   type GitSyncStop,
   type SyncResult,
 } from "../model";
@@ -69,9 +74,21 @@ function currentStop(path: string): GitSyncStop | undefined {
  * state before the merge, and the incoming changes show as incoming again.
  */
 export async function abortGitSyncMerge(path: string): Promise<void> {
-  const status = toGitStatus(await abortGitMerge(path));
+  applyAborted(path, toGitStatus(await abortGitMerge(path)));
+  await refreshGitRemoteStatus(path).catch(() => {});
+}
+
+/**
+ * Abort the rebase, cherry-pick, revert or sequencer that stops sync: Git
+ * returns the branch and the files to the state before it.
+ */
+export async function abortGitOperationStop(path: string): Promise<void> {
+  applyAborted(path, toGitStatus(await abortGitOperation(path)));
+  await refreshGitRemoteStatus(path).catch(() => {});
+}
+
+function applyAborted(path: string, status: GitStatus) {
   const git = useGitStore.getState();
   git.applyStatus(path, status);
   git.setSyncStop(path, null);
-  await refreshGitRemoteStatus(path).catch(() => {});
 }
