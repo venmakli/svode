@@ -5,12 +5,16 @@ use std::path::{Path, PathBuf};
 use super::GitError;
 use super::cli::GitCli;
 
-/// Only the local inputs of the Human Actors projection, never the object store.
+/// The local files Desktop observes for a repository, never the object
+/// store: the inputs of the Human Actors projection, and the index whose
+/// change, like one of HEAD or the refs, means a Git operation outside Svode
+/// changed the status (a commit, reset or checkout of an agent or a terminal).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActorSources {
     pub repository: PathBuf,
     files: Vec<PathBuf>,
     refs: PathBuf,
+    index: PathBuf,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -46,11 +50,13 @@ impl ActorSources {
                     "refs",
                     "--git-path",
                     "reftable/tables.list",
+                    "--git-path",
+                    "index",
                 ],
             )
             .await?;
         let paths: Vec<_> = result.stdout.lines().map(PathBuf::from).collect();
-        if result.exit_code != 0 || paths.len() != 8 {
+        if result.exit_code != 0 || paths.len() != 9 {
             return Err(GitError::GitCommandFailed(format!(
                 "cannot resolve actor sources: {}",
                 result.stderr.trim()
@@ -77,11 +83,38 @@ impl ActorSources {
             repository,
             files,
             refs: paths[6].clone(),
+            index: paths[8].clone(),
         })
     }
 
+    /// Whether a change at `path` is an input of the Human Actors projection.
     pub fn contains(&self, path: &Path) -> bool {
         self.files.iter().any(|file| file.starts_with(path)) || path.starts_with(&self.refs)
+    }
+
+    /// Whether a change at `path` may change the status or the branch
+    /// counters of the repository: HEAD, the index, packed refs, loose refs,
+    /// a reftable table list or the gitfile. Lock files count as their
+    /// target, since Git renames them into place.
+    pub fn changes_state(&self, path: &Path) -> bool {
+        let path = match path.to_str().and_then(|text| text.strip_suffix(".lock")) {
+            Some(target) => Path::new(target),
+            None => path,
+        };
+        let head = &self.files[0];
+        let packed_refs = &self.files[3];
+        let gitfile = self.repository.join(".git");
+        // A backend may report the Git directory itself for a change in it.
+        path == head
+            || path == self.index
+            || Some(path) == self.index.parent()
+            || path == packed_refs
+            || path == gitfile
+            || path.starts_with(&self.refs)
+            || self
+                .files
+                .iter()
+                .any(|file| file == path && file.ends_with("reftable/tables.list"))
     }
 
     pub fn watch_paths(&self) -> Vec<(PathBuf, bool)> {
@@ -95,6 +128,9 @@ impl ActorSources {
                     paths.insert(anchor.to_path_buf(), false);
                 }
             }
+        }
+        if let Some(parent) = self.index.parent() {
+            paths.insert(parent.to_path_buf(), false);
         }
         if self.refs.is_dir() {
             paths.insert(self.refs.clone(), true);
@@ -222,11 +258,63 @@ mod tests {
             )
             .await;
             assert_ne!(sources.stamp().unwrap(), before, "{path:?}");
+            // The same table lists tell the Git indicators about the update.
+            let lists = sources
+                .files
+                .iter()
+                .filter(|file| file.ends_with("reftable/tables.list"))
+                .collect::<Vec<_>>();
+            assert!(!lists.is_empty(), "{path:?}");
+            assert!(lists.iter().all(|list| sources.changes_state(list)));
         }
         // HEAD of the linked worktree lives in its own reftable stack.
         let sources = ActorSources::resolve(&cli, &linked).await.unwrap();
         let before = sources.stamp().unwrap();
         git(&cli, &linked, &["checkout", "-q", "repo"]).await;
         assert_ne!(sources.stamp().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn git_state_inputs_are_head_index_and_ref_storage_only() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let out = cli.exec(&root, &["init", "-q"]).await.unwrap();
+        assert_eq!(out.exit_code, 0, "{}", out.stderr);
+        let sources = ActorSources::resolve(&cli, &root).await.unwrap();
+        let git = sources.repository.join(".git");
+        for path in [
+            git.join("HEAD"),
+            git.join("HEAD.lock"),
+            git.join("index"),
+            git.join("index.lock"),
+            git.join("packed-refs"),
+            git.join("refs/heads/main"),
+            git.join("refs/remotes/origin/main.lock"),
+            git.clone(),
+        ] {
+            assert!(sources.changes_state(&path), "{}", path.display());
+        }
+        for path in [
+            git.join("config"),
+            git.join("config.lock"),
+            git.join("FETCH_HEAD"),
+            git.join("objects/ab/cdef"),
+            // A `files` store has no table list.
+            git.join("reftable/tables.list"),
+            sources.repository.join(".mailmap"),
+            sources.repository.join("notes.md"),
+            sources.repository.clone(),
+        ] {
+            assert!(!sources.changes_state(&path), "{}", path.display());
+        }
+        assert!(
+            sources
+                .watch_paths()
+                .iter()
+                .any(|(path, recursive)| *path == git && !recursive)
+        );
     }
 }

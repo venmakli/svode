@@ -1,3 +1,8 @@
+import {
+  toGitSyncFailureDto,
+  type GitFailureCauseDto,
+  type GitFailureStageDto,
+} from "@/platform/git/failure-errors";
 import { toGitPublicationBlockDto } from "@/platform/git/publication-errors";
 import { toGitPullBlockDto } from "@/platform/git/pull-block-errors";
 import { toGitPushRejectionDto } from "@/platform/git/push-rejection-errors";
@@ -15,6 +20,29 @@ export function toGitPublicationBlock(
   return dto?.reason === "spaces"
     ? { project: dto.repository, spaces: dto.spaces }
     : null;
+}
+
+/** What the user can do about a recognized cause of a failed Git step. */
+export function gitFailureCauseMessage(cause: GitFailureCauseDto): string {
+  return {
+    hook: m.git_failure_cause_hook,
+    signing: m.git_failure_cause_signing,
+    identity: m.git_failure_cause_identity,
+    index_locked: m.git_failure_cause_index_locked,
+    file_system_denied: m.git_failure_cause_file_system_denied,
+    network: m.git_failure_cause_network,
+  }[cause]();
+}
+
+function gitSyncStageMessage(stage: GitFailureStageDto): string {
+  return {
+    prepare: m.git_save_stage_prepare,
+    verify: m.git_save_stage_verify,
+    commit: m.git_sync_stage_commit,
+    fetch: m.git_sync_stage_fetch,
+    integrate: m.git_sync_stage_integrate,
+    push: m.git_sync_stage_push,
+  }[stage]();
 }
 
 export function gitSyncErrorMessage(error: unknown): string {
@@ -39,10 +67,29 @@ export function gitSyncErrorMessage(error: unknown): string {
   const pullBlock = toGitPullBlockDto(error);
   if (pullBlock)
     return m.git_sync_pull_blocked({ files: pullBlock.files.join(", ") });
+  const failure = toGitSyncFailureDto(error);
+  if (failure)
+    return [
+      failure.repository ? `${failure.repository}:` : "",
+      gitSyncStageMessage(failure.stage),
+      failure.cause
+        ? gitFailureCauseMessage(failure.cause)
+        : m.git_save_cause_unknown(),
+    ]
+      .filter(Boolean)
+      .join(" ");
   const rejection = toGitPushRejectionDto(error);
   if (rejection) {
-    if (rejection.reason === "lfs_transfer_unconfigured")
-      return `${m.git_push_lfs_transfer_unconfigured()} ${m.git_push_lfs_transfer_recovery()}`;
+    switch (rejection.reason) {
+      case "lfs_transfer_unconfigured":
+        return `${m.git_push_lfs_transfer_unconfigured()} ${m.git_push_lfs_transfer_recovery()}`;
+      case "protected_branch":
+        return m.git_push_protected_branch();
+      case "repository_rules":
+        return m.git_push_repository_rules();
+      case "non_fast_forward":
+        return m.git_push_non_fast_forward();
+    }
     // Only lfs-s3 carries a declaration state; other strategies get neutral copy.
     const action = rejection.lfsDeclaration
       ? {

@@ -1,5 +1,6 @@
 import * as m from "@/paraglide/messages.js";
 import type { GitSaveError } from "../api/git-save-error";
+import { gitFailureCauseMessage } from "../api/git-sync-error";
 
 export function gitSaveErrorDescription(error: GitSaveError): string {
   if (error.branchMessage) return error.branchMessage;
@@ -22,7 +23,9 @@ export function gitSaveErrorDescription(error: GitSaveError): string {
     target_cleanup_failed: m.git_save_cause_target_cleanup_failed,
   }[cause.reason]();
   return [
+    cause.repository ? `${cause.repository}:` : "",
     stage,
+    cause.cause ? gitFailureCauseMessage(cause.cause) : "",
     reason,
     cause.pathCount > 0
       ? m.git_save_cause_count({ count: String(cause.pathCount) })

@@ -98,3 +98,75 @@ test("a pull blocked by local files names every file and the recovery", async ()
     await setLocale(original, { reload: false });
   }
 });
+
+test("a failed sync step names the repository, the stage and the cause without Git output", async () => {
+  const original = getLocale();
+  try {
+    await setLocale("en", { reload: false });
+    expect(
+      gitSyncErrorMessage({
+        kind: "git_sync_failed",
+        repository: "Research",
+        stage: "fetch",
+        cause: "file_system_denied",
+        stderr: "/Users/private/.git/FETCH_HEAD: Permission denied",
+      }),
+    ).toBe(
+      "Research: Could not receive changes from the remote. The file system denied access to the repository files. Check the permissions of the folder and its .git folder.",
+    );
+    expect(
+      gitSyncErrorMessage({
+        kind: "git_sync_failed",
+        repository: "Research",
+        stage: "push",
+        cause: null,
+      }),
+    ).toBe("Research: Could not publish the changes. The cause is unknown.");
+    await setLocale("ru", { reload: false });
+    expect(
+      gitSyncErrorMessage({
+        kind: "git_sync_failed",
+        repository: "Исследования",
+        stage: "commit",
+        cause: "index_locked",
+      }),
+    ).toBe(
+      "Исследования: Не удалось создать коммит слияния. Репозиторием занят другой процесс Git (index.lock). Дождитесь его завершения; если такого процесса нет, удалите .git/index.lock.",
+    );
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});
+
+test("protected branch, repository rules and non-fast-forward rejections are named", async () => {
+  const original = getLocale();
+  try {
+    for (const locale of ["en", "ru"] as const) {
+      await setLocale(locale, { reload: false });
+      const messages = (
+        ["protected_branch", "repository_rules", "non_fast_forward"] as const
+      ).map((reason) =>
+        gitSyncErrorMessage({ kind: "git_push_rejected", reason }),
+      );
+      expect(new Set(messages).size).toBe(3);
+      for (const message of messages)
+        expect(
+          message ===
+            (locale === "en"
+              ? "Failed to sync"
+              : "Не удалось синхронизировать"),
+        ).toBe(false);
+    }
+    await setLocale("en", { reload: false });
+    expect(
+      gitSyncErrorMessage({
+        kind: "git_push_rejected",
+        reason: "protected_branch",
+      }).startsWith(
+        "The Git provider rejected the push: the branch is protected.",
+      ),
+    ).toBe(true);
+  } finally {
+    await setLocale(original, { reload: false });
+  }
+});

@@ -7,7 +7,14 @@ export type GitPushRejectionDto =
       objectCount: number;
       lfsDeclaration: LfsDeclarationStateDto | null;
     }
-  | { kind: "git_push_rejected"; reason: "lfs_transfer_unconfigured" };
+  | {
+      kind: "git_push_rejected";
+      reason:
+        | "lfs_transfer_unconfigured"
+        | "protected_branch"
+        | "repository_rules"
+        | "non_fast_forward";
+    };
 
 const DECLARATION_STATES: readonly string[] = [
   "published",
@@ -47,7 +54,10 @@ export function toGitPushRejectionDto(
       };
     }
     case "lfs_transfer_unconfigured":
-      return { kind: "git_push_rejected", reason: "lfs_transfer_unconfigured" };
+    case "protected_branch":
+    case "repository_rules":
+    case "non_fast_forward":
+      return { kind: "git_push_rejected", reason: error.reason };
     default:
       return null;
   }

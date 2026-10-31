@@ -21,6 +21,13 @@ pub enum PushRejectionReason {
     /// git-lfs reached the reserved host of Svode's declaration: this device
     /// has no S3 transfer wiring for the repository.
     LfsTransferUnconfigured,
+    /// The branch is protected on the remote (GitHub `GH006`, GitLab
+    /// protected branch): changes reach it another way, such as a merge request.
+    ProtectedBranch,
+    /// Repository rules of the remote declined the push (GitHub `GH013`).
+    RepositoryRules,
+    /// The remote branch has commits this one does not contain.
+    NonFastForward,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +53,27 @@ pub(crate) fn classify(stderr: &str) -> Option<Classified> {
             object_count: Some(missing_object_count(stderr)),
         });
     }
-    None
+    let lower = stderr.to_ascii_lowercase();
+    let reason = if stderr.contains("GH013") || lower.contains("repository rule violations") {
+        PushRejectionReason::RepositoryRules
+    } else if stderr.contains("GH006")
+        || lower.contains("protected branch hook declined")
+        || lower.contains("not allowed to push code to protected branches")
+        || lower.contains("not allowed to force push code to a protected branch")
+    {
+        PushRejectionReason::ProtectedBranch
+    } else if lower.lines().any(|line| {
+        line.contains("[rejected]")
+            && (line.contains("(fetch first)") || line.contains("(non-fast-forward)"))
+    }) {
+        PushRejectionReason::NonFastForward
+    } else {
+        return None;
+    };
+    Some(Classified {
+        reason,
+        object_count: None,
+    })
 }
 
 /// Typed rejection for a failed push of `repo`, or `None` for any other
@@ -149,12 +176,60 @@ error: failed to push some refs to 'origin'\n";
         for stderr in [
             "fatal: Authentication failed for 'https://github.com/org/repo.git/'",
             "remote: Permission denied. GH008 unknown Git LFS object",
-            " ! [rejected] main -> main (fetch first)\nUpdates were rejected",
             "fatal: unable to access 'https://github.com/': Could not resolve host",
+            " ! [remote rejected] main -> main (pre-receive hook declined)",
             "",
         ] {
             assert_eq!(classify(stderr), None, "{stderr}");
         }
+    }
+
+    #[test]
+    fn recognizes_protected_branch_rules_and_non_fast_forward() {
+        let reason = |stderr: &str| classify(stderr).map(|classified| classified.reason);
+        let github_protected = "remote: error: GH006: Protected branch update failed for refs/heads/main.\n\
+remote: error: Changes must be made through a pull request.\n\
+To https://user:secret@github.com/org/repo.git\n \
+! [remote rejected] main -> main (protected branch hook declined)\n\
+error: failed to push some refs to 'https://user:secret@github.com/org/repo.git'\n";
+        assert_eq!(
+            reason(github_protected),
+            Some(PushRejectionReason::ProtectedBranch)
+        );
+        let gitlab_protected = "remote: GitLab: You are not allowed to push code to protected branches on this project.\n\
+To gitlab.com:org/repo.git\n \
+! [remote rejected] main -> main (pre-receive hook declined)\n";
+        assert_eq!(
+            reason(gitlab_protected),
+            Some(PushRejectionReason::ProtectedBranch)
+        );
+        let gitlab_force = "remote: GitLab: You are not allowed to force push code to a protected branch on this project.\n";
+        assert_eq!(
+            reason(gitlab_force),
+            Some(PushRejectionReason::ProtectedBranch)
+        );
+        let rules = "remote: error: GH013: Repository rule violations found for refs/heads/main.\n\
+remote: - Changes must be made through a pull request.\n \
+! [remote rejected] main -> main (push declined due to repository rule violations)\n";
+        assert_eq!(reason(rules), Some(PushRejectionReason::RepositoryRules));
+        for stderr in [
+            " ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs\nhint: Updates were rejected because the remote contains work",
+            " ! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs",
+        ] {
+            assert_eq!(
+                reason(stderr),
+                Some(PushRejectionReason::NonFastForward),
+                "{stderr}"
+            );
+        }
+        let json = serde_json::to_value(GitError::PushRejected {
+            reason: PushRejectionReason::ProtectedBranch,
+            object_count: None,
+            lfs_declaration: None,
+        })
+        .unwrap();
+        assert_eq!(json["reason"], "protected_branch");
+        assert!(!json.to_string().contains("secret"));
     }
 
     #[test]

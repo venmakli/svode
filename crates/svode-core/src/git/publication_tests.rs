@@ -255,10 +255,14 @@ async fn every_publisher_runs_real_hooks_once_and_preserves_rejection() {
                 "{publisher}, reject={reject}: {result:?}"
             );
             if reject {
-                let error = result.unwrap_err().to_string();
+                let error = result.unwrap_err();
                 assert!(
-                    error.contains("fixture hook declined publication"),
-                    "{publisher}: {error}"
+                    matches!(
+                        error.failure(),
+                        Some(failure) if failure.stage == crate::git::diagnostics::GitStage::Push
+                            && failure.cause == Some(crate::git::diagnostics::GitFailureCause::Hook)
+                    ),
+                    "{publisher}: {error:?}"
                 );
                 assert_eq!(git(&f.remote, &["for-each-ref"]), before);
                 counting_hook(&f.root, "cat >/dev/null");
@@ -304,12 +308,7 @@ async fn rejecting_parent_hook_preserves_child_success_and_pointer_retry() {
     .await;
     let report = serde_json::to_value(report).unwrap();
     assert_eq!(report["pointer"], "local");
-    assert!(
-        report
-            .to_string()
-            .contains("fixture hook declined publication"),
-        "{report}"
-    );
+    assert!(report.to_string().contains(r#""cause":"hook""#), "{report}");
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
     assert_eq!(git(&f.source, &["rev-parse", "main"]), head);
     assert_eq!(hook_count(&root_calls), 1);

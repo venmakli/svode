@@ -1,8 +1,17 @@
 import { toGitBranchBlockDto } from "./branch-errors";
+import {
+  toGitFailureCause,
+  toGitFailureRepository,
+  type GitFailureCauseDto,
+} from "./failure-errors";
 import { toRepositoryAccessDeniedDto } from "./repository-access-api";
 
 export interface GitSaveFailureDto {
+  /** The Space or project name of the repository. */
+  repository: string | null;
   stage: "prepare" | "verify" | "commit";
+  /** What the failed Git command showed, when it was recognized. */
+  cause: GitFailureCauseDto | null;
   reason:
     | "command_unavailable"
     | "command_failed"
@@ -50,7 +59,8 @@ export function toGitSaveFailureDto(error: unknown): GitSaveFailureDto | null {
   const candidate =
     isRecord(error) && isGitSavePartial(error) ? error.cause : error;
   if (!isRecord(candidate) || candidate.kind !== "git_save_failed") return null;
-  const { stage, reason, exitCode, pathCount, pathSample } = candidate;
+  const { repository, stage, cause, reason, exitCode, pathCount, pathSample } =
+    candidate;
   if (stage !== "prepare" && stage !== "verify" && stage !== "commit")
     return null;
   if (
@@ -72,7 +82,9 @@ export function toGitSaveFailureDto(error: unknown): GitSaveFailureDto | null {
   )
     return null;
   return {
+    repository: toGitFailureRepository(repository),
     stage,
+    cause: toGitFailureCause(cause),
     reason,
     exitCode:
       typeof exitCode === "number" && Number.isSafeInteger(exitCode)

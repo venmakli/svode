@@ -7,7 +7,9 @@ import {
 
 const failure = {
   kind: "git_save_failed",
+  repository: "Исследования",
   stage: "verify",
+  cause: "index_locked",
   reason: "paths_not_prepared",
   exitCode: null,
   pathCount: 2,
@@ -57,7 +59,9 @@ test("Git save error boundary copies only controlled fields, including nested pa
   };
   const dto = toGitSaveFailureDto(raw);
   expect(dto).toEqual({
+    repository: "Исследования",
     stage: "verify",
+    cause: "index_locked",
     reason: "paths_not_prepared",
     exitCode: null,
     pathCount: 2,
@@ -115,4 +119,25 @@ test("path samples remain bounded relative text and preserve literal Unicode nam
     toGitSaveFailureDto({ ...failure, pathSample: "папка/[a]*.md" })
       ?.pathSample,
   ).toBe("папка/[a]*.md");
+});
+
+test("an unknown cause or a missing repository stays empty, not raw text", () => {
+  const expected = {
+    repository: null,
+    stage: "verify",
+    cause: null,
+    reason: "paths_not_prepared",
+    exitCode: null,
+    pathCount: 2,
+    pathSample: "Исследования/README.md",
+  };
+  expect(
+    toGitSaveFailureDto({
+      ...failure,
+      repository: "a\u0000b",
+      cause: "SECRET stderr",
+    }),
+  ).toEqual(expected);
+  const { repository: _repository, cause: _cause, ...older } = failure;
+  expect(toGitSaveFailureDto(older)).toEqual(expected);
 });

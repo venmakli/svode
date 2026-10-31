@@ -163,7 +163,12 @@ async fn push_without_s3_transfer_wiring_is_typed_and_leaves_auth_and_other_fail
     );
     let error = sync::sync(&f.cli, &f.root).await.unwrap_err();
     assert!(
-        matches!(&error, GitError::GitCommandFailed(message) if message.contains("fixture hook declined publication")),
+        matches!(
+            &error,
+            GitError::SyncFailed(failure)
+                if failure.stage == crate::git::diagnostics::GitStage::Push
+                    && failure.cause == Some(crate::git::diagnostics::GitFailureCause::Hook)
+        ),
         "{error:?}"
     );
     assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);

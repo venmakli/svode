@@ -6,6 +6,7 @@ use super::GitError;
 use super::auth::{GitAuthChallenge, GitRemoteOperation};
 use super::branch::GitOperation;
 use super::cli::{GitCli, literal_pathspec_input, nul_paths_input, stdin_paths_input};
+use super::diagnostics::{GitStage, HookTrace};
 use super::path::{RootMode, normalize_repo_relative};
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,7 +94,7 @@ pub async fn sync(cli: &GitCli, space_dir: &Path) -> Result<SyncResult, GitError
             return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
         }
 
-        let error = super::ops::git_remote_command_error("git push", stderr);
+        let error = super::ops::git_remote_command_error(space_dir, GitStage::Push, stderr);
         return remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await;
     }
 
@@ -161,7 +162,7 @@ async fn sync_without_upstream(
             cli,
             space_dir,
             GitRemoteOperation::FirstPush,
-            super::ops::git_remote_command_error("git push", &out.stderr),
+            super::ops::git_remote_command_error(space_dir, GitStage::Push, &out.stderr),
         )
         .await;
     }
@@ -189,7 +190,8 @@ pub async fn integrate(
 ) -> Result<Option<SyncResult>, GitError> {
     let mut retried = false;
     loop {
-        let merge = super::upstream::merge(cli, space_dir, upstream, revision).await?;
+        let trace = HookTrace::new();
+        let merge = super::upstream::merge(cli, space_dir, upstream, revision, &trace).await?;
         if merge.exit_code == 0 {
             // A merge that succeeds, or the merge retried after setting
             // matching edits aside, may still leave files in conflict.
@@ -211,9 +213,15 @@ pub async fn integrate(
                 Err(error) => tracing::warn!("interfering local files unavailable: {error}"),
             }
         }
-        return merge_failure(cli, space_dir, &merge.stderr, &merge.stdout)
-            .await
-            .map(Some);
+        return merge_failure(
+            cli,
+            space_dir,
+            &merge.stderr,
+            &merge.stdout,
+            trace.hook_failed(),
+        )
+        .await
+        .map(Some);
     }
 }
 
@@ -222,6 +230,7 @@ async fn merge_failure(
     space_dir: &Path,
     stderr: &str,
     stdout: &str,
+    hook_failed: bool,
 ) -> Result<SyncResult, GitError> {
     let stderr = stderr.trim();
 
@@ -238,7 +247,12 @@ async fn merge_failure(
         return Ok(SyncResult::Conflict { files });
     }
 
-    let error = super::ops::git_remote_command_error("git merge", stderr);
+    // The merge commit of the step runs the hooks of the repository.
+    let error = if hook_failed {
+        super::ops::sync_failure(space_dir, GitStage::Integrate, stderr, true)
+    } else {
+        super::ops::git_remote_command_error(space_dir, GitStage::Integrate, stderr)
+    };
     remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error).await
 }
 
@@ -667,10 +681,12 @@ pub async fn resolve_and_continue(
             )
             .await?;
         if add_out.exit_code != 0 {
-            return Err(GitError::GitCommandFailed(format!(
-                "git add failed: {}",
-                add_out.stderr
-            )));
+            return Err(super::ops::sync_failure(
+                space_dir,
+                GitStage::Commit,
+                &add_out.stderr,
+                false,
+            ));
         }
     }
 
@@ -687,12 +703,17 @@ pub async fn resolve_and_continue(
     }
 
     // The index holds the merge result and the resolved paths only.
-    let commit_out = cli.exec(space_dir, &["commit", "--no-edit"]).await?;
+    let trace = HookTrace::new();
+    let commit_out = cli
+        .exec_with_env(space_dir, &["commit", "--no-edit"], &trace.env(&[]))
+        .await?;
     if commit_out.exit_code != 0 {
-        return Err(GitError::GitCommandFailed(format!(
-            "git commit failed: {}",
-            commit_out.stderr
-        )));
+        return Err(super::ops::sync_failure(
+            space_dir,
+            GitStage::Commit,
+            &commit_out.stderr,
+            trace.hook_failed(),
+        ));
     }
 
     // Push
@@ -704,9 +725,11 @@ pub async fn resolve_and_continue(
         if super::ops::is_git_auth_error(stderr) {
             return auth_required(cli, space_dir, GitRemoteOperation::Sync, Some(stderr)).await;
         }
-        return Err(GitError::GitCommandFailed(format!(
-            "git push failed: {stderr}"
-        )));
+        return Err(super::ops::git_remote_command_error(
+            space_dir,
+            GitStage::Push,
+            stderr,
+        ));
     }
 
     tracing::info!("Resolved conflicts and pushed in {}", space_dir.display());

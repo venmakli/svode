@@ -1734,19 +1734,7 @@ enum ServiceRefStage {
 
 fn classify_failure(output: &GitOutput, stage: ServiceRefStage) -> ProbeResult {
     let detail = format!("{}\n{}", output.stderr, output.stdout).to_ascii_lowercase();
-    let reason = if output.exit_code == -2
-        || contains_any(
-            &detail,
-            &[
-                "could not resolve host",
-                "connection timed out",
-                "operation timed out",
-                "network is unreachable",
-                "connection refused",
-                "connection reset",
-                "remote end hung up unexpectedly",
-            ],
-        ) {
+    let reason = if output.exit_code == -2 || super::diagnostics::is_network_failure(&detail) {
         RepositoryAccessReason::OfflineOrTimeout
     } else if contains_any(
         &detail,

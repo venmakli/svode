@@ -58,10 +58,15 @@ mod tests {
         let start = |path: PathBuf| {
             let state = state.clone();
             let tx = tx.clone();
-            ActorObservation::start(cli.clone(), path, move |repository| {
-                let _ = state.mark_repository_dirty(repository);
-                let _ = tx.send(());
-            })
+            ActorObservation::start(
+                cli.clone(),
+                path,
+                move |repository| {
+                    let _ = state.mark_repository_dirty(repository);
+                    let _ = tx.send(());
+                },
+                |_| {},
+            )
             .unwrap()
         };
         let first = start(repo.path().to_path_buf());
@@ -163,10 +168,15 @@ mod tests {
         let sibling_sources = ActorSources::resolve(&cli, &sibling).await.unwrap();
         let (tx, rx) = mpsc::channel();
         let observed_state = state.clone();
-        let observation = ActorObservation::start(cli.clone(), child.clone(), move |repository| {
-            observed_state.mark_repository_dirty(repository).unwrap();
-            tx.send(repository.to_path_buf()).unwrap();
-        })
+        let observation = ActorObservation::start(
+            cli.clone(),
+            child.clone(),
+            move |repository| {
+                observed_state.mark_repository_dirty(repository).unwrap();
+                tx.send(repository.to_path_buf()).unwrap();
+            },
+            |_| {},
+        )
         .unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), child);
         let sources = ActorSources::resolve(&cli, &child).await.unwrap();
@@ -285,5 +295,47 @@ mod tests {
             state.snapshot(&cli, &child).await.unwrap().current_email(),
             Some("gap@example.test")
         );
+    }
+
+    #[tokio::test]
+    async fn git_operations_outside_svode_signal_a_state_change() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let repo = init_repo("Root", "root@example.test");
+        commit(repo.path(), "one.txt", "one", "one");
+        let expected = fs::canonicalize(repo.path()).unwrap();
+        let cli = GitCli::detect().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let observation = ActorObservation::start(
+            cli,
+            repo.path().to_path_buf(),
+            |_| {},
+            move |repository| {
+                let _ = tx.send(repository.to_path_buf());
+            },
+        )
+        .unwrap();
+        let drain = || while rx.recv_timeout(Duration::from_millis(500)).is_ok() {};
+        let wait = |operation: &str| {
+            assert_eq!(
+                rx.recv_timeout(Duration::from_secs(8))
+                    .unwrap_or_else(|_| panic!("no state change after {operation}")),
+                expected
+            );
+            drain();
+        };
+        drain();
+
+        // A terminal commit, reset and checkout, and an index change alone.
+        commit(repo.path(), "two.txt", "two", "two");
+        wait("commit");
+        git(repo.path(), &["reset", "--soft", "HEAD~1"]);
+        wait("reset");
+        git(repo.path(), &["reset", "--quiet"]);
+        wait("unstaging");
+        git(repo.path(), &["checkout", "--quiet", "-b", "other"]);
+        wait("checkout");
+        drop(observation);
     }
 }

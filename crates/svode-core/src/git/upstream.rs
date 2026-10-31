@@ -149,7 +149,11 @@ pub async fn fetch(cli: &GitCli, repo: &Path, upstream: Upstream) -> Result<Obse
         if out.exit_code != 0 {
             let stderr = out.stderr.trim();
             if !stderr.contains("couldn't find remote ref") {
-                return Err(super::ops::git_remote_command_error("git fetch", stderr));
+                return Err(super::ops::git_remote_command_error(
+                    repo,
+                    super::diagnostics::GitStage::Fetch,
+                    stderr,
+                ));
             }
             let dropped = cli
                 .exec(repo, &["update-ref", "-d", &upstream.tracking_ref])
@@ -192,6 +196,7 @@ pub async fn merge(
     repo: &Path,
     upstream: &Upstream,
     revision: &str,
+    trace: &super::diagnostics::HookTrace,
 ) -> Result<GitOutput, GitError> {
     // `pull.twohead` picks the strategy of `git merge` too; an explicit one
     // overrides it. Without that setting the default strategy of this Git
@@ -226,7 +231,7 @@ pub async fn merge(
         args.extend(["-s", "ort"]);
     }
     args.push(revision);
-    cli.exec(repo, &args).await
+    cli.exec_with_env(repo, &args, &trace.env(&[])).await
 }
 
 fn merge_message(upstream: &Upstream) -> String {

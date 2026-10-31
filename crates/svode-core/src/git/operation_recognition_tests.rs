@@ -110,17 +110,23 @@ impl Repo {
         std::fs::write(self.path.join("other.md"), "other\n").unwrap();
         self.ok(&["add", "other.md"]);
         let head = self.ok(&["rev-parse", "HEAD"]);
-        let error = commit_prepared(&self.cli, &self.path, &["other.md".into()], "partial")
-            .await
-            .unwrap_err();
+        let error = commit_prepared(
+            &self.cli,
+            &self.path,
+            &["other.md".into()],
+            "partial",
+            &crate::git::diagnostics::HookTrace::new(),
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(
                 error,
                 GitError::SaveFailed {
-                    stage: "commit",
+                    ref failure,
                     reason: "command_failed",
                     ..
-                }
+                } if failure.stage == crate::git::diagnostics::GitStage::Commit
             ),
             "{error:?}"
         );
@@ -223,9 +229,15 @@ async fn partial_commit_runs_without_an_operation_with_both_ref_stores() {
         };
         std::fs::write(repo.path.join("other.md"), "other\n").unwrap();
         repo.ok(&["add", "other.md"]);
-        let out = commit_prepared(&repo.cli, &repo.path, &["other.md".into()], "partial")
-            .await
-            .unwrap();
+        let out = commit_prepared(
+            &repo.cli,
+            &repo.path,
+            &["other.md".into()],
+            "partial",
+            &crate::git::diagnostics::HookTrace::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(out.exit_code, 0, "{format}: {}", out.stderr);
         assert_eq!(
             repo.ok(&["log", "-1", "--format=%s"]),

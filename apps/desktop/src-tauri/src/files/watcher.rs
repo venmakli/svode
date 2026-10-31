@@ -77,6 +77,8 @@ impl FileWatcher {
             let git_state = app.state::<crate::git::GitState>();
             crate::git::require_cli(&git_state).and_then(|cli| {
                 let actor_app = app.clone();
+                let git_app = app.clone();
+                let watched_space = space_path.clone();
                 super::actor_observation::ActorObservation::start(
                     cli,
                     space_path.clone(),
@@ -86,6 +88,9 @@ impl FileWatcher {
                         {
                             tracing::warn!("actor observation invalidation failed: {error}");
                         }
+                    },
+                    move |repository| {
+                        crate::git::delivery::emit_committed(&git_app, &watched_space, repository)
                     },
                 )
             })?

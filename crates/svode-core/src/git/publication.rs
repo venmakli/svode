@@ -103,7 +103,16 @@ async fn checked(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<String, Git
 }
 
 async fn sensitive(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
-    cli.exec_sensitive_with_stdin(repo, args, &[], None, Duration::from_secs(120))
+    sensitive_with_env(cli, repo, args, &[]).await
+}
+
+async fn sensitive_with_env(
+    cli: &GitCli,
+    repo: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<GitOutput, GitError> {
+    cli.exec_sensitive_with_stdin(repo, args, env, None, Duration::from_secs(120))
         .await
 }
 
@@ -122,6 +131,7 @@ impl Drop for NativeEvidence {
         for (repo, reference, oid) in &self.refs {
             let mut command = std::process::Command::new(&self.git);
             super::cli::hide_window(&mut command);
+            super::cli::configure_std_process_env(&mut command);
             match command
                 .current_dir(repo)
                 .args(["update-ref", "-d", reference, oid])
@@ -200,11 +210,23 @@ pub async fn push_snapshot(
         &fixed.remote,
     ];
     args.extend(mappings.iter().map(String::as_str));
-    let out = sensitive(cli, repo, &args).await?;
+    let trace = super::diagnostics::HookTrace::new();
+    let out = sensitive_with_env(cli, repo, &args, &trace.env(&[])).await?;
     if out.exit_code != 0 {
         if let Some(rejection) = super::push_rejection::push_rejection(cli, repo, &out.stderr).await
         {
             return Err(rejection);
+        }
+        // A declining pre-push hook stops the push before the remote sees it.
+        // The git-lfs transfer runs in that hook too: its known refusals
+        // above and its credential failures keep their own outcome.
+        if trace.hook_failed() && !super::ops::is_git_auth_error(&out.stderr) {
+            return Err(super::ops::sync_failure(
+                repo,
+                super::diagnostics::GitStage::Push,
+                &out.stderr,
+                true,
+            ));
         }
     }
     if out.exit_code == 0 && first {
@@ -229,7 +251,8 @@ pub async fn blocked_spaces(cli: &GitCli, repo: &Path) -> Result<Vec<BlockedSpac
         Ok(fixed) => fixed,
         Err(out) => {
             return Err(super::ops::git_remote_command_error(
-                "git push",
+                repo,
+                super::diagnostics::GitStage::Push,
                 out.stderr.trim(),
             ));
         }

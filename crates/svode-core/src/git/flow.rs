@@ -432,7 +432,9 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                         Ok(Output::Status(status))
                     }
                     Err(error) => {
-                        host.invalidate_repository_access(&cli, repo).await;
+                        if !error.is_local_failure() {
+                            host.invalidate_repository_access(&cli, repo).await;
+                        }
                         Err(error)
                     }
                 }
@@ -508,7 +510,8 @@ async fn direct_push_locked(
         if !matches!(
             error,
             GitError::PublicationBlocked { .. } | GitError::BranchBlocked { .. }
-        ) {
+        ) && !error.is_local_failure()
+        {
             host.invalidate_repository_access(cli, repo).await;
         }
         return Err(error);
@@ -715,7 +718,7 @@ async fn parent_step_recorded(
                     | GitError::BranchBlocked { .. }
                     | GitError::PublicationBlocked { .. }
                     | GitError::PullBlocked { .. }
-            )
+            ) && !error.is_local_failure()
         })
     {
         host.invalidate_repository_access(cli, parent).await;
@@ -1056,7 +1059,9 @@ async fn run_repository(
             | GitError::PublicationBlocked { .. }
             | GitError::PullBlocked { .. },
         ) => false,
-        Err(_) => true,
+        // The file system or another Git process of this device says
+        // nothing about access to the remote.
+        Err(error) => !error.is_local_failure(),
         _ => false,
     };
     if invalidate {

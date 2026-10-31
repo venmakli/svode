@@ -594,13 +594,17 @@ async fn native_ssh_dns_failure_keeps_configured_remote_error() {
             "ssh://fixture.invalid/repo.git",
         ],
     );
+    let network = |error: &GitError| {
+        error.failure().and_then(|failure| failure.cause)
+            == Some(crate::git::diagnostics::GitFailureCause::Network)
+    };
     assert!(matches!(
         sync::sync(&f.cli, &f.root).await,
-        Err(GitError::GitCommandFailed(_))
+        Err(ref error @ GitError::SyncFailed(_)) if network(error)
     ));
     assert!(matches!(
         crate::git::upstream::fetch_counted(&f.cli, &f.root).await,
-        Err(GitError::GitCommandFailed(_))
+        Err(ref error @ GitError::SyncFailed(_)) if network(error)
     ));
     git(&f.root, &["remote", "remove", "origin"]);
     assert!(matches!(

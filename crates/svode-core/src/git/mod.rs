@@ -4,6 +4,7 @@ pub mod auth;
 pub mod autocommit;
 pub mod branch;
 pub mod cli;
+pub mod diagnostics;
 pub mod flow;
 pub mod host;
 #[cfg(test)]
@@ -85,14 +86,16 @@ pub enum GitError {
         repository: String,
         files: Vec<String>,
     },
-    #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
+    #[error("Git save of {failure}: {reason} ({path_count} paths)")]
     SaveFailed {
-        stage: &'static str,
+        failure: diagnostics::GitFailure,
         reason: &'static str,
         exit_code: Option<i32>,
         path_count: usize,
         path_sample: Option<String>,
     },
+    #[error("Git sync of {0} failed")]
+    SyncFailed(diagnostics::GitFailure),
     #[error("Git did not return the status of {repository} within {seconds} seconds")]
     StatusTimedOut { repository: String, seconds: u64 },
     #[error("Git conflict: {0}")]
@@ -128,6 +131,7 @@ impl GitError {
             GitError::PushRejected { .. } => "git_push_rejected",
             GitError::PullBlocked { .. } => "git_pull_blocked",
             GitError::SaveFailed { .. } => "git_save_failed",
+            GitError::SyncFailed(_) => "git_sync_failed",
             GitError::StatusTimedOut { .. } => "git_status_timed_out",
             GitError::Conflict(_) => "git_conflict",
             GitError::AuthRequired(_) => "git_auth_required",
@@ -138,6 +142,22 @@ impl GitError {
             GitError::Serde(_) => "serde",
             GitError::General(_) => "general",
         }
+    }
+
+    /// The repository, stage and cause of a failed save or sync step.
+    pub fn failure(&self) -> Option<&diagnostics::GitFailure> {
+        match self {
+            GitError::SaveFailed { failure, .. } | GitError::SyncFailed(failure) => Some(failure),
+            _ => None,
+        }
+    }
+
+    /// A failure of this device, such as the file system refusing a file,
+    /// which says nothing about access to the remote.
+    pub fn is_local_failure(&self) -> bool {
+        self.failure()
+            .and_then(|failure| failure.cause)
+            .is_some_and(diagnostics::GitFailureCause::is_local)
     }
 }
 
@@ -173,18 +193,27 @@ impl serde::Serialize for GitError {
             })
             .serialize(serializer),
             GitError::SaveFailed {
-                stage,
+                failure,
                 reason,
                 exit_code,
                 path_count,
                 path_sample,
             } => serde_json::json!({
                 "kind": self.kind(),
-                "stage": stage,
+                "repository": failure.repository,
+                "stage": failure.stage,
+                "cause": failure.cause,
                 "reason": reason,
                 "exitCode": exit_code,
                 "pathCount": path_count,
                 "pathSample": path_sample,
+            })
+            .serialize(serializer),
+            GitError::SyncFailed(failure) => serde_json::json!({
+                "kind": self.kind(),
+                "repository": failure.repository,
+                "stage": failure.stage,
+                "cause": failure.cause,
             })
             .serialize(serializer),
             GitError::SourceBusy { path } => {
@@ -270,7 +299,11 @@ mod tests {
         assert_eq!(branch["reason"], "root_detached");
 
         let save = serde_json::to_value(GitError::SaveFailed {
-            stage: "prepare",
+            failure: diagnostics::GitFailure {
+                repository: "Research".to_string(),
+                stage: diagnostics::GitStage::Prepare,
+                cause: Some(diagnostics::GitFailureCause::IndexLocked),
+            },
             reason: "target_unavailable",
             exit_code: Some(1),
             path_count: 2,
@@ -278,11 +311,29 @@ mod tests {
         })
         .unwrap();
         assert_eq!(save["kind"], "git_save_failed");
+        assert_eq!(save["repository"], "Research");
         assert_eq!(save["stage"], "prepare");
+        assert_eq!(save["cause"], "index_locked");
         assert_eq!(save["reason"], "target_unavailable");
         assert_eq!(save["exitCode"], 1);
         assert_eq!(save["pathCount"], 2);
         assert_eq!(save["pathSample"], "docs/a.md");
+
+        let sync = serde_json::to_value(GitError::SyncFailed(diagnostics::GitFailure {
+            repository: "Research".to_string(),
+            stage: diagnostics::GitStage::Fetch,
+            cause: None,
+        }))
+        .unwrap();
+        assert_eq!(
+            sync,
+            serde_json::json!({
+                "kind": "git_sync_failed",
+                "repository": "Research",
+                "stage": "fetch",
+                "cause": null,
+            })
+        );
 
         let denied = serde_json::to_value(GitError::RepositoryAccessDenied {
             repository_id: "repo-parent".to_string(),

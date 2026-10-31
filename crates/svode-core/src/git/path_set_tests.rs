@@ -281,7 +281,7 @@ async fn a_failing_hook_on_a_large_set_is_a_save_failure_of_the_commit() {
         .unwrap_err();
 
     let GitError::SaveFailed {
-        stage,
+        failure,
         reason,
         exit_code,
         path_count,
@@ -291,7 +291,7 @@ async fn a_failing_hook_on_a_large_set_is_a_save_failure_of_the_commit() {
         panic!("{error:?}");
     };
     assert_eq!(
-        (stage, reason, exit_code),
+        (failure.stage.as_str(), reason, exit_code),
         ("commit", "command_failed", Some(1))
     );
     assert_eq!(path_count, paths.len());
@@ -319,7 +319,7 @@ async fn a_failing_space_pointer_check_is_a_save_failure_of_the_preparation() {
         .unwrap_err();
 
     let GitError::SaveFailed {
-        stage,
+        failure,
         reason,
         path_count,
         ..
@@ -328,7 +328,7 @@ async fn a_failing_space_pointer_check_is_a_save_failure_of_the_preparation() {
         panic!("{error:?}");
     };
     assert_eq!(
-        (stage, reason, path_count),
+        (failure.stage.as_str(), reason, path_count),
         ("prepare", "inventory_failed", 2)
     );
 }

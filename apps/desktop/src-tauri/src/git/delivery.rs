@@ -21,6 +21,19 @@ const EVENT_COMMITTED: &str = "git:committed";
 const EVENT_SYNC_STATE: &str = "git:sync-state";
 const EVENT_PUBLICATION: &str = "git:publication";
 
+/// The commit event the Git indicators of `space` refresh on. A change of
+/// HEAD, refs or the index by a Git process outside Svode (a commit, reset or
+/// checkout of an agent or a terminal) announces itself the same way.
+pub(crate) fn emit_committed(app: &AppHandle, space: &Path, repository: &Path) {
+    let payload = CommittedPayload {
+        space_path: space.to_string_lossy().into_owned(),
+        repo_path: repository.to_string_lossy().into_owned(),
+    };
+    if let Err(error) = app.emit(EVENT_COMMITTED, payload) {
+        tracing::warn!("failed to emit {EVENT_COMMITTED}: {error}");
+    }
+}
+
 /// Tauri-managed handle to the one Git host of this process.
 pub struct GitHostState(Arc<dyn GitHost>);
 
@@ -181,13 +194,7 @@ impl GitHost for DesktopGitHost {
                 "failed to invalidate actor catalog after commit: {error}"
             );
         }
-        let payload = CommittedPayload {
-            space_path: space.to_string_lossy().into_owned(),
-            repo_path: repository.to_string_lossy().into_owned(),
-        };
-        if let Err(error) = self.app.emit(EVENT_COMMITTED, payload) {
-            tracing::warn!("failed to emit {EVENT_COMMITTED}: {error}");
-        }
+        emit_committed(&self.app, space, repository);
     }
 
     fn schedule_auto_sync(&self, repository: &Path) {

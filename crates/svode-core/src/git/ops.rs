@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use super::GitError;
 use super::cli::GitCli;
+use super::diagnostics::{GitStage, HookTrace};
 #[cfg(test)]
 use super::status::FileGitStatus;
 use crate::git::path::{RootMode, normalize_repo_relative};
@@ -31,28 +32,47 @@ struct NameStatusRecord {
     path: String,
 }
 
+/// Only a refusal of authorization: a file system "permission denied" of the
+/// repository is a local failure, not a missing credential.
 pub fn is_git_auth_error(stderr: &str) -> bool {
-    let stderr = stderr.to_ascii_lowercase();
-    stderr.contains("authentication")
-        || stderr.contains("could not read username")
-        || stderr.contains("terminal prompts disabled")
-        || stderr.contains("permission denied")
-        || stderr.contains("missing credentials")
-        || stderr.contains("missing or invalid credentials")
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("authentication")
+        || lower.contains("could not read username")
+        || lower.contains("terminal prompts disabled")
+        || super::diagnostics::is_authorization_denial(stderr)
+        || lower.contains("missing credentials")
+        || lower.contains("missing or invalid credentials")
 }
 
 pub fn is_git_no_remote_error(stderr: &str) -> bool {
     stderr.contains("No configured push destination")
 }
 
-pub fn git_remote_command_error(command: &str, stderr: &str) -> GitError {
+/// The error of a remote step of a sync or publish in `repo` that failed
+/// with `stderr`: a missing credential or remote keeps its own outcome,
+/// anything else names the repository, the stage and the recognized cause.
+pub fn git_remote_command_error(repo: &Path, stage: GitStage, stderr: &str) -> GitError {
     if is_git_auth_error(stderr) {
         return GitError::AuthRequired(stderr.to_string());
     }
     if is_git_no_remote_error(stderr) {
         return GitError::NoRemote;
     }
-    GitError::GitCommandFailed(format!("{command} failed: {stderr}"))
+    sync_failure(repo, stage, stderr, false)
+}
+
+/// A failed sync step of `repo`. Stderr goes only to the log, redacted.
+pub fn sync_failure(repo: &Path, stage: GitStage, stderr: &str, hook_failed: bool) -> GitError {
+    tracing::warn!(
+        "git {stage} failed: {}",
+        super::auth::redact_url_credentials(stderr.trim())
+    );
+    GitError::SyncFailed(super::diagnostics::GitFailure::from_output(
+        repo,
+        stage,
+        stderr,
+        hook_failed,
+    ))
 }
 
 /// List submodules declared in `.gitmodules`.
@@ -150,7 +170,7 @@ pub async fn push(cli: &GitCli, space_dir: &Path) -> Result<(), GitError> {
     let out = super::publication::push(cli, space_dir, false).await?;
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
-        return Err(git_remote_command_error("git push", stderr));
+        return Err(git_remote_command_error(space_dir, GitStage::Push, stderr));
     }
     Ok(())
 }
@@ -276,13 +296,25 @@ pub async fn commit(cli: &GitCli, space_dir: &Path, message: &str) -> Result<boo
     if !super::staging::has_changes(cli, space_dir, &[]).await? {
         return Ok(false);
     }
-    let out =
-        super::staging::exec(cli, space_dir, &["commit", "-m", message], "commit", &[]).await?;
+    let trace = HookTrace::new();
+    let out = cli
+        .exec_redacted_with_env(space_dir, &["commit", "-m", message], &trace.env(&[]))
+        .await
+        .map_err(|_| {
+            super::staging::failure(
+                space_dir,
+                GitStage::Commit,
+                "command_unavailable",
+                None,
+                &[],
+            )
+        })?;
     if out.exit_code != 0 {
-        return Err(super::staging::failure(
-            "commit",
-            "command_failed",
-            Some(out.exit_code),
+        return Err(super::staging::command_failure(
+            space_dir,
+            GitStage::Commit,
+            &out,
+            Some(&trace),
             &[],
         ));
     }
@@ -336,7 +368,7 @@ pub async fn commit_exact_path_receipt(
             cli,
             repo,
             &["rev-parse", "--verify", "HEAD"],
-            "verify",
+            GitStage::Verify,
             paths,
         )
         .await?;
@@ -353,7 +385,7 @@ pub async fn commit_exact_path_receipt(
                     "--",
                     &literal,
                 ],
-                "verify",
+                GitStage::Verify,
                 paths,
             )
             .await?;
@@ -362,7 +394,8 @@ pub async fn commit_exact_path_receipt(
                 1 => {}
                 code => {
                     return Err(super::staging::failure(
-                        "verify",
+                        repo,
+                        GitStage::Verify,
                         "verification_failed",
                         Some(code),
                         paths,
@@ -376,17 +409,19 @@ pub async fn commit_exact_path_receipt(
             .exec_redacted(repo, &["add", "--intent-to-add", "--", &literal])
             .await?;
         if prepared.exit_code != 0 {
-            return Err(super::staging::failure(
-                "prepare",
-                "command_failed",
-                Some(prepared.exit_code),
+            return Err(super::staging::command_failure(
+                repo,
+                GitStage::Prepare,
+                &prepared,
+                None,
                 paths,
             ));
         }
     }
 
+    let trace = HookTrace::new();
     let out = cli
-        .exec_redacted(
+        .exec_redacted_with_env(
             repo,
             &[
                 "-c",
@@ -399,6 +434,7 @@ pub async fn commit_exact_path_receipt(
                 "--",
                 &format!(":(literal){path}"),
             ],
+            &trace.env(&[]),
         )
         .await?;
     if out.exit_code == 0 {
@@ -427,7 +463,8 @@ pub async fn commit_exact_path_receipt(
         let cleanup = cli.exec_redacted(repo, &["reset", "--", &literal]).await?;
         if cleanup.exit_code != 0 {
             return Err(super::staging::failure(
-                "commit",
+                repo,
+                GitStage::Commit,
                 "target_cleanup_failed",
                 Some(cleanup.exit_code),
                 paths,
@@ -435,10 +472,11 @@ pub async fn commit_exact_path_receipt(
         }
     }
 
-    Err(super::staging::failure(
-        "commit",
-        "command_failed",
-        Some(out.exit_code),
+    Err(super::staging::command_failure(
+        repo,
+        GitStage::Commit,
+        &out,
+        Some(&trace),
         paths,
     ))
 }
@@ -670,8 +708,9 @@ pub async fn commit_paths(
     let message = generate_commit_message_for_paths(cli, space_dir, &file_paths).await?;
     super::staging::verify(cli, space_dir, &file_paths, &prepared).await?;
     let mut presence = super::staging::Presence::new(space_dir);
+    let trace = HookTrace::new();
     let out = if file_paths.iter().any(|path| presence.shadowed(path)) {
-        super::staging::commit_prepared(cli, space_dir, &file_paths, &message).await?
+        super::staging::commit_prepared(cli, space_dir, &file_paths, &message, &trace).await?
     } else {
         super::staging::exec_input(
             cli,
@@ -684,18 +723,19 @@ pub async fn commit_paths(
                 "--pathspec-from-file=-",
                 "--pathspec-file-nul",
             ],
-            &[],
+            &trace.env(&[]),
             &super::cli::literal_pathspec_input(&file_paths),
-            "commit",
+            GitStage::Commit,
             &file_paths,
         )
         .await?
     };
     if out.exit_code != 0 {
-        return Err(super::staging::failure(
-            "commit",
-            "command_failed",
-            Some(out.exit_code),
+        return Err(super::staging::command_failure(
+            space_dir,
+            GitStage::Commit,
+            &out,
+            Some(&trace),
             &file_paths,
         ));
     }
@@ -714,7 +754,8 @@ async fn generate_commit_message_for_paths(
         &["diff", "--cached", "--name-status", "-z", "--"],
         &literal_paths,
     ) {
-        let name_status = super::staging::exec(cli, space_dir, &args, "commit", paths).await?;
+        let name_status =
+            super::staging::exec(cli, space_dir, &args, GitStage::Commit, paths).await?;
         records.extend(parse_name_status_z(&name_status.stdout)?);
     }
     if records.is_empty() {
@@ -1361,7 +1402,13 @@ fn extract_block<'a>(
 
 /// Push with --set-upstream origin <current-branch>.
 pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), GitError> {
-    let out = super::publication::push(cli, space_dir, true).await?;
+    let out = match super::publication::push(cli, space_dir, true).await {
+        Err(GitError::PushRejected {
+            reason: super::push_rejection::PushRejectionReason::NonFastForward,
+            ..
+        }) => return Err(GitError::RemoteNotEmpty),
+        result => result?,
+    };
     if out.exit_code != 0 {
         let stderr = out.stderr.trim();
         if (stderr.contains("rejected")
@@ -1372,7 +1419,7 @@ pub async fn push_set_upstream(cli: &GitCli, space_dir: &Path) -> Result<(), Git
         {
             return Err(GitError::RemoteNotEmpty);
         }
-        return Err(git_remote_command_error("git push", stderr));
+        return Err(git_remote_command_error(space_dir, GitStage::Push, stderr));
     }
     Ok(())
 }
@@ -2255,7 +2302,8 @@ mod tests {
     #[test]
     fn classifies_remote_auth_errors_before_no_remote_errors() {
         let err = git_remote_command_error(
-            "git fetch",
+            Path::new("/missing/Research"),
+            GitStage::Fetch,
             "Permission denied (publickey).\nfatal: Could not read from remote repository.",
         );
 
@@ -2265,7 +2313,8 @@ mod tests {
     #[test]
     fn classifies_missing_credentials_as_auth_required() {
         let err = git_remote_command_error(
-            "git push",
+            Path::new("/missing/Research"),
+            GitStage::Push,
             "Missing or invalid credentials.\nfatal: Authentication failed",
         );
 
@@ -2275,25 +2324,66 @@ mod tests {
     #[test]
     fn transport_failure_does_not_prove_missing_remote() {
         let err = git_remote_command_error(
-            "git fetch",
+            Path::new("/missing/Research"),
+            GitStage::Fetch,
             "fatal: 'origin' does not appear to be a git repository",
         );
 
-        assert!(matches!(err, GitError::GitCommandFailed(_)));
+        assert!(matches!(err, GitError::SyncFailed(_)));
         for message in [
             "ssh: Could not resolve hostname fixture.invalid: nodename nor servname provided\nfatal: Could not read from remote repository.",
             "fatal: Repository not found",
             "fatal: unable to access remote: Could not resolve host",
         ] {
             assert!(matches!(
-                git_remote_command_error("git fetch", message),
-                GitError::GitCommandFailed(_)
+                git_remote_command_error(Path::new("/missing/Research"), GitStage::Fetch, message),
+                GitError::SyncFailed(_)
             ));
         }
         assert!(matches!(
-            git_remote_command_error("git push", "fatal: No configured push destination."),
+            git_remote_command_error(
+                Path::new("/missing/Research"),
+                GitStage::Push,
+                "fatal: No configured push destination."
+            ),
             GitError::NoRemote
         ));
+    }
+
+    #[test]
+    fn file_system_permission_denied_is_a_local_failure_not_authorization() {
+        let temp = TempDir::new().unwrap();
+        let repo = temp.path().join("Research");
+        std::fs::create_dir(&repo).unwrap();
+        for stderr in [
+            "error: cannot open .git/FETCH_HEAD: Permission denied",
+            "fatal: Unable to create '/home/user/project/.git/index.lock': Permission denied",
+            "error: insufficient permission for adding an object to repository database .git/objects\nfatal: failed to write object",
+        ] {
+            assert!(!is_git_auth_error(stderr), "{stderr}");
+            let error = git_remote_command_error(&repo, GitStage::Fetch, stderr);
+            assert!(
+                matches!(
+                    &error,
+                    GitError::SyncFailed(failure)
+                        if failure.repository == "Research"
+                            && failure.stage == GitStage::Fetch
+                            && failure.cause == Some(super::super::diagnostics::GitFailureCause::FileSystemDenied)
+                ),
+                "{stderr}: {error:?}"
+            );
+            assert!(error.is_local_failure());
+            let text = format!("{error} {}", serde_json::to_string(&error).unwrap());
+            assert!(!text.contains("/home/user"), "{text}");
+        }
+        for stderr in [
+            "git@github.com: Permission denied (publickey).",
+            "Permission denied, please try again.",
+            "remote: Permission denied.",
+            "fatal: Authentication failed for 'https://github.com/org/repo.git/'",
+        ] {
+            assert!(is_git_auth_error(stderr), "{stderr}");
+        }
     }
 
     #[test]

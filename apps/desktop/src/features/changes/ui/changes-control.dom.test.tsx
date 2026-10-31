@@ -1073,7 +1073,9 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
           pathSample: `Исследования/${"я".repeat(300)}.md`,
         },
         {
+          repository: "Исследования",
           stage: "commit",
+          cause: "hook",
           reason: "command_failed",
           exitCode: 1,
           pathCount: 2,
@@ -1122,6 +1124,17 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
                     : "Не удалось создать",
             ),
           ).toBe(true);
+          if (cause.stage === "commit") {
+            // The repository and the recognized cause are named.
+            expect(content.includes("Исследования:")).toBe(true);
+            expect(
+              content.includes(
+                locale === "en"
+                  ? "A Git hook of the repository declined the operation."
+                  : "Git hook репозитория отклонил операцию.",
+              ),
+            ).toBe(true);
+          }
           expect(content.includes("SECRET_HOOK")).toBe(false);
           expect(content.includes("/Users/")).toBe(false);
           expect(doc.activeElement).toBe(save());

@@ -9,6 +9,7 @@ fn temporary_directory(repo: &Path) -> Result<PathBuf> {
     command
         .args(["rev-parse", "--absolute-git-dir"])
         .current_dir(repo)
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null());
     #[cfg(windows)]
     {

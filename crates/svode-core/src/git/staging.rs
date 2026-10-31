@@ -8,6 +8,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use super::GitError;
 use super::cli::{GitCli, GitOutput, literal_pathspec_input, literal_pathspecs, nul_paths_input};
+use super::diagnostics::{GitFailure, GitStage, HookTrace, repository_name};
 use crate::git::path::{RootMode, normalize_repo_relative};
 
 /// Presence of repository paths by their exact spelling. A case-insensitive
@@ -57,13 +58,54 @@ impl<'a> Presence<'a> {
 }
 
 pub fn failure(
-    stage: &'static str,
+    repo: &Path,
+    stage: GitStage,
+    reason: &'static str,
+    exit_code: Option<i32>,
+    paths: &[String],
+) -> GitError {
+    failure_with(
+        GitFailure {
+            repository: repository_name(repo),
+            stage,
+            cause: None,
+        },
+        reason,
+        exit_code,
+        paths,
+    )
+}
+
+/// A Git command of a save that ran and failed, with the cause its stderr and
+/// the hook `trace` of the command show.
+pub fn command_failure(
+    repo: &Path,
+    stage: GitStage,
+    out: &GitOutput,
+    trace: Option<&HookTrace>,
+    paths: &[String],
+) -> GitError {
+    failure_with(
+        GitFailure::from_output(
+            repo,
+            stage,
+            &out.stderr,
+            trace.is_some_and(HookTrace::hook_failed),
+        ),
+        "command_failed",
+        Some(out.exit_code),
+        paths,
+    )
+}
+
+fn failure_with(
+    failure: GitFailure,
     reason: &'static str,
     exit_code: Option<i32>,
     paths: &[String],
 ) -> GitError {
     GitError::SaveFailed {
-        stage,
+        failure,
         reason,
         exit_code,
         path_count: paths.len(),
@@ -78,12 +120,12 @@ pub async fn exec(
     cli: &GitCli,
     repo: &Path,
     args: &[&str],
-    stage: &'static str,
+    stage: GitStage,
     paths: &[String],
 ) -> Result<GitOutput, GitError> {
     cli.exec_redacted(repo, args)
         .await
-        .map_err(|_| failure(stage, "command_unavailable", None, paths))
+        .map_err(|_| failure(repo, stage, "command_unavailable", None, paths))
 }
 
 /// [`exec`] of a command that reads `input` from stdin.
@@ -93,12 +135,12 @@ pub async fn exec_input(
     args: &[&str],
     env: &[(&str, &str)],
     input: &[u8],
-    stage: &'static str,
+    stage: GitStage,
     paths: &[String],
 ) -> Result<GitOutput, GitError> {
     cli.exec_with_input(repo, args, env, input)
         .await
-        .map_err(|_| failure(stage, "command_unavailable", None, paths))
+        .map_err(|_| failure(repo, stage, "command_unavailable", None, paths))
 }
 
 pub(crate) async fn read_paths(
@@ -106,10 +148,11 @@ pub(crate) async fn read_paths(
     repo: &Path,
     args: &[&str],
 ) -> Result<BTreeSet<String>, GitError> {
-    let out = exec(cli, repo, args, "prepare", &[]).await?;
+    let out = exec(cli, repo, args, GitStage::Prepare, &[]).await?;
     if out.exit_code != 0 {
         return Err(failure(
-            "prepare",
+            repo,
+            GitStage::Prepare,
             "inventory_failed",
             Some(out.exit_code),
             &[],
@@ -120,7 +163,7 @@ pub(crate) async fn read_paths(
         .filter(|p| !p.is_empty())
         .map(|p| {
             normalize_repo_relative(p.trim_end_matches('/'), RootMode::Reject)
-                .map_err(|_| failure("prepare", "invalid_path", None, &[]))
+                .map_err(|_| failure(repo, GitStage::Prepare, "invalid_path", None, &[]))
         })
         .collect()
 }
@@ -176,13 +219,14 @@ pub async fn resolve(
         .iter()
         .map(|path| {
             normalize_repo_relative(path, RootMode::Allow)
-                .map_err(|_| failure("prepare", "invalid_path", None, &[]))
+                .map_err(|_| failure(repo, GitStage::Prepare, "invalid_path", None, &[]))
         })
         .collect::<Result<Vec<_>, _>>()?;
     for scope in &scopes {
         if super::policy::contains(scope) {
             return Err(failure(
-                "prepare",
+                repo,
+                GitStage::Prepare,
                 "local_file_excluded",
                 None,
                 std::slice::from_ref(scope),
@@ -206,7 +250,7 @@ pub async fn resolve(
         cli,
         repo,
         &["rev-parse", "--verify", "HEAD"],
-        "prepare",
+        GitStage::Prepare,
         &[],
     )
     .await?;
@@ -252,7 +296,13 @@ pub async fn resolve(
                 .collect();
         }
         if matches.is_empty() && scope != "." && !scope.is_empty() && !repo.join(&scope).is_dir() {
-            return Err(failure("prepare", "target_unavailable", None, &[scope]));
+            return Err(failure(
+                repo,
+                GitStage::Prepare,
+                "target_unavailable",
+                None,
+                &[scope],
+            ));
         }
         for path in matches {
             if !super::policy::contains(&path) {
@@ -264,7 +314,7 @@ pub async fn resolve(
     // A Space checkout behind the project pointer is never staged over it.
     let backward = super::published_pointer::backward(cli, repo, &selected)
         .await
-        .map_err(|_| failure("prepare", "inventory_failed", None, &selected))?;
+        .map_err(|_| failure(repo, GitStage::Prepare, "inventory_failed", None, &selected))?;
     Ok(selected
         .into_iter()
         .filter(|path| !backward.contains(path))
@@ -288,7 +338,7 @@ pub async fn recorded(
         cli,
         repo,
         &["rev-parse", "--verify", "HEAD"],
-        "prepare",
+        GitStage::Prepare,
         &[],
     )
     .await?;
@@ -325,7 +375,7 @@ pub async fn prepare(
             cli,
             repo,
             &["ls-tree", "-r", "--name-only", "-z", "HEAD"],
-            "prepare",
+            GitStage::Prepare,
             &absent,
         )
         .await?;
@@ -336,7 +386,8 @@ pub async fn prepare(
         };
         if let Some(path) = absent.iter().find(|path| !tracked.contains(path.as_str())) {
             return Err(failure(
-                "prepare",
+                repo,
+                GitStage::Prepare,
                 "target_unavailable",
                 None,
                 std::slice::from_ref(path),
@@ -353,15 +404,16 @@ pub async fn prepare(
             &["update-index", "--force-remove", "-z", "--stdin"],
             &[],
             &nul_paths_input(&removed),
-            "prepare",
+            GitStage::Prepare,
             &removed,
         )
         .await?;
         if out.exit_code != 0 {
-            return Err(failure(
-                "prepare",
-                "command_failed",
-                Some(out.exit_code),
+            return Err(command_failure(
+                repo,
+                GitStage::Prepare,
+                &out,
+                None,
                 &removed,
             ));
         }
@@ -378,17 +430,12 @@ pub async fn prepare(
             &["add", "--pathspec-from-file=-", "--pathspec-file-nul"],
             &[],
             &literal_pathspec_input(&added),
-            "prepare",
+            GitStage::Prepare,
             &added,
         )
         .await?;
         if out.exit_code != 0 {
-            return Err(failure(
-                "prepare",
-                "command_failed",
-                Some(out.exit_code),
-                &added,
-            ));
+            return Err(command_failure(repo, GitStage::Prepare, &out, None, &added));
         }
     }
     verify(cli, repo, paths, &present).await?;
@@ -415,7 +462,13 @@ pub async fn verify(
         .cloned()
         .collect::<Vec<_>>();
     if !missing.is_empty() {
-        return Err(failure("verify", "paths_not_prepared", None, &missing));
+        return Err(failure(
+            repo,
+            GitStage::Verify,
+            "paths_not_prepared",
+            None,
+            &missing,
+        ));
     }
     let literals = literal_pathspecs(paths);
     let mut dirty = Vec::new();
@@ -430,10 +483,11 @@ pub async fn verify(
         ],
         &literals,
     ) {
-        let out = exec(cli, repo, &args, "verify", paths).await?;
+        let out = exec(cli, repo, &args, GitStage::Verify, paths).await?;
         if out.exit_code != 0 {
             return Err(failure(
-                "verify",
+                repo,
+                GitStage::Verify,
                 "verification_failed",
                 Some(out.exit_code),
                 paths,
@@ -447,7 +501,13 @@ pub async fn verify(
         );
     }
     if !dirty.is_empty() {
-        return Err(failure("verify", "paths_not_prepared", None, &dirty));
+        return Err(failure(
+            repo,
+            GitStage::Verify,
+            "paths_not_prepared",
+            None,
+            &dirty,
+        ));
     }
     Ok(())
 }
@@ -462,18 +522,19 @@ pub async fn commit_prepared(
     repo: &Path,
     paths: &[String],
     message: &str,
+    trace: &HookTrace,
 ) -> Result<GitOutput, GitError> {
     let pseudo = |name| async move {
         super::branch::read_pseudo_ref(cli, repo, name)
             .await
-            .map_err(|_| failure("commit", "command_unavailable", None, paths))
+            .map_err(|_| failure(repo, GitStage::Commit, "command_unavailable", None, paths))
     };
     let (index, merge, pick, revert) = tokio::join!(
         exec(
             cli,
             repo,
             &["rev-parse", "--git-path", "svode-save.index"],
-            "commit",
+            GitStage::Commit,
             paths,
         ),
         pseudo("MERGE_HEAD"),
@@ -483,17 +544,31 @@ pub async fn commit_prepared(
     let index = index?;
     let index = match index.stdout.lines().next() {
         Some(line) if index.exit_code == 0 => repo.join(line.trim()),
-        _ => return Err(failure("commit", "command_unavailable", None, paths)),
+        _ => {
+            return Err(failure(
+                repo,
+                GitStage::Commit,
+                "command_unavailable",
+                None,
+                paths,
+            ));
+        }
     };
     // Like `commit --only`, a partial commit never concludes a merge or a pick.
     // The pseudo-refs are read as refs: reftable keeps the pick ones out of `.git`.
     for state in [merge?, pick?, revert?] {
         if state != super::branch::PseudoRef::Absent {
-            return Err(failure("commit", "command_failed", None, paths));
+            return Err(failure(
+                repo,
+                GitStage::Commit,
+                "command_failed",
+                None,
+                paths,
+            ));
         }
     }
     let _ = std::fs::remove_file(&index);
-    let outcome = commit_through(cli, repo, &index, paths, message).await;
+    let outcome = commit_through(cli, repo, &index, paths, message, trace).await;
     let _ = std::fs::remove_file(&index);
     outcome
 }
@@ -504,6 +579,7 @@ async fn commit_through(
     index: &Path,
     paths: &[String],
     message: &str,
+    trace: &HookTrace,
 ) -> Result<GitOutput, GitError> {
     let index = index.to_string_lossy();
     let env = [("GIT_INDEX_FILE", index.as_ref())];
@@ -511,7 +587,7 @@ async fn commit_through(
         cli,
         repo,
         &["rev-parse", "--verify", "HEAD"],
-        "commit",
+        GitStage::Commit,
         paths,
     )
     .await?;
@@ -523,10 +599,17 @@ async fn commit_through(
     let mut steps = vec![
         cli.exec_redacted_with_env(repo, base, &env)
             .await
-            .map_err(|_| failure("commit", "command_unavailable", None, paths))?,
+            .map_err(|_| failure(repo, GitStage::Commit, "command_unavailable", None, paths))?,
     ];
     let set = paths.iter().map(String::as_str).collect::<HashSet<_>>();
-    let staged = exec(cli, repo, &["ls-files", "--stage", "-z"], "commit", paths).await?;
+    let staged = exec(
+        cli,
+        repo,
+        &["ls-files", "--stage", "-z"],
+        GitStage::Commit,
+        paths,
+    )
+    .await?;
     let mut entries = Vec::new();
     let mut kept = BTreeSet::new();
     for record in staged
@@ -556,7 +639,7 @@ async fn commit_through(
                 ],
                 &env,
                 &entries,
-                "commit",
+                GitStage::Commit,
                 paths,
             )
             .await?,
@@ -581,23 +664,18 @@ async fn commit_through(
                 ],
                 &env,
                 &nul_paths_input(removed),
-                "commit",
+                GitStage::Commit,
                 paths,
             )
             .await?,
         );
     }
     if let Some(step) = steps.iter().find(|step| step.exit_code != 0) {
-        return Err(failure(
-            "commit",
-            "command_failed",
-            Some(step.exit_code),
-            paths,
-        ));
+        return Err(command_failure(repo, GitStage::Commit, step, None, paths));
     }
-    cli.exec_redacted_with_env(repo, &["commit", "-m", message], &env)
+    cli.exec_redacted_with_env(repo, &["commit", "-m", message], &trace.env(&env))
         .await
-        .map_err(|_| failure("commit", "command_unavailable", None, paths))
+        .map_err(|_| failure(repo, GitStage::Commit, "command_unavailable", None, paths))
 }
 
 /// Whether the index differs from HEAD at `paths`, or anywhere without paths.
@@ -607,14 +685,20 @@ pub async fn has_changes(cli: &GitCli, repo: &Path, paths: &[String]) -> Result<
             cli,
             repo,
             &["diff", "--cached", "--quiet", "--no-ext-diff"],
-            "verify",
+            GitStage::Verify,
             paths,
         )
         .await?;
         return match out.exit_code {
             0 => Ok(false),
             1 => Ok(true),
-            code => Err(failure("verify", "verification_failed", Some(code), paths)),
+            code => Err(failure(
+                repo,
+                GitStage::Verify,
+                "verification_failed",
+                Some(code),
+                paths,
+            )),
         };
     }
     // Comparing the index with HEAD costs the same without paths, and every
@@ -630,13 +714,14 @@ pub async fn has_changes(cli: &GitCli, repo: &Path, paths: &[String]) -> Result<
             "--no-renames",
             "--no-ext-diff",
         ],
-        "verify",
+        GitStage::Verify,
         paths,
     )
     .await?;
     if out.exit_code != 0 {
         return Err(failure(
-            "verify",
+            repo,
+            GitStage::Verify,
             "verification_failed",
             Some(out.exit_code),
             paths,

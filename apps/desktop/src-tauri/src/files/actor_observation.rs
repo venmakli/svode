@@ -15,7 +15,9 @@ enum Message {
     Stop,
 }
 
-/// A Space owns the subscription; every signal is addressed to its resolved repository.
+/// A Space owns the subscription; every signal is addressed to its resolved
+/// repository. `invalidate` hears changes of the Human Actors inputs,
+/// `changed` changes of HEAD, refs or the index by any Git process.
 pub(crate) struct ActorObservation {
     sender: mpsc::Sender<Message>,
     thread: Option<JoinHandle<()>>,
@@ -35,6 +37,7 @@ impl ActorObservation {
         cli: GitCli,
         space: PathBuf,
         invalidate: impl Fn(&Path) + Send + 'static,
+        changed: impl Fn(&Path) + Send + 'static,
     ) -> Result<Self, AppError> {
         let (sender, receiver) = mpsc::channel();
         let events = sender.clone();
@@ -120,6 +123,7 @@ impl ActorObservation {
                         }
                         if let Some(previous) = sources.as_ref() {
                             invalidate(&previous.repository);
+                            changed(&previous.repository);
                         }
                         tracing::warn!("actor source resolution failed: {error}");
                         false
@@ -140,24 +144,33 @@ impl ActorObservation {
                         healthy = reconcile(&mut watcher, &mut sources);
                         if healthy && let Some(source) = &sources {
                             invalidate(&source.repository);
+                            changed(&source.repository);
                         }
                         continue;
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 };
                 let mut relevant = false;
+                let mut state = false;
                 let mut inspect = |message| match message {
                     Message::Stop => false,
                     Message::Event(event) => {
-                        relevant |= match event {
-                            Err(_) => true,
-                            Ok(event) => {
-                                !matches!(event.kind, notify::EventKind::Access(_))
-                                    && event.paths.iter().any(|path| {
-                                        sources.as_ref().is_none_or(|source| source.contains(path))
-                                    })
+                        let (actors, git) = match event {
+                            Err(_) => (true, true),
+                            Ok(event) if matches!(event.kind, notify::EventKind::Access(_)) => {
+                                (false, false)
                             }
+                            Ok(event) => event.paths.iter().fold((false, false), |seen, path| {
+                                let source = sources.as_ref();
+                                (
+                                    seen.0 || source.is_none_or(|source| source.contains(path)),
+                                    seen.1
+                                        || source.is_none_or(|source| source.changes_state(path)),
+                                )
+                            }),
                         };
+                        relevant |= actors;
+                        state |= git;
                         true
                     }
                 };
@@ -174,6 +187,9 @@ impl ActorObservation {
                     if std::time::Instant::now() >= deadline {
                         break;
                     }
+                }
+                if state && let Some(source) = &sources {
+                    changed(&source.repository);
                 }
                 if relevant {
                     if let Some(source) = &sources {

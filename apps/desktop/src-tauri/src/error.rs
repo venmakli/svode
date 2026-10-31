@@ -252,18 +252,19 @@ impl From<svode_core::git::GitError> for AppError {
                 seconds,
             },
             GitError::SaveFailed {
-                stage,
+                failure,
                 reason,
                 exit_code,
                 path_count,
                 path_sample,
             } => Self::GitSaveFailed {
-                stage,
+                failure,
                 reason,
                 exit_code,
                 path_count,
                 path_sample,
             },
+            GitError::SyncFailed(failure) => Self::GitSyncFailed(failure),
             GitError::Conflict(message) => Self::GitConflict(message),
             GitError::AuthRequired(message) => Self::GitAuthRequired(message),
             GitError::NoRemote => Self::GitNoRemote,
@@ -510,14 +511,17 @@ pub enum AppError {
     #[error("Git did not return the status of {repository} within {seconds} seconds")]
     GitStatusTimedOut { repository: String, seconds: u64 },
 
-    #[error("Git save failed during {stage}: {reason} ({path_count} paths)")]
+    #[error("Git save of {failure}: {reason} ({path_count} paths)")]
     GitSaveFailed {
-        stage: &'static str,
+        failure: svode_core::git::diagnostics::GitFailure,
         reason: &'static str,
         exit_code: Option<i32>,
         path_count: usize,
         path_sample: Option<String>,
     },
+
+    #[error("Git sync of {0} failed")]
+    GitSyncFailed(svode_core::git::diagnostics::GitFailure),
 
     #[error("Git conflict: {0}")]
     GitConflict(String),
@@ -630,6 +634,7 @@ impl AppError {
             AppError::GitPullBlocked { .. } => "git_pull_blocked",
             AppError::GitStatusTimedOut { .. } => "git_status_timed_out",
             AppError::GitSaveFailed { .. } => "git_save_failed",
+            AppError::GitSyncFailed(_) => "git_sync_failed",
             AppError::GitConflict(_) => "git_conflict",
             AppError::GitAuthRequired(_) => "git_auth_required",
             AppError::RepositoryAccessDenied { .. } => "repository_access_denied",
@@ -718,8 +723,11 @@ impl Serialize for AppError {
             AppError::GitStatusTimedOut { repository, seconds } => {
                 serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "repository": repository, "seconds": seconds }).serialize(serializer)
             }
-            AppError::GitSaveFailed { stage, reason, exit_code, path_count, path_sample } => {
-                serde_json::json!({ "kind": self.kind(), "stage": stage, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
+            AppError::GitSaveFailed { failure, reason, exit_code, path_count, path_sample } => {
+                serde_json::json!({ "kind": self.kind(), "repository": failure.repository, "stage": failure.stage, "cause": failure.cause, "reason": reason, "exitCode": exit_code, "pathCount": path_count, "pathSample": path_sample }).serialize(serializer)
+            }
+            AppError::GitSyncFailed(failure) => {
+                serde_json::json!({ "kind": self.kind(), "repository": failure.repository, "stage": failure.stage, "cause": failure.cause }).serialize(serializer)
             }
             AppError::RepositoryAccessDenied {
                 repository_id,
@@ -1040,6 +1048,32 @@ mod tests {
                 "seconds": 30,
             })
         );
+    }
+
+    #[test]
+    fn save_and_sync_failures_keep_the_core_transport_shape() {
+        use svode_core::git::diagnostics::{GitFailure, GitFailureCause, GitStage};
+        let failure = |stage| GitFailure {
+            repository: "Research".into(),
+            stage,
+            cause: Some(GitFailureCause::Hook),
+        };
+        for core in [
+            svode_core::git::GitError::SaveFailed {
+                failure: failure(GitStage::Commit),
+                reason: "command_failed",
+                exit_code: Some(1),
+                path_count: 1,
+                path_sample: Some("note.md".into()),
+            },
+            svode_core::git::GitError::SyncFailed(failure(GitStage::Push)),
+        ] {
+            let expected = serde_json::to_value(&core).unwrap();
+            let value = serde_json::to_value(AppError::from(core)).unwrap();
+            assert_eq!(value, expected);
+            assert_eq!(value["repository"], "Research");
+            assert_eq!(value["cause"], "hook");
+        }
     }
 
     #[test]

@@ -481,10 +481,17 @@ fn detect_version(git_path: &Path) -> Option<GitVersion> {
     GitVersion::parse(&String::from_utf8_lossy(&output.stdout))
 }
 
+/// Every Git process Svode starts runs without optional locks: a read never
+/// writes the index, so it neither blocks nor fails a concurrent Git process
+/// of the user, an agent or a terminal. A command whose operation needs a
+/// lock still takes it.
+const OPTIONAL_LOCKS: (&str, &str) = ("GIT_OPTIONAL_LOCKS", "0");
+
 fn apply_common_git_env(cmd: &mut Command) {
     // Do not inherit editor askpass helpers into backend IPC commands. Svode
     // needs git to fail fast with AuthRequired instead of waiting on another UI.
-    cmd.env("GIT_TERMINAL_PROMPT", "0")
+    cmd.env(OPTIONAL_LOCKS.0, OPTIONAL_LOCKS.1)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "")
         .env("SSH_ASKPASS", "")
         .env("SSH_ASKPASS_REQUIRE", "never")
@@ -495,9 +502,15 @@ fn apply_common_git_env(cmd: &mut Command) {
     }
 }
 
+/// The environment of [`GitCli`] for a blocking Git process.
+pub(crate) fn configure_std_process_env(cmd: &mut StdCommand) {
+    apply_common_std_git_env(cmd);
+}
+
 fn apply_common_std_git_env(cmd: &mut StdCommand) {
     // Keep sync and blocking detection paths consistent with async git calls.
-    cmd.env("GIT_TERMINAL_PROMPT", "0")
+    cmd.env(OPTIONAL_LOCKS.0, OPTIONAL_LOCKS.1)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_ASKPASS", "")
         .env("SSH_ASKPASS", "")
         .env("SSH_ASKPASS_REQUIRE", "never")
@@ -892,6 +905,134 @@ mod tests {
         assert_eq!(out.stdout, expected);
     }
 
+    /// Every way [`GitCli`] starts Git runs it without optional locks.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn every_git_process_runs_without_optional_locks() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let log = dir.path().join("log");
+        let recorder = dir.path().join("git");
+        svode_testkit::write_executable(
+            &recorder,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"${{GIT_OPTIONAL_LOCKS-unset}}\" >> '{}'\nprintf 'a\\0'\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        let cli = GitCli::for_test(recorder);
+        let repo = dir.path();
+        let timeout = std::time::Duration::from_secs(5);
+        cli.exec(repo, &["status"]).await.unwrap();
+        cli.exec_with_env(repo, &["status"], &[]).await.unwrap();
+        cli.exec_redacted(repo, &["status"]).await.unwrap();
+        cli.exec_redacted_with_env(repo, &["status"], &[])
+            .await
+            .unwrap();
+        cli.exec_with_input(repo, &["status"], &[], b"")
+            .await
+            .unwrap();
+        cli.exec_sensitive_with_stdin(repo, &["status"], &[], None, timeout)
+            .await
+            .unwrap();
+        cli.exec_no_dir(&["status"]).await.unwrap();
+        cli.exec_no_dir_with_stdin(&["status"], "").await.unwrap();
+        super::read_records(&cli, repo, &["status"], Some(timeout), |_| Ok(()))
+            .await
+            .unwrap();
+        super::read_bounded(&cli, repo, &["status"], 16)
+            .await
+            .unwrap();
+        super::write_within(&cli, repo, &["status"], timeout)
+            .await
+            .unwrap();
+        let mut blocking = std::process::Command::new(cli.git_path());
+        super::configure_std_process_env(&mut blocking);
+        blocking.current_dir(repo).output().unwrap();
+        let mut direct = tokio::process::Command::new(cli.git_path());
+        cli.configure_process_env(&mut direct);
+        direct.current_dir(repo).output().await.unwrap();
+
+        let recorded = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(recorded.lines().collect::<Vec<_>>(), vec!["0"; 13]);
+    }
+
+    /// Inventory of Git processes: production code starts Git only through
+    /// [`GitCli`] and the few owners below, each with its environment, so no
+    /// read takes optional locks.
+    #[test]
+    fn git_processes_start_only_through_the_cli_environment() {
+        let app = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        // Owner → how it applies the environment of every Git process.
+        let owners = [
+            ("crates/svode-core/src/git/cli.rs", "apply_common_git_env"),
+            (
+                "crates/svode-core/src/git/publication.rs",
+                "configure_std_process_env",
+            ),
+            ("crates/svode-core/src/page/dates.rs", "GIT_OPTIONAL_LOCKS"),
+            ("crates/svode-lfs/src/download.rs", "GIT_OPTIONAL_LOCKS"),
+            (
+                "apps/desktop/src-tauri/src/git/clone.rs",
+                "configure_process_env",
+            ),
+        ];
+        let mut found = Vec::new();
+        let mut stack = vec![app.join("crates"), app.join("apps/desktop/src-tauri/src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if !matches!(name.as_str(), "target" | "tests" | "node_modules" | "gen") {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                if !name.ends_with(".rs") || name.ends_with("tests.rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                // Inline test modules sit after the production code.
+                let production = source.split("#[cfg(test)]\nmod tests {").next().unwrap();
+                let starts_git = production.lines().any(|line| {
+                    line.split_once("Command::new(")
+                        .is_some_and(|(before, program)| {
+                            // `ToolCommand::new(…)` and the like start no process.
+                            !before.ends_with(|c: char| c.is_alphanumeric() || c == '_')
+                                && (program.to_ascii_lowercase().contains("git")
+                                    || (program.starts_with("binary")
+                                        && production.contains("detect_git_binary")))
+                        })
+                });
+                if starts_git {
+                    let relative = path
+                        .strip_prefix(&app)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    found.push((relative, production.to_string()));
+                }
+            }
+        }
+        found.sort();
+        let mut names = found
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        let mut expected = owners.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+        names.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(
+            names, expected,
+            "a new Git process owner must apply the GitCli environment"
+        );
+        for (name, marker) in owners {
+            let (_, source) = found.iter().find(|(found, _)| found == name).unwrap();
+            assert!(source.contains(marker), "{name} does not apply {marker}");
+        }
+    }
+
     #[test]
     fn parses_git_lfs_version_prefix() {
         assert_eq!(
@@ -936,7 +1077,6 @@ pub async fn read_bounded(
     command
         .args(args)
         .current_dir(repo)
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -962,7 +1102,7 @@ pub async fn read_bounded(
     Ok(result)
 }
 
-/// Run a Git read without optional locks and hand each NUL-terminated record of
+/// Run a Git read and hand each NUL-terminated record of
 /// its output to `record` as it arrives, so no output size is ever buffered.
 /// Returns whether Git succeeded, or `None` when `timeout` passed first; the
 /// process is killed then and on a `record` error.
@@ -979,7 +1119,6 @@ pub async fn read_records(
     command
         .args(args)
         .current_dir(repo)
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

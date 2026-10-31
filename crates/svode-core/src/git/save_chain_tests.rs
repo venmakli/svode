@@ -524,7 +524,12 @@ async fn a_refused_commit_returns_the_chain_and_a_retry_commits_it() {
         .expect_err("hook refusal");
 
     assert!(
-        matches!(error, GitError::SaveFailed { stage, .. } if stage == "commit"),
+        matches!(
+            &error,
+            GitError::SaveFailed { failure, .. }
+                if failure.stage == super::diagnostics::GitStage::Commit
+                    && failure.cause == Some(super::diagnostics::GitFailureCause::Hook)
+        ),
         "{error:?}"
     );
     assert_eq!(fixture.head().await, before);

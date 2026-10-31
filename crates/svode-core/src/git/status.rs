@@ -202,7 +202,7 @@ async fn read_status(
         }
         (None, timeout) => {
             return Err(GitError::StatusTimedOut {
-                repository: repository_name(space_dir),
+                repository: super::diagnostics::repository_name(space_dir),
                 seconds: timeout.unwrap_or_default().as_secs(),
             });
         }
@@ -252,22 +252,6 @@ fn limit_files(status: &mut GitStatus, limit: usize) {
         status.files = files;
     }
     status.omitted_files = status.total_files - status.files.len();
-}
-
-/// The repository a status error names: its Space or project name, else its
-/// folder name, never an absolute path.
-fn repository_name(space_dir: &Path) -> String {
-    crate::storage::config::read_space_assets_config(space_dir)
-        .map(|config| config.name)
-        .ok()
-        .filter(|name| !name.trim().is_empty())
-        .or_else(|| {
-            std::fs::canonicalize(space_dir).ok().and_then(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-            })
-        })
-        .unwrap_or_else(|| "repository".into())
 }
 
 /// Git folding names on a case-insensitive file system reports nothing for a
