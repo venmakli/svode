@@ -211,6 +211,11 @@ export function getGitUncommittedGroups(input: {
   return invokeCommand<GitUncommittedGroupsDto>("git_uncommitted_groups", input);
 }
 
+/** The Git rules for agents, as the guide and the Svode skill state them. */
+export function getGitAgentRules(): Promise<string> {
+  return invokeCommand<string>("git_agent_rules");
+}
+
 /** The conflicted file at `path` (relative to `spacePath`) with its places. */
 export function getGitConflictFile(input: {
   spacePath: string;

@@ -22,6 +22,7 @@ import {
   type GitPublicationBlock,
   type GitRemoteAuthCredentials,
   type GitStatus,
+  type GitSyncOutcome,
   type GitSyncStop,
   type GitUnpushedCommit,
 } from "../model";
@@ -67,7 +68,11 @@ export interface GitSyncWidget {
   authSaving: boolean;
   authError: string | null;
   openDialog: () => Promise<void>;
-  syncNow: () => Promise<void>;
+  /**
+   * An explicit sync; resolves its outcome, or null when it did not run or
+   * the Dialog moved to another repository meanwhile.
+   */
+  syncNow: () => Promise<GitSyncOutcome | null>;
   /** Ask for the remote sign-in of this repository. */
   requestAuth: (challenge: GitAuthChallenge) => void;
   /** Finish the Dialog like a successful sync. */
@@ -302,22 +307,23 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     setOutgoingList(null);
   }, []);
 
-  const syncNow = useCallback(async () => {
-    if (!spacePath) return;
+  const syncNow = useCallback(async (): Promise<GitSyncOutcome | null> => {
+    if (!spacePath) return null;
     const identity = active.current;
 
     const outcome = await syncGitNow(spacePath);
-    if (active.current !== identity) return;
+    if (active.current !== identity) return null;
     if (outcome.type === "AuthRequired") {
       if (outcome.challenge) requestAuth(outcome.challenge);
       else notifyGitSyncOutcome(outcome);
-      return;
+      return outcome;
     }
     notifyGitSyncOutcome(outcome);
     if (isFullSyncSuccess(outcome)) {
       toast.success(m.git_sync_success());
       closeAfterSync();
     }
+    return outcome;
   }, [closeAfterSync, requestAuth, spacePath]);
 
   const setAuthOpen = useCallback((nextOpen: boolean) => {

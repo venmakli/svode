@@ -591,6 +591,13 @@ pub async fn git_uncommitted_groups(
     .await?)
 }
 
+/// The Git rules for agents (Stage 11 1.D) that «Разрешить с агентом»
+/// puts into its request, in the words of the guide and the Svode skill.
+#[tauri::command]
+pub fn git_agent_rules() -> &'static str {
+    svode_tools::catalog::GIT_RULES
+}
+
 /// Close open content groups of automatic versions (Stage 11 1.E): the
 /// group at `left` of the Space the user left, or with no `left` every
 /// group of the given Spaces, when the window loses focus.

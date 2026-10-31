@@ -101,7 +101,7 @@ if (process.env.SVODE_GIT_LIFECYCLE_DOM !== "1") {
     };
     try {
       await render("/project/child");
-      let pending!: Promise<void>;
+      let pending!: Promise<unknown>;
       await act(async () => {
         pending = widget.syncNow();
       });

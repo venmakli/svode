@@ -1,4 +1,5 @@
 import {
+  getGitAgentRules,
   getGitConflictFile,
   getGitConflictKinds,
   resolveGitConflictFile as resolvePlatformGitConflictFile,
@@ -58,4 +59,12 @@ export function resolveGitConflictFile(
   return runSync(spacePath, () =>
     resolvePlatformGitConflictFile({ spacePath, path, resolution }),
   );
+}
+
+/**
+ * The Git rules for agents (1.D) in the words of the guide and the Svode
+ * skill, which «Разрешить с агентом» puts into its request.
+ */
+export function readGitAgentRules(): Promise<string> {
+  return getGitAgentRules();
 }

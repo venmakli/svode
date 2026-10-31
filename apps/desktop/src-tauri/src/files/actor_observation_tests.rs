@@ -338,4 +338,60 @@ mod tests {
         wait("checkout");
         drop(observation);
     }
+
+    /// An agent or the terminal finishing a merge Svode stopped at (Stage 11
+    /// 1.12) signals a state change without window focus, so the Dialog
+    /// reads the repository again and its merge stop clears.
+    #[tokio::test]
+    async fn a_merge_finished_outside_svode_signals_a_state_change() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let repo = init_repo("Root", "root@example.test");
+        commit(repo.path(), "page.md", "base\n", "base");
+        git(repo.path(), &["checkout", "--quiet", "-b", "incoming"]);
+        commit(repo.path(), "page.md", "incoming\n", "incoming");
+        git(repo.path(), &["checkout", "--quiet", "-"]);
+        commit(repo.path(), "page.md", "mine\n", "mine");
+        let merge = Command::new("git")
+            .args(["merge", "--no-edit", "incoming"])
+            .current_dir(repo.path())
+            .output()
+            .expect("run git merge");
+        assert!(!merge.status.success(), "the merge must stop at a conflict");
+        assert!(repo.path().join(".git/MERGE_HEAD").exists());
+
+        let expected = fs::canonicalize(repo.path()).unwrap();
+        let cli = GitCli::detect().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let observation = ActorObservation::start(
+            cli,
+            repo.path().to_path_buf(),
+            |_| {},
+            move |repository| {
+                let _ = tx.send(repository.to_path_buf());
+            },
+        )
+        .unwrap();
+        let drain = || while rx.recv_timeout(Duration::from_millis(500)).is_ok() {};
+        let wait = |operation: &str| {
+            assert_eq!(
+                rx.recv_timeout(Duration::from_secs(8))
+                    .unwrap_or_else(|_| panic!("no state change after {operation}")),
+                expected
+            );
+            drain();
+        };
+        drain();
+
+        // Resolving the path changes the index; the merge commit then ends
+        // the merge with no other change of the working copy.
+        fs::write(repo.path().join("page.md"), "mine\nincoming\n").unwrap();
+        git(repo.path(), &["add", "page.md"]);
+        wait("resolving the path");
+        git(repo.path(), &["commit", "--quiet", "--no-edit"]);
+        assert!(!repo.path().join(".git/MERGE_HEAD").exists());
+        wait("the merge commit");
+        drop(observation);
+    }
 }

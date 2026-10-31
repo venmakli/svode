@@ -39,9 +39,11 @@ import { isParentPointerPending } from "../model/publication";
 import { syncStopBlocksSync } from "../model/sync-stop";
 import { conflictFileOpener } from "../model/conflict-navigation";
 import { useConflictPathNames } from "../hooks/use-conflict-path-names";
+import { useResolveWithAgent } from "../hooks/use-resolve-with-agent";
 import { useRepositoryAccess } from "../hooks/use-repository-access";
 import { useRepositoryAccessActivation } from "../hooks/use-repository-access-activation";
 import { GitRemoteAuthDialog } from "./git-remote-auth-dialog";
+import { GitResolveWithAgentButton } from "./git-resolve-with-agent-button";
 import { GitSyncAbortButton } from "./git-sync-abort-button";
 import {
   gitServiceMergedMessage,
@@ -104,6 +106,7 @@ export function GitSyncStatusWidget({
     sync.stop?.kind === "conflict",
   );
   const nameOf = useConflictPathNames(sync.repositoryPath);
+  const resolveWithAgent = useResolveWithAgent(sync, nameOf);
   useRepositoryAccessActivation(sync.spacePath, activateAccess);
   const access = useRepositoryAccess(sync.spacePath);
   const presentation = repositoryAccessPresentation(access);
@@ -395,6 +398,12 @@ export function GitSyncStatusWidget({
                   </>
                 )}
               </p>
+            )}
+            {sync.visible && resolveWithAgent.shown && (
+              <GitResolveWithAgentButton
+                agent={resolveWithAgent}
+                disabled={busy || abort.aborting}
+              />
             )}
             {sync.visible && stop?.kind === "conflict" && (
               <GitSyncAbortButton
