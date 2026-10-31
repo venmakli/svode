@@ -308,6 +308,8 @@ pub async fn update_page_field(
         |paths| require_planned_mutation_paths(&app, &authorization_space, paths),
     )
     .await?;
+    // An editor edit during an agent turn keeps its own group (1.E).
+    svode_core::git::versions::turns::editor_wrote(&outcome.changed_paths);
     if outcome.page.path != file_path {
         crate::navigation::artifact_moved(&app, &space, &file_path, &outcome.page.path);
     }
@@ -395,7 +397,11 @@ pub(super) async fn write_page_body_shared(
         },
     )
     .await
-    .map(|outcome| outcome.result)
+    .map(|outcome| {
+        // An editor edit during an agent turn keeps its own group (1.E).
+        svode_core::git::versions::turns::editor_wrote(&outcome.changed_paths);
+        outcome.result
+    })
 }
 
 #[tauri::command]

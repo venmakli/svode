@@ -165,6 +165,10 @@ pub fn run() {
                 .sync(app.handle());
             #[cfg(target_os = "macos")]
             macos_fullscreen::install(app.handle());
+            // ACP turns in a repository hold its content versions (Stage 11 1.E).
+            app.state::<agent_runtime::AgentRuntimeState>()
+                .runtime()
+                .observe_turns(Arc::new(git::turns::AcpTurns::new(app.handle().clone())));
             agent_sessions::follow_acp_catalog_changes(
                 &app.state::<agent_sessions::AgentSessionsState>(),
                 app.state::<agent_runtime::AgentRuntimeState>()

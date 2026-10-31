@@ -22,6 +22,7 @@ use svode_agents::custom::CustomAgentDefinition;
 use svode_agents::identity::SessionKey;
 use svode_agents::native_settings::{NativeSessionSettings, SessionValues, session_values};
 use svode_agents::prompt::PromptPart;
+use svode_agents::turns::TurnMark;
 use svode_agents::writer::{ExternalLiveness, UnknownLiveness, Writer, WriterRefusal};
 use svode_agents::{
     AcpLaunch, AgentCheck, AgentInfo, AgentRuntime, AgentRuntimeError, ConnectionLease,
@@ -347,13 +348,8 @@ impl AgentConnections {
         });
     }
 
-    /// Creates a session of `agent` in `cwd` with the draft's setting values
-    /// and sends its first prompt: the first send of a new session draft.
-    /// A session the draft `hold` created for this agent and `cwd` takes the
-    /// prompt instead, with the values the agent confirmed in the draft; if
-    /// it is gone, a new one is created. The session enters the catalogue
-    /// once the prompt is accepted; a prompt linking a missing file creates
-    /// no session.
+    /// [`Self::start_session_with`] of a prompt without a mark.
+    #[cfg(test)]
     pub async fn start_session(
         &self,
         agent: &str,
@@ -362,11 +358,32 @@ impl AgentConnections {
         prompt: &[PromptPart],
         hold: Option<u64>,
     ) -> Result<SessionStart, AgentRuntimeError> {
+        self.start_session_with(agent, cwd, settings, prompt, hold, None)
+            .await
+    }
+
+    /// Creates a session of `agent` in `cwd` with the draft's setting values
+    /// and sends its first prompt: the first send of a new session draft.
+    /// A session the draft `hold` created for this agent and `cwd` takes the
+    /// prompt instead, with the values the agent confirmed in the draft; if
+    /// it is gone, a new one is created. The session enters the catalogue
+    /// once the prompt is accepted; a prompt linking a missing file creates
+    /// no session. The first turn carries `mark`, the request of the draft
+    /// such as «Зафиксировать с агентом» (Stage 11 1.E).
+    pub async fn start_session_with(
+        &self,
+        agent: &str,
+        cwd: &Path,
+        settings: &[SettingValue],
+        prompt: &[PromptPart],
+        hold: Option<u64>,
+        mark: Option<TurnMark>,
+    ) -> Result<SessionStart, AgentRuntimeError> {
         svode_agents::prompt::check(prompt)?;
         if let Some(hold) = hold
             && let Some(session) = self.draft_session_for(hold, agent, cwd)
         {
-            match self.runtime.prompt(&session, prompt) {
+            match self.runtime.prompt_with(&session, prompt, mark) {
                 Ok(turn_id) => {
                     if let Some(draft) = self.drafts.lock().unwrap().get_mut(&hold) {
                         draft.session = None;
@@ -393,7 +410,7 @@ impl AgentConnections {
             .runtime
             .new_session(lease.connection(), cwd, settings)
             .await?;
-        let turn_id = self.runtime.prompt(&session, prompt)?;
+        let turn_id = self.runtime.prompt_with(&session, prompt, mark)?;
         Ok(SessionStart::Started { session, turn_id })
     }
 

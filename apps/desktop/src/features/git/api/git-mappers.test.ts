@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import { toSyncResult } from "./git-mappers";
+import {
+  serviceMergedFromResult,
+  syncStopFromResult,
+} from "../model/sync-stop";
 
 test("toSyncResult maps backend camelCase sync results", () => {
   expect(toSyncResult({ type: "success" })).toEqual({ type: "Success" });
@@ -111,4 +115,11 @@ test("toSyncResult keeps the files and kinds of a background stop", () => {
   expect(toSyncResult({ type: "explicitSyncRequired" })).toEqual({
     type: "ExplicitSyncRequired",
   });
+});
+
+test("a sync during an agent turn fetches and reports the integration after it, not a stop", () => {
+  const result = toSyncResult({ type: "integrationAfterTurn" });
+  expect(result).toEqual({ type: "IntegrationAfterTurn" });
+  expect(syncStopFromResult(result)).toBe(undefined);
+  expect(serviceMergedFromResult(result)).toBe(undefined);
 });

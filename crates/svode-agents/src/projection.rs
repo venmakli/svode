@@ -256,6 +256,11 @@ impl Projection {
         Some(())
     }
 
+    /// Cancel was requested for the active turn.
+    pub(crate) fn cancel_requested(&self) -> bool {
+        self.snapshot.turn.phase == TurnPhase::Cancelling
+    }
+
     pub(crate) fn cancelling(&mut self) {
         if self.snapshot.turn.phase == TurnPhase::Running {
             let turn = self.snapshot.turn.turn_id.clone();

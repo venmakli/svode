@@ -10,6 +10,7 @@ use svode_agents::adapters::LaunchUnavailable;
 use svode_agents::identity::SessionKey;
 use svode_agents::interaction::{AnswerOutcome, InteractionAnswer};
 use svode_agents::prompt::PromptPart;
+use svode_agents::turns::TurnMark;
 use svode_agents::{AgentCheck, SettingValue};
 use tauri::ipc::Channel;
 use tauri::{State, Webview};
@@ -67,14 +68,17 @@ pub async fn agent_runtime_media(
     Ok(state.runtime().media(&session, &item_id, &segment_id))
 }
 
-/// Returns the turn id once the runtime accepted the prompt.
+/// Returns the turn id once the runtime accepted the prompt. `mark` is the
+/// request of the composer draft the prompt was sent from, such as
+/// «Зафиксировать с агентом» (Stage 11 1.E); a plain prompt has none.
 #[tauri::command]
 pub async fn agent_runtime_prompt(
     state: State<'_, AgentRuntimeState>,
     session: SessionKey,
     prompt: Vec<PromptPart>,
+    mark: Option<TurnMark>,
 ) -> Result<String, AppError> {
-    Ok(state.runtime().prompt(&session, &prompt)?)
+    Ok(state.runtime().prompt_with(&session, &prompt, mark)?)
 }
 
 /// Changes a declared setting of the session (C6); returns once the agent
@@ -170,12 +174,13 @@ pub async fn agent_runtime_start_session(
     settings: Vec<SettingValue>,
     prompt: Vec<PromptPart>,
     hold: Option<u64>,
+    mark: Option<TurnMark>,
 ) -> Result<StartedSession, AppError> {
     session_dir(&cwd)?;
     let source = AgentId::parse(&agent)
         .map_err(|error| AppError::General(format!("invalid agent id: {error}")))?;
     match connections
-        .start_session(&agent, &cwd, &settings, &prompt, hold)
+        .start_session_with(&agent, &cwd, &settings, &prompt, hold, mark)
         .await?
     {
         SessionStart::Started { session, turn_id } => {

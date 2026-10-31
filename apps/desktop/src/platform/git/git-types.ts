@@ -91,7 +91,12 @@ export type SyncResultDto =
       service?: GitServiceFileDto[];
     }
   /** Diverged on a Git without merges in memory: only an explicit sync merges. */
-  | { type: "explicitSyncRequired" };
+  | { type: "explicitSyncRequired" }
+  /**
+   * An agent turn or a Routine run is in progress: the incoming changes
+   * were fetched and are integrated after the turn; nothing was published.
+   */
+  | { type: "integrationAfterTurn" };
 
 /** The kind of a conflicted path, as the person resolves it. */
 export type GitConflictKindDto =

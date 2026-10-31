@@ -120,6 +120,10 @@ async function runSync(
       case "ExplicitSyncRequired":
         // Nothing changed in the repository; the stop says why.
         return result;
+      case "IntegrationAfterTurn":
+        // Fetched only: the counters show the incoming changes.
+        void refreshGitRemoteStatus(spacePath).catch(() => {});
+        return result;
       case "Resolved":
         await refreshGitStatus(spacePath);
         return result;

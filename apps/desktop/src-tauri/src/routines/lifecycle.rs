@@ -50,6 +50,9 @@ pub(crate) struct RoutineRunLifecycleSink {
     space_dir: PathBuf,
     routine_run_id: String,
     invalidation: Option<(tauri::AppHandle, RoutineInvalidationPayload)>,
+    /// The turn of the run's repository (Stage 11 1.E «Рутины»), ended by
+    /// the run's outcome.
+    turn: Mutex<Option<String>>,
 }
 
 impl RoutineRunLifecycleSink {
@@ -68,6 +71,7 @@ impl RoutineRunLifecycleSink {
             space_dir,
             routine_run_id,
             invalidation: None,
+            turn: Mutex::new(None),
         }
     }
 
@@ -79,6 +83,7 @@ impl RoutineRunLifecycleSink {
         routine_run_id: String,
         app: tauri::AppHandle,
         owner: &ResolvedRoutineOwner,
+        turn: String,
     ) -> Self {
         Self {
             pool: Mutex::new(pool),
@@ -87,6 +92,15 @@ impl RoutineRunLifecycleSink {
             space_dir,
             routine_run_id,
             invalidation: Some((app, RoutineInvalidationPayload::from_owner(owner))),
+            turn: Mutex::new(Some(turn)),
+        }
+    }
+
+    /// The run ended: so does its turn, once.
+    fn end_turn(&self) {
+        let turn = self.turn.lock().ok().and_then(|mut turn| turn.take());
+        if let (Some((app, _)), Some(turn)) = (&self.invalidation, turn) {
+            crate::git::turns::end_later(app, turn);
         }
     }
 
@@ -118,6 +132,7 @@ impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
         &self,
         evidence: &AgentTerminalOutcomeEvidence,
     ) -> Result<(), AppError> {
+        self.end_turn();
         let pool = self.current_pool()?;
         tauri::async_runtime::block_on(record_terminal_outcome(
             &pool,

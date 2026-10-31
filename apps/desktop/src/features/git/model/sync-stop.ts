@@ -101,6 +101,9 @@ export function syncStopFromResult(
     case "NoRemote":
       // A background sync skipped by policy never reaches the preflight.
       return undefined;
+    case "IntegrationAfterTurn":
+      // Not a stop: the integration runs after the agent's turn.
+      return undefined;
   }
 }
 
@@ -123,6 +126,7 @@ export function serviceMergedFromResult(
       return [];
     case "AuthRequired":
     case "NoRemote":
+    case "IntegrationAfterTurn":
       return undefined;
   }
 }

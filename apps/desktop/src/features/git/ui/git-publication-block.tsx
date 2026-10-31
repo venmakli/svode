@@ -163,6 +163,8 @@ function stepFailureText(step: GitSpacePublicationStep): string {
       return m.git_sync_stop_incoming_title();
     case "ExplicitSyncRequired":
       return m.git_sync_stop_explicit_title();
+    case "IntegrationAfterTurn":
+      return m.git_sync_integration_after_turn();
     default:
       return m.git_sync_failed();
   }

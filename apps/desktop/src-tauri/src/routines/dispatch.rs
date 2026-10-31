@@ -244,6 +244,10 @@ pub(crate) async fn scheduled_dispatch_ready(
         .is_ok()
 }
 
+/// One dispatch of a Routine as a turn of its repository (Stage 11 1.E
+/// «Рутины»): the groups close before it, and its changes until the run's
+/// recorded outcome land as one version. A dispatch that does not start a
+/// run ends its turn at once.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn dispatch_routine(
     app: &AppHandle,
@@ -255,6 +259,41 @@ pub(super) async fn dispatch_routine(
     routine_stores: &RoutineStoreState,
     index_state: &IndexState,
     terminal_manager: &TerminalManager,
+) -> Result<RoutineDispatchResult, AppError> {
+    let repository = host::mutation_repository(git_state, &owner).await?;
+    let turn = crate::git::turns::routine_began(app, &repository).await;
+    let result = dispatch_in_turn(
+        app,
+        owner,
+        routine_id,
+        dispatch_kind,
+        git_state,
+        access_state,
+        routine_stores,
+        index_state,
+        terminal_manager,
+        &turn,
+    )
+    .await;
+    // A started run ends its turn with its recorded outcome.
+    if !matches!(result, Ok(RoutineDispatchResult::Started { .. })) {
+        crate::git::turns::end_later(app, turn);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_in_turn(
+    app: &AppHandle,
+    owner: ResolvedRoutineOwner,
+    routine_id: String,
+    dispatch_kind: DispatchKind,
+    git_state: &GitState,
+    access_state: &RepositoryAccessState,
+    routine_stores: &RoutineStoreState,
+    index_state: &IndexState,
+    terminal_manager: &TerminalManager,
+    turn: &str,
 ) -> Result<RoutineDispatchResult, AppError> {
     let repository = host::mutation_repository(git_state, &owner).await?;
     let lock = git_state.get_lock(&repository).await;
@@ -487,6 +526,7 @@ pub(super) async fn dispatch_routine(
             routine_run_id.clone(),
             app.clone(),
             &owner,
+            turn.to_owned(),
         )),
     };
     let registry = AdapterRuntimeRegistry;

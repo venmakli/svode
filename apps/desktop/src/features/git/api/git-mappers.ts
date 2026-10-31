@@ -88,6 +88,8 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
       };
     case "explicitSyncRequired":
       return { type: "ExplicitSyncRequired" };
+    case "integrationAfterTurn":
+      return { type: "IntegrationAfterTurn" };
     default:
       throw new Error(`Unknown git sync result: ${JSON.stringify(dto)}`);
   }

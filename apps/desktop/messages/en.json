@@ -951,6 +951,7 @@
   "git_sync_stop_incoming_description": "Incoming changes overlap with yours, so Svode did not start a merge and published nothing. Keep working; when you are ready, sync and resolve the conflicts.",
   "git_sync_stop_incoming_action": "Sync and resolve",
   "git_sync_stop_explicit_title": "Incoming changes wait for a sync",
+  "git_sync_integration_after_turn": "Changes received. They are integrated after the agent's turn.",
   "git_sync_stop_explicit_description": "Your commits and your colleagues' have diverged. This Git version cannot check a merge in advance, so background sync only moves forward. Sync to merge the changes.",
   "git_conflict_kind_page_text": "page text",
   "git_conflict_kind_page_properties": "page properties",

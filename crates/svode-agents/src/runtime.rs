@@ -38,6 +38,7 @@ use crate::process::{self, ProcessTree};
 use crate::projection::Projection;
 use crate::prompt::{self, PromptPart};
 use crate::status::{InteractionKind, StopReason};
+use crate::turns::{TurnBoundary, TurnEnded, TurnMark, TurnObserver};
 use crate::writer::{
     ExternalLiveness, UnknownLiveness, Writer, WriterClaim, WriterRefusal, WriterRegistry,
 };
@@ -311,6 +312,8 @@ struct Inner {
     slots: Mutex<HashMap<AcpLaunch, Slot>>,
     /// What each agent declared in its last `initialize` of this process.
     declared: Mutex<HashMap<String, AgentInfo>>,
+    /// The host that hears turn boundaries.
+    turns: Mutex<Option<Arc<dyn TurnObserver>>>,
 }
 
 type Slot = Arc<tokio::sync::Mutex<Option<ConnectionId>>>;
@@ -1286,6 +1289,12 @@ impl AgentRuntime {
         Ok(())
     }
 
+    /// The host that hears the start and end of every turn this runtime
+    /// drives from now on (Stage 11 1.E «Ходы агентов»).
+    pub fn observe_turns(&self, observer: Arc<dyn TurnObserver>) {
+        *self.inner.turns.lock().unwrap() = Some(observer);
+    }
+
     /// Accepts a prompt — text and links to files in order — and returns the
     /// turn id at once; the runtime owns the call, so a lost caller does not
     /// lose the prompt. A link to a missing file is refused before anything
@@ -1294,6 +1303,18 @@ impl AgentRuntime {
         &self,
         key: &SessionKey,
         parts: &[PromptPart],
+    ) -> Result<String, AgentRuntimeError> {
+        self.prompt_with(key, parts, None)
+    }
+
+    /// [`Self::prompt`] whose turn carries `mark` to the turn observer. The
+    /// prompt reaches the agent after the observer prepared for the turn; a
+    /// cancel requested meanwhile ends the turn `cancelled` without it.
+    pub fn prompt_with(
+        &self,
+        key: &SessionKey,
+        parts: &[PromptPart],
+        mark: Option<TurnMark>,
     ) -> Result<String, AgentRuntimeError> {
         let session = self.session(key)?;
         session.connection.require_open()?;
@@ -1323,21 +1344,40 @@ impl AgentRuntime {
         self.inner.enforce_detail_bound();
         let request = acp::prompt_request(&session.acp_id, &blocks);
         let turn = turn_id.clone();
+        let observer = self.inner.turns.lock().unwrap().clone();
+        let boundary = TurnBoundary {
+            session: key.clone(),
+            turn_id: turn_id.clone(),
+            cwd: session.cwd.clone(),
+            mark,
+        };
         tokio::spawn(async move {
-            let (reason, error) = match session
-                .connection
-                .call(acp::SESSION_PROMPT, request, None)
-                .await
-            {
-                Ok(response) => match normalize::stop_reason(response) {
-                    Ok(reason) => (reason, None),
-                    Err(message) => {
-                        session.connection.set_state(ConnectionState::Degraded);
-                        (StopReason::Error, Some(message))
-                    }
-                },
-                Err(AgentRuntimeError::ConnectionClosed) => (StopReason::Interrupted, None),
-                Err(error) => (StopReason::Error, Some(error.to_string())),
+            let _ended = observer.clone().map(|observer| TurnEnded {
+                observer,
+                turn: boundary.clone(),
+            });
+            if let Some(observer) = &observer {
+                observer.began(&boundary).await;
+            }
+            let cancelled = session.projection.lock().unwrap().cancel_requested();
+            let (reason, error) = if cancelled {
+                (StopReason::Cancelled, None)
+            } else {
+                match session
+                    .connection
+                    .call(acp::SESSION_PROMPT, request, None)
+                    .await
+                {
+                    Ok(response) => match normalize::stop_reason(response) {
+                        Ok(reason) => (reason, None),
+                        Err(message) => {
+                            session.connection.set_state(ConnectionState::Degraded);
+                            (StopReason::Error, Some(message))
+                        }
+                    },
+                    Err(AgentRuntimeError::ConnectionClosed) => (StopReason::Interrupted, None),
+                    Err(error) => (StopReason::Error, Some(error.to_string())),
+                }
             };
             // Updates the agent sent before its answer belong to this turn;
             // apply all of them before the turn ends.

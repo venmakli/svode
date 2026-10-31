@@ -3,7 +3,8 @@
 //! Which groups closed and their commits belong to
 //! `svode_core::git::versions::auto`. A refused background commit becomes
 //! the commit stop of its repository and is tried again only at the next
-//! closing, never in a loop.
+//! closing, never in a loop. Agent turns and Routine runs hold the
+//! versions of their repository ([`super::turns`]).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -242,6 +243,17 @@ async fn run(app: &AppHandle, repo: PathBuf, closing: Closing) {
         message_language(app),
     )
     .await;
+    settle(app, repo, result);
+}
+
+/// What versions of `repo` made by a closing or a turn did: a refused
+/// commit becomes the commit stop, a success ends it, and open groups plan
+/// their next check.
+pub(crate) fn settle(
+    app: &AppHandle,
+    repo: PathBuf,
+    result: Result<AutoVersions, svode_core::git::GitError>,
+) {
     let (next, error) = match result {
         Ok(AutoVersions::Done { next, .. }) => (next, None),
         Ok(AutoVersions::Off | AutoVersions::Held(_)) => return,

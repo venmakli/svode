@@ -45,7 +45,7 @@ pub async fn agent_sessions_list(
     let connections = connections.inner().clone();
     let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
-    reads
+    let result = reads
         .run(
             project_key,
             AgentSessionsReadKind::Discovery,
@@ -64,7 +64,11 @@ pub async fn agent_sessions_list(
                 Ok(result)
             },
         )
-        .await
+        .await;
+    if let Ok(result) = &result {
+        crate::git::turns::observe_sessions(&app, &result.sessions);
+    }
+    result
 }
 
 /// The sessions of a project no window works with (Stage 10 `09`, invariant
@@ -126,7 +130,7 @@ pub async fn agent_sessions_refresh(
     let connections = connections.inner().clone();
     let project_key = root.to_string_lossy().into_owned();
     let reads = state.reads.clone();
-    reads
+    let result = reads
         .run(
             project_key,
             AgentSessionsReadKind::FullRefresh,
@@ -145,7 +149,11 @@ pub async fn agent_sessions_refresh(
                 Ok(result)
             },
         )
-        .await
+        .await;
+    if let Ok(result) = &result {
+        crate::git::turns::observe_sessions(&app, &result.sessions);
+    }
+    result
 }
 
 /// A Sessions collection opened in this webview: the catalogue connections
@@ -201,7 +209,7 @@ pub async fn agent_sessions_hot_status(
     let terminal_manager = terminal_manager.inner().clone();
     let runtime = agent_runtime.runtime().clone();
     let connections = connections.inner().clone();
-    run_blocking(move || {
+    let result = run_blocking(move || {
         follow_terminals(&state, &terminal_manager, &connections, &runtime);
         let result = read_model::hot_status(
             &state,
@@ -213,7 +221,11 @@ pub async fn agent_sessions_hot_status(
         terminal_manager.reconcile_agent_sessions(&result.sessions)?;
         Ok(result)
     })
-    .await
+    .await;
+    if let Ok(result) = &result {
+        crate::git::turns::observe_sessions(&app, &result.sessions);
+    }
+    result
 }
 
 #[tauri::command]

@@ -5302,3 +5302,156 @@ async fn a_replayed_user_message_keeps_its_links_and_images_in_order() {
         "links the adapter replays as text stay text for the chat to read"
     );
 }
+
+/// A host that records turn boundaries and holds each turn until released.
+struct RecordingTurns {
+    events: Mutex<Vec<(String, TurnBoundary)>>,
+    release: Arc<tokio::sync::Semaphore>,
+    changed: tokio::sync::Notify,
+}
+
+impl Default for RecordingTurns {
+    fn default() -> Self {
+        Self {
+            events: Mutex::default(),
+            release: Arc::new(tokio::sync::Semaphore::new(0)),
+            changed: tokio::sync::Notify::new(),
+        }
+    }
+}
+
+impl RecordingTurns {
+    fn events(&self) -> Vec<(String, Option<TurnMark>)> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(event, turn)| (event.clone(), turn.mark))
+            .collect()
+    }
+
+    async fn until(&self, count: usize) {
+        loop {
+            let changed = self.changed.notified();
+            if self.events.lock().unwrap().len() >= count {
+                return;
+            }
+            tokio::time::timeout(Duration::from_secs(5), changed)
+                .await
+                .expect("the runtime reports the turn boundary");
+        }
+    }
+}
+
+impl TurnObserver for RecordingTurns {
+    fn began(&self, turn: &TurnBoundary) -> crate::turns::TurnFuture {
+        self.events
+            .lock()
+            .unwrap()
+            .push(("began".into(), turn.clone()));
+        self.changed.notify_waiters();
+        let release = self.release.clone();
+        Box::pin(async move {
+            release.acquire().await.unwrap().forget();
+        })
+    }
+
+    fn ended(&self, turn: &TurnBoundary) {
+        self.events
+            .lock()
+            .unwrap()
+            .push(("ended".into(), turn.clone()));
+        self.changed.notify_waiters();
+    }
+}
+
+fn observed(runtime: &AgentRuntime) -> Arc<RecordingTurns> {
+    let turns = Arc::new(RecordingTurns::default());
+    runtime.observe_turns(turns.clone());
+    turns
+}
+
+#[tokio::test]
+async fn a_turn_reports_its_boundaries_with_its_mark_and_sends_the_prompt_after_the_host() {
+    let runtime = AgentRuntime::default();
+    let turns = observed(&runtime);
+    let (_, key, mut agent) = session(&runtime).await;
+    let turn = runtime
+        .prompt_with(
+            &key,
+            &[PromptPart::text("commit this")],
+            Some(TurnMark::AgentCommits),
+        )
+        .unwrap();
+    turns.until(1).await;
+    {
+        let events = turns.events.lock().unwrap();
+        assert_eq!(events[0].1.turn_id, turn);
+        assert_eq!(events[0].1.session, key);
+        assert_eq!(events[0].1.cwd, PathBuf::from("/project"));
+    }
+    // The prompt waits for the host to prepare for the turn.
+    agent.silent().await;
+    turns.release.add_permits(1);
+    let prompt = agent.expect("session/prompt").await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    turns.until(2).await;
+    assert_eq!(
+        turns.events(),
+        [
+            ("began".to_string(), Some(TurnMark::AgentCommits)),
+            ("ended".to_string(), Some(TurnMark::AgentCommits)),
+        ]
+    );
+
+    // The next turn of the session carries no mark.
+    turns.release.add_permits(1);
+    runtime.prompt(&key, &[PromptPart::text("next")]).unwrap();
+    let prompt = agent.expect("session/prompt").await;
+    agent
+        .reply(&prompt, json!({ "stopReason": "end_turn" }))
+        .await;
+    turns.until(4).await;
+    assert_eq!(turns.events()[2], ("began".to_string(), None));
+    assert_eq!(turns.events()[3], ("ended".to_string(), None));
+}
+
+#[tokio::test]
+async fn a_lost_agent_process_ends_the_turn_for_the_host() {
+    let runtime = AgentRuntime::default();
+    let turns = observed(&runtime);
+    turns.release.add_permits(1);
+    let (_, key, mut agent) = session(&runtime).await;
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
+    agent.expect("session/prompt").await;
+    assert_eq!(turns.events().len(), 1);
+    drop(agent);
+    turns.until(2).await;
+    assert_eq!(turns.events()[1].0, "ended");
+    assert_eq!(
+        runtime.subscribe(&key).unwrap().snapshot.turn.last_outcome,
+        Some(StopReason::Interrupted)
+    );
+}
+
+#[tokio::test]
+async fn a_cancel_while_the_host_prepares_ends_the_turn_without_the_prompt() {
+    let runtime = AgentRuntime::default();
+    let turns = observed(&runtime);
+    let (_, key, mut agent) = session(&runtime).await;
+    let mut subscription = runtime.subscribe(&key).unwrap();
+    runtime.prompt(&key, &[PromptPart::text("work")]).unwrap();
+    turns.until(1).await;
+    runtime.cancel(&key).unwrap();
+    agent.expect("session/cancel").await;
+    turns.release.add_permits(1);
+    follow(&mut subscription, idle).await;
+    assert_eq!(
+        subscription.snapshot.turn.last_outcome,
+        Some(StopReason::Cancelled)
+    );
+    turns.until(2).await;
+    agent.silent().await;
+}

@@ -62,6 +62,9 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
             : m.git_publication_partial(),
         );
       break;
+    case "IntegrationAfterTurn":
+      toast.info(m.git_sync_integration_after_turn());
+      break;
     // A background stop: the indicator shows it, work goes on.
     case "IncomingConflict":
     case "ExplicitSyncRequired":

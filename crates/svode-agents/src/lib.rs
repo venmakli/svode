@@ -19,6 +19,7 @@ pub mod prompt;
 pub mod registry;
 mod runtime;
 pub mod status;
+pub mod turns;
 pub mod writer;
 
 pub use error::{AgentRuntimeError, SettingRefusal};

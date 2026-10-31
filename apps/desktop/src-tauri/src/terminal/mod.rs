@@ -1093,6 +1093,7 @@ fn spawn_reader_loop(
             }
             finish_reader_surface(&agent_surfaces, &lifecycle_sinks, &pty_id);
             release_writer(&writer_claims, &pty_id);
+            crate::git::turns::terminal_exited(&app, &pty_id);
 
             let _ = app.emit(
                 EXIT_EVENT,

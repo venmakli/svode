@@ -1,8 +1,9 @@
 //! Smart versions (Stage 11 1.G): the changes of an explicit commit split
 //! into groups — one reason, one commit — each with a message composed of
 //! the facts Svode recognizes, in the author's interface language. Manual
-//! commits (⌘S, ⇧⌘S, «Commit all») and later automatic versions share this
-//! owner ([`auto`]); the author is always the person of the device, and no
+//! commits (⌘S, ⇧⌘S, «Commit all»), automatic versions ([`auto`]) and the
+//! versions of agent turns and Routine runs ([`turns`]) share this owner;
+//! the author is always the person of the device, and no
 //! agent, session or Routine is written into a message.
 
 pub mod auto;
@@ -14,6 +15,9 @@ mod group;
 mod message;
 #[cfg(test)]
 mod tests;
+pub mod turns;
+#[cfg(test)]
+mod turns_tests;
 
 use std::collections::BTreeSet;
 use std::path::Path;

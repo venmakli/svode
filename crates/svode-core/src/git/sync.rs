@@ -89,6 +89,11 @@ pub enum SyncResult {
     /// cannot check the merge in memory: background sync only fast-forwards,
     /// so only an explicit sync merges the incoming changes (1.A).
     ExplicitSyncRequired,
+    /// An agent turn or a Routine run is in progress in the repository
+    /// (1.E «Ходы агентов»): the incoming changes were fetched, the step
+    /// that changes the working copy waits for the end of the turn, and
+    /// nothing was published.
+    IntegrationAfterTurn,
 }
 
 #[cfg(test)]
@@ -261,6 +266,10 @@ pub async fn validate_transport(cli: &GitCli, repo: &Path, expected: &str) -> Re
 ///
 /// The renumbering of repeated `unique_id` (DF-237D) belongs to this step,
 /// after the fast-forward or merge and under the same guard.
+///
+/// While an agent turn or a Routine run is in progress in the repository
+/// the step does not run in either mode: the fetch already happened, and
+/// the turn's end syncs again (1.E «Ходы агентов»).
 pub async fn integration_step(
     cli: &GitCli,
     space_dir: &Path,
@@ -269,6 +278,9 @@ pub async fn integration_step(
     mode: SyncMode,
 ) -> Result<Integration, GitError> {
     let repository = super::access::local_repository_root(space_dir)?;
+    if super::versions::turns::defer_integration(&repository) {
+        return Ok(Integration::Stopped(SyncResult::IntegrationAfterTurn));
+    }
     let _guard =
         super::write_guard::acquire(&std::collections::BTreeSet::from([repository]), &[]).await?;
     if mode == SyncMode::Explicit {

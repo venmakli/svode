@@ -4,7 +4,8 @@
 //! and on quit. Desktop plans these moments; this owner decides which groups
 //! closed and commits them. A version never takes the paths of system or
 //! structural changes, and versions wait while the repository is in a Git
-//! operation, has files in conflict or a detached HEAD.
+//! operation, has files in conflict or a detached HEAD, and while an agent
+//! turn or a Routine run holds the repository ([`super::turns`]).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -19,7 +20,7 @@ use super::super::state::GitRuntime;
 use super::super::{branch, ops, policy, staging};
 use super::changes::{ChangeStatus, PathChange, Sources};
 use super::group::{self, GroupKind, PendingOperation, VersionGroup, at_or_under, is_page};
-use super::{MessageLanguage, commit_grouped};
+use super::{MessageLanguage, commit_grouped, commit_single};
 
 /// Which open content groups of a repository close now.
 #[derive(Debug, Clone)]
@@ -61,6 +62,9 @@ pub enum Held {
     Conflicts,
     /// HEAD is detached.
     DetachedHead,
+    /// An agent turn or a Routine run is in progress in the repository; its
+    /// end makes the version of the turn.
+    Turn,
 }
 
 /// What a closing did to a repository.
@@ -107,6 +111,31 @@ pub async fn close(
     if !enabled(repo) {
         return Ok(AutoVersions::Off);
     }
+    if super::turns::holds(repo) {
+        return Ok(AutoVersions::Held(Held::Turn));
+    }
+    version(runtime, host, repo, language, Select::Closing(closing)).await
+}
+
+/// Which changed content paths of a repository become versions now, and in
+/// what shape.
+pub(super) enum Select<'a> {
+    /// The groups a closing names, one version per group.
+    Closing(&'a Closing),
+    /// The content paths a turn changed, as one version (1.E «Ходы
+    /// агентов»).
+    Turn(&'a (dyn Fn(&str) -> bool + Sync)),
+}
+
+/// Commit the content paths `select` picks in `repo` as versions; the
+/// shared body of a closing and of the version of a turn.
+pub(super) async fn version(
+    runtime: &GitRuntime,
+    host: &dyn GitHost,
+    repo: &Path,
+    language: MessageLanguage,
+    select: Select<'_>,
+) -> Result<AutoVersions, GitError> {
     let cli = runtime.require_cli()?;
     let lock = runtime.get_lock(repo).await;
     let guard = lock.lock().await;
@@ -160,7 +189,10 @@ pub async fn close(
     }
     let sources = Sources::read(&cli, repo, &changes).await;
     let groups = group::group_changes(repo, changes, &operations, &sources);
-    let (due, next) = due_paths(repo, &groups, closing, SystemTime::now());
+    let (due, next) = match &select {
+        Select::Closing(closing) => due_paths(repo, &groups, closing, SystemTime::now()),
+        Select::Turn(changed) => (turn_paths(&groups, changed), None),
+    };
     if due.is_empty() {
         return Ok(AutoVersions::Done { commits: 0, next });
     }
@@ -199,18 +231,32 @@ pub async fn close(
         }
     }
 
-    let result = commit_grouped(&cli, repo, &paths, &taken_operations, language).await;
-    let (commits, failure) = match result {
-        Ok(report) => {
-            for save in &mut taken {
-                save.complete();
+    let (commits, failure) = match select {
+        Select::Closing(_) => {
+            match commit_grouped(&cli, repo, &paths, &taken_operations, language).await {
+                Ok(report) => {
+                    for save in &mut taken {
+                        save.complete();
+                    }
+                    (report.commits, None)
+                }
+                Err(failure) => {
+                    settle(&mut taken, &owners, &failure.report.settled);
+                    (failure.report.commits, Some(failure.error))
+                }
             }
-            (report.commits, None)
         }
-        Err(failure) => {
-            settle(&mut taken, &owners, &failure.report.settled);
-            (failure.report.commits, Some(failure.error))
-        }
+        // One version: its registrations land together or return to their
+        // Spaces together.
+        Select::Turn(_) => match commit_single(&cli, repo, &paths, language).await {
+            Ok(committed) => {
+                for save in &mut taken {
+                    save.complete();
+                }
+                (usize::from(committed), None)
+            }
+            Err(error) => (0, Some(error)),
+        },
     };
     drop(taken);
     drop(guard);
@@ -251,6 +297,19 @@ fn due_paths(
         }
     }
     (due, next)
+}
+
+/// The paths of the content groups that `changed` says the turn changed.
+fn turn_paths(groups: &[VersionGroup], changed: &(dyn Fn(&str) -> bool + Sync)) -> Vec<String> {
+    let mut paths = Vec::new();
+    for group in groups.iter().filter(|group| group.kind.is_content()) {
+        for path in group.paths() {
+            if changed(&path) && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
 }
 
 /// Groups that close right after their operation (1.G): an operation on a
