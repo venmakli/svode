@@ -32,6 +32,8 @@ export function sessionChangesTarget(
   space: ChangesTarget,
   work: readonly string[] | null,
   spaces: readonly { id: string; path: string }[],
+  /** The catalogue id of the session, whose composer the window has. */
+  sessionId?: string,
 ): ChangesTarget {
   if (!work) return space;
   const files = work.flatMap((path) => {
@@ -41,7 +43,11 @@ export function sessionChangesTarget(
   return {
     ...space,
     kind: "session",
-    work: { files, spaceKind: space.kind === "project" ? "project" : "space" },
+    work: {
+      files,
+      spaceKind: space.kind === "project" ? "project" : "space",
+      ...(sessionId ? { sessionId } : {}),
+    },
   };
 }
 

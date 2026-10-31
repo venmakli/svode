@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   readComposerDraft,
+  settleDraftMark,
   subscribeComposerDraft,
   writeComposerDraft,
   type ComposerDraft,
@@ -38,8 +39,9 @@ export function useComposerDraft(key: string) {
         latest.current.key === key
           ? latest.current.draft
           : (readComposerDraft(key) ?? EMPTY);
-      const next =
-        typeof change === "function" ? change(base) : { ...base, ...change };
+      const next = settleDraftMark(
+        typeof change === "function" ? change(base) : { ...base, ...change },
+      );
       writeComposerDraft(key, next);
       latest.current = { key, draft: next };
       setState(latest.current);

@@ -508,12 +508,23 @@ export function readAgentMedia(
   });
 }
 
+/**
+ * What a prompt asks beyond its text (Stage 11 1.E «Ходы агентов», п. 5):
+ * `agent_commits` — the user asked the agent to commit, so Svode does not
+ * wrap the turn in a version.
+ */
+export type AgentTurnMarkDto = "agent_commits";
+
 /** Resolves to the turn id once the runtime accepted the prompt. */
 export function promptAgentSession(
   session: AgentSessionKeyDto,
   prompt: AgentPromptPartDto[],
+  mark?: AgentTurnMarkDto | null,
 ): Promise<string> {
-  return invoke<string>("agent_runtime_prompt", { session, prompt });
+  return invoke<string>(
+    "agent_runtime_prompt",
+    mark ? { session, prompt, mark } : { session, prompt },
+  );
 }
 
 export function cancelAgentTurn(session: AgentSessionKeyDto): Promise<void> {
@@ -669,6 +680,11 @@ export function startAgentSession(request: {
   settings: AgentSettingValueDto[];
   prompt: AgentPromptPartDto[];
   hold: number | null;
+  mark?: AgentTurnMarkDto | null;
 }): Promise<StartedAgentSessionDto> {
-  return invoke<StartedAgentSessionDto>("agent_runtime_start_session", request);
+  const { mark, ...rest } = request;
+  return invoke<StartedAgentSessionDto>(
+    "agent_runtime_start_session",
+    mark ? { ...rest, mark } : rest,
+  );
 }

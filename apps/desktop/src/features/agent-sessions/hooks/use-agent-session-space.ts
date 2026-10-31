@@ -58,7 +58,8 @@ export function useAgentSessionChangesTarget(
   const projectPath = useSpace((state) => state.activeRootPath);
   const rootSpaces = useSpace((state) => state.rootSpaces);
   const spaces = useSpace((state) => state.spaces);
-  const work = useSessionWork(session?.id);
+  const sessionId = session?.id;
+  const work = useSessionWork(sessionId);
   const ready = Boolean(space?.ready && projectPath);
   const spaceId = space?.spaceId ?? null;
   const spacePath = space?.spacePath ?? "";
@@ -76,6 +77,17 @@ export function useAgentSessionChangesTarget(
       },
       work,
       [...rootSpaces, ...spaces],
+      sessionId,
     );
-  }, [ready, projectPath, spaceId, spacePath, name, work, rootSpaces, spaces]);
+  }, [
+    ready,
+    projectPath,
+    spaceId,
+    spacePath,
+    name,
+    work,
+    rootSpaces,
+    spaces,
+    sessionId,
+  ]);
 }

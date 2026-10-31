@@ -32,6 +32,13 @@ export {
   conflictResolvable,
 } from "./model/conflict-paths";
 export { conflictPageOpener } from "./model/conflict-navigation";
+export {
+  agentRequests,
+  type AgentRequest,
+  type AgentRequestPlace,
+  type AgentRequests,
+} from "./model/agent-request";
+export { useAgentRequestAvailability } from "./hooks/use-agent-request-availability";
 export { gitBranchErrorMessage } from "./api/git-branch-error";
 export { getGitAvailability } from "./api/git-availability-actions";
 export { trackSpaceCloneProgress } from "./api/git-clone-progress-actions";

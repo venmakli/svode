@@ -104,6 +104,8 @@ export function useNewSessionDraft(
         settings: draftValues(draft, agent),
         prompt: promptParts(draft.parts),
         hold,
+        // A request a Svode action put in carries its mark (Stage 11 1.E).
+        mark: draft.mark,
       });
       if (started.outcome === "started") {
         updateDraft(() => ({ parts: [] }));

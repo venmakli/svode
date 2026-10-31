@@ -123,6 +123,38 @@ export interface GitPathConflictDto {
   kind: GitConflictKindDto;
 }
 
+/** What a version group is about (Stage 11 1.G). */
+export type GitVersionGroupKindDto =
+  | "operation"
+  | "creation"
+  | "page"
+  | "fields"
+  | "schema"
+  | "attachments"
+  | "folder"
+  | "system"
+  | "structural";
+
+/** One uncommitted group: what one commit takes, as its message says it. */
+export interface GitUncommittedGroupDto {
+  kind: GitVersionGroupKindDto;
+  /** The summary line of the message Svode would write. */
+  header: string;
+  /** Every fact of the group when the summary does not say them all. */
+  facts: string[];
+  /** Repository-relative paths the commit of the group takes. */
+  paths: string[];
+  /** Files of sensitive Collections, counted by folder instead of named. */
+  hidden: { folder: string; files: number }[];
+}
+
+/** The uncommitted groups of an area in one repository. */
+export interface GitUncommittedGroupsDto {
+  /** The repository the paths of the groups are relative to. */
+  repository: string;
+  groups: GitUncommittedGroupDto[];
+}
+
 /** Why a chosen result does not resolve its path. */
 export type GitResolutionFindingDto =
   | { type: "markers" }

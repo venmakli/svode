@@ -18,6 +18,9 @@ mod tests;
 pub mod turns;
 #[cfg(test)]
 mod turns_tests;
+mod uncommitted;
+#[cfg(test)]
+mod uncommitted_tests;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -27,6 +30,7 @@ pub use facts::{ChangeFact, General, GroupFacts, Place, PlacedFact, Sensitive};
 pub(crate) use group::is_page;
 pub use group::{GroupKind, PendingOperation, VersionGroup};
 pub use message::{MessageLanguage, VersionMessage, compose};
+pub use uncommitted::{HiddenFiles, UncommittedGroup, UncommittedGroups, uncommitted};
 
 use super::GitError;
 use super::cli::{GitCli, literal_pathspec_input};

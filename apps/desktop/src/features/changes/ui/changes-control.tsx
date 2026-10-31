@@ -25,6 +25,8 @@ import { SessionChangesBody } from "./session-changes-body";
 import { ChangesSaveFooter } from "./changes-save-footer";
 import { changesCount } from "./changes-toolbar";
 import { useChangesSave } from "../hooks/use-changes-save";
+import { useCommitWithAgent } from "../hooks/use-commit-with-agent";
+import type { AgentRequest } from "@/features/git";
 
 export function ChangesControl({
   target,
@@ -186,6 +188,9 @@ function ChangesSheetContent({
   const save = useChangesSave(target, open);
   // The version choice opens once "Changes" has closed and let go of focus.
   const versionChoiceRef = useRef<GitCommitRefusal | null>(null);
+  // So does the composer that takes «Зафиксировать с агентом» (1.10).
+  const agent = useCommitWithAgent(target, open);
+  const agentRequestRef = useRef<AgentRequest | null>(null);
 
   return (
     <SheetContent
@@ -209,6 +214,13 @@ function ChangesSheetContent({
           : undefined
       }
       onCloseAutoFocus={(event) => {
+        const request = agentRequestRef.current;
+        if (request) {
+          agentRequestRef.current = null;
+          event.preventDefault();
+          agent.deliver(request);
+          return;
+        }
         const refusal = versionChoiceRef.current;
         if (!refusal) return;
         versionChoiceRef.current = null;
@@ -244,6 +256,17 @@ function ChangesSheetContent({
         onChooseVersion={(refusal) => {
           versionChoiceRef.current = refusal;
           onClose();
+        }}
+        agent={{
+          available: agent.available,
+          preparing: agent.preparing,
+          onCommit: () => {
+            void agent.prepare().then((request) => {
+              if (!request) return;
+              agentRequestRef.current = request;
+              onClose();
+            });
+          },
         }}
       />
       <div className="absolute top-3 right-3">

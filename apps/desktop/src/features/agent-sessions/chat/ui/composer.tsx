@@ -56,6 +56,7 @@ import {
   ComposerFieldContext,
   holdComposerFocus,
   useComposerFocusReturn,
+  useDraftComposerFocusRequest,
   type ComposerFieldHandle,
 } from "../hooks/use-composer-focus";
 import {
@@ -172,6 +173,13 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) editor.tf.focus({ edge: "endEditor" });
   }, [autoFocus, editor]);
+
+  // A Svode action put a request into the draft (Stage 11 1.10).
+  const focusEnd = useCallback(() => {
+    editor.tf.blur();
+    editor.tf.focus({ edge: "endEditor" });
+  }, [editor]);
+  useDraftComposerFocusRequest(draftKey, focusEnd);
 
   useEffect(() => {
     editor.setOption(SessionCommandsPlugin, "commands", commands);

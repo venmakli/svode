@@ -108,6 +108,8 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   let promptAnswer: () => Promise<string> = async () => "turn-1";
   let writer = "acp";
   const prompts: unknown[] = [];
+  /** The request mark each prompt carried (Stage 11 1.10). */
+  const marks: unknown[] = [];
   /** The activity channel of each session and its next message index. */
   const channels = new Map<string, { id: number; index: number }>();
 
@@ -129,9 +131,11 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
       }
       case "agent_runtime_prompt":
         prompts.push(payload.prompt);
+        marks.push(payload.mark ?? null);
         return promptAnswer();
       case "agent_runtime_start_session":
         prompts.push(payload.prompt);
+        marks.push(payload.mark ?? null);
         return promptAnswer().then((turnId) => ({
           outcome: "started",
           session: { ...key, sessionId: "s2" },
@@ -170,6 +174,9 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
   const { NewSessionDraft } = await import("./new-session-draft");
   const { newSessionDraftKey, readComposerDraft, sessionDraftKey, writeComposerDraft } =
     await import("../model/composer");
+  const { putNewSessionRequest, putSessionRequest } = await import(
+    "../hooks/composer-request"
+  );
 
   const DRAFT = sessionDraftKey("codex:s1");
   let root: Root | null = null;
@@ -179,6 +186,7 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
       promptAnswer = async () => "turn-1";
       writer = "acp";
       prompts.length = 0;
+      marks.length = 0;
       try {
         await fn();
       } finally {
@@ -484,6 +492,92 @@ if (process.env.SVODE_COMPOSER_FOCUS_DOM !== "1") {
     expect(readComposerDraft(newSessionDraftKey("/project"))?.sending ?? null).toBeNull();
     expect(readComposerDraft(newSessionDraftKey("/project"))?.parts ?? []).toEqual([]);
   });
+
+  focusTest(
+    "a request goes after the typed text with focus at its end, waits for the user and its send carries the mark",
+    async () => {
+      writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "My note" }] });
+      await mount(chat());
+      const elsewhere = document.createElement("button");
+      document.body.append(elsewhere);
+      elsewhere.focus();
+      await act(async () =>
+        putSessionRequest("codex:s1", "Commit the changes", "agent_commits"),
+      );
+      await settle();
+      expect(stored()).toBe("My note\n\nCommit the changes");
+      expect(readComposerDraft(DRAFT)?.mark).toBe("agent_commits");
+      expect(await fieldFocused()).toBe(true);
+      expect(await caret()).toBe("My note\n\nCommit the changes".length);
+      // Nothing is sent until the user sends it.
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(prompts.length).toBe(0);
+      await pressEnter();
+      expect(prompts.length).toBe(1);
+      expect(marks).toEqual(["agent_commits"]);
+      expect(stored()).toBe("");
+      expect(readComposerDraft(DRAFT)?.mark ?? null).toBeNull();
+      // The next turn of the session is an ordinary one.
+      await type("Thanks");
+      await pressEnter();
+      expect(marks).toEqual(["agent_commits", null]);
+    },
+  );
+
+  focusTest("clearing the composer drops the request mark", async () => {
+    await mount(chat());
+    await act(async () =>
+      putSessionRequest("codex:s1", "Commit the changes", "agent_commits"),
+    );
+    await settle();
+    expect(await fieldFocused()).toBe(true);
+    await act(async () => {
+      const range = document.createRange();
+      range.selectNodeContents(field());
+      document.getSelection()!.removeAllRanges();
+      document.getSelection()!.addRange(range);
+      document.dispatchEvent(new window.Event("selectionchange"));
+    });
+    await settle();
+    await act(async () => {
+      field().dispatchEvent(
+        new window.InputEvent("beforeinput", {
+          inputType: "deleteContentBackward",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await settle();
+    expect(stored()).toBe("");
+    expect(readComposerDraft(DRAFT)?.mark ?? null).toBeNull();
+    await type("Something else");
+    await pressEnter();
+    expect(marks).toEqual([null]);
+  });
+
+  focusTest(
+    "a request for a new session fills its draft, focuses its field once shown and starts the session with the mark",
+    async () => {
+      await act(async () =>
+        putNewSessionRequest("/project", "Commit the changes", "agent_commits"),
+      );
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      expect(await fieldFocused()).toBe(true);
+      expect(field().textContent).toBe("Commit the changes");
+      expect(prompts.length).toBe(0);
+      await pressEnter();
+      expect(prompts.length).toBe(1);
+      expect(marks).toEqual(["agent_commits"]);
+    },
+  );
+
 
   focusTest("during a turn a click puts the caret in the field and typing reaches the draft", async () => {
     writeComposerDraft(DRAFT, { parts: [{ type: "text", text: "Hello" }] });

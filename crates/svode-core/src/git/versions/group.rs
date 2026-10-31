@@ -17,7 +17,8 @@ use super::changes::{ChangeStatus, PathChange, Sources};
 pub const MAX_OWNER_GROUPS: usize = 50;
 
 /// What a group of changes is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum GroupKind {
     /// A managed operation on a committed object, with the links, order and
     /// relations it touched.

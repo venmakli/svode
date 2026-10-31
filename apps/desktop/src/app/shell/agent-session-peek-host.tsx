@@ -79,6 +79,35 @@ export function useStartSessionInMainArea() {
   );
 }
 
+/**
+ * A request for an agent in a new chat session of a Space as the main area
+ * object (Stage 11 1.10, 1.12): `put` writes it into the Space's new session
+ * draft, whose composer then takes focus. A draft of that Space already in
+ * the main area takes it in place; otherwise the guards pass first, and a
+ * cancelled one puts nothing. Resolves whether the request was put.
+ */
+export function useStartRequestInMainArea() {
+  const showDraft = useShowDraftInMainArea();
+  const scopes = useSessionScopesBySpacePath();
+  return useCallback(
+    async (spacePath: string, put: () => void) => {
+      const { mainSurface, mainSessionDraft } = useShellStore.getState();
+      if (
+        mainSurface === "session" &&
+        mainSessionDraft?.spacePath === spacePath
+      ) {
+        put();
+        return true;
+      }
+      if (!(await passNavigationGuards())) return false;
+      put();
+      showDraft({ draftId: crypto.randomUUID(), spacePath }, scopes(spacePath));
+      return true;
+    },
+    [scopes, showDraft],
+  );
+}
+
 /** The first send of a main area draft: the created session replaces it. */
 export function useShowStartedSessionInMainArea() {
   const showSession = useShowSessionInMainArea();

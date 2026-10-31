@@ -17,7 +17,7 @@ use svode_core::git::operations::SharedError;
 use svode_core::git::ops::{GitStatus, UnpushedCommit};
 use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use svode_core::git::save::save;
-use svode_core::git::versions::MessageLanguage;
+use svode_core::git::versions::{self, MessageLanguage};
 use svode_core::git::{conflict_file, conflict_kind, flow, markers, ops, sync};
 use svode_core::system_path;
 
@@ -568,6 +568,25 @@ pub async fn git_last_synced(
     let cli = state.require_cli()?;
     let repository = super::access::resolve_repository(&cli, Path::new(&space_path)).await?;
     Ok(super::sync_rhythm::last_synced(&app, &repository))
+}
+
+/// The uncommitted groups of `paths` (relative to `space_path`) with their
+/// facts and repository paths, as «Зафиксировать с агентом» hands them to
+/// an agent (Stage 11 1.G); nothing is staged.
+#[tauri::command]
+pub async fn git_uncommitted_groups(
+    app: AppHandle,
+    state: State<'_, GitState>,
+    space_path: String,
+    paths: Vec<String>,
+) -> Result<versions::UncommittedGroups, AppError> {
+    Ok(versions::uncommitted(
+        state.runtime(),
+        Path::new(&space_path),
+        &paths,
+        message_language(&app),
+    )
+    .await?)
 }
 
 /// Close open content groups of automatic versions (Stage 11 1.E): the

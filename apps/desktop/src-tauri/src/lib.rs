@@ -430,6 +430,7 @@ pub fn run() {
             git::commands::git_resolve_continue,
             git::commands::git_merge_service_files,
             git::commands::git_conflict_kinds,
+            git::commands::git_uncommitted_groups,
             git::commands::git_conflict_file,
             git::commands::git_resolve_conflict_file,
             git::commands::git_merge_abort,

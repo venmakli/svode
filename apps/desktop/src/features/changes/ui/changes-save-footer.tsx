@@ -2,6 +2,11 @@ import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { SheetFooter } from "@/components/ui/sheet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { GitCommitRefusal } from "@/features/git/editor";
 import {
   RepositoryAccessInlineRecovery,
@@ -18,6 +23,7 @@ export function ChangesSaveFooter({
   statusError,
   fileScope,
   onChooseVersion,
+  agent,
 }: {
   save: ReturnType<typeof useChangesSave>;
   dirty: boolean;
@@ -25,6 +31,8 @@ export function ChangesSaveFooter({
   fileScope: boolean;
   /** Leaves "Changes" for the version choice of the Page a refusal names. */
   onChooseVersion: (refusal: GitCommitRefusal) => void;
+  /** «Зафиксировать с агентом» (Stage 11 1.10). */
+  agent: CommitWithAgentAction;
 }) {
   const hint =
     typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
@@ -76,16 +84,88 @@ export function ChangesSaveFooter({
       ) : null}
       <RepositoryAccessInlineRecovery recovery={save.recovery} />
       <RepositoryAccessPrimaryButton recovery={save.recovery} />
-      <Button
-        disabled={!save.editable || save.saving || statusError}
-        onClick={() => void save.save(!fileScope)}
-      >
-        {save.saving ? (
-          <LoaderCircle className="animate-spin" data-icon="inline-start" />
-        ) : null}
-        {fileScope ? m.changes_save() : m.changes_save_all()}
-        <span className="ml-auto">{hint}</span>
-      </Button>
+      <div className="flex min-w-0 gap-2">
+        <Button
+          className="min-w-0 flex-1"
+          data-changes-commit
+          disabled={!save.editable || save.saving || statusError}
+          onClick={() => void save.save(!fileScope)}
+        >
+          {save.saving ? (
+            <LoaderCircle className="animate-spin" data-icon="inline-start" />
+          ) : null}
+          <span className="truncate">
+            {fileScope ? m.changes_save() : m.changes_save_all()}
+          </span>
+          <span className="ml-auto">{hint}</span>
+        </Button>
+        <CommitWithAgentButton
+          agent={agent}
+          dirty={dirty}
+          statusError={statusError}
+        />
+      </div>
     </SheetFooter>
+  );
+}
+
+export interface CommitWithAgentAction {
+  /** A chat session can take the request; null while unknown. */
+  available: boolean | null;
+  preparing: boolean;
+  onCommit: () => void;
+}
+
+/**
+ * The secondary action right of «Зафиксировать»: the agent commits the
+ * window's changes. Without changes or a chat session it is unavailable
+ * and says why.
+ */
+function CommitWithAgentButton({
+  agent,
+  dirty,
+  statusError,
+}: {
+  agent: CommitWithAgentAction;
+  dirty: boolean;
+  statusError: boolean;
+}) {
+  const reason = !dirty
+    ? m.changes_commit_with_agent_no_changes()
+    : agent.available === false
+      ? m.changes_commit_with_agent_unavailable()
+      : null;
+  const disabled =
+    reason !== null || agent.available !== true || agent.preparing || statusError;
+  const button = (
+    <Button
+      type="button"
+      variant="outline"
+      className="shrink-0"
+      disabled={disabled}
+      onClick={agent.onCommit}
+      data-commit-with-agent
+    >
+      {agent.preparing ? (
+        <LoaderCircle className="animate-spin" data-icon="inline-start" />
+      ) : null}
+      {m.changes_commit_with_agent()}
+    </Button>
+  );
+  if (!reason) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className="inline-flex shrink-0"
+          aria-label={`${m.changes_commit_with_agent()}. ${reason}`}
+          data-commit-with-agent-reason
+        >
+          {button}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{reason}</TooltipContent>
+    </Tooltip>
   );
 }

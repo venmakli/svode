@@ -1,8 +1,13 @@
 import type {
   AgentSessionSnapshotDto,
   AgentSettingValueDto,
+  AgentTurnMarkDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
-import { normalizeDraftParts, type DraftPart } from "./attachments";
+import {
+  isDraftBlank,
+  normalizeDraftParts,
+  type DraftPart,
+} from "./attachments";
 
 /**
  * A composer draft (Stage 10 `04`): it survives a window reload and moves
@@ -29,6 +34,12 @@ export interface ComposerDraft {
   sending?: { previousTurnId: string | null } | null;
   /** The text came back from a send that did not reach the agent. */
   notSent?: boolean;
+  /**
+   * The draft is a request a Svode action put in, such as «Зафиксировать с
+   * агентом» (Stage 11 1.E «Ходы агентов», п. 5): its send carries the mark,
+   * and clearing the composer drops it.
+   */
+  mark?: AgentTurnMarkDto | null;
 }
 
 /** The setting values a draft keeps for `agent`. */
@@ -64,7 +75,15 @@ export function readComposerDraft(key: string): ComposerDraft | null {
   }
 }
 
+/** A cleared composer is no longer the request a Svode action put in. */
+export function settleDraftMark(draft: ComposerDraft): ComposerDraft {
+  return draft.mark && isDraftBlank(draft.parts)
+    ? { ...draft, mark: null }
+    : draft;
+}
+
 export function writeComposerDraft(key: string, draft: ComposerDraft | null) {
+  if (draft) draft = settleDraftMark(draft);
   try {
     if (!draft || isEmptyDraft(draft)) {
       window.sessionStorage.removeItem(STORAGE_PREFIX + key);
@@ -106,6 +125,40 @@ export function appendComposerDraftText(
   writeComposerDraft(key, {
     ...draft,
     parts: normalizeDraftParts([...draft.parts, { type: "text", text }]),
+  });
+  for (const listener of draftListeners.get(key) ?? []) listener();
+}
+
+/**
+ * Puts a request Svode composed after the text of the stored draft of
+ * `key`, separated by a blank line, and marks the draft with `mark`; the
+ * shown composer of `key` follows. The user edits and sends it.
+ */
+export function appendComposerDraftRequest(
+  key: string,
+  text: string,
+  mark: AgentTurnMarkDto,
+) {
+  const request = text.trim();
+  if (!request) return;
+  const draft = readComposerDraft(key) ?? { parts: [] };
+  const last = draft.parts.at(-1);
+  const before = last?.type === "text" ? last.text : "";
+  const separator = isDraftBlank(draft.parts)
+    ? ""
+    : before.endsWith("\n\n")
+      ? ""
+      : before.endsWith("\n")
+        ? "\n"
+        : "\n\n";
+  writeComposerDraft(key, {
+    ...draft,
+    parts: normalizeDraftParts([
+      ...(isDraftBlank(draft.parts) ? [] : draft.parts),
+      { type: "text", text: separator + request },
+    ]),
+    notSent: false,
+    mark,
   });
   for (const listener of draftListeners.get(key) ?? []) listener();
 }

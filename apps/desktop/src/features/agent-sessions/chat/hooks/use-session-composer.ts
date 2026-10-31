@@ -166,7 +166,10 @@ export function useSessionComposer(
       notSent: false,
     });
     try {
-      accept(await promptAgentSession(session, promptParts(draft.parts)));
+      // A request a Svode action put in carries its mark (Stage 11 1.E).
+      accept(
+        await promptAgentSession(session, promptParts(draft.parts), draft.mark),
+      );
       // The session may have shown the turn first and settled the send;
       // what was typed since stays.
       updateDraft((latest) => (latest.sending ? { parts: [] } : latest));
@@ -185,6 +188,7 @@ export function useSessionComposer(
     agent,
     attach,
     confirmation,
+    draft.mark,
     draft.parts,
     plan,
     running,

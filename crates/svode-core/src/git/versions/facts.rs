@@ -458,12 +458,17 @@ fn file_title(path: &str) -> String {
 }
 
 fn in_sensitive_collection(repo: &Path, path: &str) -> bool {
+    sensitive_collection_of(repo, path).is_some()
+}
+
+/// The root of the sensitive Collection `path` lies in, relative to the
+/// repository; `None` outside one.
+pub(super) fn sensitive_collection_of(repo: &Path, path: &str) -> Option<String> {
     crate::collections::schema::resolve_collection_schema_by_location(repo, path)
         .ok()
         .flatten()
-        .is_some_and(|(schema, _)| {
-            crate::collections::engine::schema_has_sensitive_columns(&schema)
-        })
+        .filter(|(schema, _)| crate::collections::engine::schema_has_sensitive_columns(schema))
+        .map(|(_, root)| root.to_string_lossy().replace('\\', "/"))
 }
 
 struct Names<'a> {

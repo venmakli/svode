@@ -118,6 +118,41 @@ export function useRequestedComposerFocus(
   );
 }
 
+/** Drafts whose composer takes focus as soon as it is shown. */
+const focusAsked = new Set<string>();
+const focusTakers = new Map<string, Set<() => void>>();
+
+/**
+ * The composer of `draftKey` takes focus: at once when it is shown,
+ * otherwise once it is, as after a Svode action put a request into its
+ * draft (Stage 11 1.10). The caret goes to the end of the draft.
+ */
+export function requestDraftComposerFocus(draftKey: string) {
+  const takers = focusTakers.get(draftKey);
+  if (takers && takers.size > 0) {
+    for (const take of takers) take();
+    return;
+  }
+  focusAsked.add(draftKey);
+}
+
+/** Inside the composer of `draftKey`: carries out its focus requests. */
+export function useDraftComposerFocusRequest(
+  draftKey: string,
+  focus: () => void,
+) {
+  useEffect(() => {
+    const takers = focusTakers.get(draftKey) ?? new Set<() => void>();
+    takers.add(focus);
+    focusTakers.set(draftKey, takers);
+    if (focusAsked.delete(draftKey)) focus();
+    return () => {
+      takers.delete(focus);
+      if (takers.size === 0) focusTakers.delete(draftKey);
+    };
+  }, [draftKey, focus]);
+}
+
 /** The composer's field to the controls inside the composer (DF-217). */
 export interface ComposerFieldHandle {
   /** The point is in the visible box of the field. */

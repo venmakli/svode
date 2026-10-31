@@ -36,6 +36,7 @@ import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceConfigChanges } from "./space-config-changes";
 import { ConflictFileChanges } from "./conflict-file-changes";
+import { AgentRequestsHost } from "./agent-requests-host";
 import {
   SpaceConfigRecheck,
   SpaceFileWatcher,
@@ -255,6 +256,7 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
       <SpaceConfigRecheck />
       <SpaceConfigChanges />
       <ConflictFileChanges />
+      <AgentRequestsHost />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
       <GitMissingDialog
         open={available === false}

@@ -15,7 +15,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       { env: { ...process.env, SVODE_CHANGES_DOM: "1" }, encoding: "utf8" },
     );
     if (child.status !== 0) throw new Error(child.stdout + child.stderr);
-  });
+  }, 60_000);
 } else {
   test("inspection is passive and save shortcuts retain their origin", async () => {
     const dom = createDom();
@@ -572,7 +572,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       });
       const footer = () =>
         doc.querySelector<HTMLButtonElement>(
-          '[data-slot="sheet-footer"] button:last-child',
+          '[data-slot="sheet-footer"] [data-changes-commit]',
         )!;
       await selectChangeFilter(dom, "Modified");
       await act(async () => {
@@ -1026,7 +1026,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     const doc = dom.window.document;
     const save = () =>
       doc.querySelector<HTMLButtonElement>(
-        '[data-slot="sheet-footer"] button:last-child',
+        '[data-slot="sheet-footer"] [data-changes-commit]',
       )!;
     const alert = () =>
       doc.querySelector('[data-slot="sheet-footer"] [role="alert"]');
@@ -1660,7 +1660,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       );
     const save = () =>
       doc.querySelector<HTMLButtonElement>(
-        '[data-slot="sheet-footer"] button:last-child',
+        '[data-slot="sheet-footer"] [data-changes-commit]',
       )!;
     const alert = () =>
       doc.querySelector('[data-slot="sheet-footer"] [role="alert"]');
@@ -1704,7 +1704,9 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       expect(alert()?.textContent?.includes("new.md")).toBe(true);
       expect(alert()?.textContent?.includes("Content saved")).toBe(false);
       expect(
-        doc.querySelectorAll('[data-slot="sheet-footer"] button').length,
+        doc.querySelectorAll(
+          '[data-slot="sheet-footer"] button:not([data-commit-with-agent])',
+        ).length,
       ).toBe(1);
       await act(async () => {
         render("new.md", 2);
@@ -2248,6 +2250,244 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
           ?.getAttribute("data-conflict-unclear"),
       ).toBe("no_markers");
     } finally {
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
+  test("«Commit with agent» puts the window's request into the session's composer or a new chat, and says why it is unavailable", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    const files: Record<string, { path: string; state: string }[]> = {
+      "/p": [
+        { path: "notes/a.md", state: "modified" },
+        { path: "README.md", state: "modified" },
+      ],
+    };
+    const asked: { spacePath: string; paths: string[] }[] = [];
+    mockNativeIpc(
+      (command, args) => {
+        const input = args as {
+          spacePath: string;
+          paths: string[];
+          generation: string;
+        };
+        if (command === "git_status")
+          return {
+            branch: "main",
+            ahead: 0,
+            behind: 0,
+            hasStaged: false,
+            hasUnstaged: true,
+            hasConflicts: false,
+            tracking: null,
+            files: files[input.spacePath] ?? [],
+          };
+        if (command === "git_inspection_stats")
+          return {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: 1,
+              deletions: 0,
+            })),
+          };
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "repo-root",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_uncommitted_groups") {
+          asked.push({ spacePath: input.spacePath, paths: input.paths });
+          return {
+            repository: "/p",
+            groups: input.paths.map((path) => ({
+              kind: "page",
+              header: `${path}: edit of section`,
+              facts: [],
+              paths: [path],
+              hidden: [],
+            })),
+          };
+        }
+        if (command === "git_get_user_policy") return { autoSync: false };
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { registerAgentRequests } = await import("@/features/git/app-shell");
+    const m = await import("@/paraglide/messages.js");
+    let available = false;
+    const submitted: unknown[] = [];
+    const release = registerAgentRequests({
+      available: async () => available,
+      submit: async (request) => {
+        submitted.push(request);
+        return true;
+      },
+    });
+    const doc = dom.window.document;
+    const root = createRoot(doc.getElementById("app")!);
+    const render = async (
+      target: Parameters<typeof ChangesControl>[0]["target"],
+    ) => {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl target={target} />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+    };
+    const settle = async () => {
+      for (let frame = 0; frame < 6; frame++) {
+        await act(async () => {
+          await nextFrame(dom);
+        });
+      }
+    };
+    const toggle = async () => {
+      await act(async () => {
+        doc.querySelector<HTMLElement>("[data-changes-trigger]")!.click();
+        await nextFrame(dom);
+      });
+      await settle();
+    };
+    const close = async () => {
+      await act(async () => {
+        doc.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        );
+        await nextFrame(dom);
+      });
+      await settle();
+    };
+    const agentButton = () =>
+      doc.querySelector<HTMLButtonElement>("[data-commit-with-agent]");
+    const space = {
+      kind: "space" as const,
+      sourceShape: "directory" as const,
+      spacePath: "/p",
+      projectPath: "/p",
+      path: "",
+      name: "Project",
+    };
+    try {
+      // No chat session can open: the action says why.
+      await render(space);
+      await toggle();
+      expect(agentButton()?.textContent).toBe(m.changes_commit_with_agent());
+      expect(agentButton()?.disabled).toBe(true);
+      expect(
+        doc
+          .querySelector("[data-commit-with-agent-reason]")
+          ?.getAttribute("aria-label"),
+      ).toBe(
+        `${m.changes_commit_with_agent()}. ${m.changes_commit_with_agent_unavailable()}`,
+      );
+      // It sits right of the commit button in one row.
+      expect(
+        doc
+          .querySelector("[data-commit-with-agent-reason]")
+          ?.previousElementSibling?.textContent?.startsWith(
+            m.changes_save_all(),
+          ),
+      ).toBe(true);
+      await close();
+
+      // Outside a session window the request goes to a new chat session.
+      available = true;
+      await toggle();
+      expect(agentButton()?.disabled).toBe(false);
+      expect(
+        agentButton()!.previousElementSibling?.textContent?.startsWith(
+          m.changes_save_all(),
+        ),
+      ).toBe(true);
+      await act(async () => {
+        agentButton()!.click();
+        await nextFrame(dom);
+      });
+      await settle();
+      expect(asked).toEqual([
+        { spacePath: "/p", paths: ["notes/a.md", "README.md"] },
+      ]);
+      expect(submitted.length).toBe(1);
+      const request = submitted[0] as {
+        spacePath: string;
+        sessionId: string | null;
+        text: string;
+        mark: string;
+      };
+      expect(request.spacePath).toBe("/p");
+      expect(request.sessionId).toBeNull();
+      expect(request.mark).toBe("agent_commits");
+      expect(
+        request.text.includes(
+          m.agent_commit_request_repository({ path: "/p" }),
+        ),
+      ).toBe(true);
+      expect(request.text.includes("1. notes/a.md: edit of section")).toBe(
+        true,
+      );
+      expect(request.text.includes("`README.md`")).toBe(true);
+      expect(
+        request.text.includes(m.agent_commit_request_rule_no_publish()),
+      ).toBe(true);
+      // The window closed for the composer; nothing was committed.
+      expect(doc.querySelector("[data-commit-with-agent]")).toBeNull();
+
+      // In a chat session window it goes to that session's composer, with
+      // only the work of the session.
+      asked.length = 0;
+      await render({
+        ...space,
+        kind: "session",
+        work: {
+          files: [{ spaceId: "root", spacePath: "/p", path: "notes/a.md" }],
+          spaceKind: "project",
+          sessionId: "codex:s1",
+        },
+      });
+      await toggle();
+      await act(async () => {
+        agentButton()!.click();
+        await nextFrame(dom);
+      });
+      await settle();
+      expect(asked).toEqual([{ spacePath: "/p", paths: ["notes/a.md"] }]);
+      expect(submitted.length).toBe(2);
+      const inSession = submitted[1] as { sessionId: string; text: string };
+      expect(inSession.sessionId).toBe("codex:s1");
+      expect(inSession.text.includes("README.md")).toBe(false);
+
+      // Without changes there is nothing to commit with the agent.
+      files["/p"] = [];
+      const { refreshGitStatus } = await import("@/features/git");
+      await act(async () => {
+        await refreshGitStatus("/p");
+      });
+      await render(space);
+      await toggle();
+      expect(agentButton()).toBeNull();
+    } finally {
+      release();
       await act(async () => {
         root.unmount();
         await nextFrame(dom);

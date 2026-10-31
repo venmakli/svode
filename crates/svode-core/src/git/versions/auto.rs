@@ -333,11 +333,11 @@ fn idle_for(repo: &Path, paths: &[String], now: SystemTime) -> Duration {
 
 /// A changed path that is a repository of its own: a Space pointer, which
 /// structural commits own.
-fn nested_repository(repo: &Path, path: &str) -> bool {
+pub(super) fn nested_repository(repo: &Path, path: &str) -> bool {
     repo.join(path).join(".git").symlink_metadata().is_ok()
 }
 
-fn operation(
+pub(super) fn operation(
     repo: &Path,
     change: Option<&super::super::pending::StructuralChange>,
     paths: &[PathBuf],

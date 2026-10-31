@@ -9,6 +9,7 @@ import type {
   GitConflictFileDto,
   GitFileResolutionDto,
   GitPathConflictDto,
+  GitUncommittedGroupsDto,
   PublicationStatusDto,
   GitAvailabilityDto,
   GitStatusDto,
@@ -194,6 +195,18 @@ export function getGitConflictKinds(
   return invokeCommand<GitPathConflictDto[]>("git_conflict_kinds", {
     spacePath,
   });
+}
+
+/**
+ * The uncommitted groups of `paths` (relative to `spacePath`) with their
+ * facts, as «Зафиксировать с агентом» hands them to an agent; nothing is
+ * staged.
+ */
+export function getGitUncommittedGroups(input: {
+  spacePath: string;
+  paths: string[];
+}): Promise<GitUncommittedGroupsDto> {
+  return invokeCommand<GitUncommittedGroupsDto>("git_uncommitted_groups", input);
 }
 
 /** The conflicted file at `path` (relative to `spacePath`) with its places. */

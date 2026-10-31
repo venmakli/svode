@@ -24,9 +24,14 @@ export interface ChangesTarget {
   name: string;
   /**
    * The work of a chat session (kind "session", Stage 11 1.7): the files its
-   * turns changed, and what its own Space is.
+   * turns changed, what its own Space is, and the session whose composer
+   * «Зафиксировать с агентом» writes to (1.10).
    */
-  work?: { files: SessionWorkFile[]; spaceKind: "space" | "project" };
+  work?: {
+    files: SessionWorkFile[];
+    spaceKind: "space" | "project";
+    sessionId?: string;
+  };
 }
 
 /** The changes of one file, such as a document or media file. */
