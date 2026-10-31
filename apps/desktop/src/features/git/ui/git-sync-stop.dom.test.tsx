@@ -29,6 +29,7 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
   const longPage = `${"Очень длинное название страницы ".repeat(6)}.md`;
   let preflight: unknown = null;
   let syncReport: unknown = null;
+  let syncFailure: unknown = null;
   const commands: string[] = [];
 
   function mockGit() {
@@ -50,7 +51,10 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
             reason: null,
           };
         if (command === "git_sync_preflight") return preflight;
-        if (command === "git_sync") return syncReport;
+        if (command === "git_sync") {
+          if (syncFailure) throw syncFailure;
+          return syncReport;
+        }
         if (command === "git_fetch_status" || command === "git_status")
           return { branch: "main", ahead: 1, behind: 2, files: [] };
         if (command === "git_unpushed_commits") return [];
@@ -329,6 +333,134 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
       expect(path in useGitStore.getState().syncStop).toBe(false);
     } finally {
       useGitStore.getState().clear(path);
+      clearNativeMocks();
+      await dom.dispose();
+    }
+  });
+
+  test("the publication guard stops only publication and names the file and commit", async () => {
+    const dom = await createTestDom();
+    mockGit();
+    preflight = null;
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const guard = {
+      kind: "git_publication_blocked",
+      repository: path,
+      reason: "content",
+      path: "Задачи/schema.yaml",
+      commit,
+      finding: "conflict_markers",
+    };
+    const stop = {
+      kind: "publication",
+      path: "Задачи/schema.yaml",
+      commit,
+      finding: "conflict_markers",
+    };
+    const { useGitStore } = await import("../model/git-store");
+    const { GitSyncStatusWidget } = await import("./git-sync-status-widget");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { syncSpace } = await import("../api/git-actions");
+    const { recordGitOperationOutcome } =
+      await import("../api/git-operation-events");
+    const m = await import("@/paraglide/messages.js");
+    try {
+      syncFailure = guard;
+      expect(await syncSpace(path)).toEqual({
+        type: "Failed",
+        message: m.git_publication_content_blocked({
+          reason: m.git_sync_stop_publication_markers(),
+          path: "Задачи/schema.yaml",
+          commit: "0123456",
+        }),
+        block: undefined,
+        stop,
+      });
+      expect(useGitStore.getState().syncStop[path]).toEqual(stop);
+      expect(path in useGitStore.getState().syncError).toBe(false);
+
+      await dom.render(
+        <TooltipProvider>
+          <GitSyncStatusWidget repositoryPath={path} onOpenPage={() => {}} />
+        </TooltipProvider>,
+      );
+      await settle();
+      const control = dom.document.querySelector<HTMLButtonElement>(
+        "[data-repository-control]",
+      )!;
+      // The preflight read on mount finds nothing and keeps the stop.
+      expect(useGitStore.getState().syncStop[path]).toEqual(stop);
+      expect(
+        control
+          .getAttribute("aria-label")
+          ?.includes(m.git_sync_stop_publication_title()),
+      ).toBe(true);
+      expect(
+        !!control.querySelector("[data-git-sync-stopped]") &&
+          !control.querySelector("[data-git-sync-error]"),
+      ).toBe(true);
+      await act(async () => {
+        control.click();
+      });
+      await settle();
+      const dialog = dom.document.querySelector<HTMLElement>("[role=dialog]")!;
+      const slot = dialog.querySelector<HTMLElement>(
+        "[data-git-sync-stop=publication]",
+      )!;
+      expect(dialog.querySelectorAll("[role=alert]").length).toBe(1);
+      for (const text of [
+        m.git_sync_stop_publication_title(),
+        m.git_sync_stop_publication_markers(),
+        m.git_sync_stop_publication_hint(),
+      ])
+        expect(slot.textContent?.includes(text)).toBe(true);
+      const file = slot.querySelector<HTMLElement>(
+        "[data-publication-stop-path]",
+      )!;
+      expect(file.textContent).toBe("Задачи/schema.yaml");
+      expect(file.title).toBe("Задачи/schema.yaml");
+      const shown = slot.querySelector<HTMLElement>(
+        "[data-publication-stop-commit]",
+      )!;
+      expect(shown.textContent).toBe("0123456");
+      expect(shown.title).toBe(commit);
+      // No action of its own; Sync publishes once the file is fixed.
+      expect(slot.querySelector("button")).toBe(null);
+      expect(
+        Array.from(dialog.querySelectorAll("button")).some(
+          (button) => button.textContent === m.git_sync_action(),
+        ),
+      ).toBe(true);
+
+      // Any other failure ends the stop and is an error again.
+      syncFailure = "network down";
+      expect((await syncSpace(path)).type).toBe("Failed");
+      expect(path in useGitStore.getState().syncStop).toBe(false);
+      expect(useGitStore.getState().syncError[path]).toBe("network down");
+
+      // A background sync refused by the guard, then a published one.
+      recordGitOperationOutcome({
+        repository: path,
+        active: false,
+        report: null,
+        error: { ...guard, finding: "unreadable" },
+      });
+      expect(useGitStore.getState().syncStop[path]).toEqual({
+        ...stop,
+        finding: "unreadable",
+      });
+      expect(path in useGitStore.getState().syncError).toBe(false);
+      recordGitOperationOutcome({
+        repository: path,
+        active: false,
+        report: { type: "success", publishedHead: commit },
+        error: null,
+      });
+      expect(path in useGitStore.getState().syncStop).toBe(false);
+    } finally {
+      syncFailure = null;
+      useGitStore.getState().clear(path);
+      await dom.render(null);
       clearNativeMocks();
       await dom.dispose();
     }

@@ -505,14 +505,18 @@ impl SpaceOrder {
     }
 }
 
+/// Parse the text of an order.json as every reader of the file does.
+pub(crate) fn parse_order(data: &str) -> Result<IndexMap<String, Vec<String>>, serde_json::Error> {
+    serde_json::from_str(data)
+}
+
 /// Read order.json for a write. A missing file is an empty order; an existing
 /// file that cannot be read or parsed (for example with Git conflict markers)
 /// is refused, so a default order never overwrites it.
 fn load_order(space: &Path) -> Result<SpaceOrder, ContentTreeError> {
     let order_path = space.join(".svode").join("order.json");
     let parsed = match fs::read_to_string(&order_path) {
-        Ok(data) => serde_json::from_str::<IndexMap<String, Vec<String>>>(&data)
-            .map_err(|error| error.to_string()),
+        Ok(data) => parse_order(&data).map_err(|error| error.to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(SpaceOrder::default());
         }

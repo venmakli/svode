@@ -2,10 +2,14 @@ import { listenGitSyncState } from "@/platform/git/git-api";
 import type { SyncResultDto } from "@/platform/git/git-types";
 import { useGitStore } from "../model";
 import { gitBranchErrorMessage } from "./git-branch-error";
-import { gitSyncErrorMessage, toGitPublicationBlock } from "./git-sync-error";
+import {
+  gitSyncErrorMessage,
+  toGitPublicationBlock,
+  toGitPublicationStop,
+} from "./git-sync-error";
 import { toGitStatus, toSyncResult } from "./git-mappers";
 import { recordSyncPublication } from "./git-publication-actions";
-import { recordSyncStop } from "./git-sync-stop-actions";
+import { recordPublicationStop, recordSyncStop } from "./git-sync-stop-actions";
 
 export function listenGitOperationOutcomes() {
   return listenGitSyncState(recordGitOperationOutcome);
@@ -36,9 +40,14 @@ export function recordGitSyncResult(
   if (error) {
     const branch = gitBranchErrorMessage(error);
     const block = toGitPublicationBlock(error);
+    const stop = toGitPublicationStop(error);
     git.setBranchError(path, branch);
     git.setPublicationBlock(path, block);
-    git.setSyncError(path, branch || block ? null : gitSyncErrorMessage(error));
+    recordPublicationStop(path, stop);
+    git.setSyncError(
+      path,
+      branch || block || stop ? null : gitSyncErrorMessage(error),
+    );
     return;
   }
   if (!report) return;

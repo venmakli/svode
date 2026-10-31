@@ -10,12 +10,17 @@ use super::schema_validation::{normalize_schema, validate_schema};
 
 pub fn read_schema_at(path: &Path) -> Result<CollectionSchema, CollectionError> {
     let raw = fs::read_to_string(path)?;
-    let mut schema: CollectionSchema = serde_norway::from_str(&raw).map_err(|error| {
-        CollectionError::Schema(format!("{}: invalid schema YAML: {error}", path.display()))
-    })?;
+    parse_schema(&raw)
+        .map_err(|error| CollectionError::Schema(format!("{}: {error}", path.display())))
+}
+
+/// Parse and validate the text of a `schema.yaml`, views included, as
+/// [`read_schema_at`] does.
+pub(crate) fn parse_schema(raw: &str) -> Result<CollectionSchema, String> {
+    let mut schema: CollectionSchema =
+        serde_norway::from_str(raw).map_err(|error| format!("invalid schema YAML: {error}"))?;
     normalize_schema(&mut schema);
-    validate_schema(&schema)
-        .map_err(|error| CollectionError::Schema(format!("{}: {error}", path.display())))?;
+    validate_schema(&schema).map_err(|error| error.to_string())?;
     Ok(schema)
 }
 

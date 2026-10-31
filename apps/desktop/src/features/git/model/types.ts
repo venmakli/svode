@@ -1,4 +1,5 @@
 import type { GitPublicationBlock } from "./publication-block";
+import type { GitSyncStop } from "./sync-stop";
 
 export interface GitAvailability {
   git: boolean;
@@ -92,6 +93,8 @@ export type GitSyncOutcome =
       message: string;
       /** Spaces that stopped the project publication; a stop, not a failure. */
       block?: GitPublicationBlock;
+      /** The publication guard kept the commits local; a stop, not a failure. */
+      stop?: GitSyncStop;
     };
 
 export interface GitUserPolicy {

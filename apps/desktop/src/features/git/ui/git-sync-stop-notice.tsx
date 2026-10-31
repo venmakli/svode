@@ -1,13 +1,14 @@
-import { GitMerge } from "lucide-react";
+import { CloudUpload, GitMerge } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { gitPublicationStopMessage, shortCommit } from "../api/git-sync-error";
 import type { GitSyncStop } from "../model";
 import { gitSyncStopTitle } from "./git-sync-stop-copy";
 import * as m from "@/paraglide/messages.js";
 
 /**
- * The slot of the Git sync Dialog for an unfinished Git operation: it takes
- * the place of the sync error and names what the user resolves and where.
+ * The slot of the Git sync Dialog for what stops sync or its publication: it
+ * takes the place of the sync error and names what the user resolves and where.
  */
 export function GitSyncStopNotice({
   stop,
@@ -18,10 +19,12 @@ export function GitSyncStopNotice({
 }) {
   return (
     <Alert data-git-sync-stop={stop.kind}>
-      <GitMerge />
+      {stop.kind === "publication" ? <CloudUpload /> : <GitMerge />}
       <AlertTitle className="break-words">{gitSyncStopTitle(stop)}</AlertTitle>
       <AlertDescription className="flex min-w-0 flex-col gap-2">
-        {stop.kind !== "operation" ? (
+        {stop.kind === "publication" ? (
+          <PublicationStopDetails stop={stop} />
+        ) : stop.kind !== "operation" ? (
           <>
             <div>
               {stop.kind === "conflict"
@@ -72,6 +75,38 @@ export function GitSyncStopNotice({
         )}
       </AlertDescription>
     </Alert>
+  );
+}
+
+/** The file and commit the guard kept local, and how publication resumes. */
+function PublicationStopDetails({
+  stop,
+}: {
+  stop: Extract<GitSyncStop, { kind: "publication" }>;
+}) {
+  return (
+    <>
+      <div>{gitPublicationStopMessage(stop)}</div>
+      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1">
+        <dt>{m.git_sync_stop_publication_file()}</dt>
+        <dd
+          className="min-w-0 truncate text-foreground"
+          title={stop.path}
+          data-publication-stop-path
+        >
+          {stop.path}
+        </dd>
+        <dt>{m.git_sync_stop_publication_commit()}</dt>
+        <dd
+          className="min-w-0 truncate font-mono text-xs text-foreground"
+          title={stop.commit}
+          data-publication-stop-commit
+        >
+          {shortCommit(stop.commit)}
+        </dd>
+      </dl>
+      <div>{m.git_sync_stop_publication_hint()}</div>
+    </>
   );
 }
 

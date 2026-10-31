@@ -1,11 +1,22 @@
+import type { GitPublicationContentFinding } from "@/platform/git/publication-errors";
 import type { GitOperation, SyncResult } from "./types";
 
-/** An unfinished Git operation that stops sync of a repository. */
+/** What stops sync of a repository, or only its publication. */
 export type GitSyncStop =
   | { kind: "conflict"; files: string[] }
   | { kind: "operation"; operation: GitOperation }
   /** Files left in conflict with no operation, after a failed autostash. */
-  | { kind: "unmerged"; files: string[] };
+  | { kind: "unmerged"; files: string[] }
+  /**
+   * The publication guard kept outgoing commits local; fetch and integration
+   * still run. `path` is relative to the repository.
+   */
+  | {
+      kind: "publication";
+      path: string;
+      commit: string;
+      finding: GitPublicationContentFinding;
+    };
 
 /**
  * The stop a sync result reports: `null` when sync got past its preflight,

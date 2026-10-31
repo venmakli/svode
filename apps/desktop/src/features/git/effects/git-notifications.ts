@@ -35,8 +35,9 @@ export function notifyGitSyncOutcome(outcome: GitSyncOutcome): void {
       break;
     }
     case "Failed":
-      // Spaces that stop the project publication are a stop, not a failure.
+      // Spaces and the publication guard stop publication; not a failure.
       if (outcome.block) toast.info(m.git_sync_publication_blocked_status());
+      else if (outcome.stop) toast.info(gitSyncStopTitle(outcome.stop));
       else notifyGitSyncFailed();
       break;
     case "Success":

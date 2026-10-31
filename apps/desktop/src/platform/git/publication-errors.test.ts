@@ -55,3 +55,27 @@ test("the replaced single-child shape and malformed Spaces are not a refusal", (
   ])
     expect(toGitPublicationBlockDto(error)).toBe(null);
 });
+
+test("a publication guard refusal names the file, commit and finding", () => {
+  const guard = {
+    kind: "git_publication_blocked",
+    repository: "/space",
+    reason: "content",
+    path: "tasks/schema.yaml",
+    commit: "abc",
+  };
+  for (const finding of ["conflict_markers", "unreadable"])
+    expect(toGitPublicationBlockDto({ ...guard, finding })).toEqual({
+      kind: "git_publication_blocked",
+      reason: "content",
+      path: "tasks/schema.yaml",
+      commit: "abc",
+      finding,
+    });
+  for (const error of [
+    { ...guard, finding: "whitespace" },
+    { ...guard, path: undefined, finding: "unreadable" },
+    { ...guard, commit: 1, finding: "unreadable" },
+  ])
+    expect(toGitPublicationBlockDto(error)).toBe(null);
+});

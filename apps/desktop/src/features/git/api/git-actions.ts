@@ -3,7 +3,11 @@ import {
   recordSyncPublication,
 } from "./git-publication-actions";
 import { gitBranchErrorMessage } from "./git-branch-error";
-import { gitSyncErrorMessage, toGitPublicationBlock } from "./git-sync-error";
+import {
+  gitSyncErrorMessage,
+  toGitPublicationBlock,
+  toGitPublicationStop,
+} from "./git-sync-error";
 import { useGitStore } from "../model";
 import {
   commitGitAll,
@@ -22,7 +26,7 @@ import {
   type GitSyncOutcome,
 } from "../model";
 import { toGitStatus, toSyncResult } from "./git-mappers";
-import { recordSyncStop } from "./git-sync-stop-actions";
+import { recordPublicationStop, recordSyncStop } from "./git-sync-stop-actions";
 import { refreshGitRemoteStatus, refreshGitStatus } from "./git-status-actions";
 
 export interface GitCommitResult {
@@ -124,11 +128,16 @@ async function runSync(
     const branchMessage = gitBranchErrorMessage(err);
     const message = gitSyncErrorMessage(err);
     const block = toGitPublicationBlock(err) ?? undefined;
-    const failed = { type: "Failed" as const, message, block };
+    const stop = toGitPublicationStop(err) ?? undefined;
+    const failed = { type: "Failed" as const, message, block, stop };
     if (!request.current()) return failed;
     if (branchMessage) git.setBranchError(spacePath, branchMessage);
     git.setPublicationBlock(spacePath, block ?? null);
-    git.setSyncError(spacePath, branchMessage || block ? null : message);
+    recordPublicationStop(spacePath, stop ?? null);
+    git.setSyncError(
+      spacePath,
+      branchMessage || block || stop ? null : message,
+    );
     return failed;
   } finally {
     request.finish();

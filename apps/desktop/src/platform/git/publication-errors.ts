@@ -18,6 +18,9 @@ export interface GitPublicationBlockedSpaceDto {
   class: GitPublicationSpaceClass;
 }
 
+/** What the publication guard refuses to publish. */
+export type GitPublicationContentFinding = "conflict_markers" | "unreadable";
+
 export type GitPublicationBlockDto =
   | { kind: "git_publication_blocked"; reason: GitPublicationProjectReason }
   | {
@@ -26,6 +29,14 @@ export type GitPublicationBlockDto =
       /** The project repository whose gitlinks name these Spaces. */
       repository: string;
       spaces: GitPublicationBlockedSpaceDto[];
+    }
+  | {
+      kind: "git_publication_blocked";
+      reason: "content";
+      /** The file relative to the repository, as the commit left it. */
+      path: string;
+      commit: string;
+      finding: GitPublicationContentFinding;
     };
 
 const spaceClasses = new Set<string>([
@@ -93,6 +104,23 @@ export function toGitPublicationBlockDto(
         spaces,
       };
     }
+    case "content":
+      if (
+        !("path" in error) ||
+        typeof error.path !== "string" ||
+        !("commit" in error) ||
+        typeof error.commit !== "string" ||
+        !("finding" in error) ||
+        (error.finding !== "conflict_markers" && error.finding !== "unreadable")
+      )
+        return null;
+      return {
+        kind: "git_publication_blocked",
+        reason,
+        path: error.path,
+        commit: error.commit,
+        finding: error.finding,
+      };
     default:
       return null;
   }

@@ -17,6 +17,22 @@ pub enum PublicationBlockReason {
     Spaces {
         spaces: Vec<BlockedSpace>,
     },
+    /// The publication guard found `finding` in `path`, as `commit` left it.
+    Content {
+        path: String,
+        commit: String,
+        finding: ContentFinding,
+    },
+}
+
+/// What the publication guard refuses to publish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentFinding {
+    /// Conflict marker lines of the path's marker size, as Git reports them.
+    ConflictMarkers,
+    /// A Svode service file its reader does not parse.
+    Unreadable,
 }
 
 /// The transport shape every host publishes for a publication refusal.
@@ -120,6 +136,9 @@ async fn sensitive_with_env(
 mod discovery;
 use discovery::{Snapshot, snapshot};
 
+#[path = "publication_guard.rs"]
+mod guard;
+
 struct NativeEvidence {
     git: PathBuf,
     refs: Vec<(PathBuf, String, String)>,
@@ -158,6 +177,8 @@ pub async fn push_snapshot(
         Err(out) => return Ok((out, None)),
     };
     let evidence = if !fixed.updates.is_empty() {
+        // Local reads before the proof, which may contact Space sources.
+        guard::check(cli, repo, &fixed, first).await?;
         Some(prove(cli, repo, &fixed).await?)
     } else {
         None

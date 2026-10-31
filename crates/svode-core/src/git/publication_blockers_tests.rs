@@ -172,8 +172,16 @@ async fn a_project_refusal_after_a_space_blocker_stays_single() {
         ),
         "{result:?}"
     );
-    // The newer pointer was classified before the older commit failed.
-    assert_eq!(count(&log, "merge-base --is-ancestor"), 1);
+    // The newer pointer was classified in the Space before the older commit
+    // failed; the project's own ancestry check belongs to the publication guard.
+    let classified = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .filter(|line| {
+            line.contains("Пространство one\t") && line.contains("merge-base --is-ancestor")
+        })
+        .count();
+    assert_eq!(classified, 1);
 }
 
 #[tokio::test]

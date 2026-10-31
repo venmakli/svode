@@ -197,7 +197,8 @@ pub fn read(space: &Path) -> Result<SpaceConfig, SpaceConfigError> {
     Ok(config)
 }
 
-fn parse(bytes: &[u8]) -> Result<SpaceConfig, Unreadable> {
+/// Parse the bytes of a `.svode/config.json` as [`read`] does.
+pub(crate) fn parse(bytes: &[u8]) -> Result<SpaceConfig, Unreadable> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Err(Unreadable::NotJson);
     };

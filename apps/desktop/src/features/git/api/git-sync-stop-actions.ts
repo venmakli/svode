@@ -1,5 +1,10 @@
 import { abortGitMerge, getGitSyncPreflight } from "@/platform/git/git-api";
-import { syncStopFromResult, useGitStore, type SyncResult } from "../model";
+import {
+  syncStopFromResult,
+  useGitStore,
+  type GitSyncStop,
+  type SyncResult,
+} from "../model";
 import { toGitStatus, toSyncResult } from "./git-mappers";
 import { refreshGitRemoteStatus } from "./git-status-actions";
 
@@ -9,15 +14,36 @@ export function recordSyncStop(path: string, result: SyncResult) {
   if (stop !== undefined) useGitStore.getState().setSyncStop(path, stop);
 }
 
-/** Read the unfinished Git operation of the repository without syncing. */
+/**
+ * Keep the publication stop in step with a failed sync: the guard's refusal
+ * sets it, any other failure ends it and leaves other stops as they are.
+ */
+export function recordPublicationStop(path: string, stop: GitSyncStop | null) {
+  if (stop || currentStop(path)?.kind === "publication")
+    useGitStore.getState().setSyncStop(path, stop);
+}
+
+/**
+ * Read the unfinished Git operation of the repository without syncing. A
+ * publication stop is not a preflight state: it lasts until the next sync.
+ */
 export async function refreshGitSyncStop(path: string): Promise<void> {
   const dto = await getGitSyncPreflight(path);
+  const preflight = dto
+    ? (syncStopFromResult(toSyncResult(dto)) ?? null)
+    : null;
+  const current = currentStop(path);
   useGitStore
     .getState()
     .setSyncStop(
       path,
-      dto ? (syncStopFromResult(toSyncResult(dto)) ?? null) : null,
+      preflight ?? (current?.kind === "publication" ? current : null),
     );
+}
+
+function currentStop(path: string): GitSyncStop | undefined {
+  const git = useGitStore.getState();
+  return git.syncStop[git.statuses[path]?.repository ?? path];
 }
 
 /**

@@ -24,7 +24,11 @@ import { toParentError, toSyncResult } from "./git-mappers";
 import { recordGitSyncResult } from "./git-operation-events";
 import { refreshGitPublication } from "./git-publication-actions";
 import { refreshGitRemoteStatus } from "./git-status-actions";
-import { gitSyncErrorMessage, toGitPublicationBlock } from "./git-sync-error";
+import {
+  gitSyncErrorMessage,
+  toGitPublicationBlock,
+  toGitPublicationStop,
+} from "./git-sync-error";
 
 export interface GitSpacesPublicationOutcome {
   published: number;
@@ -157,6 +161,7 @@ function failedOutcome(error: unknown): GitSyncOutcome {
     type: "Failed",
     message: gitSyncErrorMessage(error),
     block: toGitPublicationBlock(error) ?? undefined,
+    stop: toGitPublicationStop(error) ?? undefined,
   };
 }
 

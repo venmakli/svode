@@ -291,6 +291,27 @@ mod tests {
             })
         );
 
+        let content = serde_json::to_value(GitError::PublicationBlocked {
+            repository: "/repo".to_string(),
+            reason: publication::PublicationBlockReason::Content {
+                path: "notes/plan.md".to_string(),
+                commit: "abc".to_string(),
+                finding: publication::ContentFinding::ConflictMarkers,
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            content,
+            serde_json::json!({
+                "kind": "git_publication_blocked",
+                "repository": "/repo",
+                "reason": "content",
+                "path": "notes/plan.md",
+                "commit": "abc",
+                "finding": "conflict_markers",
+            })
+        );
+
         let branch = serde_json::to_value(GitError::BranchBlocked {
             reason: branch::BranchBlockReason::RootDetached,
         })

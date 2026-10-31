@@ -140,12 +140,13 @@ export function GitSyncStatusWidget({
   // Publishing the shown Spaces takes the place of sync or the project retry.
   const publishAction =
     sync.visible && (publish.available || publish.running) && !stop;
-  // Sync cannot run through an unfinished Git operation.
+  // Sync cannot run through an unfinished Git operation; after a publication
+  // stop it is how the fixed commits get published.
   const footerAction =
     sync.visible &&
     !publishAction &&
     sync.parent.action !== "none" &&
-    !(stop && sync.parent.action === "sync");
+    !(stop && stop.kind !== "publication" && sync.parent.action === "sync");
   const openPage = onOpenPage
     ? (path: string) => {
         sync.setOpen(false);

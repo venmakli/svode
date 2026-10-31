@@ -10,6 +10,7 @@ import { toRepositoryAccessDeniedDto } from "@/platform/git/repository-access-ap
 import { redactUrlCredentials } from "../model/remote-auth";
 import { gitBranchErrorMessage } from "./git-branch-error";
 import type { GitPublicationBlock } from "../model/publication-block";
+import type { GitSyncStop } from "../model/sync-stop";
 import * as m from "@/paraglide/messages.js";
 
 /** The Spaces a publication refusal names, or `null` for any other error. */
@@ -45,6 +46,28 @@ function gitSyncStageMessage(stage: GitFailureStageDto): string {
   }[stage]();
 }
 
+/** The stop of a publication the guard refused, or `null` for any other error. */
+export function toGitPublicationStop(error: unknown): GitSyncStop | null {
+  const dto = toGitPublicationBlockDto(error);
+  return dto?.reason === "content"
+    ? {
+        kind: "publication",
+        path: dto.path,
+        commit: dto.commit,
+        finding: dto.finding,
+      }
+    : null;
+}
+
+/** Why the guard refused the publication, with the file and its commit. */
+export function gitPublicationStopMessage(
+  stop: Pick<Extract<GitSyncStop, { kind: "publication" }>, "finding">,
+): string {
+  return stop.finding === "conflict_markers"
+    ? m.git_sync_stop_publication_markers()
+    : m.git_sync_stop_publication_unreadable();
+}
+
 export function gitSyncErrorMessage(error: unknown): string {
   const branch = gitBranchErrorMessage(error);
   if (branch) return branch;
@@ -55,6 +78,12 @@ export function gitSyncErrorMessage(error: unknown): string {
       : m.git_sync_access_unknown();
   const publication = toGitPublicationBlockDto(error);
   if (publication) {
+    if (publication.reason === "content")
+      return m.git_publication_content_blocked({
+        reason: gitPublicationStopMessage(publication),
+        path: publication.path,
+        commit: shortCommit(publication.commit),
+      });
     if (publication.reason !== "spaces")
       return {
         target_changed: m.git_publication_target_changed,
@@ -114,4 +143,9 @@ export function gitSyncErrorMessage(error: unknown): string {
   return detail?.trim()
     ? redactUrlCredentials(detail).trim().slice(0, 4000)
     : m.git_sync_failed();
+}
+
+/** The abbreviated commit id the Dialog shows. */
+export function shortCommit(commit: string): string {
+  return commit.slice(0, 7);
 }
