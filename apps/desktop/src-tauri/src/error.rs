@@ -214,6 +214,7 @@ impl From<svode_core::git::GitError> for AppError {
         use svode_core::git::GitError;
         match error {
             GitError::GitNotFound => Self::GitNotFound,
+            GitError::GitUnsupported { version } => Self::GitUnsupported { version },
             GitError::GitCommandFailed(message) => Self::GitCommandFailed(message),
             GitError::PathNotAccessible(path) => Self::PathNotAccessible(path),
             GitError::RepositoryAccessDenied {
@@ -472,6 +473,12 @@ pub enum AppError {
     #[error("Git not found")]
     GitNotFound,
 
+    #[error(
+        "Git {version} is older than {}, the oldest Git Svode supports. Update Git, then retry.",
+        svode_core::git::version::GitVersion::MINIMUM
+    )]
+    GitUnsupported { version: String },
+
     #[error("Git command failed: {0}")]
     GitCommandFailed(String),
     #[error("Project publication blocked: {reason:?}")]
@@ -615,6 +622,7 @@ impl AppError {
             AppError::AgentCliNotFound(_) => "agent_cli_not_found",
             AppError::AgentSpawnFailed(_) => "agent_spawn_failed",
             AppError::GitNotFound => "git_not_found",
+            AppError::GitUnsupported { .. } => "git_unsupported",
             AppError::GitCommandFailed(_) => "git_command_failed",
             AppError::GitPublicationBlocked { .. } => "git_publication_blocked",
             AppError::GitBranchBlocked { .. } => "git_branch_blocked",
@@ -697,6 +705,9 @@ impl Serialize for AppError {
             }
             AppError::GitBranchBlocked { reason } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason }).serialize(serializer)
+            }
+            AppError::GitUnsupported { version } => {
+                serde_json::json!({ "kind": self.kind(), "message": self.to_string(), "version": version, "minimumVersion": svode_core::git::version::GitVersion::MINIMUM.to_string() }).serialize(serializer)
             }
             AppError::GitPushRejected { reason, object_count, lfs_declaration } => {
                 serde_json::json!({ "kind": self.kind(), "reason": reason, "objectCount": object_count, "lfsDeclaration": lfs_declaration }).serialize(serializer)
@@ -814,6 +825,22 @@ mod tests {
                     { "path": "legal", "class": "missing" },
                 ],
             })
+        );
+    }
+
+    #[test]
+    fn outdated_git_refusal_serializes_the_release_found_and_the_minimum() {
+        let value =
+            serde_json::to_value(AppError::from(svode_core::git::GitError::GitUnsupported {
+                version: "2.30.1".into(),
+            }))
+            .unwrap();
+        assert_eq!(value["kind"], "git_unsupported");
+        assert_eq!(value["version"], "2.30.1");
+        assert_eq!(value["minimumVersion"], "2.31.0");
+        assert_eq!(
+            value["message"],
+            "Git 2.30.1 is older than 2.31.0, the oldest Git Svode supports. Update Git, then retry."
         );
     }
 

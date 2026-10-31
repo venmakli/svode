@@ -7,9 +7,13 @@ pub mod cli;
 pub mod flow;
 pub mod host;
 #[cfg(test)]
+mod init_tests;
+#[cfg(test)]
 mod local_policy_tests;
 pub mod local_repair;
 pub mod markers;
+#[cfg(test)]
+mod operation_recognition_tests;
 pub mod operations;
 pub mod ops;
 pub mod path;
@@ -35,12 +39,18 @@ pub mod state;
 pub mod status;
 pub mod sync;
 pub mod upstream;
+pub mod version;
 pub mod write_guard;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("Git not found")]
     GitNotFound,
+    #[error(
+        "Git {version} is older than {}, the oldest Git Svode supports. Update Git, then retry.",
+        version::GitVersion::MINIMUM
+    )]
+    GitUnsupported { version: String },
     #[error("Git command failed: {0}")]
     GitCommandFailed(String),
     #[error("Path not accessible: {0}")]
@@ -108,6 +118,7 @@ impl GitError {
     pub fn kind(&self) -> &'static str {
         match self {
             GitError::GitNotFound => "git_not_found",
+            GitError::GitUnsupported { .. } => "git_unsupported",
             GitError::GitCommandFailed(_) => "git_command_failed",
             GitError::PathNotAccessible(_) => "path_not_accessible",
             GitError::RepositoryAccessDenied { .. } => "repository_access_denied",
@@ -179,6 +190,13 @@ impl serde::Serialize for GitError {
             GitError::SourceBusy { path } => {
                 serde_json::json!({ "kind": self.kind(), "path": path }).serialize(serializer)
             }
+            GitError::GitUnsupported { version } => serde_json::json!({
+                "kind": self.kind(),
+                "message": self.to_string(),
+                "version": version,
+                "minimumVersion": version::GitVersion::MINIMUM.to_string(),
+            })
+            .serialize(serializer),
             GitError::StatusTimedOut {
                 repository,
                 seconds,

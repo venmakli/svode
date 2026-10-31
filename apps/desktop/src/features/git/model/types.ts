@@ -5,6 +5,9 @@ export interface GitAvailability {
   gitLfs: boolean;
   gitVersion: string | null;
   gitLfsVersion: string | null;
+  /** False only for a recognised Git older than `gitMinimumVersion`. */
+  gitVersionSupported: boolean;
+  gitMinimumVersion: string;
 }
 
 export type FileGitState = "modified" | "untracked" | "deleted" | "conflict";

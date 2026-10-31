@@ -11,9 +11,16 @@ use super::sync::SyncResult;
 
 static DETECTED_CLI: OnceLock<Option<GitCli>> = OnceLock::new();
 
-/// One process-wide Git CLI detection shared by every runtime and caller.
-pub fn detected_cli() -> Option<GitCli> {
+/// One process-wide Git CLI detection shared by every runtime and caller,
+/// whatever its release.
+fn installed_cli() -> Option<GitCli> {
     DETECTED_CLI.get_or_init(|| GitCli::detect().ok()).clone()
+}
+
+/// The detected Git CLI when Svode may run it: a Git older than the minimum
+/// is treated like a missing one.
+pub fn detected_cli() -> Option<GitCli> {
+    installed_cli().filter(|cli| cli.ensure_supported().is_ok())
 }
 
 #[derive(Default)]
@@ -60,7 +67,7 @@ pub struct GitRuntime {
 
 impl GitRuntime {
     pub fn new() -> Self {
-        let cli = detected_cli();
+        let cli = installed_cli();
         if cli.is_none() {
             tracing::warn!("Git not available");
         }
@@ -81,16 +88,36 @@ impl GitRuntime {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_cli(cli: GitCli) -> Self {
+        Self {
+            cli: Some(cli),
+            operations: Arc::default(),
+            repository: GitRepositoryState::new(),
+        }
+    }
+
+    /// The Git CLI when Svode may run it; `None` also for a Git older than
+    /// the minimum, which [`Self::cli`] refuses with its release.
     pub fn detected(&self) -> Option<&GitCli> {
+        self.cli
+            .as_ref()
+            .filter(|cli| cli.ensure_supported().is_ok())
+    }
+
+    /// The Git CLI whatever its release, for availability checks only.
+    pub fn installed(&self) -> Option<&GitCli> {
         self.cli.as_ref()
     }
 
     pub fn cli(&self) -> Result<&GitCli, GitError> {
-        self.cli.as_ref().ok_or(GitError::GitNotFound)
+        let cli = self.cli.as_ref().ok_or(GitError::GitNotFound)?;
+        cli.ensure_supported()?;
+        Ok(cli)
     }
 
     pub fn require_cli(&self) -> Result<GitCli, GitError> {
-        self.cli.clone().ok_or(GitError::GitNotFound)
+        self.cli().cloned()
     }
 
     pub fn repository(&self) -> &GitRepositoryState {
@@ -169,6 +196,52 @@ mod tests {
             runtime.status(Path::new("."), false).await,
             Err(GitError::GitNotFound)
         ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_older_than_the_minimum_is_refused_with_its_release_until_updated_in_place() {
+        let temp = tempfile::tempdir().unwrap();
+        let release = temp.path().join("release");
+        let script = temp.path().join("git");
+        std::fs::write(&release, "git version 2.30.1\n").unwrap();
+        svode_testkit::write_executable(
+            &script,
+            format!(
+                "#!/bin/sh\nfor arg in \"$@\"; do if [ \"$arg\" = --version ]; then cat '{}'; exit 0; fi; done\nexit 1\n",
+                release.display()
+            ),
+        )
+        .unwrap();
+        let cli = GitCli::for_test(script);
+
+        let availability = cli.check_availability().await;
+        assert!(availability.git && !availability.git_version_supported);
+        assert_eq!(availability.git_version.as_deref(), Some("2.30.1"));
+        assert_eq!(availability.git_minimum_version, "2.31.0");
+        let runtime = GitRuntime::with_cli(cli.clone());
+        let refusal = runtime.require_cli().unwrap_err();
+        assert!(
+            matches!(&refusal, GitError::GitUnsupported { version } if version == "2.30.1"),
+            "{refusal:?}"
+        );
+        assert_eq!(
+            refusal.to_string(),
+            "Git 2.30.1 is older than 2.31.0, the oldest Git Svode supports. Update Git, then retry."
+        );
+        assert!(runtime.detected().is_none());
+        assert!(runtime.installed().is_some());
+        assert!(matches!(
+            runtime.status(Path::new("."), false).await,
+            Err(GitError::GitUnsupported { .. })
+        ));
+
+        std::fs::write(&release, "git version 2.37.7\n").unwrap();
+        assert!(cli.check_availability().await.git_version_supported);
+        assert!(!runtime.cli().unwrap().background_merge());
+        std::fs::write(&release, "git version 2.38.0 (Apple Git-200)\n").unwrap();
+        cli.refresh_version().await;
+        assert!(runtime.detected().unwrap().background_merge());
     }
 
     #[tokio::test]

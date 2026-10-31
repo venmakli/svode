@@ -46,6 +46,7 @@ impl Fixture {
             format!(
                 r#"#!/bin/sh
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+REAL_GIT='{real_path}'
 shift 4
 printf '%s\n' "$1" >> .git/probe-calls
 {fault}
@@ -1460,7 +1461,7 @@ if [ "$1" = push ]; then
   touch ".git/push-ready-$PPID"
   wait_until '[ "$(ls .git | grep -c "^push-ready-")" -ge 2 ]'
   if [ "$SVODE_ACCESS_CHILD_PUSH" = second ]; then
-    wait_until '[ -n "$(ls ../remote.git/refs/svode/access 2>/dev/null | grep -v "\.lock$")" ]'
+    wait_until '[ -n "$("$REAL_GIT" --git-dir=../remote.git for-each-ref refs/svode/access)" ]'
   elif [ "$SVODE_ACCESS_CHILD_PERSIST" = last ]; then
     touch ".git/persist-after-$PPID"
   fi

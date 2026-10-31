@@ -179,14 +179,11 @@ fn drop_legacy_shared_git_policy(config_target: &Path) {
 pub async fn git_check_availability(
     state: State<'_, GitState>,
 ) -> Result<GitAvailability, AppError> {
-    match state.detected() {
+    // The installed CLI whatever its release: this check is how an update of
+    // an outdated Git becomes visible.
+    match state.installed() {
         Some(cli) => Ok(cli.check_availability().await),
-        None => Ok(GitAvailability {
-            git: false,
-            git_lfs: false,
-            git_version: None,
-            git_lfs_version: None,
-        }),
+        None => Ok(GitAvailability::missing()),
     }
 }
 

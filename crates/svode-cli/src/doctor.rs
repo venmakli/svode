@@ -20,6 +20,8 @@ pub async fn run(host: &impl ToolHost, selectors: Selectors<'_>) -> Outcome {
             json!({
                 "available": availability.git,
                 "version": availability.git_version,
+                "versionSupported": availability.git_version_supported,
+                "minimumVersion": availability.git_minimum_version,
                 "lfs": availability.git_lfs,
                 "lfsVersion": availability.git_lfs_version,
             })
@@ -114,6 +116,10 @@ fn human(report: &Value) -> String {
         ));
     }
     match report["git"]["version"].as_str() {
+        Some(version) if report["git"]["versionSupported"] == false => out.push_str(&format!(
+            "git: {version} — older than {}, update Git\n",
+            report["git"]["minimumVersion"].as_str().unwrap_or_default()
+        )),
         Some(version) => out.push_str(&format!("git: {version}\n")),
         None => out.push_str("git: unavailable\n"),
     }

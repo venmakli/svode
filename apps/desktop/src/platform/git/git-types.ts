@@ -3,6 +3,8 @@ export interface GitAvailabilityDto {
   gitLfs: boolean;
   gitVersion: string | null;
   gitLfsVersion: string | null;
+  gitVersionSupported: boolean;
+  gitMinimumVersion: string;
 }
 
 export type FileGitStateDto = "modified" | "untracked" | "deleted" | "conflict";

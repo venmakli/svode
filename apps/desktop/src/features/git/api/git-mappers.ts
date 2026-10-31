@@ -19,6 +19,8 @@ export function toGitAvailability(dto: GitAvailabilityDto): GitAvailability {
     gitLfs: dto.gitLfs,
     gitVersion: dto.gitVersion,
     gitLfsVersion: dto.gitLfsVersion,
+    gitVersionSupported: dto.gitVersionSupported,
+    gitMinimumVersion: dto.gitMinimumVersion,
   };
 }
 

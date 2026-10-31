@@ -31,6 +31,10 @@ impl GitState {
         self.0.detected()
     }
 
+    pub(crate) fn installed(&self) -> Option<&GitCli> {
+        self.0.installed()
+    }
+
     pub(crate) fn cli(&self) -> Result<&GitCli, AppError> {
         Ok(self.0.cli()?)
     }

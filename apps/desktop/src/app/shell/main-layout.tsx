@@ -159,7 +159,7 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
     [activeRootIcon, activeRootName, spaces],
   );
   useNavigationStateLifecycle(activeRootPath, navigationSpacesKey);
-  const { available, recheck } = useGitAvailability();
+  const { available, availability, recheck } = useGitAvailability();
   const identity = useGlobalIdentity();
   const identityName = identity?.name ?? null;
   const identityEmail = identity?.email ?? null;
@@ -252,7 +252,11 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
       <SpaceConfigRecheck />
       <SpaceConfigChanges />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
-      <GitMissingDialog open={available === false} onRecheck={recheck} />
+      <GitMissingDialog
+        open={available === false}
+        availability={availability}
+        onRecheck={recheck}
+      />
       {view === "space" ? (
         <SpaceCommandPalette
           onBeforeNavigation={passNavigationGuards}

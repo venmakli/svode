@@ -166,7 +166,7 @@ pub async fn init_with_optional_scaffold_commit(
     space_dir: &Path,
     commit_scaffold: bool,
 ) -> Result<(), GitError> {
-    let out = cli.exec(space_dir, &["init"]).await?;
+    let out = init_repository(cli, space_dir).await?;
     if out.exit_code != 0 {
         return Err(GitError::GitCommandFailed(format!(
             "git init failed: {}",
@@ -188,6 +188,41 @@ pub async fn init_with_optional_scaffold_commit(
 
     tracing::info!("Initialized git repo at {}", space_dir.display());
     Ok(())
+}
+
+/// `git init` of a repository Svode creates: SHA-1 objects while forges do not
+/// support SHA-256 everywhere, and the user's `init.defaultBranch` or `main`.
+/// Reinitializing an existing repository keeps its format and branch.
+async fn init_repository(
+    cli: &GitCli,
+    space_dir: &Path,
+) -> Result<super::cli::GitOutput, GitError> {
+    let git_dir = space_dir.join(".git");
+    if git_dir.symlink_metadata().is_ok() {
+        return cli.exec(space_dir, &["init"]).await;
+    }
+    // `git init` reads only system and global config, never the config of a
+    // repository around a Space folder; an explicit GIT_DIR reads the same.
+    let configured = cli
+        .exec_with_env(
+            space_dir,
+            &["config", "--get", "init.defaultBranch"],
+            &[("GIT_DIR", &git_dir.to_string_lossy())],
+        )
+        .await?;
+    let branch = match configured.stdout.trim() {
+        branch if configured.exit_code == 0 && !branch.is_empty() => branch,
+        _ => "main",
+    };
+    cli.exec(
+        space_dir,
+        &[
+            "init",
+            "--object-format=sha1",
+            &format!("--initial-branch={branch}"),
+        ],
+    )
+    .await
 }
 
 fn is_local_variable_path(path: &str) -> bool {

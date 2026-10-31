@@ -382,41 +382,87 @@ pub enum GitOperation {
     Sequencer,
 }
 
+/// A pseudo-ref such as `CHERRY_PICK_HEAD`, read as a ref. With the reftable
+/// backend only `MERGE_HEAD` and `FETCH_HEAD` remain files in `.git`; the
+/// others live in the ref store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PseudoRef {
+    Present(String),
+    Absent,
+    /// Git refused the read (no repository or an unusable one).
+    Unreadable,
+}
+
+pub(crate) async fn read_pseudo_ref(
+    cli: &GitCli,
+    repo: &Path,
+    name: &str,
+) -> Result<PseudoRef, GitError> {
+    let out = cli
+        .exec(repo, &["rev-parse", "-q", "--verify", name])
+        .await?;
+    Ok(match out.exit_code {
+        0 => PseudoRef::Present(out.stdout.trim().to_string()),
+        1 => PseudoRef::Absent,
+        _ => PseudoRef::Unreadable,
+    })
+}
+
+/// Recognise the unfinished operation through Git, the same with the `files`
+/// and `reftable` ref stores: pseudo-refs as refs, rebase and sequencer state
+/// as directories.
 pub async fn operation_in_progress(
     cli: &GitCli,
     repo: &Path,
 ) -> Result<Option<GitOperation>, GitError> {
-    let path = |name| async move {
+    let pseudo = |name| async move {
+        match read_pseudo_ref(cli, repo, name).await? {
+            PseudoRef::Present(_) => Ok(true),
+            PseudoRef::Absent => Ok(false),
+            PseudoRef::Unreadable => Err(blocked(BranchBlockReason::Configuration)),
+        }
+    };
+    let (directories, merge, pick, revert) = tokio::join!(
         checked(
             cli,
             repo,
-            &["rev-parse", "--path-format=absolute", "--git-path", name],
-        )
-        .await
-    };
-    let paths = tokio::join!(
-        path("rebase-merge"),
-        path("rebase-apply"),
-        path("MERGE_HEAD"),
-        path("CHERRY_PICK_HEAD"),
-        path("REVERT_HEAD"),
-        path("sequencer"),
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "rebase-merge",
+                "--git-path",
+                "rebase-apply",
+                "--git-path",
+                "sequencer",
+            ],
+        ),
+        pseudo("MERGE_HEAD"),
+        pseudo("CHERRY_PICK_HEAD"),
+        pseudo("REVERT_HEAD"),
     );
+    let directories = directories?;
+    let directory = |index: usize| {
+        directories
+            .lines()
+            .nth(index)
+            .is_some_and(|path| Path::new(path).is_dir())
+    };
     // A rebase may replay a merge, and a multi-commit pick keeps its sequencer:
     // the most specific operation wins.
-    for (result, operation) in [
-        (paths.0, GitOperation::Rebase),
-        (paths.1, GitOperation::Rebase),
-        (paths.2, GitOperation::Merge),
-        (paths.3, GitOperation::CherryPick),
-        (paths.4, GitOperation::Revert),
-        (paths.5, GitOperation::Sequencer),
-    ] {
-        if Path::new(&result?).exists() {
-            return Ok(Some(operation));
-        }
-    }
-    Ok(None)
+    Ok(if directory(0) || directory(1) {
+        Some(GitOperation::Rebase)
+    } else if merge? {
+        Some(GitOperation::Merge)
+    } else if pick? {
+        Some(GitOperation::CherryPick)
+    } else if revert? {
+        Some(GitOperation::Revert)
+    } else if directory(2) {
+        Some(GitOperation::Sequencer)
+    } else {
+        None
+    })
 }
 
 /// Never repeat `submodule update` over an existing checkout, even after a partial clone.

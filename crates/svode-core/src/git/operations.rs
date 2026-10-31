@@ -11,6 +11,7 @@ use tokio::sync::{Mutex, watch};
 
 use super::GitError;
 use super::{
+    branch::{PseudoRef, read_pseudo_ref},
     cli::GitCli,
     flow::{PublicationStatus, SyncReport},
     ops::GitStatus,
@@ -177,16 +178,43 @@ pub async fn read_transport(cli: &GitCli, repo: &Path) -> Result<String, GitErro
     ))
 }
 
+/// Pseudo-refs of operations and fetches the snapshot observes, read as refs:
+/// with reftable most of them are not files in `.git`.
+const PSEUDO_REFS: [&str; 6] = [
+    "ORIG_HEAD",
+    "FETCH_HEAD",
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "REBASE_HEAD",
+];
+
+async fn read_pseudo_refs(cli: &GitCli, repo: &Path) -> Result<[PseudoRef; 6], GitError> {
+    let read = |name| read_pseudo_ref(cli, repo, name);
+    let [orig, fetch, merge, pick, revert, rebase] = PSEUDO_REFS;
+    let refs = tokio::join!(
+        read(orig),
+        read(fetch),
+        read(merge),
+        read(pick),
+        read(revert),
+        read(rebase),
+    );
+    Ok([refs.0?, refs.1?, refs.2?, refs.3?, refs.4?, refs.5?])
+}
+
 impl Snapshot {
     pub async fn read(cli: &GitCli, repo: &Path) -> Result<Self, GitError> {
-        let (branch, config, refs, git_dir, index) = tokio::join!(
+        let (branch, config, refs, git_dir, index, pseudo_refs) = tokio::join!(
             cli.exec(repo, &["symbolic-ref", "-q", "HEAD"]),
             cli.exec_redacted(repo, &["config", "--null", "--list"]),
             cli.exec(repo, &["show-ref", "--head"]),
             cli.exec(repo, &["rev-parse", "--absolute-git-dir"]),
             cli.exec(repo, &["ls-files", "--stage", "-z"]),
+            read_pseudo_refs(cli, repo),
         );
-        let (branch, config, refs, git_dir, index) = (branch?, config?, refs?, git_dir?, index?);
+        let (branch, config, refs, git_dir, index, pseudo_refs) =
+            (branch?, config?, refs?, git_dir?, index?, pseudo_refs?);
         if config.exit_code != 0 || branch.exit_code > 1 {
             return Err(target_changed(repo));
         }
@@ -225,20 +253,14 @@ impl Snapshot {
                     && (key != "push.default" || matches!(value, "simple" | "current" | "upstream"))
             });
         let mut pseudo = Sha256::new();
-        for name in [
-            "ORIG_HEAD",
-            "FETCH_HEAD",
-            "MERGE_HEAD",
-            "CHERRY_PICK_HEAD",
-            "REBASE_HEAD",
-        ] {
-            match std::fs::read(Path::new(git_dir.stdout.trim()).join(name)) {
-                Ok(bytes) => {
+        for (name, state) in PSEUDO_REFS.iter().zip(pseudo_refs) {
+            match state {
+                PseudoRef::Present(oid) => {
                     pseudo.update(name);
-                    pseudo.update(bytes);
+                    pseudo.update(oid);
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
+                PseudoRef::Absent => {}
+                PseudoRef::Unreadable => return Err(target_changed(repo)),
             }
         }
         // Cached stat data and index extensions can change during a reader's

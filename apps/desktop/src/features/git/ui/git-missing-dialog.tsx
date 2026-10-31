@@ -11,12 +11,29 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RefreshCw } from "lucide-react";
 import * as m from "@/paraglide/messages.js";
+import type { GitAvailability } from "../model";
 
-function platformInstructions() {
+function installInstructions() {
   return [
     { id: "macos", label: "macOS", text: m.git_missing_instructions_macos() },
-    { id: "windows", label: "Windows", text: m.git_missing_instructions_windows() },
+    {
+      id: "windows",
+      label: "Windows",
+      text: m.git_missing_instructions_windows(),
+    },
     { id: "linux", label: "Linux", text: m.git_missing_instructions_linux() },
+  ];
+}
+
+function updateInstructions() {
+  return [
+    { id: "macos", label: "macOS", text: m.git_outdated_instructions_macos() },
+    {
+      id: "windows",
+      label: "Windows",
+      text: m.git_outdated_instructions_windows(),
+    },
+    { id: "linux", label: "Linux", text: m.git_outdated_instructions_linux() },
   ];
 }
 
@@ -30,13 +47,21 @@ function detectPlatform(): string {
 
 interface GitMissingDialogProps {
   open: boolean;
+  /** The last check; Git found but older than the minimum asks for an update. */
+  availability: GitAvailability | null;
   onRecheck: () => Promise<void>;
 }
 
-export function GitMissingDialog({ open, onRecheck }: GitMissingDialogProps) {
+export function GitMissingDialog({
+  open,
+  availability,
+  onRecheck,
+}: GitMissingDialogProps) {
   const [checking, setChecking] = useState(false);
   const [platform] = useState(detectPlatform);
-  const platforms = platformInstructions();
+  const outdated =
+    availability?.git === true && !availability.gitVersionSupported;
+  const platforms = outdated ? updateInstructions() : installInstructions();
 
   async function recheck() {
     setChecking(true);
@@ -47,7 +72,7 @@ export function GitMissingDialog({ open, onRecheck }: GitMissingDialogProps) {
     }
   }
 
-  // No "skip" — dialog blocks until git is found.
+  // No "skip" — dialog blocks until a supported git is found.
   return (
     <Dialog open={open}>
       <DialogContent
@@ -57,8 +82,17 @@ export function GitMissingDialog({ open, onRecheck }: GitMissingDialogProps) {
         showCloseButton={false}
       >
         <DialogHeader>
-          <DialogTitle>{m.git_missing_title()}</DialogTitle>
-          <DialogDescription>{m.git_missing_description()}</DialogDescription>
+          <DialogTitle>
+            {outdated ? m.git_outdated_title() : m.git_missing_title()}
+          </DialogTitle>
+          <DialogDescription>
+            {outdated
+              ? m.git_outdated_description({
+                  version: availability.gitVersion ?? "",
+                  minimum: availability.gitMinimumVersion,
+                })
+              : m.git_missing_description()}
+          </DialogDescription>
         </DialogHeader>
         <Tabs defaultValue={platform} className="mt-2">
           <TabsList>

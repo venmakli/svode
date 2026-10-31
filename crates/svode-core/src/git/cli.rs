@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -8,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use super::GitError;
+use super::version::{GitVersion, release_label};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -34,8 +36,25 @@ fn hide_tokio_window(command: &mut Command) {
 pub struct GitAvailability {
     pub git: bool,
     pub git_lfs: bool,
+    /// `git version` output without its fixed prefix, e.g. `2.50.1 (Apple Git-155)`.
     pub git_version: Option<String>,
     pub git_lfs_version: Option<String>,
+    /// False only for a recognised release older than [`GitVersion::MINIMUM`].
+    pub git_version_supported: bool,
+    pub git_minimum_version: String,
+}
+
+impl GitAvailability {
+    pub fn missing() -> Self {
+        Self {
+            git: false,
+            git_lfs: false,
+            git_version: None,
+            git_lfs_version: None,
+            git_version_supported: false,
+            git_minimum_version: GitVersion::MINIMUM.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -48,17 +67,33 @@ pub struct GitOutput {
 #[derive(Debug, Clone)]
 pub struct GitCli {
     git_path: PathBuf,
+    /// Last observed release, shared by every clone so that an availability
+    /// check after a Git update applies to the whole process.
+    version: Arc<RwLock<Option<GitVersion>>>,
 }
 
 impl GitCli {
+    /// A CLI whose release is unknown until [`Self::refresh_version`].
     pub fn for_test(git_path: PathBuf) -> Self {
-        Self { git_path }
+        Self {
+            git_path,
+            version: Arc::default(),
+        }
     }
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, GitError> {
         let git_path = resolve_git_binary()?;
 
         tracing::info!("Found git at: {}", git_path.display());
+
+        let version = detect_version(&git_path);
+        match version {
+            Some(version) if !version.supported() => {
+                tracing::warn!("Git {version} is older than {}", GitVersion::MINIMUM)
+            }
+            Some(version) => tracing::info!("Git version {version}"),
+            None => tracing::warn!("Git version not recognised"),
+        }
 
         let lfs = detect_lfs_extension(&git_path);
         if lfs.available {
@@ -67,7 +102,50 @@ impl GitCli {
             tracing::debug!("Git LFS extension not available");
         }
 
-        Ok(Self { git_path })
+        Ok(Self {
+            git_path,
+            version: Arc::new(RwLock::new(version)),
+        })
+    }
+
+    /// Last observed release; `None` when `git version` was not recognised.
+    pub fn version(&self) -> Option<GitVersion> {
+        *self
+            .version
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn observe_version(&self, version: Option<GitVersion>) {
+        *self
+            .version
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = version;
+    }
+
+    /// Read the release again, e.g. after the user updated Git in place.
+    pub async fn refresh_version(&self) -> Option<GitVersion> {
+        let output = self.version_output().await;
+        let version = output.as_deref().and_then(GitVersion::parse);
+        self.observe_version(version);
+        version
+    }
+
+    /// Refuse a Git older than [`GitVersion::MINIMUM`] with the release found.
+    /// An unrecognised release is not refused: nothing proves it too old.
+    pub fn ensure_supported(&self) -> Result<(), GitError> {
+        match self.version() {
+            Some(version) if !version.supported() => Err(GitError::GitUnsupported {
+                version: version.to_string(),
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether background integration may merge (`merge-tree --write-tree`);
+    /// otherwise it only fast-forwards. An unknown release cannot.
+    pub fn background_merge(&self) -> bool {
+        self.version().is_some_and(GitVersion::background_merge)
     }
 
     /// Path to the git binary.
@@ -363,30 +441,44 @@ impl GitCli {
         })
     }
 
-    /// Check git and git-lfs availability with version info.
-    pub async fn check_availability(&self) -> GitAvailability {
+    async fn version_output(&self) -> Option<String> {
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
         apply_common_git_env(&mut cmd);
-        let version_output = cmd
-            .args(["-c", "core.quotePath=false", "--version"])
+        cmd.args(["-c", "core.quotePath=false", "--version"])
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
-            .await;
-
-        let git_version = version_output
+            .await
             .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    }
+
+    /// Check git and git-lfs availability with version info. The release read
+    /// here becomes the one every clone of this CLI checks against.
+    pub async fn check_availability(&self) -> GitAvailability {
+        let output = self.version_output().await;
+        let version = output.as_deref().and_then(GitVersion::parse);
+        self.observe_version(version);
 
         let lfs = detect_lfs_extension(&self.git_path);
 
         GitAvailability {
             git: true,
             git_lfs: lfs.available,
-            git_version,
+            git_version: output.as_deref().and_then(release_label),
             git_lfs_version: lfs.version,
+            git_version_supported: version.is_none_or(GitVersion::supported),
+            git_minimum_version: GitVersion::MINIMUM.to_string(),
         }
     }
+}
+
+fn detect_version(git_path: &Path) -> Option<GitVersion> {
+    let mut cmd = StdCommand::new(git_path);
+    hide_window(&mut cmd);
+    apply_common_std_git_env(&mut cmd);
+    let output = cmd.arg("--version").output().ok()?;
+    GitVersion::parse(&String::from_utf8_lossy(&output.stdout))
 }
 
 fn apply_common_git_env(cmd: &mut Command) {

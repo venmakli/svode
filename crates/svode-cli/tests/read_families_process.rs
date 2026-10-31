@@ -425,6 +425,10 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
         );
     }
     assert_eq!(doctor["git"]["available"], has_git());
+    if has_git() {
+        assert_eq!(doctor["git"]["versionSupported"], true);
+        assert_eq!(doctor["git"]["minimumVersion"], "2.31.0");
+    }
     let served = doctor["runtime"]["servedTools"].as_array().unwrap();
     assert!(served.contains(&Value::from("list_pages")));
     assert!(served.contains(&Value::from("query_collection_items")));

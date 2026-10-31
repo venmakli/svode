@@ -463,39 +463,38 @@ pub async fn commit_prepared(
     paths: &[String],
     message: &str,
 ) -> Result<GitOutput, GitError> {
-    let locations = exec(
-        cli,
-        repo,
-        &[
-            "rev-parse",
-            "--git-path",
-            "svode-save.index",
-            "--git-path",
-            "MERGE_HEAD",
-            "--git-path",
-            "CHERRY_PICK_HEAD",
-            "--git-path",
-            "REVERT_HEAD",
-        ],
-        "commit",
-        paths,
-    )
-    .await?;
-    let locations = locations
-        .stdout
-        .lines()
-        .map(|line| repo.join(line.trim()))
-        .collect::<Vec<_>>();
-    let [index, sequencer @ ..] = locations.as_slice() else {
-        return Err(failure("commit", "command_unavailable", None, paths));
+    let pseudo = |name| async move {
+        super::branch::read_pseudo_ref(cli, repo, name)
+            .await
+            .map_err(|_| failure("commit", "command_unavailable", None, paths))
+    };
+    let (index, merge, pick, revert) = tokio::join!(
+        exec(
+            cli,
+            repo,
+            &["rev-parse", "--git-path", "svode-save.index"],
+            "commit",
+            paths,
+        ),
+        pseudo("MERGE_HEAD"),
+        pseudo("CHERRY_PICK_HEAD"),
+        pseudo("REVERT_HEAD"),
+    );
+    let index = index?;
+    let index = match index.stdout.lines().next() {
+        Some(line) if index.exit_code == 0 => repo.join(line.trim()),
+        _ => return Err(failure("commit", "command_unavailable", None, paths)),
     };
     // Like `commit --only`, a partial commit never concludes a merge or a pick.
-    if sequencer.len() != 3 || sequencer.iter().any(|path| path.exists()) {
-        return Err(failure("commit", "command_failed", None, paths));
+    // The pseudo-refs are read as refs: reftable keeps the pick ones out of `.git`.
+    for state in [merge?, pick?, revert?] {
+        if state != super::branch::PseudoRef::Absent {
+            return Err(failure("commit", "command_failed", None, paths));
+        }
     }
-    let _ = std::fs::remove_file(index);
-    let outcome = commit_through(cli, repo, index, paths, message).await;
-    let _ = std::fs::remove_file(index);
+    let _ = std::fs::remove_file(&index);
+    let outcome = commit_through(cli, repo, &index, paths, message).await;
+    let _ = std::fs::remove_file(&index);
     outcome
 }
 

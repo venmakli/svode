@@ -44,11 +44,13 @@ impl ActorSources {
                     "shallow",
                     "--git-path",
                     "refs",
+                    "--git-path",
+                    "reftable/tables.list",
                 ],
             )
             .await?;
         let paths: Vec<_> = result.stdout.lines().map(PathBuf::from).collect();
-        if result.exit_code != 0 || paths.len() != 7 {
+        if result.exit_code != 0 || paths.len() != 8 {
             return Err(GitError::GitCommandFailed(format!(
                 "cannot resolve actor sources: {}",
                 result.stderr.trim()
@@ -58,6 +60,19 @@ impl ActorSources {
         let mut files = paths[1..6].to_vec();
         files.push(repository.join(".mailmap"));
         files.push(repository.join(".git"));
+        // A reftable store rewrites its table list on every ref update; a
+        // linked worktree keeps its own stack next to the common one. A
+        // `files` store has no such directory to observe.
+        let mut tables = vec![paths[7].clone()];
+        if let Some(common) = paths[6].parent() {
+            tables.push(common.join("reftable").join("tables.list"));
+        }
+        tables.dedup();
+        files.extend(
+            tables
+                .into_iter()
+                .filter(|list| list.parent().is_some_and(Path::is_dir)),
+        );
         Ok(Self {
             repository,
             files,
@@ -133,4 +148,85 @@ fn read_refs(path: &Path, stamp: &mut SourceStamp) -> Result<(), GitError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git::version::GitVersion;
+
+    async fn git(cli: &GitCli, repo: &Path, args: &[&str]) {
+        let out = cli.exec(repo, args).await.unwrap();
+        assert_eq!(out.exit_code, 0, "{args:?}: {}", out.stderr);
+    }
+
+    #[tokio::test]
+    async fn reftable_ref_updates_change_the_stamp_in_main_and_linked_worktrees() {
+        let cli = GitCli::detect().unwrap();
+        if cli
+            .version()
+            .is_none_or(|version| version < GitVersion::new(2, 45, 0))
+        {
+            eprintln!("skipped: no reftable in {:?}", cli.version());
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let linked = temp.path().join("linked");
+        std::fs::create_dir(&repo).unwrap();
+        git(
+            &cli,
+            &repo,
+            &["init", "-q", "-b", "main", "--ref-format=reftable"],
+        )
+        .await;
+        git(
+            &cli,
+            &repo,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "initial",
+            ],
+        )
+        .await;
+        git(
+            &cli,
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                linked.to_str().unwrap(),
+            ],
+        )
+        .await;
+        for path in [&repo, &linked] {
+            let sources = ActorSources::resolve(&cli, path).await.unwrap();
+            let before = sources.stamp().unwrap();
+            git(
+                &cli,
+                &repo,
+                &[
+                    "update-ref",
+                    &format!("refs/heads/{}", path.file_name().unwrap().to_string_lossy()),
+                    "HEAD",
+                ],
+            )
+            .await;
+            assert_ne!(sources.stamp().unwrap(), before, "{path:?}");
+        }
+        // HEAD of the linked worktree lives in its own reftable stack.
+        let sources = ActorSources::resolve(&cli, &linked).await.unwrap();
+        let before = sources.stamp().unwrap();
+        git(&cli, &linked, &["checkout", "-q", "repo"]).await;
+        assert_ne!(sources.stamp().unwrap(), before);
+    }
 }
