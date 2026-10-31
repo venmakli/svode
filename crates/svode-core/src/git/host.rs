@@ -54,7 +54,8 @@ pub trait GitHost: Send + Sync {
     /// Deliver a landed commit to the runtime.
     fn publish_commit(&self, space: &Path, repository: &Path);
 
-    /// Start the background sync that follows a commit when policy allows it.
+    /// A commit landed where policy allows background sync: its publication
+    /// joins the rhythm of the repository (1.E).
     fn schedule_auto_sync(&self, repository: &Path);
 
     /// A managed operation registered content changes of `space` for the
@@ -62,11 +63,14 @@ pub trait GitHost: Send + Sync {
     /// that close right after their operation (Stage 11 1.E).
     fn content_recorded(&self, _space: &Path) {}
 
-    /// Publish the active/finished state of one publication operation.
+    /// Publish the active/finished state of one publication operation;
+    /// `background` when no person started it (1.E: only an explicit sync
+    /// shows that it runs).
     fn publish_sync_state(
         &self,
         repository: &Path,
         active: bool,
+        background: bool,
         report: Option<&SyncReport>,
         error: Option<&SharedError>,
     );

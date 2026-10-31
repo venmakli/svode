@@ -1,10 +1,11 @@
 import {
+  getGitLastSynced,
   getGitRemote,
   getGitUserPolicy,
   getUnpushedCommits,
   listenGitCommitted,
-  setGitAutoSync as setPlatformGitAutoSync,
 } from "@/platform/git/git-api";
+import { useGitStore } from "../model";
 import type { UnpushedCommitDto } from "@/platform/git/git-types";
 import type { GitSyncOutcome, GitUnpushedCommit } from "../model";
 import {
@@ -20,12 +21,6 @@ type GitSyncUnlistenFn = () => void;
 export interface GitSyncWidgetConfig {
   hasRemote: boolean;
   autoSync: boolean;
-}
-
-export interface SetGitAutoSyncInput {
-  spacePath: string;
-  projectPath?: string | null;
-  enabled: boolean;
 }
 
 function toGitUnpushedCommit(commit: UnpushedCommitDto): GitUnpushedCommit {
@@ -71,16 +66,14 @@ export function saveGitSyncCredentials(
   return saveGitRemoteCredentials(input);
 }
 
-export async function setGitAutoSync({
-  spacePath,
-  projectPath,
-  enabled,
-}: SetGitAutoSyncInput): Promise<void> {
-  await setPlatformGitAutoSync({
-    spacePath,
-    projectPath,
-    enabled,
-  });
+/** Read when the repository last synced on this device into the store. */
+export async function getGitLastSyncedAt(spacePath: string): Promise<void> {
+  const at = await getGitLastSynced(spacePath);
+  // A sync that finished meanwhile is newer than the stored time.
+  const git = useGitStore.getState();
+  const repository = git.statuses[spacePath]?.repository ?? spacePath;
+  if (at != null && (git.lastSynced[repository] ?? 0) < at)
+    git.setLastSynced(spacePath, at);
 }
 
 export function listenGitSyncCommits(

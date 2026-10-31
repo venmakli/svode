@@ -1,25 +1,32 @@
-import { isAutoSyncEnabled, syncOnOpen, syncSpace } from "./git-actions";
-import { refreshGitRemoteStatus } from "./git-status-actions";
+import { triggerGitSync } from "@/platform/git/git-api";
+import { useGitStore } from "../model";
+import { toGitStatus } from "./git-mappers";
 
-export function syncGitOnActiveSpaceOpen(
+/**
+ * A Space opened, also at start: with sync on, the rhythm checks incoming
+ * (Stage 11 1.E). Silent on failure.
+ */
+export async function syncGitOnActiveSpaceOpen(
   spacePath: string,
-  projectPath?: string | null,
-): Promise<void> {
-  return syncOnOpen(spacePath, projectPath);
-}
-
-export async function refreshGitOnWindowFocus(
-  spacePath: string,
-  projectPath?: string | null,
 ): Promise<void> {
   try {
-    const status = await refreshGitRemoteStatus(spacePath);
-    if (
-      (await isAutoSyncEnabled(spacePath, projectPath)) &&
-      (status.ahead > 0 || status.behind > 0)
-    ) {
-      await syncSpace(spacePath, true);
-    }
+    await triggerGitSync({ spacePath, trigger: "opened" });
+  } catch (err) {
+    console.debug("git sync on open not planned:", err);
+  }
+}
+
+/**
+ * The window got focus: with sync on, the rhythm checks incoming; with sync
+ * off, the counters come from a fetch that starts with the light check.
+ */
+export async function refreshGitOnWindowFocus(
+  spacePath: string,
+): Promise<void> {
+  try {
+    const status = await triggerGitSync({ spacePath, trigger: "focused" });
+    if (status)
+      useGitStore.getState().applyRemoteStatus(spacePath, toGitStatus(status));
   } catch (err) {
     console.debug("git fetch/status on focus failed:", err);
   }

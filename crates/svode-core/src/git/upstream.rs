@@ -90,9 +90,10 @@ pub async fn of_current_branch(cli: &GitCli, repo: &Path) -> Result<Option<Upstr
 }
 
 /// The fetch step for the remote counters and the focus refresh: the
-/// same-named branch of `origin`, which the counters compare HEAD with.
-/// `None` when the current branch has no such target.
-pub async fn fetch_counted(cli: &GitCli, repo: &Path) -> Result<Option<Observed>, GitError> {
+/// same-named branch of `origin`, which the counters compare HEAD with,
+/// after the light check of [`fetch_if_changed`]. `None` when the current
+/// branch has no such target.
+pub async fn fetch_counted(cli: &GitCli, repo: &Path) -> Result<Option<Probed>, GitError> {
     let Some(upstream) = of_current_branch(cli, repo).await? else {
         return Ok(None);
     };
@@ -111,7 +112,7 @@ pub async fn fetch_counted(cli: &GitCli, repo: &Path) -> Result<Option<Observed>
     } else {
         return Ok(None);
     };
-    fetch(cli, repo, target).await.map(Some)
+    fetch_if_changed(cli, repo, target).await.map(Some)
 }
 
 fn origin_branch(branch: String) -> Upstream {
@@ -122,6 +123,127 @@ fn origin_branch(branch: String) -> Upstream {
         branch,
         configured: false,
     }
+}
+
+/// What [`fetch_if_changed`] observed, and whether it had to fetch for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probed {
+    pub observed: Observed,
+    /// `false` when the light check found the revision already fetched.
+    pub fetched: bool,
+}
+
+/// The light check of a background sync and of the fetch for the counters
+/// (1.E): one network call reads the revision of `upstream` on its remote,
+/// and only a revision other than the one already fetched is fetched. A
+/// branch the remote no longer has drops its tracking ref, as [`fetch`]
+/// does, without fetching.
+pub async fn fetch_if_changed(
+    cli: &GitCli,
+    repo: &Path,
+    upstream: Upstream,
+) -> Result<Probed, GitError> {
+    if upstream.remote == "." {
+        return Ok(Probed {
+            observed: fetch(cli, repo, upstream).await?,
+            fetched: true,
+        });
+    }
+    let remote = probe(cli, repo, &upstream).await?;
+    let tracked = tracked(cli, repo, &upstream).await?;
+    match remote {
+        Some(revision) if tracked.as_deref() == Some(revision.as_str()) => Ok(Probed {
+            observed: Observed {
+                upstream,
+                revision: Some(revision),
+            },
+            fetched: false,
+        }),
+        None => {
+            if tracked.is_some() {
+                drop_tracking(cli, repo, &upstream).await?;
+            }
+            Ok(Probed {
+                observed: Observed {
+                    upstream,
+                    revision: None,
+                },
+                fetched: false,
+            })
+        }
+        Some(_) => Ok(Probed {
+            observed: fetch(cli, repo, upstream).await?,
+            fetched: true,
+        }),
+    }
+}
+
+/// The revision of `upstream` on its remote, read by one `ls-remote` of
+/// exactly that ref; `None` when the remote has no such branch.
+pub async fn probe(
+    cli: &GitCli,
+    repo: &Path,
+    upstream: &Upstream,
+) -> Result<Option<String>, GitError> {
+    let out = cli
+        .exec(
+            repo,
+            &[
+                "ls-remote",
+                "--refs",
+                "--",
+                &upstream.remote,
+                &upstream.remote_ref,
+            ],
+        )
+        .await?;
+    if out.exit_code != 0 {
+        return Err(super::ops::git_remote_command_error(
+            repo,
+            super::diagnostics::GitStage::Fetch,
+            out.stderr.trim(),
+        ));
+    }
+    // The pattern matches the tail of a ref name, so another ref may end
+    // with the same path.
+    Ok(out.stdout.lines().find_map(|line| {
+        let (oid, name) = line.split_once('\t')?;
+        (name == upstream.remote_ref && !oid.is_empty()).then(|| oid.to_owned())
+    }))
+}
+
+/// The revision the tracking ref of `upstream` holds now, if any.
+async fn tracked(
+    cli: &GitCli,
+    repo: &Path,
+    upstream: &Upstream,
+) -> Result<Option<String>, GitError> {
+    let read = cli
+        .exec(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "-q",
+                &format!("{}^{{commit}}", upstream.tracking_ref),
+            ],
+        )
+        .await?;
+    let revision = read.stdout.trim();
+    Ok((read.exit_code == 0 && !revision.is_empty()).then(|| revision.to_owned()))
+}
+
+async fn drop_tracking(cli: &GitCli, repo: &Path, upstream: &Upstream) -> Result<(), GitError> {
+    let dropped = cli
+        .exec(repo, &["update-ref", "-d", &upstream.tracking_ref])
+        .await?;
+    if dropped.exit_code != 0 {
+        return Err(GitError::GitCommandFailed(format!(
+            "git update-ref failed: {}",
+            dropped.stderr.trim()
+        )));
+    }
+    Ok(())
 }
 
 /// Fetches `upstream` alone into its tracking ref and reads the revision the
@@ -155,35 +277,15 @@ pub async fn fetch(cli: &GitCli, repo: &Path, upstream: Upstream) -> Result<Obse
                     stderr,
                 ));
             }
-            let dropped = cli
-                .exec(repo, &["update-ref", "-d", &upstream.tracking_ref])
-                .await?;
-            if dropped.exit_code != 0 {
-                return Err(GitError::GitCommandFailed(format!(
-                    "git update-ref failed: {}",
-                    dropped.stderr.trim()
-                )));
-            }
+            drop_tracking(cli, repo, &upstream).await?;
             return Ok(Observed {
                 upstream,
                 revision: None,
             });
         }
     }
-    let read = cli
-        .exec(
-            repo,
-            &[
-                "rev-parse",
-                "--verify",
-                "-q",
-                &format!("{}^{{commit}}", upstream.tracking_ref),
-            ],
-        )
-        .await?;
-    let revision = read.stdout.trim();
     Ok(Observed {
-        revision: (read.exit_code == 0 && !revision.is_empty()).then(|| revision.to_owned()),
+        revision: tracked(cli, repo, &upstream).await?,
         upstream,
     })
 }

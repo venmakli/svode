@@ -14,10 +14,10 @@ import {
   commitGitFile,
   commitGitPaths,
   continueGitResolve as continuePlatformGitResolve,
-  getGitUserPolicy,
   mergeGitServiceFiles as mergePlatformGitServiceFiles,
   saveGitHttpCredentials,
   syncGit,
+  triggerGitSync,
 } from "@/platform/git/git-api";
 import {
   dirtyPathsForGitSaveScope,
@@ -59,37 +59,24 @@ export function saveGitRemoteCredentials({
 }
 
 /**
- * Read the local per-user auto-sync policy (default: false).
- */
-export async function isAutoSyncEnabled(
-  spacePath: string,
-  projectPath?: string | null,
-): Promise<boolean> {
-  try {
-    const policy = await getGitUserPolicy({ spacePath, projectPath });
-    return policy.autoSync === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Run pull+push for the space and return a typed outcome to callers.
- * Updates per-space syncing/error state in the git store.
+ * Updates per-space syncing/error state in the git store; only an explicit
+ * sync shows that it runs (Stage 11 1.E).
  */
 export async function syncSpace(
   spacePath: string,
   background = false,
 ): Promise<GitSyncOutcome> {
-  return runSync(spacePath, () => syncGit(spacePath, background));
+  return runSync(spacePath, () => syncGit(spacePath, background), !background);
 }
 
 export async function runSync(
   spacePath: string,
   execute: () => ReturnType<typeof syncGit>,
+  indicate = true,
 ): Promise<GitSyncOutcome> {
   const git = useGitStore.getState();
-  const request = git.beginSync(spacePath);
+  const request = git.beginSync(spacePath, indicate);
   try {
     const dto = await execute();
     const result = toSyncResult(dto);
@@ -187,9 +174,7 @@ export async function commitFileAndMaybeSync(
     throw err;
   }
   useGitStore.getState().setBranchError(spacePath, null);
-  if (await isAutoSyncEnabled(spacePath, projectPath)) {
-    void syncSpace(spacePath, true);
-  }
+  publishAfterCommit(spacePath);
   return result;
 }
 
@@ -232,9 +217,7 @@ export async function commitAllSpace(
     throw err;
   }
   useGitStore.getState().setBranchError(spacePath, null);
-  if (await isAutoSyncEnabled(spacePath, projectPath)) {
-    void syncSpace(spacePath, true);
-  }
+  publishAfterCommit(spacePath);
   return result;
 }
 
@@ -277,9 +260,7 @@ export async function commitPathsAndMaybeSync(
     throw err;
   }
   useGitStore.getState().setBranchError(spacePath, null);
-  if (await isAutoSyncEnabled(spacePath, projectPath)) {
-    void syncSpace(spacePath, true);
-  }
+  publishAfterCommit(spacePath);
   return result;
 }
 
@@ -353,14 +334,13 @@ export async function syncGitPointerSpace(
 }
 
 /**
- * Sync on space open. Silent on failure (no remote / offline / auth).
+ * A commit landed: with sync on, its publication joins the rhythm of the
+ * repository, whichever commit toggles are on (Stage 11 1.E).
  */
-export async function syncOnOpen(
-  spacePath: string,
-  projectPath?: string | null,
-): Promise<void> {
-  if (!(await isAutoSyncEnabled(spacePath, projectPath))) return;
-  await syncSpace(spacePath, true);
+function publishAfterCommit(spacePath: string) {
+  void triggerGitSync({ spacePath, trigger: "committed" }).catch((err) =>
+    console.debug("sync after commit not planned:", err),
+  );
 }
 
 function uniqueGitStatusPaths(paths: readonly string[]): string[] {

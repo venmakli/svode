@@ -19,7 +19,6 @@ import {
   commitFileAndMaybeSync,
   commitAllSpace,
   commitPathsAndMaybeSync,
-  syncOnOpen,
   continueGitResolve,
   syncSpace,
 } from "./git-actions";
@@ -120,7 +119,12 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       release = resolve;
     });
     const backgrounds: unknown[] = [];
+    const triggers: unknown[] = [];
     mockNativeIpc(async (command, args) => {
+      if (command === "git_sync_trigger") {
+        triggers.push((args as { trigger: string }).trigger);
+        return null;
+      }
       if (command === "git_sync") {
         backgrounds.push((args as { background: boolean }).background);
         await pending;
@@ -140,12 +144,18 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       const repeated = syncSpace(path, true);
       const explicit = syncSpace(path, false);
       await commitFileAndMaybeSync(path, "README.md");
-      expect(backgrounds).toEqual([true, true, false, true]);
+      // The sync after a commit belongs to the rhythm of the repository.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(backgrounds).toEqual([true, true, false]);
+      expect(triggers).toEqual(["committed"]);
+      // Only the explicit sync shows that it runs.
       expect(useGitStore.getState().syncing[path]).toBe(true);
       release();
-      await Promise.all([first, repeated, explicit]);
+      await explicit;
+      expect(useGitStore.getState().syncing[path] === undefined).toBe(true);
+      await Promise.all([first, repeated]);
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(backgrounds.length).toBe(4);
+      expect(backgrounds.length).toBe(3);
       expect(useGitStore.getState().syncing[path] === undefined).toBe(true);
       expect(useGitStore.getState().remoteChecked[path]).toBe(true);
     } finally {
@@ -188,7 +198,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       try {
         const child = syncSpace(childPath, true);
         await entered;
-        const parent = syncOnOpen(rootPath, rootPath);
+        const parent = syncSpace(rootPath, true);
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(calls).toEqual([childPath, rootPath]);
         release();
@@ -266,6 +276,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
     mockNativeIpc((command) => {
       calls.push(command);
       if (command === "git_get_user_policy") return { autoSync: false };
+      if (command === "git_sync_trigger") return null;
       if (command.startsWith("git_commit_"))
         return {
           ...status,
@@ -291,6 +302,9 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       expect(
         calls.some((c) => c === "git_sync" || c === "repository_access_verify"),
       ).toBe(false);
+      // Every manual commit is an action of the rhythm, whatever the commit
+      // toggles; the backend applies the sync toggle.
+      expect(calls.filter((c) => c === "git_sync_trigger").length).toBe(3);
     } finally {
       clearNativeMocks();
       useGitStore.getState().clear(path);
@@ -370,7 +384,7 @@ if (process.env.SVODE_PUBLICATION_TEST !== "1") {
       throw new Error(command);
     });
     try {
-      await syncOnOpen(path);
+      await syncSpace(path, true);
       expect(
         useGitStore.getState().publications[path]?.parent.result?.type,
       ).toBe("Conflict");

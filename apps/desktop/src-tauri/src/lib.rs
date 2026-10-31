@@ -80,6 +80,7 @@ pub fn run() {
         .manage(Arc::new(svode_core::page::nonce::WriteNonceRegistry::new()))
         .manage(git::GitState::new())
         .manage(git::auto_versions::AutoVersionState::new())
+        .manage(git::sync_rhythm::SyncRhythmState::new())
         .manage(identity::IdentityState::new())
         .manage(routines::RoutineSchedulerState::new())
         .manage(project_runtime::ProjectRuntimeState::new())
@@ -439,8 +440,8 @@ pub fn run() {
             git::commands::git_get_submodule_url,
             git::commands::git_unpushed_commits,
             git::commands::git_publish,
-            git::commands::git_enable_auto_sync,
-            git::commands::git_set_auto_sync,
+            git::commands::git_sync_trigger,
+            git::commands::git_last_synced,
             git::commands::git_get_user_policy,
             git::commands::git_set_user_policy,
             identity::commands::get_git_identity,

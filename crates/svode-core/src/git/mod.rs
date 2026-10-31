@@ -11,6 +11,7 @@ pub mod flow;
 pub mod host;
 #[cfg(test)]
 mod init_tests;
+pub mod last_sync;
 #[cfg(test)]
 mod local_policy_tests;
 pub mod local_repair;
@@ -31,6 +32,7 @@ pub mod push_rejection;
 pub mod readers;
 #[cfg(test)]
 mod resolve_tests;
+pub mod rhythm;
 pub mod save;
 #[cfg(test)]
 mod save_chain_tests;

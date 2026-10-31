@@ -198,12 +198,8 @@ if (process.env.SVODE_SYNC_STOP_DOM !== "1") {
         for (const row of rows.slice(1, 4))
           expect(!!row.querySelector("[data-git-conflict-resolve]")).toBe(true);
         expect(rows[4].querySelector("[data-git-conflict-resolve]")).toBe(null);
-        // Counters stay below the slot; Sync is hidden in the footer.
-        expect(
-          dialog.textContent?.includes(
-            m.git_sync_incoming_summary({ count: "2" }),
-          ),
-        ).toBe(true);
+        // The stop takes the body of the Dialog; Sync is hidden in the footer.
+        expect(dialog.querySelector("[data-git-sync-incoming]")).toBe(null);
         expect(
           Array.from(dialog.querySelectorAll("button")).some(
             (button) => button.textContent === m.git_sync_action(),

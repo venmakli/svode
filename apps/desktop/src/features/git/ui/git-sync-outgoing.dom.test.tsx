@@ -87,6 +87,9 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
           };
         if (command === "git_fetch_status" || command === "git_status")
           return status(ahead);
+        // With sync off, focus fetches the counters through the rhythm.
+        if (command === "git_sync_trigger") return status(ahead);
+        if (command === "git_last_synced") return null;
         if (command === "git_merge_abort") return status(ahead);
         if (command === "git_sync")
           return {
@@ -122,12 +125,12 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
     const dialog = () =>
       dom.document.querySelector<HTMLElement>("[role=dialog]");
     const shown = () =>
-      Array.from(dialog()?.querySelectorAll("section li") ?? []).map(
-        (row) => row.querySelector(".font-mono")?.textContent,
-      );
+      Array.from(
+        dialog()?.querySelectorAll("section li[data-git-commit]") ?? [],
+      ).map((row) => row.getAttribute("data-git-commit"));
     const counter = (count: number) =>
       dialog()?.textContent?.includes(
-        m.git_sync_outgoing_summary({ count: String(count) }),
+        m.git_sync_dialog_outgoing({ count: String(count) }),
       );
     const text = () => dialog()?.textContent ?? "";
     const reads = () =>
@@ -135,7 +138,7 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
     const expectList = (count: number) => {
       expect(counter(count)).toBe(true);
       expect(shown()).toEqual(commits(count).map((commit) => commit.sha));
-      expect(text().includes(m.git_sync_outgoing_empty())).toBe(false);
+      expect(dialog()?.querySelector("[data-git-sync-nothing]")).toBe(null);
     };
     try {
       await dom.render(
@@ -247,7 +250,7 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
       await settle();
       expect(counter(9)).toBe(true);
       expect(shown()).toEqual([]);
-      expect(text().includes(m.git_sync_outgoing_empty())).toBe(false);
+      expect(dialog()?.querySelector("[data-git-sync-nothing]")).toBe(null);
       expect(
         dialog()?.querySelector("[data-git-outgoing-failed]")?.textContent,
       ).toBe(m.git_sync_outgoing_load_failed());
@@ -259,7 +262,7 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
       });
       await settle();
       expect(text().includes(m.git_unpushed_loading())).toBe(true);
-      expect(text().includes(m.git_sync_outgoing_empty())).toBe(false);
+      expect(dialog()?.querySelector("[data-git-sync-nothing]")).toBe(null);
       expect(dialog()?.querySelector("[data-git-outgoing-failed]")).toBe(null);
       await act(async () => held[0]());
       await settle();
@@ -340,6 +343,7 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
           return status(ahead);
         }
         if (command === "git_status") return status(ahead);
+        if (command === "git_last_synced") return null;
         if (command === "git_unpushed_commits") {
           if (listFails) throw "git log failed";
           const list = commits(ahead);
@@ -371,7 +375,7 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
       dialog()?.querySelector("[data-git-outgoing-more]")?.textContent ?? null;
     const counter = (count: number) =>
       dialog()?.textContent?.includes(
-        m.git_sync_outgoing_summary({ count: String(count) }),
+        m.git_sync_dialog_outgoing({ count: String(count) }),
       );
     const refresh = async () => {
       await act(async () => {
@@ -426,9 +430,9 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
 
       ahead = 0;
       await refresh();
-      expect(dialog()?.textContent?.includes(m.git_sync_outgoing_empty())).toBe(
-        true,
-      );
+      expect(
+        dialog()?.querySelector("[data-git-sync-nothing]")?.textContent,
+      ).toBe(m.git_sync_dialog_nothing());
       expect(more()).toBe(null);
 
       // Neither does a failed read nor a remote status that is not checked.
@@ -448,9 +452,9 @@ if (process.env.SVODE_SYNC_OUTGOING_DOM !== "1") {
         await refreshGitRemoteStatus(path).catch(() => {});
       });
       await settle();
-      expect(
-        dialog()?.textContent?.includes(m.git_sync_outgoing_unchecked()),
-      ).toBe(true);
+      // The failure takes the body of the Dialog in place of the lists.
+      expect(dialog()?.querySelector("[data-git-sync-outgoing]")).toBe(null);
+      expect(dialog()?.querySelector("[role=alert]") == null).toBe(false);
       expect(more()).toBe(null);
     } finally {
       await dom.render(null);

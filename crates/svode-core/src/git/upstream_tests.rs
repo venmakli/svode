@@ -336,7 +336,11 @@ async fn first_publication_fetches_the_branch_and_drops_a_stale_tracking_ref() {
         &["update-ref", "refs/remotes/origin/topic", "HEAD"],
     );
 
-    let observed = fetch_counted(&f.cli, &f.local).await.unwrap().unwrap();
+    let observed = fetch_counted(&f.cli, &f.local)
+        .await
+        .unwrap()
+        .unwrap()
+        .observed;
     assert!(!observed.upstream.configured);
     assert_eq!(observed.upstream.tracking_ref, "refs/remotes/origin/topic");
     assert_eq!(observed.revision, None);
@@ -352,7 +356,11 @@ async fn first_publication_fetches_the_branch_and_drops_a_stale_tracking_ref() {
 
     let incoming = f.incoming("remote\n");
     f.git(&f.local, &["checkout", "-q", "main"]);
-    let observed = fetch_counted(&f.cli, &f.local).await.unwrap().unwrap();
+    let observed = fetch_counted(&f.cli, &f.local)
+        .await
+        .unwrap()
+        .unwrap()
+        .observed;
     assert!(observed.upstream.configured);
     assert_eq!(observed.revision.as_deref(), Some(incoming.as_str()));
     assert_ne!(f.head(), incoming, "fetch leaves the branch alone");
@@ -387,7 +395,11 @@ async fn root_fetch_leaves_submodule_space_refs_and_fetch_head_alone() {
     let space_fetch_head = f.fetch_head(&space);
     assert!(!space_fetch_head.exists());
 
-    let observed = fetch_counted(&f.cli, &f.local).await.unwrap().unwrap();
+    let observed = fetch_counted(&f.cli, &f.local)
+        .await
+        .unwrap()
+        .unwrap()
+        .observed;
     assert_eq!(observed.revision.as_deref(), Some(incoming.as_str()));
     assert_eq!(space_refs(), refs_before);
     assert!(!space_fetch_head.exists());

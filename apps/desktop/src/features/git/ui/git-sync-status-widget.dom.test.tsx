@@ -51,6 +51,17 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
         if (command === "git_get_remote")
           return "https://example.test/project.git";
         if (command === "git_publication_status") return null;
+        if (command === "git_last_synced") return null;
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: path,
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
         if (command === "git_fetch_status") {
           if (failFetch) throw "git fetch failed: connection timed out";
           return { branch: "main", ahead: 1, behind: 0, files: [] };
@@ -120,14 +131,10 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
               m.git_sync_remote_unchecked_description(),
             ),
           ).toBe(false);
-          expect(dialog.textContent.includes(m.git_sync_outgoing_empty())).toBe(
-            false,
-          );
-          expect(
-            dialog.textContent.includes(
-              failed ? m.git_sync_outgoing_unchecked() : "Saved README",
-            ),
-          ).toBe(true);
+          // The error takes the body of the Dialog: no list, no empty state.
+          expect(dialog.querySelector("[data-git-sync-nothing]")).toBe(null);
+          expect(dialog.querySelector("[data-git-sync-outgoing]")).toBe(null);
+          expect(dialog.textContent.includes("Saved README")).toBe(false);
           const retry = Array.from(dialog.querySelectorAll("button")).find(
             (button) => button.textContent === m.git_sync_action(),
           );
@@ -168,8 +175,14 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
             lastKnownStatus: null,
             reason: null,
           };
-        if (command === "git_fetch_status" || command === "git_status") {
-          if (command === "git_fetch_status") fetches.push(spacePath ?? "");
+        if (command === "git_last_synced") return null;
+        if (
+          command === "git_fetch_status" ||
+          command === "git_status" ||
+          // With sync off, focus fetches the counters through the rhythm.
+          command === "git_sync_trigger"
+        ) {
+          if (command !== "git_status") fetches.push(spacePath ?? "");
           return {
             branch: spacePath === other ? "docs-main" : "main",
             ahead: spacePath === other ? ahead : 0,
@@ -259,6 +272,17 @@ if (process.env.SVODE_SYNC_WIDGET_DOM !== "1") {
         if (command === "git_get_remote")
           return "https://example.test/project.git";
         if (command === "git_publication_status") return null;
+        if (command === "git_last_synced") return null;
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: path,
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
         if (command === "git_fetch_status" || command === "git_status")
           return { branch: "main", ahead: 0, behind: 1, files: [] };
         if (command === "git_unpushed_commits") return [];

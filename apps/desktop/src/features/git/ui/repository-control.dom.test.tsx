@@ -257,7 +257,6 @@ if (!isolatedProcess) {
       expect(
         section.textContent.includes("Write access is not confirmed"),
       ).toBe(true);
-      expect(section.textContent.includes("/dialog-unknown")).toBe(true);
       expect(Boolean(buttonWithText(dialog(dom)!, "Sync now"))).toBe(true);
       await act(async () => {
         buttonWithText(section, "Check access")!.click();
@@ -270,17 +269,18 @@ if (!isolatedProcess) {
             path === "/dialog-unknown",
         ),
       ).toBe(true);
-      section = accessSection(dom)!;
-      expect(section.dataset.repositoryAccessSectionStatus).toBe("writable");
-      expect(section.textContent.includes("Editing is available")).toBe(true);
-      expect(buttonWithText(section, "Check")).toBe(undefined);
+      // Normal access shows no access row in the Dialog.
+      expect(accessSection(dom)).toBeNull();
       expect(
         repositoryControl(dom)!.querySelector(
           "[data-repository-access-indicator]",
         ),
       ).toBeNull();
+      // The settings link of the footer leads to Git automation.
       await act(async () => {
-        buttonWithText(section, "Open Git settings")!.click();
+        dialog(dom)!
+          .querySelector<HTMLButtonElement>("[data-git-auto-sync-settings]")!
+          .click();
         await settle();
       });
       expect(settingsPaths).toEqual(["/dialog-unknown"]);
@@ -309,7 +309,7 @@ if (!isolatedProcess) {
         "unknown",
       );
       expect(buttonWithText(dialog(dom)!, "Sync now")).toBe(undefined);
-      expect(dialog(dom)!.textContent.includes("Outgoing commits")).toBe(false);
+      expect(dialog(dom)!.querySelector("[data-git-sync-outgoing]")).toBeNull();
     } finally {
       await act(async () => {
         root.unmount();

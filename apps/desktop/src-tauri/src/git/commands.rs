@@ -517,13 +517,57 @@ pub async fn git_sync(
 ) -> Result<flow::SyncReport, SharedError> {
     // Open content groups close before a sync (Stage 11 1.E).
     super::auto_versions::close_all(&app, &[PathBuf::from(&space_path)]).await;
-    flow::sync(
+    let background = background.unwrap_or(false);
+    let result = flow::sync(
         app.state::<GitState>().runtime(),
         &host(&app),
         Path::new(&space_path),
-        background.unwrap_or(false),
+        background,
     )
-    .await
+    .await;
+    if !background {
+        super::sync_rhythm::explicit(&app, Path::new(&space_path)).await;
+    }
+    result
+}
+
+/// An action that starts sync of the repository of `space_path` in its
+/// rhythm (Stage 11 1.E): `opened` (a Space opened, also at start),
+/// `focused` (the window got focus) or `committed` (a commit landed). With
+/// sync off, focus returns the counters its fetch read.
+#[tauri::command]
+pub async fn git_sync_trigger(
+    app: AppHandle,
+    window: tauri::Window,
+    space_path: String,
+    trigger: String,
+) -> Result<Option<GitStatus>, SharedError> {
+    use svode_core::git::rhythm::Trigger;
+    let trigger = match trigger.as_str() {
+        "opened" => Trigger::Opened,
+        "focused" => Trigger::Focused,
+        "committed" => Trigger::Committed,
+        other => {
+            return Err(svode_core::git::GitError::General(format!(
+                "unknown sync trigger: {other}"
+            ))
+            .into());
+        }
+    };
+    super::sync_rhythm::trigger(&app, Some(window.label()), Path::new(&space_path), trigger).await
+}
+
+/// When the repository of `space_path` last synced successfully on this
+/// device, in milliseconds since the Unix epoch.
+#[tauri::command]
+pub async fn git_last_synced(
+    app: AppHandle,
+    state: State<'_, GitState>,
+    space_path: String,
+) -> Result<Option<u64>, AppError> {
+    let cli = state.require_cli()?;
+    let repository = super::access::resolve_repository(&cli, Path::new(&space_path)).await?;
+    Ok(super::sync_rhythm::last_synced(&app, &repository))
 }
 
 /// Close open content groups of automatic versions (Stage 11 1.E): the
@@ -895,32 +939,6 @@ pub async fn git_publish(app: AppHandle, space_path: String) -> Result<GitStatus
         true,
     )
     .await
-}
-
-#[tauri::command]
-pub async fn git_enable_auto_sync(
-    state: State<'_, GitState>,
-    space_path: String,
-    project_path: Option<String>,
-) -> Result<(), AppError> {
-    git_set_auto_sync(state, space_path, project_path, true).await
-}
-
-#[tauri::command]
-pub async fn git_set_auto_sync(
-    state: State<'_, GitState>,
-    space_path: String,
-    project_path: Option<String>,
-    enabled: bool,
-) -> Result<(), AppError> {
-    let space = PathBuf::from(&space_path);
-    let config_target =
-        resolve_git_user_policy_target(&state, &space, project_path.as_deref()).await?;
-    let mut policy = svode_core::git::policy::read_user_policy(&config_target)?;
-    policy.auto_sync = enabled;
-    svode_core::git::policy::write_user_policy(&config_target, &policy)?;
-    drop_legacy_shared_git_policy(&config_target);
-    Ok(())
 }
 
 #[tauri::command]

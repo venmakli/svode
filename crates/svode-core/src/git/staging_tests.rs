@@ -130,6 +130,7 @@ impl GitHost for TestHost {
         &self,
         repository: &Path,
         active: bool,
+        _: bool,
         _: Option<&SyncReport>,
         _: Option<&SharedError>,
     ) {

@@ -180,8 +180,10 @@ if (process.env.SVODE_PUBLICATION_BLOCK_DOM !== "1") {
         // Outgoing commits and counters stay below; publishing the
         // publishable Spaces takes the place of sync.
         expect(
-          dialog().textContent.includes(m.git_sync_outgoing_section()),
-        ).toBe(true);
+          dialog().querySelector(
+            "[data-git-sync-outgoing], [data-git-sync-nothing], [data-git-sync-unchecked]",
+          ) === null,
+        ).toBe(false);
         expect(button(m.git_publication_publish_spaces())?.disabled).toBe(
           false,
         );

@@ -20,7 +20,10 @@ export function recordGitOperationOutcome(
 ) {
   const git = useGitStore.getState();
   const path = event.repository;
-  git.updateBackendSyncing(path, event.active);
+  // Only an explicit sync shows that it runs (Stage 11 1.E); a background
+  // one shows its result.
+  if (!event.background) git.updateBackendSyncing(path, event.active);
+  if (event.syncedAt != null) git.setLastSynced(path, event.syncedAt);
   if (event.active) {
     git.setSyncError(path, null);
     git.setPublicationBlock(path, null);

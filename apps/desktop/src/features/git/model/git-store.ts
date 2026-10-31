@@ -21,7 +21,9 @@ import {
  * Sources of truth:
  * - `statuses` is the latest `git status` snapshot per space path.
  * - `statusErrors` is why the latest status read failed, until one succeeds.
- * - `syncing` flags spaces in the middle of a pull/push.
+ * - `syncing` flags spaces in the middle of an explicit sync; a background
+ *   sync shows only its result (Stage 11 1.E).
+ * - `lastSynced` is when each repository last synced on this device.
  * - `cloning` tracks in-progress `git clone` operations and their percent.
  * - `syncError` is set when sync fails (auth/network) → indicator goes to `✕`.
  * - `syncStop` is the unfinished Git operation that stops sync.
@@ -41,6 +43,9 @@ interface GitState {
   syncing: Record<string, boolean>;
   backendSyncing: Record<string, boolean>;
   updateBackendSyncing: (path: string, active: boolean) => void;
+  /** Repository → milliseconds since the Unix epoch of its last sync. */
+  lastSynced: Record<string, number>;
+  setLastSynced: (path: string, at: number | null) => void;
   syncError: Record<string, string>;
   syncStop: Record<string, GitSyncStop>;
   serviceMerged: Record<string, string[]>;
@@ -55,7 +60,11 @@ interface GitState {
     message: (error: unknown) => string,
     local: () => Promise<GitStatus>,
   ) => Promise<GitStatus>;
-  beginSync: (path: string) => { current: () => boolean; finish: () => void };
+  /** Start a sync of `path`; only an explicit one (`indicate`) shows it runs. */
+  beginSync: (
+    path: string,
+    indicate?: boolean,
+  ) => { current: () => boolean; finish: () => void };
   branchError: Record<string, string>;
   cloning: Record<string, GitCloneProgress>;
 
@@ -92,7 +101,10 @@ export const useGitStore = create<GitState>((set, get) => {
   const remoteVersions: Record<string, number> = {};
   const publicationVersions: Record<string, number> = {};
   const backendRequests: Record<string, number> = {};
-  const syncRequests: Record<string, { count: number; version: number }> = {};
+  const syncRequests: Record<
+    string,
+    { count: number; indicated: number; version: number }
+  > = {};
 
   return {
     publications: {},
@@ -132,6 +144,15 @@ export const useGitStore = create<GitState>((set, get) => {
         },
       }));
     },
+    lastSynced: {},
+    setLastSynced: (path, at) =>
+      set((s) => {
+        const repository = s.statuses[path]?.repository ?? path;
+        if (at == null)
+          return { lastSynced: withoutPath(s.lastSynced, repository) };
+        if (s.lastSynced[repository] === at) return s;
+        return { lastSynced: { ...s.lastSynced, [repository]: at } };
+      }),
     syncError: {},
     syncStop: {},
     serviceMerged: {},
@@ -142,11 +163,16 @@ export const useGitStore = create<GitState>((set, get) => {
     branchError: {},
     cloning: {},
 
-    beginSync: (path) => {
-      const pending = (syncRequests[path] ??= { count: 0, version: 0 });
+    beginSync: (path, indicate = true) => {
+      const pending = (syncRequests[path] ??= {
+        count: 0,
+        indicated: 0,
+        version: 0,
+      });
       pending.count++;
+      if (indicate) pending.indicated++;
       const version = ++pending.version;
-      get().setSyncing(path, true);
+      if (indicate) get().setSyncing(path, true);
       get().setSyncError(path, null);
       get().setPublicationBlock(path, null);
       get().setBranchError(path, null);
@@ -155,10 +181,9 @@ export const useGitStore = create<GitState>((set, get) => {
           syncRequests[path] === pending && pending.version === version,
         finish: () => {
           if (syncRequests[path] !== pending) return;
-          if (--pending.count === 0) {
-            delete syncRequests[path];
+          if (indicate && --pending.indicated === 0)
             get().setSyncing(path, false);
-          }
+          if (--pending.count === 0) delete syncRequests[path];
         },
       };
     },
@@ -257,6 +282,7 @@ export const useGitStore = create<GitState>((set, get) => {
           spacePath,
           status.repository,
         ),
+        lastSynced: repositoryState(s.lastSynced, spacePath, status.repository),
       }));
     },
 
@@ -303,7 +329,9 @@ export const useGitStore = create<GitState>((set, get) => {
           s.remoteStatuses;
         const { [spacePath]: _rmBranchError, ...branchError } = s.branchError;
         const { [spacePath]: _rmClone, ...cloning } = s.cloning;
+        const { [spacePath]: _rmLastSynced, ...lastSynced } = s.lastSynced;
         return {
+          lastSynced,
           publications,
           statuses,
           statusErrors,

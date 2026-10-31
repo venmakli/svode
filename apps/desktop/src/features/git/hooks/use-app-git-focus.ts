@@ -13,16 +13,16 @@ import {
 } from "../api/git-focus-actions";
 
 /**
- * App-level git hooks that run once for the currently-active space:
- *  - `syncOnOpen` on space switch (silent pull+push if remote configured)
- *  - window `focus` → status refresh; auto-push only when auto-sync is enabled
+ * App-level git hooks that run once for the currently-active space; the
+ * sync rhythm decides what each action does (Stage 11 1.E):
+ *  - opening the Space, also at start, checks incoming when sync is on;
+ *  - window `focus` checks incoming, or fetches the counters with sync off.
  *
  * Hoisted here so sidebars rendering N space rows don't multiply the
- * number of concurrent sync/push calls on startup and focus.
+ * number of actions on startup and focus.
  */
 export function useAppGitFocus() {
   const activePath = useSpace((s) => selectActiveSpacePath(s));
-  const activeRootPath = useSpace((s) => s.activeRootPath);
   useEffect(() => {
     let disposed = false;
     const stops: (() => void)[] = [];
@@ -42,20 +42,18 @@ export function useAppGitFocus() {
     };
   }, []);
 
-  // Silent sync-on-open for the active space only.
+  // Opening the active Space is an action of the rhythm.
   useEffect(() => {
     if (!activePath) return;
-    void syncGitOnActiveSpaceOpen(activePath, activeRootPath);
-  }, [activePath, activeRootPath]);
+    void syncGitOnActiveSpaceOpen(activePath);
+  }, [activePath]);
 
-  // Single window-focus listener that refreshes status for the active space.
-  // Background network writes obey the same auto-sync policy as commit paths.
+  // Single window-focus listener for the active space.
   useEffect(() => {
     const onFocus = async () => {
       const path = selectActiveSpacePath(getSpaceSnapshot());
-      const projectPath = getSpaceSnapshot().activeRootPath;
       if (!path) return;
-      await refreshGitOnWindowFocus(path, projectPath);
+      await refreshGitOnWindowFocus(path);
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);

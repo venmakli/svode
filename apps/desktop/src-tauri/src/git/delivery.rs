@@ -67,8 +67,12 @@ struct CommittedPayload {
 struct SyncStateEvent<'a> {
     repository: String,
     active: bool,
+    /// No person started this operation: it shows no progress (1.E).
+    background: bool,
     report: Option<&'a SyncReport>,
     error: Option<&'a SharedError>,
+    /// When the repository synced, for a finished successful sync.
+    synced_at: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -198,17 +202,7 @@ impl GitHost for DesktopGitHost {
     }
 
     fn schedule_auto_sync(&self, repository: &Path) {
-        let app = self.app.clone();
-        let repository = repository.to_path_buf();
-        tauri::async_runtime::spawn(async move {
-            let runtime = runtime(&app);
-            let host = host(&app);
-            if let Err(error) =
-                svode_core::git::flow::sync(&runtime, &host, &repository, true).await
-            {
-                tracing::warn!(kind = error.kind(), "auto-sync after commit failed");
-            }
-        });
+        super::sync_rhythm::committed(&self.app, repository);
     }
 
     fn content_recorded(&self, space: &Path) {
@@ -219,16 +213,22 @@ impl GitHost for DesktopGitHost {
         &self,
         repository: &Path,
         active: bool,
+        background: bool,
         report: Option<&SyncReport>,
         error: Option<&SharedError>,
     ) {
+        let synced_at = report
+            .filter(|report| !active && report.synced())
+            .and_then(|_| super::sync_rhythm::record_synced(&self.app, repository));
         let _ = self.app.emit(
             EVENT_SYNC_STATE,
             SyncStateEvent {
                 repository: repository.to_string_lossy().into_owned(),
                 active,
+                background,
                 report,
                 error,
+                synced_at,
             },
         );
     }

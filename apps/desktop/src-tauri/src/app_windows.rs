@@ -629,6 +629,7 @@ pub fn handle_window_event(app: &AppHandle, window: &Window, event: &WindowEvent
                 connections.release_webview(&label);
             }
             crate::speech::commands::release_webview(app, &label);
+            crate::git::sync_rhythm::release_window(app, &label);
         }
         _ => {}
     }

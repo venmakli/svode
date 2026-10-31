@@ -9,6 +9,7 @@ pub mod inspection_stats;
 #[cfg(test)]
 mod inspection_tests;
 mod state;
+pub mod sync_rhythm;
 pub(crate) mod turns;
 
 pub use delivery::GitHostState;

@@ -190,7 +190,7 @@ if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
       expect(
         ui
           .dialog()
-          .textContent?.includes(m.git_sync_incoming_summary({ count: "2" })),
+          .textContent?.includes(m.git_sync_dialog_incoming({ count: "2" })),
       ).toBe(true);
     } finally {
       await ui.close();

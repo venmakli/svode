@@ -151,7 +151,15 @@ pub async fn sync_with(
             return sync_without_upstream(cli, space_dir, &target, upstream, mode).await;
         }
     };
-    let observed = match super::upstream::fetch(cli, space_dir, upstream).await {
+    // A background sync starts with the light check (1.E): the fetch runs
+    // only for a revision of the remote other than the one already fetched.
+    let fetched = match mode {
+        SyncMode::Explicit => super::upstream::fetch(cli, space_dir, upstream).await,
+        SyncMode::Background => super::upstream::fetch_if_changed(cli, space_dir, upstream)
+            .await
+            .map(|probed| probed.observed),
+    };
+    let observed = match fetched {
         Ok(observed) => observed,
         Err(error) => {
             return remote_error_to_sync_result(cli, space_dir, GitRemoteOperation::Sync, error)
@@ -164,10 +172,28 @@ pub async fn sync_with(
             observed.upstream.remote, observed.upstream.remote_ref
         )));
     };
-    let merged = match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
-        Integration::Integrated { merged } => merged,
-        Integration::Stopped(stopped) => return Ok(stopped),
+    let merged = if mode == SyncMode::Background && head_contains(cli, space_dir, revision).await? {
+        Vec::new()
+    } else {
+        match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
+            Integration::Integrated { merged } => merged,
+            Integration::Stopped(stopped) => return Ok(stopped),
+        }
     };
+    // A background sync publishes only outgoing commits, checked locally.
+    if mode == SyncMode::Background && !has_outgoing(cli, space_dir, revision).await? {
+        let head = self::revision(
+            cli,
+            space_dir,
+            &["rev-parse", "--verify", "-q", "HEAD^{commit}"],
+        )
+        .await?;
+        tracing::info!("Space {} is in sync", space_dir.display());
+        return Ok(SyncResult::Success {
+            published_head: head.unwrap_or_default(),
+            merged,
+        });
+    }
 
     // Push
     validate_transport(cli, space_dir, &target).await?;
@@ -842,6 +868,23 @@ fn paths_overlap(local: &str, incoming: &str) -> bool {
     local == incoming || nested(local, incoming) || nested(incoming, local)
 }
 
+/// HEAD already contains `revision`: nothing to integrate.
+async fn head_contains(cli: &GitCli, repo: &Path, revision: &str) -> Result<bool, GitError> {
+    let out = cli
+        .exec(repo, &["merge-base", "--is-ancestor", revision, "HEAD"])
+        .await?;
+    Ok(out.exit_code == 0)
+}
+
+/// HEAD has commits `revision` lacks; unreadable history counts as outgoing,
+/// so the publication still decides.
+async fn has_outgoing(cli: &GitCli, repo: &Path, revision: &str) -> Result<bool, GitError> {
+    let out = cli
+        .exec(repo, &["rev-list", "--count", &format!("{revision}..HEAD")])
+        .await?;
+    Ok(out.exit_code != 0 || out.stdout.trim() != "0")
+}
+
 async fn revision(cli: &GitCli, repo: &Path, args: &[&str]) -> Result<Option<String>, GitError> {
     let out = cli.exec(repo, args).await?;
     let oid = out.stdout.trim();
@@ -1084,6 +1127,9 @@ mod pull_block_tests;
 #[cfg(test)]
 #[path = "sync_autostash_tests.rs"]
 mod autostash_tests;
+#[cfg(test)]
+#[path = "light_sync_tests.rs"]
+mod light_sync_tests;
 #[cfg(test)]
 #[path = "sync_preflight_tests.rs"]
 mod preflight_tests;

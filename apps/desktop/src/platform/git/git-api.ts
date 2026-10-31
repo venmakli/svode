@@ -95,6 +95,26 @@ export function syncGit(
   return invokeCommand<SyncResultDto>("git_sync", { spacePath, background });
 }
 
+/**
+ * An action that starts sync of the repository of `spacePath` in its rhythm
+ * (Stage 11 1.E): a Space opened (also at start), the window got focus, or a
+ * commit landed. With sync off, focus returns the counters its fetch read.
+ */
+export function triggerGitSync(input: {
+  spacePath: string;
+  trigger: "opened" | "focused" | "committed";
+}): Promise<GitStatusDto | null> {
+  return invokeCommand<GitStatusDto | null>("git_sync_trigger", input);
+}
+
+/**
+ * When the repository of `spacePath` last synced successfully on this
+ * device, in milliseconds since the Unix epoch.
+ */
+export function getGitLastSynced(spacePath: string): Promise<number | null> {
+  return invokeCommand<number | null>("git_last_synced", { spacePath });
+}
+
 /** Publish the shown Spaces that still block the project, then sync it. */
 export function publishGitSpaces(input: {
   projectPath: string;
@@ -212,28 +232,6 @@ export function abortGitMerge(spacePath: string): Promise<GitStatusDto> {
 
 export function publishGit(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_publish", { spacePath });
-}
-
-export function enableGitAutoSync(input: {
-  spacePath: string;
-  projectPath?: string | null;
-}): Promise<void> {
-  return invokeCommand<void>("git_enable_auto_sync", {
-    spacePath: input.spacePath,
-    projectPath: input.projectPath ?? null,
-  });
-}
-
-export function setGitAutoSync(input: {
-  spacePath: string;
-  projectPath?: string | null;
-  enabled: boolean;
-}): Promise<void> {
-  return invokeCommand<void>("git_set_auto_sync", {
-    spacePath: input.spacePath,
-    projectPath: input.projectPath ?? null,
-    enabled: input.enabled,
-  });
 }
 
 export function getGitUserPolicy(input: {
@@ -354,8 +352,12 @@ export function listenGitSyncState(
   handler: (event: {
     repository: string;
     active: boolean;
+    /** No person started the operation: it shows no progress. */
+    background?: boolean;
     report: SyncResultDto | null;
     error: unknown;
+    /** When the repository synced, for a finished successful sync. */
+    syncedAt?: number | null;
   }) => void,
 ) {
   return listen<Parameters<typeof handler>[0]>("git:sync-state", (event) =>

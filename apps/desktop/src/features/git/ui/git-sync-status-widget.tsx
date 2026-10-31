@@ -11,9 +11,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +28,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/shared/lib/utils";
+import { relativeTime } from "@/shared/lib/relative-time";
+import { getLocale } from "@/paraglide/runtime.js";
 import { useEffect, useRef } from "react";
 import { usePublishSpaces } from "../hooks/use-publish-spaces";
 import { useGitSyncAbort } from "../hooks/use-git-sync-abort";
@@ -48,6 +48,7 @@ import {
   gitSyncStopTitle,
 } from "./git-sync-stop-copy";
 import { GitSyncStopNotice } from "./git-sync-stop-notice";
+import { GitSyncCommits } from "./git-sync-commits";
 import {
   repositoryAccessPresentation,
   type RepositoryAccessPresentation,
@@ -110,8 +111,9 @@ export function GitSyncStatusWidget({
 
   if (!sync.spacePath || (!sync.visible && !accessLabel)) return null;
 
-  const busy =
-    sync.syncing || sync.checkingRemote || sync.parent.busy || publish.running;
+  // Only an explicit action shows that it runs (Stage 11 1.E): a background
+  // sync and the fetch for the counters show their result.
+  const busy = sync.syncing || sync.parent.busy || publish.running;
   const pendingParent = isParentPointerPending(sync.parent.publication);
   const stop = sync.stop;
   const error = sync.syncError ?? sync.remoteError;
@@ -269,21 +271,29 @@ export function GitSyncStatusWidget({
         <DialogContent className="w-[calc(100vw-2rem)] max-w-[560px] overflow-hidden sm:max-w-[560px]">
           <DialogHeader className="min-w-0">
             <DialogTitle>{m.git_sync_modal_title()}</DialogTitle>
-            <DialogDescription className="break-words">
-              {m.git_sync_modal_description({ branch: sync.branch })}
+            <DialogDescription className="break-words" data-git-last-synced>
+              {sync.lastSynced == null
+                ? m.git_sync_dialog_never_synced({ branch: sync.branch })
+                : m.git_sync_dialog_synced({
+                    branch: sync.branch,
+                    ago: relativeTime(
+                      new Date(
+                        Math.min(sync.lastSynced, sync.now),
+                      ).toISOString(),
+                      getLocale(),
+                    ),
+                  })}
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex min-w-0 flex-col gap-3 max-h-[65vh] overflow-y-auto">
             <RepositoryAccessSection
               presentation={presentation}
-              repositoryPath={sync.spacePath}
               verify={access.verify}
               onOpenSettings={openSettings}
             />
             {sync.visible ? (
               <>
-                <Separator />
                 {sync.parent.publication && (
                   <GitPublicationResult
                     publication={sync.parent.publication}
@@ -342,99 +352,50 @@ export function GitSyncStatusWidget({
                   </Alert>
                 )}
 
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <Badge variant="outline">
-                    {m.git_sync_incoming_summary({
-                      count: counterLabel(sync.incoming),
-                    })}
-                  </Badge>
-                  <Badge variant="outline">
-                    {m.git_sync_outgoing_summary({
-                      count: counterLabel(sync.outgoing),
-                    })}
-                  </Badge>
-                  {sync.autoSync && (
-                    <Badge variant="secondary">{m.git_sync_auto_badge()}</Badge>
-                  )}
-                </div>
-
-                <Separator />
-
-                <section className="flex min-w-0 flex-col gap-2">
-                  <div className="text-sm font-medium">
-                    {m.git_sync_outgoing_section()}
-                  </div>
-                  <div className="max-h-[240px] min-w-0 overflow-y-auto overflow-x-hidden rounded-md border">
-                    {!sync.remoteChecked ? (
-                      <p className="p-4 text-sm text-muted-foreground">
-                        {sync.checkingRemote
-                          ? m.git_sync_remote_checking()
-                          : m.git_sync_outgoing_unchecked()}
-                      </p>
-                    ) : sync.commitsFailed ? (
-                      <p
-                        className="p-4 text-sm text-muted-foreground"
-                        data-git-outgoing-failed
-                      >
-                        {m.git_sync_outgoing_load_failed()}
-                      </p>
-                    ) : sync.commits.length === 0 ? (
-                      <p className="p-4 text-sm text-muted-foreground">
-                        {sync.loadingCommits && sync.outgoing !== 0
-                          ? m.git_unpushed_loading()
-                          : m.git_sync_outgoing_empty()}
-                      </p>
-                    ) : (
-                      <ul className="divide-y">
-                        {sync.commits.map((commit) => (
-                          <li key={commit.sha} className="min-w-0 p-3 text-sm">
-                            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-2">
-                              <span className="truncate font-mono text-xs text-muted-foreground">
-                                {commit.sha}
-                              </span>
-                              <span className="max-w-32 truncate text-xs text-muted-foreground sm:max-w-40">
-                                {commit.author}
-                              </span>
-                            </div>
-                            <p className="mt-1 truncate">{commit.message}</p>
-                          </li>
-                        ))}
-                        {sync.moreCommits > 0 && (
-                          <li
-                            className="p-3 text-sm text-muted-foreground"
-                            data-git-outgoing-more
-                          >
-                            {m.git_sync_outgoing_more({
-                              count: String(sync.moreCommits),
-                            })}
-                          </li>
-                        )}
-                      </ul>
-                    )}
-                  </div>
-                </section>
-
-                <label className="flex min-w-0 cursor-pointer items-start gap-2">
-                  <Checkbox
-                    checked={sync.autoSync}
-                    disabled={sync.savingAutoSync}
-                    onCheckedChange={(checked) =>
-                      void sync.setAutoSync(checked === true)
-                    }
-                    className="mt-0.5"
+                {!stop && !hasSyncError && (
+                  <GitSyncCommits
+                    remoteChecked={sync.remoteChecked}
+                    checkingRemote={sync.checkingRemote}
+                    incoming={sync.incoming}
+                    outgoing={sync.outgoing}
+                    commits={sync.commits}
+                    commitsFailed={sync.commitsFailed}
+                    loadingCommits={sync.loadingCommits}
+                    moreCommits={sync.moreCommits}
                   />
-                  <span className="min-w-0 text-sm">
-                    {m.git_sync_auto_label()}
-                    <span className="block text-xs text-muted-foreground">
-                      {m.git_sync_auto_hint()}
-                    </span>
-                  </span>
-                </label>
+                )}
               </>
             ) : null}
           </div>
 
-          <DialogFooter className="min-w-0">
+          <DialogFooter className="min-w-0 sm:items-center">
+            {sync.visible && (
+              <p
+                className="mr-auto flex min-w-0 items-center gap-1 text-sm text-muted-foreground"
+                data-git-auto-sync={sync.autoSync ? "on" : "off"}
+              >
+                <span className="truncate">
+                  {sync.autoSync
+                    ? m.git_sync_dialog_auto_on()
+                    : m.git_sync_dialog_auto_off()}
+                </span>
+                {openSettings && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0"
+                      onClick={openSettings}
+                      data-git-auto-sync-settings
+                    >
+                      {m.git_sync_dialog_configure()}
+                    </Button>
+                  </>
+                )}
+              </p>
+            )}
             {sync.visible && stop?.kind === "conflict" && (
               <GitSyncAbortButton
                 aborting={abort.aborting}

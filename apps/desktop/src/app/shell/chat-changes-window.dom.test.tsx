@@ -67,7 +67,7 @@ if (process.env.SVODE_CHAT_CHANGES_WINDOW_TEST !== "1") {
     ],
   };
   const commits: unknown[] = [];
-  const policies: unknown[] = [];
+  const triggers: unknown[] = [];
   mockNativeIpc(
     (command, args) => {
       const input = args as {
@@ -111,9 +111,9 @@ if (process.env.SVODE_CHAT_CHANGES_WINDOW_TEST !== "1") {
         );
         return { ...base, files: files[input.spacePath] };
       }
-      if (command === "git_get_user_policy") {
-        policies.push(args);
-        return { autoSync: false };
+      if (command === "git_sync_trigger") {
+        triggers.push(args);
+        return null;
       }
       throw new Error(`Unexpected IPC: ${command}`);
     },
@@ -145,7 +145,7 @@ if (process.env.SVODE_CHAT_CHANGES_WINDOW_TEST !== "1") {
 
   async function saveFromChat(target: ChatFileChangesTarget) {
     commits.length = 0;
-    policies.length = 0;
+    triggers.length = 0;
     await dom.render(
       <ThemeProvider theme="light" setTheme={() => {}}>
         <TooltipProvider>
@@ -202,9 +202,9 @@ if (process.env.SVODE_CHAT_CHANGES_WINDOW_TEST !== "1") {
         { projectPath: project, spacePath: space, filePaths: ["plan.txt"] },
       ]),
     );
-    // Auto-sync policy is resolved with the project too.
-    expect(JSON.stringify(policies)).toBe(
-      JSON.stringify([{ spacePath: space, projectPath: project }]),
+    // The commit joins the sync rhythm of the repository of its Space.
+    expect(JSON.stringify(triggers)).toBe(
+      JSON.stringify([{ spacePath: space, trigger: "committed" }]),
     );
     expect(footer()).toBeNull();
     expect(Boolean(doc.querySelector('[role="alert"]'))).toBe(false);

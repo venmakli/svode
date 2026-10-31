@@ -6,12 +6,12 @@ import { gitSyncErrorMessage } from "../api/git-sync-error";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { toast } from "sonner";
 import {
+  getGitLastSyncedAt,
   getGitOutgoingCommits,
   getGitSyncWidgetConfig,
   listenGitSyncCommits,
   refreshGitSyncRemoteStatus,
   saveGitSyncCredentials,
-  setGitAutoSync,
   syncGitNow,
 } from "../api/git-sync-widget-actions";
 import { refreshGitOnWindowFocus } from "../api/git-focus-actions";
@@ -51,7 +51,10 @@ export interface GitSyncWidget {
   publicationBlock: GitPublicationBlock | null;
   syncing: boolean;
   autoSync: boolean;
-  savingAutoSync: boolean;
+  /** When the repository last synced on this device, in Unix milliseconds. */
+  lastSynced: number | null;
+  /** The clock the time since the last sync is shown against. */
+  now: number;
   commits: GitUnpushedCommit[];
   /** The list is being read for the shown counters. */
   loadingCommits: boolean;
@@ -71,7 +74,6 @@ export interface GitSyncWidget {
   closeAfterSync: () => void;
   setAuthOpen: (open: boolean) => void;
   saveAuthAndRetry: (credentials: GitRemoteAuthCredentials) => Promise<void>;
-  setAutoSync: (enabled: boolean) => Promise<void>;
 }
 
 /** The outgoing commits read for one remote status of the repository. */
@@ -93,7 +95,6 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     configRequest.current++;
     setHasRemote(false);
     setAutoSyncState(false);
-    setSavingAutoSync(false);
     setOpen(false);
     setAuthOpenState(false);
     setAuthSaving(false);
@@ -111,11 +112,10 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   // another repository shown here refreshes the same way.
   useEffect(() => {
     if (!spacePath || spacePath === activeSpacePath) return;
-    const onFocus = () =>
-      void refreshGitOnWindowFocus(spacePath, activeRootPath);
+    const onFocus = () => void refreshGitOnWindowFocus(spacePath);
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [activeRootPath, activeSpacePath, spacePath]);
+  }, [activeSpacePath, spacePath]);
   const status = useGitStore((state) =>
     spacePath ? state.statuses[spacePath] : undefined,
   );
@@ -146,6 +146,9 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   const serviceMerged = useGitStore((state) =>
     repository ? (state.serviceMerged[repository] ?? NO_FILES) : NO_FILES,
   );
+  const lastSynced = useGitStore((state) =>
+    repository ? (state.lastSynced[repository] ?? null) : null,
+  );
 
   const [hasRemote, setHasRemote] = useState(false);
   const [autoSync, setAutoSyncState] = useState(false);
@@ -158,7 +161,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
   );
   const [checkingRemote, setCheckingRemote] = useState(false);
   const [outgoingList, setOutgoingList] = useState<OutgoingList | null>(null);
-  const [savingAutoSync, setSavingAutoSync] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [authOpen, setAuthOpenState] = useState(false);
   const [authChallenge, setAuthChallenge] = useState<GitAuthChallenge | null>(
     null,
@@ -201,6 +204,7 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
       setHasRemote(config.hasRemote);
       setAutoSyncState(config.autoSync);
       if (config.hasRemote) {
+        void getGitLastSyncedAt(spacePath).catch(() => {});
         await refreshRemote();
       } else {
         setOutgoingList(null);
@@ -269,14 +273,23 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     };
   }, [refreshRemote, refreshStop, spacePath]);
 
+  // The time since the last sync stays current while the Dialog is open.
+  useEffect(() => {
+    if (!open) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [open]);
+
   const openDialog = useCallback(async () => {
     if (!spacePath) return;
 
     setOpen(true);
     refreshStop();
     void refreshGitPublication(spacePath).catch(() => {});
-    await refreshRemote();
-  }, [refreshRemote, refreshStop, spacePath]);
+    // The sync toggle may have changed in the settings meanwhile.
+    await loadConfig();
+  }, [loadConfig, refreshStop, spacePath]);
 
   const requestAuth = useCallback((challenge: GitAuthChallenge) => {
     setAuthChallenge(challenge);
@@ -356,32 +369,6 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     [authChallenge, authSaving, closeAfterSync, spacePath],
   );
 
-  const setAutoSync = useCallback(
-    async (enabled: boolean) => {
-      if (!spacePath) return;
-      const identity = active.current;
-      configRequest.current++;
-      const previous = autoSync;
-      setAutoSyncState(enabled);
-      setSavingAutoSync(true);
-      try {
-        await setGitAutoSync({
-          spacePath,
-          projectPath: activeRootPath,
-          enabled,
-        });
-      } catch (err) {
-        console.error("Failed to update git auto-sync:", err);
-        if (active.current !== identity) return;
-        setAutoSyncState(previous);
-        toast.error(m.toast_error());
-      } finally {
-        if (active.current === identity) setSavingAutoSync(false);
-      }
-    },
-    [activeRootPath, autoSync, spacePath],
-  );
-
   const counters = useMemo(
     () => remoteCounters(remoteStatus, remoteChecked),
     [remoteChecked, remoteStatus],
@@ -416,7 +403,8 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     publicationBlock,
     syncing,
     autoSync,
-    savingAutoSync,
+    lastSynced,
+    now,
     commits: outgoingList?.commits ?? [],
     loadingCommits: open && remoteChecked && !listCurrent,
     commitsFailed: listCurrent && outgoingList?.failed === true,
@@ -434,7 +422,6 @@ export function useGitSyncWidget(spacePath: string): GitSyncWidget {
     closeAfterSync,
     setAuthOpen,
     saveAuthAndRetry,
-    setAutoSync,
   };
 }
 

@@ -23,6 +23,13 @@ pub struct SyncReport {
     pub(crate) remote_status: Option<ops::GitStatus>,
 }
 
+impl SyncReport {
+    /// The repository itself synced, whatever happened to its parent.
+    pub fn synced(&self) -> bool {
+        matches!(self.child, SyncResult::Success { .. })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParentPublication {
@@ -372,7 +379,7 @@ async fn caller_status(
 async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> Completion {
     let repo = request.repo.as_path();
     if !request.intent.reader() {
-        host.publish_sync_state(repo, true, None, None);
+        host.publish_sync_state(repo, true, request.intent.background(), None, None);
     }
     let lock = runtime.get_lock(repo).await;
     let _guard = lock.lock().await;
@@ -540,6 +547,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
         host.publish_sync_state(
             repo,
             false,
+            request.intent.background(),
             match &result {
                 Ok(Output::Sync(report)) => Some(report),
                 _ => None,
@@ -749,7 +757,7 @@ async fn parent_step_recorded(
     let parent_lock = runtime.get_lock(parent).await;
     let _parent_guard = parent_lock.lock().await;
     if publish {
-        host.publish_sync_state(parent, true, None, None);
+        host.publish_sync_state(parent, true, background, None, None);
     }
     let before = Snapshot::read(cli, parent).await;
     let mut permission = match &before {
@@ -814,7 +822,13 @@ async fn parent_step_recorded(
             parent: None,
             remote_status: evidence.as_ref().and_then(|e| e.remote_status.clone()),
         });
-        host.publish_sync_state(parent, false, report.as_ref(), outcome.error.as_ref());
+        host.publish_sync_state(
+            parent,
+            false,
+            background,
+            report.as_ref(),
+            outcome.error.as_ref(),
+        );
     }
     (outcome, evidence)
 }
