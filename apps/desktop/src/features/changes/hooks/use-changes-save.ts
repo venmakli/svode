@@ -18,6 +18,7 @@ import {
 } from "@/features/git/editor";
 import { inspectionSaveScope, resolveInspectionScope } from "../model/scope";
 import type { ChangesTarget } from "../model/scope";
+import { commitSessionArea } from "../api/session-commit";
 
 export function useChangesSave(target: ChangesTarget, open: boolean) {
   const access = useRepositoryAccess(target.spacePath);
@@ -29,6 +30,7 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
     target.sourceShape,
     target.path,
     target.sessionKey,
+    target.work?.files.map((file) => `${file.spacePath}\0${file.path}`),
   ]);
   const [state, setState] = useState<{
     key: string;
@@ -69,7 +71,10 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
         const aggregate = resolveInspectionScope(target).kind !== "file";
         const scope = inspectionSaveScope(target);
         let refusal: GitCommitRefusal | null = null;
-        if (hasPageSaveOwner(target.spacePath, target.path)) {
+        if (target.kind === "session") {
+          // Only the files of the session's area, by Space and by group.
+          if (all) refusal = await commitSessionArea(target);
+        } else if (hasPageSaveOwner(target.spacePath, target.path)) {
           refusal = await dispatchPageSave(
             target.spacePath,
             target.path,
@@ -151,3 +156,4 @@ export function useChangesSave(target: ChangesTarget, open: boolean) {
     refusal: state?.key === targetKey ? (state.refusal ?? null) : null,
   };
 }
+

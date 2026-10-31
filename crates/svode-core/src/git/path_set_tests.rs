@@ -73,6 +73,7 @@ async fn saving_a_folder_beyond_the_command_line_limit_commits_it_once() {
         None,
         root,
         Some(vec!["Папка".into()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("folder save");
@@ -108,11 +109,14 @@ async fn saving_all_beyond_the_command_line_limit_commits_deletions_and_a_case_o
         None,
         root,
         None,
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("save all");
 
-    assert_eq!(commits(&cli, root).await, 3);
+    // The content is one commit; the ignore rules the save repaired are a
+    // system commit of their own (Stage 11 1.E).
+    assert_eq!(commits(&cli, root).await, 4);
     let tree = tree(&cli, root).await;
     assert!(removed.iter().all(|path| !tree.contains(path)));
     assert!(relocated.iter().all(|path| !tree.contains(path)));
@@ -355,12 +359,14 @@ async fn save_all_long_names(count: usize) {
         None,
         root,
         None,
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("save all");
     let elapsed = started.elapsed();
     eprintln!("save all of {count} paths: {elapsed:?}");
-    assert_eq!(commits(&cli, root).await, 2);
+    // The content and the repaired ignore rules (a system commit).
+    assert_eq!(commits(&cli, root).await, 3);
     let tree = tree(&cli, root).await;
     assert_eq!(
         tree.iter().filter(|path| path.starts_with("bulk/")).count(),

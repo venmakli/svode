@@ -174,6 +174,7 @@ impl Fixture {
             Some(self.root()),
             self.root(),
             requested.map(|paths| paths.iter().map(|path| path.to_string()).collect()),
+            super::versions::MessageLanguage::En,
         )
         .await
         .map(|_| ())
@@ -194,6 +195,30 @@ impl Fixture {
         let mut records = out.lines().map(str::to_string).collect::<Vec<_>>();
         records.sort();
         records
+    }
+
+    /// The sorted records of every commit after `before`, newest first,
+    /// without order files: a save lands one commit per version group.
+    async fn commits_since(&self, before: &str) -> Vec<Vec<String>> {
+        let revs = git(
+            &cli(),
+            self.root(),
+            &["rev-list", &format!("{}..HEAD", before.trim())],
+        )
+        .await;
+        let mut commits = Vec::new();
+        for rev in revs.lines().filter(|rev| !rev.is_empty()) {
+            let out = git(
+                &cli(),
+                self.root(),
+                &["show", "--no-renames", "--name-status", "--format=", rev],
+            )
+            .await;
+            let mut records = out.lines().map(str::to_string).collect::<Vec<_>>();
+            records.sort();
+            commits.push(without_order(records));
+        }
+        commits
     }
 
     async fn show(&self, path: &str) -> String {
@@ -294,17 +319,24 @@ async fn save_all_after_a_title_rename_chain_commits_it_with_other_dirty_files()
     let fixture = Fixture::new(CHAIN_FILES).await;
     title_chain(&fixture).await;
     write(fixture.root(), "Unrelated.md", "unrelated dirty\n");
+    let before = fixture.head().await;
 
     fixture.save(None).await.expect("save all");
 
-    assert_eq!(
-        without_order(fixture.committed().await),
-        records(&[
+    // The rename chain is its own version; the unrelated edit is another.
+    let commits = fixture.commits_since(&before).await;
+    assert_eq!(commits.len(), 2, "{commits:?}");
+    assert!(
+        commits.contains(&records(&[
             "A\tAccepted.md",
             "D\tPage.md",
-            "M\tUnrelated.md",
-            "M\tnotes/Link.md",
-        ])
+            "M\tnotes/Link.md"
+        ])),
+        "{commits:?}"
+    );
+    assert!(
+        commits.contains(&records(&["M\tUnrelated.md"])),
+        "{commits:?}"
     );
     assert!(fixture.pending().is_empty());
 }
@@ -681,15 +713,22 @@ async fn a_case_only_folder_rename_is_listed_and_saved_as_a_relocation() {
     structure::rename(root, "Jobs", "jobs", Some(root), fixture.structure())
         .await
         .unwrap();
+    let before = fixture.head().await;
     fixture.save(None).await.expect("save all");
-    assert_eq!(
-        without_order(fixture.committed().await),
-        records(&[
+    // The relocation is its own version; the unrelated edit is another.
+    let commits = fixture.commits_since(&before).await;
+    assert_eq!(commits.len(), 2, "{commits:?}");
+    assert!(
+        commits.contains(&records(&[
             "A\tjobs/Ship.md",
             "D\tJobs/Ship.md",
-            "M\tIndex.md",
-            "M\tUnrelated.md",
-        ])
+            "M\tIndex.md"
+        ])),
+        "{commits:?}"
+    );
+    assert!(
+        commits.contains(&records(&["M\tUnrelated.md"])),
+        "{commits:?}"
     );
     assert!(listed().await.is_empty());
     assert_eq!(

@@ -17,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { FileGitIndicatorIcon } from "@/features/git/sidebar";
 import { cn } from "@/shared/lib/utils";
 import type { AgentActivityItemDto, AgentSessionKeyDto } from "../api/chat";
 import { useOpenAttachment } from "../hooks/use-attachment-opener";
@@ -152,6 +153,13 @@ function ChangedFileRow({
             {removed ? m.sessions_chat_changed_file_removed() : file.path}
           </TooltipContent>
         </Tooltip>
+        {state?.location ? (
+          // The sidebar's marker of uncommitted changes; a clean file has none.
+          <FileGitIndicatorIcon
+            spacePath={state.location.spacePath}
+            filePath={state.location.path}
+          />
+        ) : null}
         {file.lines && (
           <LineCountsView lines={file.lines} className="ms-auto" />
         )}

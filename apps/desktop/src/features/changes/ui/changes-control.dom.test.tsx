@@ -1483,7 +1483,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         await nextFrame(dom);
       });
       expect(notice()).toBe(
-        "Showing the first 3 of 30,003 changes in the repository. Save all also saves the hidden ones.",
+        "Showing the first 3 of 30,003 changes in the repository. Commit all also commits the hidden ones.",
       );
       expect(filterTrigger()).toBe("All files · 2+");
       expect(doc.querySelectorAll("[data-changes-item-trigger]").length).toBe(
@@ -1506,7 +1506,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       expect(trigger().getAttribute("aria-label")).toBe("Changes in Contract");
       expect(body().textContent?.includes("No changes")).toBe(false);
       expect(notice()).toBe(
-        "Showing the first 1 of 30,001 changes in the repository. Save all also saves the hidden ones.",
+        "Showing the first 1 of 30,001 changes in the repository. Commit all also commits the hidden ones.",
       );
 
       omittedFiles = 0;
@@ -1557,7 +1557,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         alert()?.hasAttribute("data-changes-list-truncated") ?? false,
       ).toBe(true);
       expect(notice()).toBe(
-        "Showing the first 1 of 6 changes in the repository. Save all also saves the hidden ones.",
+        "Showing the first 1 of 6 changes in the repository. Commit all also commits the hidden ones.",
       );
     } finally {
       await act(async () => {
@@ -1844,12 +1844,12 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         name: "bravo.md",
       });
       await click(doc.querySelector<HTMLElement>("[data-changes-trigger]")!);
-      await click(button("Save"));
+      await click(button("Commit"));
       expect(alert()).toBe(refusalText);
       expect(commits).toEqual([]);
       expect(doc.querySelector('[data-slot="alert"][class*="destructive"]')).toBeNull();
       // Saving stays available, and the choice leaves "Changes" first.
-      expect(button("Save").disabled).toBe(false);
+      expect(button("Commit").disabled).toBe(false);
       await click(button("Choose version"));
       expect(doc.querySelector("[data-changes-commit-refused]")).toBeNull();
       expect(doc.querySelector('[data-slot="sheet-content"]')).toBeNull();
@@ -1864,7 +1864,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         name: "notes",
       });
       await click(doc.querySelector<HTMLElement>("[data-changes-trigger]")!);
-      await click(button("Save all"));
+      await click(button("Commit all"));
       expect(alert()).toBe(refusalText);
       expect(commits).toEqual([]);
       await click(button("Choose version"));
@@ -1879,15 +1879,205 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
         name: "Space",
       });
       await click(doc.querySelector<HTMLElement>("[data-changes-trigger]")!);
-      await click(button("Save all"));
+      await click(button("Commit all"));
       expect(alert()).toBe(refusalText);
       expect(commits).toEqual([]);
       conflicted = false;
-      await click(button("Save all"));
+      await click(button("Commit all"));
       expect(alert()).toBeNull();
       expect(commits).toEqual(["git_commit_paths"]);
     } finally {
       releases.forEach((release) => release());
+      await act(async () => {
+        root.unmount();
+        await nextFrame(dom);
+      });
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
+  test("a chat session's Changes show and commit only the work of its turns", async () => {
+    const dom = createDom();
+    const restore = installDomGlobals(dom);
+    const base = {
+      branch: "main",
+      ahead: 0,
+      behind: 0,
+      hasStaged: false,
+      hasUnstaged: true,
+      hasConflicts: false,
+      tracking: null,
+    };
+    const files: Record<string, { path: string; state: string }[]> = {
+      "/p": [
+        { path: "notes/a.md", state: "modified" },
+        { path: "README.md", state: "modified" },
+      ],
+      "/p/docs": [{ path: "b.md", state: "modified" }],
+    };
+    const commits: { spacePath: string; filePaths: string[] }[] = [];
+    const docsRepository = "repo-docs";
+    mockNativeIpc(
+      (command, args) => {
+        const input = args as {
+          spacePath: string;
+          filePaths: string[];
+          paths: string[];
+          generation: string;
+        };
+        if (command === "git_status")
+          return { ...base, files: files[input.spacePath] ?? [] };
+        if (command === "git_inspection_stats")
+          return {
+            generation: input.generation,
+            items: input.paths.map((path) => ({
+              path,
+              additions: 1,
+              deletions: 0,
+            })),
+          };
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            // An Inline Space shares the project's repository.
+            repositoryId:
+              input.spacePath === "/p/docs" ? docsRepository : "repo-root",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            lastKnownStatus: null,
+            reason: null,
+          };
+        if (command === "git_commit_paths") {
+          commits.push({
+            spacePath: input.spacePath,
+            filePaths: input.filePaths,
+          });
+          files[input.spacePath] = (files[input.spacePath] ?? []).filter(
+            (file) => !input.filePaths.includes(file.path),
+          );
+          return { ...base, files: files[input.spacePath] };
+        }
+        if (command === "git_get_user_policy") return { autoSync: false };
+        throw new Error(`Unexpected ${command}`);
+      },
+      { shouldMockEvents: true },
+    );
+    const { ChangesControl } = await import("./changes-control");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const session = (
+      work: { spaceId: string; spacePath: string; path: string }[],
+    ) => ({
+      kind: "session" as const,
+      sourceShape: "directory" as const,
+      spacePath: "/p",
+      projectPath: "/p",
+      path: "",
+      name: "Project",
+      work: { files: work, spaceKind: "project" as const },
+    });
+    const doc = dom.window.document;
+    const root = createRoot(doc.getElementById("app")!);
+    const render = async (target: ReturnType<typeof session>) => {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChangesControl target={target} />
+          </TooltipProvider>,
+        );
+        await nextFrame(dom);
+      });
+    };
+    const click = (node: HTMLElement) =>
+      act(async () => {
+        node.click();
+        await nextFrame(dom);
+        await nextFrame(dom);
+      });
+    const button = (text: string) =>
+      [...doc.querySelectorAll<HTMLButtonElement>("button")].find((node) =>
+        node.textContent?.startsWith(text),
+      )!;
+    const items = () =>
+      [...doc.querySelectorAll<HTMLElement>("[data-changes-item-trigger]")].map(
+        (node) => node.dataset.changesItemTrigger,
+      );
+    try {
+      // One Space: the uncommitted work, then the rest of the Space.
+      await render(
+        session([
+          { spaceId: "root", spacePath: "/p", path: "notes/a.md" },
+          { spaceId: "root", spacePath: "/p", path: "notes/clean.md" },
+        ]),
+      );
+      const trigger = doc.querySelector<HTMLElement>("[data-changes-trigger]")!;
+      expect(trigger.getAttribute("aria-label")).toBe("Session changes: 1");
+      await click(trigger);
+      expect(items()).toEqual(["notes/a.md"]);
+      expect(doc.querySelector("[data-changes-session-section]")).toBeNull();
+      const outside = () =>
+        doc.querySelector<HTMLElement>("[data-changes-session-outside]");
+      expect(outside()?.textContent).toBe("More in Space Project: 1");
+      await click(button("Commit all"));
+      expect(commits).toEqual([{ spacePath: "/p", filePaths: ["notes/a.md"] }]);
+      expect(items()).toEqual([]);
+      // Committed, the work is clean and the Space still has the rest.
+      expect(outside()?.textContent).toBe("More in Space Project: 1");
+      await click(outside()!);
+      expect(items()).toEqual(["README.md"]);
+      expect(outside()).toBeNull();
+      await act(async () => {
+        doc.dispatchEvent(
+          new dom.window.KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+          }),
+        );
+        await nextFrame(dom);
+      });
+
+      // Two repositories: one section each; the row needs uncommitted outside.
+      files["/p"] = [{ path: "notes/a.md", state: "modified" }];
+      commits.length = 0;
+      const { refreshGitStatus } = await import("@/features/git");
+      await act(async () => {
+        await refreshGitStatus("/p");
+      });
+      const work = [
+        { spaceId: "root", spacePath: "/p", path: "notes/a.md" },
+        { spaceId: "docs", spacePath: "/p/docs", path: "b.md" },
+      ];
+      await render(session(work));
+      const reopened = doc.querySelector<HTMLElement>("[data-changes-trigger]")!;
+      const sections = () =>
+        [
+          ...doc.querySelectorAll<HTMLElement>("[data-changes-session-section]"),
+        ].map((node) => node.dataset.changesSessionSection);
+      // The statuses and repositories of both Spaces are read as it mounts.
+      for (
+        let frame = 0;
+        frame < 20 &&
+        reopened.getAttribute("aria-label") !== "Session changes: 2";
+        frame++
+      ) {
+        await act(async () => {
+          await nextFrame(dom);
+        });
+      }
+      expect(reopened.getAttribute("aria-label")).toBe("Session changes: 2");
+      await click(reopened);
+      expect(sections()).toEqual(["repo-root", "repo-docs"]);
+      expect(doc.querySelectorAll("[data-changes-session-repository]").length).toBe(2);
+      expect(items()).toEqual(["notes/a.md", "b.md"]);
+      expect(outside()).toBeNull();
+      await click(button("Commit all"));
+      expect(commits).toEqual([
+        { spacePath: "/p", filePaths: ["notes/a.md"] },
+        { spacePath: "/p/docs", filePaths: ["b.md"] },
+      ]);
+    } finally {
       await act(async () => {
         root.unmount();
         await nextFrame(dom);

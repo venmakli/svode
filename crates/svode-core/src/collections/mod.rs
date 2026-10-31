@@ -8,6 +8,7 @@ pub mod model;
 pub mod query;
 pub mod relation_read;
 pub mod schema;
+pub mod schema_changes;
 mod schema_support;
 pub mod schema_validation;
 pub mod traversal;

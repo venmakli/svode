@@ -1,5 +1,4 @@
-import { useRef, useState } from "react";
-import { Accordion } from "@/components/ui/accordion";
+import { useRef, useState, type ReactNode } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -15,7 +14,6 @@ import {
   type GitStatusFailure,
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
-import { useChangesItemNames } from "../hooks/use-changes-item-names";
 import { useChangesAccordion } from "../hooks/use-changes-accordion";
 import { useChangesStats } from "../hooks/use-changes-stats";
 import type { ItemReader } from "../model/item-reader";
@@ -26,6 +24,7 @@ import {
   type ChangesFilter,
 } from "../model/list-summary";
 import { ChangedItem } from "./changed-item";
+import { ChangesItemList } from "./changes-item-list";
 import {
   ChangesFilterSelect,
   ChangesSummary,
@@ -40,6 +39,7 @@ export function ChangesBody({
   paths,
   reader,
   name,
+  after,
 }: {
   open: boolean;
   scope: InspectionScope;
@@ -48,10 +48,11 @@ export function ChangesBody({
   paths: string[];
   reader: ItemReader;
   name: string;
+  /** Shown under the list, such as the rest of a session's Space. */
+  after?: ReactNode;
 }) {
   const body = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<ChangesFilter>("all");
-  const names = useChangesItemNames(scope.spacePath);
   const files = new Map(status?.files.map((file) => [file.path, file]));
   const filtered = filterChanges(paths, files, filter);
   const accordion = useChangesAccordion(paths, body, filtered.paths);
@@ -160,47 +161,19 @@ export function ChangesBody({
                   </EmptyHeader>
                 </Empty>
               ) : null}
-              <Accordion
-                type="multiple"
-                value={accordion.expanded}
-                onValueChange={accordion.setExpanded}
-                className="px-4"
-              >
-                {accordion.shown.map((path) => (
-                  <ChangedItem
-                    key={path}
-                    reader={reader}
-                    scope={scope}
-                    path={path}
-                    name={names.get(path) || itemName(path, scope, name)}
-                    state={files.get(path)!.state}
-                    status={status}
-                    expanded={accordion.expanded.includes(path)}
-                    stats={stats[path]}
-                  />
-                ))}
-              </Accordion>
-              {accordion.remaining > 0 ? (
-                <div className="p-4">
-                  <Button variant="outline" onClick={accordion.more}>
-                    {m.changes_more({ count: String(accordion.remaining) })}
-                  </Button>
-                </div>
-              ) : null}
+              <ChangesItemList
+                accordion={accordion}
+                scope={scope}
+                status={status}
+                stats={stats}
+                reader={reader}
+                ownerName={name}
+              />
             </>
           )}
+          {after}
         </div>
       ) : null}
     </>
   );
-}
-
-function itemName(path: string, scope: InspectionScope, ownerName: string) {
-  const parts = path.split("/");
-  const file = parts.at(-1) ?? path;
-  if (file.toLowerCase() === "readme.md")
-    return parts.slice(0, -1).join("/") === scope.path
-      ? ownerName
-      : (parts.at(-2) ?? ownerName);
-  return file.endsWith(".md") ? file.slice(0, -3).replaceAll("-", " ") : file;
 }

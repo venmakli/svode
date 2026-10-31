@@ -15,8 +15,11 @@ import {
 } from "@/features/artifact";
 import {
   isInsideAgentSessionContent,
+  useAgentSessionChangesTarget,
   useNewSessionTarget,
+  useResolvedAgentSession,
 } from "@/features/agent-sessions";
+import { commitSessionArea } from "@/features/changes";
 import {
   commitSaveScopeAndMaybeSync,
   dirtyPathsForGitSaveScope,
@@ -87,6 +90,15 @@ export function useKeyboardShortcuts() {
   const terminalPanel = useTerminalPanelToggle();
   const terminalAvailable = terminalPanel.available && !home;
   const toggleTerminal = terminalPanel.toggle;
+  // The window of a chat session commits the work of the session only.
+  const mainSessionTarget = useShellStore((state) =>
+    state.mainSurface === "session" ? state.mainSessionTarget : null,
+  );
+  const mainSessionChanges = useAgentSessionChangesTarget(
+    useResolvedAgentSession(mainSessionTarget),
+  );
+  const sessionArea =
+    mainSessionChanges?.kind === "session" ? mainSessionChanges : null;
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -129,6 +141,20 @@ export function useKeyboardShortcuts() {
       if (isTerminalKeyboardEvent(e)) return;
       const isMeta = e.metaKey || e.ctrlKey;
       const isSaveKey = isMeta && !e.altKey && e.key.toLowerCase() === "s";
+
+      if (isSaveKey && sessionArea) {
+        e.preventDefault();
+        if (!e.shiftKey) {
+          toast.info(m.git_save_no_surface());
+          return;
+        }
+        void commitSessionArea(sessionArea)
+          .then((refusal) => {
+            if (refusal) notifyGitCommitRefusal(refusal);
+          })
+          .catch(console.error);
+        return;
+      }
 
       if (isSaveKey && !activeContentPath && activeScopeSpace) {
         e.preventDefault();
@@ -197,6 +223,7 @@ export function useKeyboardShortcuts() {
     goHome,
     home,
     newSessionScope,
+    sessionArea,
     startSession,
     terminalAvailable,
     toggleTerminal,

@@ -654,7 +654,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
     folderContents = { subpageCount: 0, otherFileCount: 0 };
   });
 
-  test("the Space row menu adds Save all with unsaved changes and its launch group", async () => {
+  test("the Space row menu adds Commit all with unsaved changes and its launch group", async () => {
     dirty = false;
     await render(<SpaceRow {...spaceProps()} tree={[]} />);
     expect(await openMenu(spaceTrigger())).toEqual([
@@ -686,7 +686,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
         items: ["New page", "New folder", "New collection"],
       },
       { group: "launch", items: ["New session", "New terminal"] },
-      { group: "edit", items: ["Save all", "Rename"] },
+      { group: "edit", items: ["Commit all", "Rename"] },
       { group: "delete", items: ["Remove"] },
     ]);
 
@@ -697,7 +697,7 @@ if (process.env.SVODE_SIDEBAR_CONTENT_MENUS_DOM !== "1") {
       "New collection",
       "New session",
       "New terminal",
-      "Save all",
+      "Commit all",
       "Rename",
       "Remove",
     ]) {

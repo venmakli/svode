@@ -215,6 +215,7 @@ export function SessionChat({
     >
       <ChatTimeline
         session={session}
+        workOwner={sessionId}
         snapshot={snapshot}
         status={status}
         header={

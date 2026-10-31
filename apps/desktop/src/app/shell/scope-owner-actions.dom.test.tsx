@@ -399,7 +399,7 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
         },
         {
           group: "edit",
-          items: unsaved ? ["Save all", "Rename"] : ["Rename"],
+          items: unsaved ? ["Commit all", "Rename"] : ["Rename"],
         },
         { group: "delete", items: ["Remove"] },
       ]);

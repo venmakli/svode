@@ -88,6 +88,11 @@ impl StructuralChange {
     pub fn id(&self) -> OperationId {
         self.id
     }
+
+    /// Where the operation moved its entity, for the registration owning it.
+    pub fn relocation(&self) -> Option<&Relocation> {
+        self.relocation.as_ref()
+    }
 }
 
 #[derive(Clone)]
@@ -135,8 +140,27 @@ impl PendingSave {
         dedupe_paths(self.items.iter().flat_map(|item| item.paths.clone()))
     }
 
+    /// The taken registrations in order: the operation, when one was
+    /// described, and its paths.
+    pub fn registrations(&self) -> impl Iterator<Item = (Option<&StructuralChange>, &[PathBuf])> {
+        self.items
+            .iter()
+            .map(|item| (item.change.as_ref(), item.paths.as_slice()))
+    }
+
     pub fn complete(&mut self) {
         self.items.clear();
+    }
+
+    /// Consume the registrations at `indices` of [`Self::registrations`];
+    /// the others return to the queue when the save ends.
+    pub fn settle(&mut self, indices: &[usize]) {
+        let mut index = 0;
+        self.items.retain(|_| {
+            let keep = !indices.contains(&index);
+            index += 1;
+            keep
+        });
     }
 }
 

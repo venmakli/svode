@@ -41,6 +41,7 @@ pub mod status;
 pub mod sync;
 pub mod upstream;
 pub mod version;
+pub mod versions;
 pub mod write_guard;
 
 #[derive(Debug, thiserror::Error)]

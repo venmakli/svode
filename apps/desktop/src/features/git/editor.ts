@@ -8,6 +8,7 @@ import { refreshGitStatus } from "./api/git-status-actions";
 import {
   commitAllSpace as commitAllSpaceAction,
   commitFileAndMaybeSync as commitFileAndMaybeSyncAction,
+  commitPathsAndMaybeSync as commitPathsAndMaybeSyncAction,
   commitSaveScopeAndMaybeSync as commitSaveScopeAndMaybeSyncAction,
   continueGitResolve as continueGitResolveAction,
   syncSpace as syncSpaceAction,
@@ -49,6 +50,15 @@ export function commitAllSpace(
   projectPath?: string,
 ): Promise<GitCommitResult | null> {
   return commitAllSpaceAction(spacePath, projectPath);
+}
+
+/** Commit exactly `filePaths` of a Space, one commit per version group. */
+export function commitPathsAndMaybeSync(
+  spacePath: string,
+  filePaths: string[],
+  projectPath?: string,
+): Promise<GitCommitResult | null> {
+  return commitPathsAndMaybeSyncAction(spacePath, filePaths, projectPath);
 }
 
 export function commitSaveScopeAndMaybeSync(

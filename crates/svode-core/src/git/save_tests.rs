@@ -18,6 +18,25 @@ async fn head(repo_path: &Path) -> String {
     git(&cli(), repo_path, &["rev-parse", "HEAD"]).await
 }
 
+/// The paths of every commit after `before`, sorted: a save lands one commit
+/// per version group.
+async fn committed_since(repo_path: &Path, before: &str) -> Vec<String> {
+    let range = format!("{}..HEAD", before.trim());
+    let mut paths = git(
+        &cli(),
+        repo_path,
+        &["log", "--name-only", "--format=", &range],
+    )
+    .await
+    .lines()
+    .filter(|line| !line.is_empty())
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+    paths.sort_unstable();
+    paths.dedup();
+    paths
+}
+
 #[tokio::test]
 async fn scoped_save_commits_only_its_paths_and_keeps_unrelated_staged_bytes() {
     let cli = cli();
@@ -37,6 +56,7 @@ async fn scoped_save_commits_only_its_paths_and_keeps_unrelated_staged_bytes() {
         None,
         space,
         Some(vec!["selected.md".to_string()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("scoped save");
@@ -76,6 +96,7 @@ async fn saving_one_page_of_a_repository_beyond_the_status_list_commits_it() {
         None,
         space,
         Some(vec!["page.md".to_string()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("save of one Page");
@@ -108,6 +129,7 @@ async fn save_without_changes_publishes_no_commit() {
         None,
         space,
         Some(vec!["baseline.md".to_string()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("no-op save");
@@ -144,6 +166,7 @@ async fn save_drains_the_related_pending_batch_and_keeps_the_rest() {
         None,
         space,
         Some(vec!["renamed.md".to_string()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("scoped save");
@@ -181,6 +204,7 @@ async fn denied_repository_leaves_the_commit_and_the_pending_batch_untouched() {
         None,
         space,
         Some(vec!["selected.md".to_string()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect_err("denied save");
@@ -204,16 +228,24 @@ async fn save_without_a_scope_excludes_device_local_files() {
     let space = tmp.path();
     write(space, "portable.md", "portable\n");
     write(space, ".svode/local.json", "{}\n");
+    let before = head(space).await;
 
     let runtime = runtime();
     let host = TestHost::default();
-    save(&runtime, &host, None, space, None)
-        .await
-        .expect("full save");
+    save(
+        &runtime,
+        &host,
+        None,
+        space,
+        None,
+        super::versions::MessageLanguage::En,
+    )
+    .await
+    .expect("full save");
 
-    let committed = git(&cli, space, &["show", "--name-only", "--format=", "HEAD"]).await;
-    assert!(committed.contains("portable.md"));
-    assert!(!committed.contains("local.json"));
+    let committed = committed_since(space, &before).await;
+    assert!(committed.contains(&"portable.md".to_string()));
+    assert!(!committed.iter().any(|path| path.contains("local.json")));
 }
 
 #[tokio::test]
@@ -246,16 +278,14 @@ async fn project_root_with_submodule_spaces_saves_file_paths_and_all() {
             Some(root),
             root,
             requested.map(|paths| paths.into_iter().map(str::to_string).collect()),
+            super::versions::MessageLanguage::En,
         )
         .await
         .expect("root save");
 
         assert!(report.parent.is_none());
         assert_ne!(head(root).await, before);
-        let committed = git(&cli, root, &["show", "--name-only", "--format=", "HEAD"]).await;
-        let mut committed = committed.lines().collect::<Vec<_>>();
-        committed.sort_unstable();
-        assert_eq!(committed, expected);
+        assert_eq!(committed_since(root, &before).await, expected);
     }
 }
 
@@ -275,6 +305,7 @@ async fn submodule_space_save_keeps_its_parent_pointer_step() {
         Some(root),
         &child,
         Some(vec!["note.md".to_string()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("child save");
@@ -307,6 +338,7 @@ async fn a_case_only_relocation_commits_its_new_spelling_and_keeps_unrelated_sta
         None,
         space,
         Some(vec!["note.md".to_string(), "Note.md".to_string()]),
+        super::versions::MessageLanguage::En,
     )
     .await
     .expect("case-only save");

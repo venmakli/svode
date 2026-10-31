@@ -310,7 +310,7 @@ if (process.env.SVODE_SPACE_HOME_ACTIONS_DOM !== "1") {
         },
         {
           group: "edit",
-          items: unsaved ? ["Save all", "Rename"] : ["Rename"],
+          items: unsaved ? ["Commit all", "Rename"] : ["Rename"],
         },
         { group: "delete", items: ["Remove"] },
       ]);
@@ -364,7 +364,7 @@ if (process.env.SVODE_SPACE_HOME_ACTIONS_DOM !== "1") {
     saves = 0;
     await render("space");
     await openMenu();
-    await select("Save all");
+    await select("Commit all");
     expect(saves).toBe(1);
     dirty = false;
 

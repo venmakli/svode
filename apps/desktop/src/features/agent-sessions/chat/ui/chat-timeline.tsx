@@ -56,6 +56,7 @@ import {
   type ManualExpansion,
 } from "../model/expansion";
 import { turnChanges } from "../model/changed-files";
+import { useSessionWorkPublisher } from "../hooks/use-session-work";
 import { chatMediaOf, turnCreatedMediaCount } from "../model/media";
 import {
   projectTimeline,
@@ -93,6 +94,8 @@ export function ChatTimeline(props: ChatTimelineProps) {
 
 interface ChatTimelineProps {
   session: AgentSessionKeyDto;
+  /** Catalogue id of a session whose work the window's "Changes" show. */
+  workOwner?: string | null;
   snapshot: AgentSessionSnapshotDto;
   /** The session status of the catalogue; a failure marks the last turn. */
   status?: AgentSessionStatusDto | null;
@@ -102,6 +105,7 @@ interface ChatTimelineProps {
 
 function TimelineView({
   session,
+  workOwner = null,
   snapshot,
   status = null,
   header,
@@ -110,6 +114,7 @@ function TimelineView({
   const toggle = (id: string, open: boolean) =>
     setManual((current) => ({ ...current, [id]: open }));
   const turns = projectTimeline(snapshot, status);
+  useSessionWorkPublisher(workOwner, turns);
   const marker = useLiveEdgeMarker(snapshot);
 
   return (

@@ -1,5 +1,8 @@
+import { useMemo } from "react";
 import type { ChangesTarget } from "@/features/changes";
 import { useSpace } from "@/features/space";
+import { useSessionWork } from "../chat/hooks/use-session-work";
+import { sessionChangesTarget } from "../chat/model/session-work";
 import type { AgentSession } from "../model";
 
 export interface AgentSessionSpace {
@@ -43,19 +46,36 @@ export function useAgentSessionSpace(
   };
 }
 
-/** The "Changes" of a session: those of its Space, once that Space is ready. */
+/**
+ * The "Changes" of a session once its Space is ready: while a chat shows it,
+ * the area of its work (Stage 11 1.7) — the files its turns changed in the
+ * project's Spaces; otherwise, as for a terminal session, its Space.
+ */
 export function useAgentSessionChangesTarget(
   session: AgentSession | null,
 ): ChangesTarget | null {
   const space = useAgentSessionSpace(session);
   const projectPath = useSpace((state) => state.activeRootPath);
-  if (!space?.ready || !projectPath) return null;
-  return {
-    kind: space.spaceId ? "space" : "project",
-    sourceShape: "directory",
-    spacePath: space.spacePath,
-    projectPath,
-    path: "",
-    name: space.name,
-  };
+  const rootSpaces = useSpace((state) => state.rootSpaces);
+  const spaces = useSpace((state) => state.spaces);
+  const work = useSessionWork(session?.id);
+  const ready = Boolean(space?.ready && projectPath);
+  const spaceId = space?.spaceId ?? null;
+  const spacePath = space?.spacePath ?? "";
+  const name = space?.name ?? "";
+  return useMemo(() => {
+    if (!ready || !projectPath) return null;
+    return sessionChangesTarget(
+      {
+        kind: spaceId ? "space" : "project",
+        sourceShape: "directory",
+        spacePath,
+        projectPath,
+        path: "",
+        name,
+      },
+      work,
+      [...rootSpaces, ...spaces],
+    );
+  }, [ready, projectPath, spaceId, spacePath, name, work, rootSpaces, spaces]);
 }

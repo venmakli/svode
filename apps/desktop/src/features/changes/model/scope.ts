@@ -5,14 +5,28 @@ import {
   type GitStatus,
 } from "@/features/git";
 
+/** A file a chat session changed, in a Space of the project. */
+export interface SessionWorkFile {
+  spaceId: string;
+  spacePath: string;
+  /** Relative to the Space. */
+  path: string;
+}
+
 export interface ChangesTarget {
-  kind: "page" | "owner" | "space" | "project";
+  kind: "page" | "owner" | "space" | "project" | "session";
   sourceShape: "file" | "directory";
+  /** The Space of the target; of a session, the Space it works in. */
   spacePath: string;
   projectPath?: string | null;
   sessionKey?: number;
   path: string;
   name: string;
+  /**
+   * The work of a chat session (kind "session", Stage 11 1.7): the files its
+   * turns changed, and what its own Space is.
+   */
+  work?: { files: SessionWorkFile[]; spaceKind: "space" | "project" };
 }
 
 /** The changes of one file, such as a document or media file. */
@@ -39,7 +53,11 @@ export interface InspectionScope {
 export function resolveInspectionScope(
   target: Pick<ChangesTarget, "kind" | "spacePath" | "sourceShape" | "path">,
 ): InspectionScope {
-  if (target.kind === "space" || target.kind === "project")
+  if (
+    target.kind === "space" ||
+    target.kind === "project" ||
+    target.kind === "session"
+  )
     return { kind: "repository", spacePath: target.spacePath, path: "" };
   const path = normalizeGitStatusPath(target.path);
   if (target.kind === "page" && target.sourceShape === "file")

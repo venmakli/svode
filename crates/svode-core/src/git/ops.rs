@@ -26,12 +26,6 @@ pub struct SubmoduleConfig {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NameStatusRecord {
-    status: char,
-    path: String,
-}
-
 /// Only a refusal of authorization: a file system "permission denied" of the
 /// repository is a local failure, not a missing credential.
 pub fn is_git_auth_error(stderr: &str) -> bool {
@@ -683,218 +677,20 @@ pub async fn submodule_target_matches_expected_head(
         && target_head.stdout.trim() == expected_head)
 }
 
+/// Commit `paths` (a scope Git expands) as one version with an English
+/// message of its facts.
 pub async fn commit_paths(
     cli: &GitCli,
     space_dir: &Path,
     file_paths: &[String],
 ) -> Result<bool, GitError> {
-    if file_paths.is_empty() {
-        return Ok(false);
-    }
-    super::branch::prepare_existing(cli, space_dir).await?;
-    let file_paths = super::staging::resolve(cli, space_dir, file_paths).await?;
-    if file_paths.is_empty() {
-        return Ok(false);
-    }
-    if full_status(cli, space_dir).await?.has_conflicts {
-        return Err(GitError::Conflict(
-            "Resolve the repository merge before saving paths".into(),
-        ));
-    }
-    let prepared = super::staging::prepare(cli, space_dir, &file_paths).await?;
-    if !super::staging::has_changes(cli, space_dir, &file_paths).await? {
-        return Ok(false);
-    }
-    let message = generate_commit_message_for_paths(cli, space_dir, &file_paths).await?;
-    super::staging::verify(cli, space_dir, &file_paths, &prepared).await?;
-    let mut presence = super::staging::Presence::new(space_dir);
-    let trace = HookTrace::new();
-    let out = if file_paths.iter().any(|path| presence.shadowed(path)) {
-        super::staging::commit_prepared(cli, space_dir, &file_paths, &message, &trace).await?
-    } else {
-        super::staging::exec_input(
-            cli,
-            space_dir,
-            &[
-                "commit",
-                "--only",
-                "-m",
-                &message,
-                "--pathspec-from-file=-",
-                "--pathspec-file-nul",
-            ],
-            &trace.env(&[]),
-            &super::cli::literal_pathspec_input(&file_paths),
-            GitStage::Commit,
-            &file_paths,
-        )
-        .await?
-    };
-    if out.exit_code != 0 {
-        return Err(super::staging::command_failure(
-            space_dir,
-            GitStage::Commit,
-            &out,
-            Some(&trace),
-            &file_paths,
-        ));
-    }
-    Ok(true)
-}
-
-async fn generate_commit_message_for_paths(
-    cli: &GitCli,
-    space_dir: &Path,
-    paths: &[String],
-) -> Result<String, GitError> {
-    // Renames pair within one batch; a path set within the budget is one.
-    let literal_paths = super::cli::literal_pathspecs(paths);
-    let mut records = Vec::new();
-    for args in cli.path_batches(
-        &["diff", "--cached", "--name-status", "-z", "--"],
-        &literal_paths,
-    ) {
-        let name_status =
-            super::staging::exec(cli, space_dir, &args, GitStage::Commit, paths).await?;
-        records.extend(parse_name_status_z(&name_status.stdout)?);
-    }
-    if records.is_empty() {
-        return Ok("Update space".to_string());
-    }
-
-    let mut added: Vec<String> = Vec::new();
-    let mut modified: Vec<String> = Vec::new();
-    let mut deleted: Vec<String> = Vec::new();
-
-    if staged_changes_touch_sensitive_collection(space_dir, &records) {
-        return Ok(sensitive_commit_message(&records));
-    }
-
-    for record in records {
-        let file = record
-            .path
-            .rsplit('/')
-            .next()
-            .unwrap_or(&record.path)
-            .to_string();
-
-        match record.status {
-            'A' => added.push(file),
-            'M' => modified.push(file),
-            'D' => deleted.push(file),
-            'R' => modified.push(file),
-            _ => modified.push(file),
-        }
-    }
-
-    let total = added.len() + modified.len() + deleted.len();
-
-    if total == 0 {
-        return Ok("Update space".to_string());
-    }
-
-    if total <= 5 {
-        // List individual files
-        let mut parts: Vec<String> = Vec::new();
-        if !modified.is_empty() {
-            parts.push(format!("Update {}", modified.join(", ")));
-        }
-        if !added.is_empty() {
-            parts.push(format!("Add {}", added.join(", ")));
-        }
-        if !deleted.is_empty() {
-            parts.push(format!("Delete {}", deleted.join(", ")));
-        }
-        Ok(parts.join("; "))
-    } else {
-        // Summarize counts
-        let mut parts: Vec<String> = Vec::new();
-        if !modified.is_empty() {
-            parts.push(format!(
-                "Update {} file{}",
-                modified.len(),
-                if modified.len() == 1 { "" } else { "s" }
-            ));
-        }
-        if !added.is_empty() {
-            parts.push(format!(
-                "Add {} file{}",
-                added.len(),
-                if added.len() == 1 { "" } else { "s" }
-            ));
-        }
-        if !deleted.is_empty() {
-            parts.push(format!(
-                "Delete {} file{}",
-                deleted.len(),
-                if deleted.len() == 1 { "" } else { "s" }
-            ));
-        }
-        Ok(parts.join(", "))
-    }
-}
-
-fn staged_changes_touch_sensitive_collection(
-    repo_dir: &Path,
-    records: &[NameStatusRecord],
-) -> bool {
-    records.iter().any(|record| {
-        crate::collections::schema::resolve_collection_schema_by_location(repo_dir, &record.path)
-            .ok()
-            .flatten()
-            .is_some_and(|(schema, _)| {
-                crate::collections::engine::schema_has_sensitive_columns(&schema)
-            })
-    })
-}
-
-fn sensitive_commit_message(records: &[NameStatusRecord]) -> String {
-    let total = records.len();
-    if total == 0 {
-        return "Update space".to_string();
-    }
-    if total > 1 {
-        return "Update collection entries".to_string();
-    }
-    match records[0].status {
-        'A' => "Create collection entry".to_string(),
-        'D' => "Delete collection entry".to_string(),
-        'R' => "Rename collection entry".to_string(),
-        _ => "Update collection entry".to_string(),
-    }
-}
-
-fn parse_name_status_z(stdout: &str) -> Result<Vec<NameStatusRecord>, GitError> {
-    let tokens: Vec<&str> = stdout
-        .split('\0')
-        .filter(|token| !token.is_empty())
-        .collect();
-    let mut records = Vec::new();
-    let mut idx = 0;
-    while idx < tokens.len() {
-        let status = tokens[idx];
-        idx += 1;
-        let Some(kind) = status.chars().next() else {
-            continue;
-        };
-        if matches!(kind, 'R' | 'C') {
-            if idx + 1 >= tokens.len() {
-                break;
-            }
-            idx += 1;
-            let path = normalize_git_path(tokens[idx])?;
-            idx += 1;
-            records.push(NameStatusRecord { status: kind, path });
-            continue;
-        }
-        if idx >= tokens.len() {
-            break;
-        }
-        let path = normalize_git_path(tokens[idx])?;
-        idx += 1;
-        records.push(NameStatusRecord { status: kind, path });
-    }
-    Ok(records)
+    super::versions::commit_single(
+        cli,
+        space_dir,
+        file_paths,
+        super::versions::MessageLanguage::En,
+    )
+    .await
 }
 
 fn parse_nul_paths(stdout: &str) -> Result<Vec<String>, GitError> {
@@ -2212,83 +2008,6 @@ mod tests {
                     state: "untracked".to_string(),
                 },
             ]
-        );
-    }
-
-    #[test]
-    fn parses_name_status_z_including_rename_records() {
-        let output = concat!(
-            "A\0new file.md\0",
-            "M\0папка/старый файл.md\0",
-            "R100\0old name.md\0new name.md\0",
-        );
-
-        let records = parse_name_status_z(output).unwrap();
-
-        assert_eq!(
-            records,
-            vec![
-                NameStatusRecord {
-                    status: 'A',
-                    path: "new file.md".to_string()
-                },
-                NameStatusRecord {
-                    status: 'M',
-                    path: "папка/старый файл.md".to_string()
-                },
-                NameStatusRecord {
-                    status: 'R',
-                    path: "new name.md".to_string()
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn sensitive_collection_changes_use_generic_commit_messages() {
-        let tmp = TempDir::new().unwrap();
-        let contacts = tmp.path().join("contacts");
-        std::fs::create_dir_all(&contacts).unwrap();
-        std::fs::write(
-            contacts.join("schema.yaml"),
-            "columns:\n  - { name: Phone, type: phone }\nviews: []\n",
-        )
-        .unwrap();
-
-        let records = vec![NameStatusRecord {
-            status: 'M',
-            path: "contacts/ivan-petrov.md".to_string(),
-        }];
-
-        assert!(staged_changes_touch_sensitive_collection(
-            tmp.path(),
-            &records
-        ));
-        // A Page below an item is no item without `nested_items`, but it
-        // still lies inside the sensitive Collection.
-        assert!(staged_changes_touch_sensitive_collection(
-            tmp.path(),
-            &[NameStatusRecord {
-                status: 'M',
-                path: "contacts/ivan-petrov/notes.md".to_string(),
-            }]
-        ));
-        assert_eq!(
-            sensitive_commit_message(&records),
-            "Update collection entry"
-        );
-        assert_eq!(
-            sensitive_commit_message(&[
-                NameStatusRecord {
-                    status: 'M',
-                    path: "contacts/ivan-petrov.md".to_string(),
-                },
-                NameStatusRecord {
-                    status: 'A',
-                    path: "contacts/jane.md".to_string(),
-                },
-            ]),
-            "Update collection entries"
         );
     }
 

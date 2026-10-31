@@ -3,6 +3,7 @@ use std::path::Path;
 use super::GitError;
 use super::host::GitHost;
 use super::state::GitRuntime;
+use super::versions::{self, MessageLanguage, PendingOperation};
 use super::{ops, path::contained_file};
 use crate::{
     git::path::{RootMode, normalize_repo_relative, repo_relative_from_base},
@@ -10,13 +11,16 @@ use crate::{
 };
 
 /// One explicit user save: a scoped set of paths, its pending structural
-/// companions and, for a submodule Space, the parent pointer step.
+/// companions and, for a submodule Space, the parent pointer step. The
+/// changes land as one commit per version group (Stage 11 1.G) with
+/// messages in `language`.
 pub async fn save(
     runtime: &GitRuntime,
     host: &dyn GitHost,
     project: Option<&Path>,
     space: &Path,
     requested: Option<Vec<String>>,
+    language: MessageLanguage,
 ) -> Result<super::flow::SaveReport, GitError> {
     let cli = runtime.require_cli()?;
     let (kind, repo) = match project {
@@ -74,10 +78,42 @@ pub async fn save(
     }
     let affected = paths.iter().map(|path| repo.join(path)).collect::<Vec<_>>();
     host.authorize_paths(affected).await?;
-    let committed = ops::commit_paths(&cli, &repo, &paths).await?;
-    pending.complete();
-    if committed {
-        host.publish_commit(space, &repo);
+    let operations = pending
+        .registrations()
+        .map(|(change, paths)| PendingOperation {
+            id: change.map(|change| change.id()),
+            op: change.map(|change| change.op.clone()),
+            relocation: change
+                .and_then(|change| change.relocation())
+                .and_then(|relocation| {
+                    Some((
+                        repo_relative_from_base(&repo, &relocation.source, RootMode::Reject)
+                            .ok()?,
+                        repo_relative_from_base(&repo, &relocation.target, RootMode::Reject)
+                            .ok()?,
+                    ))
+                }),
+            paths: paths
+                .iter()
+                .filter_map(|path| repo_relative_from_base(&repo, path, RootMode::Reject).ok())
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    match versions::commit_grouped(&cli, &repo, &paths, &operations, language).await {
+        Ok(report) => {
+            pending.complete();
+            if report.commits > 0 {
+                host.publish_commit(space, &repo);
+            }
+        }
+        Err(failure) => {
+            // Groups that landed keep their commits; the rest stays pending.
+            pending.settle(&failure.report.settled);
+            if failure.report.commits > 0 {
+                host.publish_commit(space, &repo);
+            }
+            return Err(failure.error);
+        }
     }
     let parent = if let Some(project) = project.filter(|_| kind == SpaceGitType::Submodule) {
         let expected = ops::repository_head_oid(&cli, &repo).await?;

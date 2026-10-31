@@ -18,7 +18,10 @@ import {
   type ChangesTarget,
 } from "../model/scope";
 import { createItemReader } from "../model/item-reader";
+import { useSessionArea } from "../hooks/use-session-area";
+import { sessionAreaPaths } from "../model/session-scope";
 import { ChangesBody } from "./changes-body";
+import { SessionChangesBody } from "./session-changes-body";
 import { ChangesSaveFooter } from "./changes-save-footer";
 import { changesCount } from "./changes-toolbar";
 import { useChangesSave } from "../hooks/use-changes-save";
@@ -54,19 +57,33 @@ function ScopeChangesControl({
     () => resolveInspectionScope({ kind, sourceShape, spacePath, path }),
     [kind, sourceShape, spacePath, path],
   );
-  const paths = inspectionPaths(scope, status);
+  const area = useSessionArea(target);
+  const paths = area
+    ? sessionAreaPaths(area)
+    : inspectionPaths(scope, status);
   const dirty = paths.length > 0;
   const statusError = useGitStore((state) =>
     Boolean(state.statusErrors[target.spacePath]),
   );
-  const incomplete = status ? status.omittedFiles > 0 : false;
+  const incomplete = area
+    ? area.incomplete
+    : status
+      ? status.omittedFiles > 0
+      : false;
   const count = changesCount(paths.length, incomplete);
+  const read = area ? area.read : Boolean(status);
   // Quiet control: "no changes" is claimed only for a readable full status.
-  const label = dirty
-    ? m.changes_scope_label({ name: target.name, count })
-    : status && !statusError && !incomplete
-      ? m.changes_scope_clean_label({ name: target.name })
-      : m.changes_scope_title({ name: target.name });
+  const label = area
+    ? dirty
+      ? m.changes_session_label({ count })
+      : read && !statusError && !incomplete
+        ? m.changes_session_clean_label()
+        : m.changes_session_title()
+    : dirty
+      ? m.changes_scope_label({ name: target.name, count })
+      : read && !statusError && !incomplete
+        ? m.changes_scope_clean_label({ name: target.name })
+        : m.changes_scope_title({ name: target.name });
   useEffect(() => {
     void refreshGitStatus(target.spacePath);
   }, [target.spacePath]);
@@ -134,7 +151,7 @@ export function ChangesWindow({
 }
 
 function ChangesSheetContent({
-  target,
+  target: requested,
   origin,
   open,
   onClose,
@@ -144,13 +161,23 @@ function ChangesSheetContent({
   open: boolean;
   onClose: () => void;
 }) {
+  // A session's "Changes" lead to its Space; closing returns to the session.
+  const [spaceShown, setSpaceShown] = useState(false);
+  if (!open && spaceShown) setSpaceShown(false);
+  const target =
+    spaceShown && requested.kind === "session"
+      ? sessionSpaceTarget(requested)
+      : requested;
   const status = useGitStore((state) => state.statuses[target.spacePath]);
   const { kind, sourceShape, spacePath, path } = target;
   const scope = useMemo(
     () => resolveInspectionScope({ kind, sourceShape, spacePath, path }),
     [kind, sourceShape, spacePath, path],
   );
-  const paths = inspectionPaths(scope, status);
+  const area = useSessionArea(target, false);
+  const paths = area
+    ? sessionAreaPaths(area)
+    : inspectionPaths(scope, status);
   const dirty = paths.length > 0;
   const statusError = useGitStore(
     (state) => state.statusErrors[target.spacePath],
@@ -189,16 +216,26 @@ function ChangesSheetContent({
         refusal.chooseVersion();
       }}
     >
-      <ChangesBody
-        key={`${scope.kind}:${scope.path}`}
-        open={open}
-        scope={scope}
-        status={status}
-        error={statusError}
-        paths={paths}
-        reader={reader}
-        name={target.name}
-      />
+      {area ? (
+        <SessionChangesBody
+          open={open}
+          target={target}
+          area={area}
+          reader={reader}
+          onShowSpace={() => setSpaceShown(true)}
+        />
+      ) : (
+        <ChangesBody
+          key={`${scope.kind}:${scope.path}`}
+          open={open}
+          scope={scope}
+          status={status}
+          error={statusError}
+          paths={paths}
+          reader={reader}
+          name={target.name}
+        />
+      )}
       <ChangesSaveFooter
         save={save}
         dirty={dirty}
@@ -214,4 +251,16 @@ function ChangesSheetContent({
       </div>
     </SheetContent>
   );
+}
+
+/** The Space a session works in, as its own "Changes" show it. */
+function sessionSpaceTarget(target: ChangesTarget): ChangesTarget {
+  return {
+    kind: target.work?.spaceKind ?? "space",
+    sourceShape: "directory",
+    spacePath: target.spacePath,
+    projectPath: target.projectPath,
+    path: "",
+    name: target.name,
+  };
 }

@@ -186,7 +186,7 @@ export async function commitFileAndMaybeSync(
 
 /**
  * Stage all changes, commit, then auto-sync if enabled.
- * Triggered by ⌘⇧S or by the space "Save all" menu item.
+ * Triggered by ⌘⇧S or by the space "Commit all" menu item.
  * When projectPath is provided, the backend routes the commit
  * to the correct repo based on the space's git type.
  */

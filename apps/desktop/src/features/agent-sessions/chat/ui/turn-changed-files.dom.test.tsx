@@ -345,6 +345,25 @@ if (process.env.SVODE_TURN_CHANGED_FILES_DOM !== "1") {
     }
   });
 
+  test("an uncommitted file of a turn carries the sidebar's Git marker, a clean one none", async () => {
+    try {
+      await mount();
+      await click(filesRows()[0]);
+      await settle();
+      const marker = (name: string) =>
+        buttonByText(name)!
+          .closest("li")!
+          .querySelector(`span[aria-label^="${m.git_status_changed()}"]`);
+      expect(Boolean(marker("a.md"))).toBe(true);
+      expect(marker("B.md")).toBe(null);
+      expect(marker("old.md")).toBe(null);
+    } finally {
+      for (const root of mounted.splice(0)) {
+        await act(async () => root.unmount());
+      }
+    }
+  });
+
   async function click(element: Element | undefined) {
     if (!element) throw new Error("nothing to click");
     await act(async () => {

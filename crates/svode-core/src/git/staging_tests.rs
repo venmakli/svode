@@ -533,9 +533,7 @@ async fn worktree_changes_after_staging_fail_before_commit() {
         let cli = fault_cli(
             fault.path(),
             &real,
-            &format!(
-                "for arg in \"$@\"; do if [ \"$arg\" = --name-status ]; then {action}; fi; done"
-            ),
+            &format!("for arg in \"$@\"; do if [ \"$arg\" = --raw ]; then {action}; fi; done"),
         );
         let error = ops::commit_paths(&cli, root, &["baseline.md".into()])
             .await

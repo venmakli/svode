@@ -30,6 +30,7 @@ export {
   containerPathForNodePath,
 } from "./model/git-paths";
 export { useRepositoryAccess } from "./hooks/use-repository-access";
+export { useRepositoryIds } from "./hooks/use-repository-ids";
 export {
   useRepositoryAccessPreflight,
   type RepositoryAccessPreflightController,

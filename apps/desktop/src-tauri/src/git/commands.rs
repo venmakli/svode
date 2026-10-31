@@ -17,6 +17,7 @@ use svode_core::git::operations::SharedError;
 use svode_core::git::ops::{GitStatus, UnpushedCommit};
 use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use svode_core::git::save::save;
+use svode_core::git::versions::MessageLanguage;
 use svode_core::git::{flow, markers, ops, sync};
 use svode_core::system_path;
 
@@ -403,6 +404,17 @@ pub async fn git_fetch_status(
     .await
 }
 
+/// The interface language of the author now: version messages are written
+/// in it (Stage 11 1.G); English when the preference cannot be read.
+fn message_language(app: &AppHandle) -> MessageLanguage {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .and_then(|dir| crate::space::settings::read_app_preferences(&dir).ok())
+        .map(|preferences| MessageLanguage::from_locale(&preferences.language))
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn git_commit_file(
     app: AppHandle,
@@ -438,6 +450,7 @@ pub async fn git_commit_file(
         project.as_deref(),
         &path,
         Some(normalize_commit_paths(vec![file_path])?),
+        message_language(&app),
     )
     .await
     .map_err(AppError::from);
@@ -462,6 +475,7 @@ pub async fn git_commit_all(
         project.as_deref(),
         &path,
         None,
+        message_language(&app),
     )
     .await
     .map_err(AppError::from);
@@ -487,6 +501,7 @@ pub async fn git_commit_paths(
         project.as_deref(),
         &path,
         Some(normalize_commit_paths(file_paths)?),
+        message_language(&app),
     )
     .await
     .map_err(AppError::from);

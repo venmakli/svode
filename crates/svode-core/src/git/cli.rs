@@ -1102,6 +1102,59 @@ pub async fn read_bounded(
     Ok(result)
 }
 
+/// Run a Git read that takes `input` on stdin and
+/// return its raw output, or `None` when Git failed, the output exceeded
+/// `max_bytes` or the read did not finish within `timeout`.
+pub async fn read_with_input(
+    cli: &GitCli,
+    repo: &Path,
+    args: &[&str],
+    input: &[u8],
+    max_bytes: usize,
+    timeout: Duration,
+) -> Result<Option<Vec<u8>>, GitError> {
+    let mut command = Command::new(cli.git_path());
+    hide_tokio_window(&mut command);
+    cli.configure_process_env(&mut command);
+    command
+        .args(args)
+        .current_dir(repo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    let stdin = child.stdin.take();
+    let mut stdout = child.stdout.take().unwrap();
+    let read = async {
+        let write = async move {
+            if let Some(mut stdin) = stdin {
+                // A Git that stops reading early exits with the code that says why.
+                let _ = stdin.write_all(input).await;
+            }
+        };
+        let collect = async {
+            let mut bytes = Vec::new();
+            (&mut stdout)
+                .take((max_bytes + 1) as u64)
+                .read_to_end(&mut bytes)
+                .await
+                .map(|_| bytes)
+        };
+        let (_, bytes) = tokio::join!(write, collect);
+        let bytes = bytes?;
+        if bytes.len() > max_bytes {
+            child.kill().await?;
+            return Ok::<_, std::io::Error>(None);
+        }
+        Ok(child.wait().await?.success().then_some(bytes))
+    };
+    match tokio::time::timeout(timeout, read).await {
+        Ok(result) => Ok(result?),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Run a Git read and hand each NUL-terminated record of
 /// its output to `record` as it arrives, so no output size is ever buffered.
 /// Returns whether Git succeeded, or `None` when `timeout` passed first; the
