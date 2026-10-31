@@ -477,6 +477,14 @@ fn guide_prints_the_shared_guide_and_files_first_rules_without_a_project() {
     // Bodies by the agent's own tools, frontmatter and fields through Svode.
     assert!(files_first.contains("frontmatter byte for byte"));
     assert!(files_first.contains("records no Routine event"));
+    // The Git rules for agents come with the shared guide.
+    assert!(files_first.contains("the Git rules of the guide below"));
+    assert!(
+        value["guide"]
+            .as_str()
+            .unwrap()
+            .contains("Git in a Svode project:\n- The Svode app commits and syncs the project.")
+    );
     // The CLI launches no Routine: the guide says where run_routine lives.
     assert!(
         value["guide"]

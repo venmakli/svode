@@ -27,4 +27,11 @@ Run `svode guide` once before the first change in a session (in MCP: `get_svode_
 
 ## After a change
 
-Svode never commits. Check the `changedPaths` of every result and `git status`; commit only when the user asks.
+Svode commands and tools never commit. Check the `changedPaths` of every result and `git status`; the Git rules below decide what you may do next.
+
+## Git in a Svode project
+
+- The Svode app commits and syncs the project. Without an explicit request from the user in the current conversation, do not run `git commit`, `commit --amend`, `push`, `pull`, `merge`, `rebase`, `reset`, `stash`, `clean`, or `checkout` or `switch` of branches.
+- When the user asks for Git work: integrate with merge, not rebase; never force-push or rewrite published history; never skip hooks (`--no-verify`); never change Git config; do not delete branches or tags unless asked; add files by explicit paths.
+- For a conflict or Git operation that Svode handed over: change only the listed files; keep what each side added unless the user decided otherwise; keep JSON, YAML and frontmatter valid and free of conflict markers; finish a merge with a commit that adds the resolved files by explicit paths and nothing else; continue or abort another operation as the user asked; do not publish: Svode pushes.
+- Do not edit `.svode/order.json` or the pointers of child Spaces to resolve a conflict: Svode merges them. Change structure through Svode tools or `svode` commands.

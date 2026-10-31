@@ -2,6 +2,7 @@
 //! host publishes and routing of bridge methods.
 
 use serde_json::{Value, json};
+use svode_tools::catalog::GIT_RULES;
 use svode_tools::dispatch::{check_tool, served_definitions};
 use svode_tools::error::ToolError;
 use svode_tools::host::ToolHost;
@@ -17,7 +18,7 @@ pub fn initialize(host_version: &str) -> Value {
         "protocolVersion": MCP_PROTOCOL_VERSION,
         "serverInfo": { "name": "svode", "version": host_version },
         "capabilities": { "tools": {} },
-        "instructions": MCP_INSTRUCTIONS,
+        "instructions": format!("{MCP_INSTRUCTIONS}\n\n{GIT_RULES}"),
     })
 }
 

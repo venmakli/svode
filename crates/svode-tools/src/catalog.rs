@@ -943,13 +943,32 @@ fn annotations_are_mutating(annotations: Option<&ToolAnnotations>) -> bool {
     annotations.is_none_or(|annotations| annotations.read_only_hint != Some(true))
 }
 
+/// The Git rules for agents in a Svode project. The guide, the MCP server
+/// instructions and the Svode skill state them in the same words.
+macro_rules! git_rules {
+    () => {
+        r#"Git in a Svode project:
+- The Svode app commits and syncs the project. Without an explicit request from the user in the current conversation, do not run `git commit`, `commit --amend`, `push`, `pull`, `merge`, `rebase`, `reset`, `stash`, `clean`, or `checkout` or `switch` of branches.
+- When the user asks for Git work: integrate with merge, not rebase; never force-push or rewrite published history; never skip hooks (`--no-verify`); never change Git config; do not delete branches or tags unless asked; add files by explicit paths.
+- For a conflict or Git operation that Svode handed over: change only the listed files; keep what each side added unless the user decided otherwise; keep JSON, YAML and frontmatter valid and free of conflict markers; finish a merge with a commit that adds the resolved files by explicit paths and nothing else; continue or abort another operation as the user asked; do not publish: Svode pushes.
+- Do not edit `.svode/order.json` or the pointers of child Spaces to resolve a conflict: Svode merges them. Change structure through Svode tools or `svode` commands."#
+    };
+}
+
+pub const GIT_RULES: &str = git_rules!();
+
 pub fn guide_text() -> &'static str {
-    r#"Svode MCP guide:
+    concat!(
+        r#"Svode MCP guide:
 - Target: Svode MCP is a tools-only local product API. It currently negotiates protocolVersion 2025-06-18 for client compatibility while using 2025-11-25-friendly tool definitions: object inputSchema, optional outputSchema only when it matches structuredContent, annotations, and tools/list pagination tolerance.
 - Mutating tools do not autocommit. They return changedPaths in structuredContent. Svode app owns commit/sync/autocommit policy.
 - A mutation of a repository with a remote needs current write evidence. REPOSITORY_ACCESS_DENIED carries status, reason and hint and writes nothing: MCP never probes the remote itself, so verify access with `svode git access verify` for that Space or in the Svode app, then retry.
 - get_git_status lists at most 20000 changed paths, conflicts first. omittedFiles above 0 means the list is partial: totalFiles and the has* flags still cover every path, so never treat a path missing from files as unchanged.
 - A title change whose rename would also write other repositories that refuse keeps the new title and the current filename: the result has a filename_rename_deferred warning with reason repository_access_denied and blockers. Verify access for those repositories, then save the same title again to rename.
+
+"#,
+        git_rules!(),
+        r#"
 
 Structure choice:
 - Use a standalone Page for narrative notes, specs, plans, and one-off knowledge.
@@ -1028,6 +1047,7 @@ Apps authoring:
 - Process `environment` is a top-level string-to-string mapping. Literal text and one or more `${NAME}` substitutions are supported; `$${NAME}` emits literal `${NAME}`. Names match `[A-Za-z_][A-Za-z0-9_]*`. No recursive expansion, defaults, functions, or expressions exist. Static and url Apps cannot declare environment.
 - Never write credentials into app.yaml. Convert credentials supplied in a prompt into `${NAME}` references and tell the user to provide values in Settings → Variables. Variable values stay on this device; Secret values stay in the OS Keychain, so a clone may require local setup.
 - Before writing app.yaml, call validate_app_manifest with the complete candidate; repair all diagnostics, write the exact validated YAML into the target owner directory, then read it back and validate again after edits. The validator is read-only and never launches setup/start or reads secret values. After a valid process App is opened, missing names block launch until the user creates each name or binds it to an existing entry. Changed values apply on the next setup/start or explicit restart."#
+    )
 }
 
 fn validate_app_manifest_output_schema() -> Value {
@@ -2053,6 +2073,43 @@ mod tests {
         assert!(guide_text().contains("confirmAutomaticExecution=true"));
         assert!(guide_text().contains("Use run_routine only"));
         assert!(guide_text().contains("served only through the running Svode desktop app"));
+    }
+
+    #[test]
+    fn guide_and_skill_state_the_git_rules_in_the_same_words() {
+        assert!(guide_text().contains(GIT_RULES));
+        for rule in [
+            "The Svode app commits and syncs the project",
+            "explicit request from the user in the current conversation",
+            "`commit --amend`",
+            "`checkout` or `switch` of branches",
+            "integrate with merge, not rebase",
+            "never force-push or rewrite published history",
+            "(`--no-verify`)",
+            "never change Git config",
+            "do not delete branches or tags unless asked",
+            "add files by explicit paths",
+            "change only the listed files",
+            "keep what each side added unless the user decided otherwise",
+            "valid and free of conflict markers",
+            "finish a merge with a commit that adds the resolved files by explicit paths",
+            "continue or abort another operation as the user asked",
+            "do not publish: Svode pushes",
+            "Do not edit `.svode/order.json` or the pointers of child Spaces",
+        ] {
+            assert!(GIT_RULES.contains(rule), "missing rule: {rule}");
+        }
+        // The rule revised on 2026-10-29: the agent finishes the merge itself.
+        assert!(!GIT_RULES.contains("do not stage"));
+
+        let skill = include_str!("../../../plugins/svode/skills/svode/SKILL.md");
+        let mut rules = GIT_RULES.lines();
+        assert_eq!(rules.next(), Some("Git in a Svode project:"));
+        assert!(skill.contains("## Git in a Svode project\n"));
+        for rule in rules {
+            assert!(skill.contains(rule), "skill misses the rule: {rule}");
+        }
+        assert!(!skill.contains("commit only when the user asks"));
     }
 
     #[test]

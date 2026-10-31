@@ -127,6 +127,7 @@ fn control_plane_reports_host_version_and_filtered_catalog() {
             && value.contains("canonical contentPath")
             && value.contains("validate_app_manifest")
             && value.contains("list_agent_actors for the same spaceId")
+            && value.ends_with(svode_tools::catalog::GIT_RULES)
     }));
 
     assert_eq!(tool_names(&host).len(), 55);
