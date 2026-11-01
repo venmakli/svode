@@ -281,7 +281,11 @@ mod tests {
         };
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let out = cli.exec(&root, &["init", "-q"]).await.unwrap();
+        // The `files` ref store, whatever the user's `init.defaultRefFormat`.
+        let out = cli
+            .exec(&root, &["-c", "init.defaultRefFormat=files", "init", "-q"])
+            .await
+            .unwrap();
         assert_eq!(out.exit_code, 0, "{}", out.stderr);
         let sources = ActorSources::resolve(&cli, &root).await.unwrap();
         let git = sources.repository.join(".git");

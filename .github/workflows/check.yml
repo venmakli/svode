@@ -50,6 +50,17 @@ jobs:
       - run: cargo check --workspace --all-targets --exclude svode-speech
       - name: Core package tests without the desktop crate
         run: cargo test -p svode-core
+      # Git 3.0 defaults to the reftable ref store, where pseudo-refs are not
+      # files; repositories the core tests create use it here (Stage 11 `01`,
+      # criterion 2). Needs Git 2.45 or newer on the runner.
+      - name: Core package tests with the reftable ref store
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: init.defaultRefFormat
+          GIT_CONFIG_VALUE_0: reftable
+        run: |
+          git --version
+          cargo test -p svode-core
       - name: Tool surface package tests without the desktop crate
         run: cargo test -p svode-tools
       - name: MCP package tests without the desktop crate
