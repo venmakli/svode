@@ -44,7 +44,7 @@ export function CalendarView({
     addDateColumnForView,
     calendarRef,
     createDraft,
-    createEntryFromDraft,
+    createItemFromDraft,
     currentDate,
     dateColumn,
     events,
@@ -176,7 +176,7 @@ export function CalendarView({
           draft={createDraft}
           onCancel={() => setCreateDraft(null)}
           onCreate={(title, draft) =>
-            void createEntryFromDraft(title, draft).catch(reportCalendarError)
+            void createItemFromDraft(title, draft).catch(reportCalendarError)
           }
         />
       ) : null}

@@ -8,12 +8,12 @@ import {
   mergeActorActivityPage,
   visibleActorAliases,
 } from "./actor-values";
-import type { ActorActivitySnapshot, ActorCatalogRow } from "./types";
+import type { ActorActivitySnapshot, ActorCatalogItem } from "./types";
 
 function actor(
-  input: Partial<ActorCatalogRow> &
-    Pick<ActorCatalogRow, "canonicalEmail" | "displayName">,
-): ActorCatalogRow {
+  input: Partial<ActorCatalogItem> &
+    Pick<ActorCatalogItem, "canonicalEmail" | "displayName">,
+): ActorCatalogItem {
   return {
     aliases: [],
     availableYears: [],
@@ -27,7 +27,7 @@ function actor(
 }
 
 test("default actor ordering keeps empty activity last and uses name then email", () => {
-  const rows = [
+  const items = [
     actor({ canonicalEmail: "z@test", displayName: "Zed" }),
     actor({
       canonicalEmail: "b@test",
@@ -47,12 +47,12 @@ test("default actor ordering keeps empty activity last and uses name then email"
   ];
 
   expect(
-    rows.sort(compareActorsByDefault).map((row) => row.canonicalEmail),
+    items.sort(compareActorsByDefault).map((item) => item.canonicalEmail),
   ).toEqual(["new@test", "a@test", "b@test", "z@test"]);
 });
 
 test("actor identity helpers keep only non-canonical aliases", () => {
-  const row = actor({
+  const item = actor({
     aliases: [
       { email: "ada@test", line: null, name: "Ada Lovelace" },
       { email: "old@test", line: 2, name: "Ada" },
@@ -62,7 +62,7 @@ test("actor identity helpers keep only non-canonical aliases", () => {
     displayName: "Ada Lovelace",
   });
 
-  expect(visibleActorAliases(row)).toEqual([
+  expect(visibleActorAliases(item)).toEqual([
     { email: "old@test", line: 2, name: "Ada" },
   ]);
 });

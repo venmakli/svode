@@ -4,15 +4,15 @@ import { fileURLToPath } from "node:url";
 import { act, useEffect } from "react";
 import { JSDOM } from "jsdom";
 import type { Page } from "@/features/page";
-import type { CollectionEntryMenu } from "../model";
+import type { CollectionItemMenu } from "../model";
 
-if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
-  test("Collection row menu operations DOM", () => {
+if (process.env.SVODE_COLLECTION_ITEM_MENU_HOOK_DOM !== "1") {
+  test("Collection item menu operations DOM", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
       {
-        env: { ...process.env, SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM: "1" },
+        env: { ...process.env, SVODE_COLLECTION_ITEM_MENU_HOOK_DOM: "1" },
         encoding: "utf8",
       },
     );
@@ -70,26 +70,25 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
   });
 
   const { createRoot } = await import("react-dom/client");
-  const { useCollectionEntryMenu } =
-    await import("./use-collection-entry-menu");
+  const { useCollectionItemMenu } = await import("./use-collection-item-menu");
 
   const events: string[] = [];
-  const latest: { menu: CollectionEntryMenu | null } = { menu: null };
+  const latest: { menu: CollectionItemMenu | null } = { menu: null };
   function Harness({ readOnly }: { readOnly: boolean }) {
-    const menu = useCollectionEntryMenu({
+    const menu = useCollectionItemMenu({
       readOnly,
       spacePath: "/space",
       projectPath: "/project",
       spaceId: "space",
-      refreshEntries: () => events.push("refresh"),
+      refreshItems: () => events.push("refresh"),
       openPeek: (target, options) =>
         events.push(
           `peek:${target.path}${options?.focusTitle ? ":title" : ""}`,
         ),
-      duplicateRow: async (target) => {
+      duplicateItem: async (target) => {
         events.push(`duplicate:${target.path}`);
       },
-      requestRowDelete: (target) => events.push(`delete:${target.path}`),
+      requestItemDelete: (target) => events.push(`delete:${target.path}`),
     });
     useEffect(() => {
       latest.menu = menu;
@@ -98,11 +97,11 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
   }
 
   const root = createRoot(document.getElementById("app")!);
-  async function run(readOnly: boolean, action: string, entry = leaf) {
+  async function run(readOnly: boolean, action: string, item = leaf) {
     commands.length = 0;
     events.length = 0;
     await act(async () => root.render(<Harness readOnly={readOnly} />));
-    const handlers = latest.menu!.handlers(entry) as Record<string, () => void>;
+    const handlers = latest.menu!.handlers(item) as Record<string, () => void>;
     await act(async () => {
       handlers[action]!();
       for (let index = 0; index < 5; index += 1) {
@@ -115,7 +114,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
     };
   }
 
-  test("row items run the Peek's operations of the item and refresh the rows", async () => {
+  test("menu items run the Peek's operations of the item and refresh the items", async () => {
     expect(await run(false, "nest-page")).toEqual({
       commands: ["convert_page_to_folder", "create_page"],
       events: ["peek:Tasks/Roadmap/Untitled.md", "refresh"],
@@ -142,7 +141,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
     ).toEqual({ commands: ["convert_page_to_leaf"], events: ["refresh"] });
   });
 
-  test("rename opens the item's peek on its title; duplicate and delete keep their row flows", async () => {
+  test("rename opens the item's peek on its title; duplicate and delete keep their item flows", async () => {
     expect((await run(false, "rename")).events).toEqual([
       `peek:${leaf.path}:title`,
     ]);
@@ -154,7 +153,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
     ]);
   });
 
-  test("read-only rows change nothing", async () => {
+  test("read-only items change nothing", async () => {
     for (const action of [
       "nest-page",
       "new-item",
@@ -169,12 +168,12 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
     }
   });
 
-  test("pinning a row pins the item as a page", async () => {
+  test("pinning an item pins it as a page", async () => {
     await act(async () => root.render(<Harness readOnly={false} />));
     expect(latest.menu!.pinItem(leaf)?.title).toBe("Roadmap");
-    const { artifactNavigationKey } = await import("@/features/navigation");
+    const { pathNavigationKey } = await import("@/features/navigation");
     expect(latest.menu!.pinItem(leaf)?.key).toEqual(
-      artifactNavigationKey("page", leaf.path, "space", null),
+      pathNavigationKey("page", leaf.path, "space", null),
     );
   });
 }

@@ -39,7 +39,7 @@ export function toAgentContextPresentationState(
       ? { attention: <NoEnabledAgentsHint onOpenProviders={onOpenProviders} /> }
       : {}),
     phase: "ready",
-    rows: state.snapshot.items,
+    items: state.snapshot.items,
     sourceEmpty,
   };
 }

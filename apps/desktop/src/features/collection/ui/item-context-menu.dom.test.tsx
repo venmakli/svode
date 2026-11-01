@@ -4,15 +4,15 @@ import { fileURLToPath } from "node:url";
 import { act, type ReactNode } from "react";
 import { JSDOM } from "jsdom";
 import type { Page } from "@/features/page";
-import type { CollectionEntryMenu } from "../model";
+import type { CollectionItemMenu } from "../model";
 
-if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
-  test("Collection row context menus DOM", () => {
+if (process.env.SVODE_COLLECTION_ITEM_MENU_DOM !== "1") {
+  test("Collection item context menus DOM", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
       {
-        env: { ...process.env, SVODE_COLLECTION_ENTRY_MENU_DOM: "1" },
+        env: { ...process.env, SVODE_COLLECTION_ITEM_MENU_DOM: "1" },
         encoding: "utf8",
       },
     );
@@ -79,14 +79,14 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
   }
 
   let detail = { form: "folder", subpageCount: 0, otherFileCount: 0 };
-  let entries: Page[] = [];
+  let items: Page[] = [];
   Object.defineProperty(dom.window, "__TAURI_INTERNALS__", {
     value: {
       transformCallback: () => 0,
       invoke: async (command: string) => {
         if (command === "get_page_detail_state") return detail;
         if (command === "navigation_read") return { pinned: [], kept: [] };
-        if (command === "list_collection_view_items") return entries;
+        if (command === "list_collection_view_items") return items;
         return null;
       },
     },
@@ -103,7 +103,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
     await import("@/features/content-actions");
   const { getNavigationState } = await import("@/features/navigation");
   const { pageNavigationItem } = await import("@/features/page");
-  const { CollectionEntryMenuProvider } = await import("./entry-context-menu");
+  const { CollectionItemMenuProvider } = await import("./item-context-menu");
   const { SortableTableRow } = await import("./table/table-row");
   const { BoardCardContent } = await import("./board/board-card");
   const { CollectionListRowContent } = await import("./list/list-row");
@@ -123,34 +123,34 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
   const leaf = page("plans/roadmap.md");
   const folder = page("plans/launch/README.md", "Launch");
   const calls: string[] = [];
-  const menuValue = (readOnly: boolean): CollectionEntryMenu => ({
+  const menuValue = (readOnly: boolean): CollectionItemMenu => ({
     readOnly,
     spacePath: "/space",
-    pinItem: (entry) => pageNavigationItem(entry, "space", null),
-    handlers: (entry) => ({
-      "nest-page": () => calls.push(`nest-page:${entry.path}`),
-      "new-item": () => calls.push(`new-item:${entry.path}`),
-      "new-folder": () => calls.push(`new-folder:${entry.path}`),
-      "make-collection": () => calls.push(`make-collection:${entry.path}`),
-      "make-leaf": () => calls.push(`make-leaf:${entry.path}`),
-      rename: () => calls.push(`rename:${entry.path}`),
-      duplicate: () => calls.push(`duplicate:${entry.path}`),
-      delete: () => calls.push(`delete:${entry.path}`),
+    pinItem: (item) => pageNavigationItem(item, "space", null),
+    handlers: (item) => ({
+      "nest-page": () => calls.push(`nest-page:${item.path}`),
+      "new-item": () => calls.push(`new-item:${item.path}`),
+      "new-folder": () => calls.push(`new-folder:${item.path}`),
+      "make-collection": () => calls.push(`make-collection:${item.path}`),
+      "make-leaf": () => calls.push(`make-leaf:${item.path}`),
+      rename: () => calls.push(`rename:${item.path}`),
+      duplicate: () => calls.push(`duplicate:${item.path}`),
+      delete: () => calls.push(`delete:${item.path}`),
     }),
   });
-  const open = (entry: Page) => () => calls.push(`open:${entry.path}`);
+  const open = (item: Page) => () => calls.push(`open:${item.path}`);
   const noop = () => undefined;
 
-  /** Each view's row of `entry`; its element answers the context menu. */
+  /** Each view's element of `item`; it answers the context menu. */
   const views: Record<
     string,
     {
-      render: (entry: Page, nested?: boolean) => ReactNode;
-      row: (entry: Page) => string;
+      render: (item: Page, nested?: boolean) => ReactNode;
+      target: (item: Page) => string;
     }
   > = {
     table: {
-      render: (entry, nested = false) => (
+      render: (item, nested = false) => (
         <DndContext>
           <Table>
             <TableBody>
@@ -159,7 +159,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
                 registerRow={noop}
                 row={{
                   child: false,
-                  entry,
+                  item,
                   level: 0,
                   nestedCollection: nested,
                 }}
@@ -168,42 +168,42 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
                 tabIndex={0}
                 onFocus={noop}
                 onMoveFocus={noop}
-                onOpen={open(entry)}
+                onOpen={open(item)}
               >
-                <TableCell>{entry.meta.title}</TableCell>
+                <TableCell>{item.meta.title}</TableCell>
               </SortableTableRow>
             </TableBody>
           </Table>
         </DndContext>
       ),
-      row: (entry) => `[data-table-row-path="${entry.path}"]`,
+      target: (item) => `[data-table-row-path="${item.path}"]`,
     },
     board: {
-      render: (entry, nested = false) => (
+      render: (item, nested = false) => (
         <BoardCardContent
           readOnly={false}
-          card={{ entry, groupKey: "todo" }}
+          card={{ item, groupKey: "todo" }}
           groupColumn={{ name: "status", type: "status" }}
           cardFields={[]}
           customColumns={[]}
           nestedCollectionPaths={
-            new Set(nested ? [entry.path.replace(/\/README\.md$/, "")] : [])
+            new Set(nested ? [item.path.replace(/\/README\.md$/, "")] : [])
           }
           active={false}
           spacePath="/space"
           actors={[]}
           onRequestActors={async () => []}
-          onOpen={(item) => open(item)()}
+          onOpen={(opened) => open(opened)()}
           onOpenNestedPeek={noop}
           onOpenNestedCollection={noop}
           onOpenFullPage={noop}
           onOpenPath={noop}
         />
       ),
-      row: () => ".group\\/board-card",
+      target: () => ".group\\/board-card",
     },
     list: {
-      render: (entry, nested = false) => (
+      render: (item, nested = false) => (
         <CollectionListRowContent
           actors={[]}
           cardFields={[]}
@@ -213,7 +213,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
           focused={false}
           properties={[]}
           row={{
-            entry,
+            item,
             expandable: false,
             expanded: false,
             level: 0,
@@ -222,21 +222,21 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
           spacePath="/space"
           onFocusRow={noop}
           onKeyboardMove={noop}
-          onOpen={(item) => open(item)()}
+          onOpen={(opened) => open(opened)()}
           onOpenNestedCollection={noop}
           onOpenPath={noop}
           onRequestActors={async () => []}
           onToggle={noop}
         />
       ),
-      row: (entry) => `[data-list-row-path="${entry.path}"]`,
+      target: (item) => `[data-list-row-path="${item.path}"]`,
     },
     gallery: {
-      render: (entry, nested = false) => (
+      render: (item, nested = false) => (
         <DndContext>
-          <SortableContext items={[entry.path]}>
+          <SortableContext items={[item.path]}>
             <SortableGalleryCard
-              entry={entry}
+              item={item}
               cover={null}
               cardFields={["title"]}
               properties={[]}
@@ -249,7 +249,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
               disabledReorder
               focused={false}
               onRequestActors={async () => []}
-              onOpen={(item) => open(item)()}
+              onOpen={(opened) => open(opened)()}
               onOpenNestedCollection={noop}
               onOpenPath={noop}
               onFocusCard={noop}
@@ -258,10 +258,10 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
           </SortableContext>
         </DndContext>
       ),
-      row: (entry) => `[data-gallery-card-path="${entry.path}"]`,
+      target: (item) => `[data-gallery-card-path="${item.path}"]`,
     },
     calendar: {
-      render: (entry, nested = false) => (
+      render: (item, nested = false) => (
         <CalendarEventContent
           readOnly={false}
           arg={
@@ -270,7 +270,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
               event: {
                 extendedProps: {
                   model: {
-                    entry,
+                    item,
                     value: { start: "2026-10-17" },
                     dateField: "due",
                     cardFields: [],
@@ -284,7 +284,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
             } as never
           }
           scope="month"
-          onOpen={(item) => open(item)()}
+          onOpen={(opened) => open(opened)()}
           onOpenNestedPeek={noop}
           onOpenNestedCollection={noop}
           propertyContext={{
@@ -296,7 +296,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
           }}
         />
       ),
-      row: () => ".svode-calendar-event-content",
+      target: () => ".svode-calendar-event-content",
     },
   };
 
@@ -307,9 +307,9 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
     await act(async () =>
       root!.render(
         <TooltipProvider>
-          <CollectionEntryMenuProvider value={menuValue(readOnly)}>
+          <CollectionItemMenuProvider value={menuValue(readOnly)}>
             {node}
-          </CollectionEntryMenuProvider>
+          </CollectionItemMenuProvider>
         </TooltipProvider>,
       ),
     );
@@ -339,8 +339,8 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
       ...(content?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? []),
     ];
   }
-  const labels = (items: HTMLElement[]) =>
-    items.map((item) => item.textContent ?? "");
+  const labels = (menu: HTMLElement[]) =>
+    menu.map((element) => element.textContent ?? "");
   const groupIds = (role = "[data-slot=context-menu-content]") =>
     [
       ...(document
@@ -357,8 +357,8 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
   }
 
   /** The menu the Peek of the same item shows, from the same catalog. */
-  async function peekMenuLabels(entry: Page, readOnly = false) {
-    const form = entry.path.endsWith("README.md") ? "folder" : "leaf";
+  async function peekMenuLabels(item: Page, readOnly = false) {
+    const form = item.path.endsWith("README.md") ? "folder" : "leaf";
     await act(async () => root?.unmount());
     root = createRoot(document.getElementById("app")!);
     await act(async () =>
@@ -381,23 +381,23 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
                 },
                 readOnly,
               })}
-              pinItem={pageNavigationItem(entry, "space", null)}
+              pinItem={pageNavigationItem(item, "space", null)}
               handlers={{}}
             />
           </DropdownMenuContent>
         </DropdownMenu>,
       ),
     );
-    return menuItems("[data-slot=dropdown-menu-content]").map((item) => ({
-      label: item.textContent,
-      disabled: item.hasAttribute("data-disabled"),
+    return menuItems("[data-slot=dropdown-menu-content]").map((element) => ({
+      label: element.textContent,
+      disabled: element.hasAttribute("data-disabled"),
     }));
   }
 
-  test("every view's row menu is Open in peek and then the Peek menu of the item", async () => {
+  test("every view's item menu is Open in peek and then the Peek menu of the item", async () => {
     await act(async () => getNavigationState().setProject("/project"));
     const peek = await peekMenuLabels(leaf);
-    expect(peek.map((item) => item.label)).toEqual([
+    expect(peek.map((option) => option.label)).toEqual([
       "Pin",
       "Keep in Now",
       "Nest page",
@@ -409,12 +409,12 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
     ]);
     for (const [name, view] of Object.entries(views)) {
       await render(view.render(leaf));
-      await openContextMenu(view.row(leaf));
-      const items = menuItems();
-      expect([name, ...labels(items)]).toEqual([
+      await openContextMenu(view.target(leaf));
+      const menu = menuItems();
+      expect([name, ...labels(menu)]).toEqual([
         name,
         "Open in peek",
-        ...peek.map((item) => item.label!),
+        ...peek.map((option) => option.label!),
       ]);
       expect([name, ...groupIds()]).toEqual([
         name,
@@ -425,26 +425,27 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
         "edit",
         "delete",
       ]);
-      const deleteItem = items.at(-1)!;
+      const deleteItem = menu.at(-1)!;
       expect(deleteItem.getAttribute("data-variant")).toBe("destructive");
       await closeMenu();
     }
   });
 
-  test("a row of a page with subpages offers Make regular page with its reason, like its Peek", async () => {
+  test("an item with subpages offers Make regular page with its reason, like its Peek", async () => {
     detail = { form: "folder", subpageCount: 2, otherFileCount: 0 };
     const peek = await peekMenuLabels(folder);
     for (const [name, view] of Object.entries(views)) {
       await render(view.render(folder));
-      await openContextMenu(view.row(folder));
-      const items = menuItems();
-      expect([name, ...labels(items)]).toEqual([
+      await openContextMenu(view.target(folder));
+      const menu = menuItems();
+      expect([name, ...labels(menu)]).toEqual([
         name,
         "Open in peek",
-        ...peek.map((item) => item.label!),
+        ...peek.map((option) => option.label!),
       ]);
-      const makeLeaf = items.find(
-        (item) => item.getAttribute("data-content-action") === "make-leaf",
+      const makeLeaf = menu.find(
+        (element) =>
+          element.getAttribute("data-content-action") === "make-leaf",
       )!;
       expect(makeLeaf.hasAttribute("data-disabled")).toBe(true);
       expect(makeLeaf.textContent?.includes("2")).toBe(true);
@@ -453,11 +454,11 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
     detail = { form: "folder", subpageCount: 0, otherFileCount: 0 };
   });
 
-  test("a row of a nested Collection shows the Collection menu, like its Peek", async () => {
+  test("an item that is a nested Collection shows the Collection menu, like its Peek", async () => {
     const nested = page("plans/backlog/README.md", "Backlog");
     for (const [name, view] of Object.entries(views)) {
       await render(view.render(nested, true));
-      await openContextMenu(view.row(nested));
+      await openContextMenu(view.target(nested));
       expect([name, ...labels(menuItems())]).toEqual([
         name,
         "Open in peek",
@@ -469,27 +470,27 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
       ]);
       calls.length = 0;
       const newItem = menuItems().find(
-        (item) => item.getAttribute("data-content-action") === "new-item",
+        (element) => element.getAttribute("data-content-action") === "new-item",
       )!;
       await act(async () => newItem.click());
       expect([name, ...calls]).toEqual([name, `new-item:${nested.path}`]);
     }
   });
 
-  test("read-only rows keep every item visible and leave only opening and pinning available", async () => {
+  test("read-only items keep every action visible and leave only opening and pinning available", async () => {
     const peek = await peekMenuLabels(leaf, true);
     for (const [name, view] of Object.entries(views)) {
       await render(view.render(leaf), true);
-      await openContextMenu(view.row(leaf));
-      const items = menuItems();
-      expect([name, ...labels(items)]).toEqual([
+      await openContextMenu(view.target(leaf));
+      const menu = menuItems();
+      expect([name, ...labels(menu)]).toEqual([
         name,
         "Open in peek",
-        ...peek.map((item) => item.label!),
+        ...peek.map((option) => option.label!),
       ]);
-      const enabled = items
-        .filter((item) => !item.hasAttribute("data-disabled"))
-        .map((item) => item.textContent);
+      const enabled = menu
+        .filter((element) => !element.hasAttribute("data-disabled"))
+        .map((element) => element.textContent);
       expect([name, ...enabled]).toEqual([
         name,
         "Open in peek",
@@ -500,7 +501,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
     }
   });
 
-  test("row items open, duplicate, delete and run the item's operations", async () => {
+  test("menu items open, duplicate, delete and run the item's operations", async () => {
     for (const [name, view] of Object.entries(views)) {
       for (const action of [
         "open-in-peek",
@@ -513,7 +514,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
       ]) {
         calls.length = 0;
         await render(view.render(leaf));
-        await openContextMenu(view.row(leaf));
+        await openContextMenu(view.target(leaf));
         const item = menuItems().find(
           (candidate) =>
             candidate.getAttribute("data-content-action") === action,
@@ -530,7 +531,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
 
   test("the placeholder list rows use the same item menu", async () => {
     const peek = await peekMenuLabels(leaf);
-    entries = [leaf];
+    items = [leaf];
     await render(
       <ViewPlaceholder
         readOnly={false}
@@ -541,7 +542,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
         spacePath="/space"
         searchQuery=""
         refreshToken={0}
-        onActivateItem={(entry) => open(entry)()}
+        onActivateItem={(item) => open(item)()}
       />,
     );
     await act(async () => {
@@ -554,7 +555,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_DOM !== "1") {
     await openContextMenu("[data-placeholder-row]");
     expect(labels(menuItems())).toEqual([
       "Open in peek",
-      ...peek.map((item) => item.label!),
+      ...peek.map((option) => option.label!),
     ]);
     calls.length = 0;
     await act(async () => menuItems()[0]!.click());

@@ -31,7 +31,7 @@ export function createScopeContentRenderers({
         renderOwnerPeek={(context) => (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>
             <AttachmentOwnerPeek
-              key={context.target.ownerSession?.key ?? context.target.row.key}
+              key={context.target.ownerSession?.key ?? context.target.item.key}
               {...context}
             />
           </Suspense>

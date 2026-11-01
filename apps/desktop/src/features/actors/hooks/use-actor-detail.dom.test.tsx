@@ -7,13 +7,13 @@ import { JSDOM } from "jsdom";
 import type {
   CollectionDetailController,
   CollectionDetailRequest,
-  CollectionDetailRowBinding,
+  CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 
-import type { ActorCatalogRow, ActorCatalogSnapshot } from "../model/types";
+import type { ActorCatalogItem, ActorCatalogSnapshot } from "../model/types";
 import { useActorDetail } from "./use-actor-detail";
 
-const actor: ActorCatalogRow = {
+const actor: ActorCatalogItem = {
   aliases: [],
   availableYears: [2026],
   canonicalEmail: "ada@example.test",
@@ -27,24 +27,24 @@ const actor: ActorCatalogRow = {
 const selection = {
   instanceKey: "actors:space:root",
   presentationId: "humans",
-  rowId: actor.canonicalEmail,
+  itemId: actor.canonicalEmail,
 };
 
 function snapshotOf(
-  rows: readonly ActorCatalogRow[],
+  items: readonly ActorCatalogItem[],
   generation = 1,
 ): ActorCatalogSnapshot {
   return {
     diagnostics: [],
     generation,
     repositoryId: "repo",
-    rows,
+    items,
     shallow: false,
   };
 }
 
 interface HarnessControls {
-  detail?: CollectionDetailRowBinding<ActorCatalogRow>;
+  detail?: CollectionDetailItemBinding<ActorCatalogItem>;
   setSnapshot?: (snapshot: ActorCatalogSnapshot | null) => void;
 }
 
@@ -65,7 +65,7 @@ function Harness({
   return null;
 }
 
-test("an open person follows the catalog: a changed row and generation show, a person gone closes", async () => {
+test("an open person follows the catalog: a changed item and generation show, a person gone closes", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -106,7 +106,7 @@ test("an open person follows the catalog: a changed row and generation show, a p
     );
     await run(() =>
       controls.detail!.activation(selection)!(actor, {
-        rowId: actor.canonicalEmail,
+        itemId: actor.canonicalEmail,
       }),
     );
     expect(markup(shown()?.title).includes("Ada Lovelace")).toBe(true);

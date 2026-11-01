@@ -88,7 +88,7 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
   ).toEqual(["readme", "app"]);
 });
 
-test("canonical definitions cover the owner eligibility matrix without row or manifest validation inputs", () => {
+test("canonical definitions cover the owner eligibility matrix without item or manifest validation inputs", () => {
   const contributions = createScopeSurfaceContributions();
   const base = {
     spaceId: "root",

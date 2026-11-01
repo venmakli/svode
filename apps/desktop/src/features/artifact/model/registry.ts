@@ -1,11 +1,11 @@
 import type {
-  ArtifactKind,
   ArtifactOpenTarget,
+  ArtifactRegistryKind,
   ArtifactSourceShape,
 } from "./types";
 
 export interface ResolvedArtifactIdentity {
-  kind: ArtifactKind;
+  kind: ArtifactRegistryKind;
   path: string;
   sourceShape: ArtifactSourceShape;
 }

@@ -57,7 +57,7 @@ function AttachmentsOwnerSurface({
       create,
       hierarchy: attachmentHierarchy(source),
       onActivate,
-      renderLeading: (row) => <AttachmentIcon row={row} />,
+      renderLeading: (item) => <AttachmentIcon item={item} />,
     }),
     state: attachmentsPresentationState(source.state, {
       blockingError: (
@@ -110,10 +110,10 @@ function AttachmentsOwnerSurface({
         target={peekTarget}
         onContentPathChange={retargetPeek}
         directoryContent={
-          peekTarget?.row.kind === "directory" && peekTarget.row.ownerPath ? (
+          peekTarget?.item.kind === "directory" && peekTarget.item.ownerPath ? (
             <DirectoryPeekTable
-              key={peekTarget.row.ownerPath}
-              path={peekTarget.row.ownerPath}
+              key={peekTarget.item.ownerPath}
+              path={peekTarget.item.ownerPath}
               ownerKey={owner.ownerKey}
               source={source}
               origin={peekTarget.activation}

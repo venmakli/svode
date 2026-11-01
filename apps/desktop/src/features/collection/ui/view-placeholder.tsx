@@ -18,8 +18,8 @@ import type {
 import type { CollectionSchema } from "@/features/properties";
 import type { Page } from "@/features/page";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
-import { useViewPlaceholderEntries } from "../hooks";
-import { CollectionEntryContextMenuItems } from "./entry-context-menu";
+import { useViewPlaceholderItems } from "../hooks";
+import { CollectionItemContextMenuItems } from "./item-context-menu";
 import { IncompleteState } from "./incomplete-state";
 import { titleFilter } from "../lib/utils";
 import * as m from "@/paraglide/messages.js";
@@ -47,7 +47,7 @@ export function ViewPlaceholder({
   refreshToken: number;
   onActivateItem: (page: Page) => void;
 }) {
-  const entries = useViewPlaceholderEntries({
+  const items = useViewPlaceholderItems({
     spacePath,
     collectionPath,
     viewName: name,
@@ -55,7 +55,7 @@ export function ViewPlaceholder({
     refreshToken,
   });
 
-  const filtered = titleFilter(entries, searchQuery);
+  const filtered = titleFilter(items, searchQuery);
   const needsGroup =
     type === "board" &&
     !((schema.views ?? []) as CollectionView[]).find(
@@ -94,25 +94,25 @@ export function ViewPlaceholder({
             <EmptyMedia variant="icon">
               <FileText />
             </EmptyMedia>
-            <EmptyTitle>{m.collection_no_entries()}</EmptyTitle>
+            <EmptyTitle>{m.collection_no_items()}</EmptyTitle>
           </EmptyHeader>
         </Empty>
       ) : (
         <div className="rounded-lg border bg-background">
-          {filtered.slice(0, 20).map((entry) => {
-            const conflictPath = pageNameConflictDisplayPath(entry);
+          {filtered.slice(0, 20).map((item) => {
+            const conflictPath = pageNameConflictDisplayPath(item);
             return (
-              <ContextMenu key={entry.path}>
+              <ContextMenu key={item.path}>
                 <ContextMenuTrigger asChild>
                   <Button
                     type="button"
                     variant="ghost"
                     className="flex w-full justify-start gap-2 border-b px-3 py-2 text-left last:border-b-0 hover:bg-muted"
-                    onClick={() => onActivateItem(entry)}
+                    onClick={() => onActivateItem(item)}
                   >
                     <FileText />
                     <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate">{entry.meta.title}</span>
+                      <span className="truncate">{item.meta.title}</span>
                       {conflictPath ? (
                         <span
                           data-page-name-conflict-path
@@ -125,9 +125,9 @@ export function ViewPlaceholder({
                   </Button>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="w-48">
-                  <CollectionEntryContextMenuItems
-                    entry={entry}
-                    onOpenInPeek={() => onActivateItem(entry)}
+                  <CollectionItemContextMenuItems
+                    item={item}
+                    onOpenInPeek={() => onActivateItem(item)}
                   />
                 </ContextMenuContent>
               </ContextMenu>

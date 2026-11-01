@@ -9,7 +9,7 @@ import {
   CollectionPresentationShell,
 } from "@/features/collection";
 
-import type { RoutineRow } from "../model/types";
+import type { RoutineItem } from "../model/types";
 import {
   createRoutinesPresentation,
   type RoutinePresentationActions,
@@ -29,7 +29,7 @@ const executors: AgentActorOptionsState = {
     },
   ],
 };
-const scheduled: RoutineRow = {
+const scheduled: RoutineItem = {
   definition: {
     action: {
       executor: "agent:01arz3ndektsv4rrffq69g5fav",
@@ -61,7 +61,7 @@ const scheduled: RoutineRow = {
   valid: true,
 };
 
-test("routine enabled Switch is single-flight and does not open the row", async () => {
+test("routine enabled Switch is single-flight and does not open the item", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -69,7 +69,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
   const restoreGlobals = installDomGlobals(dom);
   const root = createRoot(dom.window.document.getElementById("app")!);
   const activations: string[] = [];
-  const updates: Array<{ enabled: boolean; rowId: string }> = [];
+  const updates: Array<{ enabled: boolean; itemId: string }> = [];
   let rejectUpdate!: (reason: Error) => void;
   const updateResult = new Promise<void>((_resolve, reject) => {
     rejectUpdate = reject;
@@ -83,8 +83,8 @@ test("routine enabled Switch is single-flight and does not open the row", async 
     onAdd: () => undefined,
     onDelete: () => undefined,
     onEdit: () => undefined,
-    onEnabledChange: async (row, enabled) => {
-      updates.push({ enabled, rowId: row.id });
+    onEnabledChange: async (item, enabled) => {
+      updates.push({ enabled, itemId: item.id });
       await updateResult;
     },
     onRun: async () => undefined,
@@ -92,10 +92,10 @@ test("routine enabled Switch is single-flight and does not open the row", async 
   const presentation = createRoutinesPresentation({
     executors,
     actions,
-    onActivate: (row) => {
-      activations.push(row.id);
+    onActivate: (item) => {
+      activations.push(item.id);
     },
-    state: { phase: "ready", rows: [scheduled] },
+    state: { phase: "ready", items: [scheduled] },
   });
 
   try {
@@ -131,7 +131,7 @@ test("routine enabled Switch is single-flight and does not open the row", async 
       await Promise.resolve();
     });
 
-    expect(updates).toEqual([{ enabled: true, rowId: "routine:summary" }]);
+    expect(updates).toEqual([{ enabled: true, itemId: "routine:summary" }]);
     expect(activations).toEqual([]);
     expect(switchControl.disabled).toBe(true);
     expect(switchControl.getAttribute("aria-checked")).toBe("false");

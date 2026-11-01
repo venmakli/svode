@@ -9,21 +9,21 @@ import {
   CollectionPresentationShell,
 } from "@/features/collection";
 import {
-  useCollectionDetailRowBinding,
+  useCollectionDetailItemBinding,
   type CollectionDetailController,
   type CollectionDetailRequest,
 } from "@/features/collection/app-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import { ActorDetail } from "./actor-detail";
 import {
   createActorDetailRequest,
   createActorsPresentation,
 } from "./actors-presentation";
 
-const actor: ActorCatalogRow = {
+const actor: ActorCatalogItem = {
   aliases: [],
   availableYears: [2026, 2025],
   canonicalEmail: "ada@example.test",
@@ -114,18 +114,18 @@ test("actors rows open in the real DOM and use shared row and detail action seam
   }
 });
 
-const createHumanDetail = (row: ActorCatalogRow) =>
-  createActorDetailRequest(row, "/repo");
+const createHumanDetail = (item: ActorCatalogItem) =>
+  createActorDetailRequest(item, "/repo");
 
 function HumansShell({
   controller,
 }: {
   controller: CollectionDetailController;
 }) {
-  const detail = useCollectionDetailRowBinding({
+  const detail = useCollectionDetailItemBinding({
     controller,
     createContent: createHumanDetail,
-    findRow: null,
+    findItem: null,
   });
   const presentation = useMemo(
     () =>
@@ -134,7 +134,7 @@ function HumansShell({
           instanceKey: "actors:space:root",
           presentationId: "humans",
         }),
-        state: { phase: "ready", rows: [actor] },
+        state: { phase: "ready", items: [actor] },
       }),
     [detail],
   );

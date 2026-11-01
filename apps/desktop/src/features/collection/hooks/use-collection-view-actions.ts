@@ -200,7 +200,7 @@ export function useCollectionViewActions({
     );
   }
 
-  function createEntryFocusTarget() {
+  function createItemFocusTarget() {
     if (!activeView) return null;
     return viewType(activeView);
   }
@@ -214,6 +214,6 @@ export function useCollectionViewActions({
     deleteActiveView,
     reorder,
     moveActive,
-    createEntryFocusTarget,
+    createItemFocusTarget,
   };
 }

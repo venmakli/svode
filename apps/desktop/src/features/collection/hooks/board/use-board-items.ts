@@ -3,17 +3,17 @@ import { toast } from "sonner";
 import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import type { Page } from "@/features/page";
-import { listCollectionInfos, queryCollectionEntries } from "../../api";
+import { listCollectionInfos, queryCollectionItems } from "../../api";
 import {
-  collectionEntriesTargetKey,
-  mergeStableEntriesByPath,
-  rebaseCollectionEntries,
+  collectionItemsTargetKey,
+  mergeStableItemsByPath,
+  rebaseCollectionItems,
   rebaseCollectionPathSet,
   sameStringSet,
-} from "../../lib/entry-refresh";
+} from "../../lib/item-refresh";
 import * as m from "@/paraglide/messages.js";
 
-export function useBoardEntries({
+export function useBoardItems({
   collectionPath,
   previousCollectionPath = null,
   filters,
@@ -30,19 +30,19 @@ export function useBoardEntries({
   sort: QuerySort[];
   spacePath: string;
 }) {
-  const [entries, setEntries] = useState<Page[]>([]);
-  const [manualOrderEntries, setManualOrderEntries] = useState<Page[]>([]);
+  const [items, setItems] = useState<Page[]>([]);
+  const [manualOrderItems, setManualOrderItems] = useState<Page[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
   const [loading, setLoading] = useState(true);
-  const targetKey = collectionEntriesTargetKey({
+  const targetKey = collectionItemsTargetKey({
     collectionPath,
     projectPath,
     spacePath,
   });
   const previousTargetKey = previousCollectionPath
-    ? collectionEntriesTargetKey({
+    ? collectionItemsTargetKey({
         collectionPath: previousCollectionPath,
         projectPath,
         spacePath,
@@ -54,7 +54,7 @@ export function useBoardEntries({
   const requestRef = useRef(0);
   const queryArgs = useStableViewQueryArgs(filters, sort);
 
-  const loadEntries = useCallback(async () => {
+  const loadItems = useCallback(async () => {
     const request = requestRef.current + 1;
     requestRef.current = request;
     const requestTarget = targetKey;
@@ -64,13 +64,9 @@ export function useBoardEntries({
       initialLoad && loadedTargetRef.current === previousTargetKey;
     if (retargeting && previousCollectionPath) {
       const rebase = (current: Page[]) =>
-        rebaseCollectionEntries(
-          current,
-          previousCollectionPath,
-          collectionPath,
-        );
-      setEntries(rebase);
-      setManualOrderEntries(rebase);
+        rebaseCollectionItems(current, previousCollectionPath, collectionPath);
+      setItems(rebase);
+      setManualOrderItems(rebase);
       setNestedCollectionPaths((current) =>
         rebaseCollectionPathSet(
           current,
@@ -84,8 +80,8 @@ export function useBoardEntries({
       setLoading(true);
     }
     try {
-      const [baseEntries, orderEntries, collections] = await Promise.all([
-        queryCollectionEntries({
+      const [baseItems, orderItems, collections] = await Promise.all([
+        queryCollectionItems({
           spacePath,
           collectionPath,
           filters: queryArgs.filters,
@@ -95,7 +91,7 @@ export function useBoardEntries({
         }),
         hasActiveSort
           ? Promise.resolve<Page[]>([])
-          : queryCollectionEntries({
+          : queryCollectionItems({
               spacePath,
               collectionPath,
               filters: null,
@@ -107,12 +103,9 @@ export function useBoardEntries({
       ]);
       if (requestRef.current !== request || targetRef.current !== requestTarget)
         return;
-      setEntries((current) => mergeStableEntriesByPath(current, baseEntries));
-      setManualOrderEntries((current) =>
-        mergeStableEntriesByPath(
-          current,
-          hasActiveSort ? baseEntries : orderEntries,
-        ),
+      setItems((current) => mergeStableItemsByPath(current, baseItems));
+      setManualOrderItems((current) =>
+        mergeStableItemsByPath(current, hasActiveSort ? baseItems : orderItems),
       );
       const collectionPaths = new Set(collections.map((item) => item.path));
       setNestedCollectionPaths((current) =>
@@ -122,7 +115,7 @@ export function useBoardEntries({
     } catch (error) {
       if (requestRef.current !== request || targetRef.current !== requestTarget)
         return;
-      console.warn("Failed to load board entries:", error);
+      console.warn("Failed to load board items:", error);
       toast.error(m.board_error_title());
     } finally {
       if (requestRef.current === request && targetRef.current === requestTarget)
@@ -139,16 +132,16 @@ export function useBoardEntries({
   ]);
 
   useLayoutEffect(() => {
-    void loadEntries();
-  }, [loadEntries, refreshToken]);
+    void loadItems();
+  }, [loadItems, refreshToken]);
 
   return {
-    entries,
-    setEntries,
-    manualOrderEntries,
-    setManualOrderEntries,
+    items,
+    setItems,
+    manualOrderItems,
+    setManualOrderItems,
     nestedCollectionPaths,
     loading,
-    loadEntries,
+    loadItems,
   };
 }

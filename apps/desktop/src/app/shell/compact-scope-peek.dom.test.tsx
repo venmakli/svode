@@ -295,7 +295,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                 target={
                   open
                     ? {
-                        row: {
+                        item: {
                           key: "page:Notes",
                           path: page.path,
                           contentPath: page.path,
@@ -305,7 +305,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                           kind: "page",
                           hasApp: true,
                           icon: null,
-                          displayName: "Notes row",
+                          displayName: "Notes item",
                           modified: "",
                           sizeBytes: null,
                           format: "",
@@ -320,7 +320,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                         },
                         mode: "peek",
                         sourceGeneration: "one",
-                        activation: { rowId: "page:Notes" },
+                        activation: { itemId: "page:Notes" },
                       }
                     : null
                 }
@@ -881,7 +881,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                 target={
                   open
                     ? {
-                        row: {
+                        item: {
                           key: "page:Tasks/Item2.md",
                           path: page.path,
                           contentPath: page.path,
@@ -906,7 +906,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                         },
                         mode: "peek",
                         sourceGeneration: "one",
-                        activation: { rowId: "page:Tasks/Item2.md" },
+                        activation: { itemId: "page:Tasks/Item2.md" },
                       }
                     : null
                 }
@@ -1085,7 +1085,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                 target={
                   open
                     ? {
-                        row: {
+                        item: {
                           key: "page:Tasks/Item2.md",
                           path: page.path,
                           contentPath: page.path,
@@ -1110,7 +1110,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
                         },
                         mode: "peek",
                         sourceGeneration: "one",
-                        activation: { rowId: "page:Tasks/Item2.md" },
+                        activation: { itemId: "page:Tasks/Item2.md" },
                       }
                     : null
                 }

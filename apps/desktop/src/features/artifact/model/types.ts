@@ -1,6 +1,10 @@
 import type { ScopeOpenIntent } from "@/features/scope-surfaces";
 
-export type ArtifactKind = "page" | "document" | "media";
+/** The kinds of artifact: page, document, media and App. */
+export type ArtifactKind = "page" | "document" | "media" | "app";
+
+/** The kinds the Artifact Registry opens; an App opens through the Apps owner. */
+export type ArtifactRegistryKind = Exclude<ArtifactKind, "app">;
 
 export type ArtifactSourceShape = "file" | "directory";
 

@@ -28,7 +28,7 @@ import type {
   RoutineLaunchLink,
   RoutineLaunchRefusal,
   RoutineOwnerKind,
-  RoutineRow,
+  RoutineItem,
 } from "../model/types";
 
 export interface RoutineOwnerInput {
@@ -87,7 +87,7 @@ export async function createRoutine(
 
 export async function updateRoutine(
   owner: RoutineOwnerInput,
-  row: RoutineRow,
+  item: RoutineItem,
   definition: RoutineDefinition,
   options: { materializeFilename: boolean },
 ): Promise<RoutineMutationResult> {
@@ -95,33 +95,33 @@ export async function updateRoutine(
     await updateRoutineCommand({
       ...owner,
       definition: toDefinitionDto(definition),
-      expectedFingerprint: row.fingerprint,
+      expectedFingerprint: item.fingerprint,
       materializeFilename: options.materializeFilename,
-      routineId: requireRoutineId(row),
+      routineId: requireRoutineId(item),
     }),
   );
 }
 
 export async function deleteRoutine(
   owner: RoutineOwnerInput,
-  row: RoutineRow,
+  item: RoutineItem,
 ): Promise<RoutineMutationResult> {
   return normalizeMutationResult(
     await deleteRoutineCommand({
       ...owner,
-      expectedFingerprint: row.fingerprint,
-      routineId: requireRoutineId(row),
+      expectedFingerprint: item.fingerprint,
+      routineId: requireRoutineId(item),
     }),
   );
 }
 
 export async function dispatchManualRoutine(
   owner: RoutineOwnerInput,
-  row: RoutineRow,
+  item: RoutineItem,
 ): Promise<RoutineManualDispatchResult> {
   const result = await dispatchManualRoutineCommand({
     ...owner,
-    routineId: requireRoutineId(row),
+    routineId: requireRoutineId(item),
   });
   if (result.status === "blocked" || result.status === "failed") {
     return { ...result, refusal: normalizeRefusal(result.refusal) };
@@ -183,47 +183,47 @@ function normalizeSnapshot(
     ownerPath: snapshot.owner.ownerPath,
     refreshedAt: snapshot.refreshedAt,
     resolvedOwnerKind: snapshot.owner.kind,
-    rows: Object.freeze(snapshot.routines.map(normalizeRow)),
+    items: Object.freeze(snapshot.routines.map(normalizeItem)),
     spaceId: snapshot.owner.spaceId,
   });
 }
 
-function normalizeRow(
-  row: RoutineCatalogSnapshotDto["routines"][number],
-): RoutineRow {
+function normalizeItem(
+  item: RoutineCatalogSnapshotDto["routines"][number],
+): RoutineItem {
   return Object.freeze({
-    definition: row.definition
-      ? normalizeDefinition(row.definition, row.name, row.description)
+    definition: item.definition
+      ? normalizeDefinition(item.definition, item.name, item.description)
       : null,
-    definitionPath: row.path,
-    description: row.description?.trim() ?? "",
-    diagnostics: Object.freeze(row.diagnostics.map(normalizeDiagnostic)),
-    filename: row.filename,
-    fingerprint: row.fingerprint,
-    id: row.routineId ?? `invalid:${row.path}`,
-    lastRunAt: row.lastRunAt,
-    lastRunOrigin: row.lastRunOrigin ?? null,
-    lastRun: row.lastRun
+    definitionPath: item.path,
+    description: item.description?.trim() ?? "",
+    diagnostics: Object.freeze(item.diagnostics.map(normalizeDiagnostic)),
+    filename: item.filename,
+    fingerprint: item.fingerprint,
+    id: item.routineId ?? `invalid:${item.path}`,
+    lastRunAt: item.lastRunAt,
+    lastRunOrigin: item.lastRunOrigin ?? null,
+    lastRun: item.lastRun
       ? Object.freeze({
-          ...row.lastRun,
-          refusal: normalizeRefusal(row.lastRun.refusal),
-          sourceSessionId: row.lastRun.sourceSessionId ?? null,
+          ...item.lastRun,
+          refusal: normalizeRefusal(item.lastRun.refusal),
+          sourceSessionId: item.lastRun.sourceSessionId ?? null,
         })
       : null,
-    nextRunAt: row.nextRunAt,
-    name: row.name,
-    nameConflict: row.nameConflict
+    nextRunAt: item.nextRunAt,
+    name: item.name,
+    nameConflict: item.nameConflict
       ? Object.freeze({
           conflictingPaths: Object.freeze([
-            ...row.nameConflict.conflictingPaths,
+            ...item.nameConflict.conflictingPaths,
           ]),
         })
       : null,
-    routineId: row.routineId,
+    routineId: item.routineId,
     valid:
-      row.routineId !== null &&
-      row.definition !== null &&
-      row.diagnostics.length === 0,
+      item.routineId !== null &&
+      item.definition !== null &&
+      item.diagnostics.length === 0,
   });
 }
 
@@ -332,11 +332,11 @@ function toDefinitionDto(definition: RoutineDefinition): RoutineDefinitionDto {
   };
 }
 
-function requireRoutineId(row: RoutineRow) {
-  if (!row.routineId) {
+function requireRoutineId(item: RoutineItem) {
+  if (!item.routineId) {
     throw new Error(
       "Invalid Routine definitions do not have an addressable id",
     );
   }
-  return row.routineId;
+  return item.routineId;
 }

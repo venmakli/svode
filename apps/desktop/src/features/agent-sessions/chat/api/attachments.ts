@@ -1,4 +1,4 @@
-import { searchEntriesByTitle } from "@/features/search";
+import { searchPagesByTitle } from "@/features/search";
 import type { SvodeDraggedResource } from "@/features/space/resource-drag";
 import {
   homeDirectory,
@@ -82,7 +82,7 @@ export async function searchMentionTargets(
   query: string,
 ): Promise<MentionTarget[]> {
   const [pages, files] = await Promise.all([
-    searchEntriesByTitle({ projectPath, query, limit: MENTION_LIMIT }).catch(
+    searchPagesByTitle({ projectPath, query, limit: MENTION_LIMIT }).catch(
       () => ({ items: [] }),
     ),
     searchProjectFiles(projectPath, query, MENTION_LIMIT).catch(() => []),

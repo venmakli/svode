@@ -29,8 +29,8 @@ export interface GalleryViewProps {
   createAsFolder?: boolean;
   onClearSearch?: () => void;
   onActivateItem: (page: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }

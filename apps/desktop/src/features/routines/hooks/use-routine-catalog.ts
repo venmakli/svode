@@ -127,8 +127,8 @@ export function useRoutineCatalog(owner: RoutineOwnerInput) {
         const snapshot = snapshotRef.current;
         if (
           snapshot &&
-          !snapshot.rows.some(
-            (row) => row.definition?.action.type === "run_agent",
+          !snapshot.items.some(
+            (item) => item.definition?.action.type === "run_agent",
           )
         ) {
           return;

@@ -87,7 +87,7 @@ export function useTableColumns({
   columnSizing,
   editing,
   openColumn,
-  entries,
+  items,
   expanded,
   nestedCollectionPaths,
   showNested,
@@ -115,7 +115,7 @@ export function useTableColumns({
   columnSizing: ColumnSizingState;
   editing: TableEditingCell | null;
   openColumn: string | null;
-  entries: Page[];
+  items: Page[];
   expanded: Set<string>;
   nestedCollectionPaths: Set<string>;
   showNested: boolean;
@@ -125,12 +125,12 @@ export function useTableColumns({
   setExpanded: (path: string) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>;
-  onOpenNestedCollection: (entry: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
   onCommitField: (
-    entry: Page,
+    item: Page,
     column: Column,
     value: unknown,
     options?: { flush?: boolean },
@@ -180,18 +180,18 @@ export function useTableColumns({
                 row={row.original}
                 showIcon={showTitleIcon}
                 expandable={isExpandable(
-                  row.original.entry,
-                  entries,
+                  row.original.item,
+                  items,
                   showNested,
                   nestedCollectionPaths,
                 )}
-                expanded={expanded.has(row.original.entry.path)}
+                expanded={expanded.has(row.original.item.path)}
                 nested={isNestedCollection(
-                  row.original.entry,
+                  row.original.item,
                   nestedCollectionPaths,
                 )}
-                onToggle={() => setExpanded(row.original.entry.path)}
-                onOpenNested={() => onOpenNestedCollection(row.original.entry)}
+                onToggle={() => setExpanded(row.original.item.path)}
+                onOpenNested={() => onOpenNestedCollection(row.original.item)}
               />
             ),
           };
@@ -233,8 +233,8 @@ export function useTableColumns({
                       collectionPath,
                       spacePath,
                       projectPath,
-                      affectedEntries: entries.filter(
-                        (entry) => entry.meta.extra?.[field] !== undefined,
+                      affectedItems: items.filter(
+                        (item) => item.meta.extra?.[field] !== undefined,
                       ).length,
                       actors,
                       onRequestActors: (allTime = false) =>
@@ -253,32 +253,32 @@ export function useTableColumns({
               <PropertyCell
                 readOnly={readOnly || property.newer === true}
                 column={property}
-                pageLabel={row.original.entry.meta.title}
+                pageLabel={row.original.item.meta.title}
                 actors={actors}
                 onRequestActors={onRequestActors}
                 relationContext={{
                   spacePath,
                   projectPath,
-                  currentFilePath: row.original.entry.path,
+                  currentFilePath: row.original.item.path,
                   onOpenPath,
                   onOpenRelationTarget,
                 }}
-                value={propertyDefinition.getValue(row.original.entry)}
-                uniqueIdDuplicate={row.original.entry.unique_id_duplicate}
+                value={propertyDefinition.getValue(row.original.item)}
+                uniqueIdDuplicate={row.original.item.unique_id_duplicate}
                 editing={
-                  editing?.path === row.original.entry.path &&
+                  editing?.path === row.original.item.path &&
                   editing.field === property.name
                 }
                 onEdit={() =>
                   setEditing({
-                    path: row.original.entry.path,
+                    path: row.original.item.path,
                     field: property.name,
                   })
                 }
                 onCancel={() => setEditing(null)}
                 onCommit={(value, options) => {
                   if (options?.close !== false) setEditing(null);
-                  onCommitField(row.original.entry, property, value, {
+                  onCommitField(row.original.item, property, value, {
                     flush: options?.close === true,
                   });
                 }}
@@ -292,7 +292,7 @@ export function useTableColumns({
     collectionPath,
     columnSizing,
     editing,
-    entries,
+    items,
     expanded,
     nestedCollectionPaths,
     onCommitField,

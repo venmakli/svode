@@ -12,12 +12,12 @@ import type {
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import { createAgentActorDraft } from "../model/agent-actor-draft";
-import type { AgentActorRow } from "../model/agent-actor-types";
+import type { AgentActorItem } from "../model/agent-actor-types";
 import { useAgentActorAccessCoordinator } from "./use-agent-actor-access-coordinator";
 import { useAgentActorDetail } from "./use-agent-actor-detail";
 import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
-const actor: AgentActorRow = {
+const actor: AgentActorItem = {
   actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
   binding: { agent: "codex", kind: "agent", settings: [] },
   description: "Writes documentation",
@@ -28,7 +28,7 @@ const actor: AgentActorRow = {
   ownerLabel: "repo",
   ownerPath: "/repo",
 };
-const actorRows: readonly AgentActorRow[] = [actor];
+const actorItems: readonly AgentActorItem[] = [actor];
 
 test("same-owner create and edit intents continue without an unrelated rerender", async () => {
   const dom = createDom();
@@ -217,7 +217,7 @@ test("an open read-only Detail follows its agent, closes once it is gone and lea
     });
     await click("[data-open-read-only]");
     expect(openCount).toBe(1);
-    expect(shown()?.selection.rowId).toBe(
+    expect(shown()?.selection.itemId).toBe(
       '["/repo","01arz3ndektsv4rrffq69g5fav"]',
     );
 
@@ -302,7 +302,7 @@ function AccessHarness({ onContinue }: { onContinue(kind: string): void }) {
           coordinator.request({
             kind: "edit-agent",
             ownerPath: "/repo",
-            row: actor,
+            item: actor,
           })
         }
       />
@@ -326,7 +326,7 @@ function DetailHarness({
   const [editSession, setEditSession] = useState<AgentActorEditSession | null>({
     draft: createAgentActorDraft(actor.ownerPath, actor),
     guard: { dirty },
-    row: actor,
+    item: actor,
   });
   const [, setRenderVersion] = useState(0);
   useAgentActorDetail({
@@ -337,7 +337,7 @@ function DetailHarness({
     instanceKey: "actors:space:root",
     mutationPending: false,
     offers: null,
-    rows: actorRows,
+    items: actorItems,
     setEditSession,
     onOpenAgentSettings: () => undefined,
     onRecheckOffers: () => undefined,
@@ -357,7 +357,7 @@ function ReadOnlyDetailHarness({
   detailController: CollectionDetailController;
 }) {
   const [offers, setOffers] = useState<ChatAgents | null>(null);
-  const [rows, setRows] = useState<readonly AgentActorRow[]>([actor]);
+  const [items, setItems] = useState<readonly AgentActorItem[]>([actor]);
   const [renames, setRenames] = useState(0);
   const [editSession, setEditSession] = useState<AgentActorEditSession | null>(
     null,
@@ -365,7 +365,7 @@ function ReadOnlyDetailHarness({
   const selection = {
     instanceKey: "actors:space:root",
     presentationId: "agents",
-    rowId: '["/repo","01arz3ndektsv4rrffq69g5fav"]',
+    itemId: '["/repo","01arz3ndektsv4rrffq69g5fav"]',
   };
   const detail = useAgentActorDetail({
     applyMutation: () => undefined,
@@ -375,7 +375,7 @@ function ReadOnlyDetailHarness({
     instanceKey: "actors:space:root",
     mutationPending: false,
     offers,
-    rows,
+    items,
     setEditSession,
     onOpenAgentSettings: () => undefined,
     onRecheckOffers: () => undefined,
@@ -383,30 +383,30 @@ function ReadOnlyDetailHarness({
   const rename = () => {
     const name = renames === 0 ? "Docs Agent" : `Docs Agent ${renames + 1}`;
     setRenames(renames + 1);
-    setRows([{ ...actor, name }]);
+    setItems([{ ...actor, name }]);
   };
   return (
     <>
       <button
         type="button"
         data-open-read-only
-        onClick={() => void detail.open(rows[0] ?? actor, selection)}
+        onClick={() => void detail.open(items[0] ?? actor, selection)}
       />
       <button type="button" data-rename-agent onClick={rename} />
-      <button type="button" data-remove-agent onClick={() => setRows([])} />
+      <button type="button" data-remove-agent onClick={() => setItems([])} />
       <button
         type="button"
         data-restore-agent
-        onClick={() => setRows([{ ...actor, name: "Docs Agent 2" }])}
+        onClick={() => setItems([{ ...actor, name: "Docs Agent 2" }])}
       />
       <button
         type="button"
         data-start-edit
         onClick={() =>
           setEditSession({
-            draft: createAgentActorDraft(actor.ownerPath, rows[0] ?? actor),
+            draft: createAgentActorDraft(actor.ownerPath, items[0] ?? actor),
             guard: { dirty: false },
-            row: rows[0] ?? actor,
+            item: items[0] ?? actor,
           })
         }
       />

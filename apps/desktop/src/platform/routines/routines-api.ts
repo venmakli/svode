@@ -80,7 +80,7 @@ export interface RoutineNameConflictDto {
   conflicts: RoutineNameConflictEvidenceDto[];
 }
 
-export interface RoutineRowDto {
+export interface RoutineItemDto {
   routineId: string | null;
   filename: string;
   path: string;
@@ -136,7 +136,7 @@ export interface RoutineCatalogSnapshotDto {
     spaceId: string;
     ownerPath: string;
   };
-  routines: RoutineRowDto[];
+  routines: RoutineItemDto[];
   diagnostics: RoutineDiagnosticDto[];
   catalogFingerprint: string;
   refreshedAt: string;

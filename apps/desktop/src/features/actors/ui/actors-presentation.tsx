@@ -16,7 +16,7 @@ import {
 import * as m from "@/paraglide/messages.js";
 
 import { compareActorsByDefault } from "../model/actor-values";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import { ActorAvatar } from "./actor-avatar";
 import { ActorDetail } from "./actor-detail";
 import { CatalogRetryButton } from "./catalog-retry-button";
@@ -28,10 +28,10 @@ export function createActorsPresentation({
 }: {
   mutations?: ActorPresentationMutationActions;
   onActivate?(
-    row: ActorCatalogRow,
+    item: ActorCatalogItem,
     context: CollectionActivationContext,
   ): void | Promise<void>;
-  state: CollectionPresentationState<ActorCatalogRow>;
+  state: CollectionPresentationState<ActorCatalogItem>;
 }) {
   return defineCollectionPresentation({
     descriptor: createActorsPresentationDescriptor({
@@ -47,8 +47,8 @@ export function createActorsPresentationDescriptor({
   onActivate,
 }: {
   mutations?: ActorPresentationMutationActions;
-  onActivate?: CollectionPresentationDescriptor<ActorCatalogRow>["onActivate"];
-} = {}): CollectionPresentationDescriptor<ActorCatalogRow> {
+  onActivate?: CollectionPresentationDescriptor<ActorCatalogItem>["onActivate"];
+} = {}): CollectionPresentationDescriptor<ActorCatalogItem> {
   const disabledReason = m.actors_mutations_unavailable();
   const disabledState: CollectionActionState = {
     reason: disabledReason,
@@ -56,50 +56,51 @@ export function createActorsPresentationDescriptor({
   };
   const contributionWithCommits = m.actors_contribution_commits();
   const contributionWithoutCommits = m.actors_contribution_no_commits();
-  const properties: readonly CollectionPropertyDefinition<ActorCatalogRow>[] = [
-    defineOwnerDefinedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "actors",
-      getValue: (row) =>
-        row.contribution === "contributor"
-          ? contributionWithCommits
-          : contributionWithoutCommits,
-      key: "contribution",
-      label: m.actors_field_contribution(),
-      standard: {
-        options: [
-          { color: "green", name: contributionWithCommits },
-          { color: "neutral", name: contributionWithoutCommits },
-        ],
-        type: "select",
-      },
-    }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "actors",
-      getValue: (row) => row.commitCount,
-      key: "commits",
-      label: m.actors_field_commits(),
-      standard: { type: "number" },
-    }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "actors",
-      getValue: (row) => row.lastActivityDate,
-      key: "activity",
-      label: m.actors_field_activity(),
-      standard: { display: "medium", type: "date" },
-    }),
-  ];
+  const properties: readonly CollectionPropertyDefinition<ActorCatalogItem>[] =
+    [
+      defineOwnerDefinedCollectionProperty({
+        capabilities: {
+          filter: { kind: "standard" },
+          sort: { kind: "standard" },
+        },
+        featureId: "actors",
+        getValue: (item) =>
+          item.contribution === "contributor"
+            ? contributionWithCommits
+            : contributionWithoutCommits,
+        key: "contribution",
+        label: m.actors_field_contribution(),
+        standard: {
+          options: [
+            { color: "green", name: contributionWithCommits },
+            { color: "neutral", name: contributionWithoutCommits },
+          ],
+          type: "select",
+        },
+      }),
+      defineComputedCollectionProperty({
+        capabilities: {
+          filter: { kind: "standard" },
+          sort: { kind: "standard" },
+        },
+        featureId: "actors",
+        getValue: (item) => item.commitCount,
+        key: "commits",
+        label: m.actors_field_commits(),
+        standard: { type: "number" },
+      }),
+      defineComputedCollectionProperty({
+        capabilities: {
+          filter: { kind: "standard" },
+          sort: { kind: "standard" },
+        },
+        featureId: "actors",
+        getValue: (item) => item.lastActivityDate,
+        key: "activity",
+        label: m.actors_field_activity(),
+        standard: { display: "medium", type: "date" },
+      }),
+    ];
 
   return {
     create: {
@@ -115,33 +116,33 @@ export function createActorsPresentationDescriptor({
     },
     onActivate,
     properties,
-    getRowId: (row) => row.canonicalEmail,
+    getItemId: (item) => item.canonicalEmail,
     id: "humans",
     label: m.actors_presentation_humans(),
     layout: {
       density: "compact",
-      getDescription: (row) => row.canonicalEmail,
-      getTitle: (row) => row.displayName,
+      getDescription: (item) => item.canonicalEmail,
+      getTitle: (item) => item.displayName,
       kind: "list",
-      renderLeading: (row) => <ActorAvatar actor={row} size="sm" />,
+      renderLeading: (item) => <ActorAvatar actor={item} size="sm" />,
       visibleProperties: ["commits", "activity"],
     },
     query: {
       defaultCompare: compareActorsByDefault,
-      getSearchText: (row) => `${row.displayName} ${row.canonicalEmail}`,
+      getSearchText: (item) => `${item.displayName} ${item.canonicalEmail}`,
     },
-    rowActions: [
+    itemActions: [
       {
-        getState: (row) => mutations?.getMergeState(row) ?? disabledState,
+        getState: (item) => mutations?.getMergeState(item) ?? disabledState,
         id: "merge-actor",
         label: m.actors_merge(),
-        run: (row) => mutations?.onMerge(row),
+        run: (item) => mutations?.onMerge(item),
       },
       {
-        getState: (row) => mutations?.getEditState(row) ?? disabledState,
+        getState: (item) => mutations?.getEditState(item) ?? disabledState,
         id: "edit-actor",
         label: m.actors_edit(),
-        run: (row) => mutations?.onEdit(row),
+        run: (item) => mutations?.onEdit(item),
       },
     ],
   };
@@ -149,22 +150,22 @@ export function createActorsPresentationDescriptor({
 
 interface ActorPresentationMutationActions {
   createState: CollectionActionState;
-  getMergeState(row: ActorCatalogRow): CollectionActionState;
-  getEditState(row: ActorCatalogRow): CollectionActionState;
+  getMergeState(item: ActorCatalogItem): CollectionActionState;
+  getEditState(item: ActorCatalogItem): CollectionActionState;
   onAdd(): void;
-  onMerge(row: ActorCatalogRow): void;
-  onEdit(row: ActorCatalogRow): void;
+  onMerge(item: ActorCatalogItem): void;
+  onEdit(item: ActorCatalogItem): void;
 }
 
 export function createActorDetailRequest(
-  row: ActorCatalogRow,
+  item: ActorCatalogItem,
   spacePath: string,
   catalogGeneration = 0,
 ): CollectionDetailContent {
   return {
     content: (
       <ActorDetail
-        actor={row}
+        actor={item}
         catalogGeneration={catalogGeneration}
         spacePath={spacePath}
       />
@@ -174,11 +175,11 @@ export function createActorDetailRequest(
     ),
     title: (
       <span className="flex min-w-0 items-center gap-3">
-        <ActorAvatar actor={row} size="lg" />
+        <ActorAvatar actor={item} size="lg" />
         <span className="flex min-w-0 flex-col text-left">
-          <span className="truncate">{row.displayName}</span>
+          <span className="truncate">{item.displayName}</span>
           <span className="truncate text-sm font-normal text-muted-foreground">
-            {row.canonicalEmail}
+            {item.canonicalEmail}
           </span>
         </span>
       </span>

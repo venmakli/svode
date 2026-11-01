@@ -1,7 +1,7 @@
 import { invokeCommand } from "@/platform/native/invoke";
 import type { SearchResponseDto, SearchScopeDto } from "./search-types";
 
-export interface SearchProjectEntriesByTitleInputDto extends Record<
+export interface SearchProjectPagesByTitleInputDto extends Record<
   string,
   unknown
 > {
@@ -11,8 +11,8 @@ export interface SearchProjectEntriesByTitleInputDto extends Record<
   scope?: SearchScopeDto;
 }
 
-export function searchProjectEntriesByTitle(
-  input: SearchProjectEntriesByTitleInputDto,
+export function searchProjectPagesByTitle(
+  input: SearchProjectPagesByTitleInputDto,
 ): Promise<SearchResponseDto> {
   return invokeCommand<SearchResponseDto>(
     "search_project_pages_by_title",

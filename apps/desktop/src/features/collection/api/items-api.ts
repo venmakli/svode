@@ -1,6 +1,6 @@
 import {
-  listEntriesForView as listEntriesForViewDto,
-  queryCollectionEntries as queryCollectionEntriesDto,
+  listItemsForView as listItemsForViewDto,
+  queryCollectionItems as queryCollectionItemsDto,
 } from "@/platform/collections/collections-api";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import { normalizePages, type Page } from "@/features/page";
@@ -9,7 +9,7 @@ import {
   savePageTreeOrderNames,
 } from "@/features/page/page-api";
 
-export function queryCollectionEntries({
+export function queryCollectionItems({
   spacePath,
   collectionPath,
   filters,
@@ -24,7 +24,7 @@ export function queryCollectionEntries({
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return queryCollectionEntriesDto({
+  return queryCollectionItemsDto({
     spacePath,
     collectionPath,
     filters,
@@ -34,7 +34,7 @@ export function queryCollectionEntries({
   }).then(normalizePages);
 }
 
-export function listEntriesForView({
+export function listItemsForView({
   spacePath,
   collectionPath,
   viewName,
@@ -47,7 +47,7 @@ export function listEntriesForView({
   includeNested: boolean;
   projectPath?: string | null;
 }) {
-  return listEntriesForViewDto({
+  return listItemsForViewDto({
     spacePath,
     collectionPath,
     viewName,
@@ -59,18 +59,18 @@ export function listEntriesForView({
 export async function saveCollectionTreeOrder({
   spacePath,
   orderKey,
-  entries,
+  items,
   projectPath,
 }: {
   spacePath: string;
   orderKey: string;
-  entries: Page[];
+  items: Page[];
   projectPath?: string | null;
 }) {
   await savePageTreeOrder({
     spacePath,
     orderKey,
-    pages: entries,
+    pages: items,
     projectPath,
   });
 }

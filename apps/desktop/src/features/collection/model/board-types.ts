@@ -16,8 +16,6 @@ import type {
 export interface CollectionInfo {
   path: string;
   title: string;
-  rowCount?: number;
-  row_count?: number;
   nested: boolean;
 }
 
@@ -31,7 +29,7 @@ export interface BoardColumnGroup {
 }
 
 export interface BoardCardModel {
-  entry: Page;
+  item: Page;
   groupKey: string;
 }
 
@@ -54,9 +52,9 @@ export interface BoardViewProps {
   createAsFolder?: boolean;
   onClearSearch?: () => void;
   onActivateItem: (page: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
-  onOpenFullPage: (entry: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
+  onOpenFullPage: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
@@ -83,10 +81,10 @@ export interface BoardCardProps {
   projectPath?: string | null;
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
-  onOpen: (entry: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
-  onOpenFullPage: (entry: Page) => void;
+  onUpdateField?: (item: Page, column: Column, value: unknown) => void;
+  onOpen: (item: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
+  onOpenFullPage: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
 }

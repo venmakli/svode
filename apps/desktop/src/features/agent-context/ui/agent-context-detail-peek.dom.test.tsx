@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 import type {
   CollectionDetailContent,
   CollectionDetailController,
-  CollectionDetailRowBinding,
+  CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 
 import type { AgentContextItem, AgentContextSnapshot } from "../model/types";
@@ -249,7 +249,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     const {
       CollectionDetailPeekHost,
       useCollectionDetailController,
-      useCollectionDetailRowBinding,
+      useCollectionDetailItemBinding,
     } = await import("@/features/collection/app-shell");
     const { createAgentAdapterDictionary } =
       await import("@/features/agent-adapters");
@@ -273,20 +273,21 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
     };
     const createContent = (
       item: AgentContextItem,
-      detail: CollectionDetailRowBinding<AgentContextItem>,
+      detail: CollectionDetailItemBinding<AgentContextItem>,
     ) =>
       createAgentContextItemDetailContent(item, properties, {
         detail,
         onOpenProviders,
       });
-    const captured: { binding?: CollectionDetailRowBinding<AgentContextItem> } =
-      {};
+    const captured: {
+      binding?: CollectionDetailItemBinding<AgentContextItem>;
+    } = {};
     /** Opens components of a plugin; the peek does not follow a source. */
     function CaptureBinding() {
-      const binding = useCollectionDetailRowBinding({
+      const binding = useCollectionDetailItemBinding({
         controller: useCollectionDetailController(),
         createContent,
-        findRow: null,
+        findItem: null,
       });
       useEffect(() => {
         captured.binding = binding;
@@ -334,14 +335,14 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await settle();
     });
 
-    async function open(content: CollectionDetailContent, rowId: string) {
+    async function open(content: CollectionDetailContent, itemId: string) {
       await act(async () => {
         await controller!.open({
           ...content,
           selection: {
             instanceKey: "agent-context:space:root",
             presentationId: "detail",
-            rowId,
+            itemId,
           },
         });
         await settle();
@@ -501,7 +502,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
 
     async function openDetails(
       content: CollectionDetailContent,
-      rowId: string,
+      itemId: string,
     ) {
       await act(async () => {
         await controller!.open({
@@ -509,7 +510,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
           selection: {
             instanceKey: "agent-context:space:root",
             presentationId: "detail",
-            rowId,
+            itemId,
           },
         });
         await settle();
@@ -685,7 +686,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
           selection: {
             instanceKey: "agent-context:space:root",
             presentationId: "all",
-            rowId: item.id,
+            itemId: item.id,
           },
         });
         await settle();
@@ -874,7 +875,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         selection: {
           instanceKey: "agent-context:space:root",
           presentationId: "all",
-          rowId: unread.id,
+          itemId: unread.id,
         },
       });
       await settle();
@@ -964,7 +965,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         selection: {
           instanceKey: "agent-context:space:root",
           presentationId: "all",
-          rowId: rejected.id,
+          itemId: rejected.id,
         },
       });
       await settle();
@@ -1036,7 +1037,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
           selection: {
             instanceKey: "agent-context:space:root",
             presentationId: "all",
-            rowId: item.id,
+            itemId: item.id,
           },
         });
         await settle();
@@ -1194,7 +1195,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
           selection: {
             instanceKey: "agent-context:space:root",
             presentationId: "mcp_servers",
-            rowId: item.id,
+            itemId: item.id,
           },
         });
         await settle();
@@ -1414,7 +1415,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         await surface.detail!.activation({ instanceKey, presentationId })!(
           item,
           {
-            rowId: item.id,
+            itemId: item.id,
           },
         );
         await settle();

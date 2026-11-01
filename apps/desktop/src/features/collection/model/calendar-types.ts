@@ -28,7 +28,7 @@ export interface CalendarDateValue {
 }
 
 export interface CalendarEventModel {
-  entry: Page;
+  item: Page;
   value: CalendarDateValue;
   dateField: string;
   cardFields: string[];
@@ -56,9 +56,9 @@ export interface CalendarViewProps {
   createFocusSignal?: number;
   createAsFolder?: boolean;
   onActivateItem: (page: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
-  onOpenFullPage: (entry: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
+  onOpenFullPage: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateView: (
@@ -79,7 +79,7 @@ export interface CalendarPropertyContext {
   onOpenPath: (path: string, spaceId?: string | null) => void;
   actors: ActorCandidate[];
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField: (entry: Page, column: Column, value: unknown) => void;
+  onUpdateField: (item: Page, column: Column, value: unknown) => void;
 }
 
 export interface CalendarCreateDraft {

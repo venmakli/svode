@@ -7,19 +7,19 @@ import {
   type CollectionInstance,
 } from "@/features/collection";
 
-interface TestRow {
+interface TestItem {
   id: string;
 }
 
 function presentation(id: string) {
-  return defineCollectionPresentation<TestRow>({
+  return defineCollectionPresentation<TestItem>({
     descriptor: {
       properties: [],
-      getRowId: (row) => row.id,
+      getItemId: (item) => item.id,
       id,
       label: id,
       layout: {
-        getTitle: (row) => row.id,
+        getTitle: (item) => item.id,
         kind: "list",
         visibleProperties: [],
       },
@@ -27,7 +27,7 @@ function presentation(id: string) {
     },
     state: {
       phase: "ready",
-      rows: [{ id: "row:one" }],
+      items: [{ id: "item:one" }],
     },
   });
 }

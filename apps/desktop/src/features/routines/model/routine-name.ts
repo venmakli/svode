@@ -1,4 +1,4 @@
-import type { RoutineRow } from "./types";
+import type { RoutineItem } from "./types";
 
 const UNICODE_WHITESPACE = /\p{White_Space}+/gu;
 
@@ -13,13 +13,13 @@ export function routineNameKey(value: string) {
 
 export function findRoutineNameConflictPath(
   name: string,
-  rows: readonly RoutineRow[],
-  excludeRowId?: string,
+  items: readonly RoutineItem[],
+  excludeItemId?: string,
 ) {
   const key = routineNameKey(name);
   return (
-    rows.find(
-      (row) => row.id !== excludeRowId && routineNameKey(row.name) === key,
+    items.find(
+      (item) => item.id !== excludeItemId && routineNameKey(item.name) === key,
     )?.definitionPath ?? null
   );
 }

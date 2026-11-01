@@ -50,7 +50,7 @@ export function EmptyTableBody({
                 >
                   {filtered
                     ? m.table_clear_filters()
-                    : m.table_create_first_entry()}
+                    : m.table_create_first_item()}
                 </Button>
               </EmptyContent>
             ) : null}

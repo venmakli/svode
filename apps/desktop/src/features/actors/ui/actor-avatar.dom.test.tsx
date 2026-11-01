@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "bun:test";
 import { act } from "react";
 import { createTestDom } from "@/shared/testing/dom";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 
 if (process.env.SVODE_AVATAR_DOM_PROCESS !== "2") {
   test("isolated avatar DOM integration 2", () => {
@@ -25,7 +25,7 @@ if (process.env.SVODE_AVATAR_DOM_PROCESS !== "2") {
     const { ActorAvatar } = await import("./actor-avatar");
     const { ActorMergePicker } = await import("./actor-merge-picker");
     const selected: string[] = [];
-    const actor: ActorCatalogRow = {
+    const actor: ActorCatalogItem = {
       canonicalEmail: "person3@example.test",
       displayName: "Ada Lovelace",
       aliases: [],
@@ -48,7 +48,7 @@ if (process.env.SVODE_AVATAR_DOM_PROCESS !== "2") {
             <ActorAvatar actor={actor} size="lg" />
             <ActorMergePicker
               pending={false}
-              rows={[actor]}
+              items={[actor]}
               selectedEmail={null}
               onSelect={(value) => {
                 selected.push(value);

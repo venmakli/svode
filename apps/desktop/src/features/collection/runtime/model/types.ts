@@ -14,40 +14,40 @@ export type CollectionRenderer =
   | "gallery";
 export type CollectionStateScope = "session" | "lifecycle";
 
-export type CollectionPresentationLayout<Row> =
+export type CollectionPresentationLayout<Item> =
   | {
       kind: "table";
       primaryProperty: string;
       hierarchy?: {
-        getBranch(row: Row): {
+        getBranch(item: Item): {
           expanded: boolean;
-          rows: readonly Row[];
+          items: readonly Item[];
           status?: ReactNode;
         } | null;
-        getLabel(row: Row): string;
-        onToggle(row: Row): void;
+        getLabel(item: Item): string;
+        onToggle(item: Item): void;
       };
-      renderLeading?(row: Row): ReactNode;
+      renderLeading?(item: Item): ReactNode;
       visibleProperties: readonly string[];
       density?: "compact" | "comfortable";
     }
   | {
       kind: "board";
       groupByProperty: string | null;
-      getTitle(row: Row): ReactNode;
+      getTitle(item: Item): ReactNode;
       visibleProperties: readonly string[];
     }
   | {
       kind: "calendar";
       dateProperty: string | null;
-      getTitle(row: Row): ReactNode;
+      getTitle(item: Item): ReactNode;
       visibleProperties: readonly string[];
     }
   | {
       kind: "list";
-      getTitle(row: Row): ReactNode;
-      getDescription?(row: Row): ReactNode;
-      renderLeading?(row: Row): ReactNode;
+      getTitle(item: Item): ReactNode;
+      getDescription?(item: Item): ReactNode;
+      renderLeading?(item: Item): ReactNode;
       visibleProperties: readonly string[];
       density?: "compact" | "comfortable";
     }
@@ -55,11 +55,11 @@ export type CollectionPresentationLayout<Row> =
       kind: "gallery";
       cardSize: CollectionGalleryCardSize;
       density: CollectionGalleryCardDensity;
-      getTitle(row: Row): ReactNode;
-      getDescription?(row: Row): ReactNode;
-      renderLeading?(row: Row): ReactNode;
-      renderCover?(row: Row): ReactNode;
-      renderOverlays?(row: Row): ReactNode;
+      getTitle(item: Item): ReactNode;
+      getDescription?(item: Item): ReactNode;
+      renderLeading?(item: Item): ReactNode;
+      renderCover?(item: Item): ReactNode;
+      renderOverlays?(item: Item): ReactNode;
       visibleProperties: readonly string[];
     };
 
@@ -77,12 +77,12 @@ export interface CollectionInstance<
   instanceKey: string;
 }
 
-export interface CollectionPresentationInstance<Row> {
-  descriptor: CollectionPresentationDescriptor<Row>;
-  state: CollectionPresentationState<Row>;
+export interface CollectionPresentationInstance<Item> {
+  descriptor: CollectionPresentationDescriptor<Item>;
+  state: CollectionPresentationState<Item>;
 }
 
-export type CollectionPresentationState<Row> =
+export type CollectionPresentationState<Item> =
   | {
       phase: "initial";
       skeleton?: ReactNode;
@@ -91,10 +91,10 @@ export type CollectionPresentationState<Row> =
       phase: "blocking_error";
       error: ReactNode;
     }
-  | ({ phase: "ready" } & CollectionSnapshot<Row>);
+  | ({ phase: "ready" } & CollectionSnapshot<Item>);
 
-export interface CollectionSnapshot<Row> {
-  rows: readonly Row[];
+export interface CollectionSnapshot<Item> {
+  items: readonly Item[];
   sourceEmpty?: ReactNode;
   diagnostics?: readonly ReactNode[];
   attention?: ReactNode;
@@ -108,38 +108,38 @@ export interface CollectionPresentationRuntime {
   readonly [collectionPresentationRuntimeBrand]: true;
 }
 
-export interface CollectionPresentationDescriptor<Row> {
+export interface CollectionPresentationDescriptor<Item> {
   id: string;
   label: string;
-  layout: CollectionPresentationLayout<Row>;
-  getRowId(row: Row): string;
-  properties: readonly CollectionPropertyDefinition<Row>[];
-  query: CollectionQueryDescriptor<Row>;
+  layout: CollectionPresentationLayout<Item>;
+  getItemId(item: Item): string;
+  properties: readonly CollectionPropertyDefinition<Item>[];
+  query: CollectionQueryDescriptor<Item>;
   create?: CollectionCreateCapability;
-  rowActions?: readonly CollectionRowActionDescriptor<Row>[];
+  itemActions?: readonly CollectionItemActionDescriptor<Item>[];
   onActivate?(
-    row: Row,
+    item: Item,
     context: CollectionActivationContext,
   ): void | Promise<void>;
 }
 
 export interface CollectionActivationContext {
-  rowId: string;
+  itemId: string;
   /**
-   * The row actions menu of the presentation for a version of the activated
-   * row, from its current actions; nothing when none is visible.
+   * The item actions menu of the presentation for a version of the activated
+   * item, from its current actions; nothing when none is visible.
    */
-  actions?(row: unknown): ReactNode;
+  actions?(item: unknown): ReactNode;
   returnFocus?(): HTMLElement | null;
   fallbackFocus?(): HTMLElement | null;
 }
 
-export interface CollectionQueryDescriptor<Row> {
-  getSearchText?(row: Row): string;
-  fixedPredicate?(row: Row): boolean;
+export interface CollectionQueryDescriptor<Item> {
+  getSearchText?(item: Item): string;
+  fixedPredicate?(item: Item): boolean;
   defaultSort?: readonly CollectionSortDescriptor[];
-  defaultCompare?(left: Row, right: Row): number;
-  getSortTieBreakId?(row: Row): string;
+  defaultCompare?(left: Item, right: Item): number;
+  getSortTieBreakId?(item: Item): string;
 }
 
 export interface CollectionQueryState {
@@ -192,15 +192,15 @@ export interface CollectionCreateCapability {
   intents: readonly CollectionCreateIntent[];
 }
 
-export interface CollectionRowActionDescriptor<Row> {
+export interface CollectionItemActionDescriptor<Item> {
   id: string;
   label: string;
   /** Leading icon shown while the action is not pending. */
   icon?: ReactNode;
-  getLabel?(row: Row): string;
-  isVisible?(row: Row): boolean;
-  getState(row: Row): CollectionActionState;
-  run(row: Row): void | Promise<void>;
+  getLabel?(item: Item): string;
+  isVisible?(item: Item): boolean;
+  getState(item: Item): CollectionActionState;
+  run(item: Item): void | Promise<void>;
 }
 
 export type CollectionActionState =
@@ -219,11 +219,11 @@ interface CollectionInteractionErrorBase {
 export type CollectionInteractionError =
   | (CollectionInteractionErrorBase & {
       kind: "create";
-      rowId?: never;
+      itemId?: never;
     })
   | (CollectionInteractionErrorBase & {
       kind: "action" | "activation" | "property";
-      rowId: string;
+      itemId: string;
     });
 
 export type CollectionDeveloperDiagnosticCode =
@@ -232,7 +232,7 @@ export type CollectionDeveloperDiagnosticCode =
   | "duplicate-property-key"
   | "duplicate-instance-key"
   | "duplicate-presentation-id"
-  | "duplicate-row-id"
+  | "duplicate-item-id"
   | "duplicate-visible-property"
   | "property-value-error"
   | "invalid-action-id"
@@ -247,9 +247,9 @@ export type CollectionDeveloperDiagnosticCode =
   | "invalid-property-capability"
   | "invalid-property-origin"
   | "invalid-property-owner"
-  | "invalid-row-id"
+  | "invalid-item-id"
   | "unknown-visible-property"
-  | "row-id-error";
+  | "item-id-error";
 
 export interface CollectionDeveloperDiagnostic {
   code: CollectionDeveloperDiagnosticCode;

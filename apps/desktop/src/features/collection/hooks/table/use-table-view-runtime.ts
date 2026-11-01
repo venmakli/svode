@@ -4,7 +4,7 @@ import type { PropertyType } from "@/features/properties";
 import { notifyPropertyAddFailed } from "@/features/properties";
 import type { TableEditingCell, TableViewProps } from "../../model/table-types";
 import {
-  entryParentDir,
+  itemParentDir,
   flattenRows,
   normalizeVisibleFields,
   showNestedForView,
@@ -12,14 +12,14 @@ import {
 import { titleFilter } from "../../lib/utils";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
-import { useCollectionEntryFieldSave } from "../use-collection-entry-field-save";
-import { handleEntryCreateError, handleError } from "../error-feedback";
+import { useCollectionItemFieldSave } from "../use-collection-item-field-save";
+import { handleItemCreateError, handleError } from "../error-feedback";
 import {
   usePersistentSet,
   usePersistentSizing,
 } from "../use-table-persistence";
-import { useTableEntries } from "./use-table-entries";
-import { useTableEntryActions } from "./use-table-entry-actions";
+import { useTableItems } from "./use-table-items";
+import { useTableItemActions } from "./use-table-item-actions";
 
 export function useTableViewRuntime({
   name,
@@ -61,14 +61,14 @@ export function useTableViewRuntime({
   const footerRef = useRef<HTMLDivElement | null>(null);
   const { actors, loadActors } = useCollectionActors(spacePath);
   const {
-    entries,
-    setEntries,
+    items,
+    setItems,
     nestedCollectionPaths,
     nestedSchemas,
     loading,
     error,
-    loadEntries,
-  } = useTableEntries({
+    loadItems,
+  } = useTableItems({
     collectionPath,
     previousCollectionPath,
     filters,
@@ -83,20 +83,19 @@ export function useTableViewRuntime({
     () => normalizeVisibleFields(view, schema),
     [schema, view],
   );
-  const topLevelEntries = useMemo(
-    () =>
-      entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
-    [collectionPath, entries],
+  const topLevelItems = useMemo(
+    () => items.filter((item) => itemParentDir(item.path) === collectionPath),
+    [collectionPath, items],
   );
   const filteredTopLevel = useMemo(
-    () => titleFilter(topLevelEntries, searchQuery),
-    [searchQuery, topLevelEntries],
+    () => titleFilter(topLevelItems, searchQuery),
+    [searchQuery, topLevelItems],
   );
   const rows = useMemo(
     () =>
       flattenRows(
         filteredTopLevel,
-        entries,
+        items,
         expanded,
         collectionPath,
         showNested,
@@ -104,7 +103,7 @@ export function useTableViewRuntime({
       ),
     [
       collectionPath,
-      entries,
+      items,
       expanded,
       filteredTopLevel,
       nestedSchemas,
@@ -113,21 +112,21 @@ export function useTableViewRuntime({
   );
   const hasSort = sort.length > 0;
   const visibleFocusedPath =
-    focusedPath && rows.some((row) => row.entry.path === focusedPath)
+    focusedPath && rows.some((row) => row.item.path === focusedPath)
       ? focusedPath
       : null;
   const hasActorColumn = useMemo(
     () => schema.columns.some((column) => column.type === "actor"),
     [schema.columns],
   );
-  const { createEntry, reorderEntries } = useTableEntryActions({
+  const { createItem, reorderItems } = useTableItemActions({
     collectionPath,
     spacePath,
     projectPath,
-    topLevelEntries,
+    topLevelItems,
     filteredTopLevel,
-    setEntries,
-    loadEntries,
+    setItems,
+    loadItems,
     onCreatePage,
   });
 
@@ -163,14 +162,14 @@ export function useTableViewRuntime({
   const handleFieldCommitError = useCallback(
     (saveError: unknown) => {
       console.warn("Failed to update table field:", saveError);
-      void loadEntries();
+      void loadItems();
     },
-    [loadEntries],
+    [loadItems],
   );
-  const { commitField } = useCollectionEntryFieldSave({
+  const { commitField } = useCollectionItemFieldSave({
     spacePath,
     projectPath,
-    setEntries,
+    setItems,
     onCommitError: handleFieldCommitError,
   });
 
@@ -217,16 +216,16 @@ export function useTableViewRuntime({
         return;
       }
       try {
-        await createEntry(title, asFolder || composerAsFolder, () => {
+        await createItem(title, asFolder || composerAsFolder, () => {
           setComposerValue("");
           setComposerOpen(false);
           setComposerAsFolder(false);
         });
       } catch (error) {
-        handleEntryCreateError(error);
+        handleItemCreateError(error);
       }
     },
-    [composerAsFolder, composerValue, createEntry],
+    [composerAsFolder, composerValue, createItem],
   );
 
   const openComposer = useCallback((asFolder: boolean) => {
@@ -242,9 +241,9 @@ export function useTableViewRuntime({
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       if (hasSort) return;
-      await reorderEntries(event);
+      await reorderItems(event);
     },
-    [hasSort, reorderEntries],
+    [hasSort, reorderItems],
   );
 
   return {
@@ -256,7 +255,7 @@ export function useTableViewRuntime({
     composerValue,
     density,
     editing,
-    entries,
+    items,
     error,
     expanded,
     filteredTopLevel,

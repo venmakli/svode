@@ -4,13 +4,13 @@ import type { CollectionActivationContext } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import {
-  currentAttachmentRow,
+  currentAttachmentItem,
   reconcileAttachmentPeek,
 } from "../model/activation";
 import type {
   AttachmentActivationRequest,
   AttachmentOwnerRef,
-  AttachmentRow,
+  AttachmentItem,
   AttachmentsSnapshot,
 } from "../model/types";
 import { useAttachmentsSource } from "./use-attachments-source";
@@ -23,18 +23,18 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
   }, []);
   const source = useAttachmentsSource(owner, reconcile);
   const { retainPeekTarget } = source;
-  const peekRow = peekTarget?.row;
+  const peekItem = peekTarget?.item;
   useEffect(
-    () => (peekRow ? retainPeekTarget(peekRow) : undefined),
-    [peekRow, retainPeekTarget],
+    () => (peekItem ? retainPeekTarget(peekItem) : undefined),
+    [peekItem, retainPeekTarget],
   );
   const onActivate = useCallback(
-    (row: AttachmentRow, activation: CollectionActivationContext) => {
+    (item: AttachmentItem, activation: CollectionActivationContext) => {
       if (source.state.phase !== "ready")
         throw new Error(m.attachments_source_stale());
       const snapshot = source.inventory();
       if (!snapshot) throw new Error(m.attachments_source_stale());
-      const current = currentAttachmentRow(snapshot, row);
+      const current = currentAttachmentItem(snapshot, item);
       if (!current) throw new Error(m.attachments_source_stale());
       setPeekTarget({
         activation,
@@ -46,7 +46,7 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
             ? { key: current.key, kind: current.kind }
             : undefined,
         owner: snapshot.owner,
-        row: current,
+        item: current,
         sourceGeneration: snapshot.generation,
       });
     },
@@ -54,12 +54,12 @@ export function useAttachmentsActivation(owner: AttachmentOwnerRef) {
   );
   const retargetPeek = useCallback((path: string) => {
     setPeekTarget((current) => {
-      if (!current || current.row.path === path) return current;
+      if (!current || current.item.path === path) return current;
       const folder = /\/readme\.md$/i.test(path);
       return {
         ...current,
-        row: {
-          ...current.row,
+        item: {
+          ...current.item,
           key: `page:${path}`,
           path,
           contentPath: path,

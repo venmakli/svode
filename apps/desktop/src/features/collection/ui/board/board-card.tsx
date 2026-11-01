@@ -11,10 +11,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
-import { isFolderEntry, isNestedCollectionEntry } from "./utils";
+import { isFolderItem, isNestedCollectionItem } from "./utils";
 import { BoardPropertyFlow } from "./board-property-flow";
 import type { BoardCardProps } from "./types";
-import { CollectionEntryContextMenuItems } from "../entry-context-menu";
+import { CollectionItemContextMenuItems } from "../item-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import * as m from "@/paraglide/messages.js";
 
@@ -27,10 +27,10 @@ export function SortableBoardCard(props: BoardCardProps) {
     transition,
     isDragging,
   } = useSortable({
-    id: props.card.entry.path,
+    id: props.card.item.path,
     data: {
       type: "card",
-      entryPath: props.card.entry.path,
+      itemPath: props.card.item.path,
       groupKey: props.card.groupKey,
     },
     disabled: props.readOnly,
@@ -71,15 +71,12 @@ export function BoardCardContent({
   onOpenPath,
   readOnly,
 }: BoardCardProps) {
-  const { entry } = card;
-  const conflictPath = pageNameConflictDisplayPath(entry);
+  const { item } = card;
+  const conflictPath = pageNameConflictDisplayPath(item);
   const showIcon = cardFields.includes("icon");
   const showDescription = cardFields.includes("description");
-  const nestedCollection = isNestedCollectionEntry(
-    entry,
-    nestedCollectionPaths,
-  );
-  const folder = isFolderEntry(entry);
+  const nestedCollection = isNestedCollectionItem(item, nestedCollectionPaths);
+  const folder = isFolderItem(item);
 
   return (
     <ContextMenu>
@@ -94,25 +91,25 @@ export function BoardCardContent({
           )}
           onClick={(event) => {
             if (shouldIgnoreCardOpen(event)) return;
-            if (nestedCollection) onOpenNestedPeek(entry);
-            else onOpen(entry);
+            if (nestedCollection) onOpenNestedPeek(item);
+            else onOpen(item);
           }}
           onDoubleClick={(event) => {
             if (shouldIgnoreCardOpen(event)) return;
-            onOpenFullPage(entry);
+            onOpenFullPage(item);
           }}
         >
           <CardContent className="flex flex-col gap-2 px-2.5">
             <div className="flex min-w-0 items-start gap-1.5">
               {showIcon ? (
                 <PageTitleIcon
-                  icon={entry.meta.icon}
+                  icon={item.meta.icon}
                   className="mt-px h-5 min-w-4 text-sm leading-5"
                 />
               ) : null}
               <div className="min-w-0 flex-1">
                 <div className="line-clamp-2 text-[13px] font-medium leading-snug">
-                  {entry.meta.title}
+                  {item.meta.title}
                 </div>
                 {conflictPath ? (
                   <div
@@ -122,26 +119,26 @@ export function BoardCardContent({
                     {conflictPath}
                   </div>
                 ) : null}
-                {showDescription && entry.meta.description ? (
+                {showDescription && item.meta.description ? (
                   <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {entry.meta.description}
+                    {item.meta.description}
                   </div>
                 ) : null}
               </div>
               <PageKindMarker
                 folder={folder}
                 nestedCollection={nestedCollection}
-                onOpenNested={() => onOpenNestedCollection(entry)}
+                onOpenNested={() => onOpenNestedCollection(item)}
               />
             </div>
             <BoardPropertyFlow
-              entry={entry}
+              item={item}
               columns={customColumns}
               actors={actors}
               relationContext={{
                 spacePath,
                 projectPath,
-                currentFilePath: entry.path,
+                currentFilePath: item.path,
                 onOpenPath,
               }}
               onRequestActors={onRequestActors}
@@ -151,12 +148,12 @@ export function BoardCardContent({
         </Card>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <CollectionEntryContextMenuItems
-          entry={entry}
+        <CollectionItemContextMenuItems
+          item={item}
           nestedCollection={nestedCollection}
           onOpenInPeek={() => {
-            if (nestedCollection) onOpenNestedPeek(entry);
-            else onOpen(entry);
+            if (nestedCollection) onOpenNestedPeek(item);
+            else onOpen(item);
           }}
         />
       </ContextMenuContent>

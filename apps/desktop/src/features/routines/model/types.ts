@@ -75,7 +75,7 @@ export interface RoutineNameConflict {
   conflicts: readonly RoutineNameConflictEvidence[];
 }
 
-export interface RoutineRow {
+export interface RoutineItem {
   id: string;
   routineId: string | null;
   definitionPath: string;
@@ -186,7 +186,7 @@ export interface RoutineCatalogSnapshot {
   resolvedOwnerKind: RoutineResolvedOwnerKind;
   spaceId: string;
   ownerPath: string;
-  rows: readonly RoutineRow[];
+  items: readonly RoutineItem[];
   diagnostics: readonly RoutineDiagnostic[];
 }
 

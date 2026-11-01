@@ -1,12 +1,12 @@
-import type { AttachmentRow } from "@/features/attachments";
+import type { AttachmentItem } from "@/features/attachments";
 
 import type { AgentContextSkillFile } from "./types";
 
 /**
- * A skill file as a row of the Attachments Table: a folder is a branch, a
+ * A skill file as an item of the Attachments Table: a folder is a branch, a
  * Markdown file reads as a Page, documents and media keep their types.
  */
-export function skillFileRow(file: AgentContextSkillFile): AttachmentRow {
+export function skillFileItem(file: AgentContextSkillFile): AttachmentItem {
   const folder = file.kind === "directory";
   return {
     availability: file.availability,

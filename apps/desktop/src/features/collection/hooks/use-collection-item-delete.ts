@@ -12,31 +12,31 @@ export interface PeekDeleteTarget {
   spaceId: string;
 }
 
-interface EntryDeleteValue {
+interface ItemDeleteValue {
   page: Page;
   peekTarget?: PeekDeleteTarget;
 }
 
 /**
- * The delete confirmation of the Collection's rows and of its Peek. A row
+ * The delete confirmation of the Collection's items and of its Peek. An item
  * deletes only while the Collection is writable; a Peek item, which may be a
  * template or live in another Space, keeps its own target.
  */
-export function useCollectionEntryDelete({
+export function useCollectionItemDelete({
   readOnly,
   spacePath,
   projectPath,
-  deleteRow,
+  deleteItem,
 }: {
   readOnly: boolean;
   spacePath: string;
   projectPath?: string | null;
-  deleteRow: (page: Page, peekTarget?: PeekDeleteTarget) => Promise<void>;
+  deleteItem: (page: Page, peekTarget?: PeekDeleteTarget) => Promise<void>;
 }) {
   const { confirmation, requestDelete, cancelDelete } =
-    useContentDeleteConfirmation<EntryDeleteValue>();
+    useContentDeleteConfirmation<ItemDeleteValue>();
 
-  const requestRowDelete = useCallback(
+  const requestItemDelete = useCallback(
     (page: Page) => {
       if (readOnly) return;
       void requestDelete({
@@ -77,10 +77,10 @@ export function useCollectionEntryDelete({
       confirmation:
         confirmation?.value.peekTarget || !readOnly ? confirmation : null,
       onCancel: cancelDelete,
-      onConfirm: ({ page, peekTarget }: EntryDeleteValue) =>
-        void deleteRow(page, peekTarget).catch(handleError),
+      onConfirm: ({ page, peekTarget }: ItemDeleteValue) =>
+        void deleteItem(page, peekTarget).catch(handleError),
     },
-    requestRowDelete,
+    requestItemDelete,
     requestPeekDelete,
     cancelDelete,
   };

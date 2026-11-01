@@ -11,7 +11,7 @@ import {
   attachmentOwnerInput,
   sameRuntimePath,
   type AttachmentOwnerRef,
-  type AttachmentRow,
+  type AttachmentItem,
   type AttachmentsSnapshot,
 } from "../model/types";
 
@@ -53,7 +53,7 @@ export function useAttachmentsSource(
     [],
   );
   const retainPeekTarget = useCallback(
-    (row: AttachmentRow) => sessionRef.current?.retainPeekTarget(row),
+    (item: AttachmentItem) => sessionRef.current?.retainPeekTarget(item),
     [],
   );
   const inventory = useCallback(

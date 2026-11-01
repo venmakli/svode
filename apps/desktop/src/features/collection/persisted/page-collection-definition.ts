@@ -133,7 +133,7 @@ export function activatePageCollectionItem(
   page: Page,
 ): Promise<CollectionCallbackResult> {
   return runCollectionCallback(
-    () => descriptor.onActivate(page, { rowId: descriptor.getRowId(page) }),
+    () => descriptor.onActivate(page, { itemId: descriptor.getItemId(page) }),
     m.collection_callback_error(),
   );
 }
@@ -154,7 +154,7 @@ function definePageCollectionPresentation({
 }): PageCollectionPresentationDescriptor {
   const type = viewType(view);
   return {
-    getRowId: (page) => page.path,
+    getItemId: (page) => page.path,
     id: view.name,
     label: view.name,
     layout: pagePresentationLayouts[type]({ schema, view }),

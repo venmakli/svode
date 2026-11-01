@@ -1,6 +1,6 @@
 export {
-  searchEntriesByTitle,
-  type SearchEntriesByTitleInput,
+  searchPagesByTitle,
+  type SearchPagesByTitleInput,
   type SearchItem,
   type SearchResponse,
   type SearchScope,

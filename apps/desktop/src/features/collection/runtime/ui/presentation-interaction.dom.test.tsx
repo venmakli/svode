@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 
 import { ContextMenuItem } from "@/components/ui/context-menu";
 
-import { CollectionEntryMenuProvider } from "../../ui/entry-context-menu";
+import { CollectionItemMenuProvider } from "../../ui/item-context-menu";
 import { CollectionListRowContent } from "../../ui/list/list-row";
 import { CollectionPresentationGalleryCard } from "../../ui/presentation-gallery-card";
 import { EMPTY_COLLECTION_QUERY } from "../model/query";
@@ -18,7 +18,7 @@ import type {
 } from "../model/types";
 import { CollectionPresentationShell } from "./presentation-shell";
 
-interface Row {
+interface Item {
   id: string;
   name: string;
 }
@@ -33,23 +33,23 @@ test("structured Collection rows activate from the row and keyboard, preserve ne
   );
   const restoreGlobals = installDomGlobals(dom);
   const activations: CollectionActivationContext[] = [];
-  const presentation = defineCollectionPresentation<Row>({
+  const presentation = defineCollectionPresentation<Item>({
     descriptor: {
-      onActivate: (_row, context) => {
+      onActivate: (_item, context) => {
         activations.push(context);
       },
       properties: [],
-      getRowId: (row) => row.id,
+      getItemId: (item) => item.id,
       id: "people",
       label: "People",
       layout: {
-        getTitle: (row) => row.name,
+        getTitle: (item) => item.name,
         kind: "list",
         renderLeading: () => <button type="button">Nested control</button>,
         visibleProperties: [],
       },
       query: {},
-      rowActions: [
+      itemActions: [
         {
           getState: () => ({ status: "idle" }),
           id: "edit",
@@ -58,7 +58,7 @@ test("structured Collection rows activate from the row and keyboard, preserve ne
         },
       ],
     },
-    state: { phase: "ready", rows: [{ id: "ada", name: "Ada" }] },
+    state: { phase: "ready", items: [{ id: "ada", name: "Ada" }] },
   });
   const root = createRoot(dom.window.document.getElementById("app")!);
 
@@ -131,7 +131,7 @@ test("structured Collection rows activate from the row and keyboard, preserve ne
   }
 });
 
-test("the row actions of an activation follow the row version and the current actions of the presentation", async () => {
+test("the item actions of an activation follow the item version and the current actions of the presentation", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -139,29 +139,29 @@ test("the row actions of an activation follow the row version and the current ac
   const restoreGlobals = installDomGlobals(dom);
   const activations: CollectionActivationContext[] = [];
   const present = (
-    rowActions: CollectionPresentationDescriptor<Row>["rowActions"],
+    itemActions: CollectionPresentationDescriptor<Item>["itemActions"],
   ) =>
-    defineCollectionPresentation<Row>({
+    defineCollectionPresentation<Item>({
       descriptor: {
-        getRowId: (row) => row.id,
+        getItemId: (item) => item.id,
         id: "people",
         label: "People",
         layout: {
-          getTitle: (row) => row.name,
+          getTitle: (item) => item.name,
           kind: "list",
           visibleProperties: [],
         },
-        onActivate: (_row, context) => {
+        onActivate: (_item, context) => {
           activations.push(context);
         },
         properties: [],
         query: {},
-        rowActions,
+        itemActions,
       },
-      state: { phase: "ready", rows: [{ id: "ada", name: "Ada" }] },
+      state: { phase: "ready", items: [{ id: "ada", name: "Ada" }] },
     });
   const render = (
-    presentation: ReturnType<typeof defineCollectionPresentation<Row>>,
+    presentation: ReturnType<typeof defineCollectionPresentation<Item>>,
   ) => (
     <CollectionPresentationShell
       instanceKey="people:test"
@@ -180,7 +180,7 @@ test("the row actions of an activation follow the row version and the current ac
             {
               getState: () => ({ status: "idle" }),
               id: "edit",
-              isVisible: (row) => row.name !== "Archived",
+              isVisible: (item) => item.name !== "Archived",
               label: "Edit row",
               run: () => undefined,
             },
@@ -224,9 +224,9 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
   );
   const restoreGlobals = installDomGlobals(dom);
   const activated: string[] = [];
-  const presentation = defineCollectionPresentation<Row>({
+  const presentation = defineCollectionPresentation<Item>({
     descriptor: {
-      getRowId: (row) => row.id,
+      getItemId: (item) => item.id,
       id: "attachments",
       label: "Attachments",
       layout: {
@@ -239,8 +239,8 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
         ),
         visibleProperties: ["name"],
       },
-      onActivate: (row) => {
-        activated.push(row.id);
+      onActivate: (item) => {
+        activated.push(item.id);
       },
       properties: [
         {
@@ -248,7 +248,7 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
             filter: { kind: "standard" },
             sort: { kind: "standard" },
           },
-          getValue: (row) => row.name,
+          getValue: (item) => item.name,
           key: "name",
           label: "Name",
           origin: "owner_defined",
@@ -257,7 +257,7 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
         },
       ],
       query: {},
-      rowActions: [
+      itemActions: [
         {
           getState: () => ({ status: "idle" }),
           id: "rename",
@@ -268,7 +268,7 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
     },
     state: {
       phase: "ready",
-      rows: [
+      items: [
         { id: "one", name: "brief.pdf" },
         { id: "two", name: "notes.md" },
       ],
@@ -339,15 +339,15 @@ test("neutral Table preserves row focus, activation, and nested action boundarie
     });
     expect(activated).toEqual(["two", "two", "two"]);
 
-    const rowActions = first.querySelector<HTMLElement>(
+    const itemActions = first.querySelector<HTMLElement>(
       '[aria-label="Row actions"]',
     )!;
     await act(async () => {
-      rowActions.dispatchEvent(
+      itemActions.dispatchEvent(
         new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
       );
     });
-    expect(rowActions.getAttribute("aria-expanded")).toBe("true");
+    expect(itemActions.getAttribute("aria-expanded")).toBe("true");
     expect(first.getAttribute("aria-selected") === "true").toBe(false);
     expect(activated).toEqual(["two", "two", "two"]);
 
@@ -390,7 +390,7 @@ test("persisted List keeps one activation contract across pointer and keyboard",
     },
   );
   const restoreGlobals = installDomGlobals(dom);
-  const entry = {
+  const item = {
     body: "",
     meta: {
       created: "2026-08-01T00:00:00Z",
@@ -409,7 +409,7 @@ test("persisted List keeps one activation contract across pointer and keyboard",
   try {
     await act(async () => {
       root.render(
-        <CollectionEntryMenuProvider
+        <CollectionItemMenuProvider
           value={{
             readOnly: true,
             spacePath: "/project",
@@ -427,7 +427,7 @@ test("persisted List keeps one activation contract across pointer and keyboard",
             properties={[]}
             projectPath="/project"
             row={{
-              entry,
+              item,
               expandable: true,
               expanded: false,
               level: 1,
@@ -436,9 +436,7 @@ test("persisted List keeps one activation contract across pointer and keyboard",
             spacePath="/project"
             onFocusRow={() => undefined}
             onKeyboardMove={(path, offset) => moved.push({ offset, path })}
-            onOpen={(rowEntry, nested) =>
-              opened.push({ nested, path: rowEntry.path })
-            }
+            onOpen={(page, nested) => opened.push({ nested, path: page.path })}
             onOpenNestedCollection={() => {
               nestedOpenCount += 1;
             }}
@@ -447,7 +445,7 @@ test("persisted List keeps one activation contract across pointer and keyboard",
             onToggle={() => undefined}
             onUpdateField={() => undefined}
           />
-        </CollectionEntryMenuProvider>,
+        </CollectionItemMenuProvider>,
       );
     });
 
@@ -633,11 +631,11 @@ test("opt-in Table hierarchy keeps root query, sibling sort, disclosure and focu
   const restore = installDomGlobals(dom);
   const root = createRoot(dom.window.document.getElementById("app")!);
   const expanded = new Set<string>();
-  let roots: Row[] = [
+  let roots: Item[] = [
     { id: "parent", name: "Parent" },
     { id: "other", name: "Other" },
   ];
-  const branches = new Map<string, Row[]>([
+  const branches = new Map<string, Item[]>([
     [
       "parent",
       [
@@ -649,17 +647,17 @@ test("opt-in Table hierarchy keeps root query, sibling sort, disclosure and focu
   ]);
   let query: CollectionQueryState = EMPTY_COLLECTION_QUERY;
   const activations: CollectionActivationContext[] = [];
-  const descriptor: CollectionPresentationDescriptor<Row> = {
+  const descriptor: CollectionPresentationDescriptor<Item> = {
     id: "hierarchy",
     label: "Hierarchy",
-    getRowId: (row) => row.id,
+    getItemId: (item) => item.id,
     properties: [
       {
         key: "name",
         label: "Name",
         origin: "owner_defined",
         owner: { kind: "feature", featureId: "test" },
-        getValue: (row) => row.name,
+        getValue: (item) => item.name,
         semantics: { kind: "standard", standard: { type: "text" } },
         capabilities: {
           sort: { kind: "standard" },
@@ -668,10 +666,10 @@ test("opt-in Table hierarchy keeps root query, sibling sort, disclosure and focu
       },
     ],
     query: {
-      getSearchText: (row) => row.name,
+      getSearchText: (item) => item.name,
       defaultSort: [{ propertyKey: "name", direction: "asc" }],
     },
-    onActivate: (_row, context) => {
+    onActivate: (_item, context) => {
       activations.push(context);
     },
     layout: {
@@ -680,21 +678,21 @@ test("opt-in Table hierarchy keeps root query, sibling sort, disclosure and focu
       visibleProperties: ["name"],
       renderLeading: () => <span aria-hidden>📁</span>,
       hierarchy: {
-        getLabel: (row) => row.name,
-        getBranch: (row) =>
-          branches.has(row.id)
+        getLabel: (item) => item.name,
+        getBranch: (item) =>
+          branches.has(item.id)
             ? {
-                expanded: expanded.has(row.id),
-                rows: branches.get(row.id)!,
+                expanded: expanded.has(item.id),
+                items: branches.get(item.id)!,
                 status:
-                  row.id === "nested" ? (
+                  item.id === "nested" ? (
                     <span>Branch diagnostic</span>
                   ) : undefined,
               }
             : null,
-        onToggle: (row) => {
-          if (expanded.has(row.id)) expanded.delete(row.id);
-          else expanded.add(row.id);
+        onToggle: (item) => {
+          if (expanded.has(item.id)) expanded.delete(item.id);
+          else expanded.add(item.id);
           render();
         },
       },
@@ -706,7 +704,7 @@ test("opt-in Table hierarchy keeps root query, sibling sort, disclosure and focu
         instanceKey="tree-test"
         presentation={defineCollectionPresentation({
           descriptor,
-          state: { phase: "ready", rows: roots },
+          state: { phase: "ready", items: roots },
         })}
         query={query}
         onQueryChange={(next) => {

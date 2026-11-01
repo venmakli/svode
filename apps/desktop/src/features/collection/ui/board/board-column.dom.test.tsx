@@ -77,8 +77,8 @@ if (process.env.SVODE_BOARD_COLUMN_DOM !== "1") {
       extra: { Status: "Todo" },
     },
   });
-  const cards = [page("tasks/A.md"), page("tasks/B.md")].map((entry) => ({
-    entry,
+  const cards = [page("tasks/A.md"), page("tasks/B.md")].map((item) => ({
+    item,
     groupKey: "Todo",
   }));
 
@@ -87,12 +87,12 @@ if (process.env.SVODE_BOARD_COLUMN_DOM !== "1") {
   async function render({
     readOnly = false,
     hasSort,
-    activeEntryPath = null,
+    activeItemPath = null,
     overGroupKey = null,
   }: {
     readOnly?: boolean;
     hasSort: boolean;
-    activeEntryPath?: string | null;
+    activeItemPath?: string | null;
     overGroupKey?: string | null;
   }) {
     await act(async () =>
@@ -102,7 +102,7 @@ if (process.env.SVODE_BOARD_COLUMN_DOM !== "1") {
             group={{ key: "Todo", value: "Todo", label: "Todo" }}
             cards={cards}
             count={cards.length}
-            activeEntryPath={activeEntryPath}
+            activeItemPath={activeItemPath}
             overGroupKey={overGroupKey}
             hasSort={hasSort}
             draftOpen={false}
@@ -154,7 +154,7 @@ if (process.env.SVODE_BOARD_COLUMN_DOM !== "1") {
   test("with a sort the source column of the dragged card shows no drop target", async () => {
     await render({
       hasSort: true,
-      activeEntryPath: "tasks/A.md",
+      activeItemPath: "tasks/A.md",
       overGroupKey: "Todo",
     });
     expect(dropPlaceholder()).toBeNull();
@@ -163,7 +163,7 @@ if (process.env.SVODE_BOARD_COLUMN_DOM !== "1") {
   test("with a sort another column under the card shows the drop target", async () => {
     await render({
       hasSort: true,
-      activeEntryPath: "tasks/Other.md",
+      activeItemPath: "tasks/Other.md",
       overGroupKey: "Todo",
     });
     expect(dropPlaceholder() !== null).toBe(true);
@@ -172,7 +172,7 @@ if (process.env.SVODE_BOARD_COLUMN_DOM !== "1") {
   test("without a sort the source column keeps its drop target", async () => {
     await render({
       hasSort: false,
-      activeEntryPath: "tasks/A.md",
+      activeItemPath: "tasks/A.md",
       overGroupKey: "Todo",
     });
     expect(dropPlaceholder() !== null).toBe(true);

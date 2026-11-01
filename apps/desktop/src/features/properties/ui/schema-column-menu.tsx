@@ -54,7 +54,7 @@ interface SchemaColumnMenuProps {
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  affectedEntries?: number;
+  affectedItems?: number;
   extensionPanes?: Array<MultiPaneDefinition<string>>;
   renderMainExtension?: (
     controls: SchemaColumnMenuExtensionControls,
@@ -76,7 +76,7 @@ export function SchemaColumnMenu({
   collectionPath,
   spacePath,
   projectPath,
-  affectedEntries,
+  affectedItems,
   extensionPanes = [],
   renderMainExtension,
   onOpenChange,
@@ -259,9 +259,9 @@ export function SchemaColumnMenu({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {m.property_dialog_delete_column_desc({ name: column.name })}
-              {affectedEntries === undefined
+              {affectedItems === undefined
                 ? null
-                : ` ${m.table_delete_column_affected({ count: affectedEntries })}`}
+                : ` ${m.table_delete_column_affected({ count: affectedItems })}`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <label className="flex items-center gap-2 text-sm">

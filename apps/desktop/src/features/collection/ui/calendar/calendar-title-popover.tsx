@@ -54,7 +54,7 @@ export function CalendarTitlePopover({
           }
           ref={inputRef}
           defaultValue=""
-          placeholder={m.calendar_new_entry_placeholder()}
+          placeholder={m.calendar_new_item_placeholder()}
           onBlur={() => {
             if (!inputRef.current?.value.trim()) onCancel();
           }}

@@ -5,7 +5,7 @@ import {
   useCollectionState,
   type CollectionInstance,
 } from "@/features/collection";
-import type { CollectionDetailRowBinding } from "@/features/collection/app-shell";
+import type { CollectionDetailItemBinding } from "@/features/collection/app-shell";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
@@ -18,16 +18,16 @@ import type {
 import { createAgentContextPresentation } from "./context-presentations";
 
 /**
- * A plugin's «Компоненты»: its nested rows in the Table of "All", each
+ * A plugin's «Компоненты»: its nested items in the Table of "All", each
  * opening in the same peek, and one line with the number of each kind that
- * is no row. A plugin whose code defines its components says so instead.
+ * is no item. A plugin whose code defines its components says so instead.
  */
 export function AgentContextPluginComponentsTab({
   detail,
   item,
   properties,
 }: {
-  detail: CollectionDetailRowBinding<AgentContextItem>;
+  detail: CollectionDetailItemBinding<AgentContextItem>;
   item: AgentContextItem;
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
 }) {
@@ -41,7 +41,7 @@ export function AgentContextPluginComponentsTab({
           presentationId: "components",
         }),
         properties,
-        state: { phase: "ready", rows: item.components },
+        state: { phase: "ready", items: item.components },
       }),
     [detail, instanceKey, item.components, properties],
   );

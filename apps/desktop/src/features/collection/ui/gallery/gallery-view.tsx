@@ -26,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { SortableGalleryCard } from "./gallery-card";
 import type { GalleryViewProps } from "../../model/gallery-types";
-import { isFolderEntry, isNestedCollectionEntry } from "../../lib/gallery-view";
+import { isFolderItem, isNestedCollectionItem } from "../../lib/gallery-view";
 import { useGalleryViewRuntime } from "../../hooks/gallery/use-gallery-view-runtime";
 import {
   CollectionCardsShell,
@@ -57,7 +57,7 @@ export function GalleryView(props: GalleryViewProps) {
     draftOpen,
     draftRef,
     draftValue,
-    filteredEntries,
+    filteredItems,
     focusedPath,
     gridRef,
     handleDragEnd,
@@ -74,7 +74,7 @@ export function GalleryView(props: GalleryViewProps) {
     resolveCover,
     setDraftValue,
     setFocusedPath,
-    topLevelEntries,
+    topLevelItems,
   } = useGalleryViewRuntime(props);
   const visiblePropertyKeys = new Set(metaColumns.map((column) => column.name));
   const visibleProperties = props.properties.filter((property) =>
@@ -92,17 +92,17 @@ export function GalleryView(props: GalleryViewProps) {
 
   if (loading) return <GallerySkeleton cardWidth={cardWidth} />;
 
-  if (topLevelEntries.length === 0 && !queryFiltered && !draftOpen) {
+  if (topLevelItems.length === 0 && !queryFiltered && !draftOpen) {
     return (
       <EmptyState
         title={m.table_empty()}
-        action={readOnly ? undefined : m.table_create_first_entry()}
+        action={readOnly ? undefined : m.table_create_first_item()}
         onAction={readOnly ? undefined : () => openDraft(false)}
       />
     );
   }
 
-  if (topLevelEntries.length === 0 || filteredEntries.length === 0) {
+  if (topLevelItems.length === 0 || filteredItems.length === 0) {
     return (
       <EmptyState
         title={m.table_no_results()}
@@ -126,19 +126,19 @@ export function GalleryView(props: GalleryViewProps) {
       <div className={detailPageViewRowClassName}>
         <CollectionCardsShell ref={gridRef} cardWidth={cardWidth}>
           <SortableContext
-            items={filteredEntries.map((entry) => entry.path)}
+            items={filteredItems.map((item) => item.path)}
             strategy={rectSortingStrategy}
           >
-            {filteredEntries.map((entry) => {
-              const nestedCollection = isNestedCollectionEntry(
-                entry,
+            {filteredItems.map((item) => {
+              const nestedCollection = isNestedCollectionItem(
+                item,
                 nestedCollectionPaths,
               );
               return (
                 <SortableGalleryCard
-                  key={entry.path}
-                  entry={entry}
-                  cover={resolveCover(entry)}
+                  key={item.path}
+                  item={item}
+                  cover={resolveCover(item)}
                   cardFields={cardFields}
                   properties={visibleProperties}
                   coverFit={coverFit}
@@ -147,16 +147,16 @@ export function GalleryView(props: GalleryViewProps) {
                   projectPath={projectPath}
                   actors={actors}
                   nestedCollection={nestedCollection}
-                  folder={isFolderEntry(entry)}
+                  folder={isFolderItem(item)}
                   disabledReorder={readOnly || hasSort}
-                  focused={focusedPath === entry.path}
-                  cardRef={(element) => cardRef(entry.path, element)}
+                  focused={focusedPath === item.path}
+                  cardRef={(element) => cardRef(item.path, element)}
                   onRequestActors={loadActors}
                   onUpdateField={
                     readOnly
                       ? undefined
-                      : (entryToUpdate, column, value) =>
-                          void commitField(entryToUpdate, column, value)
+                      : (itemToUpdate, column, value) =>
+                          void commitField(itemToUpdate, column, value)
                   }
                   onOpen={openCard}
                   onOpenNestedCollection={onOpenNestedCollection}
@@ -216,7 +216,7 @@ function GalleryCreateTile({
           <Input
             ref={inputRef}
             value={value}
-            placeholder={m.table_new_entry_placeholder()}
+            placeholder={m.table_new_item_placeholder()}
             className="h-8"
             onChange={(event) => onValueChange(event.target.value)}
             onBlur={() => {
@@ -236,7 +236,7 @@ function GalleryCreateTile({
             onClick={(event) => onOpen(event.shiftKey)}
           >
             <Plus data-icon="inline-start" />
-            {m.table_new_entry_placeholder()}
+            {m.table_new_item_placeholder()}
           </Button>
         )}
       </CardContent>

@@ -6,7 +6,7 @@ import {
   type DefaultAgent,
 } from "@/features/agent-sessions/agent-settings-popover";
 
-import type { AgentActorRow } from "./agent-actor-types";
+import type { AgentActorItem } from "./agent-actor-types";
 
 /**
  * The readiness of an Agent on this device (Stage 11 `03`, the properties
@@ -62,10 +62,10 @@ const NOT_INSTALLED = new Set([
 ]);
 
 export function agentActorFacts(
-  row: AgentActorRow,
+  item: AgentActorItem,
   sources: AgentActorFactsSources,
 ): AgentActorFacts {
-  const binding = row.binding;
+  const binding = item.binding;
   if (binding.kind === "participant") {
     const defaultAgent = sources.defaultAgent;
     return {
@@ -82,7 +82,7 @@ export function agentActorFacts(
   }
   const agent = binding.agent;
   const declarations = sources.declarations.get(agent) ?? null;
-  const mode = row.mode?.agent === agent ? row.mode : null;
+  const mode = item.mode?.agent === agent ? item.mode : null;
   const values = [
     ...binding.settings,
     ...(mode ? [{ setting: mode.setting, value: mode.value }] : []),

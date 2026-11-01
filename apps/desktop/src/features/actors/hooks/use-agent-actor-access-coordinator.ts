@@ -7,12 +7,12 @@ import {
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
-import type { AgentActorRow } from "../model/agent-actor-types";
+import type { AgentActorItem } from "../model/agent-actor-types";
 
 export type AgentActorAccessIntent =
   | { kind: "add-agent"; ownerPath: string }
-  | { kind: "edit-agent"; ownerPath: string; row: AgentActorRow }
-  | { kind: "delete-agent"; ownerPath: string; row: AgentActorRow }
+  | { kind: "edit-agent"; ownerPath: string; item: AgentActorItem }
+  | { kind: "delete-agent"; ownerPath: string; item: AgentActorItem }
   | { kind: "save-agent-catalog"; ownerPath: string };
 
 export interface AgentActorLateAccessRequest {
@@ -59,7 +59,7 @@ export function useAgentActorAccessCoordinator({
         targets: [
           targetFor(
             intent.ownerPath,
-            "row" in intent ? intent.row.ownerLabel : undefined,
+            "item" in intent ? intent.item.ownerLabel : undefined,
           ),
         ],
       }),

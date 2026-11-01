@@ -1,5 +1,5 @@
 import {
-  artifactNavigationKey,
+  pathNavigationKey,
   spaceNavigationKey,
   type NavigationItem,
   type NavigationKey,
@@ -15,21 +15,21 @@ export function scopeOwnerNavigationKey(
     case "registered-space":
       return spaceNavigationKey(owner.spaceId, rootSpaceId);
     case "collection-directory":
-      return artifactNavigationKey(
+      return pathNavigationKey(
         "collection",
         owner.ownerPath,
         owner.spaceId,
         rootSpaceId,
       );
     case "app-directory":
-      return artifactNavigationKey(
+      return pathNavigationKey(
         "app",
         owner.ownerPath,
         owner.spaceId,
         rootSpaceId,
       );
     default:
-      return artifactNavigationKey(
+      return pathNavigationKey(
         "page",
         owner.ownerPath,
         owner.spaceId,

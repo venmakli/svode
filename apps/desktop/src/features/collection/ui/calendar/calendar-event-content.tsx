@@ -23,7 +23,7 @@ import type {
   CalendarPropertyContext,
   CalendarScope,
 } from "../../model/calendar-types";
-import { CollectionEntryContextMenuItems } from "../entry-context-menu";
+import { CollectionItemContextMenuItems } from "../item-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import * as m from "@/paraglide/messages.js";
 
@@ -39,21 +39,21 @@ export function CalendarEventContent({
   readOnly: boolean;
   arg: EventContentArg;
   scope: CalendarScope;
-  onOpen: (entry: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
+  onOpen: (item: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
   propertyContext: CalendarPropertyContext;
 }) {
   const model = arg.event.extendedProps.model as CalendarEventModel | undefined;
   if (!model) return null;
-  const { entry } = model;
-  const conflictPath = pageNameConflictDisplayPath(entry);
+  const { item } = model;
+  const conflictPath = pageNameConflictDisplayPath(item);
   const list = scope === "list";
   const compact = scope === "week" || scope === "day";
 
-  function openEntry() {
-    if (model?.nestedCollection) onOpenNestedPeek(entry);
-    else onOpen(entry);
+  function openItem() {
+    if (model?.nestedCollection) onOpenNestedPeek(item);
+    else onOpen(item);
   }
 
   return (
@@ -79,7 +79,7 @@ export function CalendarEventContent({
                 <span className="svode-calendar-event-color-bar h-3 w-1 shrink-0 rounded-full bg-(--calendar-event-color)" />
                 {model.cardFields.includes("icon") ? (
                   <PageTitleIcon
-                    icon={entry.meta.icon}
+                    icon={item.meta.icon}
                     className="svode-calendar-event-icon size-4 text-sm leading-none"
                   />
                 ) : null}
@@ -91,7 +91,7 @@ export function CalendarEventContent({
                       </span>
                     ) : null}
                     <span className="truncate font-medium">
-                      {entry.meta.title}
+                      {item.meta.title}
                     </span>
                   </div>
                   {conflictPath ? (
@@ -104,16 +104,16 @@ export function CalendarEventContent({
                   ) : null}
                   {list &&
                   model.cardFields.includes("description") &&
-                  entry.meta.description ? (
+                  item.meta.description ? (
                     <div className="truncate text-xs text-muted-foreground">
-                      {entry.meta.description}
+                      {item.meta.description}
                     </div>
                   ) : null}
                 </div>
                 <PageKindMarker
                   folder={model.folder}
                   nestedCollection={model.nestedCollection}
-                  onOpenNested={() => onOpenNestedCollection(entry)}
+                  onOpenNested={() => onOpenNestedCollection(item)}
                 />
               </div>
             </TooltipTrigger>
@@ -133,7 +133,7 @@ export function CalendarEventContent({
                   className="min-w-0 text-xs text-muted-foreground"
                 >
                   <CalendarPropertyControl
-                    entry={entry}
+                    item={item}
                     column={column}
                     propertyContext={propertyContext}
                     readOnly={readOnly}
@@ -145,10 +145,10 @@ export function CalendarEventContent({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <CollectionEntryContextMenuItems
-          entry={entry}
+        <CollectionItemContextMenuItems
+          item={item}
           nestedCollection={model.nestedCollection}
-          onOpenInPeek={openEntry}
+          onOpenInPeek={openItem}
         />
       </ContextMenuContent>
     </ContextMenu>
@@ -164,25 +164,24 @@ function CalendarEventTooltip({
   propertyContext: CalendarPropertyContext;
   readOnly: boolean;
 }) {
-  const { entry } = model;
-  const conflictPath = pageNameConflictDisplayPath(entry);
+  const { item } = model;
+  const conflictPath = pageNameConflictDisplayPath(item);
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
         {model.cardFields.includes("icon") ? (
-          <PageTitleIcon icon={entry.meta.icon} className="size-5" />
+          <PageTitleIcon icon={item.meta.icon} className="size-5" />
         ) : null}
         <div className="min-w-0">
-          <div className="truncate font-medium">{entry.meta.title}</div>
+          <div className="truncate font-medium">{item.meta.title}</div>
           {conflictPath ? (
             <div className="truncate text-xs text-muted-foreground">
               {conflictPath}
             </div>
           ) : null}
-          {model.cardFields.includes("description") &&
-          entry.meta.description ? (
+          {model.cardFields.includes("description") && item.meta.description ? (
             <div className="truncate text-xs text-muted-foreground">
-              {entry.meta.description}
+              {item.meta.description}
             </div>
           ) : null}
         </div>
@@ -199,7 +198,7 @@ function CalendarEventTooltip({
               </span>
               <span className="min-w-0 truncate">
                 <CalendarPropertyControl
-                  entry={entry}
+                  item={item}
                   column={column}
                   propertyContext={propertyContext}
                   readOnly={readOnly}
@@ -214,17 +213,17 @@ function CalendarEventTooltip({
 }
 
 function CalendarPropertyControl({
-  entry,
+  item,
   column,
   propertyContext,
   readOnly,
 }: {
-  entry: Page;
+  item: Page;
   column: Column;
   propertyContext: CalendarPropertyContext;
   readOnly: boolean;
 }) {
-  const value = calendarColumnValue(entry, column);
+  const value = calendarColumnValue(item, column);
   const validation = validatePropertyValue(column, value);
 
   if (readOnly || isReadonlyColumn(column)) {
@@ -237,7 +236,7 @@ function CalendarPropertyControl({
           relationContext={{
             spacePath: propertyContext.spacePath,
             projectPath: propertyContext.projectPath,
-            currentFilePath: entry.path,
+            currentFilePath: item.path,
             onOpenPath: propertyContext.onOpenPath,
           }}
         />
@@ -261,26 +260,26 @@ function CalendarPropertyControl({
         column={column}
         value={value}
         invalid={validation.invalid}
-        accessibilityLabel={`${column.name}: ${entry.meta.title}`}
+        accessibilityLabel={`${column.name}: ${item.meta.title}`}
         density="compact"
         actors={propertyContext.actors}
         relationContext={{
           spacePath: propertyContext.spacePath,
           projectPath: propertyContext.projectPath,
-          currentFilePath: entry.path,
+          currentFilePath: item.path,
           onOpenPath: propertyContext.onOpenPath,
         }}
         onRequestActors={propertyContext.onRequestActors}
-        onChange={(next) => propertyContext.onUpdateField(entry, column, next)}
+        onChange={(next) => propertyContext.onUpdateField(item, column, next)}
       />
     </span>
   );
 }
 
-function calendarColumnValue(entry: Page, column: Column) {
-  if (column.name === "created") return entry.meta.created;
-  if (column.name === "updated") return entry.meta.updated;
-  return entry.meta.extra?.[column.name] ?? null;
+function calendarColumnValue(item: Page, column: Column) {
+  if (column.name === "created") return item.meta.created;
+  if (column.name === "updated") return item.meta.updated;
+  return item.meta.extra?.[column.name] ?? null;
 }
 
 function calendarColumnLabel(column: Column) {

@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   CollectionDetailHeader,
   type CollectionDetailContent,
-  type CollectionDetailRowBinding,
+  type CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 import {
   CollectionPropertyPanel,
@@ -56,7 +56,7 @@ const AgentContextSkillFilesTab = lazy(async () => ({
 
 export interface AgentContextDetailOptions {
   /** Opens a plugin's components in the same peek, following the "Context". */
-  detail: CollectionDetailRowBinding<AgentContextItem>;
+  detail: CollectionDetailItemBinding<AgentContextItem>;
   /** Opens App Settings "Providers", which manages the Svode integration. */
   onOpenProviders?: () => void;
 }
@@ -111,7 +111,7 @@ function AgentContextItemDetail({
   properties,
   tableProperties,
 }: {
-  detail: CollectionDetailRowBinding<AgentContextItem>;
+  detail: CollectionDetailItemBinding<AgentContextItem>;
   item: AgentContextItem;
   onOpenProviders?: () => void;
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
@@ -141,7 +141,7 @@ function AgentContextItemDetail({
       <CollectionPropertyPanel
         factGroups={factGroups}
         properties={properties}
-        row={item}
+        item={item}
       />
       {item.kind === "plugin" ? (
         <AgentContextItemTabs
@@ -204,13 +204,13 @@ function ItemBody({ item }: { item: AgentContextItem }) {
 }
 
 /**
- * The nested rows and counted kinds of a declared plugin, nothing when it
+ * The nested items and counted kinds of a declared plugin, nothing when it
  * has none; the plugin whose code defines its components says so.
  */
 function pluginComponentsContent(
   item: AgentContextItem,
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[],
-  detail: CollectionDetailRowBinding<AgentContextItem>,
+  detail: CollectionDetailItemBinding<AgentContextItem>,
 ) {
   if (!item.plugin) return null;
   if (item.plugin.composition === "code") {

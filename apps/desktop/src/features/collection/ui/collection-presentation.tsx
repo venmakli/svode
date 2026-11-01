@@ -56,9 +56,9 @@ export interface SchemaBackedCollectionPresentationProps {
   calendarScope?: CalendarScope | null;
   createRequest: ViewCreateRequest;
   onClearSearch: () => void;
-  onOpenNestedPeek: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
-  onOpenFullPage: (entry: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
+  onOpenFullPage: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onSchemaChange: (schema: CollectionSchema) => void;

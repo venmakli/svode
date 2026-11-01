@@ -21,7 +21,7 @@ test("collection title cells show the current path only for external name confli
       root.render(
         <TitleCell
           row={{
-            entry: {
+            item: {
               meta: {
                 title: "Shared",
                 icon: null,
@@ -82,7 +82,7 @@ test("collection Table rows select visibly and open the same peek from double-cl
               registerRow={() => undefined}
               row={{
                 child: false,
-                entry: {
+                item: {
                   body: "",
                   meta: {
                     created: "",
@@ -109,7 +109,7 @@ test("collection Table rows select visibly and open the same peek from double-cl
                 <TitleCell
                   row={{
                     child: false,
-                    entry: {
+                    item: {
                       body: "",
                       meta: {
                         created: "",

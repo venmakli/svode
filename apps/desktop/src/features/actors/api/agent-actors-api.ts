@@ -45,7 +45,7 @@ export async function loadAgentActors(
     ),
     fingerprints: Object.freeze({ ...dto.ownerFingerprints }),
     launchSpacePath,
-    rows: Object.freeze(
+    items: Object.freeze(
       dto.resolution.actors.map(({ actor, mode, ownerPath }) =>
         Object.freeze({
           actorRef: `agent:${actor.id}` as const,
@@ -79,12 +79,12 @@ export async function loadAgentActorOptions(
   return Object.freeze({
     ...agentActorOptionCatalogDiagnostics(snapshot.diagnostics),
     options: Object.freeze(
-      snapshot.rows.map((row) =>
+      snapshot.items.map((item) =>
         Object.freeze({
-          description: row.description,
-          label: row.name,
-          ownerLabel: row.ownerLabel,
-          value: row.actorRef,
+          description: item.description,
+          label: item.name,
+          ownerLabel: item.ownerLabel,
+          value: item.actorRef,
         }),
       ),
     ),

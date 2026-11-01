@@ -324,14 +324,14 @@ export function TitleCell({
   onToggle: () => void;
   onOpenNested: () => void;
 }) {
-  const conflictPath = pageNameConflictDisplayPath(row.entry);
+  const conflictPath = pageNameConflictDisplayPath(row.item);
   return (
     <div
       className="flex min-w-0 items-center gap-1"
       style={{ paddingLeft: row.level * 18 }}
     >
       <PageDisclosure
-        icon={row.entry.meta.icon}
+        icon={row.item.meta.icon}
         showIcon={showIcon}
         expandable={expandable}
         expanded={expanded}
@@ -339,12 +339,12 @@ export function TitleCell({
       />
       <button
         type="button"
-        title={m.table_open_entry_tooltip()}
+        title={m.table_open_item_tooltip()}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-1 py-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         data-collection-primary
       >
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate">{row.entry.meta.title}</span>
+          <span className="truncate">{row.item.meta.title}</span>
           {conflictPath ? (
             <span
               data-page-name-conflict-path

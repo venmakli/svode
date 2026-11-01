@@ -14,11 +14,11 @@ const snapshot: RoutineCatalogSnapshot = {
   ownerPath: "/repo",
   refreshedAt: "2026-08-19T00:00:00.000Z",
   resolvedOwnerKind: "project",
-  rows: [],
+  items: [],
   spaceId: "root",
 };
 
-test("routine refresh preserves ready rows through a background failure", () => {
+test("routine refresh preserves ready items through a background failure", () => {
   const ready = completeRoutineCatalogRefresh(snapshot);
   const refreshing = beginRoutineCatalogRefresh(ready);
   const failed = failRoutineCatalogRefresh(refreshing, "offline");

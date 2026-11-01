@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Page } from "@/features/page";
-import { listEntriesForView } from "../api";
+import { listItemsForView } from "../api";
 
-export function useViewPlaceholderEntries({
+export function useViewPlaceholderItems({
   spacePath,
   collectionPath,
   viewName,
@@ -17,24 +17,24 @@ export function useViewPlaceholderEntries({
   projectPath?: string | null;
   refreshToken: number;
 }) {
-  const [entries, setEntries] = useState<Page[]>([]);
+  const [items, setItems] = useState<Page[]>([]);
 
   useEffect(() => {
     let cancelled = false;
 
-    listEntriesForView({
+    listItemsForView({
       spacePath,
       collectionPath,
       viewName,
       includeNested,
       projectPath,
     })
-      .then((nextEntries) => {
-        if (!cancelled) setEntries(nextEntries);
+      .then((nextItems) => {
+        if (!cancelled) setItems(nextItems);
       })
       .catch((error) => {
         if (!cancelled) {
-          console.warn("Failed to load view entries:", error);
+          console.warn("Failed to load view items:", error);
         }
       });
 
@@ -50,5 +50,5 @@ export function useViewPlaceholderEntries({
     viewName,
   ]);
 
-  return entries;
+  return items;
 }

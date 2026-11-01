@@ -24,20 +24,20 @@ import { PROPERTY_TYPE_ICONS } from "./property-type-meta";
  * property definitions as its Table and List columns, followed by the item's
  * facts under their group labels. Empty facts and groups are not shown.
  */
-export function CollectionPropertyPanel<Row>({
+export function CollectionPropertyPanel<Item>({
   factGroups = [],
   properties,
-  row,
+  item,
 }: {
   factGroups?: readonly CollectionPropertyFactGroup[];
-  properties: readonly CollectionPropertyDefinition<Row>[];
-  row: Row;
+  properties: readonly CollectionPropertyDefinition<Item>[];
+  item: Item;
 }) {
   const visibleProperties = properties.filter(
     (property) =>
       readCollectionPropertyApplicability(
         property as CollectionPropertyDefinition<unknown>,
-        row,
+        item,
       ).status !== "hidden",
   );
   const visibleGroups = factGroups
@@ -67,7 +67,7 @@ export function CollectionPropertyPanel<Row>({
             <CollectionPropertyValue
               context="detail"
               property={property as CollectionPropertyDefinition<unknown>}
-              row={row}
+              item={item}
             />
           </PanelRow>
         );

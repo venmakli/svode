@@ -49,6 +49,6 @@ function snapshotFromDto(dto: AttachmentsSnapshotDto): AttachmentsSnapshot {
     diagnostics: dto.diagnostics,
     generation: dto.generation,
     owner: dto.owner,
-    rows: dto.items.map((item) => ({ ...item })),
+    items: dto.items.map((item) => ({ ...item })),
   };
 }

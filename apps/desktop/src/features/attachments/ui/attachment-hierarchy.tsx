@@ -6,38 +6,38 @@ import * as m from "@/paraglide/messages.js";
 import type { CollectionPresentationLayout } from "@/features/collection";
 import type { useAttachmentsSource } from "../hooks/use-attachments-source";
 import type { AttachmentBranch } from "../model/source-session";
-import type { AttachmentRow } from "../model/types";
+import type { AttachmentItem } from "../model/types";
 
 export type AttachmentsSource = ReturnType<typeof useAttachmentsSource>;
 
 export function attachmentHierarchy(
   source: AttachmentsSource,
 ): Extract<
-  CollectionPresentationLayout<AttachmentRow>,
+  CollectionPresentationLayout<AttachmentItem>,
   { kind: "table" }
 >["hierarchy"] {
   return {
-    getLabel: (row) => row.displayName,
-    onToggle: (row) => {
-      if (row.ownerPath) source.toggle(row.ownerPath);
+    getLabel: (item) => item.displayName,
+    onToggle: (item) => {
+      if (item.ownerPath) source.toggle(item.ownerPath);
     },
-    getBranch: (row) => {
-      if (!row.ownerPath || row.sourceShape !== "directory") return null;
-      if (row.hasChildren === false && !source.expanded.has(row.ownerPath))
+    getBranch: (item) => {
+      if (!item.ownerPath || item.sourceShape !== "directory") return null;
+      if (item.hasChildren === false && !source.expanded.has(item.ownerPath))
         return null;
-      const branch = source.branches.get(row.ownerPath);
+      const branch = source.branches.get(item.ownerPath);
       return {
-        expanded: source.expanded.has(row.ownerPath),
-        rows: branch?.snapshot?.rows ?? [],
+        expanded: source.expanded.has(item.ownerPath),
+        items: branch?.snapshot?.items ?? [],
         status:
           !branch ||
           branch.loading ||
           branch.error ||
-          !branch.snapshot?.rows.length ||
+          !branch.snapshot?.items.length ||
           branch.snapshot.diagnostics.length ? (
             <AttachmentBranchStatus
               branch={branch}
-              onRetry={() => void source.loadBranch(row.ownerPath!)}
+              onRetry={() => void source.loadBranch(item.ownerPath!)}
             />
           ) : undefined,
       };
@@ -73,7 +73,7 @@ export function AttachmentBranchStatus({
       {branch?.snapshot &&
       !branch.loading &&
       !branch.error &&
-      branch.snapshot.rows.length === 0 ? (
+      branch.snapshot.items.length === 0 ? (
         <Empty className="p-2">
           <EmptyHeader>
             <EmptyTitle>{m.attachments_branch_empty()}</EmptyTitle>

@@ -41,7 +41,7 @@ import {
   PanelsTopLeft,
 } from "lucide-react";
 import type { TreeNode } from "../model/types";
-import { getArtifactPresentationKind } from "@/features/artifact";
+import { getDirectoryPresentationKind } from "@/features/artifact";
 import {
   ContentDeleteDialog,
   useContentMenuHandlers,
@@ -163,7 +163,7 @@ export function FileTreeItem({
     opacity: isDragging ? 0.4 : undefined,
   };
 
-  const presentationKind = getArtifactPresentationKind({
+  const presentationKind = getDirectoryPresentationKind({
     hasSchema: node.has_schema,
     hasApp: node.has_app ?? false,
     hasPage: !bareFolder,

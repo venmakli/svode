@@ -75,7 +75,7 @@ export function createCollectionDetailControllerStore({
 
   /**
    * Runs transitions one after another. A quiet one, such as a new version
-   * of the shown row, does not mark the detail pending, so close stays
+   * of the shown item, does not mark the detail pending, so close stays
    * enabled and keeps focus.
    */
   function enqueue(
@@ -270,7 +270,7 @@ export function collectionDetailSelectionEquals(
   return (
     left.instanceKey === right.instanceKey &&
     left.presentationId === right.presentationId &&
-    left.rowId === right.rowId
+    left.itemId === right.itemId
   );
 }
 

@@ -20,7 +20,7 @@ import {
 } from "./presentation-chrome";
 
 export function CardPropertyFlow({
-  entry,
+  item,
   properties,
   actors,
   relationContext,
@@ -29,20 +29,20 @@ export function CardPropertyFlow({
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Page;
+  item: Page;
   properties: readonly CollectionPropertyDefinition<Page>[];
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   className?: string;
   mode?: "card" | "inline";
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
+  onUpdateField?: (item: Page, column: Column, value: unknown) => void;
 }) {
   const rendered = properties
     .map((property) => (
       <CardPropertyItem
         key={property.key}
-        entry={entry}
+        item={item}
         property={property}
         actors={actors}
         relationContext={relationContext}
@@ -64,7 +64,7 @@ export function CardPropertyFlow({
 }
 
 function CardPropertyItem({
-  entry,
+  item,
   property,
   actors,
   relationContext,
@@ -72,16 +72,16 @@ function CardPropertyItem({
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Page;
+  item: Page;
   property: CollectionPropertyDefinition<Page>;
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   mode: "card" | "inline";
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
+  onUpdateField?: (item: Page, column: Column, value: unknown) => void;
 }) {
   const standardColumn = resolveStandardPropertyColumn(property);
-  const value = property.getValue(entry);
+  const value = property.getValue(item);
   if (!standardColumn) return null;
   if (isEmptyValue(value) && standardColumn.type !== "boolean") return null;
 
@@ -118,15 +118,15 @@ function CardPropertyItem({
             value={value}
             invalid={validation.invalid}
             accessibilityLabel={
-              property.getAccessibilityLabel?.(entry) ??
-              `${property.label}: ${entry.meta.title}`
+              property.getAccessibilityLabel?.(item) ??
+              `${property.label}: ${item.meta.title}`
             }
             density="compact"
             actors={actors}
             relationContext={relationContext}
             onRequestActors={onRequestActors}
             onChange={(next) =>
-              void onUpdateField?.(entry, standardColumn, next)
+              void onUpdateField?.(item, standardColumn, next)
             }
           />
         ) : (

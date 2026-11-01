@@ -4,7 +4,7 @@ import type { Page } from "@/features/page";
 import type { GalleryViewProps } from "../../model/gallery-types";
 import type { GalleryNavigationKey } from "../../ui/gallery/types";
 import { titleFilter } from "../../lib/utils";
-import { entryParentDir } from "../../lib/entry-tree";
+import { itemParentDir } from "../../lib/item-tree";
 import {
   galleryCardCover,
   galleryCardWidth,
@@ -14,10 +14,10 @@ import {
   normalizeGalleryCardFields,
 } from "../../lib/gallery-view";
 import { useCollectionActors } from "../use-collection-actors";
-import { useCollectionEntryFieldSave } from "../use-collection-entry-field-save";
+import { useCollectionItemFieldSave } from "../use-collection-item-field-save";
 import { resolveGalleryCover } from "./resolve-gallery-cover";
-import { useGalleryEntries } from "./use-gallery-entries";
-import { useGalleryEntryActions } from "./use-gallery-entry-actions";
+import { useGalleryItems } from "./use-gallery-items";
+import { useGalleryItemActions } from "./use-gallery-item-actions";
 
 export function useGalleryViewRuntime({
   view,
@@ -45,8 +45,8 @@ export function useGalleryViewRuntime({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const { entries, setEntries, nestedCollectionPaths, loading, loadEntries } =
-    useGalleryEntries({
+  const { items, setItems, nestedCollectionPaths, loading, loadItems } =
+    useGalleryItems({
       collectionPath,
       previousCollectionPath,
       filters,
@@ -69,36 +69,35 @@ export function useGalleryViewRuntime({
   const coverFit = galleryCoverFit(view);
   const coverAspect = galleryCoverAspect(view);
   const resolveCover = useCallback(
-    (entry: Page) =>
+    (item: Page) =>
       resolveGalleryCover({
-        entry,
+        item,
         cardCover,
         schema,
         spacePath,
       }),
     [cardCover, schema, spacePath],
   );
-  const topLevelEntries = useMemo(
-    () =>
-      entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
-    [collectionPath, entries],
+  const topLevelItems = useMemo(
+    () => items.filter((item) => itemParentDir(item.path) === collectionPath),
+    [collectionPath, items],
   );
-  const filteredEntries = useMemo(
-    () => titleFilter(topLevelEntries, searchQuery),
-    [searchQuery, topLevelEntries],
+  const filteredItems = useMemo(
+    () => titleFilter(topLevelItems, searchQuery),
+    [searchQuery, topLevelItems],
   );
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
   const hasActorField = metaColumns.some((column) => column.type === "actor");
-  const { createEntry, reorderEntries } = useGalleryEntryActions({
+  const { createItem, reorderItems } = useGalleryItemActions({
     collectionPath,
     spacePath,
     projectPath,
-    entries,
-    topLevelEntries,
-    filteredEntries,
-    setEntries,
-    loadEntries,
+    items,
+    topLevelItems,
+    filteredItems,
+    setItems,
+    loadItems,
     onCreatePage,
   });
 
@@ -135,14 +134,14 @@ export function useGalleryViewRuntime({
   const handleFieldCommitError = useCallback(
     (error: unknown) => {
       console.warn("Failed to update gallery field:", error);
-      void loadEntries();
+      void loadItems();
     },
-    [loadEntries],
+    [loadItems],
   );
-  const { commitField } = useCollectionEntryFieldSave({
+  const { commitField } = useCollectionItemFieldSave({
     spacePath,
     projectPath,
-    setEntries,
+    setItems,
     onCommitError: handleFieldCommitError,
   });
 
@@ -160,17 +159,17 @@ export function useGalleryViewRuntime({
       setDraftValue("");
       return;
     }
-    const created = await createEntry(title, draftAsFolder, () => {
+    const created = await createItem(title, draftAsFolder, () => {
       setDraftOpen(false);
       setDraftValue("");
     });
     if (created) focusCard(created.path);
-  }, [createEntry, draftAsFolder, draftValue, focusCard]);
+  }, [createItem, draftAsFolder, draftValue, focusCard]);
 
   const openCard = useCallback(
-    (entry: Page, nestedCollection: boolean) => {
-      if (nestedCollection) onOpenNestedPeek(entry);
-      else onActivateItem(entry);
+    (item: Page, nestedCollection: boolean) => {
+      if (nestedCollection) onOpenNestedPeek(item);
+      else onActivateItem(item);
     },
     [onActivateItem, onOpenNestedPeek],
   );
@@ -182,7 +181,7 @@ export function useGalleryViewRuntime({
 
   const moveFocus = useCallback(
     (path: string, key: GalleryNavigationKey) => {
-      const index = filteredEntries.findIndex((entry) => entry.path === path);
+      const index = filteredItems.findIndex((item) => item.path === path);
       if (index < 0) return;
       const columns = currentColumnCount();
       const offset =
@@ -199,20 +198,20 @@ export function useGalleryViewRuntime({
         key === "Home"
           ? 0
           : key === "End"
-            ? filteredEntries.length - 1
+            ? filteredItems.length - 1
             : index + offset;
-      const next = filteredEntries[nextIndex];
+      const next = filteredItems[nextIndex];
       if (next) focusCard(next.path);
     },
-    [currentColumnCount, filteredEntries, focusCard],
+    [currentColumnCount, filteredItems, focusCard],
   );
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       if (hasSort || !event.over || event.active.id === event.over.id) return;
-      await reorderEntries(event);
+      await reorderItems(event);
     },
-    [hasSort, reorderEntries],
+    [hasSort, reorderItems],
   );
 
   const openDraft = useCallback((asFolder: boolean) => {
@@ -249,7 +248,7 @@ export function useGalleryViewRuntime({
     draftOpen,
     draftRef,
     draftValue,
-    filteredEntries,
+    filteredItems,
     focusedPath,
     gridRef,
     handleDragEnd,
@@ -266,6 +265,6 @@ export function useGalleryViewRuntime({
     resolveCover,
     setDraftValue,
     setFocusedPath,
-    topLevelEntries,
+    topLevelItems,
   };
 }

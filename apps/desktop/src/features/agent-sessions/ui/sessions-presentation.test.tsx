@@ -66,7 +66,7 @@ const withTerminal = listedSession({
     lastOutputAt: "2026-09-29T13:00:00Z",
   },
 });
-const rows: AgentSession[] = [done, working, waiting, withTerminal];
+const items: AgentSession[] = [done, working, waiting, withTerminal];
 
 function routineLink(
   launchId: string,
@@ -116,7 +116,7 @@ function descriptor() {
   return createAgentSessionsPresentationDescriptor({
     actions: actions(),
     agents,
-    rows,
+    items,
   });
 }
 
@@ -184,26 +184,28 @@ test("filter, sort and search by routine", () => {
     query: query({
       filters: [{ propertyKey: "routine", operator: "eq", value: "Review" }],
     }),
-    rows,
+    items,
   });
   const sorted = applyCollectionQuery({
     descriptor: presentation,
     query: query({ sort: [{ propertyKey: "routine", direction: "asc" }] }),
-    rows,
+    items,
   });
   const searched = applyCollectionQuery({
     descriptor: presentation,
     query: query({ search: "nightly" }),
-    rows,
+    items,
   });
 
-  expect(byRoutine.rows.map((row) => row.id)).toEqual(["codex:done"]);
+  expect(byRoutine.items.map((item) => item.id)).toEqual(["codex:done"]);
   // A select sorts by option order, like every select property.
-  expect(sorted.rows.slice(0, 2).map((row) => row.id)).toEqual([
+  expect(sorted.items.slice(0, 2).map((item) => item.id)).toEqual([
     "codex:done",
     "claude-code:working",
   ]);
-  expect(searched.rows.map((row) => row.id)).toEqual(["claude-code:working"]);
+  expect(searched.items.map((item) => item.id)).toEqual([
+    "claude-code:working",
+  ]);
 });
 
 test("every status value is shown by the Status property, including Done", () => {
@@ -229,11 +231,11 @@ test("default order is waiting, then working, then last activity", () => {
   const ordered = applyCollectionQuery({
     descriptor: descriptor(),
     query: EMPTY_COLLECTION_QUERY,
-    rows,
+    items,
   });
 
   // An open terminal does not move a session: only its turns do (DF-216).
-  expect(ordered.rows.map((row) => row.id)).toEqual([
+  expect(ordered.items.map((item) => item.id)).toEqual([
     "codex:waiting",
     "claude-code:working",
     "codex:done",
@@ -248,7 +250,7 @@ test("filters, sorts and search use status, agent and last activity", () => {
     query: query({
       filters: [{ propertyKey: "status", operator: "eq", value: "Working" }],
     }),
-    rows,
+    items,
   });
   const byAgent = applyCollectionQuery({
     descriptor: presentation,
@@ -256,22 +258,24 @@ test("filters, sorts and search use status, agent and last activity", () => {
       filters: [{ propertyKey: "agent", operator: "eq", value: "Codex" }],
       sort: [{ propertyKey: "last-activity", direction: "asc" }],
     }),
-    rows,
+    items,
   });
   const searched = applyCollectionQuery({
     descriptor: presentation,
     query: query({ search: "claude" }),
-    rows,
+    items,
   });
   const searchedStatus = applyCollectionQuery({
     descriptor: presentation,
     query: query({ search: "approval" }),
-    rows,
+    items,
   });
 
-  expect(byStatus.rows.map((row) => row.id)).toEqual(["claude-code:working"]);
+  expect(byStatus.items.map((item) => item.id)).toEqual([
+    "claude-code:working",
+  ]);
   // An open terminal's output does not count: the session log does (DF-216).
-  expect(byAgent.rows.map((row) => row.id)).toEqual([
+  expect(byAgent.items.map((item) => item.id)).toEqual([
     "codex:terminal",
     "codex:waiting",
     "codex:done",
@@ -282,11 +286,15 @@ test("filters, sorts and search use status, agent and last activity", () => {
   expect(lastActivity?.getValue(withTerminal)).toBe(
     withTerminal.lastActivityAt,
   );
-  expect(searched.rows.map((row) => row.id)).toEqual(["claude-code:working"]);
-  expect(searchedStatus.rows.map((row) => row.id)).toEqual(["codex:waiting"]);
+  expect(searched.items.map((item) => item.id)).toEqual([
+    "claude-code:working",
+  ]);
+  expect(searchedStatus.items.map((item) => item.id)).toEqual([
+    "codex:waiting",
+  ]);
 });
 
-test("row actions follow the session: close only an open terminal, copy and open only when available", () => {
+test("item actions follow the session: close only an open terminal, copy and open only when available", () => {
   const calls: string[] = [];
   const presentation = createAgentSessionsPresentationDescriptor({
     actions: actions({
@@ -295,10 +303,10 @@ test("row actions follow the session: close only an open terminal, copy and open
       onOpenRoutine: (routine) => calls.push(`routine:${routine.routineId}`),
     }),
     agents,
-    rows,
+    items,
   });
   const visible = (session: AgentSession) =>
-    (presentation.rowActions ?? [])
+    (presentation.itemActions ?? [])
       .filter((action) => action.isVisible?.(session) ?? true)
       .map((action) => action.id);
 
@@ -310,12 +318,12 @@ test("row actions follow the session: close only an open terminal, copy and open
   ]);
   // A deleted routine shows its name without the way to it.
   expect(visible(working)).toEqual([]);
-  for (const action of presentation.rowActions ?? []) {
+  for (const action of presentation.itemActions ?? []) {
     if (action.isVisible?.(withTerminal) ?? true) {
       void action.run(withTerminal);
     }
   }
-  const openRoutine = presentation.rowActions?.find(
+  const openRoutine = presentation.itemActions?.find(
     (action) => action.id === "open-routine",
   );
   void openRoutine?.run(done);
@@ -325,7 +333,7 @@ test("row actions follow the session: close only an open terminal, copy and open
   ]);
 });
 
-test("pin and unpin follow the pin state of each row", () => {
+test("pin and unpin follow the pin state of each item", () => {
   const toggled: string[] = [];
   const presentation = createAgentSessionsPresentationDescriptor({
     actions: actions({
@@ -335,9 +343,9 @@ test("pin and unpin follow the pin state of each row", () => {
       onTogglePin: (session) => toggled.push(session.id),
     }),
     agents,
-    rows,
+    items,
   });
-  const pin = presentation.rowActions?.find((action) => action.id === "pin");
+  const pin = presentation.itemActions?.find((action) => action.id === "pin");
 
   expect(pin?.isVisible?.(withTerminal)).toBe(false);
   expect(pin?.getLabel?.(done)).toBe("Unpin");
@@ -347,7 +355,7 @@ test("pin and unpin follow the pin state of each row", () => {
   expect(toggled).toEqual([done.id]);
 });
 
-test("keep in Now shows only for rows that are neither pinned nor kept", () => {
+test("keep in Now shows only for items that are neither pinned nor kept", () => {
   const kept: string[] = [];
   const presentation = createAgentSessionsPresentationDescriptor({
     actions: actions({
@@ -355,9 +363,9 @@ test("keep in Now shows only for rows that are neither pinned nor kept", () => {
       onKeep: (session) => kept.push(session.id),
     }),
     agents,
-    rows,
+    items,
   });
-  const keep = presentation.rowActions?.find((action) => action.id === "keep");
+  const keep = presentation.itemActions?.find((action) => action.id === "keep");
 
   expect(keep?.label).toBe("Keep in Now");
   expect(keep?.isVisible?.(working)).toBe(true);
@@ -374,21 +382,21 @@ test("collection states: loading, blocking error, partial source and empty Space
 
   expect(
     toAgentSessionsPresentationState(
-      { result: null, error: null, refreshing: false, rows: [] },
+      { result: null, error: null, refreshing: false, items: [] },
       agents,
       recovery,
     ).phase,
   ).toBe("initial");
   expect(
     toAgentSessionsPresentationState(
-      { result: null, error: "boom", refreshing: false, rows: [] },
+      { result: null, error: "boom", refreshing: false, items: [] },
       agents,
       recovery,
     ).phase,
   ).toBe("blocking_error");
   expect(
     toAgentSessionsPresentationState(
-      { result: listResult([]), error: null, refreshing: false, rows: [] },
+      { result: listResult([]), error: null, refreshing: false, items: [] },
       createAgentAdapterDictionary([], false),
       recovery,
     ).phase,
@@ -406,13 +414,13 @@ test("collection states: loading, blocking error, partial source and empty Space
     ],
   };
   const partialState = toAgentSessionsPresentationState(
-    { result: partial, error: null, refreshing: false, rows: [done] },
+    { result: partial, error: null, refreshing: false, items: [done] },
     agents,
     recovery,
   );
   expect(partialState.phase).toBe("ready");
   if (partialState.phase !== "ready") return;
-  expect(partialState.rows).toEqual([done]);
+  expect(partialState.items).toEqual([done]);
   expect(partialState.diagnostics).toEqual([]);
   expect(
     agentSessionsSourceProblem({ result: partial, error: null }, agents),
@@ -429,14 +437,14 @@ test("collection states: loading, blocking error, partial source and empty Space
       result: listResult([done]),
       error: "offline",
       refreshing: false,
-      rows: [done],
+      items: [done],
     },
     agents,
     recovery,
   );
   expect(refreshFailed.phase).toBe("ready");
   if (refreshFailed.phase !== "ready") return;
-  expect(refreshFailed.rows).toEqual([done]);
+  expect(refreshFailed.items).toEqual([done]);
   expect(
     agentSessionsSourceProblem(
       { result: listResult([done]), error: "offline" },

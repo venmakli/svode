@@ -18,7 +18,7 @@ export interface ActorSource {
   line: number | null;
 }
 
-export interface ActorCatalogRow {
+export interface ActorCatalogItem {
   canonicalEmail: string;
   displayName: string;
   contribution: ActorContribution;
@@ -40,7 +40,7 @@ export interface ActorDiagnostic {
 export interface ActorCatalogSnapshot {
   repositoryId: string;
   generation: number;
-  rows: readonly ActorCatalogRow[];
+  items: readonly ActorCatalogItem[];
   diagnostics: readonly ActorDiagnostic[];
   shallow: boolean;
 }

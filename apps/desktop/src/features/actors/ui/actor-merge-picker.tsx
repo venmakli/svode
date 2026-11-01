@@ -8,17 +8,17 @@ import {
 } from "@/components/ui/command";
 import * as m from "@/paraglide/messages.js";
 
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import { ActorAvatar } from "./actor-avatar";
 
 export function ActorMergePicker({
   pending,
-  rows,
+  items,
   selectedEmail,
   onSelect,
 }: {
   pending: boolean;
-  rows: readonly ActorCatalogRow[];
+  items: readonly ActorCatalogItem[];
   selectedEmail: string | null;
   onSelect(canonicalEmail: string): void;
 }) {
@@ -33,19 +33,19 @@ export function ActorMergePicker({
         <CommandList>
           <CommandEmpty>{m.actors_mutation_merge_empty()}</CommandEmpty>
           <CommandGroup heading={m.actors_mutation_merge_target_label()}>
-            {rows.map((row) => (
+            {items.map((item) => (
               <CommandItem
-                key={row.canonicalEmail}
+                key={item.canonicalEmail}
                 disabled={pending}
-                value={`${row.displayName} ${row.canonicalEmail}`}
-                data-checked={selectedEmail === row.canonicalEmail}
-                onSelect={() => onSelect(row.canonicalEmail)}
+                value={`${item.displayName} ${item.canonicalEmail}`}
+                data-checked={selectedEmail === item.canonicalEmail}
+                onSelect={() => onSelect(item.canonicalEmail)}
               >
-                <ActorAvatar actor={row} size="sm" />
+                <ActorAvatar actor={item} size="sm" />
                 <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{row.displayName}</span>
+                  <span className="truncate">{item.displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {row.canonicalEmail}
+                    {item.canonicalEmail}
                   </span>
                 </span>
               </CommandItem>

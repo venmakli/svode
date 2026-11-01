@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import {
   listenCollectionDataChanges,
-  listenCollectionEntryChanges,
+  listenCollectionItemChanges,
 } from "../api";
 
 const COLLECTION_REFRESH_DEBOUNCE_MS = 75;
@@ -10,27 +10,27 @@ export function useCollectionRefreshEvents({
   spacePath,
   collectionPath,
   refreshSchema,
-  refreshEntries,
+  refreshItems,
 }: {
   spacePath: string;
   collectionPath: string;
   refreshSchema: () => Promise<void> | void;
-  refreshEntries: () => void;
+  refreshItems: () => void;
 }) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
     let timer: number | null = null;
     const pending = {
-      entries: false,
+      items: false,
       schema: false,
     };
 
     async function flush() {
       const schemaChanged = pending.schema;
-      const entriesChanged = pending.entries || schemaChanged;
+      const itemsChanged = pending.items || schemaChanged;
       pending.schema = false;
-      pending.entries = false;
+      pending.items = false;
 
       try {
         if (schemaChanged) await refreshSchema();
@@ -39,15 +39,15 @@ export function useCollectionRefreshEvents({
           console.warn("Failed to refresh collection schema:", error);
         }
       } finally {
-        if (!disposed && entriesChanged) {
-          refreshEntries();
+        if (!disposed && itemsChanged) {
+          refreshItems();
         }
       }
     }
 
-    function schedule(kind: "entries" | "schema") {
+    function schedule(kind: "items" | "schema") {
       if (kind === "schema") pending.schema = true;
-      else pending.entries = true;
+      else pending.items = true;
       if (timer !== null) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = null;
@@ -75,26 +75,26 @@ export function useCollectionRefreshEvents({
       if (timer !== null) window.clearTimeout(timer);
       unlisten?.();
     };
-  }, [collectionPath, refreshEntries, refreshSchema, spacePath]);
+  }, [collectionPath, refreshItems, refreshSchema, spacePath]);
 }
 
-export function useCollectionEntryEvents({
+export function useCollectionItemEvents({
   spacePath,
   collectionPath,
-  onEntriesChanged,
+  onItemsChanged,
 }: {
   spacePath: string;
   collectionPath: string;
-  onEntriesChanged: () => void;
+  onItemsChanged: () => void;
 }) {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
 
-    listenCollectionEntryChanges({
+    listenCollectionItemChanges({
       spacePath,
       collectionPath,
-      onEntriesChanged,
+      onItemsChanged,
     })
       .then((nextUnlisten) => {
         if (disposed) nextUnlisten();
@@ -102,7 +102,7 @@ export function useCollectionEntryEvents({
       })
       .catch((error) => {
         if (!disposed) {
-          console.warn("Failed to listen for collection entry changes:", error);
+          console.warn("Failed to listen for collection item changes:", error);
         }
       });
 
@@ -110,5 +110,5 @@ export function useCollectionEntryEvents({
       disposed = true;
       unlisten?.();
     };
-  }, [collectionPath, onEntriesChanged, spacePath]);
+  }, [collectionPath, onItemsChanged, spacePath]);
 }

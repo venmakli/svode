@@ -3,7 +3,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import type { Page } from "@/features/page";
 import type { ListViewProps } from "../../model/list-types";
 import { titleFilter } from "../../lib/utils";
-import { entryParentDir } from "../../lib/entry-tree";
+import { itemParentDir } from "../../lib/item-tree";
 import {
   flattenListRows,
   listDensity,
@@ -11,9 +11,9 @@ import {
   normalizeListCardFields,
 } from "../../lib/list-view";
 import { useCollectionActors } from "../use-collection-actors";
-import { useCollectionEntryFieldSave } from "../use-collection-entry-field-save";
-import { useListEntries } from "./use-list-entries";
-import { useListEntryActions } from "./use-list-entry-actions";
+import { useCollectionItemFieldSave } from "../use-collection-item-field-save";
+import { useListItems } from "./use-list-items";
+import { useListItemActions } from "./use-list-item-actions";
 
 export function useListViewRuntime({
   view,
@@ -41,8 +41,8 @@ export function useListViewRuntime({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const { actors, loadActors } = useCollectionActors(spacePath);
-  const { entries, setEntries, nestedCollectionPaths, loading, loadEntries } =
-    useListEntries({
+  const { items, setItems, nestedCollectionPaths, loading, loadItems } =
+    useListItems({
       collectionPath,
       previousCollectionPath,
       filters,
@@ -61,43 +61,36 @@ export function useListViewRuntime({
     () => listMetaColumns(cardFields, schema),
     [cardFields, schema],
   );
-  const topLevelEntries = useMemo(
-    () =>
-      entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
-    [collectionPath, entries],
+  const topLevelItems = useMemo(
+    () => items.filter((item) => itemParentDir(item.path) === collectionPath),
+    [collectionPath, items],
   );
   const filteredTopLevel = useMemo(
-    () => titleFilter(topLevelEntries, searchQuery),
-    [searchQuery, topLevelEntries],
+    () => titleFilter(topLevelItems, searchQuery),
+    [searchQuery, topLevelItems],
   );
   const rows = useMemo(
     () =>
       flattenListRows({
         parents: filteredTopLevel,
-        entries,
+        items,
         expanded,
         collectionPath,
         nestedCollectionPaths,
       }),
-    [
-      collectionPath,
-      entries,
-      expanded,
-      filteredTopLevel,
-      nestedCollectionPaths,
-    ],
+    [collectionPath, items, expanded, filteredTopLevel, nestedCollectionPaths],
   );
   const hasSort = sort.length > 0;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
   const hasActorField = metaColumns.some((column) => column.type === "actor");
-  const { createEntry, reorderEntries } = useListEntryActions({
+  const { createItem, reorderItems } = useListItemActions({
     collectionPath,
     spacePath,
     projectPath,
-    entries,
+    items,
     rows,
-    setEntries,
-    loadEntries,
+    setItems,
+    loadItems,
     onCreatePage,
   });
 
@@ -134,14 +127,14 @@ export function useListViewRuntime({
   const handleFieldCommitError = useCallback(
     (error: unknown) => {
       console.warn("Failed to update list field:", error);
-      void loadEntries();
+      void loadItems();
     },
-    [loadEntries],
+    [loadItems],
   );
-  const { commitField } = useCollectionEntryFieldSave({
+  const { commitField } = useCollectionItemFieldSave({
     spacePath,
     projectPath,
-    setEntries,
+    setItems,
     onCommitError: handleFieldCommitError,
   });
 
@@ -159,35 +152,35 @@ export function useListViewRuntime({
       setComposerValue("");
       return;
     }
-    const created = await createEntry(title, composerAsFolder, () => {
+    const created = await createItem(title, composerAsFolder, () => {
       setComposerOpen(false);
       setComposerValue("");
     });
     if (created) focusRow(created.path);
-  }, [composerAsFolder, composerValue, createEntry, focusRow]);
+  }, [composerAsFolder, composerValue, createItem, focusRow]);
 
-  const toggleRow = useCallback((entry: Page) => {
+  const toggleRow = useCallback((item: Page) => {
     setExpanded((current) => {
       const next = new Set(current);
-      if (next.has(entry.path)) next.delete(entry.path);
-      else next.add(entry.path);
+      if (next.has(item.path)) next.delete(item.path);
+      else next.add(item.path);
       return next;
     });
   }, []);
 
   const openRow = useCallback(
-    (entry: Page, nestedCollection: boolean) => {
-      if (nestedCollection) onOpenNestedPeek(entry);
-      else onActivateItem(entry);
+    (item: Page, nestedCollection: boolean) => {
+      if (nestedCollection) onOpenNestedPeek(item);
+      else onActivateItem(item);
     },
     [onActivateItem, onOpenNestedPeek],
   );
 
   const moveFocus = useCallback(
     (path: string, offset: number) => {
-      const index = rows.findIndex((row) => row.entry.path === path);
+      const index = rows.findIndex((row) => row.item.path === path);
       const next = rows[index + offset];
-      if (next) focusRow(next.entry.path);
+      if (next) focusRow(next.item.path);
     },
     [focusRow, rows],
   );
@@ -195,9 +188,9 @@ export function useListViewRuntime({
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       if (hasSort || !event.over || event.active.id === event.over.id) return;
-      await reorderEntries(event);
+      await reorderItems(event);
     },
-    [hasSort, reorderEntries],
+    [hasSort, reorderItems],
   );
 
   const openComposer = useCallback((asFolder: boolean) => {
@@ -247,7 +240,7 @@ export function useListViewRuntime({
     rows,
     setComposerValue,
     setFocusedPath,
-    topLevelEntries,
+    topLevelItems,
     toggleRow,
   };
 }

@@ -13,7 +13,7 @@ const snapshot: ActorCatalogSnapshot = {
   diagnostics: [],
   generation: 1,
   repositoryId: "/repo",
-  rows: [],
+  items: [],
   shallow: false,
 };
 

@@ -1,18 +1,18 @@
 import type { Page, PageCover } from "@/features/page";
 import type { CollectionSchema } from "@/features/properties";
 import {
-  resolveEntryImageSource,
+  resolveItemImageSource,
   resolveSpaceRelativeImageSource,
 } from "../../api";
 import type { GalleryResolvedCover } from "../../model/gallery-cover-types";
 
 export function resolveGalleryCover({
-  entry,
+  item,
   cardCover,
   schema,
   spacePath,
 }: {
-  entry: Page;
+  item: Page;
   cardCover: string[];
   schema: CollectionSchema;
   spacePath: string;
@@ -21,21 +21,23 @@ export function resolveGalleryCover({
 
   for (const source of cardCover) {
     if (source === "cover") {
-      const cover = resolveSystemCover(entry.meta.cover, spacePath);
+      const cover = resolveSystemCover(item.meta.cover, spacePath);
       if (cover) return cover;
       continue;
     }
-    if (source === "icon" && entry.meta.icon) {
-      return { kind: "icon", value: entry.meta.icon };
+    if (source === "icon" && item.meta.icon) {
+      return { kind: "icon", value: item.meta.icon };
     }
-    if (source === "title" && entry.meta.title.trim()) {
+    if (source === "title" && item.meta.title.trim()) {
       return {
         kind: "initial",
-        value: entry.meta.title.trim().slice(0, 1).toUpperCase(),
+        value: item.meta.title.trim().slice(0, 1).toUpperCase(),
       };
     }
 
-    const column = schema.columns.find((item) => item.name === source);
+    const column = schema.columns.find(
+      (candidate) => candidate.name === source,
+    );
     if (
       !column ||
       column.newer ||
@@ -43,14 +45,14 @@ export function resolveGalleryCover({
     ) {
       continue;
     }
-    const value = entry.meta.extra?.[source];
+    const value = item.meta.extra?.[source];
     if (typeof value !== "string" || !isRenderableImagePath(value)) continue;
     return {
       kind: "image",
-      src: resolveEntryImageSource({
+      src: resolveItemImageSource({
         value,
         spacePath,
-        entryPath: entry.path,
+        itemPath: item.path,
       }),
       position: 50,
     };

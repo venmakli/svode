@@ -101,7 +101,7 @@ function Harness({
       calls.push(`focus-create:${asFolder}`);
       return false;
     },
-    createEntry: async (asFolder) => {
+    createItem: async (asFolder) => {
       calls.push(`create:${Boolean(asFolder)}`);
       return {
         body: "",

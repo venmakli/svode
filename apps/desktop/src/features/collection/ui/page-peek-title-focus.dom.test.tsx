@@ -114,8 +114,8 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
   const { ContextMenu, ContextMenuContent, ContextMenuTrigger } =
     await import("@/components/ui/context-menu");
   const { PagePeekSheet } = await import("./page-peek-sheet");
-  const { CollectionEntryContextMenuItems, CollectionEntryMenuProvider } =
-    await import("./entry-context-menu");
+  const { CollectionItemContextMenuItems, CollectionItemMenuProvider } =
+    await import("./item-context-menu");
 
   /** The Peek host's header: the item's title and the Peek's actions. */
   function PeekHeader({ context }: { context: ScopePeekContext }) {
@@ -203,14 +203,14 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
   function RowWithPeek() {
     const [target, setTarget] = useState<PagePeekTarget | null>(null);
     return (
-      <CollectionEntryMenuProvider
+      <CollectionItemMenuProvider
         value={{
           readOnly: false,
           spacePath: "/space",
           pinItem: () => null,
-          handlers: (entry) => ({
+          handlers: (handled) => ({
             rename: () =>
-              setTarget({ page: entry, nested: false, focusTitle: true }),
+              setTarget({ page: handled, nested: false, focusTitle: true }),
           }),
         }}
       >
@@ -219,14 +219,14 @@ if (process.env.SVODE_PEEK_TITLE_FOCUS_DOM !== "1") {
             <div data-row>{item.meta.title}</div>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <CollectionEntryContextMenuItems
-              entry={item}
+            <CollectionItemContextMenuItems
+              item={item}
               onOpenInPeek={() => {}}
             />
           </ContextMenuContent>
         </ContextMenu>
         {peekSheet(target)}
-      </CollectionEntryMenuProvider>
+      </CollectionItemMenuProvider>
     );
   }
 

@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 
-import type { RoutineRow } from "./types";
+import type { RoutineItem } from "./types";
 import { findRoutineNameConflictPath, routineNameKey } from "./routine-name";
 
 const existing = {
   definitionPath: ".routines/quarterly-review.md",
   id: "routine:existing",
   name: "Quarterly Review",
-} as RoutineRow;
+} as RoutineItem;
 
 test("routine name key normalizes compatibility, whitespace, and case", () => {
   expect(routineNameKey("  ＱＵＡＲＴＥＲＬＹ\u{2003}review ")).toBe(
@@ -16,7 +16,7 @@ test("routine name key normalizes compatibility, whitespace, and case", () => {
   expect(routineNameKey("Resume") === routineNameKey("Résumé")).toBe(false);
 });
 
-test("routine name availability excludes only the current row", () => {
+test("routine name availability excludes only the current item", () => {
   expect(findRoutineNameConflictPath("quarterly review", [existing])).toBe(
     existing.definitionPath,
   );

@@ -22,7 +22,7 @@ import {
   type ActorActivityResource,
   useActorActivity,
 } from "../hooks/use-actor-activity";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import { ActorActivityHeatmap } from "./actor-activity-heatmap";
 import { ActorActivityTimeline } from "./actor-activity-timeline";
 
@@ -30,7 +30,7 @@ export function ActorActivityProfile({
   actor,
   spacePath,
 }: {
-  actor: ActorCatalogRow;
+  actor: ActorCatalogItem;
   spacePath: string;
 }) {
   const activity = useActorActivity({

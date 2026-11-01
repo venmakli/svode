@@ -4,33 +4,33 @@ import type {
   CollectionQueryState,
 } from "./types";
 
-export interface CollectionVisibleRow<Row> {
-  row: Row;
+export interface CollectionVisibleItem<Item> {
+  item: Item;
   ancestors: readonly string[];
 }
 
-export function collectionVisibleRows<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
-  roots: readonly Row[],
+export function collectionVisibleItems<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
+  roots: readonly Item[],
   query: CollectionQueryState,
-): CollectionVisibleRow<Row>[] {
+): CollectionVisibleItem<Item>[] {
   const hierarchy =
     descriptor.layout.kind === "table"
       ? descriptor.layout.hierarchy
       : undefined;
-  const result: CollectionVisibleRow<Row>[] = [];
-  const visit = (rows: readonly Row[], ancestors: readonly string[]) => {
-    for (const row of rows) {
-      const id = descriptor.getRowId(row);
+  const result: CollectionVisibleItem<Item>[] = [];
+  const visit = (items: readonly Item[], ancestors: readonly string[]) => {
+    for (const item of items) {
+      const id = descriptor.getItemId(item);
       if (ancestors.includes(id)) continue;
-      result.push({ row, ancestors });
-      const branch = hierarchy?.getBranch(row);
+      result.push({ item, ancestors });
+      const branch = hierarchy?.getBranch(item);
       if (branch?.expanded) {
         const children = applyCollectionQuery({
           descriptor,
-          rows: branch.rows,
+          items: branch.items,
           query: { ...query, search: "", filters: [] },
-        }).rows;
+        }).items;
         visit(children, [...ancestors, id]);
       }
     }

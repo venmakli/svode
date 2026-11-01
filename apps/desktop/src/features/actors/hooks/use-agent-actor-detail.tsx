@@ -9,10 +9,10 @@ import { LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
-  useCollectionDetailRowBinding,
+  useCollectionDetailItemBinding,
   type CollectionDetailContent,
   type CollectionDetailController,
-  type CollectionDetailRowBinding,
+  type CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 import {
   RepositoryAccessInlineRecovery,
@@ -27,10 +27,10 @@ import { createAgentActorDraft } from "../model/agent-actor-draft";
 import type {
   AgentActorAgentOption,
   AgentActorDraft,
-  AgentActorRow,
+  AgentActorItem,
 } from "../model/agent-actor-types";
 import { AgentActorDetail } from "../ui/agent-actor-detail";
-import { agentActorRowId } from "../ui/agent-actors-presentation";
+import { agentActorItemId } from "../ui/agent-actors-presentation";
 import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
 export function useAgentActorDetail({
@@ -43,7 +43,7 @@ export function useAgentActorDetail({
   mutationPending,
   offers,
   readOnly = false,
-  rows,
+  items,
   setEditSession,
   onOpenAgentSettings,
   onRecheckOffers,
@@ -63,17 +63,17 @@ export function useAgentActorDetail({
   offers: ChatAgents | null;
   readOnly?: boolean;
   /** The agents of the ready catalog; null until it is read. */
-  rows: readonly AgentActorRow[] | null;
+  items: readonly AgentActorItem[] | null;
   setEditSession: Dispatch<SetStateAction<AgentActorEditSession | null>>;
   onOpenAgentSettings(): void;
   onRecheckOffers(): void;
-}): CollectionDetailRowBinding<AgentActorRow> {
+}): CollectionDetailItemBinding<AgentActorItem> {
   const createReadOnlyDetail = useCallback(
-    (row: AgentActorRow): CollectionDetailContent => ({
+    (item: AgentActorItem): CollectionDetailContent => ({
       content: (
         <AgentActorDetail
           agents={agents}
-          draft={createAgentActorDraft(row.ownerPath, row)}
+          draft={createAgentActorDraft(item.ownerPath, item)}
           editMode={false}
           offers={offers}
           onChange={() => undefined}
@@ -85,27 +85,27 @@ export function useAgentActorDetail({
       description: (
         <span className="sr-only">{m.agent_actors_detail_description()}</span>
       ),
-      title: detailTitle(row),
+      title: detailTitle(item),
     }),
     [agents, offers, onOpenAgentSettings, onRecheckOffers],
   );
-  const findRow = useMemo(
+  const findItem = useMemo(
     () =>
-      rows
-        ? (selection: { rowId: string }) =>
-            rows.find((row) => agentActorRowId(row) === selection.rowId)
+      items
+        ? (selection: { itemId: string }) =>
+            items.find((item) => agentActorItemId(item) === selection.itemId)
         : null,
-    [rows],
+    [items],
   );
-  const detail = useCollectionDetailRowBinding({
+  const detail = useCollectionDetailItemBinding({
     controller: detailController,
     createContent: createReadOnlyDetail,
-    findRow,
+    findItem,
   });
 
   useEffect(() => {
     if (!editSession || !detailController) return;
-    const selection = detailSelection(instanceKey, editSession.row);
+    const selection = detailSelection(instanceKey, editSession.item);
     const session = editSession;
     const accessBlocked =
       Boolean(accessRecovery?.open) &&
@@ -149,7 +149,7 @@ export function useAgentActorDetail({
               onRecheckOffers={onRecheckOffers}
               onSave={(draft) => {
                 if (readOnly) return;
-                void applyMutation("update", editSession.row.ownerPath, draft);
+                void applyMutation("update", editSession.item.ownerPath, draft);
               }}
             />
             {accessBlocked ? (
@@ -174,7 +174,7 @@ export function useAgentActorDetail({
                 accessRecovery?.close();
                 editSession.guard.dirty = false;
                 setEditSession(null);
-                void detail.open(editSession.row, selection);
+                void detail.open(editSession.item, selection);
               }}
             >
               {accessBlocked
@@ -204,7 +204,7 @@ export function useAgentActorDetail({
         ),
         layout: "form",
         selection,
-        title: detailTitle(editSession.row),
+        title: detailTitle(editSession.item),
       })
       .then((opened) => {
         if (!opened) {
@@ -230,27 +230,27 @@ export function useAgentActorDetail({
   return detail;
 }
 
-function detailSelection(instanceKey: string, row: AgentActorRow) {
+function detailSelection(instanceKey: string, item: AgentActorItem) {
   return {
     instanceKey,
     presentationId: "agents",
-    rowId: agentActorRowId(row),
+    itemId: agentActorItemId(item),
   };
 }
 
-function detailTitle(row: AgentActorRow) {
+function detailTitle(item: AgentActorItem) {
   return (
     <span className="flex min-w-0 items-center gap-3">
       <AgentAvatar shape="square" size="lg" />
       <span className="flex min-w-0 flex-col text-left">
-        <span className="truncate">{row.name}</span>
-        {row.description ? (
+        <span className="truncate">{item.name}</span>
+        {item.description ? (
           <span className="truncate text-sm font-normal text-muted-foreground">
-            {row.description}
+            {item.description}
           </span>
         ) : null}
         <span className="truncate text-sm font-normal text-muted-foreground">
-          {m.agent_actors_owner({ owner: row.ownerLabel })}
+          {m.agent_actors_owner({ owner: item.ownerLabel })}
         </span>
       </span>
     </span>

@@ -1,4 +1,4 @@
-import { getArtifactPresentationKind } from "@/features/artifact";
+import { getDirectoryPresentationKind } from "@/features/artifact";
 import type {
   CollectionActivationContext,
   CollectionCreateCapability,
@@ -11,7 +11,7 @@ import {
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
-import type { AttachmentRow, AttachmentsSourceState } from "./types";
+import type { AttachmentItem, AttachmentsSourceState } from "./types";
 
 export const ATTACHMENTS_PRESENTATION_ID = "all";
 
@@ -22,24 +22,24 @@ export function createAttachmentsPresentationDescriptor({
   hierarchy,
 }: {
   hierarchy?: Extract<
-    CollectionPresentationDescriptor<AttachmentRow>["layout"],
+    CollectionPresentationDescriptor<AttachmentItem>["layout"],
     { kind: "table" }
   >["hierarchy"];
-  renderLeading?: (row: AttachmentRow) => ReactNode;
+  renderLeading?: (item: AttachmentItem) => ReactNode;
   create?: CollectionCreateCapability;
   onActivate(
-    row: AttachmentRow,
+    item: AttachmentItem,
     context: CollectionActivationContext,
   ): void | Promise<void>;
-}): CollectionPresentationDescriptor<AttachmentRow> {
-  const properties: readonly CollectionPropertyDefinition<AttachmentRow>[] = [
+}): CollectionPresentationDescriptor<AttachmentItem> {
+  const properties: readonly CollectionPropertyDefinition<AttachmentItem>[] = [
     defineComputedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
         sort: { kind: "standard" },
       },
       featureId: "attachments",
-      getValue: (row) => row.displayName,
+      getValue: (item) => item.displayName,
       key: "name",
       label: m.attachments_property_name(),
       standard: { type: "text" },
@@ -50,7 +50,7 @@ export function createAttachmentsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "attachments",
-      getValue: (row) => attachmentKindLabel(row),
+      getValue: (item) => attachmentKindLabel(item),
       key: "type",
       label: m.attachments_property_type(),
       standard: {
@@ -71,7 +71,7 @@ export function createAttachmentsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "attachments",
-      getValue: (row) => row.modified,
+      getValue: (item) => item.modified,
       key: "modified",
       label: m.attachments_property_modified(),
       standard: { display: "medium", type: "date" },
@@ -83,13 +83,13 @@ export function createAttachmentsPresentationDescriptor({
           sort: { kind: "standard" },
         },
         featureId: "attachments",
-        getValue: (row) => row.sizeBytes,
+        getValue: (item) => item.sizeBytes,
         key: "size",
         label: m.attachments_property_size(),
         standard: { display: "bytes", type: "number" },
       }),
-      getApplicability: (row) =>
-        row.kind === "document" || row.kind === "media"
+      getApplicability: (item) =>
+        item.kind === "document" || item.kind === "media"
           ? { status: "applicable" }
           : { label: "—", status: "unavailable" },
     },
@@ -97,7 +97,7 @@ export function createAttachmentsPresentationDescriptor({
 
   return {
     create,
-    getRowId: (row) => row.key,
+    getItemId: (item) => item.key,
     id: ATTACHMENTS_PRESENTATION_ID,
     label: m.attachments_presentation_all(),
     layout: {
@@ -111,9 +111,10 @@ export function createAttachmentsPresentationDescriptor({
     onActivate,
     properties,
     query: {
-      getSortTieBreakId: (row) => row.path,
+      getSortTieBreakId: (item) => item.path,
       defaultSort: [{ direction: "asc", propertyKey: "name" }],
-      getSearchText: (row) => `${row.displayName} ${attachmentKindLabel(row)}`,
+      getSearchText: (item) =>
+        `${item.displayName} ${attachmentKindLabel(item)}`,
     },
   };
 }
@@ -125,7 +126,7 @@ export function attachmentsPresentationState(
     diagnostic?: ReactNode;
     sourceEmpty: ReactNode;
   },
-): CollectionPresentationState<AttachmentRow> {
+): CollectionPresentationState<AttachmentItem> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return { error: content.blockingError, phase: "blocking_error" };
@@ -139,22 +140,22 @@ export function attachmentsPresentationState(
   return {
     diagnostics,
     phase: "ready",
-    rows: state.snapshot.rows,
+    items: state.snapshot.items,
     sourceEmpty: content.sourceEmpty,
   };
 }
 
-export function attachmentPresentationKind(row: AttachmentRow) {
-  if (row.kind === "document" || row.kind === "media") return row.kind;
-  return getArtifactPresentationKind({
-    hasSchema: row.kind === "collection",
-    hasApp: row.hasApp || row.kind === "app",
-    hasPage: row.kind === "page",
+export function attachmentPresentationKind(item: AttachmentItem) {
+  if (item.kind === "document" || item.kind === "media") return item.kind;
+  return getDirectoryPresentationKind({
+    hasSchema: item.kind === "collection",
+    hasApp: item.hasApp || item.kind === "app",
+    hasPage: item.kind === "page",
   });
 }
 
-export function attachmentKindLabel(row: AttachmentRow) {
-  const kind = attachmentPresentationKind(row);
+export function attachmentKindLabel(item: AttachmentItem) {
+  const kind = attachmentPresentationKind(item);
   if (kind === "directory") return m.attachments_type_folder();
   if (kind === "page") return m.attachments_type_page();
   if (kind === "document") return m.attachments_type_document();

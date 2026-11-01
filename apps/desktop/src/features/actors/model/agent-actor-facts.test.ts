@@ -9,9 +9,9 @@ import {
   agentActorFacts,
   type AgentActorFactsSources,
 } from "./agent-actor-facts";
-import type { AgentActorRow } from "./agent-actor-types";
+import type { AgentActorItem } from "./agent-actor-types";
 
-const codex: AgentActorRow = {
+const codex: AgentActorItem = {
   actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
   binding: {
     agent: "codex",
@@ -26,7 +26,7 @@ const codex: AgentActorRow = {
   ownerLabel: "docs",
   ownerPath: "/repo/docs",
 };
-const participant: AgentActorRow = {
+const participant: AgentActorItem = {
   ...codex,
   binding: { kind: "participant" },
   mode: null,

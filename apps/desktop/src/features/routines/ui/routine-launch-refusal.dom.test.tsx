@@ -8,7 +8,7 @@ import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import { loadAgentAdapterIdentities } from "@/features/agent-adapters";
 
 import { RoutineLaunchRefusedError } from "../model/launch-refusal";
-import type { RoutineLaunchRefusal, RoutineRow } from "../model/types";
+import type { RoutineLaunchRefusal, RoutineItem } from "../model/types";
 import { RoutineDetailActions } from "./routine-detail-actions";
 import { RoutineDetailView } from "./routine-detail-view";
 
@@ -20,7 +20,7 @@ const executors: AgentActorOptionsState = {
   loading: false,
   options: [],
 };
-const routine: RoutineRow = {
+const routine: RoutineItem = {
   definition: {
     action: { executor: `agent:${ACTOR}`, type: "run_agent" },
     body: "Review changes.",
@@ -60,7 +60,7 @@ const noDefaultAgent: RoutineLaunchRefusal = {
   value: null,
 };
 
-function refusedRun(refusal: RoutineLaunchRefusal): RoutineRow {
+function refusedRun(refusal: RoutineLaunchRefusal): RoutineItem {
   return {
     ...routine,
     lastRun: {
@@ -118,7 +118,7 @@ test("a manual run refused for a value names it and opens the Agent Actor's edit
             onOpenAgentActor: (actorId) => opened.push(actorId),
             onOpenAgentSettings: () => opened.push("settings"),
           }}
-          row={routine}
+          item={routine}
           runState={{ status: "idle" }}
           onOpenSession={() => undefined}
           onRun={async () => {
@@ -148,7 +148,7 @@ test("a manual run refused at readiness keeps its reason when the detail opens a
       root.render(
         <RoutineDetailActions
           recovery={{ onOpenAgentSettings: () => opened.push("settings") }}
-          row={routine}
+          item={routine}
           runRefusal={noDefaultAgent}
           runState={{ message: "refused", status: "error" }}
           onOpenSession={() => undefined}
@@ -182,7 +182,7 @@ test("the last run shows why its launch was refused, with no session to open", a
     <RoutineDetailView
       executors={executors}
       recovery={recovery}
-      row={refusedRun(staleModel)}
+      item={refusedRun(staleModel)}
     />,
   );
   expect(
@@ -196,7 +196,7 @@ test("the last run shows why its launch was refused, with no session to open", a
       <RoutineDetailView
         executors={executors}
         recovery={recovery}
-        row={refusedRun(noDefaultAgent)}
+        item={refusedRun(noDefaultAgent)}
       />,
     ).includes("Agent settings"),
   ).toBe(true);
@@ -207,7 +207,7 @@ test("the last run shows why its launch was refused, with no session to open", a
       root.render(
         <RoutineDetailActions
           recovery={recovery}
-          row={refusedRun(staleModel)}
+          item={refusedRun(staleModel)}
           runState={{ status: "idle" }}
           onOpenSession={() => undefined}
           onRun={async () => undefined}

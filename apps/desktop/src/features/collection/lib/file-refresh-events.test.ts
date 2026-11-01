@@ -18,10 +18,10 @@ test("collectionFileChangeKind refreshes the owning schema only", () => {
   expect(isCollectionSchemaPath("tasks/schema.yaml", ".")).toBe(false);
 });
 
-test("collectionFileChangeKind refreshes entries inside its owner only", () => {
-  expect(collectionFileChangeKind("tasks/card.md", "tasks")).toBe("entries");
+test("collectionFileChangeKind refreshes items inside its owner only", () => {
+  expect(collectionFileChangeKind("tasks/card.md", "tasks")).toBe("items");
   expect(collectionFileChangeKind("docs\\tasks\\card.MD", "docs/tasks")).toBe(
-    "entries",
+    "items",
   );
   expect(collectionFileChangeKind("other/card.md", "tasks")).toBeNull();
   expect(collectionFileChangeKind("tasks/card.md", "Tasks")).toBeNull();

@@ -1,4 +1,4 @@
-import { getArtifactPresentationKind } from "@/features/artifact";
+import { getDirectoryPresentationKind } from "@/features/artifact";
 import { mediaFamilyFromFormat, mediaFormatFromPath } from "@/features/media";
 import type { SpaceInfo, TreeNode } from "../model/types";
 
@@ -79,7 +79,7 @@ function segmentFallback(
   path: string,
   last: boolean,
 ): BreadcrumbFallbackIcon {
-  const kind = getArtifactPresentationKind({
+  const kind = getDirectoryPresentationKind({
     hasSchema: Boolean(node?.has_schema),
     hasApp: node?.kind === "app" || Boolean(node?.has_app),
     hasPage: path.toLowerCase().endsWith(".md"),

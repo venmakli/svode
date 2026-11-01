@@ -20,7 +20,7 @@ import {
 import { getLocale } from "@/paraglide/runtime.js";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
-import { handleEntryCreateError } from "../error-feedback";
+import { handleItemCreateError } from "../error-feedback";
 import * as m from "@/paraglide/messages.js";
 import {
   anchorFromMouse,
@@ -51,7 +51,7 @@ import {
   visibleEventCount,
   type CalendarEventInput,
 } from "./calendar-adapter";
-import { useCalendarEntries } from "./use-calendar-entries";
+import { useCalendarItems } from "./use-calendar-items";
 import { useCalendarScopeQuery } from "./use-calendar-scope-query";
 
 export function useCalendarViewRuntime({
@@ -109,13 +109,13 @@ export function useCalendarViewRuntime({
     onSchemaChange,
   });
   const {
-    entries,
-    setEntries,
+    items,
+    setItems,
     nestedCollectionPaths,
     loading,
-    loadEntries,
+    loadItems,
     updateField,
-  } = useCalendarEntries({
+  } = useCalendarItems({
     collectionPath,
     previousCollectionPath,
     filters,
@@ -155,18 +155,18 @@ export function useCalendarViewRuntime({
         : [],
     [cardFields, dateColumn, propertyColumns],
   );
-  const filteredEntries = useMemo(() => {
+  const filteredItems = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return entries;
-    return entries.filter((entry) =>
-      entry.meta.title.toLowerCase().includes(query),
+    if (!query) return items;
+    return items.filter((item) =>
+      item.meta.title.toLowerCase().includes(query),
     );
-  }, [entries, searchQuery]);
+  }, [items, searchQuery]);
   const events = useMemo<CalendarEventInput[]>(
     () =>
       dateColumn
         ? buildCalendarEvents({
-            entries: filteredEntries,
+            items: filteredItems,
             view,
             schema,
             dateColumn,
@@ -179,14 +179,14 @@ export function useCalendarViewRuntime({
       cardFields,
       customColumns,
       dateColumn,
-      filteredEntries,
+      filteredItems,
       nestedCollectionPaths,
       schema,
       view,
     ],
   );
   const hiddenCount = dateColumn
-    ? hiddenNoDateCount(filteredEntries, dateColumn)
+    ? hiddenNoDateCount(filteredItems, dateColumn)
     : 0;
   const visibleCount = visibleEventCount(events, visibleRange);
   const hasActorCardField = customColumns.some(
@@ -244,8 +244,8 @@ export function useCalendarViewRuntime({
       onOpenPath,
       actors,
       onRequestActors: loadActors,
-      onUpdateField: (entry: Page, column: Column, value: unknown) => {
-        void updateField(entry, column.name, value, {
+      onUpdateField: (item: Page, column: Column, value: unknown) => {
+        void updateField(item, column.name, value, {
           policy: propertyFieldSavePolicy(column),
         });
       },
@@ -302,11 +302,11 @@ export function useCalendarViewRuntime({
         | undefined;
       if (!model) return;
       if (info.jsEvent.detail >= 2) {
-        onOpenFullPage(model.entry);
+        onOpenFullPage(model.item);
         return;
       }
-      if (model.nestedCollection) onOpenNestedPeek(model.entry);
-      else onActivateItem(model.entry);
+      if (model.nestedCollection) onOpenNestedPeek(model.item);
+      else onActivateItem(model.item);
     },
     [onActivateItem, onOpenFullPage, onOpenNestedPeek],
   );
@@ -325,7 +325,7 @@ export function useCalendarViewRuntime({
         info.revert();
         return;
       }
-      void updateField(model.entry, model.dateField, nextValue, {
+      void updateField(model.item, model.dateField, nextValue, {
         revert: info.revert,
         policy: propertyFieldSavePolicy(dateColumn),
       });
@@ -347,7 +347,7 @@ export function useCalendarViewRuntime({
         info.revert();
         return;
       }
-      void updateField(model.entry, model.dateField, nextValue, {
+      void updateField(model.item, model.dateField, nextValue, {
         revert: info.revert,
         policy: propertyFieldSavePolicy(dateColumn),
       });
@@ -355,17 +355,17 @@ export function useCalendarViewRuntime({
     [dateColumn, scope, updateField],
   );
 
-  const createEntryFromDraft = useCallback(
+  const createItemFromDraft = useCallback(
     async (title: string, draft: CalendarCreateDraft) => {
       if (!dateColumn) return;
       const created = await onCreatePage(title, draft.asFolder, {
         [dateColumn.name]: draft.dateValue,
       });
       setCreateDraft(null);
-      setEntries((current) => [...current, created]);
-      await loadEntries();
+      setItems((current) => [...current, created]);
+      await loadItems();
     },
-    [dateColumn, loadEntries, onCreatePage, setEntries],
+    [dateColumn, loadItems, onCreatePage, setItems],
   );
 
   const syncDates = useCallback(
@@ -399,7 +399,7 @@ export function useCalendarViewRuntime({
     handleEventResize,
     handleSelect,
     syncDates,
-    createEntryFromDraft,
+    createItemFromDraft,
     goToPrevious: () => calendarApi(calendarRef.current)?.prev(),
     goToNext: () => calendarApi(calendarRef.current)?.next(),
     goToToday: () => calendarApi(calendarRef.current)?.today(),
@@ -414,7 +414,7 @@ export function useCalendarViewRuntime({
 
 export function reportCalendarError(error: unknown) {
   if (pageNameConflictFromError(error)) {
-    handleEntryCreateError(error);
+    handleItemCreateError(error);
     return;
   }
   console.error(error);

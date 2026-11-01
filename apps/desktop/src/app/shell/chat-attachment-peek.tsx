@@ -1,7 +1,10 @@
 import { lazy, Suspense, useCallback, useState, type ReactNode } from "react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useOpenArtifact } from "@/features/artifact";
+import {
+  useOpenArtifact,
+  type ArtifactRegistryKind,
+} from "@/features/artifact";
 import {
   ChatAttachmentOpenerContext,
   ChatHeldMediaOpenerContext,
@@ -33,11 +36,9 @@ const MediaSurface = lazy(async () => ({
   default: (await import("@/features/media/app-shell")).MediaSurface,
 }));
 
-type ViewerKind = "page" | "document" | "media";
-
 type AttachmentPeekTarget =
   | {
-      kind: ViewerKind;
+      kind: ArtifactRegistryKind;
       attachment: ChatAttachment;
       location: ChatAttachmentLocation;
       /** Media and documents name the project root without a Space id. */
@@ -55,7 +56,7 @@ const MEDIA_EXTENSIONS = new Set<string>([
 ]);
 const DOCUMENT_EXTENSIONS = new Set<string>(DOCUMENT_EXTS);
 
-function viewerKind(attachment: ChatAttachment): ViewerKind | null {
+function viewerKind(attachment: ChatAttachment): ArtifactRegistryKind | null {
   if (chatAttachmentKind(attachment.path) === "page") return "page";
   const dot = attachment.path.lastIndexOf(".");
   const extension = dot >= 0 ? attachment.path.slice(dot).toLowerCase() : "";

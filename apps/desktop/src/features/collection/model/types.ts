@@ -33,13 +33,13 @@ export type SettingsPane =
   | "sortEditor"
   | "group";
 
-/** What the context menu of every row of one Collection acts with. */
-export interface CollectionEntryMenu {
+/** What the context menu of every item of one Collection acts with. */
+export interface CollectionItemMenu {
   readOnly: boolean;
   spacePath: string;
-  pinItem: (entry: Page) => NavigationItem | null;
-  /** The item's own actions; the row adds how it opens in peek. */
-  handlers: (entry: Page) => Omit<ContentActionHandlers, "open-in-peek">;
+  pinItem: (item: Page) => NavigationItem | null;
+  /** The item's own actions; its row or card adds how it opens in peek. */
+  handlers: (item: Page) => Omit<ContentActionHandlers, "open-in-peek">;
 }
 
 export interface PagePeekTarget {

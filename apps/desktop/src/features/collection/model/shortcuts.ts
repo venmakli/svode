@@ -3,8 +3,8 @@ import * as m from "@/paraglide/messages.js";
 
 export const collectionShortcuts = [
   {
-    id: "create-entry",
-    label: m.shortcuts_create_entry,
+    id: "create-item",
+    label: m.shortcuts_create_item,
     keys: [["Mod", "N"]],
     context: m.shortcuts_collection_write,
   },

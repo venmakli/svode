@@ -21,7 +21,7 @@ export function BoardColumn({
   group,
   cards,
   count,
-  activeEntryPath,
+  activeItemPath,
   overGroupKey,
   hasSort,
   draftOpen,
@@ -36,7 +36,7 @@ export function BoardColumn({
   group: BoardColumnGroup;
   cards: BoardCardModel[];
   count: number;
-  activeEntryPath: string | null;
+  activeItemPath: string | null;
   overGroupKey: string | null;
   hasSort: boolean;
   draftOpen: boolean;
@@ -55,7 +55,7 @@ export function BoardColumn({
   });
   // With an explicit sort a drop in the source column changes nothing.
   const dropLocked =
-    hasSort && cards.some((card) => card.entry.path === activeEntryPath);
+    hasSort && cards.some((card) => card.item.path === activeItemPath);
   const highlighted = !dropLocked && (isOver || overGroupKey === group.key);
   const collapsible = Boolean(group.collapsedByDefault);
 
@@ -115,16 +115,16 @@ export function BoardColumn({
         <div className="pr-1">
           <div className="flex min-h-24 flex-col gap-1.5 px-0.5 pb-1 pt-0.5">
             <SortableContext
-              items={cards.map((card) => card.entry.path)}
+              items={cards.map((card) => card.item.path)}
               strategy={
                 hasSort ? keepPlacesStrategy : verticalListSortingStrategy
               }
             >
               {cards.map((card) => (
                 <SortableBoardCard
-                  key={card.entry.path}
+                  key={card.item.path}
                   card={card}
-                  active={activeEntryPath === card.entry.path}
+                  active={activeItemPath === card.item.path}
                   {...cardProps}
                 />
               ))}

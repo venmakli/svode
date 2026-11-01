@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import * as m from "@/paraglide/messages.js";
 
-import type { RoutineRow } from "../model/types";
+import type { RoutineItem } from "../model/types";
 
 export function RoutineDeleteDialog({
   error,
@@ -25,7 +25,7 @@ export function RoutineDeleteDialog({
   error: string | null;
   pending: boolean;
   readOnly: boolean;
-  routine: RoutineRow | null;
+  routine: RoutineItem | null;
   onClose(): void;
   onConfirm(): void;
 }) {

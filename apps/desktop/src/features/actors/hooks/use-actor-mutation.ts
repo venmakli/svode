@@ -9,7 +9,7 @@ import type {
   ActorMutationReview,
   AppliedActorMutationResult,
 } from "../model/identity-mutation";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 
 type ActorMutationPendingPhase = "preview" | "apply" | null;
 
@@ -69,11 +69,11 @@ export function useActorMutation({
   }, []);
   const openAdd = useCallback(() => open({ kind: "add" }), [open]);
   const openEdit = useCallback(
-    (source: ActorCatalogRow) => open({ kind: "edit", source }),
+    (source: ActorCatalogItem) => open({ kind: "edit", source }),
     [open],
   );
   const openMerge = useCallback(
-    (source: ActorCatalogRow) => open({ kind: "merge", source }),
+    (source: ActorCatalogItem) => open({ kind: "merge", source }),
     [open],
   );
 

@@ -19,10 +19,10 @@ export interface ListRowProps {
   disabledReorder: boolean;
   focused: boolean;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
-  onToggle: (entry: Page) => void;
-  onOpen: (entry: Page, nestedCollection: boolean) => void;
-  onOpenNestedCollection: (entry: Page) => void;
+  onUpdateField?: (item: Page, column: Column, value: unknown) => void;
+  onToggle: (item: Page) => void;
+  onOpen: (item: Page, nestedCollection: boolean) => void;
+  onOpenNestedCollection: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onFocusRow: (path: string) => void;
   onKeyboardMove: (path: string, offset: number) => void;

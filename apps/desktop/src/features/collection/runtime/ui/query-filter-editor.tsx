@@ -17,17 +17,17 @@ import { FilterEditor } from "../../query/ui/query-controls";
 import { collectionFilterOperators } from "../model/query";
 import type { CollectionFilterRule } from "../model/types";
 
-interface CollectionQueryFilterEditorProps<Row> {
-  property: CollectionPropertyDefinition<Row>;
+interface CollectionQueryFilterEditorProps<Item> {
+  property: CollectionPropertyDefinition<Item>;
   onChange(rule: CollectionFilterRule): void;
   rule: CollectionFilterRule;
 }
 
-export function CollectionQueryFilterEditor<Row>({
+export function CollectionQueryFilterEditor<Item>({
   property,
   onChange,
   rule,
-}: CollectionQueryFilterEditorProps<Row>) {
+}: CollectionQueryFilterEditorProps<Item>) {
   const filterSemantics = property.capabilities?.filter;
   const standardColumn = resolveStandardPropertyColumn(property);
   if (filterSemantics?.kind === "standard" && standardColumn) {

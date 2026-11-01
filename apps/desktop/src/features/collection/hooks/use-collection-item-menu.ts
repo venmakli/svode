@@ -1,33 +1,33 @@
 import { pageNavigationItem, type Page } from "@/features/page";
 import { usePageContentOperations } from "@/features/page/detail";
 import { useSpace } from "@/features/space";
-import type { CollectionEntryMenu } from "../model";
+import type { CollectionItemMenu } from "../model";
 import { handleError } from "./error-feedback";
 
 /**
- * The actions of the Collection rows' context menu: the operations the Peek
- * of the same item runs, followed by a refresh of the rows. Nesting a page
+ * The actions of the Collection items' context menu: the operations the Peek
+ * of the same item runs, followed by a refresh of the items. Nesting a page
  * shows the new page in peek, and rename opens the item's peek on its title.
  */
-export function useCollectionEntryMenu({
+export function useCollectionItemMenu({
   readOnly,
   spacePath,
   projectPath,
   spaceId,
-  refreshEntries,
+  refreshItems,
   openPeek,
-  duplicateRow,
-  requestRowDelete,
+  duplicateItem,
+  requestItemDelete,
 }: {
   readOnly: boolean;
   spacePath: string;
   projectPath?: string | null;
   spaceId: string;
-  refreshEntries: () => void;
+  refreshItems: () => void;
   openPeek: (page: Page, options?: { focusTitle?: boolean }) => void;
-  duplicateRow: (page: Page) => Promise<void>;
-  requestRowDelete: (page: Page) => void;
-}): CollectionEntryMenu {
+  duplicateItem: (page: Page) => Promise<void>;
+  requestItemDelete: (page: Page) => void;
+}): CollectionItemMenu {
   const activeRootId = useSpace((state) => state.activeRootId);
   const operations = usePageContentOperations({
     spacePath,
@@ -37,39 +37,39 @@ export function useCollectionEntryMenu({
 
   const mutate = (operation: () => Promise<void>) => () => {
     if (readOnly) return;
-    void operation().then(refreshEntries).catch(handleError);
+    void operation().then(refreshItems).catch(handleError);
   };
 
   /** A nested Collection takes its new item the same way. */
-  const nestPage = (entry: Page) =>
+  const nestPage = (item: Page) =>
     mutate(async () => {
-      const { childPage } = await operations.nestPage(entry);
+      const { childPage } = await operations.nestPage(item);
       openPeek(childPage);
     });
 
   return {
     readOnly,
     spacePath,
-    pinItem: (entry) => pageNavigationItem(entry, spaceId, activeRootId),
-    handlers: (entry) => ({
-      "nest-page": nestPage(entry),
-      "new-item": nestPage(entry),
+    pinItem: (item) => pageNavigationItem(item, spaceId, activeRootId),
+    handlers: (item) => ({
+      "nest-page": nestPage(item),
+      "new-item": nestPage(item),
       "new-folder": mutate(async () => {
-        await operations.newFolder(entry);
+        await operations.newFolder(item);
       }),
       "make-collection": mutate(async () => {
-        await operations.makeCollection(entry);
+        await operations.makeCollection(item);
       }),
       "make-leaf": mutate(async () => {
-        await operations.makeLeaf(entry);
+        await operations.makeLeaf(item);
       }),
       rename: () => {
-        if (!readOnly) openPeek(entry, { focusTitle: true });
+        if (!readOnly) openPeek(item, { focusTitle: true });
       },
       duplicate: () => {
-        if (!readOnly) void duplicateRow(entry).catch(handleError);
+        if (!readOnly) void duplicateItem(item).catch(handleError);
       },
-      delete: () => requestRowDelete(entry),
+      delete: () => requestItemDelete(item),
     }),
   };
 }

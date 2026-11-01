@@ -12,7 +12,7 @@ test("Page Collection shares Properties and descriptor activation across all fiv
   const definition = definePageCollection({
     collectionPath: "Projects/tasks.collection",
     onActivate: (page, context) => {
-      activations.push(`${context.rowId}:${page.path}`);
+      activations.push(`${context.itemId}:${page.path}`);
     },
     schema: {
       columns: [
@@ -63,7 +63,7 @@ test("Page Collection shares Properties and descriptor activation across all fiv
   ).toBe(true);
   for (const presentation of definition.presentations) {
     presentation.onActivate(pageFixture, {
-      rowId: presentation.getRowId(pageFixture),
+      itemId: presentation.getItemId(pageFixture),
     });
   }
   expect(activations).toEqual(
@@ -94,7 +94,7 @@ test("Page Collection shares Properties and descriptor activation across all fiv
         readCollectionPresentationRuntime(
           defineCollectionPresentation({
             descriptor,
-            state: { phase: "ready", rows: [] },
+            state: { phase: "ready", items: [] },
           }),
         ).diagnostics,
     ),

@@ -1,7 +1,7 @@
 import type {
   ActorActivitySnapshot,
   ActorAlias,
-  ActorCatalogRow,
+  ActorCatalogItem,
 } from "./types";
 
 const DAY_MS = 86_400_000;
@@ -13,8 +13,8 @@ export interface ActorHeatmapCell {
 }
 
 export function compareActorsByDefault(
-  left: ActorCatalogRow,
-  right: ActorCatalogRow,
+  left: ActorCatalogItem,
+  right: ActorCatalogItem,
 ) {
   if (left.lastCommitAt === null && right.lastCommitAt !== null) return 1;
   if (left.lastCommitAt !== null && right.lastCommitAt === null) return -1;
@@ -37,7 +37,7 @@ export function compareActorsByDefault(
   );
 }
 
-export function visibleActorAliases(actor: ActorCatalogRow): ActorAlias[] {
+export function visibleActorAliases(actor: ActorCatalogItem): ActorAlias[] {
   const seen = new Set<string>();
   return actor.aliases.filter((alias) => {
     const normalizedName = normalizeActorText(alias.name ?? "");

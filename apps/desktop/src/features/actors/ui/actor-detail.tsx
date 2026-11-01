@@ -1,4 +1,4 @@
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import { ActorActivityProfile } from "./actor-activity-profile";
 import { ActorGitIdentities } from "./actor-git-identities";
 
@@ -7,7 +7,7 @@ export function ActorDetail({
   catalogGeneration = 0,
   spacePath,
 }: {
-  actor: ActorCatalogRow;
+  actor: ActorCatalogItem;
   catalogGeneration?: number;
   spacePath: string;
 }) {

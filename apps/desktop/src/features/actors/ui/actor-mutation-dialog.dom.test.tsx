@@ -6,9 +6,9 @@ import type { ActorIdentityDraft } from "./actor-identity-fields";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import type { AppliedActorMutationResult } from "../model/identity-mutation";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 
-const source: ActorCatalogRow = {
+const source: ActorCatalogItem = {
   aliases: [{ email: "ada@old.test", line: 2, name: "A. Lovelace" }],
   availableYears: [2026],
   canonicalEmail: "ada@example.test",
@@ -20,7 +20,7 @@ const source: ActorCatalogRow = {
   sources: [],
 };
 
-const target: ActorCatalogRow = {
+const target: ActorCatalogItem = {
   aliases: [],
   availableYears: [2026],
   canonicalEmail: "grace@example.test",
@@ -95,7 +95,7 @@ test("merge picker selects one canonical target from the available actors", asyn
       root.render(
         <ActorMergePicker
           pending={false}
-          rows={[target]}
+          items={[target]}
           selectedEmail={null}
           onSelect={(canonicalEmail) => selected.push(canonicalEmail)}
         />,

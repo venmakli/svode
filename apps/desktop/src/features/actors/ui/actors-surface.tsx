@@ -30,7 +30,7 @@ import type {
   ActorMutationIntent,
   AppliedActorMutationResult,
 } from "../model/identity-mutation";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import { ActorMailmapSaveDialog } from "./actor-mailmap-save-dialog";
 import { ActorMutationDialog } from "./actor-mutation-dialog";
 import { showActorMutationOutcome } from "./actor-mutation-outcome";
@@ -39,7 +39,7 @@ import {
   createActorsPresentation,
 } from "./actors-presentation";
 import {
-  agentActorRowId,
+  agentActorItemId,
   createAgentActorsPresentation,
 } from "./agent-actors-presentation";
 import { CatalogRetryButton } from "./catalog-retry-button";
@@ -75,7 +75,7 @@ export function ActorsSurface({
   );
   const detailController = useCollectionDetailController();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
-  const [focusRowId, setFocusRowId] = useState<string | null>(null);
+  const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const instanceKey = `actors:${owner.ownerKey}`;
   const agentActors = useAgentActorsController({
     detailController,
@@ -85,8 +85,8 @@ export function ActorsSurface({
     onOpenAgentSettings,
     onOpenRepositorySettings,
   });
-  const catalogRows = useMemo(
-    () => (state.phase === "ready" ? state.snapshot.rows : []),
+  const catalogItems = useMemo(
+    () => (state.phase === "ready" ? state.snapshot.items : []),
     [state],
   );
   const humanDetail = useActorDetail({
@@ -97,7 +97,7 @@ export function ActorsSurface({
   const onApplied = useCallback(
     (result: AppliedActorMutationResult) => {
       replaceSnapshot(result.catalog);
-      setFocusRowId(result.canonicalEmail);
+      setFocusItemId(result.canonicalEmail);
       void detailController?.close();
       showActorMutationOutcome(result);
     },
@@ -105,18 +105,18 @@ export function ActorsSurface({
   );
   const onDuplicate = useCallback(
     (canonicalEmail: string) => {
-      const actor = catalogRows.find(
-        (row) => row.canonicalEmail === canonicalEmail,
+      const actor = catalogItems.find(
+        (item) => item.canonicalEmail === canonicalEmail,
       );
-      setFocusRowId(canonicalEmail);
+      setFocusItemId(canonicalEmail);
       if (!actor) return;
       void humanDetail.open(actor, {
         instanceKey,
         presentationId: "humans",
-        rowId: actor.canonicalEmail,
+        itemId: actor.canonicalEmail,
       });
     },
-    [catalogRows, humanDetail, instanceKey],
+    [catalogItems, humanDetail, instanceKey],
   );
   const mutation = useActorMutation({
     onAccessBlocked: (continueIntent) =>
@@ -173,22 +173,24 @@ export function ActorsSurface({
   );
 
   useEffect(() => {
-    if (!focusRowId || state.phase !== "ready") return;
-    if (!state.snapshot.rows.some((row) => row.canonicalEmail === focusRowId)) {
+    if (!focusItemId || state.phase !== "ready") return;
+    if (
+      !state.snapshot.items.some((item) => item.canonicalEmail === focusItemId)
+    ) {
       return;
     }
     const frame = requestAnimationFrame(() => {
-      const row = Array.from(
+      const itemElement = Array.from(
         surfaceRef.current?.querySelectorAll<HTMLElement>(
           "[data-collection-row]",
         ) ?? [],
-      ).find((element) => element.dataset.collectionRow === focusRowId);
-      row?.focus({ preventScroll: true });
-      row?.scrollIntoView?.({ block: "nearest" });
-      setFocusRowId(null);
+      ).find((element) => element.dataset.collectionRow === focusItemId);
+      itemElement?.focus({ preventScroll: true });
+      itemElement?.scrollIntoView?.({ block: "nearest" });
+      setFocusItemId(null);
     });
     return () => cancelAnimationFrame(frame);
-  }, [focusRowId, state]);
+  }, [focusItemId, state]);
 
   const presentationState = toPresentationState(state, () => void refresh());
   const mutationState = mutationActionState(
@@ -201,7 +203,7 @@ export function ActorsSurface({
       createState: mutationState,
       getEditState: () => mutationState,
       getMergeState: () =>
-        mutationState.status === "idle" && catalogRows.length < 2
+        mutationState.status === "idle" && catalogItems.length < 2
           ? {
               reason: m.actors_mutation_disabled_merge_target(),
               status: "disabled",
@@ -237,9 +239,9 @@ export function ActorsSurface({
   const collectionState = useCollectionState(instance);
   // An Agent Actor addressed by the open request, such as the one of a
   // refused Routine launch, opens once its catalog is read.
-  const agentActorRows =
+  const agentActorItems =
     agentActors.presentationState.phase === "ready"
-      ? agentActors.presentationState.rows
+      ? agentActors.presentationState.items
       : null;
   const openAgentActorDetail = agentActors.detail.open;
   const setActivePresentationId =
@@ -248,22 +250,22 @@ export function ActorsSurface({
       : null;
   const appliedOpenItem = useRef<typeof openItem>(undefined);
   useEffect(() => {
-    if (!openItem || !agentActorRows || !setActivePresentationId) return;
+    if (!openItem || !agentActorItems || !setActivePresentationId) return;
     if (appliedOpenItem.current === openItem) return;
     appliedOpenItem.current = openItem;
     openItem.consume();
-    const row = agentActorRows.find(
+    const item = agentActorItems.find(
       (candidate) => candidate.id === openItem.id,
     );
-    if (!row) return;
+    if (!item) return;
     setActivePresentationId("agents");
-    void openAgentActorDetail(row, {
+    void openAgentActorDetail(item, {
       instanceKey,
       presentationId: "agents",
-      rowId: agentActorRowId(row),
+      itemId: agentActorItemId(item),
     });
   }, [
-    agentActorRows,
+    agentActorItems,
     instanceKey,
     openAgentActorDetail,
     openItem,
@@ -304,7 +306,7 @@ export function ActorsSurface({
         pendingPhase={mutation.pendingPhase}
         review={mutation.review}
         rootPointerCommitExpectation={mutation.rootPointerCommitExpectation}
-        rows={catalogRows}
+        items={catalogItems}
         readOnly={readOnly}
         onApply={() => void mutation.apply()}
         onBack={mutation.back}
@@ -372,7 +374,7 @@ function mutationActionState(
 function toPresentationState(
   state: ReturnType<typeof useActorCatalog>["state"],
   onRetry: () => void,
-): CollectionPresentationState<ActorCatalogRow> {
+): CollectionPresentationState<ActorCatalogItem> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {
@@ -415,6 +417,6 @@ function toPresentationState(
   return {
     diagnostics,
     phase: "ready",
-    rows: state.snapshot.rows,
+    items: state.snapshot.items,
   };
 }

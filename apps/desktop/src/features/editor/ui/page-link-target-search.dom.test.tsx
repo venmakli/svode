@@ -99,18 +99,18 @@ if (process.env.SVODE_PAGE_LINK_SEARCH_DOM !== "1") {
   let held = new Set<string>();
   let releases: (() => void)[] = [];
 
-  function item(spaceId: string, entry: { path: string; title: string }) {
+  function item(spaceId: string, page: { path: string; title: string }) {
     const space =
       spaceId === "root"
         ? spaceState.rootSpaces[0]
         : spaceState.spaces.find((s) => s.id === spaceId)!;
     return {
-      id: `${spaceId}:${entry.path}`,
+      id: `${spaceId}:${page.path}`,
       spaceId: spaceId === "root" ? null : spaceId,
       spacePath: space.path,
       spaceName: space.name,
-      path: entry.path,
-      title: entry.title,
+      path: page.path,
+      title: page.title,
       type: "page",
       tableName: null,
       snippet: null,
@@ -134,7 +134,7 @@ if (process.env.SVODE_PAGE_LINK_SEARCH_DOM !== "1") {
             (query === "TCK-1" && title === "Q3 goals"),
         )
         .slice(0, 8)
-        .map((entry) => item(spaceId, entry)),
+        .map((page) => item(spaceId, page)),
     );
   }
   function installIpc() {

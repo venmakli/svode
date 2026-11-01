@@ -39,10 +39,10 @@ test("dateValueFromSelection stores all-day range ends inclusively", () => {
   expect(value).toEqual({ start: "2026-06-20", end: "2026-06-22" });
 });
 
-test("hiddenNoDateCount ignores entries without date values", () => {
+test("hiddenNoDateCount ignores items without date values", () => {
   expect(
     hiddenNoDateCount(
-      [entry("tasks/a.md", { Due: "2026-06-20" }), entry("tasks/b.md", {})],
+      [item("tasks/a.md", { Due: "2026-06-20" }), item("tasks/b.md", {})],
       dateColumn(),
     ),
   ).toBe(1);
@@ -68,7 +68,7 @@ function dateColumn(patch: Partial<Column> = {}): Column {
   return { name: "Due", type: "date", ...patch };
 }
 
-function entry(path: string, extra: Record<string, unknown>): Page {
+function item(path: string, extra: Record<string, unknown>): Page {
   return {
     path,
     body: "",

@@ -7,11 +7,11 @@ import type {
 export type NavigationKey = NavigationKeyDto;
 export type NavigationItem = NavigationItemDto;
 export type NavigationResolvedItem = NavigationResolvedItemDto;
-export type NavigationArtifactKind =
-  | "page"
-  | "collection"
-  | "attachment"
-  | "app";
+/** The kinds of keys that address content by its Space and path. */
+export type NavigationPathKeyKind = Extract<
+  NavigationKey,
+  { path: string }
+>["kind"];
 
 /**
  * Stable identity string of a key, equal for keys that address one object.
@@ -83,8 +83,8 @@ export function spaceNavigationKey(
   return { kind: "space", ...keySpaceId(spaceId, rootSpaceId) };
 }
 
-export function artifactNavigationKey(
-  kind: NavigationArtifactKind,
+export function pathNavigationKey(
+  kind: NavigationPathKeyKind,
   path: string,
   spaceId: string | null | undefined,
   rootSpaceId: string | null,

@@ -17,7 +17,7 @@ export type GalleryNavigationKey =
   | "Home";
 
 export interface GalleryCardProps {
-  entry: Page;
+  item: Page;
   cover: GalleryResolvedCover | null;
   cardFields: string[];
   properties: readonly CollectionPropertyDefinition<Page>[];
@@ -31,9 +31,9 @@ export interface GalleryCardProps {
   disabledReorder: boolean;
   focused: boolean;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
-  onOpen: (entry: Page, nestedCollection: boolean) => void;
-  onOpenNestedCollection: (entry: Page) => void;
+  onUpdateField?: (item: Page, column: Column, value: unknown) => void;
+  onOpen: (item: Page, nestedCollection: boolean) => void;
+  onOpenNestedCollection: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onFocusCard: (path: string) => void;
   onKeyboardMove: (path: string, key: GalleryNavigationKey) => void;

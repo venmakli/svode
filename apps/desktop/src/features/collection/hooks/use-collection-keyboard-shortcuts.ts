@@ -11,7 +11,7 @@ export function useCollectionKeyboardShortcuts({
   selectTab,
   moveActive,
   focusActiveViewCreate,
-  createEntry,
+  createItem,
   readOnly,
 }: {
   activeTab: ActiveTab;
@@ -19,7 +19,7 @@ export function useCollectionKeyboardShortcuts({
   selectTab: (next: ActiveTab) => void;
   moveActive: (offset: number) => Promise<void>;
   focusActiveViewCreate: (asFolder: boolean) => boolean;
-  createEntry: (asFolder?: boolean) => Promise<Page>;
+  createItem: (asFolder?: boolean) => Promise<Page>;
   readOnly: boolean;
 }) {
   useEffect(() => {
@@ -68,7 +68,7 @@ export function useCollectionKeyboardShortcuts({
         event.preventDefault();
         if (readOnly) return;
         if (focusActiveViewCreate(false)) return;
-        void createEntry(false).catch(handleError);
+        void createItem(false).catch(handleError);
         return;
       }
     }
@@ -76,7 +76,7 @@ export function useCollectionKeyboardShortcuts({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     activeTab,
-    createEntry,
+    createItem,
     focusActiveViewCreate,
     moveActive,
     readOnly,

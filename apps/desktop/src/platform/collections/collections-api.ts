@@ -37,7 +37,6 @@ export interface CollectionInfoDto {
   path: string;
   title: string;
   rowCount?: number;
-  row_count?: number;
   nested: boolean;
 }
 
@@ -224,7 +223,7 @@ export function reorderCollectionViews(
   });
 }
 
-export function queryCollectionEntries(input: {
+export function queryCollectionItems(input: {
   spacePath: string;
   collectionPath: string;
   filters: QueryFilterDto[] | null;
@@ -244,7 +243,7 @@ export function queryCollectionEntries(input: {
   });
 }
 
-export function listEntriesForView(input: {
+export function listItemsForView(input: {
   spacePath: string;
   collectionPath: string;
   viewName: string;

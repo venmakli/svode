@@ -12,7 +12,7 @@ import type {
 } from "@/features/properties";
 
 export interface CollectionTableRow {
-  entry: Page;
+  item: Page;
   level: number;
   child: boolean;
   nestedCollection: boolean;
@@ -28,8 +28,6 @@ export interface TableEditingCell {
 export interface CollectionInfo {
   path: string;
   title: string;
-  rowCount?: number;
-  row_count?: number;
   nested: boolean;
 }
 
@@ -52,8 +50,8 @@ export interface TableViewProps {
   createAsFolder?: boolean;
   onClearSearch?: () => void;
   onActivateItem: (page: Page) => void;
-  onOpenNestedPeek?: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
+  onOpenNestedPeek?: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
   onOpenRelationTarget: (target: RelationOpenTarget) => void;
   onSchemaChange: (schema: CollectionSchema) => void;

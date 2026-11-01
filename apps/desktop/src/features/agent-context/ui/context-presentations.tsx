@@ -80,7 +80,7 @@ export function createAgentContextPresentation({
 }) {
   return defineCollectionPresentation<AgentContextItem>({
     descriptor: {
-      getRowId: (item) => item.id,
+      getItemId: (item) => item.id,
       id,
       label: presetLabel(id),
       layout: presetLayout(id, expansion),
@@ -183,7 +183,7 @@ function presetLayout(
 
 /**
  * A plugin with declared components expands in the Table like a folder of
- * "Attachments"; its components are not top-level rows.
+ * "Attachments"; its components are not top-level items.
  */
 function agentContextPluginHierarchy({
   expanded,
@@ -195,7 +195,7 @@ function agentContextPluginHierarchy({
   return {
     getBranch: (item) =>
       item.components.length > 0
-        ? { expanded: expanded.has(item.id), rows: item.components }
+        ? { expanded: expanded.has(item.id), items: item.components }
         : null,
     getLabel: (item) => item.name,
     onToggle: (item) => onToggle(item.id),
@@ -272,7 +272,7 @@ function presetLabel(id: AgentContextPresetId) {
   return m.agent_context_preset_all();
 }
 
-/** "Has problems" on the card of a problem row only. */
+/** "Has problems" on the card of a problem item only. */
 function ItemProblemsMarker({ item }: { item: AgentContextItem }) {
   const agents = useAgentAdapterDictionary();
   const warnings = agentContextHealthWarnings(agents, item);

@@ -6,13 +6,13 @@ import { act, useEffect } from "react";
 import { JSDOM } from "jsdom";
 import type { Page } from "@/features/page";
 
-if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
-  test("Collection row and Peek delete DOM", () => {
+if (process.env.SVODE_COLLECTION_ITEM_DELETE_DOM !== "1") {
+  test("Collection item and Peek delete DOM", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
       {
-        env: { ...process.env, SVODE_COLLECTION_ENTRY_DELETE_DOM: "1" },
+        env: { ...process.env, SVODE_COLLECTION_ITEM_DELETE_DOM: "1" },
         encoding: "utf8",
       },
     );
@@ -97,22 +97,22 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
   // React DOM reads the environment when it loads, so after the globals.
   const { createRoot } = await import("react-dom/client");
   const { ContentDeleteDialog } = await import("@/features/content-actions");
-  const { useCollectionEntryDelete } =
-    await import("./use-collection-entry-delete");
-  const { useCollectionEntryActions } =
-    await import("./use-collection-entry-actions");
-  type EntryDelete = ReturnType<typeof useCollectionEntryDelete>;
+  const { useCollectionItemDelete } =
+    await import("./use-collection-item-delete");
+  const { useCollectionItemActions } =
+    await import("./use-collection-item-actions");
+  type ItemDelete = ReturnType<typeof useCollectionItemDelete>;
 
   const root = createRoot(document.getElementById("app")!);
   const settle = () =>
     act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
-  let entryDelete: EntryDelete | null = null;
+  let itemDelete: ItemDelete | null = null;
 
   function Harness({ readOnly }: { readOnly: boolean }) {
-    // The real row deletion of the Collection, as its screen wires it.
-    const { deleteRow } = useCollectionEntryActions({
+    // The real item deletion of the Collection, as its screen wires it.
+    const { deleteItem } = useCollectionItemActions({
       schema: null,
       spacePath: "/project/docs",
       projectPath: "/project",
@@ -120,14 +120,14 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
       spaceId: "docs",
       openPage: () => {},
     });
-    const current = useCollectionEntryDelete({
+    const current = useCollectionItemDelete({
       readOnly,
       spacePath: "/project/docs",
       projectPath: "/project",
-      deleteRow,
+      deleteItem,
     });
     useEffect(() => {
-      entryDelete = current;
+      itemDelete = current;
     });
     return <ContentDeleteDialog {...current.dialog} />;
   }
@@ -142,8 +142,8 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
     meta: { title, icon: null, created: "", updated: "", extra: {} },
   });
 
-  async function request(run: (current: EntryDelete) => void) {
-    await act(async () => run(entryDelete!));
+  async function request(run: (current: ItemDelete) => void) {
+    await act(async () => run(itemDelete!));
     await settle();
   }
 
@@ -177,11 +177,11 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
     await settle();
   }
 
-  test("a row confirms deleting its Collection item with its links", async () => {
+  test("deleting a Collection item confirms it with its links", async () => {
     await render();
     backlinks = [{ sourceSpaceId: null, sourcePath: "plan.md", linkCount: 1 }];
     await request((current) =>
-      current.requestRowDelete(page("tasks/Task.md", "Task")),
+      current.requestItemDelete(page("tasks/Task.md", "Task")),
     );
     expect(deleteDialog()).toEqual({
       title: "Delete collection item?",
@@ -201,7 +201,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
 
     backlinks = [];
     await request((current) =>
-      current.requestRowDelete(page("tasks/Epic/README.md", "Epic")),
+      current.requestItemDelete(page("tasks/Epic/README.md", "Epic")),
     );
     expect(deleteDialog()).toEqual({
       title: "Delete collection item?",
@@ -219,7 +219,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_DELETE_DOM !== "1") {
     await render(true);
     commands.length = 0;
     await request((current) =>
-      current.requestRowDelete(page("tasks/Task.md", "Task")),
+      current.requestItemDelete(page("tasks/Task.md", "Task")),
     );
     expect(deleteDialog()).toBeNull();
     expect(commands).toEqual([]);

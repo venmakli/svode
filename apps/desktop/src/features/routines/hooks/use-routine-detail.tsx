@@ -5,10 +5,10 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import {
-  useCollectionDetailRowBinding,
+  useCollectionDetailItemBinding,
   type CollectionDetailContent,
   type CollectionDetailController,
-  type CollectionDetailRowBinding,
+  type CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
@@ -18,7 +18,7 @@ import type {
   RoutineDefinition,
   RoutineLaunchRecoveryActions,
   RoutineLaunchRefusal,
-  RoutineRow,
+  RoutineItem,
 } from "../model/types";
 import { RoutineDefinitionForm } from "../ui/routine-definition-form";
 import { RoutineDetailView } from "../ui/routine-detail-view";
@@ -42,30 +42,30 @@ export function useRoutineDetail({
   pending,
   readOnly,
   recovery,
-  rows,
+  items,
   onEditChange,
   setEditSession,
 }: {
   applyUpdate(
-    row: RoutineRow,
+    item: RoutineItem,
     definition: RoutineDefinition,
-  ): Promise<RoutineRow | null>;
+  ): Promise<RoutineItem | null>;
   detailController: CollectionDetailController | null;
   editSession: RoutineEditSession | null;
   executors: AgentActorOptionsState;
   instanceKey: string;
   mutationError: string | null;
   nameError: string | null;
-  getRunRefusal(row: RoutineRow): RoutineLaunchRefusal | null;
-  getRunState(row: RoutineRow): CollectionActionState;
-  onOpenSession(row: RoutineRow): void;
-  onRun(row: RoutineRow): Promise<void>;
+  getRunRefusal(item: RoutineItem): RoutineLaunchRefusal | null;
+  getRunState(item: RoutineItem): CollectionActionState;
+  onOpenSession(item: RoutineItem): void;
+  onRun(item: RoutineItem): Promise<void>;
   owner: RoutineOwnerInput;
   pending: boolean;
   readOnly: boolean;
   recovery: RoutineLaunchRecoveryActions;
   /** The Routines of the ready catalog; null until it is read. */
-  rows: readonly RoutineRow[] | null;
+  items: readonly RoutineItem[] | null;
   onEditChange(definition: RoutineDefinition): void;
   setEditSession(
     value:
@@ -73,14 +73,14 @@ export function useRoutineDetail({
       | null
       | ((current: RoutineEditSession | null) => RoutineEditSession | null),
   ): void;
-}): CollectionDetailRowBinding<RoutineRow> {
+}): CollectionDetailItemBinding<RoutineItem> {
   const createReadOnlyDetail = useCallback(
-    (row: RoutineRow): CollectionDetailContent => ({
+    (item: RoutineItem): CollectionDetailContent => ({
       content: (
         <RoutineDetailView
           executors={executors}
           recovery={recovery}
-          row={row}
+          item={item}
         />
       ),
       description: (
@@ -89,41 +89,41 @@ export function useRoutineDetail({
       footerActions: (
         <RoutineDetailActions
           recovery={recovery}
-          row={row}
-          runRefusal={getRunRefusal(row)}
-          runState={getRunState(row)}
+          item={item}
+          runRefusal={getRunRefusal(item)}
+          runState={getRunState(item)}
           onOpenSession={onOpenSession}
           onRun={onRun}
         />
       ),
-      title: routineDetailTitle(row),
+      title: routineDetailTitle(item),
     }),
     [executors, getRunRefusal, getRunState, onOpenSession, onRun, recovery],
   );
   // A Routine without a readable id is listed as `invalid:<path>`, so its
   // detail closes as a Routine that is gone.
-  const findRow = useMemo(
+  const findItem = useMemo(
     () =>
-      rows
-        ? (selection: { rowId: string }) =>
-            rows.find((row) => row.id === selection.rowId)
+      items
+        ? (selection: { itemId: string }) =>
+            items.find((item) => item.id === selection.itemId)
         : null,
-    [rows],
+    [items],
   );
-  const detail = useCollectionDetailRowBinding({
+  const detail = useCollectionDetailItemBinding({
     controller: detailController,
     createContent: createReadOnlyDetail,
-    findRow,
+    findItem,
   });
 
   useEffect(() => {
     if (!editSession || !detailController) return;
     const session = editSession;
-    const formId = `routine-detail-${session.row.id}`;
+    const formId = `routine-detail-${session.item.id}`;
     const selection = {
       instanceKey,
       presentationId: "all",
-      rowId: session.row.id,
+      itemId: session.item.id,
     };
     void detailController
       .open({
@@ -159,7 +159,7 @@ export function useRoutineDetail({
                   if (readOnly) return;
                   void (async () => {
                     const updated = await applyUpdate(
-                      session.row,
+                      session.item,
                       session.draft,
                     );
                     if (!updated) return;
@@ -184,7 +184,7 @@ export function useRoutineDetail({
               onClick={() => {
                 session.guard.dirty = false;
                 setEditSession(null);
-                void detail.open(session.row, selection);
+                void detail.open(session.item, selection);
               }}
             >
               {m.routines_cancel()}
@@ -203,7 +203,7 @@ export function useRoutineDetail({
         layout: "form",
         selection,
         title: routineDetailTitle({
-          ...session.row,
+          ...session.item,
           description: session.draft.description,
           name: session.draft.name,
         }),

@@ -80,33 +80,33 @@ if (!isolatedProcess) {
     },
   }));
   const actors = { actors: [], loadActors: async () => [] };
-  const tableEntries = {
-    get entries() {
-      return entries;
+  const tableItems = {
+    get items() {
+      return items;
     },
-    setEntries: () => undefined,
+    setItems: () => undefined,
     nestedCollectionPaths: new Set<string>(),
     nestedSchemas: new Map<string, CollectionSchema>(),
     loading: false,
     error: null,
-    loadEntries: async () => undefined,
+    loadItems: async () => undefined,
   };
-  const entryActions = {
-    createEntry: async () => undefined,
-    reorderEntries: () => undefined,
+  const itemActions = {
+    createItem: async () => undefined,
+    reorderItems: () => undefined,
   };
   const fieldSave = { commitField: () => undefined };
   mock.module("../../hooks/use-collection-actors", () => ({
     useCollectionActors: () => actors,
   }));
-  mock.module("../../hooks/table/use-table-entries", () => ({
-    useTableEntries: () => tableEntries,
+  mock.module("../../hooks/table/use-table-items", () => ({
+    useTableItems: () => tableItems,
   }));
-  mock.module("../../hooks/table/use-table-entry-actions", () => ({
-    useTableEntryActions: () => entryActions,
+  mock.module("../../hooks/table/use-table-item-actions", () => ({
+    useTableItemActions: () => itemActions,
   }));
-  mock.module("../../hooks/use-collection-entry-field-save", () => ({
-    useCollectionEntryFieldSave: () => fieldSave,
+  mock.module("../../hooks/use-collection-item-field-save", () => ({
+    useCollectionItemFieldSave: () => fieldSave,
   }));
   mock.module("sonner", () => ({
     toast: {
@@ -131,7 +131,7 @@ if (!isolatedProcess) {
       },
     ],
   };
-  const entries: Page[] = ["one", "two"].map((name) => ({
+  const items: Page[] = ["one", "two"].map((name) => ({
     meta: {
       title: name,
       icon: null,

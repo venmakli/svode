@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { CardPropertyFlow } from "../card-property-flow";
-import { CollectionEntryContextMenuItems } from "../entry-context-menu";
+import { CollectionItemContextMenuItems } from "../item-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import { CollectionPresentationGalleryCard } from "../presentation-gallery-card";
 import { GalleryCover } from "./gallery-cover";
@@ -22,11 +22,11 @@ export function SortableGalleryCard(props: GalleryCardProps) {
     transition,
     isDragging,
   } = useSortable({
-    id: props.entry.path,
+    id: props.item.path,
     disabled: props.disabledReorder,
     data: {
       type: "gallery-card",
-      entryPath: props.entry.path,
+      itemPath: props.item.path,
     },
   });
 
@@ -49,7 +49,7 @@ export function SortableGalleryCard(props: GalleryCardProps) {
 }
 
 function GalleryCardContent({
-  entry,
+  item,
   cover,
   cardFields,
   properties,
@@ -79,7 +79,7 @@ function GalleryCardContent({
   const showTitle = cardFields.includes("title");
   const showIcon = cardFields.includes("icon");
   const showDescription = cardFields.includes("description");
-  const conflictPath = pageNameConflictDisplayPath(entry);
+  const conflictPath = pageNameConflictDisplayPath(item);
 
   return (
     <CollectionPresentationGalleryCard
@@ -87,7 +87,7 @@ function GalleryCardContent({
       {...(!disabledReorder ? dragListeners : {})}
       cardRef={cardRef}
       tabIndex={0}
-      data-gallery-card-path={entry.path}
+      data-gallery-card-path={item.path}
       density="compact"
       selected={focused}
       className={cn(!disabledReorder && "active:cursor-grabbing")}
@@ -102,33 +102,33 @@ function GalleryCardContent({
         <PageKindMarker
           folder={folder}
           nestedCollection={nestedCollection}
-          onOpenNested={() => onOpenNestedCollection(entry)}
+          onOpenNested={() => onOpenNestedCollection(item)}
         />
       }
       leading={
         showIcon ? (
           <PageTitleIcon
-            icon={entry.meta.icon}
+            icon={item.meta.icon}
             className="h-5 min-w-4 text-sm leading-5"
           />
         ) : undefined
       }
-      title={showTitle ? entry.meta.title : undefined}
+      title={showTitle ? item.meta.title : undefined}
       description={
         conflictPath ??
-        (showDescription && entry.meta.description
-          ? entry.meta.description
+        (showDescription && item.meta.description
+          ? item.meta.description
           : undefined)
       }
       properties={
         <CardPropertyFlow
-          entry={entry}
+          item={item}
           properties={properties}
           actors={actors}
           relationContext={{
             spacePath,
             projectPath,
-            currentFilePath: entry.path,
+            currentFilePath: item.path,
             onOpenPath,
           }}
           className="gap-x-1.5 gap-y-1 pt-0.5"
@@ -137,16 +137,16 @@ function GalleryCardContent({
         />
       }
       contextMenu={
-        <CollectionEntryContextMenuItems
-          entry={entry}
+        <CollectionItemContextMenuItems
+          item={item}
           nestedCollection={nestedCollection}
-          onOpenInPeek={() => onOpen(entry, nestedCollection)}
+          onOpenInPeek={() => onOpen(item, nestedCollection)}
         />
       }
       contextMenuClassName="w-48"
-      onFocusCard={() => onFocusCard(entry.path)}
-      onMoveFocus={(key) => onKeyboardMove(entry.path, key)}
-      onOpen={() => onOpen(entry, nestedCollection)}
+      onFocusCard={() => onFocusCard(item.path)}
+      onMoveFocus={(key) => onKeyboardMove(item.path, key)}
+      onOpen={() => onOpen(item, nestedCollection)}
     />
   );
 }

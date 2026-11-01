@@ -1,13 +1,13 @@
 import type {
   AttachmentOwnerInput,
-  AttachmentRow,
+  AttachmentItem,
   AttachmentsSnapshot,
   AttachmentsSourceState,
 } from "./types";
 import { sameRuntimePath } from "./types";
 
 export interface AttachmentBranch {
-  target: AttachmentRow;
+  target: AttachmentItem;
   snapshot?: AttachmentsSnapshot;
   loading: boolean;
   error: string | null;
@@ -54,26 +54,26 @@ export class AttachmentSourceSession {
   inventory(): AttachmentsSnapshot | null {
     if (this.view.state.phase !== "ready") return null;
     const root = this.view.state.snapshot;
-    const rows = [...root.rows];
+    const items = [...root.items];
     const generations = [root.generation];
-    for (let index = 0; index < rows.length; index++) {
-      const row = rows[index]!;
-      if (!row.ownerPath) continue;
-      const branch = this.view.branches.get(row.ownerPath);
-      if (branch?.snapshot && sameBranchTarget(row, branch.target)) {
-        rows.push(...branch.snapshot.rows);
-        generations.push(`${row.ownerPath}:${branch.snapshot.generation}`);
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index]!;
+      if (!item.ownerPath) continue;
+      const branch = this.view.branches.get(item.ownerPath);
+      if (branch?.snapshot && sameBranchTarget(item, branch.target)) {
+        items.push(...branch.snapshot.items);
+        generations.push(`${item.ownerPath}:${branch.snapshot.generation}`);
       }
     }
-    return { ...root, rows, generation: generations.join("\0") };
+    return { ...root, items, generation: generations.join("\0") };
   }
 
   private emit() {
     const inventory = this.inventory();
     const targets = new Map(
-      inventory?.rows
-        .filter((row) => row.ownerPath)
-        .map((row) => [row.ownerPath!, row]),
+      inventory?.items
+        .filter((item) => item.ownerPath)
+        .map((item) => [item.ownerPath!, item]),
     );
     const branches = new Map(this.view.branches);
     const expanded = new Set(this.view.expanded);
@@ -129,16 +129,17 @@ export class AttachmentSourceSession {
   private visibleBranches() {
     const paths = new Set([...this.observed, ...this.peekAncestors]);
     if (this.view.state.phase !== "ready") return paths;
-    const visit = (rows: readonly AttachmentRow[]) => {
-      for (const row of rows) {
-        if (!row.ownerPath || !this.view.expanded.has(row.ownerPath)) continue;
-        paths.add(row.ownerPath);
-        visit(this.view.branches.get(row.ownerPath)?.snapshot?.rows ?? []);
+    const visit = (items: readonly AttachmentItem[]) => {
+      for (const item of items) {
+        if (!item.ownerPath || !this.view.expanded.has(item.ownerPath))
+          continue;
+        paths.add(item.ownerPath);
+        visit(this.view.branches.get(item.ownerPath)?.snapshot?.items ?? []);
       }
     };
-    visit(this.view.state.snapshot.rows);
+    visit(this.view.state.snapshot.items);
     for (const path of this.observed)
-      visit(this.view.branches.get(path)?.snapshot?.rows ?? []);
+      visit(this.view.branches.get(path)?.snapshot?.items ?? []);
     return paths;
   }
 
@@ -170,10 +171,10 @@ export class AttachmentSourceSession {
     if (expanded.has(path)) void this.refreshBranchTree(path);
   }
 
-  retainPeekTarget(row: AttachmentRow) {
+  retainPeekTarget(item: AttachmentItem) {
     this.peekAncestors = new Set(
       [...this.view.branches.keys()].filter((path) =>
-        row.path.startsWith(`${path}/`),
+        item.path.startsWith(`${path}/`),
       ),
     );
     return () => {
@@ -188,7 +189,7 @@ export class AttachmentSourceSession {
       (!this.view.expanded.has(path) && !this.observed.has(path))
     )
       return;
-    const children = this.view.branches.get(path)?.snapshot?.rows ?? [];
+    const children = this.view.branches.get(path)?.snapshot?.items ?? [];
     for (const child of children) {
       if (child.ownerPath && this.view.expanded.has(child.ownerPath))
         await this.refreshBranchTree(child.ownerPath);
@@ -196,7 +197,9 @@ export class AttachmentSourceSession {
   }
 
   async loadBranch(path: string) {
-    const target = this.inventory()?.rows.find((row) => row.ownerPath === path);
+    const target = this.inventory()?.items.find(
+      (item) => item.ownerPath === path,
+    );
     if (!target || !this.active) return;
     const request = ++this.branchRequest;
     const previous = this.view.branches.get(path);
@@ -244,10 +247,10 @@ export class AttachmentSourceSession {
   private isCurrentBranch(
     path: string,
     request: number,
-    target: AttachmentRow,
+    target: AttachmentItem,
   ) {
-    const current = this.inventory()?.rows.find(
-      (row) => row.ownerPath === path,
+    const current = this.inventory()?.items.find(
+      (item) => item.ownerPath === path,
     );
     return (
       this.active &&
@@ -265,7 +268,7 @@ export class AttachmentSourceSession {
   }
 }
 
-function sameBranchTarget(left: AttachmentRow, right: AttachmentRow) {
+function sameBranchTarget(left: AttachmentItem, right: AttachmentItem) {
   return (
     left.key === right.key &&
     left.kind === right.kind &&

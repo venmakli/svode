@@ -1,4 +1,4 @@
-export { getArtifactPresentationKind } from "./model/presentation";
+export { getDirectoryPresentationKind } from "./model/presentation";
 export {
   closeActiveContent,
   getActiveContentPath,
@@ -51,6 +51,7 @@ export type {
   ArtifactKind,
   ArtifactOpenIntent,
   ArtifactOpenTarget,
+  ArtifactRegistryKind,
   ArtifactSourceShape,
   ContentPathRetarget,
   ContentRevealRequest,

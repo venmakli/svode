@@ -19,7 +19,7 @@ import {
   routineTriggerSummary,
 } from "../model/routine-values";
 import { routineAgentActorId } from "../model/launch-refusal";
-import type { RoutineLaunchRecoveryActions, RoutineRow } from "../model/types";
+import type { RoutineLaunchRecoveryActions, RoutineItem } from "../model/types";
 import { RoutineDiagnostics } from "./routine-diagnostics";
 import { RoutineLaunchRefusalNotice } from "./routine-launch-refusal";
 import {
@@ -30,77 +30,77 @@ import {
 export function RoutineDetailView({
   executors,
   recovery = {},
-  row,
+  item,
 }: {
   executors: AgentActorOptionsState;
   recovery?: RoutineLaunchRecoveryActions;
-  row: RoutineRow;
+  item: RoutineItem;
 }) {
   if (
-    !row.definition ||
-    row.routineId === null ||
-    routineDefinitionDiagnostics(row).length > 0
+    !item.definition ||
+    item.routineId === null ||
+    routineDefinitionDiagnostics(item).length > 0
   ) {
     return (
       <div className="flex flex-col gap-4">
-        <RoutineNameConflictNotice row={row} />
-        <RoutineDiagnostics diagnostics={row.diagnostics} />
+        <RoutineNameConflictNotice item={item} />
+        <RoutineDiagnostics diagnostics={item.diagnostics} />
         <DetailValue label={m.routines_definition_path_label()}>
-          {row.definitionPath}
+          {item.definitionPath}
         </DetailValue>
       </div>
     );
   }
 
-  const nextRunCopy = routineNextRunCopy(row);
+  const nextRunCopy = routineNextRunCopy(item);
 
   return (
     <div className="flex flex-col gap-5">
-      <RoutineNameConflictNotice row={row} />
+      <RoutineNameConflictNotice item={item} />
       <div className="grid gap-4 sm:grid-cols-2">
         <DetailValue label={m.routines_field_trigger()}>
           <Badge variant="secondary">
-            {row.definition.trigger.type === "schedule"
-              ? routineScheduleSummary(row.definition.trigger)
-              : routineTriggerSummary(row)}
+            {item.definition.trigger.type === "schedule"
+              ? routineScheduleSummary(item.definition.trigger)
+              : routineTriggerSummary(item)}
           </Badge>
         </DetailValue>
         <DetailValue label={m.routines_field_action()}>
-          <Badge variant="secondary">{routineActionSummary(row)}</Badge>
+          <Badge variant="secondary">{routineActionSummary(item)}</Badge>
         </DetailValue>
         <DetailValue label={m.routines_field_enabled()}>
-          {row.definition.trigger.type === "manual"
+          {item.definition.trigger.type === "manual"
             ? m.routines_not_applicable()
-            : row.definition.enabled
+            : item.definition.enabled
               ? m.routines_enabled_yes()
               : m.routines_enabled_no()}
         </DetailValue>
         <DetailValue label={m.routines_field_executor()}>
-          {row.definition.action.type === "run_agent" ? (
+          {item.definition.action.type === "run_agent" ? (
             <RoutineExecutorValue
               executors={executors}
-              reference={row.definition.action.executor}
+              reference={item.definition.action.executor}
             />
           ) : (
             m.routines_not_applicable()
           )}
         </DetailValue>
-        {row.lastRunAt ? (
+        {item.lastRunAt ? (
           <DetailValue label={m.routines_field_last_run()}>
             <span className="flex flex-wrap items-center gap-2">
-              <time dateTime={row.lastRunAt}>
-                {formatRoutineRunDate(row.lastRunAt)}
+              <time dateTime={item.lastRunAt}>
+                {formatRoutineRunDate(item.lastRunAt)}
               </time>
-              {row.lastRunOrigin === "remote" ? (
+              {item.lastRunOrigin === "remote" ? (
                 <Badge variant="outline">{m.routines_last_run_remote()}</Badge>
               ) : null}
             </span>
-            {row.lastRun?.refusal ? (
+            {item.lastRun?.refusal ? (
               <span className="mt-1 flex text-destructive">
                 <RoutineLaunchRefusalNotice
-                  actorId={routineAgentActorId(row)}
+                  actorId={routineAgentActorId(item)}
                   recovery={recovery}
-                  refusal={row.lastRun.refusal}
+                  refusal={item.lastRun.refusal}
                 />
               </span>
             ) : null}
@@ -108,22 +108,22 @@ export function RoutineDetailView({
         ) : null}
         {nextRunCopy ? (
           <DetailValue label={m.routines_field_next_run()}>
-            <time dateTime={row.nextRunAt ?? undefined}>{nextRunCopy}</time>
+            <time dateTime={item.nextRunAt ?? undefined}>{nextRunCopy}</time>
           </DetailValue>
         ) : null}
       </div>
       <Separator />
       <DetailValue
         label={
-          row.definition.action.type === "run_agent"
+          item.definition.action.type === "run_agent"
             ? m.routines_instruction_label()
             : m.routines_rule_description_label()
         }
       >
         <ControlledMarkdownEditor
-          key={row.fingerprint}
+          key={item.fingerprint}
           disabled
-          value={row.definition.body}
+          value={item.definition.body}
           placeholder={m.routines_instruction_empty()}
           onChange={() => undefined}
         />
@@ -154,14 +154,14 @@ function RoutineExecutorValue({
   );
 }
 
-function RoutineNameConflictNotice({ row }: { row: RoutineRow }) {
-  if (!row.nameConflict) return null;
+function RoutineNameConflictNotice({ item }: { item: RoutineItem }) {
+  if (!item.nameConflict) return null;
   return (
     <Alert>
       <AlertTriangle />
       <AlertTitle>{m.routines_name_conflict_title()}</AlertTitle>
       <AlertDescription>
-        {m.routines_name_conflict_detail({ path: row.definitionPath })}
+        {m.routines_name_conflict_detail({ path: item.definitionPath })}
       </AlertDescription>
     </Alert>
   );

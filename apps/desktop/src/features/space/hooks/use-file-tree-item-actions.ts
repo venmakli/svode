@@ -4,10 +4,7 @@ import {
   useActiveContentSpaceId,
   useOpenScopeOwner,
 } from "@/features/artifact";
-import {
-  artifactNavigationKey,
-  type NavigationItem,
-} from "@/features/navigation";
+import { pathNavigationKey, type NavigationItem } from "@/features/navigation";
 import { useOpenPage } from "@/features/page/navigation";
 import type { TreeNode } from "../model/types";
 import { useEditorFilePendingWrite } from "@/features/editor/file-tree-sync";
@@ -50,7 +47,7 @@ function treeNodeNavigationItem(
         : "page";
   if (!kind) return null;
   return {
-    key: artifactNavigationKey(kind, node.path, spaceId, rootSpaceId),
+    key: pathNavigationKey(kind, node.path, spaceId, rootSpaceId),
     title: node.title,
     ...(node.icon ? { icon: node.icon } : {}),
   };

@@ -21,19 +21,19 @@ export function CollectionInlineDiagnostic({ message }: { message: string }) {
 
 /**
  * The value of a Collection property: the standard display of its semantics
- * or the owner's render. `detail` is the row's detail, where a custom
+ * or the owner's render. `detail` is the item's detail, where a custom
  * property may show more than in a cell.
  */
 export function CollectionPropertyValue({
   property,
-  row,
+  item,
   context = "cell",
 }: {
   property: CollectionPropertyDefinition<unknown>;
-  row: unknown;
+  item: unknown;
   context?: "cell" | "detail";
 }) {
-  const applicability = readCollectionPropertyApplicability(property, row);
+  const applicability = readCollectionPropertyApplicability(property, item);
   if (applicability.status === "hidden") return null;
   if (applicability.status !== "applicable") {
     return (
@@ -44,15 +44,15 @@ export function CollectionPropertyValue({
     );
   }
 
-  const value = property.getValue(row);
+  const value = property.getValue(item);
 
   const display =
     property.semantics.kind === "custom"
       ? property.semantics
       : property.semantics.display;
   if (display) {
-    if (context === "cell") return display.render(value, row);
-    const rendered = (display.renderDetail ?? display.render)(value, row);
+    if (context === "cell") return display.render(value, item);
+    const rendered = (display.renderDetail ?? display.render)(value, item);
     // An empty custom value reads like an empty standard one.
     return rendered === null ||
       rendered === undefined ||
@@ -86,10 +86,10 @@ export function CollectionPropertyValue({
 
 export function readCollectionPropertyApplicability(
   property: CollectionPropertyDefinition<unknown>,
-  row: unknown,
+  item: unknown,
 ): CollectionPropertyApplicability {
   try {
-    return property.getApplicability?.(row) ?? { status: "applicable" };
+    return property.getApplicability?.(item) ?? { status: "applicable" };
   } catch {
     return {
       label: m.collection_callback_error(),

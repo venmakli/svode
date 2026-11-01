@@ -21,15 +21,15 @@ import { runCollectionCallback } from "../lib/interaction";
 
 interface CollectionPropertyProps {
   property: CollectionPropertyDefinition<unknown>;
-  row: unknown;
+  item: unknown;
 }
 
 function readPropertyState(
   property: CollectionPropertyDefinition<unknown>,
-  row: unknown,
+  item: unknown,
 ): CollectionPropertyActionState {
   try {
-    return property.capabilities?.edit?.getState(row) ?? { status: "idle" };
+    return property.capabilities?.edit?.getState(item) ?? { status: "idle" };
   } catch (error) {
     return {
       status: "error",
@@ -43,7 +43,7 @@ function readPropertyState(
 
 export function CollectionPropertyControl({
   property,
-  row,
+  item,
   density = "default",
   onRejected,
 }: CollectionPropertyProps & {
@@ -54,7 +54,7 @@ export function CollectionPropertyControl({
   const [localPending, setLocalPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  const applicability = readCollectionPropertyApplicability(property, row);
+  const applicability = readCollectionPropertyApplicability(property, item);
   if (applicability.status === "hidden") return null;
   if (applicability.status !== "applicable") {
     return (
@@ -77,8 +77,8 @@ export function CollectionPropertyControl({
     );
   }
 
-  const value = property.getValue(row);
-  const ownerState = readPropertyState(property, row);
+  const value = property.getValue(item);
+  const ownerState = readPropertyState(property, item);
   const pending = localPending || ownerState.status === "pending";
   const disabled = pending || ownerState.status === "disabled";
   const message =
@@ -110,7 +110,7 @@ export function CollectionPropertyControl({
           invalid={validation.invalid}
           disabled={disabled}
           accessibilityLabel={
-            property.getAccessibilityLabel?.(row) ?? property.label
+            property.getAccessibilityLabel?.(item) ?? property.label
           }
           density={density}
           onChange={async (nextValue: unknown) => {
@@ -119,7 +119,7 @@ export function CollectionPropertyControl({
             setLocalPending(true);
             setLocalError(null);
             const result = await runCollectionCallback(
-              () => edit.update(row, nextValue),
+              () => edit.update(item, nextValue),
               m.collection_callback_error(),
             );
             localPendingRef.current = false;

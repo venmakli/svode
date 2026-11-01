@@ -19,14 +19,14 @@ import type {
   RoutineCatalogSnapshot,
   RoutineDefinition,
   RoutineDiagnostic,
-  RoutineRow,
+  RoutineItem,
 } from "../model/types";
 import { routineMutationWarningDescription } from "../lib/routine-mutation-warning";
 import { routineErrorMessage } from "./use-routine-catalog";
 
 interface RoutineCreateSession {
   automaticAuthority: boolean | null;
-  baselineRows: readonly RoutineRow[];
+  baselineItems: readonly RoutineItem[];
   draft: RoutineDefinition;
   initialDraft: RoutineDefinition;
   owner: RoutineOwnerInput;
@@ -35,7 +35,7 @@ interface RoutineCreateSession {
 
 interface RoutineCreateApplied {
   owner: RoutineOwnerInput;
-  row: RoutineRow;
+  item: RoutineItem;
   snapshot: RoutineCatalogSnapshot;
 }
 
@@ -55,12 +55,12 @@ export function useRoutineCreateJourney({
   const open = useCallback(
     ({
       automaticAuthority,
-      baselineRows,
+      baselineItems,
       owner,
       ownerLabel,
     }: {
       automaticAuthority: boolean | null;
-      baselineRows: readonly RoutineRow[];
+      baselineItems: readonly RoutineItem[];
       owner: RoutineOwnerInput;
       ownerLabel: string;
     }) => {
@@ -70,7 +70,7 @@ export function useRoutineCreateJourney({
       setAuthoritativeNameConflictPath(null);
       setSession({
         automaticAuthority,
-        baselineRows,
+        baselineItems,
         draft,
         initialDraft: cloneRoutineDefinition(draft),
         owner: { ...owner },
@@ -96,7 +96,7 @@ export function useRoutineCreateJourney({
   }, []);
 
   const optimisticNameConflictPath = session
-    ? findRoutineNameConflictPath(session.draft.name, session.baselineRows)
+    ? findRoutineNameConflictPath(session.draft.name, session.baselineItems)
     : null;
   const nameConflictPath =
     authoritativeNameConflictPath ?? optimisticNameConflictPath;
@@ -130,10 +130,10 @@ export function useRoutineCreateJourney({
         );
         return;
       }
-      const row = result.snapshot.rows.find(
-        (candidateRow) => candidateRow.id === result.routineId,
+      const item = result.snapshot.items.find(
+        (candidateItem) => candidateItem.id === result.routineId,
       );
-      if (!row?.definition) {
+      if (!item?.definition) {
         setRetryBlocked(true);
         setError(m.routines_create_result_missing());
         return;
@@ -141,7 +141,7 @@ export function useRoutineCreateJourney({
       publishWarnings(result.warnings);
       setAuthoritativeNameConflictPath(null);
       setSession(null);
-      await onApplied({ owner: active.owner, row, snapshot: result.snapshot });
+      await onApplied({ owner: active.owner, item, snapshot: result.snapshot });
     } catch (reason) {
       await reconcileUncertainCreate(active, candidate, reason, onApplied, {
         blockRetry: () => setRetryBlocked(true),
@@ -180,20 +180,20 @@ async function reconcileUncertainCreate(
 ) {
   try {
     const snapshot = await loadRoutineCatalog(session.owner);
-    const baseline = new Set(session.baselineRows.map((row) => row.id));
-    const matches = snapshot.rows.filter(
-      (row) =>
-        !baseline.has(row.id) &&
-        row.definition &&
-        routineDefinitionMatchesCandidate(row.definition, candidate),
+    const baseline = new Set(session.baselineItems.map((item) => item.id));
+    const matches = snapshot.items.filter(
+      (item) =>
+        !baseline.has(item.id) &&
+        item.definition &&
+        routineDefinitionMatchesCandidate(item.definition, candidate),
     );
     if (matches.length === 1) {
       toast.warning(m.routines_create_reconciled());
       actions.close();
-      await onApplied({ owner: session.owner, row: matches[0]!, snapshot });
+      await onApplied({ owner: session.owner, item: matches[0]!, snapshot });
       return;
     }
-    if (snapshot.rows.every((row) => baseline.has(row.id))) {
+    if (snapshot.items.every((item) => baseline.has(item.id))) {
       actions.fail(routineErrorMessage(reason));
       return;
     }

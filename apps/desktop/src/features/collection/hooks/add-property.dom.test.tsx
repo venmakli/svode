@@ -63,25 +63,25 @@ if (!isolatedProcess) {
   mock.module("./use-collection-actors", () => ({
     useCollectionActors: () => ({ actors: [], loadActors: async () => [] }),
   }));
-  mock.module("./table/use-table-entries", () => ({
-    useTableEntries: () => ({
-      entries: [],
-      setEntries: () => undefined,
+  mock.module("./table/use-table-items", () => ({
+    useTableItems: () => ({
+      items: [],
+      setItems: () => undefined,
       nestedCollectionPaths: new Set<string>(),
       nestedSchemas: new Map<string, CollectionSchema>(),
       loading: false,
       error: null,
-      loadEntries: async () => undefined,
+      loadItems: async () => undefined,
     }),
   }));
-  mock.module("./table/use-table-entry-actions", () => ({
-    useTableEntryActions: () => ({
-      createEntry: async () => undefined,
-      reorderEntries: () => undefined,
+  mock.module("./table/use-table-item-actions", () => ({
+    useTableItemActions: () => ({
+      createItem: async () => undefined,
+      reorderItems: () => undefined,
     }),
   }));
-  mock.module("./use-collection-entry-field-save", () => ({
-    useCollectionEntryFieldSave: () => ({ commitField: () => undefined }),
+  mock.module("./use-collection-item-field-save", () => ({
+    useCollectionItemFieldSave: () => ({ commitField: () => undefined }),
   }));
   mock.module("sonner", () => ({
     toast: {

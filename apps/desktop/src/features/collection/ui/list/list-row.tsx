@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/shared/lib/utils";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
 import { CardPropertyFlow } from "../card-property-flow";
-import { CollectionEntryContextMenuItems } from "../entry-context-menu";
+import { CollectionItemContextMenuItems } from "../item-context-menu";
 import { PageTitleIcon } from "../page-title-icon";
 import { CollectionPresentationListRow } from "../presentation-chrome";
 import type { ListRowProps } from "./types";
@@ -26,11 +26,11 @@ export function SortableListRow(props: ListRowProps) {
     transition,
     isDragging,
   } = useSortable({
-    id: props.row.entry.path,
+    id: props.row.item.path,
     disabled: props.disabledReorder,
     data: {
       type: "list-row",
-      entryPath: props.row.entry.path,
+      itemPath: props.row.item.path,
     },
   });
 
@@ -79,8 +79,8 @@ export function CollectionListRowContent({
   dragAttributes: ButtonHTMLAttributes<HTMLButtonElement>;
   dragListeners?: ButtonHTMLAttributes<HTMLButtonElement>;
 }) {
-  const { entry } = row;
-  const conflictPath = pageNameConflictDisplayPath(entry);
+  const { item } = row;
+  const conflictPath = pageNameConflictDisplayPath(item);
   const showIcon = cardFields.includes("icon");
   const showDescription =
     density === "comfortable" && cardFields.includes("description");
@@ -89,15 +89,15 @@ export function CollectionListRowContent({
     <CollectionPresentationListRow
       rowRef={rowRef}
       tabIndex={0}
-      data-list-row-path={entry.path}
+      data-list-row-path={item.path}
       density={density}
       selected={focused}
       style={{ paddingLeft: `${12 + row.level * 18}px` }}
-      onFocusRow={() => onFocusRow(entry.path)}
-      onOpen={() => onOpen(entry, row.nestedCollection)}
+      onFocusRow={() => onFocusRow(item.path)}
+      onOpen={() => onOpen(item, row.nestedCollection)}
       onMoveFocus={(key) => {
-        if (key === "ArrowUp") onKeyboardMove(entry.path, -1);
-        if (key === "ArrowDown") onKeyboardMove(entry.path, 1);
+        if (key === "ArrowUp") onKeyboardMove(item.path, -1);
+        if (key === "ArrowDown") onKeyboardMove(item.path, 1);
       }}
       leading={
         <button
@@ -126,7 +126,7 @@ export function CollectionListRowContent({
               className="flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground [&_svg]:size-3.5"
               onClick={(event) => {
                 event.stopPropagation();
-                onToggle(entry);
+                onToggle(item);
               }}
             >
               {row.expanded ? <ChevronDown /> : <ChevronRight />}
@@ -134,14 +134,14 @@ export function CollectionListRowContent({
           ) : null}
           {showIcon ? (
             <PageTitleIcon
-              icon={entry.meta.icon}
+              icon={item.meta.icon}
               className="size-5 text-[15px] leading-none"
             />
           ) : null}
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <span className="truncate text-sm font-medium">
-                {entry.meta.title}
+                {item.meta.title}
               </span>
               {row.nestedCollection ? (
                 <Button
@@ -153,7 +153,7 @@ export function CollectionListRowContent({
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onOpenNestedCollection(entry);
+                    onOpenNestedCollection(item);
                   }}
                 >
                   <Database />
@@ -171,9 +171,9 @@ export function CollectionListRowContent({
                 {conflictPath}
               </div>
             ) : null}
-            {showDescription && entry.meta.description ? (
+            {showDescription && item.meta.description ? (
               <div className="mt-1 truncate text-xs text-muted-foreground">
-                {entry.meta.description}
+                {item.meta.description}
               </div>
             ) : null}
           </div>
@@ -181,13 +181,13 @@ export function CollectionListRowContent({
       }
       properties={
         <CardPropertyFlow
-          entry={entry}
+          item={item}
           properties={properties}
           actors={actors}
           relationContext={{
             spacePath,
             projectPath,
-            currentFilePath: entry.path,
+            currentFilePath: item.path,
             onOpenPath,
           }}
           mode="inline"
@@ -197,10 +197,10 @@ export function CollectionListRowContent({
         />
       }
       contextMenu={
-        <CollectionEntryContextMenuItems
-          entry={entry}
+        <CollectionItemContextMenuItems
+          item={item}
           nestedCollection={row.nestedCollection}
-          onOpenInPeek={() => onOpen(entry, row.nestedCollection)}
+          onOpenInPeek={() => onOpen(item, row.nestedCollection)}
         />
       }
     />

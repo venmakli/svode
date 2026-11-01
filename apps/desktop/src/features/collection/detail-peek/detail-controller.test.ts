@@ -12,12 +12,12 @@ import type {
 const firstSelection: CollectionDetailSelection = {
   instanceKey: "space:root:actors",
   presentationId: "contributors",
-  rowId: "person:one",
+  itemId: "person:one",
 };
 
 const secondSelection: CollectionDetailSelection = {
   ...firstSelection,
-  rowId: "person:two",
+  itemId: "person:two",
 };
 
 function request(
@@ -25,10 +25,10 @@ function request(
   input: Partial<CollectionDetailRequest> = {},
 ): CollectionDetailRequest {
   return {
-    content: `Content ${selection.rowId}`,
+    content: `Content ${selection.itemId}`,
     description: "Repository actor",
     selection,
-    title: selection.rowId,
+    title: selection.itemId,
     ...input,
   };
 }
@@ -72,7 +72,7 @@ test("open updates the same stable selection without running its close guard", a
   expect(store.getSnapshot().active?.request.content).toBe("Refreshed actor");
 });
 
-test("replacement, explicit close, and identity-scoped disappeared-row close share one guard", async () => {
+test("replacement, explicit close, and identity-scoped disappeared-item close share one guard", async () => {
   const store = createStore();
   let allowClose = false;
   let guardCalls = 0;
@@ -209,7 +209,7 @@ test("an update queued while a close guard asks does not reopen the closed detai
   expect(await updateResult).toBe(false);
   expect(store.getSnapshot().active).toBeNull();
 
-  // Opening the row again later is a new request and opens it.
+  // Opening the item again later is a new request and opens it.
   expect(await store.controller.open(request(firstSelection))).toBe(true);
   expect(store.getSnapshot().active?.request.selection).toEqual(firstSelection);
 });
@@ -250,7 +250,7 @@ test("update leaves a detail that another request took and never opens a closed 
   const shown = request(firstSelection);
   await store.controller.open(shown);
 
-  // Another row took the peek.
+  // Another item took the peek.
   await store.controller.open(request(secondSelection));
   expect(await store.controller.update(shown, request(firstSelection))).toBe(
     false,
@@ -260,7 +260,7 @@ test("update leaves a detail that another request took and never opens a closed 
     secondSelection,
   );
 
-  // A form of the same row took the peek.
+  // A form of the same item took the peek.
   const reader = store.getSnapshot().active!.request;
   const form = request(secondSelection, { layout: "form" });
   await store.controller.open(form);
@@ -287,7 +287,7 @@ test("update without a next version closes the shown detail with its focus retur
         },
         isConnected: true,
       }) as unknown as HTMLElement,
-    // The row of the disappeared detail left the table.
+    // The item of the disappeared detail left the table.
     returnFocus: () =>
       ({
         focus: () => undefined,

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { skillFileRow } from "./skill-files";
+import { skillFileItem } from "./skill-files";
 import type { AgentContextSkillFile } from "./types";
 
 const file = (
@@ -18,18 +18,18 @@ const file = (
 });
 
 test("a folder becomes an expandable branch keyed by its path", () => {
-  const row = skillFileRow(file("directory", "references"));
+  const item = skillFileItem(file("directory", "references"));
 
-  expect(row.kind).toBe("directory");
-  expect(row.sourceShape).toBe("directory");
-  expect(row.ownerPath).toBe("references");
-  expect(row.hasChildren).toBe(true);
-  expect(row.contentPath).toBe(null);
+  expect(item.kind).toBe("directory");
+  expect(item.sourceShape).toBe("directory");
+  expect(item.ownerPath).toBe("references");
+  expect(item.hasChildren).toBe(true);
+  expect(item.contentPath).toBe(null);
 });
 
 test("Markdown reads as a Page and media keep their type, format and size", () => {
-  const markdown = skillFileRow(file("markdown", "references/guide.md"));
-  const media = skillFileRow(file("media", "assets/logo.png"));
+  const markdown = skillFileItem(file("markdown", "references/guide.md"));
+  const media = skillFileItem(file("media", "assets/logo.png"));
 
   expect(markdown.kind).toBe("page");
   expect(markdown.ownerPath).toBe(null);

@@ -1,19 +1,19 @@
 import type {
   AttachmentActivationRequest,
-  AttachmentRow,
+  AttachmentItem,
   AttachmentsSnapshot,
 } from "./types";
 import { sameRuntimePath } from "./types";
 
-export function currentAttachmentRow(
+export function currentAttachmentItem(
   snapshot: AttachmentsSnapshot,
-  row: AttachmentRow,
+  item: AttachmentItem,
 ) {
-  return snapshot.rows.find(
+  return snapshot.items.find(
     (candidate) =>
-      candidate.key === row.key &&
-      candidate.path === row.path &&
-      candidate.kind === row.kind,
+      candidate.key === item.key &&
+      candidate.path === item.path &&
+      candidate.kind === item.kind,
   );
 }
 
@@ -28,18 +28,18 @@ export function reconcileAttachmentPeek(
     current.owner.ownerPath !== snapshot.owner.ownerPath
   )
     return null;
-  const row =
-    currentAttachmentRow(snapshot, current.row) ??
-    snapshot.rows.find(
+  const item =
+    currentAttachmentItem(snapshot, current.item) ??
+    snapshot.items.find(
       (candidate) =>
         current.ownerSession &&
-        current.row.ownerPath &&
-        candidate.ownerPath === current.row.ownerPath &&
+        current.item.ownerPath &&
+        candidate.ownerPath === current.item.ownerPath &&
         candidate.sourceShape === "directory" &&
         ["page", "collection", "app"].includes(candidate.kind),
     );
-  if (row?.kind === "app" && !row.hasApp) return null;
-  return row
-    ? { ...current, row, sourceGeneration: snapshot.generation }
+  if (item?.kind === "app" && !item.hasApp) return null;
+  return item
+    ? { ...current, item, sourceGeneration: snapshot.generation }
     : null;
 }

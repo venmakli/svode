@@ -119,13 +119,13 @@ function toActorCatalog(dto: ActorCatalogDto): ActorCatalogSnapshot {
   return Object.freeze({
     repositoryId: dto.repositoryId,
     generation: dto.generation,
-    rows: Object.freeze(
-      dto.rows.map((row) =>
+    items: Object.freeze(
+      dto.rows.map((item) =>
         Object.freeze({
-          ...row,
-          availableYears: Object.freeze([...row.availableYears]),
+          ...item,
+          availableYears: Object.freeze([...item.availableYears]),
           aliases: Object.freeze(
-            row.aliases.map((alias) =>
+            item.aliases.map((alias) =>
               Object.freeze({
                 email: alias.email,
                 line: alias.line ?? null,
@@ -134,7 +134,7 @@ function toActorCatalog(dto: ActorCatalogDto): ActorCatalogSnapshot {
             ),
           ),
           sources: Object.freeze(
-            row.sources.map((source) =>
+            item.sources.map((source) =>
               Object.freeze({
                 ...source,
                 line: source.line ?? null,

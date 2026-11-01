@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { spaceRelativeImageAbsPath } from "./entry-image-source";
+import { spaceRelativeImageAbsPath } from "./item-image-source";
 
 test("spaceRelativeImageAbsPath resolves inherited inline cover path from space root", () => {
   expect(

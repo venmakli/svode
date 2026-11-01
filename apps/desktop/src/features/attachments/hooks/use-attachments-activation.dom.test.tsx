@@ -10,7 +10,7 @@ import {
 } from "@/features/artifact";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 import type { AttachmentsSnapshotDto } from "@/platform/attachments/attachments-api";
-import type { AttachmentOwnerRef, AttachmentRow } from "../model/types";
+import type { AttachmentOwnerRef, AttachmentItem } from "../model/types";
 import { useAttachmentsActivation } from "./use-attachments-activation";
 
 test("typed activation and source refresh reject stale owner, marker and request results", async () => {
@@ -45,7 +45,7 @@ test("typed activation and source refresh reject stale owner, marker and request
     contentPath: "README.md",
     hasDirectCollection: false,
   };
-  const page: AttachmentRow = {
+  const page: AttachmentItem = {
     key: "page:notes.md",
     path: "notes.md",
     contentPath: "notes.md",
@@ -61,7 +61,7 @@ test("typed activation and source refresh reject stale owner, marker and request
     format: "markdown",
     availability: "available",
   };
-  const collection: AttachmentRow = {
+  const collection: AttachmentItem = {
     ...page,
     key: "collection:tasks",
     path: "tasks",
@@ -71,7 +71,7 @@ test("typed activation and source refresh reject stale owner, marker and request
     sourcePath: "tasks/schema.yaml",
     sourceShape: "directory",
   };
-  const app: AttachmentRow = {
+  const app: AttachmentItem = {
     ...collection,
     key: "app:tool",
     path: "tool",
@@ -110,7 +110,7 @@ test("typed activation and source refresh reject stale owner, marker and request
   try {
     await act(async () => root.render(<Harness target={owner} />));
     await act(async () => pending.shift()!(snapshot("one")));
-    for (const row of [
+    for (const item of [
       page,
       {
         ...page,
@@ -130,17 +130,17 @@ test("typed activation and source refresh reject stale owner, marker and request
         refresh = current.source.refresh();
       });
       await act(async () => {
-        pending.shift()!(snapshot(row.key, [row, collection, app]));
+        pending.shift()!(snapshot(item.key, [item, collection, app]));
         await refresh;
       });
-      await act(async () => current.onActivate(row, { rowId: row.key }));
-      expect(current.peekTarget?.row.kind).toBe(row.kind);
+      await act(async () => current.onActivate(item, { itemId: item.key }));
+      expect(current.peekTarget?.item.kind).toBe(item.kind);
       await act(async () => current.closePeek());
     }
-    for (const row of [collection, app]) {
-      await act(async () => current.onActivate(row, { rowId: row.key }));
+    for (const item of [collection, app]) {
+      await act(async () => current.onActivate(item, { itemId: item.key }));
       expect(getActiveContentSelection().selection).toBe(null);
-      expect(current.peekTarget?.row).toEqual(row);
+      expect(current.peekTarget?.item).toEqual(item);
       await act(async () => current.closePeek());
     }
     for (const missing of [collection, app]) {
@@ -159,7 +159,7 @@ test("typed activation and source refresh reject stale owner, marker and request
         await refresh;
       });
       await act(async () =>
-        current.onActivate(missingHead, { rowId: missingHead.key }),
+        current.onActivate(missingHead, { itemId: missingHead.key }),
       );
       const identity = current.peekTarget?.ownerSession;
       const ready = {
@@ -180,11 +180,11 @@ test("typed activation and source refresh reject stale owner, marker and request
         pending.shift()!(snapshot("created", [ready]));
         await refresh;
       });
-      expect(current.peekTarget?.row).toEqual(ready);
+      expect(current.peekTarget?.item).toEqual(ready);
       expect(current.peekTarget?.ownerSession).toEqual(identity);
-      expect(current.source.inventory()?.rows).toEqual([ready]);
+      expect(current.source.inventory()?.items).toEqual([ready]);
       await act(async () => current.closePeek());
-      await act(async () => current.onActivate(ready, { rowId: ready.key }));
+      await act(async () => current.onActivate(ready, { itemId: ready.key }));
       expect(current.peekTarget?.ownerSession?.kind).toBe(
         missing.kind === "app" ? "page" : "collection",
       );
@@ -198,7 +198,7 @@ test("typed activation and source refresh reject stale owner, marker and request
       pending.shift()!(snapshot("leaf", [page]));
       await handoffRefresh;
     });
-    await act(async () => current.onActivate(page, { rowId: page.key }));
+    await act(async () => current.onActivate(page, { itemId: page.key }));
     const pageSession = current.peekTarget?.ownerSession;
     await act(async () => current.retargetPeek("Renamed/README.md"));
     const moved = {
@@ -216,7 +216,7 @@ test("typed activation and source refresh reject stale owner, marker and request
       pending.shift()!(snapshot("moved", [moved]));
       await handoffRefresh;
     });
-    expect(current.peekTarget?.row.path).toBe(moved.path);
+    expect(current.peekTarget?.item.path).toBe(moved.path);
     expect(current.peekTarget?.ownerSession).toEqual(pageSession);
     const converted = {
       ...moved,
@@ -231,7 +231,7 @@ test("typed activation and source refresh reject stale owner, marker and request
       pending.shift()!(snapshot("converted", [converted]));
       await handoffRefresh;
     });
-    expect(current.peekTarget?.row.kind).toBe("collection");
+    expect(current.peekTarget?.item.kind).toBe("collection");
     expect(current.peekTarget?.ownerSession).toEqual(pageSession);
     await act(async () => current.closePeek());
     let first!: Promise<void>;
@@ -250,8 +250,8 @@ test("typed activation and source refresh reject stale owner, marker and request
       old(snapshot("older"));
       await first;
     });
-    assert.throws(() => current.onActivate(app, { rowId: app.key }));
-    await act(async () => current.onActivate(page, { rowId: page.key }));
+    assert.throws(() => current.onActivate(app, { itemId: app.key }));
+    await act(async () => current.onActivate(page, { itemId: page.key }));
     await act(async () => {
       first = current.source.refresh();
     });
@@ -260,7 +260,7 @@ test("typed activation and source refresh reject stale owner, marker and request
       await first;
     });
     expect(current.peekTarget).toBe(null);
-    assert.throws(() => current.onActivate(page, { rowId: page.key }));
+    assert.throws(() => current.onActivate(page, { itemId: page.key }));
     await act(async () => {
       first = current.source.refresh();
     });

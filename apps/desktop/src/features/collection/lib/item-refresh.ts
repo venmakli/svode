@@ -1,6 +1,6 @@
 import type { Page } from "@/features/page";
 
-export function collectionEntriesTargetKey({
+export function collectionItemsTargetKey({
   collectionPath,
   projectPath,
   spacePath,
@@ -12,22 +12,22 @@ export function collectionEntriesTargetKey({
   return [spacePath, projectPath ?? "", collectionPath].join("\u0000");
 }
 
-export function mergeStableEntriesByPath(current: Page[], next: Page[]) {
+export function mergeStableItemsByPath(current: Page[], next: Page[]) {
   if (current.length === 0) return next;
 
   const currentByPath = new Map(
-    current.map((entry) => [entry.path, entry] as const),
+    current.map((item) => [item.path, item] as const),
   );
   let changed = current.length !== next.length;
 
-  const merged = next.map((nextEntry, index) => {
-    const currentEntry = currentByPath.get(nextEntry.path);
-    if (!currentEntry || !sameEntry(currentEntry, nextEntry)) {
+  const merged = next.map((nextItem, index) => {
+    const currentItem = currentByPath.get(nextItem.path);
+    if (!currentItem || !sameItem(currentItem, nextItem)) {
       changed = true;
-      return nextEntry;
+      return nextItem;
     }
-    if (current[index] !== currentEntry) changed = true;
-    return currentEntry;
+    if (current[index] !== currentItem) changed = true;
+    return currentItem;
   });
 
   return changed ? merged : current;
@@ -41,23 +41,23 @@ export function sameStringSet(left: Set<string>, right: Set<string>) {
   return true;
 }
 
-export function rebaseCollectionEntries(
-  entries: Page[],
+export function rebaseCollectionItems(
+  items: Page[],
   previousCollectionPath: string,
   collectionPath: string,
 ) {
   let changed = false;
-  const next = entries.map((entry) => {
+  const next = items.map((item) => {
     const path = rebaseCollectionPath(
-      entry.path,
+      item.path,
       previousCollectionPath,
       collectionPath,
     );
-    if (path === entry.path) return entry;
+    if (path === item.path) return item;
     changed = true;
-    return { ...entry, path };
+    return { ...item, path };
   });
-  return changed ? next : entries;
+  return changed ? next : items;
 }
 
 export function rebaseCollectionPathSet(
@@ -85,7 +85,7 @@ export function rebaseCollectionPath(
     : path;
 }
 
-function sameEntry(left: Page, right: Page) {
+function sameItem(left: Page, right: Page) {
   return (
     left.path === right.path &&
     left.body === right.body &&

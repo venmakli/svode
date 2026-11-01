@@ -11,7 +11,7 @@ import {
 import { BoardPropertyFlow } from "./board/board-property-flow";
 import { CardPropertyFlow } from "./card-property-flow";
 
-const entry: Page = {
+const item: Page = {
   body: "",
   meta: {
     created: "2026-08-22T00:00:00Z",
@@ -49,16 +49,16 @@ test("card and board share switch presentation while preserving editability owne
           <CardPropertyFlow
             actors={[]}
             properties={[property]}
-            entry={entry}
+            item={item}
             onRequestActors={async () => []}
-            onUpdateField={(_entry, _column, value) => changes.push(value)}
+            onUpdateField={(_item, _column, value) => changes.push(value)}
           />
           <BoardPropertyFlow
             actors={[]}
             columns={[column]}
-            entry={entry}
+            item={item}
             onRequestActors={async () => []}
-            onUpdateField={(_entry, _column, value) => changes.push(value)}
+            onUpdateField={(_item, _column, value) => changes.push(value)}
           />
         </>,
       );

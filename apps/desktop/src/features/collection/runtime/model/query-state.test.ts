@@ -13,7 +13,7 @@ import type {
   CollectionPresentationRuntime,
 } from "./types";
 
-interface Row {
+interface Item {
   id: string;
   name: string;
 }
@@ -22,7 +22,7 @@ function presentation(
   id: string,
   properties: "searchable" | "plain" = "searchable",
 ): CollectionPresentationRuntime {
-  return defineCollectionPresentation<Row>({
+  return defineCollectionPresentation<Item>({
     descriptor: {
       properties: [
         {
@@ -30,7 +30,7 @@ function presentation(
             filter: { kind: "standard" },
             sort: { kind: "standard" },
           },
-          getValue: (row) => row.name,
+          getValue: (item) => item.name,
           key: "name",
           label: "Name",
           origin: "owner_defined",
@@ -38,18 +38,20 @@ function presentation(
           semantics: { kind: "standard", standard: { type: "text" } },
         },
       ],
-      getRowId: (row) => row.id,
+      getItemId: (item) => item.id,
       id,
       label: id,
       layout: {
-        getTitle: (row) => row.name,
+        getTitle: (item) => item.name,
         kind: "list",
         visibleProperties: [],
       },
       query:
-        properties === "searchable" ? { getSearchText: (row) => row.name } : {},
+        properties === "searchable"
+          ? { getSearchText: (item) => item.name }
+          : {},
     },
-    state: { phase: "ready", rows: [] },
+    state: { phase: "ready", items: [] },
   });
 }
 

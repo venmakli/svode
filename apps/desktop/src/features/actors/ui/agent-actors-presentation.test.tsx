@@ -10,7 +10,7 @@ import {
 import { createAgentAdapterDictionary } from "@/features/agent-adapters";
 
 import type { AgentActorFacts } from "../model/agent-actor-facts";
-import type { AgentActorRow } from "../model/agent-actor-types";
+import type { AgentActorItem } from "../model/agent-actor-types";
 import {
   createAgentActorsPresentation,
   createAgentActorsPresentationDescriptor,
@@ -20,7 +20,7 @@ const agents = createAgentAdapterDictionary([
   { id: "codex", displayName: "Codex" },
   { id: "claude-code", displayName: "Claude Code" },
 ]);
-const own: AgentActorRow = {
+const own: AgentActorItem = {
   actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
   binding: {
     agent: "codex",
@@ -35,7 +35,7 @@ const own: AgentActorRow = {
   ownerLabel: "docs",
   ownerPath: "/repo/docs",
 };
-const inherited: AgentActorRow = {
+const inherited: AgentActorItem = {
   ...own,
   actorRef: "agent:01arz3ndektsv4rrffq69g5faw",
   id: "01arz3ndektsv4rrffq69g5faw",
@@ -43,7 +43,7 @@ const inherited: AgentActorRow = {
   ownerLabel: "repo",
   ownerPath: "/repo",
 };
-const participant: AgentActorRow = {
+const participant: AgentActorItem = {
   ...own,
   actorRef: "agent:01arz3ndektsv4rrffq69g5fax",
   binding: { kind: "participant" },
@@ -60,13 +60,13 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
       getDeleteState: () => ({ status: "idle" }),
       getEditState: () => ({ status: "idle" }),
       onAdd: () => calls.push("add"),
-      onDelete: (row) => calls.push(`delete:${row.ownerPath}`),
-      onEdit: (row) => calls.push(`edit:${row.ownerPath}`),
+      onDelete: (item) => calls.push(`delete:${item.ownerPath}`),
+      onEdit: (item) => calls.push(`edit:${item.ownerPath}`),
     },
     agents,
     facts,
     inheritedVisible: true,
-    rows: [own, inherited],
+    items: [own, inherited],
   });
 
   expect(descriptor.id).toBe("agents");
@@ -85,12 +85,13 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
   expect(
     descriptor.layout.kind === "list" && descriptor.layout.visibleProperties,
   ).toEqual(["agent", "status", "space"]);
-  expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
+  expect(descriptor.itemActions?.map((action) => action.id)).toEqual([
     "edit-agent",
     "delete-agent",
   ]);
   await descriptor.create?.intents[0]?.run();
-  for (const action of descriptor.rowActions ?? []) await action.run(inherited);
+  for (const action of descriptor.itemActions ?? [])
+    await action.run(inherited);
   expect(calls).toEqual(["add", "edit:/repo", "delete:/repo"]);
 });
 
@@ -100,12 +101,12 @@ test("Agent Actors show the agent with its model, the device mode in the agent's
     agents,
     facts,
     inheritedVisible: false,
-    rows: [own, participant],
+    items: [own, participant],
   });
-  const value = (key: string, row: AgentActorRow) =>
+  const value = (key: string, item: AgentActorItem) =>
     descriptor.properties
       .find((property) => property.key === key)
-      ?.getValue(row);
+      ?.getValue(item);
   expect(value("agent", own)).toBe("Codex · GPT-5.4");
   expect(value("approval", own)).toBe("Auto review");
   expect(value("status", own)).toBe("Ready");
@@ -127,7 +128,7 @@ test("Agent Actors rows lead with the shared rounded agent avatar", () => {
     agents,
     facts,
     inheritedVisible: false,
-    rows: [own],
+    items: [own],
   });
   const leading =
     descriptor.layout.kind === "list"
@@ -144,7 +145,7 @@ test("Agent Actors rows never describe an agent by its raw reference", () => {
     agents,
     facts,
     inheritedVisible: false,
-    rows: [undescribed],
+    items: [undescribed],
   });
   const description =
     descriptor.layout.kind === "list"
@@ -162,30 +163,30 @@ test("Agent Actors default order and search preserve owner provenance", () => {
     agents,
     facts,
     inheritedVisible: true,
-    state: { phase: "ready", rows: [inherited, own] },
+    state: { phase: "ready", items: [inherited, own] },
   });
   const descriptor = createAgentActorsPresentationDescriptor({
     actions: disabledActions(),
     agents,
     facts,
     inheritedVisible: true,
-    rows: [inherited, own],
+    items: [inherited, own],
   });
   const ordered = applyCollectionQuery({
     descriptor,
     query: EMPTY_COLLECTION_QUERY,
-    rows: [inherited, own],
+    items: [inherited, own],
   });
   const searched = applyCollectionQuery({
     descriptor,
     query: { filters: [], search: "repo", sort: [] },
-    rows: [own, inherited],
+    items: [own, inherited],
   });
-  expect(ordered.rows.map((row) => row.ownerPath)).toEqual([
+  expect(ordered.items.map((item) => item.ownerPath)).toEqual([
     "/repo/docs",
     "/repo",
   ]);
-  expect(searched.rows.map((row) => row.ownerPath)).toEqual(["/repo"]);
+  expect(searched.items.map((item) => item.ownerPath)).toEqual(["/repo"]);
 
   const markup = renderToStaticMarkup(
     <CollectionPresentationShell
@@ -199,9 +200,9 @@ test("Agent Actors default order and search preserve owner provenance", () => {
   expect(markup.includes("data-agent-adapter")).toBe(false);
 });
 
-/** What a device shows of the rows above. */
-function facts(row: AgentActorRow): AgentActorFacts {
-  return row.binding.kind === "participant"
+/** What a device shows of the items above. */
+function facts(item: AgentActorItem): AgentActorFacts {
+  return item.binding.kind === "participant"
     ? {
         bindable: true,
         model: null,

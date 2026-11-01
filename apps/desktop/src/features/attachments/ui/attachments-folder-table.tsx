@@ -18,7 +18,7 @@ import {
   attachmentsPresentationState,
   createAttachmentsPresentationDescriptor,
 } from "../model/presentation";
-import type { AttachmentRow } from "../model/types";
+import type { AttachmentItem } from "../model/types";
 import { attachmentHierarchy } from "./attachment-hierarchy";
 import { AttachmentIcon } from "./attachment-icon";
 import {
@@ -29,27 +29,27 @@ import {
 /**
  * A read-only folder of another feature with the Attachments mechanics: the
  * same host, Table, Properties and folder expansion, without creation. A
- * folder row expands; a file row goes to `onOpenFile`.
+ * folder item expands; a file item goes to `onOpenFile`.
  */
 export function AttachmentsFolderTable({
   folder,
   onOpenFile,
 }: {
   folder: AttachmentsFolder;
-  onOpenFile(row: AttachmentRow, context: CollectionActivationContext): void;
+  onOpenFile(item: AttachmentItem, context: CollectionActivationContext): void;
 }) {
   const source = useAttachmentsFolderSource(folder);
   const presentation = defineCollectionPresentation({
     descriptor: createAttachmentsPresentationDescriptor({
       hierarchy: attachmentHierarchy(source),
-      onActivate: (row, context) => {
-        if (row.sourceShape === "directory" && row.ownerPath) {
-          source.toggle(row.ownerPath);
+      onActivate: (item, context) => {
+        if (item.sourceShape === "directory" && item.ownerPath) {
+          source.toggle(item.ownerPath);
           return;
         }
-        onOpenFile(row, context);
+        onOpenFile(item, context);
       },
-      renderLeading: (row) => <AttachmentIcon row={row} />,
+      renderLeading: (item) => <AttachmentIcon item={item} />,
     }),
     state: attachmentsPresentationState(source.state, {
       blockingError: (

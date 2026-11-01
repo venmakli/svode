@@ -5,24 +5,24 @@ import { act, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
-import type { CollectionDetailRowBinding } from "./detail-row-binding";
+import type { CollectionDetailItemBinding } from "./detail-item-binding";
 import type {
   CollectionDetailController,
   CollectionDetailSelection,
 } from "./types";
 
-interface Row {
+interface Item {
   id: string;
   name: string;
 }
 
-if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
-  test("detail row binding DOM", () => {
+if (process.env.SVODE_DETAIL_ITEM_BINDING_DOM !== "1") {
+  test("detail item binding DOM", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
       {
-        env: { ...process.env, SVODE_DETAIL_ROW_BINDING_DOM: "1" },
+        env: { ...process.env, SVODE_DETAIL_ITEM_BINDING_DOM: "1" },
         encoding: "utf8",
       },
     );
@@ -78,7 +78,7 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
   const selection: CollectionDetailSelection = {
     instanceKey: "people:root",
     presentationId: "all",
-    rowId: "ada",
+    itemId: "ada",
   };
 
   async function settle() {
@@ -104,46 +104,46 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
     const { TooltipProvider } = await import("@/components/ui/tooltip");
     const { CollectionDetailPeekHost, useCollectionDetailController } =
       await import("./detail-peek");
-    const { useCollectionDetailRowBinding } =
-      await import("./detail-row-binding");
+    const { useCollectionDetailItemBinding } =
+      await import("./detail-item-binding");
 
     let guardCalls = 0;
     const owner: {
-      binding?: CollectionDetailRowBinding<Row>;
+      binding?: CollectionDetailItemBinding<Item>;
       controller?: CollectionDetailController;
-      setRows?: (rows: readonly Row[] | null) => void;
+      setItems?: (items: readonly Item[] | null) => void;
     } = {};
 
-    function Owner({ initial }: { initial: readonly Row[] }) {
+    function Owner({ initial }: { initial: readonly Item[] }) {
       // Null while the source loads or failed to refresh.
-      const [rows, setRows] = useState<readonly Row[] | null>(initial);
+      const [items, setItems] = useState<readonly Item[] | null>(initial);
       const controller = useCollectionDetailController();
-      const binding = useCollectionDetailRowBinding<Row>({
+      const binding = useCollectionDetailItemBinding<Item>({
         controller,
-        createContent: (row) => ({
+        createContent: (item) => ({
           canClose: () => {
             guardCalls += 1;
             return true;
           },
           content: (
             <Expandable>
-              <p data-row-content>{row.name}</p>
+              <p data-row-content>{item.name}</p>
             </Expandable>
           ),
-          description: `About ${row.name}`,
+          description: `About ${item.name}`,
           headerActions: (
             <button type="button" data-owner-action>
-              Share {row.name}
+              Share {item.name}
             </button>
           ),
-          title: row.name,
+          title: item.name,
         }),
-        findRow: rows
-          ? (target) => rows.find((row) => row.id === target.rowId)
+        findItem: items
+          ? (target) => items.find((item) => item.id === target.itemId)
           : null,
       });
       useEffect(() => {
-        Object.assign(owner, { binding, controller, setRows });
+        Object.assign(owner, { binding, controller, setItems });
       }, [binding, controller]);
       return null;
     }
@@ -166,33 +166,33 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
     });
 
     const trigger = doc.createElement("button");
-    async function activate(row: Row) {
+    async function activate(item: Item) {
       await act(async () => {
-        await owner.binding!.activation(selection)!(row, {
+        await owner.binding!.activation(selection)!(item, {
           actions: (version) => (
             <button type="button" data-row-action>
-              Act on {(version as Row).name}
+              Act on {(version as Item).name}
             </button>
           ),
           fallbackFocus: () => doc.getElementById("fallback"),
-          // The row of the table, which leaves it with the row.
+          // The row of the table, which leaves it with the item.
           returnFocus: () => trigger,
-          rowId: row.id,
+          itemId: item.id,
         });
       });
       await settle();
     }
 
-    async function change(rows: readonly Row[] | null) {
+    async function change(items: readonly Item[] | null) {
       await act(async () => {
-        owner.setRows!(rows);
+        owner.setItems!(items);
       });
       await settle();
     }
 
-    async function open(row: Row) {
+    async function open(item: Item) {
       await act(async () => {
-        await owner.binding!.open(row, selection);
+        await owner.binding!.open(item, selection);
       });
       await settle();
     }
@@ -213,14 +213,14 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
   const peek = () => doc.querySelector("[data-collection-detail-peek]");
   const content = () => doc.querySelector("[data-row-content]")?.textContent;
 
-  test("the open detail follows its row and closes once the row is gone", async () => {
+  test("the open detail follows its item and closes once the item is gone", async () => {
     const env = await setup();
     await env.activate({ id: "ada", name: "Ada" });
     expect(content()).toBe("Ada");
     expect(doc.querySelector("[data-row-action]")?.textContent).toBe(
       "Act on Ada",
     );
-    // The owner's actions come first, the row's follow.
+    // The owner's actions come first, the item's follow.
     const owned = doc.querySelector("[data-owner-action]")!;
     expect(owned.textContent).toBe("Share Ada");
     expect(
@@ -265,19 +265,19 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
     expect(content()).toBe("Ada Lovelace");
     expect(peek()?.getAttribute("data-state")).toBe("open");
 
-    // Another row changing or leaving does not touch the open detail.
+    // Another item changing or leaving does not touch the open detail.
     await env.change([{ id: "ada", name: "Ada Lovelace" }]);
     expect(content()).toBe("Ada Lovelace");
     expect(peek()?.getAttribute("data-state")).toBe("open");
 
-    // The row left the set: the peek closes, focus falls back.
+    // The item left the set: the peek closes, focus falls back.
     await env.change([{ id: "bob", name: "Bob" }]);
     expect(peek()?.getAttribute("data-state") === "open").toBe(false);
     await settle();
     expect(doc.activeElement?.id).toBe("fallback");
     expect(env.guardCalls()).toBe(1);
 
-    // The row coming back does not reopen the closed peek.
+    // The item coming back does not reopen the closed peek.
     await env.change([{ id: "ada", name: "Ada" }]);
     expect(peek()?.getAttribute("data-state") === "open").toBe(false);
 
@@ -293,7 +293,7 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
       await env.controller().open({
         content: <p data-file>guide.md</p>,
         description: "File",
-        selection: { ...selection, instanceKey: "files:ada", rowId: "guide" },
+        selection: { ...selection, instanceKey: "files:ada", itemId: "guide" },
         title: "guide.md",
       });
     });
@@ -312,11 +312,11 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
     await env.unmount();
   });
 
-  test("a detail opened outside activation follows the current state and keeps its row actions after a form", async () => {
+  test("a detail opened outside activation follows the current state and keeps its item actions after a form", async () => {
     const env = await setup();
     await env.activate({ id: "ada", name: "Ada" });
 
-    // A form of the same row takes the peek; the row changes meanwhile.
+    // A form of the same item takes the peek; the item changes meanwhile.
     await act(async () => {
       await env.controller().open({
         content: <p data-form>Editing Ada</p>,
@@ -330,15 +330,15 @@ if (process.env.SVODE_DETAIL_ROW_BINDING_DOM !== "1") {
     await env.change([{ id: "ada", name: "Ada Lovelace" }]);
     expect(doc.querySelector("[data-form]")?.textContent).toBe("Editing Ada");
 
-    // Cancel shows the row again from the version it was edited from: the
-    // next render shows the current one with the row actions it had.
+    // Cancel shows the item again from the version it was edited from: the
+    // next render shows the current one with the item actions it had.
     await env.open({ id: "ada", name: "Ada" });
     expect(content()).toBe("Ada Lovelace");
     expect(doc.querySelector("[data-row-action]")?.textContent).toBe(
       "Act on Ada Lovelace",
     );
 
-    // Opened after the row left the set, the detail closes.
+    // Opened after the item left the set, the detail closes.
     await env.change([]);
     expect(peek()?.getAttribute("data-state") === "open").toBe(false);
     await env.change([{ id: "bob", name: "Bob" }]);

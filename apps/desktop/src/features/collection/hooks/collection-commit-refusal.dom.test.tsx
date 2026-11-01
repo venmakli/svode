@@ -7,7 +7,7 @@ import { act } from "react";
 import { mockNativeIpc } from "@/platform/native/testing";
 import { createTestDom } from "@/shared/testing/dom";
 
-// The toasts of the entries are read from a mocked `sonner`, loaded first.
+// The toasts of the items are read from a mocked `sonner`, loaded first.
 if (process.env.SVODE_COLLECTION_COMMIT_REFUSAL_DOM !== "1") {
   test("collection commit refusal DOM scenarios", () => {
     const child = spawnSync(

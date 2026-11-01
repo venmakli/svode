@@ -33,7 +33,7 @@ export function ColumnMenuPopover({
   projectPath,
   actors = [],
   onRequestActors,
-  affectedEntries = 0,
+  affectedItems = 0,
   onOpenChange,
   onSchemaChange,
   onUpdateViewPatch,
@@ -51,7 +51,7 @@ export function ColumnMenuPopover({
   projectPath?: string | null;
   actors?: ActorCandidate[];
   onRequestActors?: (allTime?: boolean) => Promise<ActorCandidate[]>;
-  affectedEntries?: number;
+  affectedItems?: number;
   onOpenChange: (open: boolean) => void;
   onSchemaChange: (schema: CollectionSchema) => void;
   onUpdateViewPatch: (patch: Record<string, unknown>) => Promise<void>;
@@ -95,7 +95,7 @@ export function ColumnMenuPopover({
         collectionPath={collectionPath}
         spacePath={spacePath}
         projectPath={projectPath}
-        affectedEntries={affectedEntries}
+        affectedItems={affectedItems}
         extensionPanes={extensionPanes}
         renderMainExtension={(controls) => (
           <TableSchemaMenuExtension

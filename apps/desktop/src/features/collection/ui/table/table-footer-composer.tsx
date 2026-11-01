@@ -12,7 +12,7 @@ import * as m from "@/paraglide/messages.js";
 export function TableFooterComposer({
   readOnly,
   colSpan,
-  entryCount,
+  itemCount,
   footerRef,
   inputRef,
   open,
@@ -24,7 +24,7 @@ export function TableFooterComposer({
 }: {
   colSpan: number;
   readOnly: boolean;
-  entryCount: number;
+  itemCount: number;
   footerRef: RefObject<HTMLDivElement | null>;
   inputRef: RefObject<HTMLInputElement | null>;
   open: boolean;
@@ -43,7 +43,7 @@ export function TableFooterComposer({
               <Input
                 ref={inputRef}
                 value={value}
-                placeholder={m.table_new_entry_placeholder()}
+                placeholder={m.table_new_item_placeholder()}
                 className="h-7 max-w-sm"
                 onChange={(event) => onValueChange(event.target.value)}
                 onBlur={() => {
@@ -66,11 +66,11 @@ export function TableFooterComposer({
                 onClick={(event) => onOpen(event.shiftKey)}
               >
                 <Plus data-icon="inline-start" />
-                {m.table_new_entry_placeholder()}
+                {m.table_new_item_placeholder()}
               </Button>
             )}
             <div className="ml-auto text-xs text-muted-foreground">
-              {m.table_entries_count({ count: entryCount })}
+              {m.table_items_count({ count: itemCount })}
             </div>
           </div>
         </TableCell>

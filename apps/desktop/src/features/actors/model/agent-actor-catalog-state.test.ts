@@ -13,7 +13,7 @@ const snapshot: AgentActorCatalogSnapshot = {
   diagnostics: [],
   fingerprints: { "/repo": "fingerprint:one" },
   launchSpacePath: "/repo/docs",
-  rows: [],
+  items: [],
 };
 
 test("agent actor publication suppresses content-equivalent snapshots", () => {
@@ -25,7 +25,7 @@ test("agent actor publication suppresses content-equivalent snapshots", () => {
   expect(publishAgentActorCatalogSnapshot(ready, { ...snapshot })).toBe(ready);
 });
 
-test("agent actor retry preserves stale rows and exposes contextual pending", () => {
+test("agent actor retry preserves stale items and exposes contextual pending", () => {
   const ready = publishAgentActorCatalogSnapshot(
     { phase: "initial" },
     snapshot,

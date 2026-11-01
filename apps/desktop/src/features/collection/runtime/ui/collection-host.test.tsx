@@ -7,24 +7,24 @@ import { defineCollectionPresentation } from "../model/runtime";
 import type { CollectionStateController } from "../hooks/use-collection-state";
 import { CollectionHost } from "../../ui/collection-host";
 
-interface Row {
+interface Item {
   id: string;
   name: string;
 }
 
 test("feature-owned actions keep their positions and survive presentation switches", () => {
-  const presentation = defineCollectionPresentation<Row>({
+  const presentation = defineCollectionPresentation<Item>({
     descriptor: {
       properties: [],
-      getRowId: (row) => row.id,
+      getItemId: (item) => item.id,
       id: "people",
       label: "People",
       layout: {
-        getTitle: (row) => row.name,
+        getTitle: (item) => item.name,
         kind: "list",
         visibleProperties: [],
       },
-      query: { getSearchText: (row) => row.name },
+      query: { getSearchText: (item) => item.name },
       create: {
         label: "Add",
         intents: [
@@ -37,27 +37,27 @@ test("feature-owned actions keep their positions and survive presentation switch
         ],
       },
     },
-    state: { phase: "ready", rows: [{ id: "ada", name: "Ada" }] },
+    state: { phase: "ready", items: [{ id: "ada", name: "Ada" }] },
   });
   const instance = {
     defaultPresentationId: "people",
     instanceKey: "people:test",
     presentations: [
       presentation,
-      defineCollectionPresentation<Row>({
+      defineCollectionPresentation<Item>({
         descriptor: {
           properties: [],
-          getRowId: (row) => row.id,
+          getItemId: (item) => item.id,
           id: "teams",
           label: "Teams",
           layout: {
-            getTitle: (row) => row.name,
+            getTitle: (item) => item.name,
             kind: "list",
             visibleProperties: [],
           },
           query: {},
         },
-        state: { phase: "ready", rows: [] },
+        state: { phase: "ready", items: [] },
       }),
     ],
     stateScope: "lifecycle" as const,
@@ -128,7 +128,7 @@ test("feature-owned actions keep their positions and survive presentation switch
 
 test("create capability hides zero intents and groups multiple owner intents", () => {
   const createPresentation = (intents: "zero" | "many") =>
-    defineCollectionPresentation<Row>({
+    defineCollectionPresentation<Item>({
       descriptor: {
         create: {
           label: "Add attachment",
@@ -150,18 +150,18 @@ test("create capability hides zero intents and groups multiple owner intents", (
                   },
                 ],
         },
-        getRowId: (row) => row.id,
+        getItemId: (item) => item.id,
         id: intents,
         label: intents,
         layout: {
-          getTitle: (row) => row.name,
+          getTitle: (item) => item.name,
           kind: "list",
           visibleProperties: [],
         },
         properties: [],
         query: {},
       },
-      state: { phase: "ready", rows: [] },
+      state: { phase: "ready", items: [] },
     });
   const state: Extract<CollectionStateController, { phase: "ready" }> = {
     activePresentationId: "zero",

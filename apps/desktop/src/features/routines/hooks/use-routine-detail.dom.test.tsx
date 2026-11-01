@@ -9,10 +9,10 @@ import type { CollectionActionState } from "@/features/collection";
 import type {
   CollectionDetailController,
   CollectionDetailRequest,
-  CollectionDetailRowBinding,
+  CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 
-import type { RoutineRow } from "../model/types";
+import type { RoutineItem } from "../model/types";
 import { useRoutineDetail } from "./use-routine-detail";
 import type { RoutineEditSession } from "./use-routine-mutations";
 
@@ -23,7 +23,7 @@ const executors: AgentActorOptionsState = {
   loading: false,
   options: [],
 };
-const routine: RoutineRow = {
+const routine: RoutineItem = {
   definition: {
     action: { executor: "agent:docs", type: "run_agent" },
     body: "Review changes.",
@@ -49,10 +49,10 @@ const routine: RoutineRow = {
 const selection = {
   instanceKey: "routines:space:root",
   presentationId: "all",
-  rowId: routine.id,
+  itemId: routine.id,
 };
 
-function renamed(name: string): RoutineRow {
+function renamed(name: string): RoutineItem {
   return {
     ...routine,
     definition: { ...routine.definition!, name },
@@ -62,9 +62,9 @@ function renamed(name: string): RoutineRow {
 }
 
 interface HarnessControls {
-  detail?: CollectionDetailRowBinding<RoutineRow>;
+  detail?: CollectionDetailItemBinding<RoutineItem>;
   setEditSession?: (session: RoutineEditSession | null) => void;
-  setRows?: (rows: readonly RoutineRow[] | null) => void;
+  setItems?: (items: readonly RoutineItem[] | null) => void;
   setRunState?: (state: CollectionActionState) => void;
 }
 
@@ -75,7 +75,7 @@ function Harness({
   controls: HarnessControls;
   detailController: CollectionDetailController;
 }) {
-  const [rows, setRows] = useState<readonly RoutineRow[] | null>([routine]);
+  const [items, setItems] = useState<readonly RoutineItem[] | null>([routine]);
   const [runState, setRunState] = useState<CollectionActionState>({
     status: "idle",
   });
@@ -105,21 +105,21 @@ function Harness({
     pending: false,
     readOnly: false,
     recovery: {},
-    rows,
+    items,
     setEditSession,
   });
   useEffect(() => {
     Object.assign(controls, {
       detail,
       setEditSession,
-      setRows,
+      setItems,
       setRunState,
     });
   }, [controls, detail]);
   return null;
 }
 
-test("an open read-only Routine follows its row, closes once it is gone and leaves its edit form alone", async () => {
+test("an open read-only Routine follows its item, closes once it is gone and leaves its edit form alone", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
@@ -162,15 +162,15 @@ test("an open read-only Routine follows its row, closes once it is gone and leav
     );
     await run(() =>
       controls.detail!.activation(selection)!(routine, {
-        actions: (row) => `Act on ${(row as RoutineRow).name}`,
-        rowId: routine.id,
+        actions: (item) => `Act on ${(item as RoutineItem).name}`,
+        itemId: routine.id,
       }),
     );
     expect(opens).toBe(1);
     expect(markup(shown()?.title).includes("Daily summary")).toBe(true);
 
     // An external edit and a new run state show in the open Routine.
-    await run(() => controls.setRows!([renamed("Weekly summary")]));
+    await run(() => controls.setItems!([renamed("Weekly summary")]));
     expect(markup(shown()?.title).includes("Weekly summary")).toBe(true);
     expect(markup(shown()?.headerActions)).toBe("Act on Weekly summary");
     const beforeRun = shown();
@@ -179,28 +179,28 @@ test("an open read-only Routine follows its row, closes once it is gone and leav
     expect(opens).toBe(1);
 
     // Loading keeps the Routine as it is.
-    await run(() => controls.setRows!(null));
+    await run(() => controls.setItems!(null));
     expect(markup(shown()?.title).includes("Weekly summary")).toBe(true);
-    await run(() => controls.setRows!([renamed("Weekly summary")]));
+    await run(() => controls.setItems!([renamed("Weekly summary")]));
 
     // The edit form keeps its draft through external changes and removal.
     await run(() =>
       controls.setEditSession!({
         draft: renamed("Weekly summary").definition!,
         guard: { dirty: true },
-        row: renamed("Weekly summary"),
+        item: renamed("Weekly summary"),
       }),
     );
     expect(shown()?.layout).toBe("form");
     const formTitle = markup(shown()?.title);
-    await run(() => controls.setRows!([renamed("Monthly summary")]));
+    await run(() => controls.setItems!([renamed("Monthly summary")]));
     expect(shown()?.layout).toBe("form");
     expect(markup(shown()?.title)).toBe(formTitle);
-    await run(() => controls.setRows!([]));
+    await run(() => controls.setItems!([]));
     expect(shown()?.layout).toBe("form");
-    await run(() => controls.setRows!([renamed("Monthly summary")]));
+    await run(() => controls.setItems!([renamed("Monthly summary")]));
 
-    // Cancel shows the current Routine with its row actions again.
+    // Cancel shows the current Routine with its item actions again.
     const footer = dom.window.document.createElement("div");
     dom.window.document.body.append(footer);
     const footerRoot = createRoot(footer);
@@ -214,18 +214,18 @@ test("an open read-only Routine follows its row, closes once it is gone and leav
     expect(markup(shown()?.headerActions)).toBe("Act on Monthly summary");
 
     // An external delete closes the read-only Routine.
-    await run(() => controls.setRows!([]));
+    await run(() => controls.setItems!([]));
     expect(shown()).toBe(null);
 
     // Opened by an addressed request, it follows the catalog too.
-    await run(() => controls.setRows!([routine]));
+    await run(() => controls.setItems!([routine]));
     await run(() => controls.detail!.open(routine, selection));
     expect(markup(shown()?.title).includes("Daily summary")).toBe(true);
-    await run(() => controls.setRows!([renamed("Nightly summary")]));
+    await run(() => controls.setItems!([renamed("Nightly summary")]));
     expect(markup(shown()?.title).includes("Nightly summary")).toBe(true);
     // A Routine that lost its id is a Routine that is gone.
     await run(() =>
-      controls.setRows!([
+      controls.setItems!([
         { ...routine, id: "invalid:.routines/daily-summary.md" },
       ]),
     );

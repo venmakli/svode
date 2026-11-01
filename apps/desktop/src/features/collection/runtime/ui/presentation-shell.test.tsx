@@ -10,7 +10,7 @@ import type {
 import { CollectionPresentationShell } from "./presentation-shell";
 import { CollectionQueryFilterEditor } from "./query-filter-editor";
 
-interface TestRow {
+interface TestItem {
   enabled: boolean;
   id: string;
   name: string;
@@ -19,10 +19,10 @@ interface TestRow {
 function onQueryChange(_query: CollectionQueryState) {}
 
 function descriptor(
-  overrides: Partial<CollectionPresentationDescriptor<TestRow>> = {},
-): CollectionPresentationDescriptor<TestRow> {
+  overrides: Partial<CollectionPresentationDescriptor<TestItem>> = {},
+): CollectionPresentationDescriptor<TestItem> {
   const nameProperty = {
-    getValue: (row: TestRow) => row.name,
+    getValue: (item: TestItem) => item.name,
     key: "name",
     label: "Name",
     origin: "domain_specific" as const,
@@ -41,7 +41,7 @@ function descriptor(
         update: async () => undefined,
       },
     },
-    getValue: (row: TestRow) => row.enabled,
+    getValue: (item: TestItem) => item.enabled,
     key: "enabled",
     label: "Enabled",
     origin: "owner_defined" as const,
@@ -55,16 +55,16 @@ function descriptor(
   return {
     onActivate: () => undefined,
     properties: [nameProperty, enabledProperty],
-    getRowId: (row) => row.id,
+    getItemId: (item) => item.id,
     id: "contributors",
     label: "Contributors",
     layout: {
-      getTitle: (row) => row.id,
+      getTitle: (item) => item.id,
       kind: "list",
       visibleProperties: ["name", "enabled"],
     },
     query: {},
-    rowActions: [
+    itemActions: [
       {
         getState: () => ({
           reason: "Repository is read-only",
@@ -95,11 +95,11 @@ function descriptor(
 }
 
 test("list shell renders structured identity, property flow, context menu, and activation seam", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor(),
     state: {
       phase: "ready",
-      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+      items: [{ enabled: true, id: "person:one", name: "Ilya" }],
     },
   });
   const markup = renderToStaticMarkup(
@@ -125,22 +125,22 @@ test("list shell renders structured identity, property flow, context menu, and a
 });
 
 test("structured Gallery uses the full responsive geometry and properties without Page", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
       onActivate: undefined,
       layout: {
         cardSize: "medium",
         density: "compact",
         getDescription: () => "Static artifact",
-        getTitle: (row) => row.name,
+        getTitle: (item) => item.name,
         kind: "gallery",
         visibleProperties: ["name"],
       },
-      rowActions: [],
+      itemActions: [],
     }),
     state: {
       phase: "ready",
-      rows: [{ enabled: false, id: "skill:review", name: "Review" }],
+      items: [{ enabled: false, id: "skill:review", name: "Review" }],
     },
   });
   const markup = renderToStaticMarkup(
@@ -164,7 +164,7 @@ test("structured Gallery uses the full responsive geometry and properties withou
 });
 
 test("neutral Table renders ordered Properties without schema-backed Page assumptions", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
       layout: {
         density: "compact",
@@ -175,7 +175,7 @@ test("neutral Table renders ordered Properties without schema-backed Page assump
     }),
     state: {
       phase: "ready",
-      rows: [{ enabled: true, id: "attachment:one", name: "brief.pdf" }],
+      items: [{ enabled: true, id: "attachment:one", name: "brief.pdf" }],
     },
   });
   const markup = renderToStaticMarkup(
@@ -195,14 +195,14 @@ test("neutral Table renders ordered Properties without schema-backed Page assump
 });
 
 test("ready presentation renders the controlled frontend query snapshot", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
-      query: { getSearchText: (row) => row.name },
-      rowActions: [],
+      query: { getSearchText: (item) => item.name },
+      itemActions: [],
     }),
     state: {
       phase: "ready",
-      rows: [
+      items: [
         { enabled: true, id: "person:one", name: "Ilya" },
         { enabled: true, id: "person:two", name: "Ada" },
       ],
@@ -222,12 +222,12 @@ test("ready presentation renders the controlled frontend query snapshot", () => 
 });
 
 test("initial presentation uses renderer-specific extracted skeleton", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
       layout: {
         cardSize: "medium",
         density: "compact",
-        getTitle: (row) => row.name,
+        getTitle: (item) => item.name,
         kind: "gallery",
         visibleProperties: [],
       },
@@ -252,19 +252,19 @@ test("initial presentation uses renderer-specific extracted skeleton", () => {
 });
 
 test("structured list layout fails closed for an unknown visible property", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
       onActivate: undefined,
       layout: {
-        getTitle: (row) => row.name,
+        getTitle: (item) => item.name,
         kind: "list",
         visibleProperties: ["missing"],
       },
-      rowActions: [],
+      itemActions: [],
     }),
     state: {
       phase: "ready",
-      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+      items: [{ enabled: true, id: "person:one", name: "Ilya" }],
     },
   });
   const markup = renderToStaticMarkup(
@@ -280,16 +280,16 @@ test("structured list layout fails closed for an unknown visible property", () =
   expect(markup.includes("data-collection-blocking-error")).toBe(true);
 });
 
-test("ready presentation keeps stale rows visible with diagnostics and no refresh status", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+test("ready presentation keeps stale items visible with diagnostics and no refresh status", () => {
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
-      rowActions: [],
+      itemActions: [],
     }),
     state: {
       attention: <span>Review identity</span>,
       diagnostics: [<span key="source">Git history is incomplete</span>],
       phase: "ready",
-      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+      items: [{ enabled: true, id: "person:one", name: "Ilya" }],
     },
   });
   const markup = renderToStaticMarkup(
@@ -311,24 +311,24 @@ test("ready presentation keeps stale rows visible with diagnostics and no refres
 });
 
 test("source-empty is resolved after fixed predicate and uses owner content or neutral fallback", () => {
-  const neutral = defineCollectionPresentation<TestRow>({
+  const neutral = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
-      query: { fixedPredicate: (row) => row.enabled },
-      rowActions: [],
+      query: { fixedPredicate: (item) => item.enabled },
+      itemActions: [],
     }),
     state: {
       phase: "ready",
-      rows: [{ enabled: false, id: "hidden", name: "Hidden" }],
+      items: [{ enabled: false, id: "hidden", name: "Hidden" }],
     },
   });
-  const owner = defineCollectionPresentation<TestRow>({
+  const owner = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
-      query: { fixedPredicate: (row) => row.enabled },
-      rowActions: [],
+      query: { fixedPredicate: (item) => item.enabled },
+      itemActions: [],
     }),
     state: {
       phase: "ready",
-      rows: [],
+      items: [],
       sourceEmpty: <div>Connect a repository to discover contributors</div>,
     },
   });
@@ -358,17 +358,17 @@ test("source-empty is resolved after fixed predicate and uses owner content or n
   expect(ownerMarkup.includes("No items yet")).toBe(false);
 });
 
-test("query-empty has a common reset action while source rows still exist", () => {
-  const presentation = defineCollectionPresentation<TestRow>({
+test("query-empty has a common reset action while source items still exist", () => {
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
-      query: { getSearchText: (row) => row.name },
-      rowActions: [],
+      query: { getSearchText: (item) => item.name },
+      itemActions: [],
     }),
     state: {
       attention: <span>Catalog is read-only</span>,
       diagnostics: [<span key="partial">One source was unavailable</span>],
       phase: "ready",
-      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+      items: [{ enabled: true, id: "person:one", name: "Ilya" }],
     },
   });
   const markup = renderToStaticMarkup(
@@ -388,18 +388,18 @@ test("query-empty has a common reset action while source rows still exist", () =
 });
 
 test("read-only presentation omits create and blocking errors stay presentation-local", () => {
-  const blocked = defineCollectionPresentation<TestRow>({
-    descriptor: descriptor({ id: "broken", rowActions: [] }),
+  const blocked = defineCollectionPresentation<TestItem>({
+    descriptor: descriptor({ id: "broken", itemActions: [] }),
     state: {
       error: "Descriptor failed",
       phase: "blocking_error",
     },
   });
-  const ready = defineCollectionPresentation<TestRow>({
-    descriptor: descriptor({ id: "healthy", rowActions: [] }),
+  const ready = defineCollectionPresentation<TestItem>({
+    descriptor: descriptor({ id: "healthy", itemActions: [] }),
     state: {
       phase: "ready",
-      rows: [{ enabled: true, id: "person:one", name: "Ilya" }],
+      items: [{ enabled: true, id: "person:one", name: "Ilya" }],
     },
   });
   const blockedMarkup = renderToStaticMarkup(
@@ -441,19 +441,19 @@ test("fixed actor properties render and filter with their own candidates", () =>
       standard: { type: "actor" as const },
     },
   };
-  const presentation = defineCollectionPresentation<TestRow>({
+  const presentation = defineCollectionPresentation<TestItem>({
     descriptor: descriptor({
       layout: {
-        getTitle: (row) => row.id,
+        getTitle: (item) => item.id,
         kind: "list",
         visibleProperties: ["executor"],
       },
       properties: [executor],
-      rowActions: [],
+      itemActions: [],
     }),
     state: {
       phase: "ready",
-      rows: [{ enabled: true, id: "routine:one", name: "Review" }],
+      items: [{ enabled: true, id: "routine:one", name: "Review" }],
     },
   });
   const cell = renderToStaticMarkup(

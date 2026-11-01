@@ -28,27 +28,27 @@ import { runCollectionCallback } from "../lib/interaction";
 import type {
   CollectionInteractionError,
   CollectionPresentationDescriptor,
-  CollectionRowActionDescriptor,
+  CollectionItemActionDescriptor,
 } from "../model/types";
 import { CollectionPropertyControl } from "./property-renderers";
 import {
-  CollectionRowActionsContextMenu,
-  CollectionRowActionsDropdownMenu,
-} from "./row-actions";
+  CollectionItemActionsContextMenu,
+  CollectionItemActionsDropdownMenu,
+} from "./item-actions";
 
 interface CollectionPresentationItemProps {
   descriptor: CollectionPresentationDescriptor<unknown>;
   depth?: number;
   activationFocusFallback?(): HTMLElement | null;
   instanceKey: string;
-  row: unknown;
-  rowId: string;
+  item: unknown;
+  itemId: string;
   selected: boolean;
   tabIndex: number;
-  onFocus(rowId: string): void;
+  onFocus(itemId: string): void;
   onInteractionError?(error: CollectionInteractionError): void;
-  onMoveFocus(rowId: string, key: string): void;
-  registerRow(rowId: string, element: HTMLElement | null): void;
+  onMoveFocus(itemId: string, key: string): void;
+  registerItem(itemId: string, element: HTMLElement | null): void;
 }
 
 export function CollectionPresentationItem({
@@ -56,21 +56,21 @@ export function CollectionPresentationItem({
   depth = 0,
   activationFocusFallback,
   instanceKey,
-  row,
-  rowId,
+  item,
+  itemId,
   selected,
   tabIndex,
   onFocus,
   onInteractionError,
   onMoveFocus,
-  registerRow,
+  registerItem,
 }: CollectionPresentationItemProps) {
   const [activationError, setActivationError] = useState<string | null>(null);
   const focusTargetId = useId();
   const activationEnabled = Boolean(descriptor.onActivate);
-  const rowActions = useMemo(
-    () => visibleRowActions(descriptor.rowActions, row),
-    [descriptor.rowActions, row],
+  const itemActions = useMemo(
+    () => visibleItemActions(descriptor.itemActions, item),
+    [descriptor.itemActions, item],
   );
 
   const reportError = useCallback(
@@ -84,29 +84,29 @@ export function CollectionPresentationItem({
         kind,
         message,
         presentationId: descriptor.id,
-        rowId,
+        itemId,
         targetId,
       });
     },
-    [descriptor.id, instanceKey, onInteractionError, rowId],
+    [descriptor.id, instanceKey, onInteractionError, itemId],
   );
 
-  // The menu of an open detail follows its row with the actions the
+  // The menu of an open detail follows its item with the actions the
   // presentation has then.
   const latestActions = useRef({
-    actions: descriptor.rowActions,
+    actions: descriptor.itemActions,
     reportError,
   });
   useEffect(() => {
-    latestActions.current = { actions: descriptor.rowActions, reportError };
-  }, [descriptor.rowActions, reportError]);
-  const rowActionsMenu = useCallback((version: unknown) => {
+    latestActions.current = { actions: descriptor.itemActions, reportError };
+  }, [descriptor.itemActions, reportError]);
+  const itemActionsMenu = useCallback((version: unknown) => {
     const { actions, reportError: report } = latestActions.current;
-    const visible = visibleRowActions(actions, version);
+    const visible = visibleItemActions(actions, version);
     return visible.length > 0 ? (
-      <CollectionRowActionsDropdownMenu
+      <CollectionItemActionsDropdownMenu
         actions={visible}
-        row={version}
+        item={version}
         onRejected={(targetId, message) => report("action", targetId, message)}
       />
     ) : undefined;
@@ -117,11 +117,11 @@ export function CollectionPresentationItem({
 
     setActivationError(null);
     const result = await runCollectionCallback(async () => {
-      await descriptor.onActivate?.(row, {
-        actions: rowActionsMenu,
+      await descriptor.onActivate?.(item, {
+        actions: itemActionsMenu,
         fallbackFocus: activationFocusFallback,
         returnFocus: () => document.getElementById(focusTargetId),
-        rowId,
+        itemId,
       });
     }, m.collection_callback_error());
 
@@ -134,9 +134,9 @@ export function CollectionPresentationItem({
     descriptor,
     focusTargetId,
     reportError,
-    row,
-    rowActionsMenu,
-    rowId,
+    item,
+    itemActionsMenu,
+    itemId,
   ]);
 
   const renderContext = {
@@ -153,7 +153,7 @@ export function CollectionPresentationItem({
           />
         );
       }
-      return <CollectionPropertyValue property={property} row={row} />;
+      return <CollectionPropertyValue property={property} item={item} />;
     },
     renderPropertyControl: (
       propertyKey: string,
@@ -175,7 +175,7 @@ export function CollectionPresentationItem({
         <CollectionPropertyControl
           density={density}
           property={property}
-          row={row}
+          item={item}
           onRejected={(targetId, message) =>
             reportError("property", targetId, message)
           }
@@ -184,9 +184,9 @@ export function CollectionPresentationItem({
     },
   };
   const actionContextMenu = (
-    <CollectionRowActionsContextMenu
-      actions={rowActions}
-      row={row}
+    <CollectionItemActionsContextMenu
+      actions={itemActions}
+      item={item}
       onRejected={(targetId, message) =>
         reportError("action", targetId, message)
       }
@@ -195,20 +195,20 @@ export function CollectionPresentationItem({
 
   if (descriptor.layout.kind === "table") {
     const layout = descriptor.layout;
-    const branch = layout.hierarchy?.getBranch(row);
+    const branch = layout.hierarchy?.getBranch(item);
     return (
       <CollectionTableRow
-        rowRef={(element) => registerRow(rowId, element)}
+        rowRef={(element) => registerItem(itemId, element)}
         aria-current={selected || undefined}
         data-collection-activatable={activationEnabled || undefined}
-        data-collection-row={rowId}
+        data-collection-row={itemId}
         id={focusTargetId}
         className="group/row h-10 bg-background text-[13px] hover:bg-muted/40"
         selected={selected}
         tabIndex={tabIndex}
         onActivate={activationEnabled ? () => void activate() : undefined}
-        onMoveFocus={(key) => onMoveFocus(rowId, key)}
-        onSelect={() => onFocus(rowId)}
+        onMoveFocus={(key) => onMoveFocus(itemId, key)}
+        onSelect={() => onFocus(itemId)}
       >
         {layout.visibleProperties.map((propertyKey) => {
           const property = descriptor.properties.find(
@@ -222,7 +222,7 @@ export function CollectionPresentationItem({
             : renderContext.renderProperty(propertyKey);
           const leading =
             propertyKey === layout.primaryProperty
-              ? layout.renderLeading?.(row)
+              ? layout.renderLeading?.(item)
               : null;
           const primary = propertyKey === layout.primaryProperty;
           const content = (
@@ -242,15 +242,15 @@ export function CollectionPresentationItem({
                 aria-label={
                   branch.expanded
                     ? m.collection_collapse_row({
-                        name: layout.hierarchy!.getLabel(row),
+                        name: layout.hierarchy!.getLabel(item),
                       })
                     : m.collection_expand_row({
-                        name: layout.hierarchy!.getLabel(row),
+                        name: layout.hierarchy!.getLabel(item),
                       })
                 }
                 onClick={(event) => {
                   event.stopPropagation();
-                  layout.hierarchy!.onToggle(row);
+                  layout.hierarchy!.onToggle(item);
                 }}
               >
                 <span
@@ -321,11 +321,11 @@ export function CollectionPresentationItem({
             </TableCell>
           );
         })}
-        {rowActions.length > 0 ? (
+        {itemActions.length > 0 ? (
           <TableCell className="w-10 p-1 text-right">
-            <CollectionRowActionsDropdownMenu
-              actions={rowActions}
-              row={row}
+            <CollectionItemActionsDropdownMenu
+              actions={itemActions}
+              item={item}
               onRejected={(targetId, message) =>
                 reportError("action", targetId, message)
               }
@@ -362,21 +362,21 @@ export function CollectionPresentationItem({
 
     return (
       <CollectionPresentationListRow
-        rowRef={(element) => registerRow(rowId, element)}
+        rowRef={(element) => registerItem(itemId, element)}
         aria-current={selected || undefined}
         data-collection-activatable={activationEnabled || undefined}
-        data-collection-row={rowId}
+        data-collection-row={itemId}
         id={focusTargetId}
-        contextMenu={rowActions.length > 0 ? actionContextMenu : undefined}
+        contextMenu={itemActions.length > 0 ? actionContextMenu : undefined}
         density={layout.density ?? "comfortable"}
         identity={
           <div className="flex min-w-0 flex-col gap-0.5">
             <span className="truncate text-sm font-medium">
-              {layout.getTitle(row)}
+              {layout.getTitle(item)}
             </span>
             {layout.getDescription ? (
               <span className="truncate text-xs text-muted-foreground">
-                {layout.getDescription(row)}
+                {layout.getDescription(item)}
               </span>
             ) : null}
             {activationError ? (
@@ -384,7 +384,7 @@ export function CollectionPresentationItem({
             ) : null}
           </div>
         }
-        leading={layout.renderLeading?.(row)}
+        leading={layout.renderLeading?.(item)}
         properties={
           properties.length > 0 ? (
             <CollectionPresentationPropertyFlow className="max-w-[46vw]">
@@ -395,8 +395,8 @@ export function CollectionPresentationItem({
         role="listitem"
         selected={selected}
         tabIndex={tabIndex}
-        onFocusRow={() => onFocus(rowId)}
-        onMoveFocus={(key) => onMoveFocus(rowId, key)}
+        onFocusRow={() => onFocus(itemId)}
+        onMoveFocus={(key) => onMoveFocus(itemId, key)}
         onOpen={activationEnabled ? () => void activate() : undefined}
       />
     );
@@ -417,25 +417,25 @@ export function CollectionPresentationItem({
 
   return (
     <CollectionPresentationGalleryCard
-      cardRef={(element) => registerRow(rowId, element)}
+      cardRef={(element) => registerItem(itemId, element)}
       aria-current={selected || undefined}
       data-collection-activatable={activationEnabled || undefined}
-      data-collection-row={rowId}
+      data-collection-row={itemId}
       density={layout.density}
       id={focusTargetId}
       role="listitem"
       selected={selected}
       tabIndex={tabIndex}
-      contextMenu={rowActions.length > 0 ? actionContextMenu : undefined}
-      cover={layout.renderCover?.(row)}
-      description={layout.getDescription?.(row)}
+      contextMenu={itemActions.length > 0 ? actionContextMenu : undefined}
+      cover={layout.renderCover?.(item)}
+      description={layout.getDescription?.(item)}
       diagnostic={
         activationError ? (
           <CollectionInlineDiagnostic message={activationError} />
         ) : undefined
       }
-      leading={layout.renderLeading?.(row)}
-      overlays={layout.renderOverlays?.(row)}
+      leading={layout.renderLeading?.(item)}
+      overlays={layout.renderOverlays?.(item)}
       properties={
         properties.length > 0 ? (
           <CollectionPresentationPropertyFlow className="justify-start gap-1.5 overflow-visible">
@@ -443,21 +443,21 @@ export function CollectionPresentationItem({
           </CollectionPresentationPropertyFlow>
         ) : undefined
       }
-      title={layout.getTitle(row)}
-      onFocusCard={() => onFocus(rowId)}
-      onMoveFocus={(key) => onMoveFocus(rowId, key)}
+      title={layout.getTitle(item)}
+      onFocusCard={() => onFocus(itemId)}
+      onMoveFocus={(key) => onMoveFocus(itemId, key)}
       onOpen={activationEnabled ? () => void activate() : undefined}
     />
   );
 }
 
-function visibleRowActions(
-  actions: readonly CollectionRowActionDescriptor<unknown>[] | undefined,
-  row: unknown,
+function visibleItemActions(
+  actions: readonly CollectionItemActionDescriptor<unknown>[] | undefined,
+  item: unknown,
 ) {
   return (actions ?? []).filter((action) => {
     try {
-      return action.isVisible?.(row) ?? true;
+      return action.isVisible?.(item) ?? true;
     } catch {
       return true;
     }

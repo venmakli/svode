@@ -13,25 +13,25 @@ import {
 import type {
   RoutineLaunchRecoveryActions,
   RoutineLaunchRefusal,
-  RoutineRow,
+  RoutineItem,
 } from "../model/types";
 import { RoutineLaunchRefusalNotice } from "./routine-launch-refusal";
 
 export function RoutineDetailActions({
   recovery = {},
-  row,
+  item,
   runRefusal = null,
   runState,
   onOpenSession,
   onRun,
 }: {
   recovery?: RoutineLaunchRecoveryActions;
-  row: RoutineRow;
+  item: RoutineItem;
   /** Why the last manual run was refused before its first prompt. */
   runRefusal?: RoutineLaunchRefusal | null;
   runState: CollectionActionState;
-  onOpenSession(row: RoutineRow): void;
-  onRun(row: RoutineRow): Promise<void>;
+  onOpenSession(item: RoutineItem): void;
+  onRun(item: RoutineItem): Promise<void>;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{
@@ -42,25 +42,25 @@ export function RoutineDetailActions({
       ? { message: runState.message, refusal: runRefusal }
       : null,
   );
-  const manuallyRunnable = row.definition?.trigger.type !== "event";
-  const active = row.lastRun?.active === true;
+  const manuallyRunnable = item.definition?.trigger.type !== "event";
+  const active = item.lastRun?.active === true;
   // A launch refused before its session leaves no session to open.
   const lastSession =
-    row.lastRun && !(row.lastRun.refusal && !row.lastRun.sourceSessionId)
-      ? row.lastRun
+    item.lastRun && !(item.lastRun.refusal && !item.lastRun.sourceSessionId)
+      ? item.lastRun
       : null;
   const disabled = pending || runState.status === "disabled";
   const disabledReason =
     runState.status === "disabled" ? runState.reason : undefined;
 
-  if (!manuallyRunnable && row.definition && !row.lastRun) return null;
+  if (!manuallyRunnable && item.definition && !item.lastRun) return null;
 
   async function run() {
     if (disabled) return;
     setPending(true);
     setError(null);
     try {
-      await onRun(row);
+      await onRun(item);
     } catch (cause) {
       setError({
         message:
@@ -83,7 +83,7 @@ export function RoutineDetailActions({
           <AlertDescription>
             {error.refusal ? (
               <RoutineLaunchRefusalNotice
-                actorId={routineAgentActorId(row)}
+                actorId={routineAgentActorId(item)}
                 recovery={recovery}
                 refusal={error.refusal}
               />
@@ -98,16 +98,16 @@ export function RoutineDetailActions({
           <Button
             type="button"
             variant="outline"
-            onClick={() => onOpenSession(row)}
+            onClick={() => onOpenSession(item)}
           >
             {m.routines_open_session()}
           </Button>
         ) : null}
         {active ? (
-          <Button type="button" onClick={() => onOpenSession(row)}>
+          <Button type="button" onClick={() => onOpenSession(item)}>
             {m.routines_open_session()}
           </Button>
-        ) : manuallyRunnable || !row.definition ? (
+        ) : manuallyRunnable || !item.definition ? (
           <Button
             type="button"
             disabled={disabled}

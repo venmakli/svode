@@ -53,8 +53,8 @@ const FILTER_OPERATORS_BY_TYPE: Record<PropertyType, readonly string[]> = {
   url: ["contains", "eq", "neq", "not_contains", "is_empty", "is_not_empty"],
 };
 
-export function standardPropertyFilterOperators<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function standardPropertyFilterOperators<Item>(
+  property: CollectionPropertyDefinition<Item>,
 ): readonly string[] {
   const column = resolveStandardPropertyColumn(property);
   if (!column) return [];
@@ -64,8 +64,8 @@ export function standardPropertyFilterOperators<Row>(
   return FILTER_OPERATORS_BY_TYPE[column.type];
 }
 
-export function createDefaultStandardPropertyFilterRule<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function createDefaultStandardPropertyFilterRule<Item>(
+  property: CollectionPropertyDefinition<Item>,
 ): CollectionPropertyFilterRule | null {
   const column = resolveStandardPropertyColumn(property);
   if (!column) return null;
@@ -81,8 +81,8 @@ export function createDefaultStandardPropertyFilterRule<Row>(
   return { operator };
 }
 
-export function validateStandardPropertyFilterRule<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function validateStandardPropertyFilterRule<Item>(
+  property: CollectionPropertyDefinition<Item>,
   rule: CollectionPropertyFilterRule,
 ): boolean {
   const column = resolveStandardPropertyColumn(property);
@@ -141,14 +141,14 @@ export function validateStandardPropertyFilterRule<Row>(
   return typeof raw === "string";
 }
 
-export function matchesStandardPropertyFilter<Row>(
-  property: CollectionPropertyDefinition<Row>,
-  row: Row,
+export function matchesStandardPropertyFilter<Item>(
+  property: CollectionPropertyDefinition<Item>,
+  item: Item,
   rule: CollectionPropertyFilterRule,
 ): boolean {
   const column = resolveStandardPropertyColumn(property);
   if (!column) return false;
-  const value = property.getValue(row);
+  const value = property.getValue(item);
   const values = rule.values ?? (rule.value === undefined ? [] : [rule.value]);
   const wanted = values[0];
   const empty = isEmptyValue(value);
@@ -182,7 +182,7 @@ export function matchesStandardPropertyFilter<Row>(
         : comparePropertyScalar(column, value, wanted) !== 0;
     case "contains":
       return isMultiValueColumn(column)
-        ? propertyArray(value).some((item) => item === wanted)
+        ? propertyArray(value).some((element) => element === wanted)
         : !empty &&
             String(value)
               .toLowerCase()
@@ -191,7 +191,7 @@ export function matchesStandardPropertyFilter<Row>(
       return (
         !empty &&
         (isMultiValueColumn(column)
-          ? !propertyArray(value).some((item) => item === wanted)
+          ? !propertyArray(value).some((element) => element === wanted)
           : !String(value)
               .toLowerCase()
               .includes(String(wanted ?? "").toLowerCase()))
@@ -211,10 +211,11 @@ export function matchesStandardPropertyFilter<Row>(
         )
       );
     case "contains_any":
-      return propertyArray(value).some((item) => values.includes(item));
+      return propertyArray(value).some((element) => values.includes(element));
     case "not_contains_any":
       return (
-        !empty && !propertyArray(value).some((item) => values.includes(item))
+        !empty &&
+        !propertyArray(value).some((element) => values.includes(element))
       );
     case "gt":
     case "gte":
@@ -254,8 +255,8 @@ export function matchesStandardPropertyFilter<Row>(
   }
 }
 
-export function compareStandardPropertyValues<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function compareStandardPropertyValues<Item>(
+  property: CollectionPropertyDefinition<Item>,
   left: unknown,
   right: unknown,
   direction: "asc" | "desc",

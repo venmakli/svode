@@ -19,7 +19,7 @@ import type {
 } from "@/features/collection/app-shell";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 
-interface ActorRow {
+interface ActorItem {
   canonicalEmail: string;
   displayName: string;
   repositoryAccess: "read-only" | "writable";
@@ -35,16 +35,16 @@ interface TargetContext {
 
 interface ActorScopeSnapshot {
   diagnostics: readonly string[];
-  rows: readonly ActorRow[];
+  items: readonly ActorItem[];
   target: TargetContext;
 }
 
-interface ProjectActorRow {
+interface ProjectActorItem {
   canonicalEmail: string;
   displayName: string;
   repositories: readonly string[];
   repositoryKeys: readonly string[];
-  rowId: string;
+  itemId: string;
   scopes: readonly string[];
   target: TargetContext;
   targets: readonly TargetContext[];
@@ -76,21 +76,22 @@ interface ActorOwnerFixtureApi {
 function provenanceField(
   key: "repository" | "scope",
   label: string,
-  getValues: (row: ProjectActorRow) => readonly string[],
-): CollectionPropertyDefinition<ProjectActorRow> {
+  getValues: (item: ProjectActorItem) => readonly string[],
+): CollectionPropertyDefinition<ProjectActorItem> {
   return {
     capabilities: {
       filter: {
         kind: "custom",
-        matches: (row, rule) =>
-          typeof rule.value === "string" && getValues(row).includes(rule.value),
+        matches: (item, rule) =>
+          typeof rule.value === "string" &&
+          getValues(item).includes(rule.value),
         operators: ["contains"],
         renderEditor: ({ rule }) => <span>{String(rule.value ?? "")}</span>,
         validate: (rule) =>
           rule.operator === "contains" && typeof rule.value === "string",
       },
     },
-    getValue: (row) => getValues(row),
+    getValue: (item) => getValues(item),
     key,
     label,
     origin: "domain_specific",
@@ -138,7 +139,7 @@ function createOwnerFixture(): {
   const snapshots: readonly ActorScopeSnapshot[] = Object.freeze([
     Object.freeze({
       diagnostics: Object.freeze(["Root mailmap is partially unreadable"]),
-      rows: Object.freeze([
+      items: Object.freeze([
         ilya,
         Object.freeze({
           canonicalEmail: "ada@example.com",
@@ -155,12 +156,12 @@ function createOwnerFixture(): {
     }),
     Object.freeze({
       diagnostics: Object.freeze([]),
-      rows: Object.freeze([ilya]),
+      items: Object.freeze([ilya]),
       target: rootAlias,
     }),
     Object.freeze({
       diagnostics: Object.freeze(["Child activity snapshot is stale"]),
-      rows: Object.freeze([ilya]),
+      items: Object.freeze([ilya]),
       target: child,
     }),
   ]);
@@ -178,7 +179,7 @@ function createOwnerFixture(): {
             .map((snapshot) =>
               Object.freeze({
                 ...snapshot,
-                rows: Object.freeze(snapshot.rows.slice(0, limitPerScope)),
+                items: Object.freeze(snapshot.items.slice(0, limitPerScope)),
               }),
             ),
         );
@@ -202,10 +203,10 @@ function createProjectAggregateFixture(
   routing: ProjectActorRouting,
 ): {
   detailRequests: CollectionDetailRequest[];
-  descriptor: CollectionPresentationDescriptor<ProjectActorRow>;
+  descriptor: CollectionPresentationDescriptor<ProjectActorItem>;
   instance: CollectionInstance;
   presentation: CollectionPresentationRuntime;
-  rows: readonly ProjectActorRow[];
+  items: readonly ProjectActorItem[];
 } {
   const detail = createRecordingDetailController();
   const instanceKey = "fixture:project-wide";
@@ -220,9 +221,12 @@ function createProjectAggregateFixture(
     }
   }
 
-  const grouped = new Map<string, Omit<ProjectActorRow, "rowId" | "target">>();
+  const grouped = new Map<
+    string,
+    Omit<ProjectActorItem, "itemId" | "target">
+  >();
   for (const snapshot of byRepository.values()) {
-    for (const actor of snapshot.rows) {
+    for (const actor of snapshot.items) {
       const current = grouped.get(actor.canonicalEmail);
       grouped.set(actor.canonicalEmail, {
         canonicalEmail: actor.canonicalEmail,
@@ -244,12 +248,12 @@ function createProjectAggregateFixture(
     }
   }
 
-  const rows = Object.freeze(
-    [...grouped.values()].map((row) => {
-      const target = routing.targetByCanonicalEmail.get(row.canonicalEmail);
+  const items = Object.freeze(
+    [...grouped.values()].map((item) => {
+      const target = routing.targetByCanonicalEmail.get(item.canonicalEmail);
       if (
         !target ||
-        !row.targets.some(
+        !item.targets.some(
           (candidate) =>
             candidate.projectId === target.projectId &&
             candidate.repositoryKey === target.repositoryKey &&
@@ -257,20 +261,20 @@ function createProjectAggregateFixture(
         )
       ) {
         throw new Error(
-          `Missing explicit target for aggregate actor "${row.canonicalEmail}".`,
+          `Missing explicit target for aggregate actor "${item.canonicalEmail}".`,
         );
       }
       return Object.freeze({
-        ...row,
-        rowId: JSON.stringify([
+        ...item,
+        itemId: JSON.stringify([
           routing.createTarget.projectId,
-          row.canonicalEmail,
+          item.canonicalEmail,
         ]),
         target,
       });
     }),
   );
-  const descriptor: CollectionPresentationDescriptor<ProjectActorRow> = {
+  const descriptor: CollectionPresentationDescriptor<ProjectActorItem> = {
     create: {
       label: "Add actor",
       intents: [
@@ -283,37 +287,41 @@ function createProjectAggregateFixture(
       ],
     },
     onActivate: detail.activation(
-      (row: ProjectActorRow) => ({
-        content: api.renderActorDetail(row.target, row.canonicalEmail),
-        description: row.repositories.join(", "),
-        title: row.displayName,
+      (item: ProjectActorItem) => ({
+        content: api.renderActorDetail(item.target, item.canonicalEmail),
+        description: item.repositories.join(", "),
+        title: item.displayName,
       }),
       instanceKey,
       "project-actors",
     ),
     properties: [
-      provenanceField("scope", "Scope", (row) => row.scopes),
-      provenanceField("repository", "Repository", (row) => row.repositoryKeys),
+      provenanceField("scope", "Scope", (item) => item.scopes),
+      provenanceField(
+        "repository",
+        "Repository",
+        (item) => item.repositoryKeys,
+      ),
     ],
-    getRowId: (row) => row.rowId,
+    getItemId: (item) => item.itemId,
     id: "project-actors",
     label: "Project actors",
     layout: {
-      getDescription: (row) => row.canonicalEmail,
-      getTitle: (row) => row.displayName,
+      getDescription: (item) => item.canonicalEmail,
+      getTitle: (item) => item.displayName,
       kind: "list",
       visibleProperties: ["scope", "repository"],
     },
     query: {
-      getSearchText: (row) =>
-        `${row.displayName} ${row.canonicalEmail} ${row.scopes.join(" ")}`,
+      getSearchText: (item) =>
+        `${item.displayName} ${item.canonicalEmail} ${item.scopes.join(" ")}`,
     },
-    rowActions: [
+    itemActions: [
       {
         getState: () => ({ status: "idle" }),
         id: "set-primary-alias",
         label: "Set primary alias",
-        run: (row) => api.setPrimaryAlias(row.target, row.canonicalEmail),
+        run: (item) => api.setPrimaryAlias(item.target, item.canonicalEmail),
       },
     ],
   };
@@ -325,7 +333,7 @@ function createProjectAggregateFixture(
         <span key={message}>{message}</span>
       )),
       phase: "ready",
-      rows,
+      items,
     },
   });
   const instance: CollectionInstance = {
@@ -339,7 +347,7 @@ function createProjectAggregateFixture(
     detailRequests: detail.requests,
     instance,
     presentation,
-    rows,
+    items,
   };
 }
 
@@ -357,21 +365,21 @@ function createProjectFixture() {
 
 function createLocalFixture(): {
   detailRequests: CollectionDetailRequest[];
-  descriptor: CollectionPresentationDescriptor<ActorRow>;
+  descriptor: CollectionPresentationDescriptor<ActorItem>;
   instance: CollectionInstance;
   presentation: CollectionPresentationRuntime;
-  row: ActorRow;
+  item: ActorItem;
 } {
   const detail = createRecordingDetailController();
   const instanceKey = "fixture:scope-local";
-  const row: ActorRow = {
+  const item: ActorItem = {
     canonicalEmail: "ilya@example.com",
     displayName: "Ilya",
     repositoryAccess: "writable",
   };
-  const descriptor: CollectionPresentationDescriptor<ActorRow> = {
+  const descriptor: CollectionPresentationDescriptor<ActorItem> = {
     onActivate: detail.activation(
-      (actor: ActorRow) => ({
+      (actor: ActorItem) => ({
         content: actor.repositoryAccess,
         description: "Derived repository identity",
         title: actor.displayName,
@@ -380,7 +388,7 @@ function createLocalFixture(): {
       "actors",
     ),
     properties: [],
-    getRowId: (actor) => actor.canonicalEmail,
+    getItemId: (actor) => actor.canonicalEmail,
     id: "actors",
     label: "Actors",
     layout: {
@@ -395,7 +403,7 @@ function createLocalFixture(): {
     state: {
       diagnostics: [<span key="history">One source is unavailable</span>],
       phase: "ready",
-      rows: [row],
+      items: [item],
     },
   });
   return {
@@ -408,24 +416,24 @@ function createLocalFixture(): {
       stateScope: "lifecycle",
     },
     presentation,
-    row,
+    item,
   };
 }
 
-/** Records the detail an owner opens for a row of its presentation. */
+/** Records the detail an owner opens for an item of its presentation. */
 function createRecordingDetailController() {
   const requests: CollectionDetailRequest[] = [];
   return {
     activation:
-      <Row,>(
-        createContent: (row: Row) => CollectionDetailContent,
+      <Item,>(
+        createContent: (item: Item) => CollectionDetailContent,
         instanceKey: string,
         presentationId: string,
       ) =>
-      async (row: Row, context: { rowId: string }) => {
+      async (item: Item, context: { itemId: string }) => {
         requests.push({
-          ...createContent(row),
-          selection: { instanceKey, presentationId, rowId: context.rowId },
+          ...createContent(item),
+          selection: { instanceKey, presentationId, itemId: context.itemId },
         });
       },
     requests,
@@ -467,16 +475,16 @@ test("project aggregate owns dedupe, grouping, provenance, and target routing", 
   const { aggregate, owner } = createProjectFixture();
 
   expect(owner.getRequestedLimit()).toBe(2);
-  expect(Object.isFrozen(aggregate.rows)).toBe(true);
-  expect(aggregate.rows.length).toBe(2);
-  expect(aggregate.rows[0]?.rowId).toBe('["project-one","ilya@example.com"]');
-  expect(aggregate.rows[0]?.targets).toEqual([
+  expect(Object.isFrozen(aggregate.items)).toBe(true);
+  expect(aggregate.items.length).toBe(2);
+  expect(aggregate.items[0]?.itemId).toBe('["project-one","ilya@example.com"]');
+  expect(aggregate.items[0]?.targets).toEqual([
     owner.targets.root,
     owner.targets.child,
   ]);
-  expect(aggregate.rows[0]?.target).toBe(owner.targets.child);
+  expect(aggregate.items[0]?.target).toBe(owner.targets.child);
   expect(
-    aggregate.rows.some((row) => row.canonicalEmail === "grace@example.com"),
+    aggregate.items.some((item) => item.canonicalEmail === "grace@example.com"),
   ).toBe(false);
 
   const filtered = applyCollectionQuery({
@@ -492,17 +500,17 @@ test("project aggregate owns dedupe, grouping, provenance, and target routing", 
       search: "",
       sort: [],
     },
-    rows: aggregate.rows,
+    items: aggregate.items,
   });
-  expect(filtered.rows.map((row) => row.canonicalEmail)).toEqual([
+  expect(filtered.items.map((item) => item.canonicalEmail)).toEqual([
     "ilya@example.com",
   ]);
 
   await aggregate.descriptor.create?.intents[0]?.run();
-  await aggregate.descriptor.onActivate?.(aggregate.rows[0]!, {
-    rowId: aggregate.rows[0]!.rowId,
+  await aggregate.descriptor.onActivate?.(aggregate.items[0]!, {
+    itemId: aggregate.items[0]!.itemId,
   });
-  await aggregate.descriptor.rowActions?.[0]?.run(aggregate.rows[0]!);
+  await aggregate.descriptor.itemActions?.[0]?.run(aggregate.items[0]!);
   expect(owner.calls).toEqual([
     { kind: "create", target: owner.targets.child },
     {
@@ -520,7 +528,7 @@ test("project aggregate owns dedupe, grouping, provenance, and target routing", 
     {
       instanceKey: aggregate.instance.instanceKey,
       presentationId: aggregate.descriptor.id,
-      rowId: aggregate.rows[0]!.rowId,
+      itemId: aggregate.items[0]!.itemId,
     },
   ]);
 });
@@ -536,11 +544,11 @@ test("scope-local and project instances retain the same shell and detail seam", 
 
   expectListContract(localMarkup);
   expectListContract(projectMarkup);
-  await local.descriptor.onActivate?.(local.row, {
-    rowId: local.descriptor.getRowId(local.row),
+  await local.descriptor.onActivate?.(local.item, {
+    itemId: local.descriptor.getItemId(local.item),
   });
-  await aggregate.descriptor.onActivate?.(aggregate.rows[0]!, {
-    rowId: aggregate.rows[0]!.rowId,
+  await aggregate.descriptor.onActivate?.(aggregate.items[0]!, {
+    itemId: aggregate.items[0]!.itemId,
   });
   expect(
     [...local.detailRequests, ...aggregate.detailRequests].map(

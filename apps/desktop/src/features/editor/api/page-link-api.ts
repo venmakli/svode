@@ -6,7 +6,7 @@ import {
   type PageLinkFixSuggestionDto,
 } from "@/platform/pages/page-links-api";
 import { cloneMissingSpace } from "@/platform/space/space-api";
-import { searchEntriesByTitle, type SearchItem } from "@/features/search";
+import { searchPagesByTitle, type SearchItem } from "@/features/search";
 import type { TreeNode } from "@/features/space";
 
 import { makeRelativePath } from "../lib/page-link-utils";
@@ -76,7 +76,7 @@ export async function searchPageLinkTargets(
   const calls =
     activeSpaceId === null
       ? [
-          searchEntriesByTitle({
+          searchPagesByTitle({
             projectPath,
             query: trimmed,
             limit: PAGE_SEARCH_LIMIT,
@@ -84,13 +84,13 @@ export async function searchPageLinkTargets(
           }),
         ]
       : [
-          searchEntriesByTitle({
+          searchPagesByTitle({
             projectPath,
             query: trimmed,
             limit: PAGE_SEARCH_LIMIT,
             scope: { kind: "space", spaceId: activeSpaceId },
           }),
-          searchEntriesByTitle({
+          searchPagesByTitle({
             projectPath,
             query: trimmed,
             limit: PAGE_SEARCH_LIMIT,

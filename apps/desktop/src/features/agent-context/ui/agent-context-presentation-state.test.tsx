@@ -36,7 +36,7 @@ test("blocking discovery failure exposes contextual retry", () => {
   expect(html.includes("Retry")).toBe(true);
 });
 
-test("ready state keeps rows without product attention or full-width diagnostics", () => {
+test("ready state keeps items without product attention or full-width diagnostics", () => {
   const state: AgentContextCatalogState = {
     ownerKey: "space:root",
     phase: "ready",
@@ -54,7 +54,7 @@ test("ready state keeps rows without product attention or full-width diagnostics
     throw new Error("Expected ready state");
   }
 
-  expect(presentation.rows).toBe(snapshot.items);
+  expect(presentation.items).toBe(snapshot.items);
   expect("attention" in presentation).toBe(false);
   expect("diagnostics" in presentation).toBe(false);
   expect("refreshing" in presentation).toBe(false);

@@ -26,7 +26,7 @@ import type {
   ActorMutationIntent,
   ActorMutationReview,
 } from "../model/identity-mutation";
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import {
   ActorIdentityFields,
   type ActorIdentityDraft,
@@ -44,7 +44,7 @@ export function ActorMutationDialog({
   review,
   readOnly,
   rootPointerCommitExpectation,
-  rows,
+  items,
   onApply,
   onBack,
   onClose,
@@ -61,7 +61,7 @@ export function ActorMutationDialog({
   review: ActorMutationReview | null;
   readOnly: boolean;
   rootPointerCommitExpectation: ActorCommitExpectation | null;
-  rows: readonly ActorCatalogRow[];
+  items: readonly ActorCatalogItem[];
   onApply(): void;
   onBack(): void;
   onClose(): void;
@@ -126,7 +126,7 @@ export function ActorMutationDialog({
             key={intentKey(intent)}
             intent={intent}
             pending={pending || readOnly}
-            rows={rows}
+            items={items}
             mergeTargetEmail={mergeTargetEmail}
             onMergeTargetChange={(canonicalEmail) =>
               setMergeTarget({ canonicalEmail, intentKey: currentIntentKey })
@@ -243,14 +243,14 @@ export function ActorMutationDialog({
 function ActorMutationInputStep({
   intent,
   pending,
-  rows,
+  items,
   mergeTargetEmail,
   onMergeTargetChange,
   onSubmit,
 }: {
   intent: ActorMutationIntent;
   pending: boolean;
-  rows: readonly ActorCatalogRow[];
+  items: readonly ActorCatalogItem[];
   mergeTargetEmail: string | null;
   onMergeTargetChange(canonicalEmail: string): void;
   onSubmit(action: ActorMutationAction): void;
@@ -286,7 +286,7 @@ function ActorMutationInputStep({
     <MergeInputStep
       intent={intent}
       pending={pending}
-      rows={rows}
+      items={items}
       targetEmail={mergeTargetEmail}
       onTargetChange={onMergeTargetChange}
       onSubmit={onSubmit}
@@ -297,20 +297,20 @@ function ActorMutationInputStep({
 function MergeInputStep({
   intent,
   pending,
-  rows,
+  items,
   targetEmail,
   onTargetChange,
   onSubmit,
 }: {
   intent: Extract<ActorMutationIntent, { kind: "merge" }>;
   pending: boolean;
-  rows: readonly ActorCatalogRow[];
+  items: readonly ActorCatalogItem[];
   targetEmail: string | null;
   onTargetChange(canonicalEmail: string): void;
   onSubmit(action: ActorMutationAction): void;
 }) {
-  const targets = rows.filter(
-    (row) => row.canonicalEmail !== intent.source.canonicalEmail,
+  const targets = items.filter(
+    (item) => item.canonicalEmail !== intent.source.canonicalEmail,
   );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -336,7 +336,7 @@ function MergeInputStep({
       </Field>
       <ActorMergePicker
         pending={pending}
-        rows={targets}
+        items={targets}
         selectedEmail={targetEmail}
         onSelect={onTargetChange}
       />

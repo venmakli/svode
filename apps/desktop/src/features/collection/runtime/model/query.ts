@@ -27,8 +27,8 @@ export function normalizeCollectionSearchText(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
-export function collectionFilterOperators<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function collectionFilterOperators<Item>(
+  property: CollectionPropertyDefinition<Item>,
 ): readonly string[] {
   const filter = property.capabilities?.filter;
   if (!filter) return [];
@@ -37,8 +37,8 @@ export function collectionFilterOperators<Row>(
     : filter.operators;
 }
 
-export function createDefaultCollectionFilterRule<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function createDefaultCollectionFilterRule<Item>(
+  property: CollectionPropertyDefinition<Item>,
 ): CollectionFilterRule | null {
   const filter = property.capabilities?.filter;
   if (!filter) return null;
@@ -51,8 +51,8 @@ export function createDefaultCollectionFilterRule<Row>(
   return rule ? { ...rule, propertyKey: property.key } : null;
 }
 
-export function validateCollectionQuery<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
+export function validateCollectionQuery<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
   query: CollectionQueryState,
 ): CollectionQueryValidationResult {
   const issues: CollectionQueryValidationIssue[] = [];
@@ -147,8 +147,8 @@ export function validateCollectionQuery<Row>(
   };
 }
 
-export function isCollectionFilterDraftValid<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
+export function isCollectionFilterDraftValid<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
   query: CollectionQueryState,
   draft: { index: number | null; item: CollectionFilterRule } | null,
 ): boolean {
@@ -166,32 +166,32 @@ export function isCollectionFilterDraftValid<Row>(
   return result.query.filters.includes(draft.item);
 }
 
-export function applyCollectionQuery<Row>({
+export function applyCollectionQuery<Item>({
   descriptor,
   query,
-  rows,
+  items,
 }: {
-  descriptor: CollectionPresentationDescriptor<Row>;
+  descriptor: CollectionPresentationDescriptor<Item>;
   query: CollectionQueryState;
-  rows: readonly Row[];
+  items: readonly Item[];
 }): {
   query: CollectionQueryState;
   reset: boolean;
-  rows: readonly Row[];
-  sourceRows: readonly Row[];
+  items: readonly Item[];
+  sourceItems: readonly Item[];
 } {
   const validation = validateCollectionQuery(descriptor, query);
-  const sourceRows = descriptor.query.fixedPredicate
-    ? rows.filter(descriptor.query.fixedPredicate)
-    : rows;
+  const sourceItems = descriptor.query.fixedPredicate
+    ? items.filter(descriptor.query.fixedPredicate)
+    : items;
   const search = normalizeCollectionSearchText(validation.query.search);
   let result = search
-    ? sourceRows.filter((row) =>
+    ? sourceItems.filter((item) =>
         normalizeCollectionSearchText(
-          descriptor.query.getSearchText?.(row) ?? "",
+          descriptor.query.getSearchText?.(item) ?? "",
         ).includes(search),
       )
-    : [...sourceRows];
+    : [...sourceItems];
 
   for (const rule of validation.query.filters) {
     const property = descriptor.properties.find(
@@ -199,10 +199,10 @@ export function applyCollectionQuery<Row>({
     );
     const filter = property?.capabilities?.filter;
     if (!property || !filter) continue;
-    result = result.filter((row) =>
+    result = result.filter((item) =>
       filter.kind === "standard"
-        ? matchesStandardPropertyFilter(property, row, rule)
-        : safelyMatchCustomFilter(filter.matches, row, rule),
+        ? matchesStandardPropertyFilter(property, item, rule)
+        : safelyMatchCustomFilter(filter.matches, item, rule),
     );
   }
 
@@ -212,22 +212,22 @@ export function applyCollectionQuery<Row>({
       : descriptor.query.defaultSort;
   if (ordering?.length) {
     result.sort((left, right) =>
-      compareRowsByFields(descriptor, ordering, left, right),
+      compareItemsByFields(descriptor, ordering, left, right),
     );
   } else if (descriptor.query.defaultCompare) {
     result.sort((left, right) => {
       const compared = finiteComparison(
         descriptor.query.defaultCompare!(left, right),
       );
-      return compared || compareRowIds(descriptor, left, right);
+      return compared || compareItemIds(descriptor, left, right);
     });
   }
 
   return {
     query: validation.query,
     reset: validation.reset,
-    rows: result,
-    sourceRows,
+    items: result,
+    sourceItems,
   };
 }
 
@@ -242,23 +242,23 @@ function safelyValidateCustomFilter(
   }
 }
 
-function safelyMatchCustomFilter<Row>(
-  matches: (row: Row, rule: CollectionFilterRule) => boolean,
-  row: Row,
+function safelyMatchCustomFilter<Item>(
+  matches: (item: Item, rule: CollectionFilterRule) => boolean,
+  item: Item,
   rule: CollectionFilterRule,
 ): boolean {
   try {
-    return matches(row, rule);
+    return matches(item, rule);
   } catch {
     return false;
   }
 }
 
-function compareRowsByFields<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
+function compareItemsByFields<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
   ordering: readonly CollectionSortDescriptor[],
-  left: Row,
-  right: Row,
+  left: Item,
+  right: Item,
 ): number {
   for (const item of ordering) {
     const property = descriptor.properties.find(
@@ -288,7 +288,7 @@ function compareRowsByFields<Row>(
     }
     if (compared !== 0) return compared;
   }
-  return compareRowIds(descriptor, left, right);
+  return compareItemIds(descriptor, left, right);
 }
 
 function compareEmptyValues(left: unknown, right: unknown): number {
@@ -307,14 +307,14 @@ function directionMultiplier(
   return direction === "desc" ? -1 : 1;
 }
 
-function compareRowIds<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
-  left: Row,
-  right: Row,
+function compareItemIds<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
+  left: Item,
+  right: Item,
 ): number {
   return compareCodeUnits(
-    descriptor.query.getSortTieBreakId?.(left) ?? descriptor.getRowId(left),
-    descriptor.query.getSortTieBreakId?.(right) ?? descriptor.getRowId(right),
+    descriptor.query.getSortTieBreakId?.(left) ?? descriptor.getItemId(left),
+    descriptor.query.getSortTieBreakId?.(right) ?? descriptor.getItemId(right),
   );
 }
 

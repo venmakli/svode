@@ -25,13 +25,13 @@ function isMissingTemplateError(error: unknown) {
   return message.includes("not found") || message.includes("filenotfound");
 }
 
-interface RowTarget {
+interface ItemTarget {
   spacePath: string;
   projectPath?: string | null;
   spaceId: string;
 }
 
-export function useCollectionEntryActions({
+export function useCollectionItemActions({
   schema,
   spacePath,
   projectPath,
@@ -49,12 +49,12 @@ export function useCollectionEntryActions({
   const { reloadTreeParent, reloadTreePathParent, removeTreePath } =
     useSpaceTreeSync();
   const signalUserEdit = useSignalUserEdit();
-  const [entriesVersion, setEntriesVersion] = useState(0);
-  const refreshEntries = useCallback(() => {
-    setEntriesVersion((version) => version + 1);
+  const [itemsVersion, setItemsVersion] = useState(0);
+  const refreshItems = useCallback(() => {
+    setItemsVersion((version) => version + 1);
   }, []);
 
-  async function createEntry(
+  async function createItem(
     asFolder = false,
     title?: string,
     openAfterCreate = true,
@@ -77,7 +77,7 @@ export function useCollectionEntryActions({
           projectPath,
         });
         publishPageFilenameWarnings(created.warnings);
-        refreshEntries();
+        refreshItems();
         signalUserEdit();
         await reloadTreeParent(spaceId, collectionPath);
         if (openAfterCreate) {
@@ -100,14 +100,14 @@ export function useCollectionEntryActions({
       contextualDefaults: contextualDefaults ?? null,
       projectPath: projectPath ?? null,
     });
-    let nextEntry = created;
+    let nextItem = created;
     if (asFolder) {
       const converted = await convertPageToFolderApi({
         spacePath,
         filePath: created.path,
         projectPath: projectPath ?? null,
       });
-      nextEntry = {
+      nextItem = {
         ...converted,
         warnings: retargetPageFilenameWarnings(
           created.warnings,
@@ -115,51 +115,51 @@ export function useCollectionEntryActions({
         ),
       };
     }
-    publishPageFilenameWarnings(nextEntry.warnings);
-    refreshEntries();
+    publishPageFilenameWarnings(nextItem.warnings);
+    refreshItems();
     signalUserEdit();
     await reloadTreeParent(spaceId, collectionPath);
     if (openAfterCreate) {
-      openPage(nextEntry.path, spaceId);
-      signalCreatedArtifact(spaceId, nextEntry.path);
+      openPage(nextItem.path, spaceId);
+      signalCreatedArtifact(spaceId, nextItem.path);
     }
-    return nextEntry;
+    return nextItem;
   }
 
-  // A row target comes from its peek; edits made there do not keep the
+  // An item target comes from its peek; edits made there do not keep the
   // collection in Now.
-  async function duplicateRow(entryToDuplicate: Page, peekTarget?: RowTarget) {
+  async function duplicateItem(itemToDuplicate: Page, peekTarget?: ItemTarget) {
     const target = peekTarget ?? { spacePath, projectPath, spaceId };
     const duplicated = await duplicatePageApi({
       spacePath: target.spacePath,
-      filePath: entryToDuplicate.path,
+      filePath: itemToDuplicate.path,
       projectPath: target.projectPath ?? null,
     });
     publishPageFilenameWarnings(duplicated.warnings);
-    refreshEntries();
+    refreshItems();
     if (!peekTarget) signalUserEdit();
     await reloadTreePathParent(target.spaceId, duplicated.path);
     openPage(duplicated.path, target.spaceId);
     signalCreatedArtifact(target.spaceId, duplicated.path);
   }
 
-  async function deleteRow(entryToDelete: Page, peekTarget?: RowTarget) {
+  async function deleteItem(itemToDelete: Page, peekTarget?: ItemTarget) {
     const target = peekTarget ?? { spacePath, projectPath, spaceId };
     await deletePageApi({
       spacePath: target.spacePath,
-      path: entryToDelete.path,
+      path: itemToDelete.path,
       projectPath: target.projectPath ?? null,
     });
-    refreshEntries();
+    refreshItems();
     if (!peekTarget) signalUserEdit();
-    removeTreePath(target.spaceId, entryToDelete.path);
-    await reloadTreePathParent(target.spaceId, entryToDelete.path);
+    removeTreePath(target.spaceId, itemToDelete.path);
+    await reloadTreePathParent(target.spaceId, itemToDelete.path);
   }
 
-  async function duplicateDetailEntry(entryToDuplicate: Page) {
+  async function duplicateDetailItem(itemToDuplicate: Page) {
     const duplicated = await duplicatePageApi({
       spacePath,
-      filePath: entryToDuplicate.path,
+      filePath: itemToDuplicate.path,
       projectPath: projectPath ?? null,
     });
     publishPageFilenameWarnings(duplicated.warnings);
@@ -169,11 +169,11 @@ export function useCollectionEntryActions({
   }
 
   return {
-    entriesVersion,
-    refreshEntries,
-    createEntry,
-    duplicateRow,
-    deleteRow,
-    duplicateDetailEntry,
+    itemsVersion,
+    refreshItems,
+    createItem,
+    duplicateItem,
+    deleteItem,
+    duplicateDetailItem,
   };
 }

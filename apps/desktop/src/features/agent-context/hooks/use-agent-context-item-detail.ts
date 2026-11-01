@@ -1,9 +1,9 @@
 import { useCallback, useMemo } from "react";
 
 import {
-  useCollectionDetailRowBinding,
+  useCollectionDetailItemBinding,
   type CollectionDetailController,
-  type CollectionDetailRowBinding,
+  type CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 
@@ -28,11 +28,11 @@ export function useAgentContextItemDetail({
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
   /** Null while the "Context" is not read. */
   snapshot: AgentContextSnapshot | null;
-}): CollectionDetailRowBinding<AgentContextItem> {
+}): CollectionDetailItemBinding<AgentContextItem> {
   const createContent = useCallback(
     (
       item: AgentContextItem,
-      detail: CollectionDetailRowBinding<AgentContextItem>,
+      detail: CollectionDetailItemBinding<AgentContextItem>,
     ) =>
       createAgentContextItemDetailContent(item, properties, {
         detail,
@@ -40,13 +40,17 @@ export function useAgentContextItemDetail({
       }),
     [onOpenProviders, properties],
   );
-  const findRow = useMemo(
+  const findItem = useMemo(
     () =>
       snapshot
-        ? (selection: { instanceKey: string; rowId: string }) =>
+        ? (selection: { instanceKey: string; itemId: string }) =>
             findAgentContextDetailItem(snapshot.items, instanceKey, selection)
         : null,
     [instanceKey, snapshot],
   );
-  return useCollectionDetailRowBinding({ controller, createContent, findRow });
+  return useCollectionDetailItemBinding({
+    controller,
+    createContent,
+    findItem,
+  });
 }

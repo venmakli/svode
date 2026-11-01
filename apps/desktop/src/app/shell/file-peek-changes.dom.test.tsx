@@ -91,13 +91,13 @@ if (process.env.SVODE_FILE_PEEK_CHANGES_TEST !== "1") {
     );
   }
 
-  test("Attachments: a document and a media row show the Changes of that file", async () => {
+  test("Attachments: a document and a media item show the Changes of that file", async () => {
     for (const [kind, path] of [
       ["document", "docs/report.pdf"],
       ["media", "docs/photo.png"],
     ] as const) {
       const target: AttachmentActivationRequest = {
-        row: {
+        item: {
           key: `${kind}:${path}`,
           path,
           contentPath: null,
@@ -122,7 +122,7 @@ if (process.env.SVODE_FILE_PEEK_CHANGES_TEST !== "1") {
         },
         mode: "peek",
         sourceGeneration: "one",
-        activation: { rowId: `${kind}:${path}` },
+        activation: { itemId: `${kind}:${path}` },
       };
       await dom.render(
         <TooltipProvider>

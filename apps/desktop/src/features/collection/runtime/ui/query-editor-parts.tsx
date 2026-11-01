@@ -12,8 +12,8 @@ import type {
   CollectionQueryState,
 } from "../model/types";
 
-export function hasCollectionSort<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function hasCollectionSort<Item>(
+  property: CollectionPropertyDefinition<Item>,
 ): boolean {
   return Boolean(
     property.capabilities?.sort &&
@@ -22,36 +22,36 @@ export function hasCollectionSort<Row>(
   );
 }
 
-export function propertyByKey<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
+export function propertyByKey<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
   propertyKey: string,
-): CollectionPropertyDefinition<Row> | undefined {
+): CollectionPropertyDefinition<Item> | undefined {
   return descriptor.properties.find((property) => property.key === propertyKey);
 }
 
-export function propertyLabel<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
+export function propertyLabel<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
   propertyKey: string,
 ): string {
   return propertyByKey(descriptor, propertyKey)?.label ?? propertyKey;
 }
 
-export function isFilterDraftValid<Row>(
-  descriptor: CollectionPresentationDescriptor<Row>,
+export function isFilterDraftValid<Item>(
+  descriptor: CollectionPresentationDescriptor<Item>,
   value: CollectionQueryState,
   draft: ControlledQueryDraft<CollectionFilterRule> | null,
 ): boolean {
   return isCollectionFilterDraftValid(descriptor, value, draft);
 }
 
-export function CollectionPropertyChoiceList<Row>({
+export function CollectionPropertyChoiceList<Item>({
   properties,
   icon,
   onSelect,
 }: {
-  properties: readonly CollectionPropertyDefinition<Row>[];
+  properties: readonly CollectionPropertyDefinition<Item>[];
   icon: LucideIcon;
-  onSelect(property: CollectionPropertyDefinition<Row>): void;
+  onSelect(property: CollectionPropertyDefinition<Item>): void;
 }) {
   return (
     <div className="flex max-h-64 flex-col overflow-y-auto p-1">

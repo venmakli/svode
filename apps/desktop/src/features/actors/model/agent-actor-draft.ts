@@ -1,7 +1,7 @@
 import type {
   AgentActorBinding,
   AgentActorDraft,
-  AgentActorRow,
+  AgentActorItem,
 } from "./agent-actor-types";
 
 export type AgentActorCreateStep = "identity" | "agent" | "review";
@@ -14,14 +14,14 @@ export interface AgentActorDraftValidation {
 /** A new draft starts without an agent; an edit draft keeps the Actor's. */
 export function createAgentActorDraft(
   ownerPath: string,
-  row?: AgentActorRow,
+  item?: AgentActorItem,
 ): AgentActorDraft {
   return {
-    binding: row ? cloneBinding(row.binding) : null,
-    description: row?.description ?? "",
-    id: row?.id ?? null,
-    mode: row?.mode ? { ...row.mode } : null,
-    name: row?.name ?? "",
+    binding: item ? cloneBinding(item.binding) : null,
+    description: item?.description ?? "",
+    id: item?.id ?? null,
+    mode: item?.mode ? { ...item.mode } : null,
+    name: item?.name ?? "",
     ownerPath,
   };
 }
@@ -105,13 +105,13 @@ export function withoutBindingSettings(
  */
 export function isAgentActorPortableUnchanged(
   draft: AgentActorDraft,
-  row: AgentActorRow,
+  item: AgentActorItem,
 ): boolean {
   return (
-    draft.id === row.id &&
-    draft.name.trim() === row.name &&
-    (draft.description.trim() || null) === row.description &&
-    JSON.stringify(draft.binding) === JSON.stringify(row.binding)
+    draft.id === item.id &&
+    draft.name.trim() === item.name &&
+    (draft.description.trim() || null) === item.description &&
+    JSON.stringify(draft.binding) === JSON.stringify(item.binding)
   );
 }
 
@@ -151,8 +151,8 @@ export function areAgentActorDraftsEqual(
 }
 
 export function compareAgentActorsByDefault(
-  left: AgentActorRow,
-  right: AgentActorRow,
+  left: AgentActorItem,
+  right: AgentActorItem,
 ): number {
   if (left.inherited !== right.inherited) return left.inherited ? 1 : -1;
   return (

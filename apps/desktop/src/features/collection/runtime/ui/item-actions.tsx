@@ -24,12 +24,12 @@ import * as m from "@/paraglide/messages.js";
 import { runCollectionCallback } from "../lib/interaction";
 import type {
   CollectionActionState,
-  CollectionRowActionDescriptor,
+  CollectionItemActionDescriptor,
 } from "../model/types";
 
-interface CollectionRowActionProps {
-  action: CollectionRowActionDescriptor<unknown>;
-  row: unknown;
+interface CollectionItemActionProps {
+  action: CollectionItemActionDescriptor<unknown>;
+  item: unknown;
   onRejected(actionId: string, message: string): void;
 }
 
@@ -41,11 +41,11 @@ interface EffectiveActionState {
 }
 
 function readActionState(
-  action: CollectionRowActionDescriptor<unknown>,
-  row: unknown,
+  action: CollectionItemActionDescriptor<unknown>,
+  item: unknown,
 ): CollectionActionState {
   try {
-    return action.getState(row);
+    return action.getState(item);
   } catch (error) {
     return {
       status: "error",
@@ -58,24 +58,24 @@ function readActionState(
 }
 
 function readActionLabel(
-  action: CollectionRowActionDescriptor<unknown>,
-  row: unknown,
+  action: CollectionItemActionDescriptor<unknown>,
+  item: unknown,
 ) {
   try {
-    return action.getLabel?.(row) ?? action.label;
+    return action.getLabel?.(item) ?? action.label;
   } catch {
     return action.label;
   }
 }
 
-function useCollectionRowAction({
+function useCollectionItemAction({
   action,
-  row,
+  item,
   onRejected,
-}: CollectionRowActionProps) {
+}: CollectionItemActionProps) {
   const [localPending, setLocalPending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const ownerState = readActionState(action, row);
+  const ownerState = readActionState(action, item);
   const pending = localPending || ownerState.status === "pending";
   const message =
     localError ??
@@ -93,7 +93,7 @@ function useCollectionRowAction({
     setLocalPending(true);
     setLocalError(null);
     const result = await runCollectionCallback(
-      () => action.run(row),
+      () => action.run(item),
       m.collection_callback_error(),
     );
     setLocalPending(false);
@@ -103,7 +103,7 @@ function useCollectionRowAction({
       onRejected(action.id, result.message);
     }
     return result.ok;
-  }, [action, onRejected, ownerState.status, pending, row]);
+  }, [action, onRejected, ownerState.status, pending, item]);
 
   const state: EffectiveActionState = {
     disabled: pending || ownerState.status === "disabled",
@@ -115,10 +115,10 @@ function useCollectionRowAction({
   return { run, state };
 }
 
-export function CollectionRowActionButton(props: CollectionRowActionProps) {
+export function CollectionItemActionButton(props: CollectionItemActionProps) {
   const { action } = props;
-  const { run, state } = useCollectionRowAction(props);
-  const label = readActionLabel(action, props.row);
+  const { run, state } = useCollectionItemAction(props);
+  const label = readActionLabel(action, props.item);
   const button = (
     <Button
       type="button"
@@ -162,14 +162,14 @@ export function CollectionRowActionButton(props: CollectionRowActionProps) {
   );
 }
 
-function CollectionRowActionDropdownItem(
-  props: CollectionRowActionProps & {
+function CollectionItemActionDropdownItem(
+  props: CollectionItemActionProps & {
     onSuccess(): void;
   },
 ) {
   const { action, onSuccess } = props;
-  const { run, state } = useCollectionRowAction(props);
-  const label = readActionLabel(action, props.row);
+  const { run, state } = useCollectionItemAction(props);
+  const label = readActionLabel(action, props.item);
 
   return (
     <DropdownMenuItem
@@ -199,10 +199,10 @@ function CollectionRowActionDropdownItem(
   );
 }
 
-function CollectionRowActionContextItem(props: CollectionRowActionProps) {
+function CollectionItemActionContextItem(props: CollectionItemActionProps) {
   const { action } = props;
-  const { run, state } = useCollectionRowAction(props);
-  const label = readActionLabel(action, props.row);
+  const { run, state } = useCollectionItemAction(props);
+  const label = readActionLabel(action, props.item);
 
   return (
     <ContextMenuItem
@@ -228,13 +228,13 @@ function CollectionRowActionContextItem(props: CollectionRowActionProps) {
   );
 }
 
-export function CollectionRowActionsContextMenu({
+export function CollectionItemActionsContextMenu({
   actions,
-  row,
+  item,
   onRejected,
 }: {
-  actions: readonly CollectionRowActionDescriptor<unknown>[];
-  row: unknown;
+  actions: readonly CollectionItemActionDescriptor<unknown>[];
+  item: unknown;
   onRejected(actionId: string, message: string): void;
 }) {
   if (actions.length === 0) return null;
@@ -242,10 +242,10 @@ export function CollectionRowActionsContextMenu({
   return (
     <ContextMenuGroup>
       {actions.map((action) => (
-        <CollectionRowActionContextItem
+        <CollectionItemActionContextItem
           key={action.id}
           action={action}
-          row={row}
+          item={item}
           onRejected={onRejected}
         />
       ))}
@@ -253,13 +253,13 @@ export function CollectionRowActionsContextMenu({
   );
 }
 
-export function CollectionRowActionsDropdownMenu({
+export function CollectionItemActionsDropdownMenu({
   actions,
-  row,
+  item,
   onRejected,
 }: {
-  actions: readonly CollectionRowActionDescriptor<unknown>[];
-  row: unknown;
+  actions: readonly CollectionItemActionDescriptor<unknown>[];
+  item: unknown;
   onRejected(actionId: string, message: string): void;
 }) {
   const [open, setOpen] = useState(false);
@@ -275,7 +275,7 @@ export function CollectionRowActionsDropdownMenu({
           type="button"
           variant="ghost"
           size="icon-xs"
-          aria-label={m.collection_row_actions()}
+          aria-label={m.collection_item_actions()}
           data-collection-interactive
           className="shrink-0 text-muted-foreground"
           onPointerDown={(event) => event.stopPropagation()}
@@ -287,10 +287,10 @@ export function CollectionRowActionsDropdownMenu({
       <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuGroup>
           {actions.map((action) => (
-            <CollectionRowActionDropdownItem
+            <CollectionItemActionDropdownItem
               key={action.id}
               action={action}
-              row={row}
+              item={item}
               onRejected={onRejected}
               onSuccess={() => setOpen(false)}
             />

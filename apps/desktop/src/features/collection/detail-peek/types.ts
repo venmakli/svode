@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 export interface CollectionDetailSelection {
   instanceKey: string;
   presentationId: string;
-  rowId: string;
+  itemId: string;
 }
 
 export interface CollectionDetailRequest {

@@ -24,17 +24,17 @@ import type {
   AgentActorDeleteReferenceState,
   AgentActorDraft,
   AgentActorMutationApplied,
-  AgentActorRow,
+  AgentActorItem,
 } from "../model/agent-actor-types";
 
 export interface AgentActorEditSession {
   draft: AgentActorDraft;
   guard: { dirty: boolean };
-  row: AgentActorRow;
+  item: AgentActorItem;
 }
 
 export interface AgentActorMutationAccessContext {
-  draftOrRow: AgentActorDraft | AgentActorRow;
+  draftOrItem: AgentActorDraft | AgentActorItem;
   kind: "create" | "update" | "delete";
   ownerPath: string;
 }
@@ -61,7 +61,7 @@ export function useAgentActorMutations({
   const [editSession, setEditSession] = useState<AgentActorEditSession | null>(
     null,
   );
-  const [deleteActor, setDeleteActor] = useState<AgentActorRow | null>(null);
+  const [deleteActor, setDeleteActor] = useState<AgentActorItem | null>(null);
   const [deleteReferences, setDeleteReferences] =
     useState<AgentActorDeleteReferenceState>({ phase: "idle" });
   const deletePreviewRequestRef = useRef(0);
@@ -78,15 +78,15 @@ export function useAgentActorMutations({
     setDeleteReferences({ phase: "idle" });
   }, []);
   const openDelete = useCallback(
-    (row: AgentActorRow) => {
+    (item: AgentActorItem) => {
       const requestId = ++deletePreviewRequestRef.current;
       setFailure(null);
-      setDeleteActor(row);
+      setDeleteActor(item);
       setDeleteReferences({ phase: "loading" });
       void previewAgentActorDeleteReferences(
         projectPath,
-        row.ownerPath,
-        row.id,
+        item.ownerPath,
+        item.id,
       ).then(
         (preview) => {
           if (requestId !== deletePreviewRequestRef.current) return;
@@ -104,12 +104,12 @@ export function useAgentActorMutations({
     },
     [projectPath],
   );
-  const openEdit = useCallback((row: AgentActorRow) => {
+  const openEdit = useCallback((item: AgentActorItem) => {
     setFailure(null);
     setEditSession({
-      draft: createAgentActorDraft(row.ownerPath, row),
+      draft: createAgentActorDraft(item.ownerPath, item),
       guard: { dirty: false },
-      row,
+      item,
     });
   }, []);
 
@@ -117,7 +117,7 @@ export function useAgentActorMutations({
     async (
       kind: "create" | "update" | "delete",
       targetOwnerPath: string,
-      draftOrRow: AgentActorDraft | AgentActorRow,
+      draftOrItem: AgentActorDraft | AgentActorItem,
     ) => {
       if (!snapshot) return;
       const fingerprint = snapshot.fingerprints[targetOwnerPath];
@@ -130,14 +130,14 @@ export function useAgentActorMutations({
       try {
         const mutation =
           kind === "delete"
-            ? ({ kind, actorId: (draftOrRow as AgentActorRow).id } as const)
+            ? ({ kind, actorId: (draftOrItem as AgentActorItem).id } as const)
             : await draftMutation(
                 kind,
-                draftOrRow as AgentActorDraft,
-                snapshot.rows.find(
-                  (row) =>
-                    row.ownerPath === targetOwnerPath &&
-                    row.id === (draftOrRow as AgentActorDraft).id,
+                draftOrItem as AgentActorDraft,
+                snapshot.items.find(
+                  (item) =>
+                    item.ownerPath === targetOwnerPath &&
+                    item.id === (draftOrItem as AgentActorDraft).id,
                 ),
               );
         const result = await mutateAgentActor({
@@ -165,7 +165,7 @@ export function useAgentActorMutations({
       } catch (error) {
         if (
           await onAccessDenied?.(error, {
-            draftOrRow,
+            draftOrItem,
             kind,
             ownerPath: targetOwnerPath,
           })
@@ -212,7 +212,7 @@ export function useAgentActorMutations({
 async function draftMutation(
   kind: "create" | "update",
   draft: AgentActorDraft,
-  current: AgentActorRow | undefined,
+  current: AgentActorItem | undefined,
 ) {
   if (
     kind === "update" &&

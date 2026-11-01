@@ -3,7 +3,7 @@ import { getLocale } from "@/paraglide/runtime.js";
 
 import { timezoneDisplayLabel } from "../model/routine-time-basis";
 import type {
-  RoutineRow,
+  RoutineItem,
   RoutineTimeBasis,
   RoutineTrigger,
 } from "../model/types";
@@ -19,12 +19,12 @@ export function routineScheduleSummary(
   return `${m.routines_trigger_schedule()} · ${trigger.cron}`;
 }
 
-export function routineNextRunCopy(row: RoutineRow) {
-  if (!row.nextRunAt || row.definition?.trigger.type !== "schedule")
+export function routineNextRunCopy(item: RoutineItem) {
+  if (!item.nextRunAt || item.definition?.trigger.type !== "schedule")
     return null;
-  const { timeBasis } = row.definition.trigger;
-  const date = new Date(row.nextRunAt);
-  let value = row.nextRunAt;
+  const { timeBasis } = item.definition.trigger;
+  const date = new Date(item.nextRunAt);
+  let value = item.nextRunAt;
   if (!Number.isNaN(date.getTime())) {
     try {
       value = new Intl.DateTimeFormat(getLocale(), {
@@ -33,7 +33,7 @@ export function routineNextRunCopy(row: RoutineRow) {
         ...(timeBasis.mode === "fixed" ? { timeZone: timeBasis.timezone } : {}),
       }).format(date);
     } catch {
-      value = row.nextRunAt;
+      value = item.nextRunAt;
     }
   }
   return value;

@@ -1,4 +1,4 @@
-export type CollectionFileChangeKind = "entries" | "schema";
+export type CollectionFileChangeKind = "items" | "schema";
 
 function normalizeEventPath(path: string) {
   return path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
@@ -39,7 +39,7 @@ export function collectionFileChangeKind(
     isPathInsideCollection(normalizedPath, normalizedCollection) &&
     normalizedPath.toLowerCase().endsWith(".md")
   ) {
-    return "entries";
+    return "items";
   }
   return null;
 }

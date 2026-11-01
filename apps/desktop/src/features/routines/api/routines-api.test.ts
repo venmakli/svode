@@ -3,7 +3,7 @@ import { JSDOM } from "jsdom";
 
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import type { RoutineRow } from "../model/types";
+import type { RoutineItem } from "../model/types";
 import { createRoutine, updateRoutine } from "./routines-api";
 
 test("desktop create sends one full definition mutation and preserves applied warnings", async () => {
@@ -52,7 +52,7 @@ test("desktop create sends one full definition mutation and preserves applied wa
             executor: "agent:01arz3ndektsv4rrffq69g5fav",
             executionFingerprint: "execution-1",
             filename: "review.md",
-            fingerprint: "row-1",
+            fingerprint: "item-1",
             lastRunAt: null,
             nextRunAt: null,
             path: ".routines/review.md",
@@ -149,7 +149,7 @@ test("desktop update forwards filename materialization intent", async () => {
     calls.push({ command, args: args as Record<string, unknown> });
     return { message: "blocked for test", status: "blocked" };
   });
-  const row: RoutineRow = {
+  const item: RoutineItem = {
     definition: {
       action: {
         executor: "agent:01arz3ndektsv4rrffq69g5fav",
@@ -170,7 +170,7 @@ test("desktop update forwards filename materialization intent", async () => {
     description: "",
     diagnostics: [],
     filename: "review.md",
-    fingerprint: "row-1",
+    fingerprint: "item-1",
     id: "routine:review",
     lastRun: null,
     lastRunAt: null,
@@ -190,8 +190,8 @@ test("desktop update forwards filename materialization intent", async () => {
         spaceId: "root",
         spacePath: "/project",
       },
-      row,
-      row.definition!,
+      item,
+      item.definition!,
       { materializeFilename: false },
     );
 

@@ -8,7 +8,7 @@ test("Peek restores focus to the surviving Collection row", async () => {
   const row = dom.window.document.querySelector<HTMLButtonElement>("#row");
   if (!row) throw new Error("row fixture missing");
 
-  restoreAttachmentFocus({ returnFocus: () => row, rowId: "page:roadmap.md" });
+  restoreAttachmentFocus({ returnFocus: () => row, itemId: "page:roadmap.md" });
   await Promise.resolve();
 
   expect(dom.window.document.activeElement).toBe(row);
@@ -24,7 +24,7 @@ test("Peek uses the Collection fallback when the activated row disappeared", asy
   restoreAttachmentFocus({
     fallbackFocus: () => fallback,
     returnFocus: () => null,
-    rowId: "page:deleted.md",
+    itemId: "page:deleted.md",
   });
   await Promise.resolve();
 

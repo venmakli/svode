@@ -201,19 +201,19 @@ export function ErrorState({ title }: { title: string }) {
 
 export function moveFocus(
   direction: 1 | -1,
-  entries: Page[],
+  items: Page[],
   focusedPath: string | null,
   setFocusedPath: (path: string | null) => void,
 ) {
-  if (entries.length === 0) return;
+  if (items.length === 0) return;
   const current = focusedPath
-    ? entries.findIndex((entry) => entry.path === focusedPath)
+    ? items.findIndex((item) => item.path === focusedPath)
     : -1;
   const next =
     current < 0
       ? 0
-      : Math.max(0, Math.min(entries.length - 1, current + direction));
-  setFocusedPath(entries[next]?.path ?? null);
+      : Math.max(0, Math.min(items.length - 1, current + direction));
+  setFocusedPath(items[next]?.path ?? null);
 }
 
 function cloneColumnMenu(children: ReactNode, trigger: ReactNode) {

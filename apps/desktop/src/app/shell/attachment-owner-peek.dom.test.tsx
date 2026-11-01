@@ -88,7 +88,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
     let directoryChild = false;
     const ownerFacts = (path: string) => {
       const ownerPath = path.replace(/\/readme\.md$/i, "");
-      const kind = snapshotTarget.row.kind;
+      const kind = snapshotTarget.item.kind;
       return {
         identity:
           kind === "collection"
@@ -113,7 +113,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
                   ? directoryChild
                     ? [
                         {
-                          ...snapshotTarget.row,
+                          ...snapshotTarget.item,
                           key: "app:child/tool",
                           path: "child/tool",
                           ownerPath: "child/tool",
@@ -123,7 +123,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
                         },
                       ]
                     : []
-                  : [snapshotTarget.row],
+                  : [snapshotTarget.item],
               diagnostics: [],
             }
           : 1,
@@ -163,7 +163,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
     try {
       for (const kind of ["collection", "app", "directory"] as const) {
         canClose = false;
-        const row = {
+        const item = {
           key: kind + ":child",
           path: kind === "collection" ? "child/readme.md" : "child",
           contentPath: kind === "collection" ? "child/readme.md" : null,
@@ -180,7 +180,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
           availability: "available" as const,
         };
         const target: AttachmentActivationRequest = {
-          row,
+          item,
           mode: "peek",
           owner: {
             projectPath: "/repo",
@@ -191,7 +191,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
           },
           sourceGeneration: "one",
           activation: {
-            rowId: row.key,
+            itemId: item.key,
             returnFocus: () => dom.window.document.getElementById("row"),
           },
         };
@@ -293,16 +293,16 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
         snapshotTarget = {
           ...snapshotTarget,
           sourceGeneration: "readme-created",
-          row: {
-            ...snapshotTarget.row,
+          item: {
+            ...snapshotTarget.item,
             kind: kind === "app" ? "page" : "collection",
             key:
-              kind === "app" ? "page:child/README.md" : snapshotTarget.row.key,
-            path: kind === "app" ? "child/README.md" : snapshotTarget.row.path,
+              kind === "app" ? "page:child/README.md" : snapshotTarget.item.key,
+            path: kind === "app" ? "child/README.md" : snapshotTarget.item.path,
             contentPath:
               kind === "app"
                 ? "child/README.md"
-                : snapshotTarget.row.contentPath,
+                : snapshotTarget.item.contentPath,
             icon: "🚀",
             displayName: "Saved metadata",
           },

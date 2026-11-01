@@ -4,8 +4,8 @@ export {
   CollectionDetailPeekHost,
   useCollectionDetailController,
 } from "./detail-peek/detail-peek";
-export { useCollectionDetailRowBinding } from "./detail-peek/detail-row-binding";
-export type { CollectionDetailRowBinding } from "./detail-peek/detail-row-binding";
+export { useCollectionDetailItemBinding } from "./detail-peek/detail-item-binding";
+export type { CollectionDetailItemBinding } from "./detail-peek/detail-item-binding";
 export { CollectionDetailHeader } from "./detail-peek/detail-header";
 export { CollectionDetailInfo } from "./detail-peek/detail-info";
 export type {

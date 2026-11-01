@@ -1,9 +1,9 @@
-import type { ActorCatalogSnapshot, ActorCatalogRow } from "./types";
+import type { ActorCatalogSnapshot, ActorCatalogItem } from "./types";
 
 export type ActorMutationIntent =
   | { kind: "add" }
-  | { kind: "merge"; source: ActorCatalogRow }
-  | { kind: "edit"; source: ActorCatalogRow };
+  | { kind: "merge"; source: ActorCatalogItem }
+  | { kind: "edit"; source: ActorCatalogItem };
 
 export type ActorMutationAction =
   | {

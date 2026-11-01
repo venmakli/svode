@@ -7,7 +7,7 @@ import {
   type CollectionInstance,
 } from "@/features/collection";
 import { createAttachmentsPresentationDescriptor } from "../model/presentation";
-import type { AttachmentRow } from "../model/types";
+import type { AttachmentItem } from "../model/types";
 import { AttachmentIcon } from "./attachment-icon";
 import {
   attachmentHierarchy,
@@ -26,15 +26,15 @@ export function DirectoryPeekTable({
   path: string;
   ownerKey: string;
   source: AttachmentsSource;
-  onActivate(row: AttachmentRow, context: CollectionActivationContext): void;
+  onActivate(item: AttachmentItem, context: CollectionActivationContext): void;
 }) {
   const { observeBranch } = source;
   useEffect(() => observeBranch(path), [observeBranch, path]);
   const branch = source.branches.get(path);
   const descriptor = createAttachmentsPresentationDescriptor({
     hierarchy: attachmentHierarchy(source),
-    onActivate: (row, activation) =>
-      onActivate(row, {
+    onActivate: (item, activation) =>
+      onActivate(item, {
         ...activation,
         fallbackFocus: () =>
           activation.fallbackFocus?.() ??
@@ -42,15 +42,15 @@ export function DirectoryPeekTable({
           origin.fallbackFocus?.() ??
           null,
       }),
-    renderLeading: (row) => <AttachmentIcon row={row} />,
+    renderLeading: (item) => <AttachmentIcon item={item} />,
   });
   const presentation = defineCollectionPresentation({
     descriptor,
     state: branch?.snapshot
       ? {
           phase: "ready",
-          rows: branch.snapshot.rows,
-          diagnostics: branch.snapshot.rows.length
+          items: branch.snapshot.items,
+          diagnostics: branch.snapshot.items.length
             ? [
                 <AttachmentBranchStatus
                   key="branch"

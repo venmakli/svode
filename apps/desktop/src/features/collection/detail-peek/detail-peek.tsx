@@ -22,7 +22,7 @@ import {
 } from "./detail-controller";
 import type { CollectionDetailController } from "./types";
 
-/** The detail of a fixed Collection row joins the navigation guards. */
+/** The detail of a fixed Collection item joins the navigation guards. */
 const collectionDetailStore = createCollectionDetailControllerStore({
   guardErrorMessage: () => m.collection_detail_guard_error(),
   registerNavigationGuard: (guard) =>
@@ -38,7 +38,7 @@ export function useCollectionDetailController(): CollectionDetailController {
   return collectionDetailController;
 }
 
-/** Row detail of fixed Collections in the Page Peek pattern. */
+/** Item detail of fixed Collections in the Page Peek pattern. */
 export function CollectionDetailPeekHost() {
   const store = collectionDetailStore;
   const snapshot = useSyncExternalStore(
@@ -131,7 +131,7 @@ export function CollectionDetailPeekFrame({
           request.identity ? <PeekIdentity {...request.identity} /> : undefined
         }
         info={request.info}
-        // The row actions of a fixed Collection keep their place before ×
+        // The item actions of a fixed Collection keep their place before ×
         // until its detail gets the shared identity and menu.
         openWith={
           request.headerActions || request.openWith ? (

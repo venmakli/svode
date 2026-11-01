@@ -104,9 +104,9 @@ export function parseCalendarDateValue(
   };
 }
 
-export function hiddenNoDateCount(entries: Page[], dateColumn: Column) {
-  return entries.filter(
-    (entry) => !parseCalendarDateValue(entry.meta.extra?.[dateColumn.name]),
+export function hiddenNoDateCount(items: Page[], dateColumn: Column) {
+  return items.filter(
+    (item) => !parseCalendarDateValue(item.meta.extra?.[dateColumn.name]),
   ).length;
 }
 
@@ -138,17 +138,13 @@ export function dateValueFromSelection(
   return { start, end };
 }
 
-export function updateEntryDateValue(
-  entry: Page,
-  field: string,
-  value: unknown,
-) {
+export function updateItemDateValue(item: Page, field: string, value: unknown) {
   return {
-    ...entry,
+    ...item,
     meta: {
-      ...entry.meta,
+      ...item.meta,
       extra: {
-        ...(entry.meta.extra ?? {}),
+        ...(item.meta.extra ?? {}),
         [field]: value,
       },
     },

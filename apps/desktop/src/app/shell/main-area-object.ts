@@ -9,7 +9,7 @@ import {
   type ActiveContentSelection,
 } from "@/features/artifact";
 import {
-  artifactNavigationKey,
+  pathNavigationKey,
   spaceNavigationKey,
   type NavigationItem,
 } from "@/features/navigation";
@@ -74,7 +74,7 @@ function contentObject(
     return {
       kind: "artifact",
       item: {
-        key: artifactNavigationKey(
+        key: pathNavigationKey(
           page ? "page" : "attachment",
           target.path,
           target.spaceId,
@@ -97,7 +97,7 @@ function contentObject(
   return {
     kind: "artifact",
     item: {
-      key: artifactNavigationKey(
+      key: pathNavigationKey(
         owner.kind === "collection" ? "collection" : "app",
         owner.path,
         owner.spaceId,

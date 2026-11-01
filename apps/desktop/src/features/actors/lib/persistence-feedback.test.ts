@@ -12,7 +12,7 @@ test("mutation feedback keeps child success and root policy pending independent"
       diagnostics: [],
       generation: 2,
       repositoryId: "/child",
-      rows: [],
+      items: [],
       shallow: false,
     },
     currentIdentityUpdated: true,

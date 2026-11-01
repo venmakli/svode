@@ -50,7 +50,7 @@ export type {
   CollectionQueryValidationIssueReason,
   CollectionQueryValidationResult,
   CollectionRenderer,
-  CollectionRowActionDescriptor,
+  CollectionItemActionDescriptor,
   CollectionSortDescriptor,
   CollectionSnapshot,
   CollectionStateScope,

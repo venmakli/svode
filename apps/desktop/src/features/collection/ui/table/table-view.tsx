@@ -55,7 +55,7 @@ export function TableView(props: TableViewProps) {
     columnSizing: runtime.columnSizing,
     editing: runtime.editing,
     openColumn: runtime.openColumn,
-    entries: runtime.entries,
+    items: runtime.items,
     expanded: runtime.expanded,
     nestedCollectionPaths: runtime.nestedCollectionPaths,
     showNested: runtime.showNested,
@@ -69,8 +69,8 @@ export function TableView(props: TableViewProps) {
     onOpenPath,
     onOpenRelationTarget,
     onRequestActors: runtime.loadActors,
-    onCommitField: (entry, column, value) =>
-      void runtime.commitField(entry, column, value),
+    onCommitField: (item, column, value) =>
+      void runtime.commitField(item, column, value),
   });
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table intentionally returns an imperative table instance for this view.
@@ -139,7 +139,7 @@ export function TableView(props: TableViewProps) {
             <TableRowsBody
               table={table}
               sensors={sensors}
-              sortedEntries={runtime.filteredTopLevel}
+              sortedItems={runtime.filteredTopLevel}
               hasSort={runtime.hasSort}
               readOnly={readOnly}
               actors={runtime.actors}
@@ -161,7 +161,7 @@ export function TableView(props: TableViewProps) {
           <TableFooterComposer
             readOnly={readOnly}
             colSpan={runtime.visibleFields.length + 2}
-            entryCount={runtime.filteredTopLevel.length}
+            itemCount={runtime.filteredTopLevel.length}
             footerRef={runtime.footerRef}
             inputRef={runtime.footerInputRef}
             open={runtime.composerOpen}

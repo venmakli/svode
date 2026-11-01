@@ -13,13 +13,13 @@ import {
 } from "@/features/collection";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 
-interface ActorRow {
+interface ActorItem {
   canonicalEmail: string;
   displayName: string;
   repositoryAccess: "read-only" | "writable";
 }
 
-interface ContextArtifactRow {
+interface ContextArtifactItem {
   artifactId: string;
   client: string;
   scopeLabel: string;
@@ -37,7 +37,7 @@ interface RoutineRuntime {
   status: "failed" | "idle" | "running";
 }
 
-interface RoutineRow {
+interface RoutineItem {
   definitionPath: string;
   lastRunAt: string | null;
   name: string;
@@ -50,11 +50,11 @@ type CreateActorDecision =
   | { message: string; status: "invalid" }
   | { canonicalEmail: string; displayName: string; status: "confirmed" };
 
-function customTextField<Row>(
+function customTextField<Item>(
   key: string,
   label: string,
-  getValue: (row: Row) => string,
-): CollectionPropertyDefinition<Row> {
+  getValue: (item: Item) => string,
+): CollectionPropertyDefinition<Item> {
   return {
     getValue,
     key,
@@ -72,7 +72,7 @@ function mergeRoutineSnapshot(
   definitions: readonly RoutineDefinition[],
   runtimeById: ReadonlyMap<string, RoutineRuntime>,
   limit: number,
-): readonly RoutineRow[] {
+): readonly RoutineItem[] {
   return Object.freeze(
     definitions.slice(0, limit).map((definition) => {
       const runtime = runtimeById.get(definition.routineId);
@@ -87,14 +87,14 @@ function mergeRoutineSnapshot(
   );
 }
 
-const actorRows = Object.freeze<readonly ActorRow[]>([
+const actorItems = Object.freeze<readonly ActorItem[]>([
   Object.freeze({
     canonicalEmail: "ilya@example.com",
     displayName: "Ilya",
     repositoryAccess: "writable",
   }),
 ]);
-const contextRows = Object.freeze<readonly ContextArtifactRow[]>([
+const contextItems = Object.freeze<readonly ContextArtifactItem[]>([
   Object.freeze({
     artifactId: "codex:project-agents",
     client: "codex",
@@ -119,7 +119,7 @@ const routineDefinitions = Object.freeze<readonly RoutineDefinition[]>([
     routineId: "archive-completed",
   }),
 ]);
-const routineRows = mergeRoutineSnapshot(
+const routineItems = mergeRoutineSnapshot(
   routineDefinitions,
   new Map([
     [
@@ -133,63 +133,65 @@ const routineRows = mergeRoutineSnapshot(
   2,
 );
 
-const actorDescriptor: CollectionPresentationDescriptor<ActorRow> = {
+const actorDescriptor: CollectionPresentationDescriptor<ActorItem> = {
   onActivate: () => undefined,
   properties: [
-    customTextField("name", "Name", (row: ActorRow) => row.displayName),
+    customTextField("name", "Name", (item: ActorItem) => item.displayName),
     customTextField(
       "access",
       "Access",
-      (row: ActorRow) => row.repositoryAccess,
+      (item: ActorItem) => item.repositoryAccess,
     ),
   ],
-  getRowId: (row) => row.canonicalEmail,
+  getItemId: (item) => item.canonicalEmail,
   id: "actors",
   label: "Actors",
   layout: {
-    getDescription: (row) => row.canonicalEmail,
-    getTitle: (row) => row.displayName,
+    getDescription: (item) => item.canonicalEmail,
+    getTitle: (item) => item.displayName,
     kind: "list",
     visibleProperties: ["access"],
   },
-  query: { getSearchText: (row) => `${row.displayName} ${row.canonicalEmail}` },
+  query: {
+    getSearchText: (item) => `${item.displayName} ${item.canonicalEmail}`,
+  },
 };
-const contextDescriptor: CollectionPresentationDescriptor<ContextArtifactRow> =
+const contextDescriptor: CollectionPresentationDescriptor<ContextArtifactItem> =
   {
     onActivate: () => undefined,
     properties: [
       customTextField(
         "client",
         "Client",
-        (row: ContextArtifactRow) => row.client,
+        (item: ContextArtifactItem) => item.client,
       ),
     ],
-    getRowId: (row) => row.artifactId,
+    getItemId: (item) => item.artifactId,
     id: "context",
     label: "Context",
     layout: {
       cardSize: "large",
       density: "comfortable",
-      getTitle: (row) => row.title,
+      getTitle: (item) => item.title,
       kind: "gallery",
       visibleProperties: ["client"],
     },
-    query: { getSearchText: (row) => `${row.title} ${row.client}` },
+    query: { getSearchText: (item) => `${item.title} ${item.client}` },
   };
-const routineDescriptor: CollectionPresentationDescriptor<RoutineRow> = {
+const routineDescriptor: CollectionPresentationDescriptor<RoutineItem> = {
   onActivate: () => undefined,
   properties: [
-    customTextField("status", "Status", (row: RoutineRow) => row.status),
+    customTextField("status", "Status", (item: RoutineItem) => item.status),
   ],
-  getRowId: (row) => row.routineId,
+  getItemId: (item) => item.routineId,
   id: "routines",
   label: "Routines",
   layout: {
-    getTitle: (row) => row.name,
+    getTitle: (item) => item.name,
     kind: "list",
     visibleProperties: ["status"],
   },
-  query: { getSearchText: (row) => `${row.name} ${row.status}` },
+  query: { getSearchText: (item) => `${item.name} ${item.status}` },
 };
 
 const actorPresentation = defineCollectionPresentation({
@@ -197,7 +199,7 @@ const actorPresentation = defineCollectionPresentation({
   state: {
     diagnostics: [<span key="history">One history source is unavailable</span>],
     phase: "ready",
-    rows: actorRows,
+    items: actorItems,
   },
 });
 const contextPresentation = defineCollectionPresentation({
@@ -205,7 +207,7 @@ const contextPresentation = defineCollectionPresentation({
   state: {
     diagnostics: [<span key="client">Claude Code source is unavailable</span>],
     phase: "ready",
-    rows: contextRows,
+    items: contextItems,
   },
 });
 const routinePresentation = defineCollectionPresentation({
@@ -215,7 +217,7 @@ const routinePresentation = defineCollectionPresentation({
       <span key="runtime">One runtime overlay is unavailable</span>,
     ],
     phase: "ready",
-    rows: routineRows,
+    items: routineItems,
   },
 });
 const heterogeneousInstance: CollectionInstance = {
@@ -250,7 +252,7 @@ test("heterogeneous owner snapshots use one public List/Gallery/query/detail sea
   const actorQuery = applyCollectionQuery({
     descriptor: actorDescriptor,
     query: { filters: [], search: " ILYA@EXAMPLE.COM ", sort: [] },
-    rows: actorRows,
+    items: actorItems,
   });
 
   expect(tabs.includes("Actors")).toBe(true);
@@ -263,17 +265,17 @@ test("heterogeneous owner snapshots use one public List/Gallery/query/detail sea
   expect(context.includes("data-collection-create")).toBe(false);
   expect(context.includes("Row actions")).toBe(false);
   expect(routines.includes("running")).toBe(true);
-  expect(actorQuery.rows).toEqual(actorRows);
+  expect(actorQuery.items).toEqual(actorItems);
   for (const markup of [actors, context, routines]) {
     expect(markup.includes('data-collection-activatable="true"')).toBe(true);
   }
 });
 
 test("routine snapshot is bounded, immutable, and normalized before composition", () => {
-  expect(Object.isFrozen(routineRows)).toBe(true);
+  expect(Object.isFrozen(routineItems)).toBe(true);
   expect(routineDefinitions.length).toBe(3);
-  expect(routineRows.length).toBe(2);
-  expect(routineRows).toEqual([
+  expect(routineItems.length).toBe(2);
+  expect(routineItems).toEqual([
     {
       definitionPath: ".routines/review.md",
       lastRunAt: "2026-07-31T07:00:00Z",
@@ -289,15 +291,15 @@ test("routine snapshot is bounded, immutable, and normalized before composition"
       status: "unavailable",
     },
   ]);
-  expect("body" in routineRows[0]!).toBe(false);
-  expect("entry" in routineRows[0]!).toBe(false);
-  expect("body" in actorRows[0]!).toBe(false);
-  expect("entry" in contextRows[0]!).toBe(false);
+  expect("body" in routineItems[0]!).toBe(false);
+  expect("entry" in routineItems[0]!).toBe(false);
+  expect("body" in actorItems[0]!).toBe(false);
+  expect("entry" in contextItems[0]!).toBe(false);
 });
 
 test("feature-owned create flow leaves no artifact before confirmation", async () => {
-  const artifacts: ActorRow[] = [];
-  const commandCalls: ActorRow[] = [];
+  const artifacts: ActorItem[] = [];
+  const commandCalls: ActorItem[] = [];
   const decisions: CreateActorDecision[] = [
     { status: "cancelled" },
     { message: "Email is required", status: "invalid" },
@@ -314,11 +316,11 @@ test("feature-owned create flow leaves no artifact before confirmation", async (
     }
     return decision;
   };
-  const createActor = async (actor: ActorRow) => {
+  const createActor = async (actor: ActorItem) => {
     commandCalls.push(actor);
     artifacts.push(actor);
   };
-  const createDescriptor: CollectionPresentationDescriptor<ActorRow> = {
+  const createDescriptor: CollectionPresentationDescriptor<ActorItem> = {
     ...actorDescriptor,
     create: {
       label: "Add contributor",

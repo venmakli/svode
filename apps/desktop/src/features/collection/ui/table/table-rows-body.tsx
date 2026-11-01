@@ -28,7 +28,7 @@ import { nestedPreviewFields } from "./utils";
 export function TableRowsBody({
   table,
   sensors,
-  sortedEntries,
+  sortedItems,
   hasSort,
   readOnly,
   actors,
@@ -46,14 +46,14 @@ export function TableRowsBody({
 }: {
   table: ReactTable<CollectionTableRow>;
   sensors: ReturnType<typeof useSensors> | undefined;
-  sortedEntries: Page[];
+  sortedItems: Page[];
   hasSort: boolean;
   readOnly: boolean;
   actors: ActorCandidate[];
   spacePath: string;
   projectPath?: string | null;
   onActivateItem: (page: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
   focusedPath: string | null;
   onFocusRow: (path: string) => void;
   onOpenPath: (path: string, spaceId?: string | null) => void;
@@ -67,7 +67,7 @@ export function TableRowsBody({
   const moveFocus = useCallback(
     (path: string, key: string) => {
       const currentIndex = visibleRows.findIndex(
-        (row) => row.original.entry.path === path,
+        (row) => row.original.item.path === path,
       );
       if (currentIndex < 0) return;
       const nextIndex =
@@ -82,7 +82,7 @@ export function TableRowsBody({
                   currentIndex + (key === "ArrowUp" ? -1 : 1),
                 ),
               );
-      const nextPath = visibleRows[nextIndex]?.original.entry.path;
+      const nextPath = visibleRows[nextIndex]?.original.item.path;
       if (!nextPath) return;
       onFocusRow(nextPath);
       rowRefs.current.get(nextPath)?.focus();
@@ -107,13 +107,13 @@ export function TableRowsBody({
       onDragEnd={onDragEnd}
     >
       <SortableContext
-        items={sortedEntries.map((entry) => entry.path)}
+        items={sortedItems.map((item) => item.path)}
         strategy={verticalListSortingStrategy}
       >
         <TableBody>
           {visibleRows.map((row, index) => {
             const original = row.original;
-            const path = original.entry.path;
+            const path = original.item.path;
             const selected = focusedPath === path;
             return (
               <SortableTableRow
@@ -125,8 +125,8 @@ export function TableRowsBody({
                 tabIndex={selected || (!focusedPath && index === 0) ? 0 : -1}
                 onOpen={() =>
                   original.nestedCollection
-                    ? onOpenNestedPeek(original.entry)
-                    : onActivateItem(original.entry)
+                    ? onOpenNestedPeek(original.item)
+                    : onActivateItem(original.item)
                 }
                 onFocus={() => onFocusRow(path)}
                 onMoveFocus={(key) => moveFocus(path, key)}
@@ -198,7 +198,7 @@ function NestedSchemaPreview({
     .map((field) => {
       const column = schema.columns.find((item) => item.name === field);
       if (!column) return null;
-      const value = row.entry.meta.extra?.[column.name] ?? null;
+      const value = row.item.meta.extra?.[column.name] ?? null;
       if (isEmptyValue(value)) return null;
       return { column, value };
     })
@@ -216,8 +216,8 @@ function NestedSchemaPreview({
           values.length > 0 ? "max-w-md shrink" : "flex-1",
         )}
       >
-        {row.entry.meta.icon ? `${row.entry.meta.icon} ` : ""}
-        {row.entry.meta.title}
+        {row.item.meta.icon ? `${row.item.meta.icon} ` : ""}
+        {row.item.meta.title}
       </span>
       {values.length > 0 ? (
         <span className="h-4 w-px shrink-0 bg-border" />
@@ -239,7 +239,7 @@ function NestedSchemaPreview({
                 relationContext={{
                   spacePath,
                   projectPath,
-                  currentFilePath: row.entry.path,
+                  currentFilePath: row.item.path,
                   onOpenPath,
                   onOpenRelationTarget,
                 }}

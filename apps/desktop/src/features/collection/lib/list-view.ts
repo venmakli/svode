@@ -3,12 +3,12 @@ import type { Page } from "@/features/page";
 import type { CollectionSchema, Column } from "@/features/properties";
 import type { ListRowModel } from "../model/list-types";
 import {
-  entryCollectionPath,
-  entryParentDir,
-  isFolderEntry,
+  itemCollectionPath,
+  itemParentDir,
+  isFolderItem,
   replaceSiblings,
-  siblingEntries,
-} from "./entry-tree";
+  siblingItems,
+} from "./item-tree";
 
 const LIST_CANONICAL_FIELDS = new Set([
   "title",
@@ -63,29 +63,29 @@ export function listMetaColumns(fields: string[], schema: CollectionSchema) {
 
 export function flattenListRows({
   parents,
-  entries,
+  items,
   expanded,
   collectionPath,
   nestedCollectionPaths,
 }: {
   parents: Page[];
-  entries: Page[];
+  items: Page[];
   expanded: Set<string>;
   collectionPath: string;
   nestedCollectionPaths: Set<string>;
 }) {
   const rows: ListRowModel[] = [];
-  const append = (entry: Page, level: number) => {
-    const folder = entryCollectionPath(entry);
+  const append = (item: Page, level: number) => {
+    const folder = itemCollectionPath(item);
     const nestedCollection = nestedCollectionPaths.has(folder);
-    const children = entries.filter(
-      (candidate) => entryParentDir(candidate.path) === folder,
+    const children = items.filter(
+      (candidate) => itemParentDir(candidate.path) === folder,
     );
     const expandable =
-      isFolderEntry(entry) && !nestedCollection && children.length > 0;
-    const isExpanded = expanded.has(entry.path);
+      isFolderItem(item) && !nestedCollection && children.length > 0;
+    const isExpanded = expanded.has(item.path);
     rows.push({
-      entry,
+      item,
       level,
       expandable,
       expanded: isExpanded,
@@ -96,10 +96,10 @@ export function flattenListRows({
   };
 
   parents
-    .filter((entry) => entryParentDir(entry.path) === collectionPath)
-    .forEach((entry) => append(entry, 0));
+    .filter((item) => itemParentDir(item.path) === collectionPath)
+    .forEach((item) => append(item, 0));
 
   return rows;
 }
 
-export { isFolderEntry, replaceSiblings, siblingEntries };
+export { isFolderItem, replaceSiblings, siblingItems };

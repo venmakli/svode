@@ -15,7 +15,7 @@ import {
   prepareActiveContentDeactivation,
 } from "@/features/artifact";
 import {
-  artifactNavigationKey,
+  pathNavigationKey,
   getNavigationState,
   hideNowRow,
   navigationKeyId,
@@ -142,12 +142,7 @@ export function useKeepEditedObjects() {
           return;
         }
         const id = navigationKeyId(
-          artifactNavigationKey(
-            "page",
-            edit.path,
-            edit.spaceId,
-            rootIdRef.current,
-          ),
+          pathNavigationKey("page", edit.path, edit.spaceId, rootIdRef.current),
         );
         if (current && navigationKeyId(current.item.key) === id) {
           keepItem(current.item);

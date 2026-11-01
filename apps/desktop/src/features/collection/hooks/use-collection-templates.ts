@@ -15,11 +15,11 @@ import {
   duplicateTemplate as duplicateTemplateApi,
   instantiateTemplate,
   listTemplates,
-  readTemplateEntry,
+  readTemplateItem,
   reorderTemplates,
   setDefaultTemplate,
 } from "../api";
-import { entryTemplateSlug, normalizePagePath } from "../lib/utils";
+import { itemTemplateSlug, normalizePagePath } from "../lib/utils";
 import {
   templateHeadPath,
   type PagePeekTarget,
@@ -31,7 +31,7 @@ export function useCollectionTemplates({
   schema,
   setSchema,
   setPeekTarget,
-  refreshEntries,
+  refreshItems,
   spacePath,
   projectPath,
   collectionPath,
@@ -41,7 +41,7 @@ export function useCollectionTemplates({
   schema: CollectionSchema | null;
   setSchema: Dispatch<SetStateAction<CollectionSchema | null>>;
   setPeekTarget: Dispatch<SetStateAction<PagePeekTarget | null>>;
-  refreshEntries: () => void;
+  refreshItems: () => void;
   spacePath: string;
   projectPath?: string | null;
   collectionPath: string;
@@ -63,12 +63,12 @@ export function useCollectionTemplates({
       kind,
       projectPath,
     });
-    const entry = await readTemplateEntry({ spacePath, path });
+    const item = await readTemplateItem({ spacePath, path });
     setPeekTarget({
-      page: entry,
+      page: item,
       nested: kind === "nestedCollection",
       template: {
-        slug: entryTemplateSlug(collectionPath, entry.path),
+        slug: itemTemplateSlug(collectionPath, item.path),
         collectionPath,
         isDefault: false,
       },
@@ -90,7 +90,7 @@ export function useCollectionTemplates({
       projectPath,
     });
     publishPageFilenameWarnings(created.warnings);
-    refreshEntries();
+    refreshItems();
     signalUserEdit();
     await reloadTreeParent(spaceId, collectionPath);
     openPage(created.path, spaceId);
@@ -99,9 +99,9 @@ export function useCollectionTemplates({
 
   async function editTemplate(template: TemplateInfo) {
     const path = templateHeadPath(collectionPath, template);
-    const entry = await readTemplateEntry({ spacePath, path });
+    const item = await readTemplateItem({ spacePath, path });
     setPeekTarget({
-      page: entry,
+      page: item,
       nested: template.kind === "nestedCollection",
       template: {
         slug: template.slug,
@@ -163,13 +163,13 @@ export function useCollectionTemplates({
     setSchema(normalizeSchema(next));
   }
 
-  async function duplicateTemplateEntry(entryToDuplicate: Page) {
-    const slug = entryTemplateSlug(collectionPath, entryToDuplicate.path);
-    const duplicatePath = normalizePagePath(entryToDuplicate.path);
+  async function duplicateTemplateItem(itemToDuplicate: Page) {
+    const slug = itemTemplateSlug(collectionPath, itemToDuplicate.path);
+    const duplicatePath = normalizePagePath(itemToDuplicate.path);
     await duplicateTemplateForMenu({
       slug,
-      title: entryToDuplicate.meta.title,
-      icon: entryToDuplicate.meta.icon,
+      title: itemToDuplicate.meta.title,
+      icon: itemToDuplicate.meta.icon,
       kind: duplicatePath.toLowerCase().includes("/schema.yaml")
         ? "nestedCollection"
         : duplicatePath.toLowerCase().endsWith("/readme.md")
@@ -187,6 +187,6 @@ export function useCollectionTemplates({
     duplicateTemplateForMenu,
     deleteTemplateForMenu,
     reorderTemplatesForMenu,
-    duplicateTemplateEntry,
+    duplicateTemplateItem,
   };
 }

@@ -20,7 +20,7 @@ import * as m from "@/paraglide/messages.js";
 
 import type {
   AgentActorDeleteReferenceState,
-  AgentActorRow,
+  AgentActorItem,
 } from "../model/agent-actor-types";
 
 export function AgentActorDeleteDialog({
@@ -35,7 +35,7 @@ export function AgentActorDeleteDialog({
   onRetry,
 }: {
   accessRecovery: RepositoryAccessPreflightController;
-  actor: AgentActorRow | null;
+  actor: AgentActorItem | null;
   failure: string | null;
   pending: boolean;
   readOnly: boolean;

@@ -75,7 +75,7 @@ export interface ContentActionGroup {
 
 /** Actions a single surface adds to the object's menu. */
 export interface ContentSurfaceActions {
-  /** A Collection row opens its item in peek. */
+  /** A Collection item opens in peek. */
   openInPeek?: boolean;
   /** Sidebar rows of a Space and of the project root. */
   newSession?: boolean;

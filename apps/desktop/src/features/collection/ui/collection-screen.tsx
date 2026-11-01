@@ -31,13 +31,13 @@ import { handleError } from "../hooks/error-feedback";
 import { CollectionSkeleton } from "./skeleton";
 import { definePageCollection } from "../persisted/page-collection-definition";
 import { CollectionHost } from "./collection-host";
-import { CollectionEntryMenuProvider } from "./entry-context-menu";
+import { CollectionItemMenuProvider } from "./item-context-menu";
 import { CollectionTabStrip } from "./view-tabs";
 import { ViewActionBar } from "./view-action-bar";
 import {
-  useCollectionEntryActions,
-  useCollectionEntryDelete,
-  useCollectionEntryMenu,
+  useCollectionItemActions,
+  useCollectionItemDelete,
+  useCollectionItemMenu,
   useCollectionActiveTab,
   useCollectionKeyboardShortcuts,
   useCollectionSaveShortcuts,
@@ -85,10 +85,10 @@ export function CollectionViewsSurface({
   routeState,
   renderPeek,
 }: CollectionViewsSurfaceProps) {
-  const entryContext = useOptionalPageDetailContext();
+  const itemContext = useOptionalPageDetailContext();
   const collectionPath = useMemo(() => collectionPathFor(pagePath), [pagePath]);
-  const previousCollectionPath = collectionPathHandoffFromEntry(
-    entryContext?.pathHandoff ?? null,
+  const previousCollectionPath = collectionPathHandoffFromItem(
+    itemContext?.pathHandoff ?? null,
     collectionPath,
   );
   const readmePath = readmePathFor(collectionPath);
@@ -135,47 +135,42 @@ export function CollectionViewsSurface({
   const [renameValue, setRenameValue] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [peekTarget, setPeekTarget] = useState<PagePeekTarget | null>(null);
-  const {
-    entriesVersion,
-    refreshEntries,
-    createEntry,
-    duplicateRow,
-    deleteRow,
-  } = useCollectionEntryActions({
-    schema,
-    spacePath,
-    projectPath,
-    collectionPath,
-    spaceId,
-    openPage,
-  });
-  const entryDelete = useCollectionEntryDelete({
+  const { itemsVersion, refreshItems, createItem, duplicateItem, deleteItem } =
+    useCollectionItemActions({
+      schema,
+      spacePath,
+      projectPath,
+      collectionPath,
+      spaceId,
+      openPage,
+    });
+  const itemDelete = useCollectionItemDelete({
     readOnly,
     spacePath,
     projectPath,
-    deleteRow,
+    deleteItem,
   });
-  const cancelEntryDelete = entryDelete.cancelDelete;
+  const cancelItemDelete = itemDelete.cancelDelete;
   useCollectionRefreshEvents({
     spacePath,
     collectionPath,
     refreshSchema,
-    refreshEntries,
+    refreshItems,
   });
 
   const openPeek = useCallback((page: Page, nested = false) => {
     setPeekTarget({ page, nested });
   }, []);
-  const entryMenu = useCollectionEntryMenu({
+  const itemMenu = useCollectionItemMenu({
     readOnly,
     spacePath,
     projectPath,
     spaceId,
-    refreshEntries,
+    refreshItems,
     openPeek: (page, options) =>
       setPeekTarget({ page, nested: false, focusTitle: options?.focusTitle }),
-    duplicateRow,
-    requestRowDelete: entryDelete.requestRowDelete,
+    duplicateItem,
+    requestItemDelete: itemDelete.requestItemDelete,
   });
 
   const views = useMemo(
@@ -226,9 +221,9 @@ export function CollectionViewsSurface({
     queueMicrotask(() => {
       if (!isLocalQueryPane(settingsPane)) setSettingsOpen(false);
       setDeleteOpen(false);
-      cancelEntryDelete();
+      cancelItemDelete();
     });
-  }, [cancelEntryDelete, readOnly, settingsPane]);
+  }, [cancelItemDelete, readOnly, settingsPane]);
 
   useEffect(() => {
     if (!activeView) return;
@@ -267,12 +262,12 @@ export function CollectionViewsSurface({
     duplicateTemplateForMenu,
     deleteTemplateForMenu,
     reorderTemplatesForMenu,
-    duplicateTemplateEntry,
+    duplicateTemplateItem,
   } = useCollectionTemplates({
     schema,
     setSchema,
     setPeekTarget,
-    refreshEntries,
+    refreshItems,
     spacePath,
     projectPath,
     collectionPath,
@@ -310,7 +305,7 @@ export function CollectionViewsSurface({
     selectTab,
     moveActive,
     focusActiveViewCreate,
-    createEntry,
+    createItem,
     readOnly,
   });
   useCollectionSaveShortcuts({
@@ -348,7 +343,7 @@ export function CollectionViewsSurface({
 
   return (
     <div className="flex min-h-full flex-col">
-      <CollectionEntryMenuProvider value={entryMenu}>
+      <CollectionItemMenuProvider value={itemMenu}>
         <CollectionHost
           activePresentationId={activeTab}
           definition={definition}
@@ -423,7 +418,7 @@ export function CollectionViewsSurface({
                 onReorderTemplates={reorderTemplatesForMenu}
                 onCreatePage={(asFolder) => {
                   if (focusActiveViewCreate(asFolder)) return;
-                  void createEntry(asFolder).catch(handleError);
+                  void createItem(asFolder).catch(handleError);
                 }}
               />
             ) : null
@@ -440,16 +435,15 @@ export function CollectionViewsSurface({
                   projectPath,
                   spacePath,
                   searchQuery,
-                  refreshToken: entriesVersion,
+                  refreshToken: itemsVersion,
                   calendarScope: routeState?.calendarScope,
                   createRequest: createRequests[viewType(activeView)],
                   onClearSearch: () => setSearchQuery(""),
-                  onOpenNestedPeek: (entryToOpen) =>
-                    openPeek(entryToOpen, true),
-                  onOpenNestedCollection: (entryToOpen) =>
+                  onOpenNestedPeek: (itemToOpen) => openPeek(itemToOpen, true),
+                  onOpenNestedCollection: (itemToOpen) =>
                     openScopeOwner({
                       kind: "collection",
-                      path: entryToOpen.path,
+                      path: itemToOpen.path,
                       spaceId,
                     }),
                   onOpenFullPage: (page) => openPage(page.path, spaceId),
@@ -473,7 +467,7 @@ export function CollectionViewsSurface({
                         new Error(m.repository_work_status_read_only()),
                       );
                     }
-                    return createEntry(
+                    return createItem(
                       asFolder,
                       title,
                       false,
@@ -484,14 +478,14 @@ export function CollectionViewsSurface({
               : null
           }
         />
-      </CollectionEntryMenuProvider>
+      </CollectionItemMenuProvider>
 
       <DeleteViewDialog
         open={!readOnly && deleteOpen}
         onOpenChange={setDeleteOpen}
         onDeleteView={() => void deleteActiveView().catch(handleError)}
       />
-      <ContentDeleteDialog {...entryDelete.dialog} />
+      <ContentDeleteDialog {...itemDelete.dialog} />
       <PagePeekSheet
         readOnly={readOnly}
         target={peekTarget}
@@ -502,25 +496,25 @@ export function CollectionViewsSurface({
           if (!open) setPeekTarget(null);
         }}
         onOpenPath={openPath}
-        onConvertedPage={(nextEntry, nested) => {
+        onConvertedPage={(nextItem, nested) => {
           setPeekTarget((current) =>
-            current ? { ...current, page: nextEntry, nested } : null,
+            current ? { ...current, page: nextItem, nested } : null,
           );
-          refreshEntries();
+          refreshItems();
         }}
-        onDuplicatePage={(entryToDuplicate) => {
+        onDuplicatePage={(itemToDuplicate) => {
           setPeekTarget(null);
-          void duplicateRow(entryToDuplicate, {
+          void duplicateItem(itemToDuplicate, {
             spacePath: peekTarget?.spacePath ?? spacePath,
             projectPath: peekTarget?.projectPath ?? projectPath,
             spaceId: peekTarget?.spaceId ?? spaceId,
           }).catch(handleError);
         }}
-        onDeletePage={(entryToDelete) => {
+        onDeletePage={(itemToDelete) => {
           const template = peekTarget?.template;
           setPeekTarget(null);
-          entryDelete.requestPeekDelete(
-            entryToDelete,
+          itemDelete.requestPeekDelete(
+            itemToDelete,
             {
               spacePath: peekTarget?.spacePath ?? spacePath,
               projectPath: peekTarget?.projectPath ?? projectPath,
@@ -530,7 +524,7 @@ export function CollectionViewsSurface({
           );
         }}
         onSetTemplateDefault={setDefaultTemplateForMenu}
-        onDuplicateTemplate={duplicateTemplateEntry}
+        onDuplicateTemplate={duplicateTemplateItem}
         renderPeek={renderPeek}
       />
     </div>
@@ -553,7 +547,7 @@ function blockReadOnly(): Promise<void> {
   return Promise.resolve();
 }
 
-function collectionPathHandoffFromEntry(
+function collectionPathHandoffFromItem(
   handoff: { previousPath: string; path: string } | null,
   collectionPath: string,
 ) {

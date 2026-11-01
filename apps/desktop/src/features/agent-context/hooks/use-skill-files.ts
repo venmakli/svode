@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AttachmentRow, AttachmentsFolder } from "@/features/attachments";
+import type { AttachmentItem, AttachmentsFolder } from "@/features/attachments";
 import { getNativeErrorMessage } from "@/platform/native/errors";
 
 import {
   loadAgentContextSkillFiles,
   loadAgentContextSkillMarkdown,
 } from "../api/agent-context-api";
-import { skillFileRow } from "../model/skill-files";
+import { skillFileItem } from "../model/skill-files";
 import type { AgentContextItem, AgentContextSkillFile } from "../model/types";
 
 /**
  * The folder of a skill for the Attachments Table, with the listed file
- * behind each of its rows.
+ * behind each of its items.
  */
 export function useSkillFilesFolder(item: AgentContextItem) {
   const files = useRef(new Map<string, AgentContextSkillFile>());
@@ -20,7 +20,7 @@ export function useSkillFilesFolder(item: AgentContextItem) {
     async (branch: string | null) => {
       const listed = await loadAgentContextSkillFiles(item.id, branch ?? "");
       for (const file of listed) files.current.set(file.path, file);
-      return listed.map(skillFileRow);
+      return listed.map(skillFileItem);
     },
     [item.id],
   );
@@ -29,7 +29,7 @@ export function useSkillFilesFolder(item: AgentContextItem) {
     [item.id, item.modifiedAt, read],
   );
   const fileOf = useCallback(
-    (row: AttachmentRow) => files.current.get(row.path) ?? null,
+    (attachment: AttachmentItem) => files.current.get(attachment.path) ?? null,
     [],
   );
   return { fileOf, folder };

@@ -1,37 +1,37 @@
-import type { RoutineRow } from "./types";
+import type { RoutineItem } from "./types";
 
 const EXECUTOR_UNAVAILABLE_CODE = "routine_executor_unavailable";
 
-export function routineDefinitionDiagnostics(row: RoutineRow) {
-  return row.diagnostics.filter(
+export function routineDefinitionDiagnostics(item: RoutineItem) {
+  return item.diagnostics.filter(
     (diagnostic) => diagnostic.code !== EXECUTOR_UNAVAILABLE_CODE,
   );
 }
 
-export function compareRoutinesByName(left: RoutineRow, right: RoutineRow) {
+export function compareRoutinesByName(left: RoutineItem, right: RoutineItem) {
   return (
     left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
     left.id.localeCompare(right.id)
   );
 }
 
-export function routineSearchText(row: RoutineRow) {
-  const definition = row.definition;
+export function routineSearchText(item: RoutineItem) {
+  const definition = item.definition;
   return [
-    row.name,
-    row.description,
-    row.filename,
+    item.name,
+    item.description,
+    item.filename,
     definition?.trigger.type,
     definition?.action.type,
-    routineTriggerSummary(row),
-    routineActionSummary(row),
+    routineTriggerSummary(item),
+    routineActionSummary(item),
     definition?.action.type === "run_agent" ? definition.action.executor : "",
-    ...row.diagnostics.map((diagnostic) => diagnostic.message),
+    ...item.diagnostics.map((diagnostic) => diagnostic.message),
   ].join(" ");
 }
 
-export function routineTriggerSummary(row: RoutineRow) {
-  const trigger = row.definition?.trigger;
+export function routineTriggerSummary(item: RoutineItem) {
+  const trigger = item.definition?.trigger;
   if (!trigger) return "—";
   if (trigger.type === "manual") return "manual";
   if (trigger.type === "schedule") {
@@ -44,8 +44,8 @@ export function routineTriggerSummary(row: RoutineRow) {
   return trigger.event;
 }
 
-export function routineActionSummary(row: RoutineRow) {
-  const action = row.definition?.action;
+export function routineActionSummary(item: RoutineItem) {
+  const action = item.definition?.action;
   if (!action) return "—";
   return action.type;
 }

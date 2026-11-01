@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { applyCollectionQuery } from "@/features/collection";
 import { AttachmentIcon } from "../ui/attachment-icon";
 import { attachmentKindLabel } from "./presentation";
-import { getArtifactPresentationKind } from "@/features/artifact";
+import { getDirectoryPresentationKind } from "@/features/artifact";
 import * as m from "@/paraglide/messages.js";
 
 import { resolveStandardPropertyColumn } from "@/features/properties";
@@ -15,12 +15,12 @@ import {
 import {
   attachmentOwnerFromScopeOwner,
   attachmentOwnerInput,
-  type AttachmentRow,
+  type AttachmentItem,
 } from "./types";
 import { createAttachmentsPresentationDescriptor } from "./presentation";
 import { createAttachmentsCreateCapability } from "./create";
 
-const page: AttachmentRow = {
+const page: AttachmentItem = {
   contentPath: "roadmap.md",
   sourcePath: "roadmap.md",
   ownerPath: null,
@@ -61,8 +61,8 @@ test("App presentation unifies query values and sidebar facts without changing i
     ["app", true, "app", m.attachments_type_app()],
     ["directory", false, "directory", m.attachments_type_folder()],
   ] as const;
-  const rows = matrix.map(
-    ([kind, hasApp], i): AttachmentRow => ({
+  const items = matrix.map(
+    ([kind, hasApp], i): AttachmentItem => ({
       ...page,
       kind,
       hasApp,
@@ -70,19 +70,19 @@ test("App presentation unifies query values and sidebar facts without changing i
       path: String(i),
     }),
   );
-  const original = structuredClone(rows);
+  const original = structuredClone(items);
   for (const [i, [kind, hasApp, presentationKind, label]] of matrix.entries()) {
-    const row = rows[i]!;
+    const item = items[i]!;
     expect(
-      getArtifactPresentationKind({
+      getDirectoryPresentationKind({
         hasSchema: kind === "collection",
         hasApp,
         hasPage: kind === "page",
       }),
     ).toBe(presentationKind);
-    expect(attachmentKindLabel(row)).toBe(label);
-    expect(descriptor.getRowId(row)).toBe(row.key);
-    const matching = rows.filter((_, index) => matrix[index]![3] === label);
+    expect(attachmentKindLabel(item)).toBe(label);
+    expect(descriptor.getItemId(item)).toBe(item.key);
+    const matching = items.filter((_, index) => matrix[index]![3] === label);
     for (const query of [
       { search: label, filters: [], sort: [] },
       {
@@ -91,28 +91,35 @@ test("App presentation unifies query values and sidebar facts without changing i
         sort: [],
       },
     ]) {
-      expect(applyCollectionQuery({ descriptor, rows, query }).rows).toEqual(
+      expect(applyCollectionQuery({ descriptor, items, query }).items).toEqual(
         matching,
       );
     }
   }
-  const ascending = [rows[0], rows[2], rows[3], rows[1], rows[4], rows[5]];
+  const ascending = [
+    items[0],
+    items[2],
+    items[3],
+    items[1],
+    items[4],
+    items[5],
+  ];
   expect(
     applyCollectionQuery({
       descriptor,
-      rows: [...rows].reverse(),
+      items: [...items].reverse(),
       query: {
         search: "",
         filters: [],
         sort: [{ propertyKey: "type", direction: "asc" }],
       },
-    }).rows,
+    }).items,
   ).toEqual(ascending);
-  const pageApp = rows[1]!;
+  const pageApp = items[1]!;
   expect(attachmentKindLabel({ ...pageApp, hasApp: false })).toBe(
     m.attachments_type_page(),
   );
-  expect(rows).toEqual(original);
+  expect(items).toEqual(original);
 });
 
 test("fixed Attachments Table is Property-driven and query-capable", () => {
@@ -129,7 +136,7 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
     visibleProperties: ["name", "type", "modified", "size"],
   });
   expect(descriptor.create).toBe(create);
-  expect(descriptor.rowActions).toBe(undefined);
+  expect(descriptor.itemActions).toBe(undefined);
   expect(descriptor.properties.map((property) => property.origin)).toEqual([
     "computed",
     "computed",
@@ -181,15 +188,15 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
 });
 
 test("activation remains an opaque owner callback", async () => {
-  let activated: AttachmentRow | null = null;
+  let activated: AttachmentItem | null = null;
   const descriptor = createAttachmentsPresentationDescriptor({
     create,
-    onActivate: (row) => {
-      activated = row;
+    onActivate: (item) => {
+      activated = item;
     },
   });
 
-  await descriptor.onActivate?.(page, { rowId: page.key });
+  await descriptor.onActivate?.(page, { itemId: page.key });
 
   expect(activated).toEqual(page);
 });
@@ -272,12 +279,12 @@ test("Page owner mapping preserves root and child source normalization", () => {
   }
 });
 
-test("mixed row types use standard filter and size applicability with stable icons", () => {
+test("mixed item types use standard filter and size applicability with stable icons", () => {
   const descriptor = createAttachmentsPresentationDescriptor({
     create,
     onActivate: () => undefined,
   });
-  const rows: AttachmentRow[] = [
+  const items: AttachmentItem[] = [
     "page",
     "collection",
     "app",
@@ -286,29 +293,29 @@ test("mixed row types use standard filter and size applicability with stable ico
     "media",
   ].map((kind, i) => ({
     ...page,
-    kind: kind as AttachmentRow["kind"],
+    kind: kind as AttachmentItem["kind"],
     key: String(i),
     path: String(i),
   }));
-  for (const row of rows) {
+  for (const item of items) {
     const result = applyCollectionQuery({
       descriptor,
-      rows,
+      items,
       query: {
         search: "",
         filters: [
           {
             propertyKey: "type",
             operator: "eq",
-            value: attachmentKindLabel(row),
+            value: attachmentKindLabel(item),
           },
         ],
         sort: [],
       },
     });
-    expect(result.rows.map((item) => item.kind)).toEqual([row.kind]);
-    expect(descriptor.properties[3]?.getApplicability?.(row)?.status).toBe(
-      row.kind === "document" || row.kind === "media"
+    expect(result.items.map((shown) => shown.kind)).toEqual([item.kind]);
+    expect(descriptor.properties[3]?.getApplicability?.(item)?.status).toBe(
+      item.kind === "document" || item.kind === "media"
         ? "applicable"
         : "unavailable",
     );
@@ -327,31 +334,31 @@ test("mixed row types use standard filter and size applicability with stable ico
   ] as const) {
     for (const icon of [null, "", "  ", "\u0001"]) {
       const markup = renderToStaticMarkup(
-        <AttachmentIcon row={{ ...page, kind, hasApp, format, icon }} />,
+        <AttachmentIcon item={{ ...page, kind, hasApp, format, icon }} />,
       );
       expect(markup.includes(`lucide-${fallback}`)).toBe(true);
       expect(markup.includes('aria-hidden="true"')).toBe(true);
     }
     const custom = renderToStaticMarkup(
-      <AttachmentIcon row={{ ...page, kind, hasApp, format, icon: "🌱" }} />,
+      <AttachmentIcon item={{ ...page, kind, hasApp, format, icon: "🌱" }} />,
     );
     expect(custom.includes("🌱")).toBe(true);
     expect(custom.includes("<svg")).toBe(false);
   }
 });
 
-test("Attachments sort ties use content paths without changing typed row identity", () => {
+test("Attachments sort ties use content paths without changing typed item identity", () => {
   const descriptor = createAttachmentsPresentationDescriptor({
     onActivate: () => {},
   });
-  const rows = [
+  const items = [
     { ...page, key: "page:a", path: "a" },
     { ...page, key: "app:z", path: "z", kind: "app" as const },
   ];
   const result = applyCollectionQuery({
     descriptor,
-    rows,
+    items,
     query: { search: "", filters: [], sort: [] },
   });
-  expect(result.rows.map((row) => row.path)).toEqual(["a", "z"]);
+  expect(result.items.map((item) => item.path)).toEqual(["a", "z"]);
 });

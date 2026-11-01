@@ -16,16 +16,16 @@ import {
   readCollectionPresentationRuntime,
 } from "./runtime";
 
-interface TestRow {
+interface TestItem {
   id: string;
   name: string;
 }
 
 function customProperty(
-  overrides: Partial<CollectionPropertyDefinition<TestRow>> = {},
-): CollectionPropertyDefinition<TestRow> {
+  overrides: Partial<CollectionPropertyDefinition<TestItem>> = {},
+): CollectionPropertyDefinition<TestItem> {
   return {
-    getValue: (row) => row.name,
+    getValue: (item) => item.name,
     key: "name",
     label: "Name",
     origin: "domain_specific",
@@ -36,15 +36,15 @@ function customProperty(
 }
 
 function testDescriptor(
-  overrides: Partial<CollectionPresentationDescriptor<TestRow>> = {},
-): CollectionPresentationDescriptor<TestRow> {
+  overrides: Partial<CollectionPresentationDescriptor<TestItem>> = {},
+): CollectionPresentationDescriptor<TestItem> {
   return {
     properties: [],
-    getRowId: (row) => row.id,
+    getItemId: (item) => item.id,
     id: "people",
     label: "People",
     layout: {
-      getTitle: (row) => row.name,
+      getTitle: (item) => item.name,
       kind: "list",
       visibleProperties: [],
     },
@@ -54,34 +54,34 @@ function testDescriptor(
 }
 
 function testPresentation(
-  overrides: Partial<CollectionPresentationInstance<TestRow>> = {},
+  overrides: Partial<CollectionPresentationInstance<TestItem>> = {},
 ) {
-  return defineCollectionPresentation<TestRow>({
+  return defineCollectionPresentation<TestItem>({
     descriptor: testDescriptor(),
     state: {
       phase: "ready",
-      rows: [{ id: "person:one", name: "One" }],
+      items: [{ id: "person:one", name: "One" }],
     },
     ...overrides,
   });
 }
 
-test("typed presentation factory erases heterogeneous row models", () => {
-  interface SkillRow {
+test("typed presentation factory erases heterogeneous item models", () => {
+  interface SkillItem {
     path: string;
   }
 
   const people = testPresentation();
-  const skills = defineCollectionPresentation<SkillRow>({
+  const skills = defineCollectionPresentation<SkillItem>({
     descriptor: {
       properties: [],
-      getRowId: (row) => row.path,
+      getItemId: (item) => item.path,
       id: "skills",
       label: "Skills",
       layout: {
         cardSize: "large",
         density: "comfortable",
-        getTitle: (row) => row.path,
+        getTitle: (item) => item.path,
         kind: "gallery",
         visibleProperties: [],
       },
@@ -89,7 +89,7 @@ test("typed presentation factory erases heterogeneous row models", () => {
     },
     state: {
       phase: "ready",
-      rows: [{ path: "skills/review/SKILL.md" }],
+      items: [{ path: "skills/review/SKILL.md" }],
     },
   });
   const instance: CollectionInstance = {
@@ -130,7 +130,7 @@ test("runtime validation rejects unsupported and malformed Gallery layouts", () 
       layout: {
         kind: "board",
         visibleProperties: [],
-      } as unknown as CollectionPresentationDescriptor<TestRow>["layout"],
+      } as unknown as CollectionPresentationDescriptor<TestItem>["layout"],
     }),
   });
   const malformedGallery = testPresentation({
@@ -138,10 +138,10 @@ test("runtime validation rejects unsupported and malformed Gallery layouts", () 
       layout: {
         cardSize: "wide",
         density: "dense",
-        getTitle: (row: TestRow) => row.name,
+        getTitle: (item: TestItem) => item.name,
         kind: "gallery",
         visibleProperties: ["missing", "missing"],
-      } as unknown as CollectionPresentationDescriptor<TestRow>["layout"],
+      } as unknown as CollectionPresentationDescriptor<TestItem>["layout"],
     }),
   });
 
@@ -163,11 +163,11 @@ test("runtime validation rejects unsupported and malformed Gallery layouts", () 
   ]);
 });
 
-test("duplicate row identity becomes a blocking developer diagnostic", () => {
+test("duplicate item identity becomes a blocking developer diagnostic", () => {
   const presentation = testPresentation({
     state: {
       phase: "ready",
-      rows: [
+      items: [
         { id: "person:one", name: "One" },
         { id: "person:one", name: "Duplicate" },
       ],
@@ -176,29 +176,29 @@ test("duplicate row identity becomes a blocking developer diagnostic", () => {
   const runtime = readCollectionPresentationRuntime(presentation);
 
   expect(runtime.instance.state.phase).toBe("blocking_error");
-  expect(runtime.diagnostics[0]?.code).toBe("duplicate-row-id");
+  expect(runtime.diagnostics[0]?.code).toBe("duplicate-item-id");
   expect(runtime.diagnostics[0]?.message.includes("person:one")).toBe(true);
 });
 
-test("invalid runtime row ids become a blocking diagnostic", () => {
-  const getRowId = (() =>
+test("invalid runtime item ids become a blocking diagnostic", () => {
+  const getItemId = (() =>
     Promise.resolve(
       "person:one",
-    )) as unknown as CollectionPresentationDescriptor<TestRow>["getRowId"];
+    )) as unknown as CollectionPresentationDescriptor<TestItem>["getItemId"];
   const presentation = testPresentation({
-    descriptor: testDescriptor({ getRowId }),
+    descriptor: testDescriptor({ getItemId }),
   });
   const runtime = readCollectionPresentationRuntime(presentation);
 
   expect(runtime.instance.state.phase).toBe("blocking_error");
-  expect(runtime.diagnostics[0]?.code).toBe("invalid-row-id");
+  expect(runtime.diagnostics[0]?.code).toBe("invalid-item-id");
 });
 
-test("opaque composite row ids are not constrained to descriptor id syntax", () => {
+test("opaque composite item ids are not constrained to descriptor id syntax", () => {
   const presentation = testPresentation({
     state: {
       phase: "ready",
-      rows: [{ id: "пространство/Команда::ilya@example.com", name: "Ilya" }],
+      items: [{ id: "пространство/Команда::ilya@example.com", name: "Ilya" }],
     },
   });
 
@@ -273,7 +273,7 @@ test("stable property and action ids and unique descriptor keys are validated", 
   const presentation = testPresentation({
     descriptor: testDescriptor({
       properties: [property, property],
-      rowActions: [
+      itemActions: [
         {
           getState: () => ({ status: "idle" }),
           id: "Открыть",
@@ -304,7 +304,7 @@ test("stable property and action ids and unique descriptor keys are validated", 
   ]);
 });
 
-test("create and row actions share one stable id namespace", () => {
+test("create and item actions share one stable id namespace", () => {
   const presentation = testPresentation({
     descriptor: testDescriptor({
       create: {
@@ -318,7 +318,7 @@ test("create and row actions share one stable id namespace", () => {
           },
         ],
       },
-      rowActions: [
+      itemActions: [
         {
           getState: () => ({ status: "idle" }),
           id: "mutate",

@@ -46,7 +46,7 @@ test("app composition contains the full active inventory", () => {
     "quote",
     "insert-after",
     "insert-before",
-    "create-entry",
+    "create-item",
     "select-view",
     "previous-view",
     "next-view",

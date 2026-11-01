@@ -72,11 +72,11 @@ export function viewType(view: CollectionView | null | undefined): ViewType {
     : "table";
 }
 
-export function titleFilter(entries: Page[], query: string) {
+export function titleFilter(items: Page[], query: string) {
   const normalized = query.trim().toLowerCase();
-  if (!normalized) return entries;
-  return entries.filter((entry) =>
-    entry.meta.title.toLowerCase().includes(normalized),
+  if (!normalized) return items;
+  return items.filter((item) =>
+    item.meta.title.toLowerCase().includes(normalized),
   );
 }
 
@@ -92,14 +92,14 @@ export function nextTableViewName(views: CollectionView[]) {
   return nextViewName(views, "Table");
 }
 
-export function entryTemplateSlug(collectionPath: string, entryPath: string) {
+export function itemTemplateSlug(collectionPath: string, itemPath: string) {
   const normalizedCollectionPath = normalizePagePath(collectionPath);
-  const normalizedEntryPath = normalizePagePath(entryPath);
+  const normalizedItemPath = normalizePagePath(itemPath);
   const prefix = normalizedCollectionPath
     ? `${normalizedCollectionPath}/.templates/`
     : ".templates/";
-  const rest = normalizedEntryPath.startsWith(prefix)
-    ? normalizedEntryPath.slice(prefix.length)
-    : normalizedEntryPath;
+  const rest = normalizedItemPath.startsWith(prefix)
+    ? normalizedItemPath.slice(prefix.length)
+    : normalizedItemPath;
   return rest.replace(/\/README\.md$/i, "").replace(/\.md$/i, "");
 }

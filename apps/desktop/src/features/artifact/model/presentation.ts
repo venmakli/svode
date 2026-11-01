@@ -1,4 +1,4 @@
-export function getArtifactPresentationKind(facts: {
+export function getDirectoryPresentationKind(facts: {
   hasSchema: boolean;
   hasApp: boolean;
   hasPage: boolean;

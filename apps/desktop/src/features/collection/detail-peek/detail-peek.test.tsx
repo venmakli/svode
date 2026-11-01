@@ -17,7 +17,7 @@ const active: CollectionDetailActiveState = {
     selection: {
       instanceKey: "space:root:actors",
       presentationId: "contributors",
-      rowId: "person:one",
+      itemId: "person:one",
     },
     title: "Ada Lovelace",
   },
@@ -57,7 +57,7 @@ test("detail frame keeps accessible semantics, diagnostic, actions, and its own 
     markup.includes("[&amp;_[data-slot=scroll-area-viewport]&gt;div]:!block"),
   ).toBe(true);
   expect(markup.includes('role="alert"')).toBe(true);
-  // Row actions keep their place before ×, which is named "Close".
+  // Item actions keep their place before ×, which is named "Close".
   expect(
     markup.indexOf("Actor actions") < markup.indexOf('aria-label="Close"'),
   ).toBe(true);

@@ -11,21 +11,21 @@ import { normalizeSchema, type CollectionSchema } from "@/features/properties";
 import {
   getCollectionSchema,
   listCollectionInfos,
-  queryCollectionEntries,
+  queryCollectionItems,
 } from "../../api";
-import { entryCollectionPath } from "../../lib/entry-tree";
+import { itemCollectionPath } from "../../lib/item-tree";
 import {
-  collectionEntriesTargetKey,
-  mergeStableEntriesByPath,
-  rebaseCollectionEntries,
+  collectionItemsTargetKey,
+  mergeStableItemsByPath,
+  rebaseCollectionItems,
   rebaseCollectionPath,
   rebaseCollectionPathSet,
   sameStringSet,
-} from "../../lib/entry-refresh";
+} from "../../lib/item-refresh";
 import { showNestedForView } from "../../lib/view-options";
 import * as m from "@/paraglide/messages.js";
 
-export function useTableEntries({
+export function useTableItems({
   collectionPath,
   previousCollectionPath = null,
   filters,
@@ -44,7 +44,7 @@ export function useTableEntries({
   sort: QuerySort[];
   spacePath: string;
 }) {
-  const [entries, setEntries] = useState<Page[]>([]);
+  const [items, setItems] = useState<Page[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
@@ -53,13 +53,13 @@ export function useTableEntries({
   >(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const targetKey = collectionEntriesTargetKey({
+  const targetKey = collectionItemsTargetKey({
     collectionPath,
     projectPath,
     spacePath,
   });
   const previousTargetKey = previousCollectionPath
-    ? collectionEntriesTargetKey({
+    ? collectionItemsTargetKey({
         collectionPath: previousCollectionPath,
         projectPath,
         spacePath,
@@ -71,7 +71,7 @@ export function useTableEntries({
   const requestRef = useRef(0);
   const queryArgs = useStableViewQueryArgs(filters, sort);
 
-  const loadEntries = useCallback(async () => {
+  const loadItems = useCallback(async () => {
     const request = requestRef.current + 1;
     requestRef.current = request;
     const requestTarget = targetKey;
@@ -79,12 +79,8 @@ export function useTableEntries({
     const retargeting =
       initialLoad && loadedTargetRef.current === previousTargetKey;
     if (retargeting && previousCollectionPath) {
-      setEntries((current) =>
-        rebaseCollectionEntries(
-          current,
-          previousCollectionPath,
-          collectionPath,
-        ),
+      setItems((current) =>
+        rebaseCollectionItems(current, previousCollectionPath, collectionPath),
       );
       setNestedCollectionPaths((current) =>
         rebaseCollectionPathSet(
@@ -111,8 +107,8 @@ export function useTableEntries({
       setError(null);
     }
     try {
-      const [baseEntries, collections] = await Promise.all([
-        queryCollectionEntries({
+      const [baseItems, collections] = await Promise.all([
+        queryCollectionItems({
           spacePath,
           collectionPath,
           filters: queryArgs.filters,
@@ -143,21 +139,21 @@ export function useTableEntries({
       );
       const nestedParentPaths = Array.from(
         new Set(
-          baseEntries
-            .map((entry) => entryCollectionPath(entry))
+          baseItems
+            .map((item) => itemCollectionPath(item))
             .filter(
               (path) => path !== collectionPath && collectionPaths.has(path),
             ),
         ),
       );
-      const nestedEntryBatches = await Promise.all(
+      const nestedItemBatches = await Promise.all(
         nestedParentPaths.map(async (nestedPath) => {
           const nestedSchema = nextNestedSchemas.get(nestedPath);
           const nestedTableView = (
             (nestedSchema?.views ?? []) as CollectionView[]
           ).find((item) => item?.type === "table");
           try {
-            return await queryCollectionEntries({
+            return await queryCollectionItems({
               spacePath,
               collectionPath: nestedPath,
               filters: nestedTableView?.filter ?? null,
@@ -168,22 +164,19 @@ export function useTableEntries({
               projectPath,
             });
           } catch (nestedLoadError) {
-            console.warn(
-              "Failed to load nested table entries:",
-              nestedLoadError,
-            );
+            console.warn("Failed to load nested table items:", nestedLoadError);
             return [];
           }
         }),
       );
-      const entriesByPath = new Map<string, Page>();
-      [...baseEntries, ...nestedEntryBatches.flat()].forEach((entry) => {
-        entriesByPath.set(entry.path, entry);
+      const itemsByPath = new Map<string, Page>();
+      [...baseItems, ...nestedItemBatches.flat()].forEach((item) => {
+        itemsByPath.set(item.path, item);
       });
       if (requestRef.current !== request || targetRef.current !== requestTarget)
         return;
-      setEntries((current) =>
-        mergeStableEntriesByPath(current, Array.from(entriesByPath.values())),
+      setItems((current) =>
+        mergeStableItemsByPath(current, Array.from(itemsByPath.values())),
       );
       setNestedSchemas(nextNestedSchemas);
       setNestedCollectionPaths((current) =>
@@ -194,7 +187,7 @@ export function useTableEntries({
     } catch (loadError) {
       if (requestRef.current !== request || targetRef.current !== requestTarget)
         return;
-      console.warn("Failed to load table entries:", loadError);
+      console.warn("Failed to load table items:", loadError);
       toast.error(m.table_error_title());
       if (initialLoad && !retargeting) setError(String(loadError));
     } finally {
@@ -213,16 +206,16 @@ export function useTableEntries({
   ]);
 
   useLayoutEffect(() => {
-    void loadEntries();
-  }, [loadEntries, refreshToken]);
+    void loadItems();
+  }, [loadItems, refreshToken]);
 
   return {
-    entries,
-    setEntries,
+    items,
+    setItems,
     nestedCollectionPaths,
     nestedSchemas,
     loading,
     error,
-    loadEntries,
+    loadItems,
   };
 }

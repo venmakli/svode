@@ -6,7 +6,7 @@ import {
   collectionGalleryCardWidth,
   type CollectionGalleryCardSize,
 } from "../model/presentation-layout";
-import { entryCollectionPath, isFolderEntry } from "./entry-tree";
+import { itemCollectionPath, isFolderItem } from "./item-tree";
 
 const GALLERY_BODY_SYSTEM_FIELDS = new Set([
   "title",
@@ -22,7 +22,7 @@ const SYSTEM_META_COLUMNS: Record<string, Column> = {
 
 export const GALLERY_CARD_WIDTH = COLLECTION_GALLERY_CARD_WIDTH;
 
-export { isFolderEntry };
+export { isFolderItem };
 
 export function galleryCardWidth(view: CollectionView) {
   const size = String(view.size ?? "medium");
@@ -88,9 +88,9 @@ export function galleryMetaColumns(fields: string[], schema: CollectionSchema) {
     .filter((column): column is Column => Boolean(column));
 }
 
-export function isNestedCollectionEntry(
-  entry: Page,
+export function isNestedCollectionItem(
+  item: Page,
   nestedCollectionPaths: Set<string>,
 ) {
-  return nestedCollectionPaths.has(entryCollectionPath(entry));
+  return nestedCollectionPaths.has(itemCollectionPath(item));
 }

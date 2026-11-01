@@ -1,63 +1,63 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { Page } from "@/features/page";
-import { entryParentDir, reorderVisibleEntries } from "../../lib/entry-tree";
+import { itemParentDir, reorderVisibleItems } from "../../lib/item-tree";
 import { notifyTreeOrderUnreadable } from "../error-feedback";
 import { useCollectionTreeOrder } from "../use-collection-tree-order";
 
-interface UseTableEntryActionsOptions {
+interface UseTableItemActionsOptions {
   collectionPath: string;
   spacePath: string;
   projectPath?: string | null;
-  topLevelEntries: Page[];
+  topLevelItems: Page[];
   filteredTopLevel: Page[];
-  setEntries: Dispatch<SetStateAction<Page[]>>;
-  loadEntries: () => Promise<void>;
+  setItems: Dispatch<SetStateAction<Page[]>>;
+  loadItems: () => Promise<void>;
   onCreatePage: (title: string, asFolder: boolean) => Promise<Page>;
 }
 
-export function useTableEntryActions({
+export function useTableItemActions({
   collectionPath,
   spacePath,
   projectPath,
-  topLevelEntries,
+  topLevelItems,
   filteredTopLevel,
-  setEntries,
-  loadEntries,
+  setItems,
+  loadItems,
   onCreatePage,
-}: UseTableEntryActionsOptions) {
+}: UseTableItemActionsOptions) {
   const { reloadOrderParent, saveOrder } = useCollectionTreeOrder({
     spacePath,
     projectPath,
   });
 
-  const createEntry = useCallback(
+  const createItem = useCallback(
     async (
       title: string,
       asFolder: boolean,
-      onCreated?: (entry: Page) => void,
+      onCreated?: (item: Page) => void,
     ) => {
       const created = await onCreatePage(title, asFolder);
       onCreated?.(created);
-      await loadEntries();
+      await loadItems();
       return created;
     },
-    [loadEntries, onCreatePage],
+    [loadItems, onCreatePage],
   );
 
-  const reorderEntries = useCallback(
+  const reorderItems = useCallback(
     async (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || active.id === over.id) return;
       const oldIndex = filteredTopLevel.findIndex(
-        (entry) => entry.path === active.id,
+        (item) => item.path === active.id,
       );
       const newIndex = filteredTopLevel.findIndex(
-        (entry) => entry.path === over.id,
+        (item) => item.path === over.id,
       );
       if (oldIndex < 0 || newIndex < 0) return;
-      const fullOrder = reorderVisibleEntries(
-        topLevelEntries,
+      const fullOrder = reorderVisibleItems(
+        topLevelItems,
         filteredTopLevel,
         String(active.id),
         newIndex,
@@ -68,9 +68,9 @@ export function useTableEntryActions({
         if (!notifyTreeOrderUnreadable(error)) throw error;
         return;
       }
-      setEntries((current) => {
+      setItems((current) => {
         const children = current.filter(
-          (entry) => entryParentDir(entry.path) !== collectionPath,
+          (item) => itemParentDir(item.path) !== collectionPath,
         );
         return [...fullOrder, ...children];
       });
@@ -81,10 +81,10 @@ export function useTableEntryActions({
       filteredTopLevel,
       reloadOrderParent,
       saveOrder,
-      setEntries,
-      topLevelEntries,
+      setItems,
+      topLevelItems,
     ],
   );
 
-  return { createEntry, reorderEntries };
+  return { createItem, reorderItems };
 }

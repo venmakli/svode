@@ -3,18 +3,18 @@ import type { Page } from "@/features/page";
 import type { CollectionSchema, Column } from "@/features/properties";
 import type { CollectionTableRow } from "../model/table-types";
 import {
-  entryCollectionPath,
-  entryParentDir,
-  isFolderEntry,
-  reorderVisibleEntries,
-} from "./entry-tree";
+  itemCollectionPath,
+  itemParentDir,
+  isFolderItem,
+  reorderVisibleItems,
+} from "./item-tree";
 import { showNestedForView } from "./view-options";
 
 export {
-  entryCollectionPath,
-  entryParentDir,
-  isFolderEntry,
-  reorderVisibleEntries,
+  itemCollectionPath,
+  itemParentDir,
+  isFolderItem,
+  reorderVisibleItems,
   showNestedForView,
 };
 
@@ -54,7 +54,7 @@ export function minColumnWidth(column?: Column) {
 
 export function flattenRows(
   parents: Page[],
-  entries: Page[],
+  items: Page[],
   expanded: Set<string>,
   collectionPath: string,
   showNested: boolean,
@@ -62,38 +62,38 @@ export function flattenRows(
 ) {
   const result: CollectionTableRow[] = [];
   const append = (
-    entry: Page,
+    item: Page,
     level: number,
     child: boolean,
     nestedSchema?: CollectionSchema | null,
     nestedCollectionPath?: string | null,
   ) => {
-    const ownCollectionPath = entryCollectionPath(entry);
+    const ownCollectionPath = itemCollectionPath(item);
     const ownNestedSchema = nestedSchemas.get(ownCollectionPath);
     result.push({
-      entry,
+      item,
       level,
       child,
       nestedCollection: Boolean(ownNestedSchema),
       nestedSchema,
       nestedCollectionPath,
     });
-    if (!showNested || !expanded.has(entry.path)) return;
+    if (!showNested || !expanded.has(item.path)) return;
     const folder = ownCollectionPath;
     const directNestedSchema = ownNestedSchema;
     const childSchema = directNestedSchema ?? nestedSchema;
     const childCollectionPath = directNestedSchema
       ? folder
       : nestedCollectionPath;
-    entries
-      .filter((candidate) => entryParentDir(candidate.path) === folder)
+    items
+      .filter((candidate) => itemParentDir(candidate.path) === folder)
       .forEach((candidate) =>
         append(candidate, level + 1, true, childSchema, childCollectionPath),
       );
   };
   parents
-    .filter((entry) => entryParentDir(entry.path) === collectionPath)
-    .forEach((entry) => append(entry, 0, false));
+    .filter((item) => itemParentDir(item.path) === collectionPath)
+    .forEach((item) => append(item, 0, false));
   return result;
 }
 
@@ -106,24 +106,22 @@ export function nestedPreviewFields(schema: CollectionSchema) {
 }
 
 export function isExpandable(
-  entry: Page,
-  entries: Page[],
+  item: Page,
+  items: Page[],
   showNested: boolean,
   nestedCollectionPaths: Set<string> = new Set(),
 ) {
   if (!showNested) return false;
-  const folderEntry = isFolderEntry(entry);
-  const nestedCollection = nestedCollectionPaths.has(
-    entryCollectionPath(entry),
-  );
-  if (!folderEntry && !nestedCollection) return false;
-  const folder = entryCollectionPath(entry);
-  return entries.some((candidate) => entryParentDir(candidate.path) === folder);
+  const folderItem = isFolderItem(item);
+  const nestedCollection = nestedCollectionPaths.has(itemCollectionPath(item));
+  if (!folderItem && !nestedCollection) return false;
+  const folder = itemCollectionPath(item);
+  return items.some((candidate) => itemParentDir(candidate.path) === folder);
 }
 
 export function isNestedCollection(
-  entry: Page,
+  item: Page,
   nestedCollectionPaths: Set<string>,
 ) {
-  return nestedCollectionPaths.has(entryCollectionPath(entry));
+  return nestedCollectionPaths.has(itemCollectionPath(item));
 }

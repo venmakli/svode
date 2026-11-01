@@ -9,12 +9,12 @@ import * as m from "@/paraglide/messages.js";
 
 import { visibleActorAliases } from "../model/actor-values";
 import type {
-  ActorCatalogRow,
+  ActorCatalogItem,
   ActorSource,
   ActorSourceKind,
 } from "../model/types";
 
-export function ActorGitIdentities({ actor }: { actor: ActorCatalogRow }) {
+export function ActorGitIdentities({ actor }: { actor: ActorCatalogItem }) {
   const aliases = visibleActorAliases(actor);
   return (
     <Collapsible className="rounded-lg border" defaultOpen={false}>

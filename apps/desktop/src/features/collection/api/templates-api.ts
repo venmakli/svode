@@ -159,7 +159,7 @@ export async function reorderTemplates({
   }).then(normalizeSchema);
 }
 
-export function readTemplateEntry({
+export function readTemplateItem({
   spacePath,
   path,
 }: {

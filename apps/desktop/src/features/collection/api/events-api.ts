@@ -15,20 +15,20 @@ function combineUnlisteners(unlisteners: UnlistenFn[]): UnlistenFn {
   };
 }
 
-export async function listenCollectionEntryChanges({
+export async function listenCollectionItemChanges({
   spacePath,
   collectionPath,
-  onEntriesChanged,
+  onItemsChanged,
 }: {
   spacePath: string;
   collectionPath: string;
-  onEntriesChanged: () => void;
+  onItemsChanged: () => void;
 }): Promise<UnlistenFn> {
   return listenCollectionDataChanges({
     spacePath,
     collectionPath,
     onDataChanged: (kind) => {
-      if (kind === "entries") onEntriesChanged();
+      if (kind === "items") onItemsChanged();
     },
   });
 }

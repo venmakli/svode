@@ -13,7 +13,7 @@ import type { RoutineOwnerInput } from "../api/routines-api";
 import type {
   RoutineAgentActorTarget,
   RoutineLaunchRecoveryActions,
-  RoutineRow,
+  RoutineItem,
   RoutineSessionTarget,
 } from "../model/types";
 import { RoutineCreateDialog } from "../ui/routine-create-dialog";
@@ -72,7 +72,7 @@ export function useRoutinesController(
     owner: routineOwner,
     refresh,
     replaceSnapshot,
-    rows: state.phase === "ready" ? state.snapshot.rows : [],
+    items: state.phase === "ready" ? state.snapshot.items : [],
   });
   const dispatch = useRoutineDispatch({ onOpenSession, owner: routineOwner });
   const { onOpenAgentActor, onOpenAgentSettings } = host;
@@ -101,26 +101,26 @@ export function useRoutinesController(
     pending: mutations.pending,
     readOnly,
     recovery,
-    rows: state.phase === "ready" ? state.snapshot.rows : null,
+    items: state.phase === "ready" ? state.snapshot.items : null,
     onEditChange: mutations.changeEditDraft,
     setEditSession: mutations.setEditSession,
   });
   const onRoutineCreated = useCallback(
     async ({
       owner: createdOwner,
-      row,
+      item,
       snapshot,
     }: {
       owner: RoutineOwnerInput;
-      row: RoutineRow;
+      item: RoutineItem;
       snapshot: Parameters<typeof replaceSnapshot>[0];
     }) => {
       if (!sameRoutineOwner(createdOwner, routineOwner)) return;
       replaceSnapshot(snapshot);
-      await detail.open(row, {
+      await detail.open(item, {
         instanceKey,
         presentationId: "all",
-        rowId: row.id,
+        itemId: item.id,
       });
     },
     [detail, instanceKey, replaceSnapshot, routineOwner],
@@ -129,14 +129,14 @@ export function useRoutinesController(
   useEffect(() => {
     if (!openItem || state.phase !== "ready") return;
     openItem.consume();
-    const row = state.snapshot.rows.find(
+    const item = state.snapshot.items.find(
       (candidate) => candidate.routineId === openItem.id,
     );
-    if (!row) return;
-    void detail.open(row, {
+    if (!item) return;
+    void detail.open(item, {
       instanceKey,
       presentationId: "all",
-      rowId: row.id,
+      itemId: item.id,
     });
   }, [detail, instanceKey, openItem, state]);
   const create = useRoutineCreateJourney({ onApplied: onRoutineCreated });
@@ -170,37 +170,37 @@ export function useRoutinesController(
   }, [create.pending, mutations.pending, readOnly, state.phase]);
   const actions: RoutinePresentationActions = {
     createState: actionState,
-    getDeleteState: (row) =>
-      row.routineId
+    getDeleteState: (item) =>
+      item.routineId
         ? actionState
         : {
             reason: m.routines_invalid_identity_disabled(),
             status: "disabled",
           },
-    getEditState: (row) =>
-      !row.routineId
+    getEditState: (item) =>
+      !item.routineId
         ? {
             reason: m.routines_invalid_identity_disabled(),
             status: "disabled",
           }
-        : row.definition
+        : item.definition
           ? actionState
           : {
               reason: m.routines_invalid_edit_disabled(),
               status: "disabled",
             },
-    getEnabledState: (row) =>
-      row.valid && row.definition && row.definition.trigger.type !== "manual"
+    getEnabledState: (item) =>
+      item.valid && item.definition && item.definition.trigger.type !== "manual"
         ? actionState
         : {
-            reason: row.definition
+            reason: item.definition
               ? m.routines_manual_enabled_disabled()
               : m.routines_invalid_edit_disabled(),
             status: "disabled",
           },
-    getRunState: (row) => {
-      if (!readOnly) return dispatch.getRunState(row);
-      if (row.lastRun?.active) return { status: "idle" };
+    getRunState: (item) => {
+      if (!readOnly) return dispatch.getRunState(item);
+      if (item.lastRun?.active) return { status: "idle" };
       return {
         reason: m.repository_work_status_read_only(),
         status: "disabled",
@@ -213,37 +213,37 @@ export function useRoutinesController(
           automaticConsent.loading || automaticConsent.error
             ? null
             : automaticConsent.enabled,
-        baselineRows: state.snapshot.rows,
+        baselineItems: state.snapshot.items,
         owner: routineOwner,
         ownerLabel: routineOwnerLabel(owner),
       });
     },
-    onDelete: (row) => {
-      if (!readOnly) mutations.openDelete(row);
+    onDelete: (item) => {
+      if (!readOnly) mutations.openDelete(item);
     },
-    onEdit: (row) => {
-      if (!readOnly) mutations.openEdit(row);
+    onEdit: (item) => {
+      if (!readOnly) mutations.openEdit(item);
     },
-    onEnabledChange: async (row, enabled) => {
+    onEnabledChange: async (item, enabled) => {
       if (readOnly) throw new Error(m.repository_work_status_read_only());
-      if (!row.definition || row.definition.trigger.type === "manual") return;
+      if (!item.definition || item.definition.trigger.type === "manual") return;
       const updated = await mutations.applyUpdate(
-        row,
+        item,
         {
-          ...row.definition,
+          ...item.definition,
           enabled,
         },
         { materializeFilename: false },
       );
       if (!updated) throw new Error(m.routines_mutation_blocked());
     },
-    onRun: async (row) => {
+    onRun: async (item) => {
       if (readOnly) {
-        if (row.lastRun?.active) dispatch.openLastSession(row);
+        if (item.lastRun?.active) dispatch.openLastSession(item);
         else throw new Error(m.repository_work_status_read_only());
         return;
       }
-      await dispatch.run(row);
+      await dispatch.run(item);
     },
   };
   const presentation = createRoutinesPresentation({

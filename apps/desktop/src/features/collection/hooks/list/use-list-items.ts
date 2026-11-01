@@ -3,17 +3,17 @@ import { toast } from "sonner";
 import { useStableViewQueryArgs } from "@/features/collection/query/hooks";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import type { Page } from "@/features/page";
-import { listCollectionInfos, queryCollectionEntries } from "../../api";
+import { listCollectionInfos, queryCollectionItems } from "../../api";
 import {
-  collectionEntriesTargetKey,
-  mergeStableEntriesByPath,
-  rebaseCollectionEntries,
+  collectionItemsTargetKey,
+  mergeStableItemsByPath,
+  rebaseCollectionItems,
   rebaseCollectionPathSet,
   sameStringSet,
-} from "../../lib/entry-refresh";
+} from "../../lib/item-refresh";
 import * as m from "@/paraglide/messages.js";
 
-export function useGalleryEntries({
+export function useListItems({
   collectionPath,
   previousCollectionPath = null,
   filters,
@@ -30,18 +30,18 @@ export function useGalleryEntries({
   sort: QuerySort[];
   spacePath: string;
 }) {
-  const [entries, setEntries] = useState<Page[]>([]);
+  const [items, setItems] = useState<Page[]>([]);
   const [nestedCollectionPaths, setNestedCollectionPaths] = useState<
     Set<string>
   >(new Set());
   const [loading, setLoading] = useState(true);
-  const targetKey = collectionEntriesTargetKey({
+  const targetKey = collectionItemsTargetKey({
     collectionPath,
     projectPath,
     spacePath,
   });
   const previousTargetKey = previousCollectionPath
-    ? collectionEntriesTargetKey({
+    ? collectionItemsTargetKey({
         collectionPath: previousCollectionPath,
         projectPath,
         spacePath,
@@ -53,7 +53,7 @@ export function useGalleryEntries({
   const requestRef = useRef(0);
   const queryArgs = useStableViewQueryArgs(filters, sort);
 
-  const loadEntries = useCallback(async () => {
+  const loadItems = useCallback(async () => {
     const request = requestRef.current + 1;
     requestRef.current = request;
     const requestTarget = targetKey;
@@ -61,12 +61,8 @@ export function useGalleryEntries({
     const retargeting =
       initialLoad && loadedTargetRef.current === previousTargetKey;
     if (retargeting && previousCollectionPath) {
-      setEntries((current) =>
-        rebaseCollectionEntries(
-          current,
-          previousCollectionPath,
-          collectionPath,
-        ),
+      setItems((current) =>
+        rebaseCollectionItems(current, previousCollectionPath, collectionPath),
       );
       setNestedCollectionPaths((current) =>
         rebaseCollectionPathSet(
@@ -81,20 +77,20 @@ export function useGalleryEntries({
       setLoading(true);
     }
     try {
-      const [nextEntries, collections] = await Promise.all([
-        queryCollectionEntries({
+      const [nextItems, collections] = await Promise.all([
+        queryCollectionItems({
           spacePath,
           collectionPath,
           filters: queryArgs.filters,
           sort: queryArgs.sort,
-          includeNested: false,
+          includeNested: true,
           projectPath,
         }),
         listCollectionInfos(spacePath).catch(() => []),
       ]);
       if (requestRef.current !== request || targetRef.current !== requestTarget)
         return;
-      setEntries((current) => mergeStableEntriesByPath(current, nextEntries));
+      setItems((current) => mergeStableItemsByPath(current, nextItems));
       const collectionPaths = new Set(collections.map((item) => item.path));
       setNestedCollectionPaths((current) =>
         sameStringSet(current, collectionPaths) ? current : collectionPaths,
@@ -103,7 +99,7 @@ export function useGalleryEntries({
     } catch (error) {
       if (requestRef.current !== request || targetRef.current !== requestTarget)
         return;
-      console.warn("Failed to load gallery entries:", error);
+      console.warn("Failed to load list items:", error);
       toast.error(m.table_error_title());
     } finally {
       if (requestRef.current === request && targetRef.current === requestTarget)
@@ -120,14 +116,14 @@ export function useGalleryEntries({
   ]);
 
   useLayoutEffect(() => {
-    void loadEntries();
-  }, [loadEntries, refreshToken]);
+    void loadItems();
+  }, [loadItems, refreshToken]);
 
   return {
-    entries,
-    setEntries,
+    items,
+    setItems,
     nestedCollectionPaths,
     loading,
-    loadEntries,
+    loadItems,
   };
 }

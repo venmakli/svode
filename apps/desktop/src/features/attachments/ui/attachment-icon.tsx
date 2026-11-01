@@ -9,12 +9,12 @@ import {
   Video,
 } from "lucide-react";
 
-import type { AttachmentRow } from "../model/types";
+import type { AttachmentItem } from "../model/types";
 import { attachmentPresentationKind } from "../model/presentation";
 
-export function AttachmentIcon({ row }: { row: AttachmentRow }) {
-  const icon = row.icon?.trim();
-  const kind = attachmentPresentationKind(row);
+export function AttachmentIcon({ item }: { item: AttachmentItem }) {
+  const icon = item.icon?.trim();
+  const kind = attachmentPresentationKind(item);
   const Fallback =
     kind === "directory"
       ? FolderOpen
@@ -24,12 +24,12 @@ export function AttachmentIcon({ row }: { row: AttachmentRow }) {
           ? PanelsTopLeft
           : kind !== "media"
             ? FileText
-            : /^(png|jpg|jpeg|webp|gif|svg|avif|ico)$/u.test(row.format)
+            : /^(png|jpg|jpeg|webp|gif|svg|avif|ico)$/u.test(item.format)
               ? FileImage
-              : /^(mp3|wav|m4a|aac|flac|ogg|opus|wma|aiff)$/u.test(row.format)
+              : /^(mp3|wav|m4a|aac|flac|ogg|opus|wma|aiff)$/u.test(item.format)
                 ? Music
                 : /^(mp4|m4v|mov|webm|mkv|avi|wmv|mpg|mpeg|3gp)$/u.test(
-                      row.format,
+                      item.format,
                     )
                   ? Video
                   : File;

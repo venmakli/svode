@@ -11,11 +11,11 @@ import {
   withoutBindingSettings,
   withParticipantBinding,
 } from "./agent-actor-draft";
-import type { AgentActorRow } from "./agent-actor-types";
+import type { AgentActorItem } from "./agent-actor-types";
 
 const codexMode = { agent: "codex", setting: "mode", value: "agent" };
 
-function row(name: string, inherited: boolean): AgentActorRow {
+function item(name: string, inherited: boolean): AgentActorItem {
   return {
     actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
     binding: {
@@ -45,19 +45,19 @@ test("agent actor draft starts artifact-free without an agent", () => {
 });
 
 test("an edit draft keeps the binding values and the device mode as they are", () => {
-  const draft = createAgentActorDraft("/repo/space", row("Docs", false));
-  expect(draft.binding).toEqual(row("Docs", false).binding);
+  const draft = createAgentActorDraft("/repo/space", item("Docs", false));
+  expect(draft.binding).toEqual(item("Docs", false).binding);
   expect(draft.mode).toEqual(codexMode);
   expect(
     areAgentActorDraftsEqual(
       draft,
-      createAgentActorDraft("/repo/space", row("Docs", false)),
+      createAgentActorDraft("/repo/space", item("Docs", false)),
     ),
   ).toBe(true);
 });
 
 test("changing the agent drops the values and the mode of the previous agent", () => {
-  const draft = createAgentActorDraft("/repo/space", row("Docs", false));
+  const draft = createAgentActorDraft("/repo/space", item("Docs", false));
   expect(withBindingAgent(draft, "codex")).toBe(draft);
   const claude = withBindingAgent(draft, "claude-code");
   expect(claude.binding).toEqual({
@@ -74,7 +74,7 @@ test("changing the agent drops the values and the mode of the previous agent", (
 });
 
 test("a value of the mode's setting never goes to the catalog", () => {
-  const draft = createAgentActorDraft("/repo/space", row("Docs", false));
+  const draft = createAgentActorDraft("/repo/space", item("Docs", false));
   draft.binding = {
     agent: "codex",
     kind: "agent",
@@ -92,7 +92,7 @@ test("a value of the mode's setting never goes to the catalog", () => {
 });
 
 test("a change of the device mode alone leaves the catalog as it is", () => {
-  const actor = row("Docs", false);
+  const actor = item("Docs", false);
   const draft = createAgentActorDraft("/repo/space", actor);
   draft.mode = { agent: "codex", setting: "mode", value: "read-only" };
   expect(isAgentActorPortableUnchanged(draft, actor)).toBe(true);
@@ -130,6 +130,6 @@ test("agent actor draft requires a name and an agent", () => {
 
 test("default order keeps own actors ahead of inherited actors", () => {
   expect(
-    compareAgentActorsByDefault(row("Zed", false), row("Ada", true)) < 0,
+    compareAgentActorsByDefault(item("Zed", false), item("Ada", true)) < 0,
   ).toBe(true);
 });

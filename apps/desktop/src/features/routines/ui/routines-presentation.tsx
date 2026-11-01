@@ -24,20 +24,20 @@ import {
   compareRoutinesByName,
   routineSearchText,
 } from "../model/routine-values";
-import type { RoutineCatalogState, RoutineRow } from "../model/types";
+import type { RoutineCatalogState, RoutineItem } from "../model/types";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
   createState: CollectionActionState;
-  getDeleteState(row: RoutineRow): CollectionActionState;
-  getEditState(row: RoutineRow): CollectionActionState;
-  getEnabledState(row: RoutineRow): CollectionActionState;
-  getRunState(row: RoutineRow): CollectionActionState;
+  getDeleteState(item: RoutineItem): CollectionActionState;
+  getEditState(item: RoutineItem): CollectionActionState;
+  getEnabledState(item: RoutineItem): CollectionActionState;
+  getRunState(item: RoutineItem): CollectionActionState;
   onAdd(): void;
-  onDelete(row: RoutineRow): void;
-  onEdit(row: RoutineRow): void;
-  onEnabledChange(row: RoutineRow, enabled: boolean): Promise<void>;
-  onRun(row: RoutineRow): Promise<void>;
+  onDelete(item: RoutineItem): void;
+  onEdit(item: RoutineItem): void;
+  onEnabledChange(item: RoutineItem, enabled: boolean): Promise<void>;
+  onRun(item: RoutineItem): Promise<void>;
 }
 
 export function createRoutinesPresentation({
@@ -48,15 +48,15 @@ export function createRoutinesPresentation({
 }: {
   actions: RoutinePresentationActions;
   executors: AgentActorOptionsState;
-  onActivate?: CollectionPresentationDescriptor<RoutineRow>["onActivate"];
-  state: CollectionPresentationState<RoutineRow>;
+  onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
+  state: CollectionPresentationState<RoutineItem>;
 }) {
   return defineCollectionPresentation({
     descriptor: createRoutinesPresentationDescriptor({
       actions,
       executors,
       onActivate,
-      rows: state.phase === "ready" ? state.rows : [],
+      items: state.phase === "ready" ? state.items : [],
     }),
     state,
   });
@@ -66,31 +66,31 @@ export function createRoutinesPresentationDescriptor({
   actions,
   executors,
   onActivate,
-  rows,
+  items,
 }: {
   actions: RoutinePresentationActions;
   executors: AgentActorOptionsState;
-  onActivate?: CollectionPresentationDescriptor<RoutineRow>["onActivate"];
-  rows: readonly RoutineRow[];
-}): CollectionPresentationDescriptor<RoutineRow> {
-  const getExecutor = (row: RoutineRow) =>
-    row.definition?.action.type === "run_agent"
-      ? row.definition.action.executor
+  onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
+  items: readonly RoutineItem[];
+}): CollectionPresentationDescriptor<RoutineItem> {
+  const getExecutor = (item: RoutineItem) =>
+    item.definition?.action.type === "run_agent"
+      ? item.definition.action.executor
       : null;
-  const getExecutorLabel = (row: RoutineRow) => {
-    const executor = getExecutor(row);
+  const getExecutorLabel = (item: RoutineItem) => {
+    const executor = getExecutor(item);
     return executor
       ? agentActorReferenceLabel(resolveAgentActorReference(executors, executor))
       : null;
   };
-  const properties: readonly CollectionPropertyDefinition<RoutineRow>[] = [
+  const properties: readonly CollectionPropertyDefinition<RoutineItem>[] = [
     defineOwnerDefinedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
         sort: { kind: "standard" },
       },
       featureId: "routines",
-      getValue: (row) => routineTriggerTypeLabel(row),
+      getValue: (item) => routineTriggerTypeLabel(item),
       key: "trigger",
       label: m.routines_field_trigger(),
       standard: {
@@ -108,7 +108,7 @@ export function createRoutinesPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "routines",
-      getValue: (row) => routineActionTypeLabel(row),
+      getValue: (item) => routineActionTypeLabel(item),
       key: "action",
       label: m.routines_field_action(),
       standard: {
@@ -136,7 +136,7 @@ export function createRoutinesPresentationDescriptor({
       }),
       actorCandidates: agentActorCandidates(
         executors,
-        rows.flatMap((row) => getExecutor(row) ?? []),
+        items.flatMap((item) => getExecutor(item) ?? []),
       ),
     },
     defineComputedCollectionProperty({
@@ -145,7 +145,7 @@ export function createRoutinesPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "routines",
-      getValue: (row) => row.lastRunAt,
+      getValue: (item) => item.lastRunAt,
       key: "last-run",
       label: m.routines_field_last_run(),
       standard: { display: "medium", type: "date" },
@@ -156,7 +156,7 @@ export function createRoutinesPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "routines",
-      getValue: (row) => row.nextRunAt,
+      getValue: (item) => item.nextRunAt,
       key: "next-run",
       label: m.routines_field_next_run(),
       standard: { display: "medium", type: "date" },
@@ -167,28 +167,28 @@ export function createRoutinesPresentationDescriptor({
           edit: {
             getState: actions.getEnabledState,
             showDisabledReason: false,
-            update: (row, value) =>
-              actions.onEnabledChange(row, value === true),
+            update: (item, value) =>
+              actions.onEnabledChange(item, value === true),
           },
           filter: { kind: "standard" },
           sort: { kind: "standard" },
         },
         featureId: "routines",
-        getValue: (row) => row.definition?.enabled ?? false,
+        getValue: (item) => item.definition?.enabled ?? false,
         key: "enabled",
         label: m.routines_field_enabled(),
         standard: { display: "switch", type: "boolean" },
       }),
-      getAccessibilityLabel: (row) =>
-        m.routines_enabled_accessibility({ name: row.name }),
-      getApplicability: (row) => {
-        if (!row.valid || !row.definition) {
+      getAccessibilityLabel: (item) =>
+        m.routines_enabled_accessibility({ name: item.name }),
+      getApplicability: (item) => {
+        if (!item.valid || !item.definition) {
           return {
             label: m.routines_unavailable(),
             status: "unavailable",
           };
         }
-        if (row.definition.trigger.type === "manual") {
+        if (item.definition.trigger.type === "manual") {
           return { status: "hidden" };
         }
         return { status: "applicable" };
@@ -210,19 +210,19 @@ export function createRoutinesPresentationDescriptor({
     },
     onActivate,
     properties,
-    getRowId: (row) => row.id,
+    getItemId: (item) => item.id,
     id: "all",
     label: m.routines_presentation_all(),
     layout: {
       density: "compact",
       getDescription: routineSecondaryDescription,
-      getTitle: (row) => row.name,
+      getTitle: (item) => item.name,
       kind: "list",
-      renderLeading: (row) => (
+      renderLeading: (item) => (
         <RoutineTriggerIcon
-          row={row}
+          item={item}
           className={
-            row.valid
+            item.valid
               ? "size-5 text-muted-foreground"
               : "size-5 text-destructive"
           }
@@ -239,19 +239,19 @@ export function createRoutinesPresentationDescriptor({
     },
     query: {
       defaultCompare: compareRoutinesByName,
-      getSearchText: (row) =>
-        `${routineSearchText(row)} ${getExecutorLabel(row) ?? ""}`,
+      getSearchText: (item) =>
+        `${routineSearchText(item)} ${getExecutorLabel(item) ?? ""}`,
     },
-    rowActions: [
+    itemActions: [
       {
-        getLabel: (row) =>
-          row.lastRun?.active
+        getLabel: (item) =>
+          item.lastRun?.active
             ? m.routines_open_session()
             : m.routines_run_now(),
         getState: actions.getRunState,
         id: "run-routine",
-        isVisible: (row) =>
-          row.definition?.trigger.type !== "event" || !row.definition,
+        isVisible: (item) =>
+          item.definition?.trigger.type !== "event" || !item.definition,
         label: m.routines_run_now(),
         run: actions.onRun,
       },
@@ -271,16 +271,16 @@ export function createRoutinesPresentationDescriptor({
   };
 }
 
-function routineTriggerTypeLabel(row: RoutineRow) {
-  const type = row.definition?.trigger.type;
+function routineTriggerTypeLabel(item: RoutineItem) {
+  const type = item.definition?.trigger.type;
   if (type === "manual") return m.routines_trigger_manual();
   if (type === "schedule") return m.routines_trigger_schedule();
   if (type === "event") return m.routines_trigger_event();
   return null;
 }
 
-function routineActionTypeLabel(row: RoutineRow) {
-  const type = row.definition?.action.type;
+function routineActionTypeLabel(item: RoutineItem) {
+  const type = item.definition?.action.type;
   if (type === "run_agent") return m.routines_action_run_agent();
   if (type === "update_properties") {
     return m.routines_action_update_properties();
@@ -291,7 +291,7 @@ function routineActionTypeLabel(row: RoutineRow) {
 export function toRoutinePresentationState(
   state: RoutineCatalogState,
   onRetry: () => void,
-): CollectionPresentationState<RoutineRow> {
+): CollectionPresentationState<RoutineItem> {
   if (state.phase === "initial") return { phase: "initial" };
   if (state.phase === "blocking_error") {
     return {
@@ -325,7 +325,7 @@ export function toRoutinePresentationState(
   return {
     diagnostics,
     phase: "ready",
-    rows: state.snapshot.rows,
+    items: state.snapshot.items,
   };
 }
 
@@ -349,29 +349,29 @@ function RoutineRetryButton({
   );
 }
 
-export function routineDetailTitle(row: RoutineRow) {
+export function routineDetailTitle(item: RoutineItem) {
   return (
     <span className="flex min-w-0 items-center gap-3">
       <RoutineTriggerIcon
-        row={row}
+        item={item}
         className={
-          row.valid ? "size-6 text-muted-foreground" : "size-6 text-destructive"
+          item.valid ? "size-6 text-muted-foreground" : "size-6 text-destructive"
         }
       />
       <span className="flex min-w-0 flex-col text-left">
-        <span className="truncate">{row.name}</span>
+        <span className="truncate">{item.name}</span>
         <span className="truncate text-sm font-normal text-muted-foreground">
-          {routineSecondaryDescription(row)}
+          {routineSecondaryDescription(item)}
         </span>
       </span>
     </span>
   );
 }
 
-function routineSecondaryDescription(row: RoutineRow) {
-  if (!row.nameConflict) return row.description || row.filename;
-  const description = row.description
-    ? `${row.description} · ${row.definitionPath}`
-    : row.definitionPath;
-  return <span title={row.definitionPath}>{description}</span>;
+function routineSecondaryDescription(item: RoutineItem) {
+  if (!item.nameConflict) return item.description || item.filename;
+  const description = item.description
+    ? `${item.description} · ${item.definitionPath}`
+    : item.definitionPath;
+  return <span title={item.definitionPath}>{description}</span>;
 }

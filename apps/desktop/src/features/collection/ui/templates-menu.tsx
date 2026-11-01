@@ -266,7 +266,7 @@ export function TemplatesSplitButton({
         onClick={(event) => onPrimaryCreate(event.shiftKey)}
       >
         <Plus data-icon="inline-start" />
-        {m.collection_new_entry()}
+        {m.collection_new_item()}
       </Button>
       <ButtonGroupSeparator />
       <MultiPanePopover

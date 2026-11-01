@@ -14,7 +14,7 @@ import type {
   CollectionQueryState,
 } from "./types";
 
-interface TestRow {
+interface TestItem {
   active: boolean;
   due?: string | { start: string; end: string };
   enabled?: unknown;
@@ -34,8 +34,8 @@ const prioritySemantics = {
 function standardProperty(
   key: string,
   standard: CollectionStandardPropertySemantics,
-  getValue: (row: TestRow) => unknown,
-): CollectionPropertyDefinition<TestRow> {
+  getValue: (item: TestItem) => unknown,
+): CollectionPropertyDefinition<TestItem> {
   return {
     capabilities: {
       filter: { kind: "standard" },
@@ -50,18 +50,18 @@ function standardProperty(
   };
 }
 
-const properties: readonly CollectionPropertyDefinition<TestRow>[] = [
-  standardProperty("enabled", { type: "boolean" }, (row) => row.enabled),
-  standardProperty("name", { type: "text" }, (row) => row.name),
-  standardProperty("score", { type: "number" }, (row) => row.score),
-  standardProperty("priority", prioritySemantics, (row) => row.priority),
+const properties: readonly CollectionPropertyDefinition<TestItem>[] = [
+  standardProperty("enabled", { type: "boolean" }, (item) => item.enabled),
+  standardProperty("name", { type: "text" }, (item) => item.name),
+  standardProperty("score", { type: "number" }, (item) => item.score),
+  standardProperty("priority", prioritySemantics, (item) => item.priority),
   standardProperty(
     "tags",
     {
       options: [{ name: "Bug" }, { name: "Feature" }],
       type: "multi_select",
     },
-    (row) => row.tags,
+    (item) => item.tags,
   ),
   standardProperty(
     "status",
@@ -73,27 +73,27 @@ const properties: readonly CollectionPropertyDefinition<TestRow>[] = [
       ],
       type: "status",
     },
-    (row) => row.status,
+    (item) => item.status,
   ),
-  standardProperty("due", { type: "date" }, (row) => row.due),
+  standardProperty("due", { type: "date" }, (item) => item.due),
 ];
 
 function descriptor(
-  overrides: Partial<CollectionPresentationDescriptor<TestRow>> = {},
-): CollectionPresentationDescriptor<TestRow> {
+  overrides: Partial<CollectionPresentationDescriptor<TestItem>> = {},
+): CollectionPresentationDescriptor<TestItem> {
   return {
     properties,
-    getRowId: (row) => row.id,
+    getItemId: (item) => item.id,
     id: "people",
     label: "People",
     layout: {
-      getTitle: (row) => row.name,
+      getTitle: (item) => item.name,
       kind: "list",
       visibleProperties: [],
     },
     query: {
-      fixedPredicate: (row) => row.active,
-      getSearchText: (row) => row.name,
+      fixedPredicate: (item) => item.active,
+      getSearchText: (item) => item.name,
     },
     ...overrides,
   };
@@ -113,7 +113,7 @@ test("search normalization is deterministic Unicode NFKC whitespace substring ma
   const result = applyCollectionQuery({
     descriptor: descriptor(),
     query: query({ search: " alpha   task " }),
-    rows: [
+    items: [
       {
         active: true,
         id: "fullwidth",
@@ -123,7 +123,7 @@ test("search normalization is deterministic Unicode NFKC whitespace substring ma
     ],
   });
 
-  expect(result.rows.map((row) => row.id)).toEqual(["fullwidth"]);
+  expect(result.items.map((item) => item.id)).toEqual(["fullwidth"]);
 });
 
 test("pipeline applies fixed predicate, search, AND filters, then explicit sort", () => {
@@ -131,8 +131,8 @@ test("pipeline applies fixed predicate, search, AND filters, then explicit sort"
     descriptor: descriptor({
       query: {
         defaultSort: [{ direction: "desc", propertyKey: "score" }],
-        fixedPredicate: (row) => row.active,
-        getSearchText: (row) => row.name,
+        fixedPredicate: (item) => item.active,
+        getSearchText: (item) => item.name,
       },
     }),
     query: query({
@@ -143,7 +143,7 @@ test("pipeline applies fixed predicate, search, AND filters, then explicit sort"
       search: "task",
       sort: [{ direction: "asc", propertyKey: "name" }],
     }),
-    rows: [
+    items: [
       {
         active: true,
         id: "z",
@@ -175,16 +175,16 @@ test("pipeline applies fixed predicate, search, AND filters, then explicit sort"
     ],
   });
 
-  expect(result.sourceRows.map((row) => row.id)).toEqual([
+  expect(result.sourceItems.map((item) => item.id)).toEqual([
     "z",
     "a",
     "filtered",
   ]);
-  expect(result.rows.map((row) => row.id)).toEqual(["a", "z"]);
+  expect(result.items.map((item) => item.id)).toEqual(["a", "z"]);
 });
 
 test("default property sort and defaultCompare apply only without explicit user sort", () => {
-  const rows = [
+  const items = [
     { active: true, id: "b", name: "Beta", score: 2 },
     { active: true, id: "a", name: "Alpha", score: 1 },
   ];
@@ -195,7 +195,7 @@ test("default property sort and defaultCompare apply only without explicit user 
       },
     }),
     query: query(),
-    rows,
+    items,
   });
   const userSort = applyCollectionQuery({
     descriptor: descriptor({
@@ -206,7 +206,7 @@ test("default property sort and defaultCompare apply only without explicit user 
     query: query({
       sort: [{ direction: "asc", propertyKey: "name" }],
     }),
-    rows,
+    items,
   });
   const defaultCompare = applyCollectionQuery({
     descriptor: descriptor({
@@ -215,16 +215,16 @@ test("default property sort and defaultCompare apply only without explicit user 
       },
     }),
     query: query(),
-    rows,
+    items,
   });
 
-  expect(defaultField.rows.map((row) => row.id)).toEqual(["b", "a"]);
-  expect(userSort.rows.map((row) => row.id)).toEqual(["a", "b"]);
-  expect(defaultCompare.rows.map((row) => row.id)).toEqual(["a", "b"]);
+  expect(defaultField.items.map((item) => item.id)).toEqual(["b", "a"]);
+  expect(userSort.items.map((item) => item.id)).toEqual(["a", "b"]);
+  expect(defaultCompare.items.map((item) => item.id)).toEqual(["a", "b"]);
 });
 
 test("Property semantics match Collection option, group, multi-value, and date fixtures", () => {
-  const rows: TestRow[] = [
+  const items: TestItem[] = [
     {
       active: true,
       due: { end: "2026-01-20", start: "2026-01-10" },
@@ -278,14 +278,14 @@ test("Property semantics match Collection option, group, multi-value, and date f
       ],
       sort: [{ direction: "asc", propertyKey: "priority" }],
     }),
-    rows,
+    items,
   });
   const dateEquals = applyCollectionQuery({
     descriptor: descriptor(),
     query: query({
       filters: [{ propertyKey: "due", operator: "eq", value: "2026-01-15" }],
     }),
-    rows,
+    items,
   });
   const dateBefore = applyCollectionQuery({
     descriptor: descriptor(),
@@ -295,18 +295,18 @@ test("Property semantics match Collection option, group, multi-value, and date f
       ],
       sort: [{ direction: "asc", propertyKey: "name" }],
     }),
-    rows,
+    items,
   });
 
-  expect(filtered.rows.map((row) => row.id)).toEqual(["b", "a", "c", "d"]);
-  expect(dateEquals.rows.map((row) => row.id)).toEqual(["a"]);
-  expect(dateBefore.rows.map((row) => row.id)).toEqual(["b", "e"]);
+  expect(filtered.items.map((item) => item.id)).toEqual(["b", "a", "c", "d"]);
+  expect(dateEquals.items.map((item) => item.id)).toEqual(["a"]);
+  expect(dateBefore.items.map((item) => item.id)).toEqual(["b", "e"]);
 });
 
 test("Property semantics reject backend-invalid payloads and never match null as zero", () => {
-  const invalidSortField: CollectionPropertyDefinition<TestRow> = {
+  const invalidSortField: CollectionPropertyDefinition<TestItem> = {
     capabilities: { sort: { kind: "standard" } },
-    getValue: (row) => row.name,
+    getValue: (item) => item.name,
     key: "invalid-sort",
     label: "Invalid sort",
     origin: "domain_specific",
@@ -339,7 +339,7 @@ test("Property semantics reject backend-invalid payloads and never match null as
     query: query({
       filters: [{ propertyKey: "score", operator: "eq", value: 0 }],
     }),
-    rows: [
+    items: [
       { active: true, id: "null", name: "Null", score: null },
       { active: true, id: "zero", name: "Zero", score: 0 },
     ],
@@ -361,12 +361,12 @@ test("Property semantics reject backend-invalid payloads and never match null as
     "invalid-value",
     "unsupported-sort",
   ]);
-  expect(zero.rows.map((row) => row.id)).toEqual(["zero"]);
+  expect(zero.items.map((item) => item.id)).toEqual(["zero"]);
   expect(emptyText.reset).toBe(false);
 });
 
-test("property sort keeps empty values last in both directions and uses rowId ties", () => {
-  const rows = [
+test("property sort keeps empty values last in both directions and uses item id ties", () => {
+  const items = [
     { active: true, id: "z", name: "Same", score: 2 },
     { active: true, id: "a", name: "Same", score: 2 },
     { active: true, id: "empty", name: "Empty", score: null },
@@ -376,83 +376,83 @@ test("property sort keeps empty values last in both directions and uses rowId ti
     query: query({
       sort: [{ direction: "asc", propertyKey: "score" }],
     }),
-    rows,
+    items,
   });
   const descending = applyCollectionQuery({
     descriptor: descriptor(),
     query: query({
       sort: [{ direction: "desc", propertyKey: "score" }],
     }),
-    rows,
+    items,
   });
   const inputOrder = applyCollectionQuery({
     descriptor: descriptor({ query: {} }),
     query: query(),
-    rows,
+    items,
   });
 
-  expect(ascending.rows.map((row) => row.id)).toEqual(["a", "z", "empty"]);
-  expect(descending.rows.map((row) => row.id)).toEqual(["a", "z", "empty"]);
-  expect(inputOrder.rows.map((row) => row.id)).toEqual(["z", "a", "empty"]);
+  expect(ascending.items.map((item) => item.id)).toEqual(["a", "z", "empty"]);
+  expect(descending.items.map((item) => item.id)).toEqual(["a", "z", "empty"]);
+  expect(inputOrder.items.map((item) => item.id)).toEqual(["z", "a", "empty"]);
 });
 
 test("boolean property queries treat missing and null as false without coercing conflicts", () => {
-  const rows = [
+  const items = [
     { active: true, enabled: true, id: "true", name: "True" },
     { active: true, enabled: false, id: "false", name: "False" },
     { active: true, id: "missing", name: "Missing" },
     { active: true, enabled: null, id: "null", name: "Null" },
     { active: true, enabled: "false", id: "invalid", name: "Invalid" },
   ];
-  const falseRows = applyCollectionQuery({
+  const falseItems = applyCollectionQuery({
     descriptor: descriptor(),
     query: query({
       filters: [{ propertyKey: "enabled", operator: "eq", value: false }],
       sort: [{ direction: "asc", propertyKey: "name" }],
     }),
-    rows,
+    items,
   });
-  const notTrueRows = applyCollectionQuery({
+  const notTrueItems = applyCollectionQuery({
     descriptor: descriptor(),
     query: query({
       filters: [{ propertyKey: "enabled", operator: "neq", value: true }],
       sort: [{ direction: "asc", propertyKey: "name" }],
     }),
-    rows,
+    items,
   });
   const ascending = applyCollectionQuery({
     descriptor: descriptor(),
     query: query({
       sort: [{ direction: "asc", propertyKey: "enabled" }],
     }),
-    rows,
+    items,
   });
   const descending = applyCollectionQuery({
     descriptor: descriptor(),
     query: query({
       sort: [{ direction: "desc", propertyKey: "enabled" }],
     }),
-    rows,
+    items,
   });
 
-  expect(falseRows.rows.map((row) => row.id)).toEqual([
+  expect(falseItems.items.map((item) => item.id)).toEqual([
     "false",
     "missing",
     "null",
   ]);
-  expect(notTrueRows.rows.map((row) => row.id)).toEqual([
+  expect(notTrueItems.items.map((item) => item.id)).toEqual([
     "false",
     "missing",
     "null",
   ]);
-  expect(ascending.rows.map((row) => row.id)).toEqual([
+  expect(ascending.items.map((item) => item.id)).toEqual([
     "false",
     "missing",
     "null",
     "true",
     "invalid",
   ]);
-  expect(descending.rows.map((row) => row.id)).toEqual([
+  expect(descending.items.map((item) => item.id)).toEqual([
     "true",
     "false",
     "missing",
@@ -462,17 +462,17 @@ test("boolean property queries treat missing and null as false without coercing 
 });
 
 test("validator drops descriptor-stale capabilities and rejects incomplete custom rules", () => {
-  const customField: CollectionPropertyDefinition<TestRow> = {
+  const customField: CollectionPropertyDefinition<TestItem> = {
     capabilities: {
       filter: {
         kind: "custom",
-        matches: (row, rule) => row.name === rule.value,
+        matches: (item, rule) => item.name === rule.value,
         operators: ["same"],
         renderEditor: () => null,
         validate: (rule) => typeof rule.value === "string",
       },
     },
-    getValue: (row) => row.name,
+    getValue: (item) => item.name,
     key: "custom",
     label: "Custom",
     origin: "domain_specific",

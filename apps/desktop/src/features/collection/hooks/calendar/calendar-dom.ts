@@ -82,7 +82,7 @@ export function mountCalendarDayNewButton(
   plus.setAttribute("aria-hidden", "true");
   plus.textContent = "+";
   const label = document.createElement("span");
-  label.textContent = m.calendar_new_entry_short();
+  label.textContent = m.calendar_new_item_short();
   button.append(plus, label);
 
   button.addEventListener("pointerdown", (event) => {

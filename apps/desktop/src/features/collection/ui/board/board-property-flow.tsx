@@ -11,25 +11,25 @@ import { PropertyControl } from "@/features/properties/control";
 import { PropertyValue } from "@/features/properties/display";
 
 export function BoardPropertyFlow({
-  entry,
+  item,
   columns,
   actors,
   relationContext,
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Page;
+  item: Page;
   columns: Column[];
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
+  onUpdateField?: (item: Page, column: Column, value: unknown) => void;
 }) {
   const rendered = columns
     .map((column) => (
       <BoardPropertyChip
         key={column.name}
-        entry={entry}
+        item={item}
         column={column}
         actors={actors}
         relationContext={relationContext}
@@ -44,21 +44,21 @@ export function BoardPropertyFlow({
 }
 
 function BoardPropertyChip({
-  entry,
+  item,
   column,
   actors,
   relationContext,
   onRequestActors,
   onUpdateField,
 }: {
-  entry: Page;
+  item: Page;
   column: Column;
   actors: ActorCandidate[];
   relationContext?: RelationContext;
   onRequestActors: (allTime: boolean) => Promise<ActorCandidate[]>;
-  onUpdateField?: (entry: Page, column: Column, value: unknown) => void;
+  onUpdateField?: (item: Page, column: Column, value: unknown) => void;
 }) {
-  const value = entry.meta.extra?.[column.name] ?? null;
+  const value = item.meta.extra?.[column.name] ?? null;
   if (isEmptyValue(value) && column.type !== "boolean") return null;
 
   const validation = validatePropertyValue(column, value);
@@ -102,7 +102,7 @@ function BoardPropertyChip({
             actors={actors}
             relationContext={relationContext}
             onRequestActors={onRequestActors}
-            onChange={(next) => onUpdateField?.(entry, column, next)}
+            onChange={(next) => onUpdateField?.(item, column, next)}
           />
         ) : (
           <PropertyValue

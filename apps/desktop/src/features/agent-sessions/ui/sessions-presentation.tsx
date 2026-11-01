@@ -76,7 +76,7 @@ export function createAgentSessionsPresentation({
       actions,
       agents,
       onActivate,
-      rows: state.phase === "ready" ? state.rows : [],
+      items: state.phase === "ready" ? state.items : [],
     }),
     state,
   });
@@ -86,17 +86,17 @@ export function createAgentSessionsPresentationDescriptor({
   actions,
   agents,
   onActivate,
-  rows,
+  items,
 }: {
   actions: AgentSessionsPresentationActions;
   agents: AgentAdapterDictionary;
   onActivate?: CollectionPresentationDescriptor<AgentSession>["onActivate"];
-  rows: readonly AgentSession[];
+  items: readonly AgentSession[];
 }): CollectionPresentationDescriptor<AgentSession> {
-  const routineName = (row: AgentSession) =>
-    actions.routineOf(row)?.name ?? null;
+  const routineName = (item: AgentSession) =>
+    actions.routineOf(item)?.name ?? null;
   const routineOptions = [
-    ...new Set(rows.flatMap((row) => routineName(row) ?? [])),
+    ...new Set(items.flatMap((item) => routineName(item) ?? [])),
   ].map((name) => ({ color: "neutral" as const, name }));
   const properties: readonly CollectionPropertyDefinition<AgentSession>[] = [
     defineOwnerDefinedCollectionProperty({
@@ -105,11 +105,11 @@ export function createAgentSessionsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "agent-sessions",
-      getValue: (row) => agents.label(row.source),
+      getValue: (item) => agents.label(item.source),
       key: "agent",
       label: m.sessions_field_agent(),
       standard: {
-        options: agents.options(rows.map((row) => row.source)),
+        options: agents.options(items.map((item) => item.source)),
         type: "select",
       },
     }),
@@ -168,12 +168,12 @@ export function createAgentSessionsPresentationDescriptor({
     },
     onActivate,
     properties,
-    getRowId: (row) => row.id,
+    getItemId: (item) => item.id,
     id: AGENT_SESSIONS_PRESENTATION_ID,
     label: m.sessions_presentation_all(),
     layout: {
       density: "compact",
-      getTitle: (row) => row.title,
+      getTitle: (item) => item.title,
       kind: "list",
       renderLeading: () => (
         <BotMessageSquare className="size-4 text-muted-foreground" />
@@ -182,24 +182,24 @@ export function createAgentSessionsPresentationDescriptor({
     },
     query: {
       defaultCompare: compareAgentSessionsByDefault,
-      getSearchText: (row) =>
-        `${row.title} ${agents.label(row.source)} ${statusText(row)} ${routineName(row) ?? ""}`,
+      getSearchText: (item) =>
+        `${item.title} ${agents.label(item.source)} ${statusText(item)} ${routineName(item) ?? ""}`,
     },
-    rowActions: [
+    itemActions: [
       {
-        getLabel: (row) =>
-          actions.pinnedOf(row) ? m.navigation_unpin() : m.navigation_pin(),
-        getState: (row) =>
-          actions.pinPending(row) ? { status: "pending" } : { status: "idle" },
+        getLabel: (item) =>
+          actions.pinnedOf(item) ? m.navigation_unpin() : m.navigation_pin(),
+        getState: (item) =>
+          actions.pinPending(item) ? { status: "pending" } : { status: "idle" },
         icon: <Pin />,
         id: "pin",
-        isVisible: (row) => actions.pinnedOf(row) !== null,
+        isVisible: (item) => actions.pinnedOf(item) !== null,
         label: m.navigation_pin(),
         run: actions.onTogglePin,
       },
       {
-        getState: (row) =>
-          actions.pinPending(row) ? { status: "pending" } : { status: "idle" },
+        getState: (item) =>
+          actions.pinPending(item) ? { status: "pending" } : { status: "idle" },
         icon: <SquarePlus />,
         id: "keep",
         isVisible: actions.keepable,
@@ -210,10 +210,11 @@ export function createAgentSessionsPresentationDescriptor({
         getState: () => ({ status: "idle" }),
         icon: <ListChecks />,
         id: "open-routine",
-        isVisible: (row) => actions.routineOf(row)?.definitionPresent === true,
+        isVisible: (item) =>
+          actions.routineOf(item)?.definitionPresent === true,
         label: m.sessions_action_open_routine(),
-        run: (row) => {
-          const routine = actions.routineOf(row);
+        run: (item) => {
+          const routine = actions.routineOf(item);
           if (routine?.definitionPresent) actions.onOpenRoutine(routine);
         },
       },
@@ -221,7 +222,7 @@ export function createAgentSessionsPresentationDescriptor({
         getState: () => ({ status: "idle" }),
         icon: <X />,
         id: "close-terminal",
-        isVisible: (row) => actions.terminalOf(row) !== null,
+        isVisible: (item) => actions.terminalOf(item) !== null,
         label: m.sessions_action_close_terminal(),
         run: actions.onCloseTerminal,
       },
@@ -229,7 +230,7 @@ export function createAgentSessionsPresentationDescriptor({
         getState: () => ({ status: "idle" }),
         icon: <Copy />,
         id: "copy-resume-command",
-        isVisible: (row) => Boolean(row.resumeCommand),
+        isVisible: (item) => Boolean(item.resumeCommand),
         label: m.sessions_action_copy_resume_command(),
         run: actions.onCopyResumeCommand,
       },
@@ -237,7 +238,7 @@ export function createAgentSessionsPresentationDescriptor({
         getState: () => ({ status: "idle" }),
         icon: <ExternalTerminalIcon />,
         id: "open-external-terminal",
-        isVisible: (row) => Boolean(row.resumeCommand?.cwd ?? row.cwd),
+        isVisible: (item) => Boolean(item.resumeCommand?.cwd ?? item.cwd),
         label: m.sessions_action_open_external_terminal(),
         run: actions.onOpenExternalTerminal,
       },
@@ -249,11 +250,11 @@ interface AgentSessionsCatalogView {
   result: AgentSessionsListResult | null;
   error: string | null;
   refreshing: boolean;
-  rows: readonly AgentSession[] | null;
+  items: readonly AgentSession[] | null;
 }
 
 /**
- * Collection state over the catalog: rows stay while a source is partly
+ * Collection state over the catalog: items stay while a source is partly
  * unavailable or a refresh failed (see agentSessionsSourceProblem); without
  * any list the failure blocks.
  */
@@ -262,7 +263,7 @@ export function toAgentSessionsPresentationState(
   agents: AgentAdapterDictionary,
   recovery: { onRetry(): void; onOpenSettings(): void },
 ): CollectionPresentationState<AgentSession> {
-  const { result, error, refreshing, rows } = catalog;
+  const { result, error, refreshing, items } = catalog;
   const recoveryActions = (
     <SessionsRecoveryActions disabled={refreshing} {...recovery} />
   );
@@ -281,12 +282,12 @@ export function toAgentSessionsPresentationState(
       phase: "blocking_error",
     };
   }
-  if (!rows || !agents.ready) return { phase: "initial" };
+  if (!items || !agents.ready) return { phase: "initial" };
 
   return {
     diagnostics: [],
     phase: "ready",
-    rows,
+    items,
     sourceEmpty: <SessionsEmpty />,
   };
 }

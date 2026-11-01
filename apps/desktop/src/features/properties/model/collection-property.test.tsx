@@ -11,7 +11,7 @@ import {
   type CollectionPropertyDefinition,
 } from "./collection-property";
 
-interface Row {
+interface Item {
   id: string;
   priority: string;
   score: number;
@@ -19,8 +19,8 @@ interface Row {
   title: string;
 }
 
-const row: Row = {
-  id: "entry:one",
+const item: Item = {
+  id: "item:one",
   priority: "High",
   score: 42,
   source: "codex",
@@ -28,7 +28,7 @@ const row: Row = {
 };
 
 test("Collection Properties preserve explicit ownership across all supported origins", () => {
-  const schemaBacked = defineSchemaBackedCollectionProperty<Row>({
+  const schemaBacked = defineSchemaBackedCollectionProperty<Item>({
     capabilities: {
       filter: { kind: "standard" },
       sort: { kind: "standard" },
@@ -40,7 +40,7 @@ test("Collection Properties preserve explicit ownership across all supported ori
     },
     getValue: (item) => item.priority,
   });
-  const ownerDefined: CollectionPropertyDefinition<Row> = {
+  const ownerDefined: CollectionPropertyDefinition<Item> = {
     capabilities: { sort: { kind: "standard" } },
     getValue: (item) => item.title,
     key: "title",
@@ -49,7 +49,7 @@ test("Collection Properties preserve explicit ownership across all supported ori
     owner: { featureId: "fixture", kind: "feature" },
     semantics: { kind: "standard", standard: { type: "text" } },
   };
-  const computed: CollectionPropertyDefinition<Row> = {
+  const computed: CollectionPropertyDefinition<Item> = {
     capabilities: { sort: { kind: "standard" } },
     getValue: (item) => item.score,
     key: "score",
@@ -58,7 +58,7 @@ test("Collection Properties preserve explicit ownership across all supported ori
     owner: { featureId: "fixture", kind: "feature" },
     semantics: { kind: "standard", standard: { type: "number" } },
   };
-  const domainSpecific: CollectionPropertyDefinition<Row> = {
+  const domainSpecific: CollectionPropertyDefinition<Item> = {
     getValue: (item) => item.source,
     key: "source",
     label: "Source",
@@ -72,9 +72,9 @@ test("Collection Properties preserve explicit ownership across all supported ori
     computed,
     domainSpecific,
   ] as const;
-  const presentation = defineCollectionPresentation<Row>({
+  const presentation = defineCollectionPresentation<Item>({
     descriptor: {
-      getRowId: (item) => item.id,
+      getItemId: (item) => item.id,
       id: "origin-fixture",
       label: "Origin fixture",
       layout: {
@@ -85,7 +85,7 @@ test("Collection Properties preserve explicit ownership across all supported ori
       properties,
       query: {},
     },
-    state: { phase: "ready", rows: [row] },
+    state: { phase: "ready", items: [item] },
   });
 
   expect(properties.map((property) => property.origin)).toEqual([
@@ -107,7 +107,7 @@ test("Collection Properties preserve explicit ownership across all supported ori
   expect(
     applyCollectionQuery({
       descriptor: {
-        getRowId: (item) => item.id,
+        getItemId: (item) => item.id,
         id: "origin-fixture",
         label: "Origin fixture",
         layout: {
@@ -123,9 +123,9 @@ test("Collection Properties preserve explicit ownership across all supported ori
         search: "",
         sort: [],
       },
-      rows: [row],
-    }).rows,
-  ).toEqual([row]);
+      items: [item],
+    }).items,
+  ).toEqual([item]);
   expect(
     (presentation as unknown as { diagnostics: readonly unknown[] })
       .diagnostics,
@@ -138,7 +138,7 @@ test("an owner display draws a standard value while its filter stays standard", 
     await import("../ui/collection-property-value");
   const { defineComputedCollectionProperty } =
     await import("./collection-property");
-  const property = defineComputedCollectionProperty<Row>({
+  const property = defineComputedCollectionProperty<Item>({
     capabilities: { filter: { kind: "standard" } },
     display: {
       render: (value) => <b>{String(value)} icon</b>,
@@ -156,7 +156,7 @@ test("an owner display draws a standard value while its filter stays standard", 
     renderToStaticMarkup(
       <CollectionPropertyValue
         property={property as CollectionPropertyDefinition<unknown>}
-        row={row}
+        item={item}
       />,
     ),
   ).toBe("<b>codex icon</b>");
@@ -165,13 +165,13 @@ test("an owner display draws a standard value while its filter stays standard", 
       <CollectionPropertyValue
         context="detail"
         property={property as CollectionPropertyDefinition<unknown>}
-        row={row}
+        item={item}
       />,
     ),
   ).toBe("<i>codex with name</i>");
-  const presentation = defineCollectionPresentation<Row>({
+  const presentation = defineCollectionPresentation<Item>({
     descriptor: {
-      getRowId: (current) => current.id,
+      getItemId: (current) => current.id,
       id: "all",
       label: "All",
       layout: {
@@ -182,13 +182,13 @@ test("an owner display draws a standard value while its filter stays standard", 
       properties: [property],
       query: {},
     },
-    state: { phase: "ready", rows: [row] },
+    state: { phase: "ready", items: [item] },
   });
   const descriptor = (
     presentation as unknown as {
       instance: {
         descriptor: Parameters<
-          typeof applyCollectionQuery<Row>
+          typeof applyCollectionQuery<Item>
         >[0]["descriptor"];
       };
     }
@@ -203,7 +203,7 @@ test("an owner display draws a standard value while its filter stays standard", 
         search: "",
         sort: [],
       },
-      rows: [row],
-    }).rows,
-  ).toEqual([row]);
+      items: [item],
+    }).items,
+  ).toEqual([item]);
 });

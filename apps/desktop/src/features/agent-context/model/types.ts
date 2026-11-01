@@ -99,7 +99,7 @@ export interface AgentContextSkillFacts {
   metadata: Readonly<Record<string, AgentContextSkillMetadataValue>> | null;
 }
 
-/** A kind of plugin component that is no row of the "Context". */
+/** A kind of plugin component that is no item of the "Context". */
 export type AgentContextPluginComponentKind =
   | "commands"
   | "subagents"
@@ -143,7 +143,7 @@ export interface AgentContextMcpFacts {
   projectOnly: boolean;
 }
 
-/** One canonical source of the target's context: one row of "Context". */
+/** One canonical source of the target's context: one item of "Context". */
 export interface AgentContextItem {
   id: string;
   kind: AgentContextItemKind;

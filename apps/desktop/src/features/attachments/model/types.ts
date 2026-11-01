@@ -15,7 +15,7 @@ export type AttachmentKind =
   | "media";
 export type AttachmentAvailability = "available" | "limited" | "external_only";
 
-export interface AttachmentRow {
+export interface AttachmentItem {
   key: string;
   path: string;
   sourceShape: "file" | "directory";
@@ -36,7 +36,7 @@ export interface AttachmentRow {
 export interface AttachmentsSnapshot {
   owner: ResolvedAttachmentOwner;
   generation: string;
-  rows: AttachmentRow[];
+  items: AttachmentItem[];
   diagnostics: Array<{ code: string; path: string }>;
 }
 
@@ -60,7 +60,7 @@ export interface AttachmentOwnerRef {
 }
 
 export interface AttachmentActivationRequest {
-  row: AttachmentRow;
+  item: AttachmentItem;
   owner: ResolvedAttachmentOwner;
   mode: "peek";
   ownerSession?: { key: string; kind: "app" | "collection" | "page" };

@@ -1,5 +1,5 @@
 export {
-  searchEntriesByTitle,
-  type SearchEntriesByTitleInput,
+  searchPagesByTitle,
+  type SearchPagesByTitleInput,
   type SearchScope,
 } from "./search-api";

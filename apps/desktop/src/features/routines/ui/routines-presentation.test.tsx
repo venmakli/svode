@@ -15,7 +15,7 @@ import {
 import { resolveStandardPropertyColumn } from "@/features/properties";
 import { PropertyValue } from "@/features/properties/display";
 
-import type { RoutineRow } from "../model/types";
+import type { RoutineItem } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 import { RoutineCreateReview } from "./routine-create-review";
 import { RoutineDetailView } from "./routine-detail-view";
@@ -44,7 +44,7 @@ const executors: AgentActorOptionsState = {
     },
   ],
 };
-const review: RoutineRow = {
+const review: RoutineItem = {
   definition: {
     action: {
       executor: "agent:01arz3ndektsv4rrffq69g5fav",
@@ -71,7 +71,7 @@ const review: RoutineRow = {
   valid: true,
 };
 
-const scheduled: RoutineRow = {
+const scheduled: RoutineItem = {
   ...review,
   definition: {
     ...review.definition!,
@@ -91,7 +91,7 @@ const scheduled: RoutineRow = {
   name: "Daily summary",
 };
 
-const invalid: RoutineRow = {
+const invalid: RoutineItem = {
   ...review,
   definition: null,
   definitionPath: ".routines/broken.md",
@@ -111,22 +111,22 @@ const invalid: RoutineRow = {
   valid: false,
 };
 
-const eventRoutine: RoutineRow = {
+const eventRoutine: RoutineItem = {
   ...scheduled,
   definition: {
     ...scheduled.definition!,
     enabled: true,
-    name: "Triage new entries",
+    name: "Triage new items",
     trigger: {
       event: "collection.entry_created",
       type: "event",
     },
   },
-  definitionPath: ".routines/triage-new-entries.md",
-  filename: "triage-new-entries.md",
+  definitionPath: ".routines/triage-new-items.md",
+  filename: "triage-new-items.md",
   fingerprint: "fingerprint:triage",
   id: "routine:triage",
-  name: "Triage new entries",
+  name: "Triage new items",
 };
 
 function actions(calls: string[]): RoutinePresentationActions {
@@ -137,13 +137,13 @@ function actions(calls: string[]): RoutinePresentationActions {
     getEnabledState: () => ({ status: "idle" }),
     getRunState: () => ({ status: "idle" }),
     onAdd: () => calls.push("add"),
-    onDelete: (row) => calls.push(`delete:${row.id}`),
-    onEdit: (row) => calls.push(`edit:${row.id}`),
-    onEnabledChange: async (row, enabled) => {
-      calls.push(`enabled:${row.id}:${enabled}`);
+    onDelete: (item) => calls.push(`delete:${item.id}`),
+    onEdit: (item) => calls.push(`edit:${item.id}`),
+    onEnabledChange: async (item, enabled) => {
+      calls.push(`enabled:${item.id}:${enabled}`);
     },
-    onRun: async (row) => {
-      calls.push(`run:${row.id}`);
+    onRun: async (item) => {
+      calls.push(`run:${item.id}`);
     },
   };
 }
@@ -153,7 +153,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     executors,
     actions: actions([]),
     onActivate: () => undefined,
-    rows: [],
+    items: [],
   });
 
   expect(descriptor.id).toBe("all");
@@ -201,12 +201,12 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   );
   expect(descriptor.create?.intents[0]?.id).toBe("add-routine");
   expect("refresh" in descriptor).toBe(false);
-  expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
+  expect(descriptor.itemActions?.map((action) => action.id)).toEqual([
     "run-routine",
     "edit-routine",
     "delete-routine",
   ]);
-  const runAction = descriptor.rowActions?.[0];
+  const runAction = descriptor.itemActions?.[0];
   expect(runAction?.getLabel?.(review)).toBe("Run now");
   expect(runAction?.isVisible?.(review)).toBe(true);
   expect(runAction?.isVisible?.(scheduled)).toBe(true);
@@ -227,7 +227,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
 
 test("routine detail hides technical paths when valid and preserves exact recovery paths when invalid", () => {
   const valid = renderToStaticMarkup(
-    <RoutineDetailView executors={executors} row={review} />,
+    <RoutineDetailView executors={executors} item={review} />,
   );
   expect(valid.includes(review.definitionPath)).toBe(false);
 
@@ -235,7 +235,7 @@ test("routine detail hides technical paths when valid and preserves exact recove
   const invalid = renderToStaticMarkup(
     <RoutineDetailView
       executors={executors}
-      row={{
+      item={{
         ...review,
         definitionPath: invalidPath,
         diagnostics: [
@@ -258,7 +258,7 @@ test("routine detail hides technical paths when valid and preserves exact recove
 
 test("schedule properties and detail stay compact without time-basis annotations", () => {
   const trigger = scheduled.definition!.trigger as Extract<
-    NonNullable<RoutineRow["definition"]>["trigger"],
+    NonNullable<RoutineItem["definition"]>["trigger"],
     { type: "schedule" }
   >;
   expect(routineScheduleSummary(trigger)).toBe("Schedule · 0 9 * * *");
@@ -269,7 +269,7 @@ test("schedule properties and detail stay compact without time-basis annotations
   const fixed = renderToStaticMarkup(
     <RoutineDetailView
       executors={executors}
-      row={{ ...scheduled, nextRunAt: "2026-08-27T02:00:00Z" }}
+      item={{ ...scheduled, nextRunAt: "2026-08-27T02:00:00Z" }}
     />,
   );
   expect(fixed.includes("Fixed timezone")).toBe(false);
@@ -278,7 +278,7 @@ test("schedule properties and detail stay compact without time-basis annotations
   const local = renderToStaticMarkup(
     <RoutineDetailView
       executors={executors}
-      row={{
+      item={{
         ...scheduled,
         definition: {
           ...scheduled.definition!,
@@ -286,7 +286,7 @@ test("schedule properties and detail stay compact without time-basis annotations
             ...scheduled.definition!.trigger,
             timeBasis: { mode: "local" },
           } as Extract<
-            NonNullable<RoutineRow["definition"]>["trigger"],
+            NonNullable<RoutineItem["definition"]>["trigger"],
             { type: "schedule" }
           >,
         },
@@ -298,8 +298,8 @@ test("schedule properties and detail stay compact without time-basis annotations
   expect(local.includes("first eligible device")).toBe(false);
 });
 
-test("duplicate-name rows conditionally expose their current path and remain usable", () => {
-  const conflictRow: RoutineRow = {
+test("duplicate-name items conditionally expose their current path and remain usable", () => {
+  const conflictItem: RoutineItem = {
     ...review,
     nameConflict: {
       conflictingPaths: [".routines/existing.md"],
@@ -309,7 +309,7 @@ test("duplicate-name rows conditionally expose their current path and remain usa
     executors,
     actions: actions([]),
     onActivate: () => undefined,
-    rows: [],
+    items: [],
   });
   const normalDescription =
     descriptor.layout.kind === "list"
@@ -317,19 +317,19 @@ test("duplicate-name rows conditionally expose their current path and remain usa
       : null;
   const conflictDescription =
     descriptor.layout.kind === "list"
-      ? descriptor.layout.getDescription?.(conflictRow)
+      ? descriptor.layout.getDescription?.(conflictItem)
       : null;
   const normalMarkup = renderToStaticMarkup(<>{normalDescription}</>);
   const conflictMarkup = renderToStaticMarkup(<>{conflictDescription}</>);
   const detailMarkup = renderToStaticMarkup(
-    <RoutineDetailView executors={executors} row={conflictRow} />,
+    <RoutineDetailView executors={executors} item={conflictItem} />,
   );
 
   expect(normalMarkup.includes(review.definitionPath)).toBe(false);
   expect(conflictMarkup.includes(review.definitionPath)).toBe(true);
   expect(detailMarkup.includes("Duplicate routine name")).toBe(true);
   expect(detailMarkup.includes(review.definitionPath)).toBe(true);
-  expect(descriptor.rowActions?.[0]?.isVisible?.(conflictRow)).toBe(true);
+  expect(descriptor.itemActions?.[0]?.isVisible?.(conflictItem)).toBe(true);
 });
 
 test("routines query searches definitions and defaults to name ordering", () => {
@@ -337,57 +337,57 @@ test("routines query searches definitions and defaults to name ordering", () => 
     executors,
     actions: actions([]),
     onActivate: () => undefined,
-    rows: [],
+    items: [],
   });
   const ordered = applyCollectionQuery({
     descriptor,
     query: EMPTY_COLLECTION_QUERY,
-    rows: [review, scheduled],
+    items: [review, scheduled],
   });
   const searched = applyCollectionQuery({
     descriptor,
     query: { filters: [], search: "0 9 * * *", sort: [] },
-    rows: [review, scheduled],
+    items: [review, scheduled],
   });
 
-  expect(ordered.rows.map((row) => row.id)).toEqual([
+  expect(ordered.items.map((item) => item.id)).toEqual([
     "routine:summary",
     "routine:review",
   ]);
-  expect(searched.rows.map((row) => row.id)).toEqual(["routine:summary"]);
+  expect(searched.items.map((item) => item.id)).toEqual(["routine:summary"]);
 
-  const enabledScheduled: RoutineRow = {
+  const enabledScheduled: RoutineItem = {
     ...scheduled,
     definition: { ...scheduled.definition!, enabled: true },
     id: "routine:enabled-summary",
     name: "Enabled summary",
   };
-  const disabledRows = applyCollectionQuery({
+  const disabledItems = applyCollectionQuery({
     descriptor,
     query: {
       filters: [{ propertyKey: "enabled", operator: "eq", value: false }],
       search: "",
       sort: [],
     },
-    rows: [review, scheduled, enabledScheduled],
+    items: [review, scheduled, enabledScheduled],
   });
-  expect(disabledRows.rows.map((row) => row.id)).toEqual([
+  expect(disabledItems.items.map((item) => item.id)).toEqual([
     "routine:summary",
     "routine:review",
   ]);
 });
 
-test("routines delegate create, row actions, and inline enabled edits", async () => {
+test("routines delegate create, item actions, and inline enabled edits", async () => {
   const calls: string[] = [];
   const descriptor = createRoutinesPresentationDescriptor({
     executors,
     actions: actions(calls),
     onActivate: () => undefined,
-    rows: [],
+    items: [],
   });
 
   await descriptor.create?.intents[0]?.run();
-  for (const action of descriptor.rowActions ?? []) {
+  for (const action of descriptor.itemActions ?? []) {
     if (action.isVisible?.(review) === false) continue;
     await action.run(review);
   }
@@ -409,7 +409,7 @@ test("routines render the common toolbar and a single fixed All list", () => {
     executors,
     actions: actions([]),
     onActivate: () => undefined,
-    state: { phase: "ready", rows: [scheduled] },
+    state: { phase: "ready", items: [scheduled] },
   });
   const instance: CollectionInstance = {
     defaultPresentationId: "all",
@@ -475,9 +475,9 @@ test("routines render the common toolbar and a single fixed All list", () => {
 
 test("manual routines omit enabled while invalid routines render a passive marker", () => {
   const routineActions = actions([]);
-  routineActions.getEnabledState = (row) => {
-    if (row.id !== scheduled.id) {
-      throw new Error("passive rows must not read control state");
+  routineActions.getEnabledState = (item) => {
+    if (item.id !== scheduled.id) {
+      throw new Error("passive items must not read control state");
     }
     return { status: "idle" };
   };
@@ -487,7 +487,7 @@ test("manual routines omit enabled while invalid routines render a passive marke
     onActivate: () => undefined,
     state: {
       phase: "ready",
-      rows: [scheduled, eventRoutine, review, invalid],
+      items: [scheduled, eventRoutine, review, invalid],
     },
   });
   const instance: CollectionInstance = {
@@ -542,7 +542,7 @@ test("retry is contextual to blocking and background catalog failures", () => {
         ownerPath: ".",
         refreshedAt: "2026-08-19T00:00:00.000Z",
         resolvedOwnerKind: "project",
-        rows: [review],
+        items: [review],
         spaceId: "root",
       },
     },
@@ -584,7 +584,7 @@ function readySnapshotState() {
       ownerPath: ".",
       refreshedAt: "2026-08-19T00:00:00.000Z",
       resolvedOwnerKind: "project" as const,
-      rows: [review],
+      items: [review],
       spaceId: "root",
     },
   };
@@ -596,7 +596,7 @@ test("executor surfaces show the agent name and never a raw id while resolved or
     createRoutinesPresentationDescriptor({
       actions: actions([]),
       executors: state,
-      rows: [review],
+      items: [review],
     });
   const executorCell = (state: AgentActorOptionsState) => {
     const property = descriptor(state).properties.find(
@@ -611,7 +611,7 @@ test("executor surfaces show the agent name and never a raw id while resolved or
     );
   };
   const detail = (state: AgentActorOptionsState) =>
-    renderToStaticMarkup(<RoutineDetailView executors={state} row={review} />);
+    renderToStaticMarkup(<RoutineDetailView executors={state} item={review} />);
   const empty: AgentActorOptionsState = { ...executors, options: [] };
 
   const resolvedCell = executorCell(executors);
@@ -695,7 +695,7 @@ test("executor surfaces show the agent name and never a raw id while resolved or
 test("routine detail presents an unavailable executor in its value instead of a definition alert", () => {
   const ref = "agent:01arz3ndektsv4rrffq69g5fav";
   const message = `executor ${ref} is not available in the effective Agent Actors catalog`;
-  const unavailable: RoutineRow = {
+  const unavailable: RoutineItem = {
     ...review,
     diagnostics: [
       {
@@ -710,7 +710,7 @@ test("routine detail presents an unavailable executor in its value instead of a 
   const empty: AgentActorOptionsState = { ...executors, options: [] };
 
   const missing = renderToStaticMarkup(
-    <RoutineDetailView executors={empty} row={unavailable} />,
+    <RoutineDetailView executors={empty} item={unavailable} />,
   );
   expect(missing.includes('data-agent-actor-reference="missing"')).toBe(true);
   expect(missing.includes(ref)).toBe(true);
@@ -720,7 +720,7 @@ test("routine detail presents an unavailable executor in its value instead of a 
   const ambiguous = renderToStaticMarkup(
     <RoutineDetailView
       executors={{ ...empty, ambiguous: [ref] }}
-      row={unavailable}
+      item={unavailable}
     />,
   );
   expect(ambiguous.includes('data-agent-actor-reference="ambiguous"')).toBe(
@@ -731,7 +731,7 @@ test("routine detail presents an unavailable executor in its value instead of a 
   const broken = renderToStaticMarkup(
     <RoutineDetailView
       executors={empty}
-      row={{
+      item={{
         ...unavailable,
         diagnostics: [
           ...unavailable.diagnostics,
@@ -752,7 +752,7 @@ test("routine detail presents an unavailable executor in its value instead of a 
 test("executor column is an agent actor filtered by reference and sorted by name", () => {
   const writerRef = "agent:01arz3ndektsv4rrffq69g5fav";
   const analystRef = "agent:01bx5zzkbkactav9wevgemmvrz";
-  const analysis: RoutineRow = {
+  const analysis: RoutineItem = {
     ...review,
     definition: {
       ...review.definition!,
@@ -761,7 +761,7 @@ test("executor column is an agent actor filtered by reference and sorted by name
     id: "routine:analysis",
     name: "Analysis",
   };
-  const rows = [review, analysis];
+  const items = [review, analysis];
   const withAgents = (writer: string): AgentActorOptionsState => ({
     ...executors,
     options: [
@@ -778,7 +778,7 @@ test("executor column is an agent actor filtered by reference and sorted by name
     createRoutinesPresentationDescriptor({
       actions: actions([]),
       executors: state,
-      rows,
+      items,
     });
   const executor = descriptor(withAgents("Writer")).properties.find(
     (property) => property.key === "executor",
@@ -806,9 +806,9 @@ test("executor column is an agent actor filtered by reference and sorted by name
     const result = applyCollectionQuery({
       descriptor: descriptor(withAgents(name)),
       query: byWriter,
-      rows,
+      items,
     });
-    expect(result.rows.map((row) => row.id)).toEqual(["routine:review"]);
+    expect(result.items.map((item) => item.id)).toEqual(["routine:review"]);
   }
 
   const byName = (writer: string) =>
@@ -819,24 +819,24 @@ test("executor column is an agent actor filtered by reference and sorted by name
         search: "",
         sort: [{ direction: "asc", propertyKey: "executor" }],
       },
-      rows,
-    }).rows.map((row) => row.id);
+      items,
+    }).items.map((item) => item.id);
   expect(byName("Writer")).toEqual(["routine:analysis", "routine:review"]);
   expect(byName("Aardvark")).toEqual(["routine:review", "routine:analysis"]);
 
   const searched = applyCollectionQuery({
     descriptor: descriptor(withAgents("Writer")),
     query: { filters: [], search: "analyst", sort: [] },
-    rows,
+    items,
   });
-  expect(searched.rows.map((row) => row.id)).toEqual(["routine:analysis"]);
+  expect(searched.items.map((item) => item.id)).toEqual(["routine:analysis"]);
 });
 
 test("a text query saved for the executor column resets instead of filtering wrongly", () => {
   const descriptor = createRoutinesPresentationDescriptor({
     actions: actions([]),
     executors,
-    rows: [review],
+    items: [review],
   });
   for (const rule of [
     { operator: "contains", value: "Documentation" },

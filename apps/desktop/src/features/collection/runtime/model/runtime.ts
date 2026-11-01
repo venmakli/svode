@@ -34,8 +34,8 @@ function isPromiseLike(value: unknown): boolean {
   return typeof (value as { then?: unknown }).then === "function";
 }
 
-function validateProperty<Row>(
-  property: CollectionPresentationInstance<Row>["descriptor"]["properties"][number],
+function validateProperty<Item>(
+  property: CollectionPresentationInstance<Item>["descriptor"]["properties"][number],
 ): CollectionDeveloperDiagnostic[] {
   const diagnostics: CollectionDeveloperDiagnostic[] = [];
 
@@ -106,8 +106,8 @@ function validateProperty<Row>(
   return diagnostics;
 }
 
-function validateDescriptor<Row>(
-  instance: CollectionPresentationInstance<Row>,
+function validateDescriptor<Item>(
+  instance: CollectionPresentationInstance<Item>,
 ): CollectionDeveloperDiagnostic[] {
   const { descriptor } = instance;
   const diagnostics: CollectionDeveloperDiagnostic[] = [];
@@ -250,7 +250,7 @@ function validateDescriptor<Row>(
 
   const actionIds = new Set<string>();
   const actions = [
-    ...(descriptor.rowActions ?? []),
+    ...(descriptor.itemActions ?? []),
     ...(descriptor.create?.intents ?? []),
   ];
   for (const action of actions) {
@@ -305,59 +305,59 @@ function validateDescriptor<Row>(
   return diagnostics;
 }
 
-function validateReadyRows<Row>(
-  instance: CollectionPresentationInstance<Row>,
+function validateReadyItems<Item>(
+  instance: CollectionPresentationInstance<Item>,
 ): CollectionDeveloperDiagnostic[] {
   if (instance.state.phase !== "ready") {
     return [];
   }
 
-  const rowIds = new Set<string>();
-  for (const row of instance.state.rows) {
-    let rowId: unknown;
+  const itemIds = new Set<string>();
+  for (const item of instance.state.items) {
+    let itemId: unknown;
     try {
-      rowId = instance.descriptor.getRowId(row);
+      itemId = instance.descriptor.getItemId(item);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       return [
         diagnostic(
-          "row-id-error",
-          `Presentation "${instance.descriptor.id}" could not resolve a row id: ${reason}`,
+          "item-id-error",
+          `Presentation "${instance.descriptor.id}" could not resolve an item id: ${reason}`,
         ),
       ];
     }
 
     if (
-      typeof rowId !== "string" ||
-      rowId.length === 0 ||
-      rowId.trim() !== rowId
+      typeof itemId !== "string" ||
+      itemId.length === 0 ||
+      itemId.trim() !== itemId
     ) {
       return [
         diagnostic(
-          "invalid-row-id",
-          `Presentation "${instance.descriptor.id}" returned a non-string, empty, or untrimmed row id.`,
+          "invalid-item-id",
+          `Presentation "${instance.descriptor.id}" returned a non-string, empty, or untrimmed item id.`,
         ),
       ];
     }
 
-    if (rowIds.has(rowId)) {
+    if (itemIds.has(itemId)) {
       return [
         diagnostic(
-          "duplicate-row-id",
-          `Presentation "${instance.descriptor.id}" returned duplicate row id "${rowId}".`,
+          "duplicate-item-id",
+          `Presentation "${instance.descriptor.id}" returned duplicate item id "${itemId}".`,
         ),
       ];
     }
-    rowIds.add(rowId);
+    itemIds.add(itemId);
 
     for (const property of instance.descriptor.properties) {
       try {
-        const value = property.getValue(row);
+        const value = property.getValue(item);
         if (isPromiseLike(value)) {
           return [
             diagnostic(
               "async-property-value",
-              `Presentation "${instance.descriptor.id}" returned an async value for property "${property.key}". Normalize rows before defining a presentation.`,
+              `Presentation "${instance.descriptor.id}" returned an async value for property "${property.key}". Normalize items before defining a presentation.`,
             ),
           ];
         }
@@ -376,18 +376,18 @@ function validateReadyRows<Row>(
   return [];
 }
 
-function erasePresentation<Row>(
-  instance: CollectionPresentationInstance<Row>,
+function erasePresentation<Item>(
+  instance: CollectionPresentationInstance<Item>,
 ): CollectionPresentationInstance<unknown> {
   return instance as unknown as CollectionPresentationInstance<unknown>;
 }
 
-export function defineCollectionPresentation<Row>(
-  instance: CollectionPresentationInstance<Row>,
+export function defineCollectionPresentation<Item>(
+  instance: CollectionPresentationInstance<Item>,
 ): CollectionPresentationRuntime {
   const diagnostics = [
     ...validateDescriptor(instance),
-    ...validateReadyRows(instance),
+    ...validateReadyItems(instance),
   ];
   const effectiveInstance =
     diagnostics.length === 0

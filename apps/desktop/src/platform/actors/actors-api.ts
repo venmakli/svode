@@ -25,7 +25,7 @@ export interface ActorSourceDto {
   line?: number | null;
 }
 
-export interface ActorCatalogRowDto {
+export interface ActorCatalogItemDto {
   canonicalEmail: string;
   displayName: string;
   contribution: ActorContributionDto;
@@ -47,7 +47,7 @@ export interface ActorDiagnosticDto {
 export interface ActorCatalogDto {
   repositoryId: string;
   generation: number;
-  rows: ActorCatalogRowDto[];
+  rows: ActorCatalogItemDto[];
   diagnostics: ActorDiagnosticDto[];
   shallow: boolean;
 }

@@ -30,11 +30,11 @@ export function useCollectionTreeOrder({
 
   const signalUserEdit = useSignalUserEdit();
   const saveOrder = useCallback(
-    async (orderKey: string, entries: Page[]) => {
+    async (orderKey: string, items: Page[]) => {
       await saveCollectionTreeOrder({
         spacePath,
         orderKey,
-        entries,
+        items,
         projectPath,
       });
       signalUserEdit();

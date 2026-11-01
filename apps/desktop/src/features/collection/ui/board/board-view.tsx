@@ -22,7 +22,7 @@ import { detailPageViewRowClassName } from "@/shared/ui/page-layout";
 import { BoardCardContent } from "./board-card";
 import { BoardColumn } from "./board-column";
 import type { BoardViewProps } from "../../model/board-types";
-import { entriesForGroup, isGroupableColumn } from "../../lib/board-view";
+import { itemsForGroup, isGroupableColumn } from "../../lib/board-view";
 import { useBoardViewRuntime } from "../../hooks/board/use-board-view-runtime";
 import * as m from "@/paraglide/messages.js";
 
@@ -105,7 +105,7 @@ export function BoardView(props: BoardViewProps) {
   const groupColumn = runtime.groupColumn;
 
   if (
-    runtime.topLevelEntries.length === 0 &&
+    runtime.topLevelItems.length === 0 &&
     !runtime.queryFiltered &&
     !runtime.draftGroupKey
   ) {
@@ -123,7 +123,7 @@ export function BoardView(props: BoardViewProps) {
                 size="sm"
                 onClick={() => runtime.openInitialDraft(false)}
               >
-                {m.table_create_first_entry()}
+                {m.table_create_first_item()}
               </Button>
             </EmptyContent>
           ) : null}
@@ -133,8 +133,8 @@ export function BoardView(props: BoardViewProps) {
   }
 
   if (
-    runtime.topLevelEntries.length === 0 ||
-    runtime.filteredEntries.length === 0
+    runtime.topLevelItems.length === 0 ||
+    runtime.filteredItems.length === 0
   ) {
     return (
       <div className="flex p-8">
@@ -179,13 +179,13 @@ export function BoardView(props: BoardViewProps) {
         <ScrollArea>
           <div className="flex min-w-max items-start gap-3 pb-4">
             {runtime.renderedColumns.map((column) => {
-              const groupEntries = entriesForGroup(
-                runtime.filteredEntries,
+              const groupItems = itemsForGroup(
+                runtime.filteredItems,
                 groupColumn,
                 column.key,
               );
-              const cards = groupEntries.map((entry) => ({
-                entry,
+              const cards = groupItems.map((item) => ({
+                item,
                 groupKey: column.key,
               }));
               return (
@@ -193,8 +193,8 @@ export function BoardView(props: BoardViewProps) {
                   key={column.key}
                   group={column}
                   cards={cards}
-                  count={groupEntries.length}
-                  activeEntryPath={runtime.activeModel?.entry.path ?? null}
+                  count={groupItems.length}
+                  activeItemPath={runtime.activeModel?.item.path ?? null}
                   overGroupKey={runtime.overGroupKey}
                   hasSort={runtime.hasSort}
                   draftOpen={runtime.draftGroupKey === column.key}
@@ -227,8 +227,8 @@ export function BoardView(props: BoardViewProps) {
                     onRequestActors: runtime.loadActors,
                     onUpdateField: readOnly
                       ? undefined
-                      : (entry, column, value) =>
-                          void runtime.commitField(entry, column, value),
+                      : (item, column, value) =>
+                          void runtime.commitField(item, column, value),
                     onOpen: onActivateItem,
                     onOpenNestedPeek,
                     onOpenNestedCollection,

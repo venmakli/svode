@@ -25,7 +25,7 @@ import type {
   AttachmentOwnerRef,
   AttachmentOwnerPeekRenderer,
   AttachmentOwnerPeekContext,
-  AttachmentRow,
+  AttachmentItem,
 } from "../model/types";
 
 const DocumentSurface = lazy(async () => {
@@ -57,7 +57,7 @@ export function AttachmentsPeek({
   const navigation = usePeekNavigation(
     requestedTarget,
     (next) =>
-      `${next.owner.spacePath}:${next.ownerSession?.key ?? next.row.key}`,
+      `${next.owner.spacePath}:${next.ownerSession?.key ?? next.item.key}`,
   );
   const target = navigation.target;
   const registerCloseGuard = navigation.registerNavigationGuard;
@@ -80,11 +80,11 @@ export function AttachmentsPeek({
   const resolvedProjectPath = target?.owner.projectPath ?? owner.projectPath;
   const isOwner =
     Boolean(target?.ownerSession) ||
-    target?.row.kind === "page" ||
-    target?.row.kind === "collection" ||
-    target?.row.kind === "app";
-  const isDocument = target?.row.kind === "document";
-  const isMedia = target?.row.kind === "media";
+    target?.item.kind === "page" ||
+    target?.item.kind === "collection" ||
+    target?.item.kind === "app";
+  const isDocument = target?.item.kind === "document";
+  const isMedia = target?.item.kind === "media";
   const isBinaryViewer = isDocument || isMedia;
   const fileChanges =
     target && isBinaryViewer ? (
@@ -93,7 +93,7 @@ export function AttachmentsPeek({
         target={fileChangesTarget({
           spacePath: resolvedSpacePath,
           projectPath: resolvedProjectPath,
-          path: target.row.path,
+          path: target.item.path,
         })}
       />
     ) : null;
@@ -120,14 +120,14 @@ export function AttachmentsPeek({
         }}
       >
         <SheetTitle className="sr-only">
-          {target?.row.displayName ?? m.scope_surface_attachments()}
+          {target?.item.displayName ?? m.scope_surface_attachments()}
         </SheetTitle>
         {target && !isBinaryViewer && !isOwner ? (
           <PeekTopBar
             identity={
               <PeekIdentity
-                icon={<AttachmentIcon row={target.row} />}
-                name={target.row.displayName}
+                icon={<AttachmentIcon item={target.item} />}
+                name={target.item.displayName}
               />
             }
             onClose={() => void close()}
@@ -143,7 +143,7 @@ export function AttachmentsPeek({
                 : "scrollbar-hide overflow-y-auto",
           )}
         >
-          {target?.row.kind === "directory" ? (
+          {target?.item.kind === "directory" ? (
             directoryContent
           ) : isOwner && target ? (
             <OwnerPeekContent
@@ -160,10 +160,10 @@ export function AttachmentsPeek({
               }
               onClose={() => void close()}
             />
-          ) : target?.row.kind === "document" ? (
+          ) : target?.item.kind === "document" ? (
             <Suspense fallback={<DocumentPeekLoadingState />}>
               <DocumentSurface
-                path={target.row.path}
+                path={target.item.path}
                 projectPath={resolvedProjectPath}
                 spaceId={target.owner.spaceId}
                 spacePath={resolvedSpacePath}
@@ -172,17 +172,17 @@ export function AttachmentsPeek({
                 onOpenFullPage={() => {
                   onOpenChange(false);
                   openArtifact({
-                    path: target.row.path,
-                    sourceShape: target.row.sourceShape,
+                    path: target.item.path,
+                    sourceShape: target.item.sourceShape,
                     spaceId: target.owner.spaceId,
                   });
                 }}
               />
             </Suspense>
-          ) : target?.row.kind === "media" ? (
+          ) : target?.item.kind === "media" ? (
             <Suspense fallback={<MediaPeekLoadingState />}>
               <MediaSurface
-                path={target.row.path}
+                path={target.item.path}
                 projectPath={resolvedProjectPath}
                 spaceId={target.owner.spaceId}
                 spacePath={resolvedSpacePath}
@@ -191,15 +191,15 @@ export function AttachmentsPeek({
                 onOpenFullPage={() => {
                   onOpenChange(false);
                   openArtifact({
-                    path: target.row.path,
-                    sourceShape: target.row.sourceShape,
+                    path: target.item.path,
+                    sourceShape: target.item.sourceShape,
                     spaceId: target.owner.spaceId,
                   });
                 }}
               />
             </Suspense>
           ) : target ? (
-            <BinaryAvailability row={target.row} />
+            <BinaryAvailability item={target.item} />
           ) : null}
         </div>
       </SheetContent>
@@ -231,17 +231,17 @@ function MediaPeekLoadingState() {
   );
 }
 
-function BinaryAvailability({ row }: { row: AttachmentRow }) {
+function BinaryAvailability({ item }: { item: AttachmentItem }) {
   return (
     <Empty className="min-h-full">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Paperclip />
         </EmptyMedia>
-        <EmptyTitle>{row.displayName}</EmptyTitle>
+        <EmptyTitle>{item.displayName}</EmptyTitle>
         <EmptyDescription>
           {m.attachments_binary_unavailable({
-            type: attachmentKindLabel(row),
+            type: attachmentKindLabel(item),
           })}
         </EmptyDescription>
       </EmptyHeader>

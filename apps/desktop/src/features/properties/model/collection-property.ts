@@ -38,23 +38,23 @@ export type CollectionStandardPropertySemantics = Omit<Column, "name">;
  * How the owner draws a value whose type, filter and sort stay standard;
  * without it the standard display of the type draws the value.
  */
-export interface CollectionPropertyDisplay<Row> {
-  render(value: unknown, row: Row): ReactNode;
-  /** The value in the row's detail when it differs from the cell. */
-  renderDetail?(value: unknown, row: Row): ReactNode;
+export interface CollectionPropertyDisplay<Item> {
+  render(value: unknown, item: Item): ReactNode;
+  /** The value in the item's detail when it differs from the cell. */
+  renderDetail?(value: unknown, item: Item): ReactNode;
 }
 
-export type CollectionPropertyValueSemantics<Row> =
+export type CollectionPropertyValueSemantics<Item> =
   | {
       kind: "standard";
       standard: CollectionStandardPropertySemantics;
-      display?: CollectionPropertyDisplay<Row>;
+      display?: CollectionPropertyDisplay<Item>;
     }
   | {
       kind: "custom";
-      render(value: unknown, row: Row): ReactNode;
-      /** The value in the row's detail when it differs from the cell. */
-      renderDetail?(value: unknown, row: Row): ReactNode;
+      render(value: unknown, item: Item): ReactNode;
+      /** The value in the item's detail when it differs from the cell. */
+      renderDetail?(value: unknown, item: Item): ReactNode;
     };
 
 export interface CollectionPropertyFilterRule {
@@ -68,60 +68,60 @@ export interface CollectionPropertyFilterEditorInput {
   onChange(rule: CollectionPropertyFilterRule): void;
 }
 
-export type CollectionPropertyFilterSemantics<Row> =
+export type CollectionPropertyFilterSemantics<Item> =
   | { kind: "standard" }
   | {
       kind: "custom";
       operators: readonly string[];
       validate(rule: CollectionPropertyFilterRule): boolean;
-      matches(row: Row, rule: CollectionPropertyFilterRule): boolean;
+      matches(item: Item, rule: CollectionPropertyFilterRule): boolean;
       renderEditor(input: CollectionPropertyFilterEditorInput): ReactNode;
     };
 
-export type CollectionPropertySortSemantics<Row> =
+export type CollectionPropertySortSemantics<Item> =
   | { kind: "standard" }
   | {
       kind: "custom";
-      compare(left: Row, right: Row): number;
+      compare(left: Item, right: Item): number;
     };
 
-export interface CollectionPropertyEdit<Row> {
-  getState(row: Row): CollectionPropertyActionState;
+export interface CollectionPropertyEdit<Item> {
+  getState(item: Item): CollectionPropertyActionState;
   showDisabledReason?: boolean;
-  update(row: Row, value: unknown): void | Promise<void>;
+  update(item: Item, value: unknown): void | Promise<void>;
 }
 
-export interface CollectionPropertyCapabilities<Row> {
-  edit?: CollectionPropertyEdit<Row>;
-  filter?: CollectionPropertyFilterSemantics<Row>;
-  sort?: CollectionPropertySortSemantics<Row>;
+export interface CollectionPropertyCapabilities<Item> {
+  edit?: CollectionPropertyEdit<Item>;
+  filter?: CollectionPropertyFilterSemantics<Item>;
+  sort?: CollectionPropertySortSemantics<Item>;
 }
 
-export interface CollectionPropertyDefinition<Row> {
+export interface CollectionPropertyDefinition<Item> {
   key: string;
   label: string;
   origin: CollectionPropertyOrigin;
   owner: CollectionPropertyOwner;
-  semantics: CollectionPropertyValueSemantics<Row>;
-  capabilities?: CollectionPropertyCapabilities<Row>;
+  semantics: CollectionPropertyValueSemantics<Item>;
+  capabilities?: CollectionPropertyCapabilities<Item>;
   /** Candidates of a standard `actor` property for its values, picker and filter. */
   actorCandidates?: readonly ActorCandidate[];
-  getValue(row: Row): unknown;
-  getAccessibilityLabel?(row: Row): string;
-  getApplicability?(row: Row): CollectionPropertyApplicability;
+  getValue(item: Item): unknown;
+  getAccessibilityLabel?(item: Item): string;
+  getApplicability?(item: Item): CollectionPropertyApplicability;
 }
 
-export function defineSchemaBackedCollectionProperty<Row>({
+export function defineSchemaBackedCollectionProperty<Item>({
   column,
   ...definition
 }: Omit<
-  CollectionPropertyDefinition<Row>,
+  CollectionPropertyDefinition<Item>,
   "key" | "label" | "origin" | "owner" | "semantics"
 > & {
   column: Column;
   key?: string;
   label?: string;
-}): CollectionPropertyDefinition<Row> {
+}): CollectionPropertyDefinition<Item> {
   return {
     ...definition,
     key: definition.key ?? column.name,
@@ -135,15 +135,18 @@ export function defineSchemaBackedCollectionProperty<Row>({
   };
 }
 
-export function defineOwnerDefinedCollectionProperty<Row>({
+export function defineOwnerDefinedCollectionProperty<Item>({
   featureId,
   standard,
   ...definition
-}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+}: Omit<
+  CollectionPropertyDefinition<Item>,
+  "origin" | "owner" | "semantics"
+> & {
   featureId: string;
   standard: CollectionStandardPropertySemantics;
-  display?: CollectionPropertyDisplay<Row>;
-}): CollectionPropertyDefinition<Row> {
+  display?: CollectionPropertyDisplay<Item>;
+}): CollectionPropertyDefinition<Item> {
   return defineFeatureStandardProperty({
     ...definition,
     featureId,
@@ -152,15 +155,18 @@ export function defineOwnerDefinedCollectionProperty<Row>({
   });
 }
 
-export function defineComputedCollectionProperty<Row>({
+export function defineComputedCollectionProperty<Item>({
   featureId,
   standard,
   ...definition
-}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+}: Omit<
+  CollectionPropertyDefinition<Item>,
+  "origin" | "owner" | "semantics"
+> & {
   featureId: string;
   standard: CollectionStandardPropertySemantics;
-  display?: CollectionPropertyDisplay<Row>;
-}): CollectionPropertyDefinition<Row> {
+  display?: CollectionPropertyDisplay<Item>;
+}): CollectionPropertyDefinition<Item> {
   return defineFeatureStandardProperty({
     ...definition,
     featureId,
@@ -169,16 +175,19 @@ export function defineComputedCollectionProperty<Row>({
   });
 }
 
-export function defineDomainSpecificCollectionProperty<Row>({
+export function defineDomainSpecificCollectionProperty<Item>({
   featureId,
   render,
   renderDetail,
   ...definition
-}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
+}: Omit<
+  CollectionPropertyDefinition<Item>,
+  "origin" | "owner" | "semantics"
+> & {
   featureId: string;
-  render(value: unknown, row: Row): ReactNode;
-  renderDetail?(value: unknown, row: Row): ReactNode;
-}): CollectionPropertyDefinition<Row> {
+  render(value: unknown, item: Item): ReactNode;
+  renderDetail?(value: unknown, item: Item): ReactNode;
+}): CollectionPropertyDefinition<Item> {
   return {
     ...definition,
     origin: "domain_specific",
@@ -189,8 +198,8 @@ export function defineDomainSpecificCollectionProperty<Row>({
   };
 }
 
-export function resolveStandardPropertyColumn<Row>(
-  property: CollectionPropertyDefinition<Row>,
+export function resolveStandardPropertyColumn<Item>(
+  property: CollectionPropertyDefinition<Item>,
 ): Column | null {
   if (property.semantics.kind !== "standard") return null;
   if (property.owner.kind === "schema") return property.owner.column;
@@ -205,18 +214,21 @@ function standardSemanticsFromColumn(
   return standard as CollectionStandardPropertySemantics;
 }
 
-function defineFeatureStandardProperty<Row>({
+function defineFeatureStandardProperty<Item>({
   display,
   featureId,
   origin,
   standard,
   ...definition
-}: Omit<CollectionPropertyDefinition<Row>, "origin" | "owner" | "semantics"> & {
-  display?: CollectionPropertyDisplay<Row>;
+}: Omit<
+  CollectionPropertyDefinition<Item>,
+  "origin" | "owner" | "semantics"
+> & {
+  display?: CollectionPropertyDisplay<Item>;
   featureId: string;
   origin: "owner_defined" | "computed";
   standard: CollectionStandardPropertySemantics;
-}): CollectionPropertyDefinition<Row> {
+}): CollectionPropertyDefinition<Item> {
   return {
     ...definition,
     origin,

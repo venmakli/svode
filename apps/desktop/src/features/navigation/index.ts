@@ -22,13 +22,13 @@ export {
   useSignalUserEdit,
 } from "./hooks/use-signal-user-edit";
 export {
-  artifactNavigationKey,
+  pathNavigationKey,
   navigationKeyId,
   navigationKeyPath,
   navigationRoutineId,
   sameNavigationKey,
   spaceNavigationKey,
-  type NavigationArtifactKind,
+  type NavigationPathKeyKind,
   type NavigationItem,
   type NavigationKey,
   type NavigationResolvedItem,

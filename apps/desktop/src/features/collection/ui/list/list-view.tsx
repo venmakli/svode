@@ -68,7 +68,7 @@ export function ListView(props: ListViewProps) {
     rows,
     setComposerValue,
     setFocusedPath,
-    topLevelEntries,
+    topLevelItems,
     toggleRow,
   } = useListViewRuntime(props);
   const visiblePropertyKeys = new Set(metaColumns.map((column) => column.name));
@@ -85,17 +85,17 @@ export function ListView(props: ListViewProps) {
 
   if (loading) return <ListSkeleton density={density} />;
 
-  if (topLevelEntries.length === 0 && !queryFiltered && !composerOpen) {
+  if (topLevelItems.length === 0 && !queryFiltered && !composerOpen) {
     return (
       <EmptyState
         title={m.table_empty()}
-        action={readOnly ? undefined : m.table_create_first_entry()}
+        action={readOnly ? undefined : m.table_create_first_item()}
         onAction={readOnly ? undefined : () => openComposer(false)}
       />
     );
   }
 
-  if (topLevelEntries.length === 0 || filteredTopLevel.length === 0) {
+  if (topLevelItems.length === 0 || filteredTopLevel.length === 0) {
     return (
       <EmptyState
         title={m.table_no_results()}
@@ -119,12 +119,12 @@ export function ListView(props: ListViewProps) {
       <div className={detailPageViewRowClassName}>
         <CollectionListShell>
           <SortableContext
-            items={rows.map((row) => row.entry.path)}
+            items={rows.map((row) => row.item.path)}
             strategy={verticalListSortingStrategy}
           >
             {rows.map((row) => (
               <SortableListRow
-                key={row.entry.path}
+                key={row.item.path}
                 row={row}
                 density={density}
                 cardFields={cardFields}
@@ -133,14 +133,14 @@ export function ListView(props: ListViewProps) {
                 projectPath={projectPath}
                 actors={actors}
                 disabledReorder={readOnly || hasSort}
-                focused={focusedPath === row.entry.path}
-                rowRef={(element) => rowRef(row.entry.path, element)}
+                focused={focusedPath === row.item.path}
+                rowRef={(element) => rowRef(row.item.path, element)}
                 onRequestActors={loadActors}
                 onUpdateField={
                   readOnly
                     ? undefined
-                    : (entry, column, value) =>
-                        void commitField(entry, column, value)
+                    : (item, column, value) =>
+                        void commitField(item, column, value)
                 }
                 onToggle={toggleRow}
                 onOpen={openRow}
@@ -160,7 +160,7 @@ export function ListView(props: ListViewProps) {
             <Input
               ref={inputRef}
               value={composerValue}
-              placeholder={m.table_new_entry_placeholder()}
+              placeholder={m.table_new_item_placeholder()}
               className="h-8 max-w-sm"
               onChange={(event) => setComposerValue(event.target.value)}
               onBlur={() => {
@@ -182,11 +182,11 @@ export function ListView(props: ListViewProps) {
               }}
             >
               <Plus data-icon="inline-start" />
-              {m.table_new_entry_placeholder()}
+              {m.table_new_item_placeholder()}
             </Button>
           )}
           <span className="shrink-0 text-xs text-muted-foreground">
-            {m.table_entries_count({ count: rows.length })}
+            {m.table_items_count({ count: rows.length })}
           </span>
         </div>
       </div>

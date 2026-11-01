@@ -1,18 +1,16 @@
 import { listCollectionInfos as listCollectionInfosDto } from "@/platform/collections/collections-api";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
 import type { Column } from "@/features/properties";
-import { queryCollectionEntries } from "./entries-api";
+import { queryCollectionItems } from "./items-api";
 import { addCollectionColumn } from "./schema-api";
 
 export interface CollectionInfo {
   path: string;
   title: string;
-  rowCount?: number;
-  row_count?: number;
   nested: boolean;
 }
 
-export function queryCalendarEntries({
+export function queryCalendarItems({
   spacePath,
   collectionPath,
   filters,
@@ -25,7 +23,7 @@ export function queryCalendarEntries({
   sort: QuerySort[];
   projectPath?: string | null;
 }) {
-  return queryCollectionEntries({
+  return queryCollectionItems({
     spacePath,
     collectionPath,
     filters,

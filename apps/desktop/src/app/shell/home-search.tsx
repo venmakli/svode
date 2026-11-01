@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useHomeProjects, type HomeProjectAvailability } from "@/features/home";
 import {
-  artifactNavigationKey,
+  pathNavigationKey,
   type NavigationResolvedItem,
 } from "@/features/navigation";
 import {
@@ -109,7 +109,7 @@ function HomeProjectSearch({
         return;
       }
       const item: NavigationResolvedItem = {
-        key: artifactNavigationKey("page", target.path, target.spaceId, null),
+        key: pathNavigationKey("page", target.path, target.spaceId, null),
         title: target.title,
         openPath: target.path,
       };

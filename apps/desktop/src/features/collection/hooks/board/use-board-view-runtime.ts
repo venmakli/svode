@@ -11,7 +11,7 @@ import {
 } from "@/features/properties";
 import type { BoardViewProps } from "../../model/board-types";
 import { titleFilter } from "../../lib/utils";
-import { entryParentDir } from "../../lib/entry-tree";
+import { itemParentDir } from "../../lib/item-tree";
 import {
   boardColumns,
   groupKeyForValue,
@@ -22,8 +22,8 @@ import {
 } from "../../lib/board-view";
 import { useCollectionActors } from "../use-collection-actors";
 import { useCollectionColumnActions } from "../use-collection-column-actions";
-import { useBoardEntries } from "./use-board-entries";
-import { useBoardEntryActions } from "./use-board-entry-actions";
+import { useBoardItems } from "./use-board-items";
+import { useBoardItemActions } from "./use-board-item-actions";
 import * as m from "@/paraglide/messages.js";
 
 export function useBoardViewRuntime({
@@ -51,14 +51,14 @@ export function useBoardViewRuntime({
   const lastActiveGroup = useRef<string | null>(null);
   const { actors, loadActors } = useCollectionActors(spacePath);
   const {
-    entries,
-    setEntries,
-    manualOrderEntries,
-    setManualOrderEntries,
+    items,
+    setItems,
+    manualOrderItems,
+    setManualOrderItems,
     nestedCollectionPaths,
     loading,
-    loadEntries,
-  } = useBoardEntries({
+    loadItems,
+  } = useBoardItems({
     collectionPath,
     previousCollectionPath,
     filters,
@@ -108,19 +108,17 @@ export function useBoardViewRuntime({
     () => customColumns.some((column) => column.type === "actor"),
     [customColumns],
   );
-  const topLevelEntries = useMemo(
-    () =>
-      entries.filter((entry) => entryParentDir(entry.path) === collectionPath),
-    [collectionPath, entries],
+  const topLevelItems = useMemo(
+    () => items.filter((item) => itemParentDir(item.path) === collectionPath),
+    [collectionPath, items],
   );
-  const filteredEntries = useMemo(
-    () => titleFilter(topLevelEntries, searchQuery),
-    [searchQuery, topLevelEntries],
+  const filteredItems = useMemo(
+    () => titleFilter(topLevelItems, searchQuery),
+    [searchQuery, topLevelItems],
   );
   const columns = useMemo(
-    () =>
-      groupColumn ? boardColumns(filteredEntries, groupColumn, actors) : [],
-    [filteredEntries, groupColumn, actors],
+    () => (groupColumn ? boardColumns(filteredItems, groupColumn, actors) : []),
+    [filteredItems, groupColumn, actors],
   );
   const renderedColumns = useMemo(() => {
     if (columns.length > 0 || draftGroupKey !== noValueKey()) return columns;
@@ -128,28 +126,28 @@ export function useBoardViewRuntime({
   }, [columns, draftGroupKey]);
   const hasSort = sort.length > 0;
   const activeCard = activePath
-    ? filteredEntries.find((entry) => entry.path === activePath)
+    ? filteredItems.find((item) => item.path === activePath)
     : null;
   const activeModel =
     activeCard && groupColumn
       ? {
-          entry: activeCard,
+          item: activeCard,
           groupKey: groupKeyForValue(groupValue(activeCard, groupColumn)),
         }
       : null;
   const queryFiltered = searchQuery.trim().length > 0 || filters.length > 0;
-  const { commitField, createDraft, moveCard } = useBoardEntryActions({
+  const { commitField, createDraft, moveCard } = useBoardItemActions({
     collectionPath,
     spacePath,
     projectPath,
-    entries,
-    manualOrderEntries,
-    topLevelEntries,
+    items,
+    manualOrderItems,
+    topLevelItems,
     groupColumn,
     hasSort,
-    setEntries,
-    setManualOrderEntries,
-    loadEntries,
+    setItems,
+    setManualOrderItems,
+    loadItems,
     onCreatePage,
   });
 
@@ -195,10 +193,10 @@ export function useBoardViewRuntime({
 
       const overData = event.over.data.current;
       await moveCard({
-        activeEntryPath: String(event.active.id),
+        activeItemPath: String(event.active.id),
         targetGroupKey: groupKeyFromOver(overData),
-        overEntryPath:
-          overData?.type === "card" ? String(overData.entryPath) : null,
+        overItemPath:
+          overData?.type === "card" ? String(overData.itemPath) : null,
         placement: dropPlacement(event),
       });
     },
@@ -272,7 +270,7 @@ export function useBoardViewRuntime({
     customColumns,
     draftAsFolder,
     draftGroupKey,
-    filteredEntries,
+    filteredItems,
     groupColumn,
     groupableColumns,
     handleDragCancel,
@@ -290,7 +288,7 @@ export function useBoardViewRuntime({
     queryFiltered,
     renderedColumns,
     selectGroupColumn,
-    topLevelEntries,
+    topLevelItems,
   };
 }
 

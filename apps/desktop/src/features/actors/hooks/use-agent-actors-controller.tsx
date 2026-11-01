@@ -11,7 +11,7 @@ import * as m from "@/paraglide/messages.js";
 
 import type {
   AgentActorAgentOption,
-  AgentActorRow,
+  AgentActorItem,
 } from "../model/agent-actor-types";
 import {
   useAgentActorAccessCoordinator,
@@ -57,7 +57,7 @@ export function useAgentActorsController({
           ? [
               owner.spacePath,
               ...Object.keys(snapshot.fingerprints),
-              ...snapshot.rows.map((row) => row.ownerPath),
+              ...snapshot.items.map((item) => item.ownerPath),
             ]
           : [owner.spacePath],
       ),
@@ -107,21 +107,21 @@ export function useAgentActorsController({
         return;
       }
       if (intent.kind === "delete-agent") {
-        openDelete(intent.row);
+        openDelete(intent.item);
         return;
       }
       if (intent.kind === "save-agent-catalog") {
         void catalogSave.confirm();
         return;
       }
-      openEdit(intent.row);
+      openEdit(intent.item);
     },
     [applyMutation, catalogSave, createDraft, openDelete, openEdit],
   );
   const agentFacts = useAgentActorFacts({
     agents: snapshot?.agents ?? NO_AGENTS,
     editing: createDraft !== null || editSession !== null,
-    rows: snapshot?.rows ?? null,
+    items: snapshot?.items ?? null,
   });
   const accessCoordinator = useAgentActorAccessCoordinator({
     onContinue: continueIntent,
@@ -139,7 +139,7 @@ export function useAgentActorsController({
     mutationPending,
     offers: agentFacts.offers,
     readOnly,
-    rows: snapshot?.rows ?? null,
+    items: snapshot?.items ?? null,
     setEditSession,
     onOpenAgentSettings,
     onRecheckOffers: agentFacts.reloadOffers,
@@ -149,16 +149,17 @@ export function useAgentActorsController({
     error: unknown,
     context: AgentActorMutationAccessContext,
   ) {
-    const row = "ownerLabel" in context.draftOrRow ? context.draftOrRow : null;
+    const item =
+      "ownerLabel" in context.draftOrItem ? context.draftOrItem : null;
     const retry = () => {
-      if (context.kind === "delete" && row) {
-        openDelete(row);
+      if (context.kind === "delete" && item) {
+        openDelete(item);
         return;
       }
       return mutations.apply(
         context.kind,
         context.ownerPath,
-        context.draftOrRow,
+        context.draftOrItem,
       );
     };
     return accessCoordinator.recoverFromError(error, {
@@ -169,13 +170,13 @@ export function useAgentActorsController({
           ? m.agent_actors_delete()
           : m.agent_actors_save(),
       onPlanChanged: () => {
-        if (context.kind === "delete" && row) {
-          openDelete(row);
+        if (context.kind === "delete" && item) {
+          openDelete(item);
           return;
         }
         return catalog.refresh();
       },
-      ownerName: row?.ownerLabel,
+      ownerName: item?.ownerLabel,
       ownerPath: context.ownerPath,
       placement: "inline",
     });
@@ -213,7 +214,7 @@ export function useAgentActorsController({
           status: "disabled",
         }
       : actionState;
-  const presentationState: CollectionPresentationState<AgentActorRow> =
+  const presentationState: CollectionPresentationState<AgentActorItem> =
     catalog.state.phase === "initial"
       ? { phase: "initial" }
       : catalog.state.phase === "blocking_error"
@@ -250,7 +251,7 @@ export function useAgentActorsController({
                 : []),
             ],
             phase: "ready",
-            rows: catalog.state.snapshot.rows,
+            items: catalog.state.snapshot.items,
           };
 
   const overlays = (
@@ -315,25 +316,30 @@ export function useAgentActorsController({
   return {
     actions: {
       createState: actionStateForOwner(owner.spacePath),
-      getDeleteState: (row: AgentActorRow) =>
-        actionStateForOwner(row.ownerPath),
-      getEditState: (row: AgentActorRow) => actionStateForOwner(row.ownerPath),
+      getDeleteState: (item: AgentActorItem) =>
+        actionStateForOwner(item.ownerPath),
+      getEditState: (item: AgentActorItem) =>
+        actionStateForOwner(item.ownerPath),
       onAdd: () => {
         if (readOnly) return;
         openCreate(owner.spacePath);
       },
-      onDelete: (row: AgentActorRow) => {
+      onDelete: (item: AgentActorItem) => {
         if (readOnly) return;
-        requestAccess({ kind: "delete-agent", ownerPath: row.ownerPath, row });
+        requestAccess({
+          kind: "delete-agent",
+          ownerPath: item.ownerPath,
+          item,
+        });
       },
-      onEdit: (row: AgentActorRow) => {
+      onEdit: (item: AgentActorItem) => {
         if (readOnly) return;
-        requestAccess({ kind: "edit-agent", ownerPath: row.ownerPath, row });
+        requestAccess({ kind: "edit-agent", ownerPath: item.ownerPath, item });
       },
     },
     /** What the Agents collection shows of an Agent on this device. */
     facts: agentFacts.facts,
-    inheritedVisible: snapshot?.rows.some((row) => row.inherited) ?? false,
+    inheritedVisible: snapshot?.items.some((item) => item.inherited) ?? false,
     overlays,
     detail,
     presentationState,

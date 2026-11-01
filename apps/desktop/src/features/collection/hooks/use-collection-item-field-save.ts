@@ -4,32 +4,32 @@ import { usePageFieldSave } from "@/features/page/field-save";
 import type { Column } from "@/features/properties";
 import { useSignalUserEdit } from "@/features/navigation";
 
-export function useCollectionEntryFieldSave({
+export function useCollectionItemFieldSave({
   spacePath,
   projectPath,
-  setEntries,
-  setManualOrderEntries,
+  setItems,
+  setManualOrderItems,
   onCommitError,
 }: {
   spacePath: string;
   projectPath?: string | null;
-  setEntries: Dispatch<SetStateAction<Page[]>>;
-  setManualOrderEntries?: Dispatch<SetStateAction<Page[]>>;
+  setItems: Dispatch<SetStateAction<Page[]>>;
+  setManualOrderItems?: Dispatch<SetStateAction<Page[]>>;
   onCommitError?: (error: unknown) => void;
 }) {
   const applyPageUpdate = useCallback(
-    (entryPath: string, update: (entry: Page) => Page) => {
-      setEntries((current) =>
-        current.map((item) => (item.path === entryPath ? update(item) : item)),
+    (itemPath: string, update: (item: Page) => Page) => {
+      setItems((current) =>
+        current.map((item) => (item.path === itemPath ? update(item) : item)),
       );
-      setManualOrderEntries?.((current) =>
-        current.map((item) => (item.path === entryPath ? update(item) : item)),
+      setManualOrderItems?.((current) =>
+        current.map((item) => (item.path === itemPath ? update(item) : item)),
       );
     },
-    [setEntries, setManualOrderEntries],
+    [setItems, setManualOrderItems],
   );
   const signalUserEdit = useSignalUserEdit();
-  const { save: saveEntryField } = usePageFieldSave({
+  const { save: saveItemField } = usePageFieldSave({
     spacePath,
     projectPath,
     applyPageUpdate,
@@ -38,28 +38,28 @@ export function useCollectionEntryFieldSave({
 
   const saveField = useCallback(
     async (
-      entry: Page,
+      item: Page,
       column: Column,
       value: unknown,
       options?: { flush?: boolean },
     ) => {
-      await saveEntryField(entry, column.name, value, {
+      await saveItemField(item, column.name, value, {
         policy: propertyFieldSavePolicy(column),
         flush: options?.flush,
       });
     },
-    [saveEntryField],
+    [saveItemField],
   );
 
   const commitField = useCallback(
     async (
-      entry: Page,
+      item: Page,
       column: Column,
       value: unknown,
       options?: { flush?: boolean },
     ) => {
       try {
-        await saveField(entry, column, value, options);
+        await saveField(item, column, value, options);
       } catch (error) {
         onCommitError?.(error);
       }

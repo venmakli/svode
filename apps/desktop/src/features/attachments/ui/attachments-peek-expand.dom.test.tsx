@@ -85,7 +85,7 @@ if (process.env.SVODE_ATTACHMENTS_PEEK_EXPAND_TEST !== "1") {
     owner: { spaceId: string | null; spacePath: string },
   ) {
     const target: AttachmentActivationRequest = {
-      row: {
+      item: {
         key: `${kind}:${path}`,
         path,
         contentPath: null,
@@ -110,7 +110,7 @@ if (process.env.SVODE_ATTACHMENTS_PEEK_EXPAND_TEST !== "1") {
       },
       mode: "peek",
       sourceGeneration: "one",
-      activation: { rowId: `${kind}:${path}` },
+      activation: { itemId: `${kind}:${path}` },
     };
     const openChanges: boolean[] = [];
     await dom.render(

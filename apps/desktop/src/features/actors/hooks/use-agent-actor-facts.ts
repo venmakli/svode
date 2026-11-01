@@ -10,7 +10,7 @@ import { loadAgentDeclarations } from "../api/agent-actors-api";
 import { agentActorFacts } from "../model/agent-actor-facts";
 import type {
   AgentActorAgentOption,
-  AgentActorRow,
+  AgentActorItem,
 } from "../model/agent-actor-types";
 
 /**
@@ -23,24 +23,26 @@ import type {
 export function useAgentActorFacts({
   agents,
   editing,
-  rows,
+  items,
 }: {
   agents: readonly AgentActorAgentOption[];
   /** An Agent's editor is open and needs the agents' offers. */
   editing: boolean;
-  rows: readonly AgentActorRow[] | null;
+  items: readonly AgentActorItem[] | null;
 }) {
-  const chat = useChatAgents(editing || (rows?.length ?? 0) > 0);
+  const chat = useChatAgents(editing || (items?.length ?? 0) > 0);
   const defaultAgent = useDefaultAgent();
-  const participant = rows?.some((row) => row.binding.kind === "participant");
+  const participant = items?.some(
+    (item) => item.binding.kind === "participant",
+  );
   const agentIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const row of rows ?? []) {
-      if (row.binding.kind === "agent") ids.add(row.binding.agent);
+    for (const item of items ?? []) {
+      if (item.binding.kind === "agent") ids.add(item.binding.agent);
     }
     if (participant && defaultAgent.value) ids.add(defaultAgent.value.agent);
     return [...ids].sort();
-  }, [defaultAgent.value, participant, rows]);
+  }, [defaultAgent.value, participant, items]);
   const [declarations, setDeclarations] = useState<
     ReadonlyMap<string, readonly AgentDeclaration[]>
   >(new Map());
@@ -59,15 +61,15 @@ export function useAgentActorFacts({
     return () => {
       current = false;
     };
-  }, [agentIds, rows]);
+  }, [agentIds, items]);
   const known = useMemo(
     () => new Set(agents.map((agent) => agent.id)),
     [agents],
   );
   const offers = chat.agents?.agents ?? null;
   const facts = useCallback(
-    (row: AgentActorRow) =>
-      agentActorFacts(row, {
+    (item: AgentActorItem) =>
+      agentActorFacts(item, {
         declarations,
         defaultAgent: defaultAgent.loaded ? defaultAgent.value : undefined,
         known,

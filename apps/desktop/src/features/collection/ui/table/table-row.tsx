@@ -11,7 +11,7 @@ import { TableCell } from "@/components/ui/table";
 import { cn } from "@/shared/lib/utils";
 import type { CollectionTableRow } from "./types";
 import { CollectionTableRow as CollectionTableRowShell } from "./table-presentation";
-import { CollectionEntryContextMenuItems } from "../entry-context-menu";
+import { CollectionItemContextMenuItems } from "../item-context-menu";
 
 export function SortableTableRow({
   row,
@@ -43,7 +43,7 @@ export function SortableTableRow({
     setNodeRef,
     transform,
     transition,
-  } = useSortable({ id: row.entry.path, disabled });
+  } = useSortable({ id: row.item.path, disabled });
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -52,7 +52,7 @@ export function SortableTableRow({
             setNodeRef(element);
             registerRow(element);
           }}
-          data-table-row-path={row.entry.path}
+          data-table-row-path={row.item.path}
           className={cn(
             "group/row h-9 bg-background text-[13px] hover:bg-muted/40",
             rowHeightClassName,
@@ -91,8 +91,8 @@ export function SortableTableRow({
         </CollectionTableRowShell>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
-        <CollectionEntryContextMenuItems
-          entry={row.entry}
+        <CollectionItemContextMenuItems
+          item={row.item}
           nestedCollection={row.nestedCollection}
           onOpenInPeek={onOpen}
         />

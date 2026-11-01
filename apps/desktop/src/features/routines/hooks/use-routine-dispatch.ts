@@ -12,7 +12,7 @@ import { routineLaunchRefusalText } from "../lib/routine-launch-refusal";
 import { RoutineLaunchRefusedError } from "../model/launch-refusal";
 import type {
   RoutineLaunchRefusal,
-  RoutineRow,
+  RoutineItem,
   RoutineSessionTarget,
 } from "../model/types";
 
@@ -32,11 +32,11 @@ export function useRoutineDispatch({
   } | null>(null);
 
   const getRunState = useCallback(
-    (row: RoutineRow): CollectionActionState => {
-      const disabledReason = routineRunDisabledReason(row);
+    (item: RoutineItem): CollectionActionState => {
+      const disabledReason = routineRunDisabledReason(item);
       if (disabledReason) return { reason: disabledReason, status: "disabled" };
-      if (pendingRoutineId === row.id) return { status: "pending" };
-      if (lastError?.routineId === row.id) {
+      if (pendingRoutineId === item.id) return { status: "pending" };
+      if (lastError?.routineId === item.id) {
         return { message: lastError.message, status: "error" };
       }
       return { status: "idle" };
@@ -46,27 +46,27 @@ export function useRoutineDispatch({
 
   /** Why the last manual run of the Routine was refused before its prompt. */
   const getRunRefusal = useCallback(
-    (row: RoutineRow) =>
-      lastError?.routineId === row.id ? lastError.refusal : null,
+    (item: RoutineItem) =>
+      lastError?.routineId === item.id ? lastError.refusal : null,
     [lastError],
   );
 
   const run = useCallback(
-    async (row: RoutineRow) => {
-      const disabledReason = routineRunDisabledReason(row);
+    async (item: RoutineItem) => {
+      const disabledReason = routineRunDisabledReason(item);
       if (disabledReason) throw new Error(disabledReason);
-      setPendingRoutineId(row.id);
+      setPendingRoutineId(item.id);
       setLastError((current) =>
-        current?.routineId === row.id ? null : current,
+        current?.routineId === item.id ? null : current,
       );
       try {
-        const result = await dispatchManualRoutine(owner, row);
+        const result = await dispatchManualRoutine(owner, item);
         if (result.status === "blocked" || result.status === "failed") {
           const refusal = result.refusal;
           const message = refusal
             ? routineLaunchRefusalText(refusal, agents.label)
             : result.message;
-          setLastError({ message, refusal, routineId: row.id });
+          setLastError({ message, refusal, routineId: item.id });
           throw refusal
             ? new RoutineLaunchRefusedError(message, refusal)
             : new Error(message);
@@ -76,18 +76,20 @@ export function useRoutineDispatch({
           sessionId: result.agentSessionId,
         });
       } finally {
-        setPendingRoutineId((current) => (current === row.id ? null : current));
+        setPendingRoutineId((current) =>
+          current === item.id ? null : current,
+        );
       }
     },
     [agents, onOpenSession, owner],
   );
 
   const openLastSession = useCallback(
-    (row: RoutineRow) => {
-      if (!row.lastRun) return;
+    (item: RoutineItem) => {
+      if (!item.lastRun) return;
       onOpenSession({
-        launchId: row.lastRun.launchId,
-        sessionId: row.lastRun.agentSessionId,
+        launchId: item.lastRun.launchId,
+        sessionId: item.lastRun.agentSessionId,
       });
     },
     [onOpenSession],
@@ -96,15 +98,15 @@ export function useRoutineDispatch({
   return { getRunRefusal, getRunState, openLastSession, run };
 }
 
-function routineRunDisabledReason(row: RoutineRow) {
-  if (!row.valid || !row.definition) return m.routines_invalid_run_disabled();
-  if (row.definition.trigger.type === "event") {
+function routineRunDisabledReason(item: RoutineItem) {
+  if (!item.valid || !item.definition) return m.routines_invalid_run_disabled();
+  if (item.definition.trigger.type === "event") {
     return m.routines_manual_run_only();
   }
-  if (row.definition.action.type !== "run_agent") {
+  if (item.definition.action.type !== "run_agent") {
     return m.routines_run_agent_only();
   }
-  if (!row.definition.action.executor.trim()) {
+  if (!item.definition.action.executor.trim()) {
     return m.routines_executor_required();
   }
   return null;

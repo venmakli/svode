@@ -7,7 +7,7 @@ import { createSkillFileDetailContent } from "./skill-file-detail";
 
 /**
  * The skill's «Вложения»: its folder in the Attachments Table. A file opens
- * in the same peek in place of the skill, as rows of a collection do.
+ * in the same peek in place of the skill, as items of a collection do.
  */
 export function AgentContextSkillFilesTab({
   item,
@@ -20,13 +20,13 @@ export function AgentContextSkillFilesTab({
   return (
     <AttachmentsFolderTable
       folder={folder}
-      onOpenFile={(row, context) => {
-        const file = fileOf(row);
+      onOpenFile={(attachment, context) => {
+        const file = fileOf(attachment);
         if (!file) return;
         const selection = {
           instanceKey: `agent-context-skill:${item.id}`,
           presentationId: "files",
-          rowId: file.path,
+          itemId: file.path,
         };
         void controller.open(
           {

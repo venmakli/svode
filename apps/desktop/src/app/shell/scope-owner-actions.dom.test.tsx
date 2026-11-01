@@ -173,7 +173,7 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
   const { createRoot } = await import("react-dom/client");
   const { SidebarProvider } = await import("@/components/ui/sidebar");
   const { TooltipProvider } = await import("@/components/ui/tooltip");
-  const { getNavigationState, artifactNavigationKey, spaceNavigationKey } =
+  const { getNavigationState, pathNavigationKey, spaceNavigationKey } =
     await import("@/features/navigation");
   const { ScopeOwnerActions } = await import("./scope-owner-actions");
   const root = createRoot(document.getElementById("app")!);
@@ -272,7 +272,7 @@ if (process.env.SVODE_SCOPE_OWNER_ACTIONS_DOM !== "1") {
                   key:
                     owner.identityKind === "registered-space"
                       ? spaceNavigationKey(owner.spaceId, "root")
-                      : artifactNavigationKey(
+                      : pathNavigationKey(
                           "collection",
                           owner.ownerPath,
                           "docs",

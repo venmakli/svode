@@ -5,15 +5,15 @@ import type { CollectionSchema, Column } from "@/features/properties";
 import { buildCalendarEvents, visibleEventCount } from "./calendar-adapter";
 
 test("buildCalendarEvents converts stored ranges to FullCalendar events", () => {
-  const entries = [
-    entry("tasks/a.md", {
+  const items = [
+    item("tasks/a.md", {
       Due: { start: "2026-06-20", end: "2026-06-22" },
       Status: "Doing",
     }),
-    entry("tasks/b.md", { Status: "Todo" }),
+    item("tasks/b.md", { Status: "Todo" }),
   ];
   const events = buildCalendarEvents({
-    entries,
+    items,
     view: calendarView(),
     schema: schema(),
     dateColumn: dateColumn(),
@@ -67,7 +67,7 @@ function statusColumn(): Column {
   };
 }
 
-function entry(path: string, extra: Record<string, unknown>): Page {
+function item(path: string, extra: Record<string, unknown>): Page {
   return {
     path,
     body: "",

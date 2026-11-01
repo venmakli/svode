@@ -7,13 +7,13 @@ import { JSDOM } from "jsdom";
 import type { Page } from "@/features/page";
 import type { Column } from "@/features/properties";
 
-if (process.env.SVODE_BOARD_ENTRY_ACTIONS_DOM !== "1") {
+if (process.env.SVODE_BOARD_ITEM_ACTIONS_DOM !== "1") {
   test("Board card drop DOM", () => {
     const child = spawnSync(
       process.execPath,
       ["test", fileURLToPath(import.meta.url)],
       {
-        env: { ...process.env, SVODE_BOARD_ENTRY_ACTIONS_DOM: "1" },
+        env: { ...process.env, SVODE_BOARD_ITEM_ACTIONS_DOM: "1" },
         encoding: "utf8",
       },
     );
@@ -52,16 +52,16 @@ if (process.env.SVODE_BOARD_ENTRY_ACTIONS_DOM !== "1") {
   // The writes a drop makes: the grouping field and the manual order.
   const fieldSaves: [string, string, unknown][] = [];
   const orderSaves: [string, string[]][] = [];
-  const saveField = async (entry: Page, column: Column, value: unknown) => {
-    fieldSaves.push([entry.path, column.name, value]);
+  const saveField = async (item: Page, column: Column, value: unknown) => {
+    fieldSaves.push([item.path, column.name, value]);
   };
   const commitField = async () => {};
-  const saveOrder = async (orderKey: string, entries: Page[]) => {
-    orderSaves.push([orderKey, entries.map((entry) => entry.path)]);
+  const saveOrder = async (orderKey: string, items: Page[]) => {
+    orderSaves.push([orderKey, items.map((item) => item.path)]);
   };
   const reloadOrderParent = async () => {};
-  mock.module("../use-collection-entry-field-save", () => ({
-    useCollectionEntryFieldSave: () => ({ commitField, saveField }),
+  mock.module("../use-collection-item-field-save", () => ({
+    useCollectionItemFieldSave: () => ({ commitField, saveField }),
   }));
   mock.module("../use-collection-tree-order", () => ({
     useCollectionTreeOrder: () => ({ reloadOrderParent, saveOrder }),
@@ -69,8 +69,8 @@ if (process.env.SVODE_BOARD_ENTRY_ACTIONS_DOM !== "1") {
 
   // React DOM reads the environment when it loads, so after the globals.
   const { createRoot } = await import("react-dom/client");
-  const { useBoardEntryActions } = await import("./use-board-entry-actions");
-  type MoveCard = ReturnType<typeof useBoardEntryActions>["moveCard"];
+  const { useBoardItemActions } = await import("./use-board-item-actions");
+  type MoveCard = ReturnType<typeof useBoardItemActions>["moveCard"];
 
   const status: Column = { name: "Status", type: "status" };
   const page = (path: string, value: string): Page => ({
@@ -96,20 +96,20 @@ if (process.env.SVODE_BOARD_ENTRY_ACTIONS_DOM !== "1") {
   let moveCard: MoveCard | null = null;
 
   function Harness({ hasSort }: { hasSort: boolean }) {
-    const [entries, setEntries] = useState(initial);
-    const [manualOrderEntries, setManualOrderEntries] = useState(initial);
-    const actions = useBoardEntryActions({
+    const [items, setItems] = useState(initial);
+    const [manualOrderItems, setManualOrderItems] = useState(initial);
+    const actions = useBoardItemActions({
       collectionPath: "tasks",
       spacePath: "/project/docs",
       projectPath: "/project",
-      entries,
-      manualOrderEntries,
-      topLevelEntries: entries,
+      items,
+      manualOrderItems,
+      topLevelItems: items,
       groupColumn: status,
       hasSort,
-      setEntries,
-      setManualOrderEntries,
-      loadEntries: async () => {},
+      setItems,
+      setManualOrderItems,
+      loadItems: async () => {},
       onCreatePage: async () => initial[0],
     });
     useEffect(() => {
@@ -132,9 +132,9 @@ if (process.env.SVODE_BOARD_ENTRY_ACTIONS_DOM !== "1") {
     await act(async () => root.render(<Harness hasSort={hasSort} />));
     await act(async () => {
       await moveCard!({
-        activeEntryPath: target.active,
+        activeItemPath: target.active,
         targetGroupKey: target.group,
-        overEntryPath: target.over,
+        overItemPath: target.over,
         placement: target.placement ?? "before",
       });
     });

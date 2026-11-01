@@ -9,7 +9,7 @@ import type {
   PropertyOption,
 } from "@/features/properties";
 import { knownColorName, optionByName } from "@/features/properties";
-import { entryCollectionPath, isFolderEntry } from "../../lib/entry-tree";
+import { itemCollectionPath, isFolderItem } from "../../lib/item-tree";
 import type {
   CalendarEventModel,
   CalendarScope,
@@ -33,7 +33,7 @@ export function fullCalendarViewForScope(scope: CalendarScope) {
 }
 
 export function buildCalendarEvents({
-  entries,
+  items,
   view,
   schema,
   dateColumn,
@@ -41,7 +41,7 @@ export function buildCalendarEvents({
   customColumns,
   nestedCollectionPaths,
 }: {
-  entries: Page[];
+  items: Page[];
   view: CollectionView;
   schema: CollectionSchema;
   dateColumn: Column;
@@ -49,23 +49,23 @@ export function buildCalendarEvents({
   customColumns: Column[];
   nestedCollectionPaths: Set<string>;
 }): CalendarEventInput[] {
-  return entries.reduce<CalendarEventInput[]>((result, entry) => {
-    const value = parseCalendarDateValue(entry.meta.extra?.[dateColumn.name]);
+  return items.reduce<CalendarEventInput[]>((result, item) => {
+    const value = parseCalendarDateValue(item.meta.extra?.[dateColumn.name]);
     if (!value) return result;
-    const color = eventColor(view, schema, entry);
+    const color = eventColor(view, schema, item);
     const model: CalendarEventModel = {
-      entry,
+      item,
       value,
       dateField: dateColumn.name,
       cardFields,
       customColumns,
-      folder: isFolderEntry(entry),
-      nestedCollection: nestedCollectionPaths.has(entryCollectionPath(entry)),
+      folder: isFolderItem(item),
+      nestedCollection: nestedCollectionPaths.has(itemCollectionPath(item)),
       color,
     };
     result.push({
-      id: entry.path,
-      title: entry.meta.title,
+      id: item.path,
+      title: item.meta.title,
       start: value.start,
       end:
         value.range && value.end
@@ -145,16 +145,18 @@ export function eventColorStyle(color: string | null) {
 function eventColor(
   view: CollectionView,
   schema: CollectionSchema,
-  entry: Page,
+  item: Page,
 ) {
   const colorField =
     typeof view.color_field === "string" ? view.color_field : null;
   if (!colorField) return null;
-  const column = schema.columns.find((item) => item.name === colorField);
+  const column = schema.columns.find(
+    (candidate) => candidate.name === colorField,
+  );
   if (!column || column.newer || !["select", "status"].includes(column.type)) {
     return null;
   }
-  const option = optionByName(column, entry.meta.extra?.[column.name]);
+  const option = optionByName(column, item.meta.extra?.[column.name]);
   return optionColorName(option);
 }
 

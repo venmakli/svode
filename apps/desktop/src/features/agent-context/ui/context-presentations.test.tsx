@@ -146,7 +146,7 @@ function presentation(id: (typeof AGENT_CONTEXT_PRESETS)[number]) {
   const runtime = createAgentContextPresentation({
     id,
     properties,
-    state: { phase: "ready", rows: items },
+    state: { phase: "ready", items: items },
   });
   return (
     runtime as unknown as {
@@ -161,13 +161,13 @@ function render(node: ReactNode) {
   return renderToStaticMarkup(<TooltipProvider>{node}</TooltipProvider>);
 }
 
-function value(key: string, row: AgentContextItem, context?: "detail") {
+function value(key: string, item: AgentContextItem, context?: "detail") {
   const property = properties.find((candidate) => candidate.key === key);
   return render(
     <CollectionPropertyValue
       context={context}
       property={property as CollectionPropertyDefinition<unknown>}
-      row={row}
+      item={item}
     />,
   );
 }
@@ -206,23 +206,23 @@ test("presets are layouts over the one set: All, Instructions, Skills, Plugins a
     "plugins",
     "mcp_servers",
   ]);
-  const rowsOf = (id: (typeof AGENT_CONTEXT_PRESETS)[number]) =>
+  const itemsOf = (id: (typeof AGENT_CONTEXT_PRESETS)[number]) =>
     applyCollectionQuery({
       descriptor: presentation(id),
       query: EMPTY_COLLECTION_QUERY,
-      rows: items,
-    }).rows.map((row) => row.id);
+      items: items,
+    }).items.map((item) => item.id);
 
-  expect(rowsOf("all").length).toBe(6);
+  expect(itemsOf("all").length).toBe(6);
   // Sorted by name, then by path.
-  expect(rowsOf("instructions")).toEqual([
+  expect(itemsOf("instructions")).toEqual([
     codexAgents.id,
     spaceAgents.id,
     shadowed.id,
   ]);
   // A plugin's skill is its component, not a skill of the preset.
-  expect(rowsOf("skills")).toEqual([projectSkill.id]);
-  expect(rowsOf("plugins")).toEqual([plugin.id, disabledPlugin.id]);
+  expect(itemsOf("skills")).toEqual([projectSkill.id]);
+  expect(itemsOf("plugins")).toEqual([plugin.id, disabledPlugin.id]);
   expect(presentation("plugins").layout.kind).toBe("gallery");
   expect(presentation("instructions").layout.kind).toBe("gallery");
   const skills = presentation("skills").layout;
@@ -238,8 +238,8 @@ test("filter, sort and search work on Providers, Location and Status", () => {
     applyCollectionQuery({
       descriptor: all,
       query: { ...EMPTY_COLLECTION_QUERY, filters },
-      rows: items,
-    }).rows.map((row) => row.id);
+      items: items,
+    }).items.map((item) => item.id);
 
   expect(
     filtered([
@@ -258,16 +258,16 @@ test("filter, sort and search work on Providers, Location and Status", () => {
     applyCollectionQuery({
       descriptor: all,
       query: { ...EMPTY_COLLECTION_QUERY, search: "~/.codex" },
-      rows: items,
-    }).rows.map((row) => row.id),
+      items: items,
+    }).items.map((item) => item.id),
   ).toEqual([codexAgents.id]);
   // A plugin is found by the names of its components.
   expect(
     applyCollectionQuery({
       descriptor: all,
       query: { ...EMPTY_COLLECTION_QUERY, search: "lint" },
-      rows: items,
-    }).rows.map((row) => row.id),
+      items: items,
+    }).items.map((item) => item.id),
   ).toEqual([plugin.id]);
 });
 
@@ -277,7 +277,7 @@ test("a plugin of All expands to its components", () => {
     expansion: { expanded, onToggle: (id) => expanded.add(id) },
     id: "all",
     properties,
-    state: { phase: "ready", rows: items },
+    state: { phase: "ready", items: items },
   }) as unknown as {
     instance: {
       descriptor: CollectionPresentationDescriptor<AgentContextItem>;
@@ -288,7 +288,7 @@ test("a plugin of All expands to its components", () => {
   expect(layout.hierarchy.getBranch(spaceAgents)).toBeNull();
   expect(layout.hierarchy.getBranch(plugin)).toEqual({
     expanded: false,
-    rows: [pluginSkill],
+    items: [pluginSkill],
   });
   layout.hierarchy.onToggle(plugin);
   expect(expanded.has(plugin.id)).toBe(true);
@@ -345,7 +345,7 @@ test("Providers show agent icons, an empty value names its reason", () => {
     <CollectionPropertyValue
       context="detail"
       property={linked as CollectionPropertyDefinition<unknown>}
-      row={projectSkill}
+      item={projectSkill}
     />,
   );
   expect(linkedDetail.includes("Open Providers")).toBe(true);
@@ -449,7 +449,7 @@ test("a skill some agents do not load names them and the missing field; without 
       <CollectionPropertyValue
         context="detail"
         property={linked as CollectionPropertyDefinition<unknown>}
-        row={unloaded}
+        item={unloaded}
       />,
     ),
   );
@@ -512,11 +512,11 @@ test("MCP servers are a List of top-level declarations described by their transp
     kind: "plugin",
     name: "kit",
   });
-  const rows = [spaceAgents, local, remote, withPlugin];
+  const items = [spaceAgents, local, remote, withPlugin];
   const runtime = createAgentContextPresentation({
     id: "mcp_servers",
     properties,
-    state: { phase: "ready", rows },
+    state: { phase: "ready", items },
   }) as unknown as {
     instance: {
       descriptor: CollectionPresentationDescriptor<AgentContextItem>;
@@ -526,13 +526,13 @@ test("MCP servers are a List of top-level declarations described by their transp
   const layout = descriptor.layout;
   if (layout.kind !== "list") throw new Error("list");
   expect(layout.visibleProperties).toEqual(["location", "providers", "health"]);
-  // A server of a plugin is its component, not a row of the preset.
+  // A server of a plugin is its component, not an item of the preset.
   expect(
     applyCollectionQuery({
       descriptor,
       query: EMPTY_COLLECTION_QUERY,
-      rows,
-    }).rows.map((row) => row.id),
+      items,
+    }).items.map((item) => item.id),
   ).toEqual([remote.id, local.id]);
   expect(agentContextItemDescription(local)).toBe(
     "Local server · @modelcontextprotocol/server-github",
@@ -548,7 +548,7 @@ test("MCP servers are a List of top-level declarations described by their transp
     applyCollectionQuery({
       descriptor,
       query: { ...EMPTY_COLLECTION_QUERY, search: "server-github" },
-      rows,
-    }).rows.map((row) => row.id),
+      items,
+    }).items.map((item) => item.id),
   ).toEqual([local.id]);
 });

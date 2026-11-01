@@ -8,10 +8,10 @@ import { createRegisteredSpaceOwner } from "@/features/scope-surfaces";
 import { emit as emitNativeEvent } from "@/platform/native/events";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import { ActorsSurface } from "./actors-surface";
 
-const actor: ActorCatalogRow = {
+const actor: ActorCatalogItem = {
   aliases: [],
   availableYears: [2026],
   canonicalEmail: "ada@example.test",

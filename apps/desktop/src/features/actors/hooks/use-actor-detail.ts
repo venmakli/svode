@@ -1,12 +1,12 @@
 import { useCallback, useMemo } from "react";
 
 import {
-  useCollectionDetailRowBinding,
+  useCollectionDetailItemBinding,
   type CollectionDetailController,
-  type CollectionDetailRowBinding,
+  type CollectionDetailItemBinding,
 } from "@/features/collection/app-shell";
 
-import type { ActorCatalogSnapshot, ActorCatalogRow } from "../model/types";
+import type { ActorCatalogSnapshot, ActorCatalogItem } from "../model/types";
 import { createActorDetailRequest } from "../ui/actors-presentation";
 
 /** The detail of a person: it shows the person of each new catalog. */
@@ -19,21 +19,25 @@ export function useActorDetail({
   /** Null until the catalog is read. */
   snapshot: ActorCatalogSnapshot | null;
   spacePath: string;
-}): CollectionDetailRowBinding<ActorCatalogRow> {
+}): CollectionDetailItemBinding<ActorCatalogItem> {
   const generation = snapshot?.generation ?? 0;
   const createContent = useCallback(
-    (row: ActorCatalogRow) =>
-      createActorDetailRequest(row, spacePath, generation),
+    (item: ActorCatalogItem) =>
+      createActorDetailRequest(item, spacePath, generation),
     [generation, spacePath],
   );
-  const rows = snapshot?.rows ?? null;
-  const findRow = useMemo(
+  const items = snapshot?.items ?? null;
+  const findItem = useMemo(
     () =>
-      rows
-        ? (selection: { rowId: string }) =>
-            rows.find((row) => row.canonicalEmail === selection.rowId)
+      items
+        ? (selection: { itemId: string }) =>
+            items.find((item) => item.canonicalEmail === selection.itemId)
         : null,
-    [rows],
+    [items],
   );
-  return useCollectionDetailRowBinding({ controller, createContent, findRow });
+  return useCollectionDetailItemBinding({
+    controller,
+    createContent,
+    findItem,
+  });
 }

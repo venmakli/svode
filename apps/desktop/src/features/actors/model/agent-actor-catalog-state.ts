@@ -60,6 +60,6 @@ export function agentActorCatalogSignature(
     diagnostics: snapshot.diagnostics,
     fingerprints: snapshot.fingerprints,
     launchSpacePath: snapshot.launchSpacePath,
-    rows: snapshot.rows,
+    items: snapshot.items,
   });
 }

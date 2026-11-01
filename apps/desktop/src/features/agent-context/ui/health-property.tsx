@@ -18,45 +18,45 @@ import type {
 } from "../model/types";
 import { agentContextRejectionTexts } from "./skill-rejection-text";
 
-interface HealthRow {
+interface HealthItem {
   health: AgentContextSourceHealth;
   healthReasons: readonly string[];
-  /** Agents that find a skill and do not load it: a problem of the row. */
+  /** Agents that find a skill and do not load it: a problem of the item. */
   rejections: readonly AgentContextSkillRejection[];
 }
 
-/** The problems of a degraded row; a normal row has none. */
+/** The problems of a degraded item; a normal item has none. */
 export function agentContextHealthWarnings(
   agents: AgentAdapterDictionary,
-  row: HealthRow,
+  item: HealthItem,
 ): readonly string[] {
-  if (row.health !== "degraded") return [];
+  if (item.health !== "degraded") return [];
   const warnings = Array.from(
     new Set([
-      ...row.healthReasons,
-      ...agentContextRejectionTexts(agents, row.rejections),
+      ...item.healthReasons,
+      ...agentContextRejectionTexts(agents, item.rejections),
     ]),
   );
   return warnings.length > 0 ? warnings : [m.agent_context_health_degraded()];
 }
 
 /**
- * "Status": a select that is empty for a normal row and "Has problems" with
+ * "Status": a select that is empty for a normal item and "Has problems" with
  * its reasons for a degraded one.
  */
-export function agentContextHealthProperty<Row extends HealthRow>({
+export function agentContextHealthProperty<Item extends HealthItem>({
   agents,
 }: {
   agents: AgentAdapterDictionary;
-}): CollectionPropertyDefinition<Row> {
-  return defineComputedCollectionProperty<Row>({
+}): CollectionPropertyDefinition<Item> {
+  return defineComputedCollectionProperty<Item>({
     capabilities: {
       filter: { kind: "standard" },
       sort: { kind: "standard" },
     },
     display: {
-      render: (_value, row) => {
-        const warnings = agentContextHealthWarnings(agents, row);
+      render: (_value, item) => {
+        const warnings = agentContextHealthWarnings(agents, item);
         if (warnings.length === 0) return null;
         return (
           <Tooltip>
@@ -70,8 +70,8 @@ export function agentContextHealthProperty<Row extends HealthRow>({
           </Tooltip>
         );
       },
-      renderDetail: (_value, row) => {
-        const warnings = agentContextHealthWarnings(agents, row);
+      renderDetail: (_value, item) => {
+        const warnings = agentContextHealthWarnings(agents, item);
         if (warnings.length === 0) return null;
         return (
           <div
@@ -97,8 +97,8 @@ export function agentContextHealthProperty<Row extends HealthRow>({
       },
     },
     featureId: "agent-context",
-    getValue: (row) =>
-      agentContextHealthWarnings(agents, row).length > 0
+    getValue: (item) =>
+      agentContextHealthWarnings(agents, item).length > 0
         ? m.agent_context_health_has_problems()
         : null,
     key: "health",

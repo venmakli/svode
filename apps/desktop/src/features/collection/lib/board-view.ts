@@ -7,8 +7,8 @@ import type {
 } from "@/features/properties";
 import { actorDisplayName, resolveActorCandidate } from "@/features/properties";
 import type { BoardColumnGroup } from "../model/board-types";
-import { entryCollectionPath, isFolderEntry } from "./entry-tree";
-import { groupKeyForValue, groupValue, noValueKey } from "./board-entry";
+import { itemCollectionPath, isFolderItem } from "./item-tree";
+import { groupKeyForValue, groupValue, noValueKey } from "./board-item";
 import * as m from "@/paraglide/messages.js";
 
 const STATUS_GROUP_ORDER = { todo: 0, in_progress: 1, done: 2 };
@@ -25,11 +25,11 @@ export {
   groupValue,
   groupValueForKey,
   noValueKey,
-  reorderEntryAround,
-  updateEntryGroupValue,
-} from "./board-entry";
+  reorderItemAround,
+  updateItemGroupValue,
+} from "./board-item";
 
-export { isFolderEntry };
+export { isFolderItem };
 
 export function isGroupableColumn(column: Column | null | undefined) {
   return (
@@ -73,13 +73,13 @@ export function boardCustomFields(
 }
 
 export function boardColumns(
-  entries: Page[],
+  items: Page[],
   groupColumn: Column,
   actors: ActorCandidate[],
 ) {
   const counts = new Map<string, number>();
-  for (const entry of entries) {
-    const key = groupKeyForValue(groupValue(entry, groupColumn));
+  for (const item of items) {
+    const key = groupKeyForValue(groupValue(item, groupColumn));
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
@@ -137,21 +137,17 @@ export function boardColumns(
   ];
 }
 
-export function entriesForGroup(
-  entries: Page[],
-  column: Column,
-  groupKey: string,
-) {
-  return entries.filter(
-    (entry) => groupKeyForValue(groupValue(entry, column)) === groupKey,
+export function itemsForGroup(items: Page[], column: Column, groupKey: string) {
+  return items.filter(
+    (item) => groupKeyForValue(groupValue(item, column)) === groupKey,
   );
 }
 
-export function isNestedCollectionEntry(
-  entry: Page,
+export function isNestedCollectionItem(
+  item: Page,
   nestedCollectionPaths: Set<string>,
 ) {
-  return nestedCollectionPaths.has(entryCollectionPath(entry));
+  return nestedCollectionPaths.has(itemCollectionPath(item));
 }
 
 function sortedOptions(column: Column) {

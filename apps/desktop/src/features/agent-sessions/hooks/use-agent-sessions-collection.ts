@@ -39,7 +39,7 @@ import { useAgentSessionScopes } from "./use-agent-session-scopes";
 import { useOpenNewSession } from "./use-open-new-session";
 import * as m from "@/paraglide/messages.js";
 
-const NO_ROWS: readonly AgentSession[] = [];
+const NO_ITEMS: readonly AgentSession[] = [];
 
 export interface AgentSessionTerminalClose {
   session: AgentSession;
@@ -101,7 +101,7 @@ export function useAgentSessionsCollection({
 
   const scope =
     scopes.find((candidate) => candidate.path === owner.spacePath) ?? null;
-  const rows = useMemo(
+  const items = useMemo(
     () =>
       scope
         ? sessions.filter((session) => isAgentSessionInScope(session, scope))
@@ -115,7 +115,7 @@ export function useAgentSessionsCollection({
   // Each list read also re-reads the Routines of its launches.
   const routineOf = useRoutineLaunchLinks(
     owner.projectPath,
-    rows ?? NO_ROWS,
+    items ?? NO_ITEMS,
     result?.generatedAt,
   );
 
@@ -224,10 +224,10 @@ export function useAgentSessionsCollection({
   const presentation = createAgentSessionsPresentation({
     actions,
     agents,
-    onActivate: (row) =>
-      onOpenSession({ sessionId: row.id, launchId: row.launchId ?? null }),
+    onActivate: (item) =>
+      onOpenSession({ sessionId: item.id, launchId: item.launchId ?? null }),
     state: toAgentSessionsPresentationState(
-      { result, error, refreshing, rows },
+      { result, error, refreshing, items },
       agents,
       { onRetry: () => void refresh(), onOpenSettings: onOpenAppSettings },
     ),

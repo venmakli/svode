@@ -1,18 +1,18 @@
 import { toWebviewAssetUrl } from "@/platform/assets/assets-api";
 
-export function resolveEntryImageSource({
+export function resolveItemImageSource({
   value,
   spacePath,
-  entryPath,
+  itemPath,
 }: {
   value: string;
   spacePath: string;
-  entryPath: string;
+  itemPath: string;
 }) {
   if (/^(https?:|data:|blob:|asset:|file:)/i.test(value)) return value;
   if (value.startsWith("/")) return toWebviewAssetUrl(normalizePath(value));
   if (value.startsWith("./") || value.startsWith("../")) {
-    return toWebviewAssetUrl(joinEntryPath(spacePath, entryPath, value));
+    return toWebviewAssetUrl(joinItemPath(spacePath, itemPath, value));
   }
   return toWebviewAssetUrl(joinSpacePath(spacePath, value));
 }
@@ -39,10 +39,10 @@ function joinSpacePath(spacePath: string, value: string) {
   return normalizePath(`${base}/${rel}`);
 }
 
-function joinEntryPath(spacePath: string, entryPath: string, value: string) {
-  const normalizedEntry = entryPath.replace(/\\/g, "/");
-  const parent = normalizedEntry.includes("/")
-    ? normalizedEntry.slice(0, normalizedEntry.lastIndexOf("/"))
+function joinItemPath(spacePath: string, itemPath: string, value: string) {
+  const normalizedItem = itemPath.replace(/\\/g, "/");
+  const parent = normalizedItem.includes("/")
+    ? normalizedItem.slice(0, normalizedItem.lastIndexOf("/"))
     : "";
   return normalizePath(
     joinSpacePath(spacePath, `${parent}/${value.replace(/\\/g, "/")}`),

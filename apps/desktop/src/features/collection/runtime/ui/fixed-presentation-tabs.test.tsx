@@ -4,19 +4,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { defineCollectionPresentation } from "../model/runtime";
 import { CollectionFixedTabs } from "./fixed-presentation-tabs";
 
-interface Row {
+interface Item {
   id: string;
 }
 
 function presentation(id: string, label: string) {
-  return defineCollectionPresentation<Row>({
+  return defineCollectionPresentation<Item>({
     descriptor: {
       properties: [],
-      getRowId: (row) => row.id,
+      getItemId: (item) => item.id,
       id,
       label,
       layout: {
-        getTitle: (row) => row.id,
+        getTitle: (item) => item.id,
         kind: "list",
         visibleProperties: [],
       },
@@ -24,7 +24,7 @@ function presentation(id: string, label: string) {
     },
     state: {
       phase: "ready",
-      rows: [],
+      items: [],
     },
   });
 }

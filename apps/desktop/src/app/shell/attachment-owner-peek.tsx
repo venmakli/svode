@@ -10,16 +10,16 @@ export function AttachmentOwnerPeek({
   onContentPathChange,
   dismiss,
 }: AttachmentOwnerPeekContext) {
-  const { row } = target;
+  const { item } = target;
   return (
     <CompactScopePeek
-      path={row.contentPath ?? row.path}
+      path={item.contentPath ?? item.path}
       spaceId={spaceId}
       spacePath={target.owner.spacePath}
       projectPath={target.owner.projectPath}
-      sessionKey={target.ownerSession?.key ?? row.key}
-      fallbackTitle={row.displayName}
-      fallbackIcon={row.icon}
+      sessionKey={target.ownerSession?.key ?? item.key}
+      fallbackTitle={item.displayName}
+      fallbackIcon={item.icon}
       onExpand={onExpand}
       onClose={onClose}
       registerNavigationGuard={registerCloseGuard}

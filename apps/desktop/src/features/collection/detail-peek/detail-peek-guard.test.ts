@@ -7,7 +7,7 @@ import { collectionDetailController } from "./detail-peek";
 const selection = {
   instanceKey: "routines:space:root",
   presentationId: "all",
-  rowId: "routine:daily",
+  itemId: "routine:daily",
 };
 
 test("navigation passes the guard of the open detail and closes it", async () => {

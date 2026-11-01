@@ -8,22 +8,22 @@ import {
 import { CollectionPropertyPanel } from "./collection-property-panel";
 import { CollectionPropertyValue } from "./collection-property-value";
 
-interface Row {
+interface Item {
   name: string;
   problems: readonly string[];
   secret: boolean;
 }
 
-const row: Row = { name: "review", problems: [], secret: false };
+const item: Item = { name: "review", problems: [], secret: false };
 
-const name = defineComputedCollectionProperty<Row>({
+const name = defineComputedCollectionProperty<Item>({
   featureId: "test",
   getValue: (item) => item.name,
   key: "name",
   label: "Name",
   standard: { type: "text" },
 });
-const state = defineDomainSpecificCollectionProperty<Row>({
+const state = defineDomainSpecificCollectionProperty<Item>({
   featureId: "test",
   getValue: (item) => item.problems,
   key: "state",
@@ -39,7 +39,7 @@ const state = defineDomainSpecificCollectionProperty<Row>({
       </ul>
     ) : null,
 });
-const hidden = defineDomainSpecificCollectionProperty<Row>({
+const hidden = defineDomainSpecificCollectionProperty<Item>({
   featureId: "test",
   getApplicability: (item) =>
     item.secret ? { status: "applicable" } : { status: "hidden" },
@@ -51,7 +51,7 @@ const hidden = defineDomainSpecificCollectionProperty<Row>({
 
 test("the panel renders the property definitions in order with their type icons", () => {
   const html = renderToStaticMarkup(
-    <CollectionPropertyPanel properties={[name, state, hidden]} row={row} />,
+    <CollectionPropertyPanel properties={[name, state, hidden]} item={item} />,
   );
 
   expect(html.includes("data-collection-property-panel")).toBe(true);
@@ -67,20 +67,20 @@ test("the panel renders the property definitions in order with their type icons"
 });
 
 test("a custom property shows its detail render in the panel and its render in a cell", () => {
-  const problemRow = { ...row, problems: ["Name mismatch"] };
+  const problemItem = { ...item, problems: ["Name mismatch"] };
   const panel = renderToStaticMarkup(
-    <CollectionPropertyPanel properties={[state]} row={problemRow} />,
+    <CollectionPropertyPanel properties={[state]} item={problemItem} />,
   );
   expect(panel.includes("<li>Name mismatch</li>")).toBe(true);
   expect(panel.includes("cell problems")).toBe(false);
 
   const cell = renderToStaticMarkup(
-    <CollectionPropertyValue property={state as never} row={problemRow} />,
+    <CollectionPropertyValue property={state as never} item={problemItem} />,
   );
   expect(cell).toBe("<span>cell problems</span>");
   expect(
     renderToStaticMarkup(
-      <CollectionPropertyValue property={state as never} row={row} />,
+      <CollectionPropertyValue property={state as never} item={item} />,
     ),
   ).toBe("");
 });
@@ -133,7 +133,7 @@ test("facts follow the properties under their group label and empty facts are no
         },
       ]}
       properties={[name]}
-      row={row}
+      item={item}
     />,
   );
 
@@ -153,7 +153,7 @@ test("facts follow the properties under their group label and empty facts are no
 test("a panel without visible rows renders nothing", () => {
   expect(
     renderToStaticMarkup(
-      <CollectionPropertyPanel properties={[hidden]} row={row} />,
+      <CollectionPropertyPanel properties={[hidden]} item={item} />,
     ),
   ).toBe("");
 });

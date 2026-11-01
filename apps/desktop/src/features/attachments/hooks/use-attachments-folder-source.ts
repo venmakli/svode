@@ -6,17 +6,17 @@ import {
 } from "../model/source-session";
 import type {
   AttachmentOwnerInput,
-  AttachmentRow,
+  AttachmentItem,
   AttachmentsSnapshot,
 } from "../model/types";
 
 /**
  * A read-only folder another feature lists, such as a skill folder: `read`
- * returns the rows directly inside a branch, `null` naming the folder itself.
+ * returns the items directly inside a branch, `null` naming the folder itself.
  */
 export interface AttachmentsFolder {
   key: string;
-  read(branchPath: string | null): Promise<readonly AttachmentRow[]>;
+  read(branchPath: string | null): Promise<readonly AttachmentItem[]>;
   /** Changes when the folder may have changed; shown branches reload. */
   revision: string | number;
 }
@@ -51,7 +51,7 @@ export function useAttachmentsFolderSource({
     [],
   );
   const retainPeekTarget = useCallback(
-    (row: AttachmentRow) => sessionRef.current?.retainPeekTarget(row),
+    (item: AttachmentItem) => sessionRef.current?.retainPeekTarget(item),
     [],
   );
   const inventory = useCallback(
@@ -104,11 +104,11 @@ export function useAttachmentsFolderSource({
 
 function folderSnapshot(
   key: string,
-  rows: readonly AttachmentRow[],
+  items: readonly AttachmentItem[],
 ): AttachmentsSnapshot {
   return {
     diagnostics: [],
-    generation: rows.map((row) => `${row.key}:${row.modified}`).join("\0"),
+    generation: items.map((item) => `${item.key}:${item.modified}`).join("\0"),
     owner: {
       ownerPath: ".",
       projectPath: key,
@@ -116,6 +116,6 @@ function folderSnapshot(
       spaceId: null,
       spacePath: key,
     },
-    rows: [...rows],
+    items: [...items],
   };
 }

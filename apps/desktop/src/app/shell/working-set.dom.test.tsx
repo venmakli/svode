@@ -105,7 +105,7 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
   const keyId = (key: Key) =>
     JSON.stringify([key.kind, key.sessionId ?? key.launchId]);
   mock.module("@/features/navigation", () => ({
-    artifactNavigationKey: () => ({ kind: "page" }),
+    pathNavigationKey: () => ({ kind: "page" }),
     getNavigationState: () => ({
       projectPath: "/project",
       pinned,

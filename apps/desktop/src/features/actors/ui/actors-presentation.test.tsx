@@ -11,7 +11,7 @@ import {
   type CollectionStateController,
 } from "@/features/collection";
 
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 import {
   actorCatalogBlockingError,
   createActorDetailRequest,
@@ -19,7 +19,7 @@ import {
   createActorsPresentationDescriptor,
 } from "./actors-presentation";
 
-const actors: readonly ActorCatalogRow[] = Object.freeze([
+const actors: readonly ActorCatalogItem[] = Object.freeze([
   {
     aliases: [{ email: "ada@old.test", line: 2, name: "A. Lovelace" }],
     availableYears: [2026, 2025],
@@ -80,12 +80,12 @@ test("actors descriptor exposes the fixed query fields and exact action placemen
   ]);
   expect(descriptor.create?.intents[0]?.id).toBe("add-actor");
   expect(descriptor.create?.intents[0]?.getState().status).toBe("disabled");
-  expect(descriptor.rowActions?.map((action) => action.id)).toEqual([
+  expect(descriptor.itemActions?.map((action) => action.id)).toEqual([
     "merge-actor",
     "edit-actor",
   ]);
   expect(
-    descriptor.rowActions?.every(
+    descriptor.itemActions?.every(
       (action) => action.getState(actors[0]!).status === "disabled",
     ),
   ).toBe(true);
@@ -99,14 +99,14 @@ test("actors descriptor delegates enabled add, merge, and edit mutations", async
       getEditState: () => ({ status: "idle" }),
       getMergeState: () => ({ status: "idle" }),
       onAdd: () => calls.push("add"),
-      onEdit: (row) => calls.push(`edit:${row.canonicalEmail}`),
-      onMerge: (row) => calls.push(`merge:${row.canonicalEmail}`),
+      onEdit: (item) => calls.push(`edit:${item.canonicalEmail}`),
+      onMerge: (item) => calls.push(`merge:${item.canonicalEmail}`),
     },
   });
 
   expect(descriptor.create?.intents[0]?.getState()).toEqual({ status: "idle" });
   await descriptor.create?.intents[0]?.run();
-  for (const action of descriptor.rowActions ?? []) {
+  for (const action of descriptor.itemActions ?? []) {
     expect(action.getState(actors[0]!)).toEqual({ status: "idle" });
     await action.run(actors[0]!);
   }
@@ -122,19 +122,19 @@ test("actors query searches name and email with activity-first default ordering"
   const ordered = applyCollectionQuery({
     descriptor,
     query: EMPTY_COLLECTION_QUERY,
-    rows: [...actors].reverse(),
+    items: [...actors].reverse(),
   });
   const searched = applyCollectionQuery({
     descriptor,
     query: { filters: [], search: " ADA@EXAMPLE.TEST ", sort: [] },
-    rows: actors,
+    items: actors,
   });
 
-  expect(ordered.rows.map((row) => row.canonicalEmail)).toEqual([
+  expect(ordered.items.map((item) => item.canonicalEmail)).toEqual([
     "ada@example.test",
     "current@example.test",
   ]);
-  expect(searched.rows.map((row) => row.canonicalEmail)).toEqual([
+  expect(searched.items.map((item) => item.canonicalEmail)).toEqual([
     "ada@example.test",
   ]);
 });
@@ -142,7 +142,7 @@ test("actors query searches name and email with activity-first default ordering"
 test("singleton and query-empty actors reuse list keyboard, menu, and detail seams", () => {
   const descriptor = createActorsPresentationDescriptor();
   const presentation = createActorsPresentation({
-    state: { phase: "ready", rows: [actors[1]!] },
+    state: { phase: "ready", items: [actors[1]!] },
   });
   const instance: CollectionInstance = {
     defaultPresentationId: descriptor.id,

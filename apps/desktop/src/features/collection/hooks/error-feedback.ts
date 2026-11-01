@@ -10,7 +10,7 @@ export function handleError(error: unknown) {
   toast.error(m.toast_error());
 }
 
-export function handleEntryCreateError(error: unknown) {
+export function handleItemCreateError(error: unknown) {
   console.error(error);
   const conflict = pageNameConflictFromError(error);
   const conflictPath = conflict?.conflicts[0]?.path;
@@ -29,6 +29,6 @@ export function notifyTreeOrderUnreadable(error: unknown) {
   return true;
 }
 
-export function handleEntryMoveError(error: unknown) {
+export function handleItemMoveError(error: unknown) {
   if (!notifyTreeOrderUnreadable(error)) toast.error(m.board_move_error());
 }

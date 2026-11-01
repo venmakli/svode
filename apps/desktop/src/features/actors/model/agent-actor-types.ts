@@ -27,7 +27,7 @@ export interface AgentActorMode {
   value: string;
 }
 
-export interface AgentActorRow {
+export interface AgentActorItem {
   actorRef: `agent:${string}`;
   binding: AgentActorBinding;
   description: string | null;
@@ -57,7 +57,7 @@ export interface AgentActorCatalogSnapshot {
   diagnostics: readonly AgentActorCatalogDiagnostic[];
   fingerprints: Readonly<Record<string, string>>;
   launchSpacePath: string;
-  rows: readonly AgentActorRow[];
+  items: readonly AgentActorItem[];
 }
 
 export interface AgentActorDraft {

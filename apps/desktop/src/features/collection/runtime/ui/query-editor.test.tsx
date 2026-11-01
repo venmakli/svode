@@ -6,7 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { defineCollectionPresentation } from "../model/runtime";
 import { CollectionQueryEditor } from "./query-editor";
 
-interface Row {
+interface Item {
   id: string;
   name: string;
 }
@@ -18,14 +18,14 @@ function presentation({
   filterable?: boolean;
   searchable?: boolean;
 }) {
-  return defineCollectionPresentation<Row>({
+  return defineCollectionPresentation<Item>({
     descriptor: {
       properties: [
         {
           capabilities: filterable
             ? { filter: { kind: "standard" as const } }
             : undefined,
-          getValue: (row) => row.name,
+          getValue: (item) => item.name,
           key: "name",
           label: "Name",
           origin: "owner_defined",
@@ -33,17 +33,17 @@ function presentation({
           semantics: { kind: "standard", standard: { type: "text" } },
         },
       ],
-      getRowId: (row) => row.id,
+      getItemId: (item) => item.id,
       id: "people",
       label: "People",
       layout: {
-        getTitle: (row) => row.name,
+        getTitle: (item) => item.name,
         kind: "list",
         visibleProperties: [],
       },
-      query: searchable ? { getSearchText: (row) => row.name } : {},
+      query: searchable ? { getSearchText: (item) => item.name } : {},
     },
-    state: { phase: "ready", rows: [] },
+    state: { phase: "ready", items: [] },
   });
 }
 

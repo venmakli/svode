@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 
 import type {
   AgentActorDraft,
-  AgentActorRow,
+  AgentActorItem,
 } from "../model/agent-actor-types";
 
 if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
@@ -303,7 +303,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
       const saved: AgentActorDraft[] = [];
       await mount(
         <EditForm
-          row={row({
+          item={item({
             binding: {
               agent: "codex",
               kind: "agent",
@@ -338,9 +338,9 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   bindingTest(
     "a change of the mode alone is a local-only write, any other change writes the catalog",
     async () => {
-      const actor = row({});
+      const actor = item({});
       const mode = { agent: "codex", setting: "mode", value: "read-only" };
-      await mount(<MutationHarness row={actor} draft={{ mode }} />);
+      await mount(<MutationHarness item={actor} draft={{ mode }} />);
       await clickButton("Apply");
       expect(mutation).toEqual({ kind: "set_mode", actorId: actor.id, mode });
 
@@ -348,7 +348,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
         await act(async () => root.unmount());
       }
       await mount(
-        <MutationHarness row={actor} draft={{ mode, name: "Reviewer" }} />,
+        <MutationHarness item={actor} draft={{ mode, name: "Reviewer" }} />,
       );
       await clickButton("Apply");
       expect(mutation).toEqual({
@@ -373,7 +373,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     async () => {
       await mount(
         <EditForm
-          row={row({
+          item={item({
             binding: {
               agent: "claude-code",
               kind: "agent",
@@ -418,7 +418,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     async () => {
       await mount(
         <EditForm
-          row={row({
+          item={item({
             binding: {
               agent: "custom-mine",
               kind: "agent",
@@ -455,7 +455,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     async () => {
       await mount(
         <EditForm
-          row={row({
+          item={item({
             binding: { agent: "grok-build", kind: "agent", settings: [] },
             mode: null,
           })}
@@ -486,7 +486,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     "the edit form holds the agent's draft session in the Space of the catalog and releases it once the form closes",
     async () => {
       const root = await mount(
-        <EditForm row={row({})} onSave={() => undefined} />,
+        <EditForm item={item({})} onSave={() => undefined} />,
       );
       expect(lastCall("agent_runtime_hold_draft")).toEqual({
         agent: "codex",
@@ -503,7 +503,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   bindingTest(
     "the Detail shows the binding from the agent's last declarations without starting it or offering changes",
     async () => {
-      await mount(<ReadOnly row={row({})} />);
+      await mount(<ReadOnly item={item({})} />);
       expect(trigger().textContent?.includes("GPT-6 Sol")).toBe(true);
       await click(trigger());
       expect(tabNames()).toEqual(["Codex"]);
@@ -552,10 +552,10 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   }
 
   function EditForm({
-    row: actor,
+    item: actor,
     onSave,
   }: {
-    row: AgentActorRow;
+    item: AgentActorItem;
     onSave(draft: AgentActorDraft): void;
   }) {
     const [current, setCurrent] = useState(() =>
@@ -581,7 +581,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     );
   }
 
-  function ReadOnly({ row: actor }: { row: AgentActorRow }) {
+  function ReadOnly({ item: actor }: { item: AgentActorItem }) {
     return (
       <AgentActorDetail
         agents={bindable}
@@ -597,10 +597,10 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
   }
 
   function MutationHarness({
-    row: actor,
+    item: actor,
     draft: patch,
   }: {
-    row: AgentActorRow;
+    item: AgentActorItem;
     draft: Partial<AgentActorDraft>;
   }) {
     const mutations = useAgentActorMutations({
@@ -613,7 +613,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
         diagnostics: [],
         fingerprints: { [actor.ownerPath]: "fingerprint" },
         launchSpacePath: actor.ownerPath,
-        rows: [actor],
+        items: [actor],
       },
     });
     return (
@@ -631,7 +631,7 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     );
   }
 
-  function row(patch: Partial<AgentActorRow>): AgentActorRow {
+  function item(patch: Partial<AgentActorItem>): AgentActorItem {
     return {
       actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
       binding: {

@@ -59,8 +59,8 @@ export function CalendarEngine({
   onDayCellDidMount: (arg: DayCellMountArg) => void;
   onDatesSet: (arg: DatesSetArg) => void;
   onActivateItem: (page: Page) => void;
-  onOpenNestedPeek: (entry: Page) => void;
-  onOpenNestedCollection: (entry: Page) => void;
+  onOpenNestedPeek: (item: Page) => void;
+  onOpenNestedCollection: (item: Page) => void;
 }) {
   return (
     <FullCalendar

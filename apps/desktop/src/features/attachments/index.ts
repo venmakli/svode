@@ -15,7 +15,7 @@ export type {
   AttachmentOwnerRef,
   AttachmentOwnerPeekContext,
   AttachmentOwnerPeekRenderer,
-  AttachmentRow,
+  AttachmentItem,
   AttachmentsSnapshot,
   AttachmentsSourceState,
   ResolvedAttachmentOwner,

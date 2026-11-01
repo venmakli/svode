@@ -24,7 +24,7 @@ test("actor resolution maps stored aliases without duplicate candidates", () => 
   ).toEqual([canonical]);
 });
 
-test("actor resolution prefers an exact row over another row alias", () => {
+test("actor resolution prefers an exact item over another item's alias", () => {
   const exact: ActorCandidate = {
     email: "old@example.test",
     name: "Exact",

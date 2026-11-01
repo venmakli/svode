@@ -58,13 +58,13 @@ import {
   CollectionSourceEmpty,
 } from "./presentation-states";
 
-import { collectionVisibleRows } from "../model/hierarchy";
+import { collectionVisibleItems } from "../model/hierarchy";
 
 const cardGap = 14;
-const emptyRows: readonly unknown[] = [];
+const emptyItems: readonly unknown[] = [];
 
 interface CollectionSelectionState {
-  rowId: string;
+  itemId: string;
   scope: string;
 }
 
@@ -99,7 +99,7 @@ export function CollectionPresentationShell({
     null,
   );
   const [openProperty, setOpenProperty] = useState<string | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLElement>());
+  const itemRefs = useRef(new Map<string, HTMLElement>());
   const cardsRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
 
@@ -109,26 +109,30 @@ export function CollectionPresentationShell({
         ? applyCollectionQuery({
             descriptor,
             query,
-            rows: state.rows,
+            items: state.items,
           })
         : null,
     [descriptor, query, state],
   );
   const visible = useMemo(
     () =>
-      collectionVisibleRows(descriptor, queryResult?.rows ?? emptyRows, query),
+      collectionVisibleItems(
+        descriptor,
+        queryResult?.items ?? emptyItems,
+        query,
+      ),
     [descriptor, queryResult, query],
   );
-  const rows = useMemo(() => visible.map((item) => item.row), [visible]);
+  const items = useMemo(() => visible.map((item) => item.item), [visible]);
   const previousVisible = useRef(visible);
-  const focusedRow = useRef<string | null>(null);
+  const focusedItem = useRef<string | null>(null);
   const resolveFallback = useCallback(
-    (rowId: string) => {
+    (itemId: string) => {
       const item = previousVisible.current.find(
-        (item) => descriptor.getRowId(item.row) === rowId,
+        (item) => descriptor.getItemId(item.item) === itemId,
       );
       for (const ancestor of [...(item?.ancestors ?? [])].reverse()) {
-        const element = rowRefs.current.get(ancestor);
+        const element = itemRefs.current.get(ancestor);
         if (element) return element;
       }
       return surfaceRef.current;
@@ -136,48 +140,48 @@ export function CollectionPresentationShell({
     [descriptor],
   );
   useLayoutEffect(() => {
-    const id = focusedRow.current;
+    const id = focusedItem.current;
     if (
       id &&
-      !rows.some((row) => descriptor.getRowId(row) === id) &&
+      !items.some((item) => descriptor.getItemId(item) === id) &&
       document.activeElement === document.body
     ) {
       resolveFallback(id)?.focus();
     }
     previousVisible.current = visible;
-  }, [descriptor, resolveFallback, rows, visible]);
-  const rowIds = useMemo(
-    () => rows.map((row) => descriptor.getRowId(row)),
-    [descriptor, rows],
+  }, [descriptor, resolveFallback, items, visible]);
+  const itemIds = useMemo(
+    () => items.map((item) => descriptor.getItemId(item)),
+    [descriptor, items],
   );
-  const selectedRowId =
-    selection?.scope === presentationScope ? selection.rowId : null;
-  const effectiveSelectedRowId =
-    selectedRowId && rowIds.includes(selectedRowId) ? selectedRowId : null;
-  const selectRow = useCallback(
-    (rowId: string) =>
+  const selectedItemId =
+    selection?.scope === presentationScope ? selection.itemId : null;
+  const effectiveSelectedItemId =
+    selectedItemId && itemIds.includes(selectedItemId) ? selectedItemId : null;
+  const selectItem = useCallback(
+    (itemId: string) =>
       setSelection((current) =>
-        current?.scope === presentationScope && current.rowId === rowId
+        current?.scope === presentationScope && current.itemId === itemId
           ? current
-          : { rowId, scope: presentationScope },
+          : { itemId, scope: presentationScope },
       ),
     [presentationScope],
   );
 
-  const registerRow = useCallback(
-    (rowId: string, element: HTMLElement | null) => {
+  const registerItem = useCallback(
+    (itemId: string, element: HTMLElement | null) => {
       if (element) {
-        rowRefs.current.set(rowId, element);
+        itemRefs.current.set(itemId, element);
       } else {
-        rowRefs.current.delete(rowId);
+        itemRefs.current.delete(itemId);
       }
     },
     [],
   );
 
   const moveFocus = useCallback(
-    (rowId: string, key: string) => {
-      const currentIndex = rowIds.indexOf(rowId);
+    (itemId: string, key: string) => {
+      const currentIndex = itemIds.indexOf(itemId);
       const cardColumns =
         descriptor.layout.kind === "gallery"
           ? Math.max(
@@ -191,21 +195,21 @@ export function CollectionPresentationShell({
       const nextIndex = resolveCollectionFocusIndex({
         cardColumns,
         currentIndex,
-        itemCount: rowIds.length,
+        itemCount: itemIds.length,
         key,
         renderer: descriptor.layout.kind,
       });
       if (nextIndex === null) {
         return;
       }
-      const nextRowId = rowIds[nextIndex];
-      if (!nextRowId) {
+      const nextItemId = itemIds[nextIndex];
+      if (!nextItemId) {
         return;
       }
-      selectRow(nextRowId);
-      rowRefs.current.get(nextRowId)?.focus();
+      selectItem(nextItemId);
+      itemRefs.current.get(nextItemId)?.focus();
     },
-    [cardWidth, descriptor.layout.kind, rowIds, selectRow],
+    [cardWidth, descriptor.layout.kind, itemIds, selectItem],
   );
 
   if (state.phase === "initial") {
@@ -252,50 +256,50 @@ export function CollectionPresentationShell({
     );
   }
 
-  const items = rows.map((row, index) => {
-    const rowId = rowIds[index]!;
-    const selected = effectiveSelectedRowId === rowId;
+  const itemNodes = items.map((item, index) => {
+    const itemId = itemIds[index]!;
+    const selected = effectiveSelectedItemId === itemId;
     const branch =
       descriptor.layout.kind === "table"
-        ? descriptor.layout.hierarchy?.getBranch(row)
+        ? descriptor.layout.hierarchy?.getBranch(item)
         : null;
     return (
-      <Fragment key={rowId}>
+      <Fragment key={itemId}>
         <CollectionPresentationItem
           descriptor={descriptor}
           activationFocusFallback={() => {
             for (const ancestor of [
               ...(visible[index]?.ancestors ?? []),
             ].reverse()) {
-              const element = rowRefs.current.get(ancestor);
+              const element = itemRefs.current.get(ancestor);
               if (element) return element;
             }
             return surfaceRef.current;
           }}
           depth={visible[index]?.ancestors.length ?? 0}
           instanceKey={instanceKey}
-          row={row}
-          rowId={rowId}
+          item={item}
+          itemId={itemId}
           selected={selected}
           tabIndex={
-            selected || (!effectiveSelectedRowId && index === 0) ? 0 : -1
+            selected || (!effectiveSelectedItemId && index === 0) ? 0 : -1
           }
           onFocus={(id) => {
-            focusedRow.current = id;
-            selectRow(id);
+            focusedItem.current = id;
+            selectItem(id);
           }}
           onInteractionError={onInteractionError}
           onMoveFocus={moveFocus}
-          registerRow={registerRow}
+          registerItem={registerItem}
         />
         {branch?.expanded &&
         branch.status &&
         descriptor.layout.kind === "table" ? (
-          <TableRow data-collection-branch-status={rowId}>
+          <TableRow data-collection-branch-status={itemId}>
             <TableCell
               colSpan={
                 descriptor.layout.visibleProperties.length +
-                (descriptor.rowActions?.length ? 1 : 0)
+                (descriptor.itemActions?.length ? 1 : 0)
               }
             >
               <div
@@ -313,8 +317,8 @@ export function CollectionPresentationShell({
     );
   });
 
-  const sourceEmpty = queryResult?.sourceRows.length === 0;
-  const queryEmpty = !sourceEmpty && rows.length === 0;
+  const sourceEmpty = queryResult?.sourceItems.length === 0;
+  const queryEmpty = !sourceEmpty && items.length === 0;
   const tableLayout =
     descriptor.layout.kind === "table" ? descriptor.layout : null;
   return (
@@ -327,10 +331,10 @@ export function CollectionPresentationShell({
       )}
       data-collection-surface
       onFocusCapture={(event) => {
-        const row = (event.target as HTMLElement).closest<HTMLElement>(
+        const itemElement = (event.target as HTMLElement).closest<HTMLElement>(
           "[data-collection-row]",
         );
-        focusedRow.current = row?.dataset.collectionRow ?? null;
+        focusedItem.current = itemElement?.dataset.collectionRow ?? null;
       }}
       tabIndex={-1}
     >
@@ -352,7 +356,7 @@ export function CollectionPresentationShell({
           role="list"
           aria-label={descriptor.label}
         >
-          {items}
+          {itemNodes}
         </CollectionCardsShell>
       ) : tableLayout ? (
         <CollectionTableShell>
@@ -377,7 +381,7 @@ export function CollectionPresentationShell({
                         : defaultColumnWidth(column ?? undefined))
                     );
                   },
-                  descriptor.rowActions?.length ? 40 : 0,
+                  descriptor.itemActions?.length ? 40 : 0,
                 ) || "100%",
             }}
           >
@@ -435,12 +439,12 @@ export function CollectionPresentationShell({
                     </TableHead>
                   );
                 })}
-                {descriptor.rowActions?.length ? (
+                {descriptor.itemActions?.length ? (
                   <TableHead className="h-[34px] w-10 p-0" />
                 ) : null}
               </TableRow>
             </TableHeader>
-            <TableBody>{items}</TableBody>
+            <TableBody>{itemNodes}</TableBody>
           </Table>
         </CollectionTableShell>
       ) : (
@@ -449,7 +453,7 @@ export function CollectionPresentationShell({
           role="list"
           aria-label={descriptor.label}
         >
-          {items}
+          {itemNodes}
         </CollectionListShell>
       )}
     </div>

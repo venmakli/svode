@@ -21,7 +21,7 @@ export type {
   RoutineMutationResult,
   RoutineOwnerKind,
   RoutineResolvedOwnerKind,
-  RoutineRow,
+  RoutineItem,
   RoutineRunLaunch,
   RoutineRunRef,
   RoutineSessionTarget,

@@ -1,13 +1,13 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { humanAvatar } from "@/features/identity";
 
-import type { ActorCatalogRow } from "../model/types";
+import type { ActorCatalogItem } from "../model/types";
 
 export function ActorAvatar({
   actor,
   size = "default",
 }: {
-  actor: ActorCatalogRow;
+  actor: ActorCatalogItem;
   size?: "default" | "sm" | "lg";
 }) {
   const avatar = humanAvatar({

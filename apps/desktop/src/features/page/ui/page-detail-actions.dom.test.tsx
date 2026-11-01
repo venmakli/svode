@@ -120,7 +120,7 @@ if (process.env.SVODE_PAGE_DETAIL_ACTIONS_DOM !== "1") {
   const { ThemeProvider } = await import("@/components/ui/theme-provider");
   const { PageSurfaceSessionProvider } =
     await import("../hooks/page-surface-context");
-  const { getNavigationState, artifactNavigationKey } =
+  const { getNavigationState, pathNavigationKey } =
     await import("@/features/navigation");
   const { PageDetailProvider, usePageDetailContext } =
     await import("../hooks/page-detail-context");
@@ -258,7 +258,7 @@ if (process.env.SVODE_PAGE_DETAIL_ACTIONS_DOM !== "1") {
   }
 
   const pinItem = {
-    key: artifactNavigationKey("page", "roadmap.md", "docs", null),
+    key: pathNavigationKey("page", "roadmap.md", "docs", null),
     title: "Roadmap",
   };
   const blocked =

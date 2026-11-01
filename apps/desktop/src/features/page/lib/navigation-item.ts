@@ -1,7 +1,4 @@
-import {
-  artifactNavigationKey,
-  type NavigationItem,
-} from "@/features/navigation";
+import { pathNavigationKey, type NavigationItem } from "@/features/navigation";
 import type { Page } from "../model";
 
 /** How an open Page is pinned. `spaceId` is the root id for root content. */
@@ -11,7 +8,7 @@ export function pageNavigationItem(
   rootSpaceId: string | null,
 ): NavigationItem {
   return {
-    key: artifactNavigationKey("page", page.path, spaceId, rootSpaceId),
+    key: pathNavigationKey("page", page.path, spaceId, rootSpaceId),
     title: page.meta.title,
     ...(page.meta.icon ? { icon: page.meta.icon } : {}),
   };
