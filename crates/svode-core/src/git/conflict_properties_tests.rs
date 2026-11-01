@@ -212,7 +212,7 @@ fn save(content: &[u8], side: Side) -> String {
         Side::Ours => PlaceChoice::Ours,
         Side::Theirs => PlaceChoice::Theirs,
     };
-    let body = match conflict_file::places(conflict.body.as_bytes(), 7) {
+    let body = match conflict_file::places(conflict.body.as_bytes(), 7, false) {
         Places::Places { places } => String::from_utf8(
             apply_choices(
                 conflict.body.as_bytes(),

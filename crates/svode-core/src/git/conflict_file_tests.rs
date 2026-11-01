@@ -543,7 +543,7 @@ async fn a_changed_file_refuses_stale_choices() {
 
 #[test]
 fn places_read_marker_lines_like_the_page_editor() {
-    let places_of = |text: &str, size| places(text.as_bytes(), size);
+    let places_of = |text: &str, size| places(text.as_bytes(), size, false);
     // `diff3`: the base section belongs to no side; CRLF endings stay out
     // of the sides.
     assert_eq!(
@@ -557,6 +557,7 @@ fn places_read_marker_lines_like_the_page_editor() {
                 end_line: 7,
                 ours: "mine".into(),
                 theirs: "yours".into(),
+                frontmatter: false,
             }]
         }
     );
@@ -569,6 +570,7 @@ fn places_read_marker_lines_like_the_page_editor() {
                 end_line: 3,
                 ours: String::new(),
                 theirs: "yours".into(),
+                frontmatter: false,
             }]
         }
     );
@@ -622,6 +624,145 @@ fn places_read_marker_lines_like_the_page_editor() {
             &[]
         ),
         None
+    );
+}
+
+#[test]
+fn places_of_a_page_mark_those_in_its_frontmatter() {
+    let marks = |text: &str, page| match places(text.as_bytes(), 7, page) {
+        Places::Places { places } => places
+            .iter()
+            .map(|place| place.frontmatter)
+            .collect::<Vec<_>>(),
+        unclear => panic!("{unclear:?}"),
+    };
+    // A place in the properties and one in the text of the same Page.
+    let page = "---\n<<<<<<< ours\ntitle: A\n=======\ntitle: B\n>>>>>>> theirs\n---\nText\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n";
+    assert_eq!(marks(page, true), [true, false]);
+    // Outside a Page no place is in a frontmatter.
+    assert_eq!(marks(page, false), [false, false]);
+    // A place through the closing `---` and into the text.
+    assert_eq!(
+        marks(
+            "---\ntitle: A\n<<<<<<< ours\nstatus: x\n---\nmine\n=======\nstatus: y\n---\nyours\n>>>>>>> theirs\nrest\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n",
+            true
+        ),
+        [true, false]
+    );
+    // A place from the first line, with the opening `---` in its sides.
+    assert_eq!(
+        marks(
+            "<<<<<<< ours\n---\ntitle: A\n=======\n---\ntitle: B\n>>>>>>> theirs\nicon: x\n---\nText\n",
+            true
+        ),
+        [true]
+    );
+    // A Page without frontmatter has its places in the text.
+    assert_eq!(
+        marks("Text\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n", true),
+        [false]
+    );
+}
+
+/// A Page whose sides both changed a property and the last line of text:
+/// one place in its frontmatter, one in its text.
+const PAGE_BASE: &str = "---\ntitle: Base\nstatus: open\n---\n\nIntro\n\nmiddle 1\nmiddle 2\nmiddle 3\nmiddle 4\n\nEnd base\n";
+
+fn page(title: &str, end: &str) -> String {
+    PAGE_BASE
+        .replace("title: Base", &format!("title: {title}"))
+        .replace("End base", end)
+}
+
+#[tokio::test]
+async fn a_page_is_resolved_by_places_without_both_in_its_frontmatter() {
+    let path = "notes/page.md";
+    let merge = Merge::text(
+        path,
+        PAGE_BASE,
+        &page("\"Theirs: \\\"quoted\\\"\"", "End theirs"),
+        &page("'Ours'", "End ours"),
+    )
+    .await;
+    assert_eq!(
+        merge.kinds().await,
+        [conflict(path, ConflictKind::PageProperties)]
+    );
+    // The places of the whole file, the frontmatter one marked.
+    let file = merge.places(path).await;
+    assert_eq!(file.kind, ConflictKind::PageProperties);
+    assert_eq!(
+        file.content.as_deref(),
+        Some(text_of(&merge.local, path).as_str())
+    );
+    let Some(Places::Places { places }) = &file.places else {
+        panic!("{file:?}");
+    };
+    assert_eq!(
+        places
+            .iter()
+            .map(|place| (place.frontmatter, place.ours.as_str()))
+            .collect::<Vec<_>>(),
+        [(true, "title: 'Ours'"), (false, "End ours")]
+    );
+    // «Оба» in the frontmatter would repeat `title`: refused, nothing written.
+    let before = text_of(&merge.local, path);
+    let error = resolve(
+        &merge.cli,
+        &merge.local,
+        path,
+        &FileResolution::Places {
+            version: file.version.clone(),
+            choices: vec![PlaceChoice::Both, PlaceChoice::Ours],
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, GitError::Conflict(_)), "{error:?}");
+    assert_eq!(text_of(&merge.local, path), before);
+    assert!(merge.merging());
+    // The lines of the chosen sides word for word; «Оба» in the text.
+    let result = merge
+        .choose(path, &[PlaceChoice::Theirs, PlaceChoice::Both])
+        .await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    let resolved = text_of(&merge.local, path);
+    assert_eq!(
+        resolved,
+        page("\"Theirs: \\\"quoted\\\"\"", "End ours\nEnd theirs")
+    );
+    assert_eq!(check_result(path, resolved.as_bytes(), 7), None);
+    assert!(!merge.merging());
+}
+
+#[tokio::test]
+async fn a_page_result_with_an_unreadable_frontmatter_is_not_written() {
+    let path = "page.md";
+    let merge = Merge::text(
+        path,
+        "---\ntitle: Base\n---\nText\n",
+        "---\ntitle: Theirs\n---\nText\n",
+        "---\ntitle: [broken\n---\nText\n",
+    )
+    .await;
+    let before = text_of(&merge.local, path);
+    let result = merge.choose(path, &[PlaceChoice::Ours]).await;
+    assert!(
+        matches!(
+            &result,
+            SyncResult::Unresolved {
+                finding: ResolutionFinding::Unreadable { .. },
+                ..
+            }
+        ),
+        "{result:?}"
+    );
+    assert_eq!(text_of(&merge.local, path), before);
+    let result = merge.choose(path, &[PlaceChoice::Theirs]).await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(
+        text_of(&merge.local, path),
+        "---\ntitle: Theirs\n---\nText\n"
     );
 }
 

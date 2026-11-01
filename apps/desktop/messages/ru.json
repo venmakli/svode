@@ -2351,7 +2351,6 @@
   "changes_deleted": "Удалён",
   "changes_added": "Добавлен",
   "changes_conflict_label": "Конфликт",
-  "changes_conflict_page": "Конфликт разрешается в редакторе страницы.",
   "changes_conflict_open_editor": "Открыть в редакторе",
   "changes_conflict_in_git": "Разрешите этот файл в Git или отмените синхронизацию.",
   "changes_conflict_ours": "Моё",

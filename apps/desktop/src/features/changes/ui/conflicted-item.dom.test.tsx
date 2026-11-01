@@ -101,8 +101,20 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
     "",
   ].join("\n");
   const places = [
-    { startLine: 1, endLine: 6, ours: "one\n=======", theirs: "uno" },
-    { startLine: 8, endLine: 12, ours: "two", theirs: "dos" },
+    {
+      startLine: 1,
+      endLine: 6,
+      ours: "one\n=======",
+      theirs: "uno",
+      frontmatter: false,
+    },
+    {
+      startLine: 8,
+      endLine: 12,
+      ours: "two",
+      theirs: "dos",
+      frontmatter: false,
+    },
   ];
 
   function conflictFile(overrides: Record<string, unknown> = {}) {
@@ -492,8 +504,49 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
     }
   });
 
-  test("a conflicted Page leads to its editor", async () => {
-    const t = await setup(conflictFile(), () => ({ type: "resolved" }));
+  /** A Page with a place in its properties and one in its text. */
+  const page = conflictFile({
+    path: "notes/page.md",
+    kind: "page_properties",
+    content: [
+      "---",
+      "<<<<<<< ours",
+      "title: Mine",
+      "=======",
+      "title: Yours",
+      ">>>>>>> theirs",
+      "---",
+      "Text",
+      "<<<<<<< ours",
+      "one",
+      "=======",
+      "uno",
+      ">>>>>>> theirs",
+      "",
+    ].join("\n"),
+    places: {
+      type: "places",
+      places: [
+        {
+          startLine: 1,
+          endLine: 5,
+          ours: "title: Mine",
+          theirs: "title: Yours",
+          frontmatter: true,
+        },
+        {
+          startLine: 8,
+          endLine: 12,
+          ours: "one",
+          theirs: "uno",
+          frontmatter: false,
+        },
+      ],
+    },
+  });
+
+  test("a conflicted Page is chosen by places without «Принять оба» in its frontmatter and leads to its editor", async () => {
+    const t = await setup(page, () => ({ type: "resolved" }));
     const { registerConflictNavigation } =
       await import("@/features/git/app-shell");
     const pages: unknown[] = [];
@@ -502,15 +555,87 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
       openPage: (target) => pages.push(target),
     });
     try {
-      await t.render("page_properties", "notes/page.md");
+      for (const kind of ["page_text", "page_properties"]) {
+        await t.render(kind, "notes/page.md");
+        await t.settle();
+        const labels = (index: number) =>
+          Array.from(t.place(index)!.querySelectorAll("button")).map(
+            (button) => button.textContent,
+          );
+        expect(labels(0)).toEqual([
+          t.m.changes_conflict_accept_ours(),
+          t.m.changes_conflict_accept_theirs(),
+        ]);
+        expect(labels(1)).toEqual([
+          t.m.changes_conflict_accept_ours(),
+          t.m.changes_conflict_accept_theirs(),
+          t.m.changes_conflict_accept_both(),
+        ]);
+      }
+      // «Открыть в редакторе» stands in the line above the file.
+      const line = t.dom.document.querySelector(
+        "[data-conflict-remaining=ours]",
+      )!.parentElement!;
+      const open = line.querySelector("[data-conflict-open-editor]");
+      expect(open?.textContent).toBe(t.m.changes_conflict_open_editor());
+      await t.click(open);
+      expect(pages).toEqual([{ spacePath, path: "notes/page.md" }]);
+      await t.click(
+        t.button(t.m.changes_conflict_accept_theirs(), t.place(0)!),
+      );
+      await t.click(t.button(t.m.changes_conflict_accept_both(), t.place(1)!));
+      expect(t.resolutions).toEqual([
+        {
+          spacePath,
+          path: "notes/page.md",
+          resolution: {
+            type: "places",
+            version: "v1",
+            choices: ["theirs", "both"],
+          },
+        },
+      ]);
+    } finally {
+      unregister();
+      await t.dispose();
+    }
+  });
+
+  test("a Page without clear places warns, takes a side for the whole file and leads to its editor", async () => {
+    const t = await setup(
+      { ...page, places: { type: "unclear", reason: "ambiguous" } },
+      () => ({ type: "resolved" }),
+    );
+    const { registerConflictNavigation } =
+      await import("@/features/git/app-shell");
+    const unregister = registerConflictNavigation({
+      openFile: () => {},
+      openPage: () => {},
+    });
+    try {
+      await t.render("page_text", "notes/page.md");
       await t.settle();
       expect(
-        t.dom.document.body.textContent?.includes(t.m.changes_conflict_page()),
-      ).toBe(true);
+        t.dom.document.querySelector("[data-conflict-unclear=ambiguous]") ===
+          null,
+      ).toBe(false);
+      expect(t.dom.document.querySelector("[data-conflict-place]")).toBe(null);
+      const ours = t.dom.document.querySelector("[data-conflict-whole=ours]")!;
+      expect(
+        ours.parentElement?.querySelector("[data-conflict-open-editor]") ==
+          null,
+      ).toBe(false);
+      await t.click(ours);
       await t.click(
-        t.dom.document.querySelector("[data-conflict-open-editor]"),
+        t.button(
+          t.m.changes_conflict_keep_ours(),
+          t.dom.document.querySelector("[role=alertdialog]")!,
+        ),
       );
-      expect(pages).toEqual([{ spacePath, path: "notes/page.md" }]);
+      expect(t.resolutions.at(-1)?.resolution).toEqual({
+        type: "side",
+        side: "ours",
+      });
     } finally {
       unregister();
       await t.dispose();
@@ -952,12 +1077,12 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
       ).toBe(2);
       await t.click(action(t, "keep_both"));
       expect(t.resolutions.at(-1)?.resolution).toEqual({ type: "keepBoth" });
-      // A Page both sides added: its text in the editor, both versions here.
+      // A Page both sides added: its places and «Сохранить обе», as here.
       await t.render("add_add", "notes/page.md");
       await t.settle();
       expect(
-        t.dom.document.body.textContent?.includes(t.m.changes_conflict_page()),
-      ).toBe(true);
+        t.dom.document.querySelectorAll("[data-conflict-place]").length,
+      ).toBe(2);
       await t.click(action(t, "keep_both"));
       expect(t.resolutions.at(-1)).toEqual({
         spacePath,

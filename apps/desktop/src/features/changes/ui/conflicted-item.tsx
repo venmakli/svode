@@ -11,6 +11,7 @@ import {
   type GitConflictKind,
   type GitConflictUnclearReason,
 } from "@/features/git";
+import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 import {
   useConflictFile,
@@ -26,10 +27,10 @@ const ConflictPlaces = lazy(() =>
 );
 
 /**
- * The body of a conflicted file in "Changes" (1.F): a Page leads to its
- * editor, a text file is resolved by places or, when they are not told
+ * The body of a conflicted file in "Changes" (1.F): a text file, a Page
+ * included (DF-294), is resolved by places or, when they are not told
  * apart, by the version of a side for the whole file, and a file without
- * markers by the actions of its kind.
+ * markers by the actions of its kind. A Page also leads to its editor.
  */
 export function ConflictedItem({
   spacePath,
@@ -42,62 +43,9 @@ export function ConflictedItem({
   kind: GitConflictKind | undefined;
   onReveal: () => void;
 }) {
-  if (conflictInPageEditor(path, kind)) {
-    const open = conflictPageOpener({ spacePath, path });
-    return (
-      <>
-        <Message>
-          {m.changes_conflict_page()}
-          {open ? (
-            <Button
-              variant="link"
-              size="sm"
-              className="h-auto p-0"
-              onClick={open}
-              data-conflict-open-editor
-            >
-              {m.changes_conflict_open_editor()}
-            </Button>
-          ) : null}
-        </Message>
-        {kind === "add_add" ? (
-          <PageKeepBoth spacePath={spacePath} path={path} />
-        ) : null}
-      </>
-    );
-  }
-  if (
-    kind === "space_pointer" ||
-    kind === "page_text" ||
-    kind === "page_properties"
-  )
-    return <InGit onReveal={onReveal} />;
+  if (kind === "space_pointer") return <InGit onReveal={onReveal} />;
   return (
     <ConflictFileBody spacePath={spacePath} path={path} onReveal={onReveal} />
-  );
-}
-
-/** «Сохранить обе» of a Page both sides added; its text is chosen in the editor. */
-function PageKeepBoth({
-  spacePath,
-  path,
-}: {
-  spacePath: string;
-  path: string;
-}) {
-  const conflict = useConflictFile(spacePath, path);
-  return (
-    <div className="flex min-w-0 flex-col gap-3 px-4">
-      {conflict.problem ? <ProblemAlert problem={conflict.problem} /> : null}
-      <div>
-        <ConflictResolveButton
-          label={m.changes_conflict_keep_both()}
-          disabled={conflict.pending || !conflict.file}
-          onRun={() => void conflict.keepBoth()}
-          data-conflict-action="keep_both"
-        />
-      </div>
-    </div>
   );
 }
 
@@ -138,6 +86,22 @@ function ConflictFileBody({
   const problem = conflict.problem ? (
     <ProblemAlert problem={conflict.problem} />
   ) : null;
+  // A Page is also resolved in its editor (DF-294 R1).
+  const openPage = conflictInPageEditor(path, file.kind)
+    ? conflictPageOpener({ spacePath, path })
+    : undefined;
+  const openEditor = (className?: string) =>
+    openPage ? (
+      <Button
+        variant="link"
+        size="sm"
+        className={cn("h-auto px-0", className)}
+        onClick={openPage}
+        data-conflict-open-editor
+      >
+        {m.changes_conflict_open_editor()}
+      </Button>
+    ) : null;
   if (file.places.type === "unclear")
     return (
       <div className="flex min-w-0 flex-col gap-3 px-4">
@@ -164,6 +128,7 @@ function ConflictFileBody({
             onConfirm={() => void conflict.takeSide("theirs")}
           />
           {keepBoth}
+          {openEditor("ml-auto")}
         </div>
       </div>
     );
@@ -193,6 +158,7 @@ function ConflictFileBody({
           {m.changes_conflict_take_theirs()}
         </Button>
         {keepBoth}
+        {openEditor()}
       </div>
       {problem ? <div className="px-4">{problem}</div> : null}
       <Suspense fallback={<Skeleton className="m-4 h-32" />}>
@@ -203,6 +169,8 @@ function ConflictFileBody({
           places={places}
           choices={conflict.choices}
           disabled={conflict.pending}
+          // Both sides in the frontmatter would repeat its keys (DF-294 R2).
+          allowsBoth={(place) => !places[place]?.frontmatter}
           onChoose={conflict.choose}
           onReopen={conflict.reopen}
         />

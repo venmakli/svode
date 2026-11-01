@@ -12,6 +12,9 @@
 //! is ambiguous, and so are marker lines that do not fold into blocks: such a
 //! file has no places, only the version of a side for the whole file.
 //!
+//! In a Page the places in its frontmatter are marked: a choice of both
+//! sides there would repeat its keys, so «Оба» is refused for them.
+//!
 //! A file without markers — binary or LFS, modify/delete, add/add of a
 //! binary file, rename/rename and rename/delete — is resolved as a whole:
 //! the version of a side, the deletion of the path, or my version in place
@@ -53,6 +56,10 @@ pub struct ConflictPlace {
     pub end_line: usize,
     pub ours: String,
     pub theirs: String,
+    /// The place lies in the frontmatter of a Page, through its closing
+    /// `---` included: both sides there would repeat its keys, so «Оба» is
+    /// not offered and is refused.
+    pub frontmatter: bool,
 }
 
 /// Why the places of a file are not told apart.
@@ -300,8 +307,9 @@ pub(super) fn find_splits(lines: &[Line]) -> (Vec<Split>, bool) {
     }
 }
 
-/// The places of `content` with markers of `size`.
-pub fn places(content: &[u8], size: usize) -> Places {
+/// The places of `content` with markers of `size`; for a Page (`page`) the
+/// places in its frontmatter are marked ([`frontmatter_places`]).
+pub fn places(content: &[u8], size: usize, page: bool) -> Places {
     if content.len() > MAX_TEXT {
         return Places::Unclear {
             reason: UnclearReason::TooLarge,
@@ -327,10 +335,16 @@ pub fn places(content: &[u8], size: usize) -> Places {
             reason: UnclearReason::Broken,
         };
     }
+    let frontmatter = page
+        .then(|| frontmatter_places(content, &lines, &splits))
+        .flatten()
+        .map(|places| places.blocks)
+        .unwrap_or_default();
     Places::Places {
         places: splits
             .iter()
-            .map(|split| conflict_place(content, &lines, split))
+            .enumerate()
+            .map(|(at, split)| conflict_place(content, &lines, split, frontmatter.contains(&at)))
             .collect(),
     }
 }
@@ -458,8 +472,14 @@ pub(super) fn unowned_marker(
         .any(|index| !owned[index] && is_resolvable_marker(lines[index].kind))
 }
 
-/// The place of block `split`: its marker lines and the text of each side.
-pub(super) fn conflict_place(content: &[u8], lines: &[Line], split: &Split) -> ConflictPlace {
+/// The place of block `split`: its marker lines, the text of each side and
+/// whether it lies in the frontmatter of a Page.
+pub(super) fn conflict_place(
+    content: &[u8],
+    lines: &[Line],
+    split: &Split,
+    frontmatter: bool,
+) -> ConflictPlace {
     let side = |from: usize, to: usize| -> String {
         if to - from > 1 {
             String::from_utf8_lossy(&content[lines[from + 1].start..lines[to - 1].content_end])
@@ -473,6 +493,7 @@ pub(super) fn conflict_place(content: &[u8], lines: &[Line], split: &Split) -> C
         end_line: split.gt,
         ours: side(split.lt, split.bar.unwrap_or(split.eq)),
         theirs: side(split.eq, split.gt),
+        frontmatter,
     }
 }
 
@@ -502,7 +523,7 @@ pub(super) fn is_resolvable_marker(kind: Option<u8>) -> bool {
 /// `None` when the places are not told apart or the choices do not cover
 /// them all. Text outside the places stays as Git merged it.
 pub fn apply_choices(content: &[u8], size: usize, choices: &[PlaceChoice]) -> Option<Vec<u8>> {
-    let Places::Places { places } = places(content, size) else {
+    let Places::Places { places } = places(content, size, false) else {
         return None;
     };
     if places.len() != choices.len() {
@@ -693,7 +714,13 @@ pub async fn read(cli: &GitCli, requested: &Path, path: &str) -> Result<Conflict
     };
     let content = read_working(&repo.join(&relative))?;
     let version = content.as_deref().map(version_of).unwrap_or_default();
-    let text_kind = matches!(kind, ConflictKind::Text | ConflictKind::AddAdd) && !binary;
+    let text_kind = matches!(
+        kind,
+        ConflictKind::Text
+            | ConflictKind::AddAdd
+            | ConflictKind::PageText
+            | ConflictKind::PageProperties
+    ) && !binary;
     let (content, places) = match content {
         Some(content) if text_kind && !content.contains(&0) => {
             let size = markers::marker_sizes(cli, &repo, std::slice::from_ref(&relative))
@@ -701,7 +728,7 @@ pub async fn read(cli: &GitCli, requested: &Path, path: &str) -> Result<Conflict
                 .get(&relative)
                 .copied()
                 .unwrap_or(markers::DEFAULT_MARKER_SIZE);
-            let places = places(&content, size);
+            let places = places(&content, size, super::versions::is_page(&relative));
             let shown =
                 (content.len() <= MAX_TEXT).then(|| String::from_utf8_lossy(&content).into_owned());
             (shown, Some(places))
@@ -895,6 +922,17 @@ pub async fn resolve(
             };
             if version_of(&content) != *version {
                 return unresolved(ResolutionFinding::Changed);
+            }
+            if let Places::Places { places } =
+                places(&content, size, super::versions::is_page(&path))
+                && places
+                    .iter()
+                    .zip(choices)
+                    .any(|(place, choice)| place.frontmatter && *choice == PlaceChoice::Both)
+            {
+                return Err(GitError::Conflict(format!(
+                    "Both sides cannot be kept in a place in the frontmatter of {path}: they would repeat its keys"
+                )));
             }
             let Some(result) = apply_choices(&content, size, choices) else {
                 return unresolved(ResolutionFinding::Changed);

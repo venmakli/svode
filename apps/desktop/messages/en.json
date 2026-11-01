@@ -2351,7 +2351,6 @@
   "changes_deleted": "Deleted",
   "changes_added": "Added",
   "changes_conflict_label": "Conflict",
-  "changes_conflict_page": "Resolve this conflict in the page editor.",
   "changes_conflict_open_editor": "Open in editor",
   "changes_conflict_in_git": "Resolve this file in Git or cancel the sync.",
   "changes_conflict_ours": "Mine",

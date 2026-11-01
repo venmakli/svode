@@ -182,6 +182,8 @@ export interface GitConflictPlaceDto {
   endLine: number;
   ours: string;
   theirs: string;
+  /** The place lies in the frontmatter of a Page. */
+  frontmatter: boolean;
 }
 
 /** A conflicted path as "Changes" resolve it. */

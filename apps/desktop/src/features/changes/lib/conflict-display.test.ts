@@ -23,6 +23,7 @@ test("shows Svode's places as blocks and keeps marker-like text out of them", ()
         endLine: 6,
         ours: "mine\n=======",
         theirs: "theirs",
+        frontmatter: false,
       },
     ],
     [null],
@@ -50,7 +51,7 @@ test("an empty side has no lines and CRLF text stays as it is", () => {
   expect(
     conflictDisplay(
       content,
-      [{ startLine: 1, endLine: 4, ours: "", theirs: "b" }],
+      [{ startLine: 1, endLine: 4, ours: "", theirs: "b", frontmatter: false }],
       [null],
       labels,
     ).text,
@@ -74,8 +75,20 @@ const content = [
   "tail\n",
 ].join("");
 const places = [
-  { startLine: 1, endLine: 6, ours: "one", theirs: "uno\ndos" },
-  { startLine: 8, endLine: 12, ours: "two", theirs: "deux" },
+  {
+    startLine: 1,
+    endLine: 6,
+    ours: "one",
+    theirs: "uno\ndos",
+    frontmatter: false,
+  },
+  {
+    startLine: 8,
+    endLine: 12,
+    ours: "two",
+    theirs: "deux",
+    frontmatter: false,
+  },
 ];
 
 test("a chosen place shows the text of its side and is marked at its last line", () => {
@@ -117,7 +130,15 @@ test("a mark counts the lines of the incoming side of the open places before it"
 test("a chosen empty side shows one empty line for its mark and marker-like text is kept out", () => {
   const display = conflictDisplay(
     "<<<<<<< a\n=======\n<<<<<<< not a marker\n>>>>>>> b\nrest\n",
-    [{ startLine: 0, endLine: 3, ours: "", theirs: "<<<<<<< not a marker" }],
+    [
+      {
+        startLine: 0,
+        endLine: 3,
+        ours: "",
+        theirs: "<<<<<<< not a marker",
+        frontmatter: false,
+      },
+    ],
     ["ours"],
     labels,
   );
@@ -126,7 +147,15 @@ test("a chosen empty side shows one empty line for its mark and marker-like text
   expect(
     conflictDisplay(
       "<<<<<<< a\n=======\n<<<<<<< not a marker\n>>>>>>> b\n",
-      [{ startLine: 0, endLine: 3, ours: "", theirs: "<<<<<<< not a marker" }],
+      [
+        {
+          startLine: 0,
+          endLine: 3,
+          ours: "",
+          theirs: "<<<<<<< not a marker",
+          frontmatter: false,
+        },
+      ],
       ["theirs"],
       labels,
     ).text,

@@ -107,7 +107,7 @@ impl Frontmatter {
         Places::Places {
             places: blocks
                 .iter()
-                .map(|split| conflict_file::conflict_place(content, &self.lines, split))
+                .map(|split| conflict_file::conflict_place(content, &self.lines, split, true))
                 .collect(),
         }
     }

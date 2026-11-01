@@ -146,6 +146,12 @@ export interface GitConflictPlace {
   endLine: number;
   ours: string;
   theirs: string;
+  /**
+   * The place lies in the frontmatter of a Page, through its closing `---`
+   * included: both sides there would repeat its keys, so «Принять оба» is
+   * not offered.
+   */
+  frontmatter: boolean;
 }
 
 /** Why the places of a text file in conflict are not told apart. */
