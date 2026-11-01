@@ -307,15 +307,20 @@ mod tests {
         let expected = fs::canonicalize(repo.path()).unwrap();
         let cli = GitCli::detect().unwrap();
         let (tx, rx) = mpsc::channel();
+        let (ready_tx, ready) = mpsc::channel();
         let observation = ActorObservation::start(
             cli,
             repo.path().to_path_buf(),
-            |_| {},
+            move |_| {
+                let _ = ready_tx.send(());
+            },
             move |repository| {
                 let _ = tx.send(repository.to_path_buf());
             },
         )
         .unwrap();
+        // The first resolution of the sources: the observation is ready.
+        ready.recv_timeout(Duration::from_secs(8)).unwrap();
         let drain = || while rx.recv_timeout(Duration::from_millis(500)).is_ok() {};
         let wait = |operation: &str| {
             assert_eq!(
@@ -336,6 +341,70 @@ mod tests {
         wait("unstaging");
         git(repo.path(), &["checkout", "--quiet", "-b", "other"]);
         wait("checkout");
+        drop(observation);
+    }
+
+    /// DF-289 R1: an event of the Git directory itself, a lock file Git never
+    /// renamed into place and a watcher error make the observation compare
+    /// the state, which did not change, so no state change is signalled.
+    #[tokio::test]
+    async fn events_without_a_state_change_signal_nothing() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let repo = init_repo("Root", "root@example.test");
+        commit(repo.path(), "one.txt", "one", "one");
+        let cli = GitCli::detect().unwrap();
+        let (seen_tx, seen) = mpsc::channel();
+        let (changed_tx, changed) = mpsc::channel();
+        let observation = ActorObservation::start(
+            cli,
+            repo.path().to_path_buf(),
+            move |_| {
+                let _ = seen_tx.send(());
+            },
+            move |_| {
+                let _ = changed_tx.send(());
+            },
+        )
+        .unwrap();
+        let drain =
+            |rx: &mpsc::Receiver<_>| while rx.recv_timeout(Duration::from_millis(500)).is_ok() {};
+        // The first resolution of the sources: the observation is ready.
+        seen.recv_timeout(Duration::from_secs(8)).unwrap();
+        drain(&seen);
+        drain(&changed);
+        // The observation hears each event (it reaches the Human Actors
+        // inputs) and signals no state change for it.
+        let quiet = |event: &str| {
+            seen.recv_timeout(Duration::from_secs(8))
+                .unwrap_or_else(|_| panic!("the observation did not hear {event}"));
+            drain(&seen);
+            assert!(
+                changed.recv_timeout(Duration::from_secs(1)).is_err(),
+                "{event} signalled a state change"
+            );
+        };
+
+        let git_dir = repo.path().join(".git");
+        // The same permissions again: an attribute event of the directory.
+        let permissions = fs::metadata(&git_dir).unwrap().permissions();
+        fs::set_permissions(&git_dir, permissions).unwrap();
+        quiet("an event of the Git directory");
+
+        let lock = git_dir.join("refs/heads/lock-probe.lock");
+        fs::write(&lock, "pending").unwrap();
+        fs::write(git_dir.join("index.lock"), "pending").unwrap();
+        fs::remove_file(git_dir.join("index.lock")).unwrap();
+        fs::remove_file(&lock).unwrap();
+        quiet("a lock file without its target replaced");
+
+        observation.inject_watcher_error();
+        quiet("a watcher error");
+
+        // A real change still signals.
+        commit(repo.path(), "two.txt", "two", "two");
+        assert!(changed.recv_timeout(Duration::from_secs(8)).is_ok());
         drop(observation);
     }
 
@@ -364,15 +433,20 @@ mod tests {
         let expected = fs::canonicalize(repo.path()).unwrap();
         let cli = GitCli::detect().unwrap();
         let (tx, rx) = mpsc::channel();
+        let (ready_tx, ready) = mpsc::channel();
         let observation = ActorObservation::start(
             cli,
             repo.path().to_path_buf(),
-            |_| {},
+            move |_| {
+                let _ = ready_tx.send(());
+            },
             move |repository| {
                 let _ = tx.send(repository.to_path_buf());
             },
         )
         .unwrap();
+        // The first resolution of the sources: the observation is ready.
+        ready.recv_timeout(Duration::from_secs(8)).unwrap();
         let drain = || while rx.recv_timeout(Duration::from_millis(500)).is_ok() {};
         let wait = |operation: &str| {
             assert_eq!(

@@ -1,3 +1,4 @@
+import { coalesceByKey } from "@/shared/lib/coalesce-by-key";
 import {
   getGitPublicationStatus,
   getGitRemote,
@@ -56,7 +57,13 @@ export function recordSyncPublication(path: string, outcome: GitSyncOutcome) {
   }
 }
 
-export async function refreshGitPublication(path: string): Promise<void> {
+/**
+ * Read the publication state of the path into the store: one read per path
+ * at a time, and the calls during it share one read after it.
+ */
+export const refreshGitPublication = coalesceByKey(readGitPublication);
+
+async function readGitPublication(path: string): Promise<void> {
   const current = useGitStore.getState().beginPublicationRead(path);
   const before = selectPublication(useGitStore.getState(), path);
   const dto = await getGitPublicationStatus(path);

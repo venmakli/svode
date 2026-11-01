@@ -584,7 +584,7 @@ if (process.env.SVODE_PUBLICATION_TEST === "1") {
     useGitStore.getState().clear(repo);
   });
 
-  test("overlapping publication reads keep the newest result and unknown remains distinct", async () => {
+  test("overlapping publication reads run one at a time, keep the newest result and unknown remains distinct", async () => {
     const path = "/inspection-order";
     const responses: ((value: unknown) => void)[] = [];
     mockNativeIpc(
@@ -597,6 +597,16 @@ if (process.env.SVODE_PUBLICATION_TEST === "1") {
       const first = refreshGitPublication(path);
       const second = refreshGitPublication(path);
       await Promise.resolve();
+      // The second read starts after the first ends (DF-289 R2).
+      expect(responses.length).toBe(1);
+      responses[0]({
+        childHead: "old",
+        child: "published",
+        parent: { repository: "/root", pointer: "published" },
+      });
+      await first;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(responses.length).toBe(2);
       responses[1]({
         childHead: "new",
         child: "unknown",
@@ -604,12 +614,6 @@ if (process.env.SVODE_PUBLICATION_TEST === "1") {
         parent: { repository: "/root", pointer: "local" },
       });
       await second;
-      responses[0]({
-        childHead: "old",
-        child: "published",
-        parent: { repository: "/root", pointer: "published" },
-      });
-      await first;
       const value = useGitStore.getState().publications[path];
       expect(value.childHead).toBe("new");
       expect(value.child).toBe("unknown");

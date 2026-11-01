@@ -7,7 +7,7 @@ use std::time::Duration;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::error::AppError;
-use svode_core::git::actor_sources::ActorSources;
+use svode_core::git::actor_sources::{ActorSources, StateFingerprint};
 use svode_core::git::cli::GitCli;
 
 enum Message {
@@ -15,9 +15,26 @@ enum Message {
     Stop,
 }
 
+/// The Git state of the repository at the last state change signal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Observed {
+    State(StateFingerprint),
+    Unresolved,
+}
+
+/// What a reconciliation of the observed sources found.
+struct Reconciled {
+    /// Every source is watched.
+    healthy: bool,
+    /// The repository resolved; otherwise the previous sources stay.
+    resolved: bool,
+}
+
 /// A Space owns the subscription; every signal is addressed to its resolved
 /// repository. `invalidate` hears changes of the Human Actors inputs,
-/// `changed` changes of HEAD, refs or the index by any Git process.
+/// `changed` changes of HEAD, refs or the index by any Git process: an
+/// observed event, including a watcher error, only makes the observation
+/// compare the repository state with the one of the last signal.
 pub(crate) struct ActorObservation {
     sender: mpsc::Sender<Message>,
     thread: Option<JoinHandle<()>>,
@@ -109,7 +126,10 @@ impl ActorObservation {
                             invalidate(&next.repository);
                         }
                         *sources = Some(next);
-                        healthy
+                        Reconciled {
+                            healthy,
+                            resolved: true,
+                        }
                     }
                     Err(error) => {
                         let stale: Vec<_> = watched
@@ -123,13 +143,50 @@ impl ActorObservation {
                         }
                         if let Some(previous) = sources.as_ref() {
                             invalidate(&previous.repository);
-                            changed(&previous.repository);
                         }
                         tracing::warn!("actor source resolution failed: {error}");
-                        false
+                        Reconciled {
+                            healthy: false,
+                            resolved: false,
+                        }
                     }
                 };
-            let mut healthy = reconcile(&mut watcher, &mut sources);
+            // Signal when the state differs from the one of the last signal;
+            // false when it cannot be read now, to compare again later.
+            let compare = |sources: &Option<ActorSources>, resolved: bool, last: &mut Observed| {
+                let Some(source) = sources else {
+                    return true;
+                };
+                let current = if resolved {
+                    match source.state() {
+                        Ok(state) => Observed::State(state),
+                        Err(error) => {
+                            tracing::warn!("repository state read failed: {error}");
+                            return false;
+                        }
+                    }
+                } else {
+                    Observed::Unresolved
+                };
+                if current != *last {
+                    *last = current;
+                    changed(&source.repository);
+                }
+                true
+            };
+            let first = reconcile(&mut watcher, &mut sources);
+            let mut healthy = first.healthy;
+            let mut resolved = first.resolved;
+            // The state at the start is the baseline, not a change.
+            let mut last = match sources.as_ref().map(ActorSources::state) {
+                Some(Ok(state)) if resolved => Observed::State(state),
+                Some(Err(error)) if resolved => {
+                    tracing::warn!("repository state read failed: {error}");
+                    healthy = false;
+                    Observed::Unresolved
+                }
+                _ => Observed::Unresolved,
+            };
             loop {
                 let message = if healthy {
                     receiver
@@ -141,11 +198,13 @@ impl ActorObservation {
                 let message = match message {
                     Ok(message) => message,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
-                        healthy = reconcile(&mut watcher, &mut sources);
+                        let next = reconcile(&mut watcher, &mut sources);
+                        resolved = next.resolved;
+                        healthy = next.healthy;
                         if healthy && let Some(source) = &sources {
                             invalidate(&source.repository);
-                            changed(&source.repository);
                         }
+                        healthy &= compare(&sources, resolved, &mut last);
                         continue;
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -188,14 +247,16 @@ impl ActorObservation {
                         break;
                     }
                 }
-                if state && let Some(source) = &sources {
-                    changed(&source.repository);
-                }
                 if relevant {
                     if let Some(source) = &sources {
                         invalidate(&source.repository);
                     }
-                    healthy = reconcile(&mut watcher, &mut sources);
+                    let next = reconcile(&mut watcher, &mut sources);
+                    resolved = next.resolved;
+                    healthy = next.healthy;
+                }
+                if state || relevant {
+                    healthy &= compare(&sources, resolved, &mut last);
                 }
             }
         });
@@ -203,5 +264,15 @@ impl ActorObservation {
             sender,
             thread: Some(thread),
         })
+    }
+}
+
+#[cfg(test)]
+impl ActorObservation {
+    /// Deliver a watcher error the way the backend reports one.
+    pub(crate) fn inject_watcher_error(&self) {
+        let _ = self
+            .sender
+            .send(Message::Event(Err(notify::Error::generic("injected"))));
     }
 }

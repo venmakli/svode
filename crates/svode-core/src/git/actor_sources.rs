@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::GitError;
@@ -17,7 +19,7 @@ pub struct ActorSources {
     index: PathBuf,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum SourceValue {
     Missing,
     File(Vec<u8>),
@@ -26,6 +28,12 @@ pub enum SourceValue {
 }
 
 pub type SourceStamp = BTreeMap<PathBuf, SourceValue>;
+
+/// The Git state of a repository a state change signal compares: its HEAD,
+/// index and refs (loose, packed, reftable table lists) by content. A lock
+/// file is not part of it until Git renames it into place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StateFingerprint(u64);
 
 impl ActorSources {
     pub async fn resolve(cli: &GitCli, space: &Path) -> Result<Self, GitError> {
@@ -117,6 +125,29 @@ impl ActorSources {
                 .any(|file| file == path && file.ends_with("reftable/tables.list"))
     }
 
+    /// Read the current [`StateFingerprint`] of the repository.
+    pub fn state(&self) -> Result<StateFingerprint, GitError> {
+        let mut hasher = DefaultHasher::new();
+        self.repository.hash(&mut hasher);
+        let head = &self.files[0];
+        let packed_refs = &self.files[3];
+        let gitfile = self.repository.join(".git");
+        let tables = self
+            .files
+            .iter()
+            .filter(|file| file.ends_with("reftable/tables.list"));
+        for path in [head, &self.index, packed_refs, &gitfile]
+            .into_iter()
+            .chain(tables)
+        {
+            hash_source(path, &mut hasher)?;
+        }
+        let mut refs = BTreeMap::new();
+        read_refs(&self.refs, &mut refs)?;
+        refs.hash(&mut hasher);
+        Ok(StateFingerprint(hasher.finish()))
+    }
+
     pub fn watch_paths(&self) -> Vec<(PathBuf, bool)> {
         let mut paths = BTreeMap::new();
         for file in &self.files {
@@ -163,6 +194,37 @@ fn read_source(path: &Path, stamp: &mut SourceStamp) -> Result<(), GitError> {
         Err(error) => return Err(error.into()),
     };
     stamp.insert(path.to_path_buf(), value);
+    Ok(())
+}
+
+/// Hash a state input by its kind and content, streaming the file so a
+/// large index is not held in memory.
+fn hash_source(path: &Path, hasher: &mut impl Hasher) -> Result<(), GitError> {
+    path.hash(hasher);
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            hasher.write_u8(1);
+            fs::read_link(path)?.hash(hasher);
+        }
+        Ok(metadata) if metadata.is_dir() => hasher.write_u8(2),
+        Ok(_) => match fs::File::open(path) {
+            Ok(mut file) => {
+                hasher.write_u8(3);
+                let mut buffer = [0; 64 * 1024];
+                loop {
+                    let read = file.read(&mut buffer)?;
+                    if read == 0 {
+                        break;
+                    }
+                    hasher.write(&buffer[..read]);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => hasher.write_u8(0),
+            Err(error) => return Err(error.into()),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => hasher.write_u8(0),
+        Err(error) => return Err(error.into()),
+    }
     Ok(())
 }
 
@@ -247,6 +309,7 @@ mod tests {
         for path in [&repo, &linked] {
             let sources = ActorSources::resolve(&cli, path).await.unwrap();
             let before = sources.stamp().unwrap();
+            let state = sources.state().unwrap();
             git(
                 &cli,
                 &repo,
@@ -258,6 +321,7 @@ mod tests {
             )
             .await;
             assert_ne!(sources.stamp().unwrap(), before, "{path:?}");
+            assert_ne!(sources.state().unwrap(), state, "{path:?}");
             // The same table lists tell the Git indicators about the update.
             let lists = sources
                 .files
@@ -270,8 +334,83 @@ mod tests {
         // HEAD of the linked worktree lives in its own reftable stack.
         let sources = ActorSources::resolve(&cli, &linked).await.unwrap();
         let before = sources.stamp().unwrap();
+        let state = sources.state().unwrap();
         git(&cli, &linked, &["checkout", "-q", "repo"]).await;
         assert_ne!(sources.stamp().unwrap(), before);
+        assert_ne!(sources.state().unwrap(), state);
+    }
+
+    /// DF-289 R1: the state a change signal compares is HEAD, the index and
+    /// the refs by content; lock files, config and other Git files are not.
+    #[tokio::test]
+    async fn the_state_fingerprint_follows_head_index_and_refs_only() {
+        let Ok(cli) = GitCli::detect() else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let out = cli
+            .exec(&root, &["-c", "init.defaultRefFormat=files", "init", "-q"])
+            .await
+            .unwrap();
+        assert_eq!(out.exit_code, 0, "{}", out.stderr);
+        let commit = [
+            "-c",
+            "user.name=F",
+            "-c",
+            "user.email=f@example.test",
+            "commit",
+            "-q",
+        ];
+        git(
+            &cli,
+            &root,
+            &[&commit[..], &["--allow-empty", "-m", "one"]].concat(),
+        )
+        .await;
+        let sources = ActorSources::resolve(&cli, &root).await.unwrap();
+        let git_dir = root.join(".git");
+        let state = sources.state().unwrap();
+        assert_eq!(sources.state().unwrap(), state, "stable without a change");
+
+        // Git files that are not the state, and locks Git never renamed into place.
+        for lock in [
+            "index.lock",
+            "HEAD.lock",
+            "packed-refs.lock",
+            "refs/heads/main.lock",
+        ] {
+            std::fs::write(git_dir.join(lock), "pending").unwrap();
+        }
+        std::fs::write(git_dir.join("FETCH_HEAD"), "fetched").unwrap();
+        git(&cli, &root, &["config", "svode.probe", "true"]).await;
+        assert_eq!(sources.state().unwrap(), state);
+        for lock in [
+            "index.lock",
+            "HEAD.lock",
+            "packed-refs.lock",
+            "refs/heads/main.lock",
+        ] {
+            std::fs::remove_file(git_dir.join(lock)).unwrap();
+        }
+        assert_eq!(sources.state().unwrap(), state);
+
+        // Each of the index, HEAD and the refs changes it.
+        let mut previous = state;
+        std::fs::write(root.join("page.md"), "page").unwrap();
+        let steps: [&[&str]; 5] = [
+            &["add", "page.md"],
+            &[&commit[..], &["-m", "two"]].concat(),
+            &["update-ref", "refs/heads/other", "HEAD"],
+            &["pack-refs", "--all", "--prune"],
+            &["symbolic-ref", "HEAD", "refs/heads/other"],
+        ];
+        for step in steps {
+            git(&cli, &root, step).await;
+            let current = sources.state().unwrap();
+            assert_ne!(current, previous, "{step:?}");
+            previous = current;
+        }
     }
 
     #[tokio::test]

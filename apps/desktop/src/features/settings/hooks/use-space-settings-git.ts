@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import { coalesceByKey } from "@/shared/lib/coalesce-by-key";
 import type { GitUserPolicy } from "@/features/git";
 import type { SpaceGitType, SpaceInfo } from "@/features/space";
 import {
@@ -149,10 +150,12 @@ export function useSpaceSettingsGit({
     if (!open || !spacePath) return;
     let unlisten: (() => void) | null = null;
     let cancelled = false;
+    // Commits during a reload share one reload after it.
+    const reload = coalesceByKey(loadGitInfo);
     listenGitCommitted((event) => {
       if (cancelled) return;
       if (event.payload.spacePath !== spacePath) return;
-      void loadGitInfo();
+      void reload(spacePath);
     }).then((nextUnlisten) => {
       if (cancelled) nextUnlisten();
       else unlisten = nextUnlisten;

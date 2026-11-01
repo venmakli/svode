@@ -1,3 +1,4 @@
+import { coalesceByKey } from "@/shared/lib/coalesce-by-key";
 import {
   fetchGitStatus as fetchPlatformGitStatus,
   getGitStatus as getPlatformGitStatus,
@@ -13,15 +14,19 @@ export async function getGitStatusSnapshot(
   return toGitStatus(await getPlatformGitStatus(spacePath));
 }
 
-export function refreshGitStatus(spacePath: string): Promise<void> {
-  return useGitStore
+/**
+ * Read the status of the Space into the store: one read per Space at a time,
+ * and the calls during it share one read after it.
+ */
+export const refreshGitStatus = coalesceByKey((spacePath: string) =>
+  useGitStore
     .getState()
     .refreshStatus(
       spacePath,
       () => getGitStatusSnapshot(spacePath),
       gitStatusFailureFromError,
-    );
-}
+    ),
+);
 
 export async function fetchGitStatusSnapshot(
   spacePath: string,
@@ -29,11 +34,16 @@ export async function fetchGitStatusSnapshot(
   return toGitStatus(await fetchPlatformGitStatus(spacePath));
 }
 
-export function refreshGitRemoteStatus(spacePath: string): Promise<GitStatus> {
-  return useGitStore.getState().refreshRemoteStatus(
-    spacePath,
-    () => fetchGitStatusSnapshot(spacePath),
-    gitSyncErrorMessage,
-    async () => toGitStatus(await getPlatformGitStatus(spacePath, true)),
-  );
-}
+/**
+ * Read the remote counters of the Space into the store: one read per Space
+ * at a time, and the calls during it share one read after it.
+ */
+export const refreshGitRemoteStatus = coalesceByKey(
+  (spacePath: string): Promise<GitStatus> =>
+    useGitStore.getState().refreshRemoteStatus(
+      spacePath,
+      () => fetchGitStatusSnapshot(spacePath),
+      gitSyncErrorMessage,
+      async () => toGitStatus(await getPlatformGitStatus(spacePath, true)),
+    ),
+);

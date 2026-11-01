@@ -1,3 +1,4 @@
+import { coalesceByKey } from "@/shared/lib/coalesce-by-key";
 import {
   abortGitMerge,
   abortGitOperation,
@@ -42,9 +43,12 @@ export function recordPublicationStop(path: string, stop: GitSyncStop | null) {
  * Read the unfinished Git operation of the repository without syncing. A
  * publication stop and the stops of a background preflight are not states
  * of the repository: they last until the next sync; a commit stop lasts
- * until the next automatic version.
+ * until the next automatic version. One read per path at a time; the calls
+ * during it share one read after it.
  */
-export async function refreshGitSyncStop(path: string): Promise<void> {
+export const refreshGitSyncStop = coalesceByKey(readGitSyncStop);
+
+async function readGitSyncStop(path: string): Promise<void> {
   const dto = await getGitSyncPreflight(path);
   const preflight = dto
     ? (syncStopFromResult(toSyncResult(dto)) ?? null)
