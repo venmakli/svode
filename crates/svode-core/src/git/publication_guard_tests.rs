@@ -92,6 +92,75 @@ async fn marker_size_of_the_path_decides_which_lines_are_markers() {
 }
 
 #[tokio::test]
+async fn setext_heading_underlined_by_a_side_separator_publishes() {
+    let f = Fixture::new();
+    write_commit(
+        &f.root,
+        &[(".gitattributes", "wide.md conflict-marker-size=10\n")],
+        "marker size",
+    );
+    write_commit(
+        &f.root,
+        &[
+            ("doc.md", "# Doc\n\nTitle\n=======\n\nBody\n"),
+            ("spaced.md", "Title\n======= \t\nBody\n"),
+            ("wide.md", "Heading\n==========\nBody\n"),
+        ],
+        "setext headings",
+    );
+    let log = traced(&f, "");
+    assert_eq!(f.push().await.unwrap().exit_code, 0);
+    assert_eq!(remote_main(&f), git(&f.root, &["rev-parse", "HEAD"]));
+    // Telling the line apart reads the published version locally.
+    assert_eq!(count(&log, "cat-file blob"), 3);
+    assert_eq!(count(&log, "fetch"), 0);
+}
+
+#[tokio::test]
+async fn lone_opening_closing_or_base_marker_line_is_not_published() {
+    let lines = [
+        "<<<<<<< ours\n",
+        "<<<<<<<\n",
+        ">>>>>>> theirs\n",
+        "|||||||\n",
+        "||||||| base\n",
+    ];
+    for line in lines {
+        let f = Fixture::new();
+        let published = remote_main(&f);
+        let marked = write_commit(
+            &f.root,
+            &[("page.md", &format!("Title\n=======\n{line}text\n"))],
+            "marker line",
+        );
+        assert_eq!(
+            guarded(f.push().await),
+            (
+                "page.md".to_owned(),
+                marked,
+                ContentFinding::ConflictMarkers
+            ),
+            "{line:?}"
+        );
+        assert_eq!(remote_main(&f), published);
+    }
+}
+
+#[tokio::test]
+async fn separator_of_one_file_does_not_hide_the_marker_of_the_next() {
+    let f = Fixture::new();
+    let published = remote_main(&f);
+    write_commit(&f.root, &[("a.md", "Title\n=======\n")], "heading");
+    let marked = write_commit(&f.root, &[("b.md", ">>>>>>> theirs\n")], "marker");
+    write_commit(&f.root, &[("c.md", "Other\n=======\n")], "another heading");
+    assert_eq!(
+        guarded(f.push().await),
+        ("b.md".to_owned(), marked, ContentFinding::ConflictMarkers)
+    );
+    assert_eq!(remote_main(&f), published);
+}
+
+#[tokio::test]
 async fn whitespace_findings_of_the_git_check_do_not_stop_publication() {
     let f = Fixture::new();
     write_commit(

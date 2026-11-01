@@ -76,7 +76,8 @@ pub(super) async fn check(
 }
 
 /// The first finding of the change from `base` to `tip`: marker lines that
-/// Git's own check reports, then a changed service file that does not parse.
+/// Git's own check reports, other than side separators, then a changed
+/// service file that does not parse.
 async fn inspect(
     cli: &GitCli,
     repo: &Path,
@@ -110,11 +111,24 @@ async fn inspect(
     if !matches!(checked.exit_code, 0..=2) {
         return Err(failed("git diff --check", &checked.stderr));
     }
-    if let Some(path) = checked.stdout.lines().find_map(|line| {
+    let reported = checked.stdout.lines().filter_map(|line| {
         let (path, number) = line.strip_suffix(MARKER)?.rsplit_once(':')?;
-        (number.bytes().all(|byte| byte.is_ascii_digit()) && changed.contains(path)).then_some(path)
-    }) {
-        return Ok(Some((path.to_owned(), ContentFinding::ConflictMarkers)));
+        let digits = number.bytes().all(|byte| byte.is_ascii_digit());
+        let number = number.parse::<usize>().ok().filter(|_| digits)?;
+        changed.contains(path).then_some((path, number))
+    });
+    // Git reports a lone side separator line as well, which is a Markdown
+    // setext heading; a conflict left in a file always keeps its opening and
+    // closing lines, which Git reports on their own.
+    let mut published: Option<(&str, Option<String>)> = None;
+    for (path, number) in reported {
+        if published.as_ref().is_none_or(|(cached, _)| *cached != path) {
+            published = Some((path, published_text(cli, repo, tip, path).await?));
+        }
+        let text = published.as_ref().and_then(|(_, text)| text.as_deref());
+        if !text.is_some_and(|text| separator_line(text, number)) {
+            return Ok(Some((path.to_owned(), ContentFinding::ConflictMarkers)));
+        }
     }
     for path in changed {
         let Some(parse) = service_parser(path) else {
@@ -133,6 +147,28 @@ async fn inspect(
         }
     }
     Ok(None)
+}
+
+/// The version of `path` that `tip` publishes, or `None` when Git cannot
+/// read it locally; a finding then stands.
+async fn published_text(
+    cli: &GitCli,
+    repo: &Path,
+    tip: &str,
+    path: &str,
+) -> Result<Option<String>, GitError> {
+    let object = format!("{tip}:{path}");
+    let out = read(cli, repo, &["cat-file", "blob", &object]).await?;
+    Ok((out.exit_code == 0).then_some(out.stdout))
+}
+
+/// Whether line `number`, counted from one as Git reports it, is a side
+/// separator: its first character is `=`.
+fn separator_line(text: &str, number: usize) -> bool {
+    number
+        .checked_sub(1)
+        .and_then(|index| text.split('\n').nth(index))
+        .is_some_and(|line| line.starts_with('='))
 }
 
 /// A service file larger than this is not one Svode wrote.
