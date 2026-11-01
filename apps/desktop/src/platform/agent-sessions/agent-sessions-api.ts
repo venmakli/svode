@@ -17,7 +17,6 @@ export interface AgentSessionRuntime {
   ptyId?: string;
   pid?: number;
   live: boolean;
-  provisional?: boolean;
   lastOutputAt?: string;
   lastInputAt?: string;
   /** The key a Svode ACP connection drives the session under. */
@@ -44,7 +43,6 @@ export interface AgentSessionCapabilities {
 export interface AgentSession {
   id: string;
   launchId?: string;
-  routineRunId?: string;
   source: AgentSessionSource;
   sourceSessionId: string;
   title: string;

@@ -736,69 +736,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_moved_routine_terminal_leaves_its_launch_to_the_session_of_the_launch() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let home = temp.path().join("home");
-        let project = temp.path().join("project");
-        let state = AgentSessionsState::with_home(home.clone());
-        project_with_claude_sessions(&home, &project, &state, &["s1", "s2"]);
-        let terminals = TerminalManager::new(WriterRegistry::default());
-        terminals.insert_shell_for_test("pty-routine", &project);
-        terminals.insert_agent_surface_for_test(AgentTerminalSurface {
-            pty_id: "pty-routine".to_string(),
-            agent_session_id: "claude-code:s1".to_string(),
-            launch_id: Some("launch-1".to_string()),
-            routine_run_id: Some("run-1".to_string()),
-            mcp_project_path: None,
-            mcp_routine_caller_token: None,
-            title: Some("Routine".to_string()),
-            source: AgentAdapterKind::ClaudeCode.id(),
-            source_session_id: "s1".to_string(),
-            live: true,
-            initial_agent_argv: Vec::new(),
-            initial_agent_cwd: None,
-            shell_cwd: project.to_string_lossy().into_owned(),
-            created_at: "2026-10-18T10:00:00Z".to_string(),
-            last_output_at: None,
-            last_input_at: None,
-            finished_at: None,
-            exit_code: None,
-            failure_reason: None,
-            status_evidence: None,
-            exit_marker_buffer: String::new(),
-            rebound: false,
-            approximate_binding: false,
-        });
-        let shell = terminals.live_pty_processes().unwrap()[0].processes[0].pid;
-        let records = claude_code::config_dir(&home).join("sessions");
-
-        let listed = list(&state, &project, &terminals);
-        let launch = by_id(&listed, "claude-code:s1");
-        assert_eq!(pty_of(launch), Some("pty-routine"));
-        assert_eq!(launch.launch_id.as_deref(), Some("launch-1"));
-
-        write_record(&records, shell, record(shell, "s2", Utc::now()));
-        let listed = list(&state, &project, &terminals);
-        let launch = by_id(&listed, "claude-code:s1");
-        let current = by_id(&listed, "claude-code:s2");
-        assert_eq!(
-            pty_of(launch),
-            None,
-            "the launch no longer names the terminal"
-        );
-        assert_eq!(launch.launch_id.as_deref(), Some("launch-1"));
-        assert_eq!(pty_of(current), Some("pty-routine"));
-        assert_eq!(current.launch_id, None);
-        assert_eq!(current.routine_run_id, None);
-        assert_eq!(
-            listed.sessions.len(),
-            2,
-            "no provisional record of the launch"
-        );
-        terminals.kill("pty-routine").unwrap();
-    }
-
     const T1: &str = "00000000-0000-4000-8000-000000000001";
     const T2: &str = "00000000-0000-4000-8000-000000000002";
     const T3: &str = "00000000-0000-4000-8000-000000000003";
@@ -860,10 +797,7 @@ mod tests {
         AgentTerminalSurface {
             pty_id: pty_id.to_string(),
             agent_session_id: format!("codex:{thread_id}"),
-            launch_id: None,
-            routine_run_id: None,
             mcp_project_path: None,
-            mcp_routine_caller_token: None,
             title: None,
             source: AgentAdapterKind::Codex.id(),
             source_session_id: thread_id.to_string(),
@@ -878,8 +812,6 @@ mod tests {
             exit_code: None,
             failure_reason: None,
             status_evidence: None,
-            exit_marker_buffer: String::new(),
-            rebound: false,
             approximate_binding: false,
         }
     }

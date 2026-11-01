@@ -289,7 +289,7 @@ function withoutMovedReentryTerminals(
 
 /**
  * The single frontend owner of the active project's Agent Sessions catalog:
- * the listed read-model, hot status, pending and provisional records, re-entry
+ * the listed read-model, hot status, pending records, re-entry
  * results and managed terminals opened for sessions. Consumers read it; only
  * the refresh lifecycle decides when the full list is polled.
  */

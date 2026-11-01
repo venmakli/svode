@@ -43,7 +43,6 @@ pub struct RoutineRunRow {
     pub routine_id: String,
     pub owner_path: String,
     pub launch_id: String,
-    pub pty_id: Option<String>,
     pub source: String,
     pub source_session_id: Option<String>,
     pub agent_session_id: String,
@@ -604,7 +603,6 @@ pub struct RoutineRunRecord {
     pub routine_id: String,
     pub owner_path: String,
     pub launch_id: String,
-    pub pty_id: Option<String>,
     pub source: String,
     pub source_session_id: Option<String>,
     pub agent_session_id: String,
@@ -618,32 +616,26 @@ pub struct RoutineRunRecord {
     pub launch_refusal: Option<RoutineLaunchRefusal>,
 }
 
-/// The host's evidence of live launches: managed PTYs by id, and runs whose
-/// ACP session holds its writer in the writer registry.
+/// The host's evidence of live launches: runs whose ACP session holds its
+/// writer in the writer registry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoutineLiveEvidence {
-    live_agent_pty_ids: HashSet<String>,
     live_acp_run_ids: HashSet<String>,
 }
 
 impl RoutineLiveEvidence {
-    pub fn new(live_agent_pty_ids: HashSet<String>, live_acp_run_ids: HashSet<String>) -> Self {
-        Self {
-            live_agent_pty_ids,
-            live_acp_run_ids,
-        }
+    pub fn new(live_acp_run_ids: HashSet<String>) -> Self {
+        Self { live_acp_run_ids }
     }
 }
 
 impl RoutineRunRecord {
-    /// A live managed PTY or a live ACP session of this run's launch.
+    /// A live ACP session of this run's launch. A terminal run of an
+    /// earlier version has no live writer: its terminal ended with that app.
     pub fn has_live_writer(&self, live: &RoutineLiveEvidence) -> bool {
         match self.launch {
             RoutineRunLaunch::Acp => live.live_acp_run_ids.contains(&self.routine_run_id),
-            RoutineRunLaunch::Terminal { .. } => self
-                .pty_id
-                .as_ref()
-                .is_some_and(|pty_id| live.live_agent_pty_ids.contains(pty_id)),
+            RoutineRunLaunch::Terminal { .. } => false,
         }
     }
 
@@ -668,7 +660,6 @@ impl RoutineRunRecord {
             launch_id: self.launch_id.clone(),
             agent_session_id: self.agent_session_id.clone(),
             source_session_id: self.source_session_id.clone(),
-            pty_id: self.pty_id.clone(),
             active: self.blocks_relaunch(live),
             refusal: self.launch_refusal.clone(),
         }
@@ -705,8 +696,6 @@ pub struct RoutineRunRef {
     pub agent_session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pty_id: Option<String>,
     pub active: bool,
     /// The run's launch was refused before its first prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -755,8 +744,6 @@ pub enum RoutineDispatchResult {
         launch_id: String,
         agent_session_id: String,
         source_session_id: Option<String>,
-        /// `None` for an ACP launch, which the session ids identify.
-        pty_id: Option<String>,
     },
     AlreadyRunning {
         routine_id: String,
@@ -764,7 +751,6 @@ pub enum RoutineDispatchResult {
         launch_id: String,
         agent_session_id: String,
         source_session_id: Option<String>,
-        pty_id: Option<String>,
     },
     Completed,
     Blocked {
@@ -781,7 +767,6 @@ pub enum RoutineDispatchResult {
         launch_id: String,
         agent_session_id: String,
         source_session_id: Option<String>,
-        pty_id: Option<String>,
         message: String,
         /// The launch was refused before its first prompt (Stage 11 `03`).
         refusal: Option<RoutineLaunchRefusal>,
@@ -801,8 +786,6 @@ pub enum RoutineManualDispatchResult {
         launch_id: String,
         agent_session_id: String,
         source_session_id: Option<String>,
-        /// `None` for an ACP launch, which the session ids identify.
-        pty_id: Option<String>,
     },
     Focused {
         routine_id: String,
@@ -810,7 +793,6 @@ pub enum RoutineManualDispatchResult {
         launch_id: String,
         agent_session_id: String,
         source_session_id: Option<String>,
-        pty_id: Option<String>,
     },
     Blocked {
         routine_id: String,
@@ -839,14 +821,12 @@ impl RoutineManualDispatchResult {
                 launch_id,
                 agent_session_id,
                 source_session_id,
-                pty_id,
             } => Self::Started {
                 routine_id,
                 routine_run_id,
                 launch_id,
                 agent_session_id,
                 source_session_id,
-                pty_id,
             },
             RoutineDispatchResult::AlreadyRunning {
                 routine_id,
@@ -854,14 +834,12 @@ impl RoutineManualDispatchResult {
                 launch_id,
                 agent_session_id,
                 source_session_id,
-                pty_id,
             } => Self::Focused {
                 routine_id,
                 routine_run_id,
                 launch_id,
                 agent_session_id,
                 source_session_id,
-                pty_id,
             },
             RoutineDispatchResult::Blocked {
                 routine_id,

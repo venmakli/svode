@@ -69,8 +69,6 @@ pub enum RoutineCaller {
     Launch {
         routine_run_id: String,
         launch_id: String,
-        /// The managed PTY of a terminal launch; `None` for an ACP launch.
-        pty_id: Option<String>,
     },
     /// Routine origin claimed by the environment of a standalone process
     /// started from a Routine launch. No host there can verify it, so it

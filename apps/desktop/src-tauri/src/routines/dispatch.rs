@@ -396,7 +396,7 @@ async fn dispatch_in_turn(
     let pool = routine_stores
         .get_or_create(&owner.index_key, &owner.space_path)
         .await?;
-    let live = super::runtime::live_evidence(terminal_manager, &app.state::<RoutineAcpLaunches>())?;
+    let live = app.state::<RoutineAcpLaunches>().live_evidence();
     if let Some(run) = latest_run_record(&pool, &owner.descriptor.owner_path, &routine_id).await?
         && run.blocks_relaunch(&live)
     {
@@ -406,7 +406,6 @@ async fn dispatch_in_turn(
             launch_id: run.launch_id,
             agent_session_id: run.agent_session_id,
             source_session_id: run.source_session_id,
-            pty_id: run.pty_id,
         });
     }
 
@@ -512,7 +511,6 @@ async fn dispatch_in_turn(
                 launch_id: execution_run_id.clone(),
                 agent_session_id: String::new(),
                 source_session_id: None,
-                pty_id: None,
                 message: error.to_string(),
                 refusal: None,
             }),
@@ -662,7 +660,6 @@ async fn dispatch_in_turn(
         launch_id,
         agent_session_id,
         source_session_id,
-        pty_id: None,
         message: refusal.message(),
         refusal: Some(refusal),
     })
@@ -753,9 +750,6 @@ impl RunContext<'_> {
         navigation::routine_launched(self.app, &self.owner.project_path, item, routine, |key| {
             live.iter().any(|surface| match key {
                 NavigationKey::Session { session_id } => &surface.agent_session_id == session_id,
-                NavigationKey::SessionLaunch { launch_id } => {
-                    surface.launch_id.as_ref() == Some(launch_id)
-                }
                 _ => false,
             })
         });

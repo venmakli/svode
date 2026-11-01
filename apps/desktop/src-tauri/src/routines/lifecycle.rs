@@ -1,5 +1,6 @@
-//! Desktop PTY lifecycle sink of a managed Routine run: it maps native terminal
-//! and Agent Session evidence onto the shared operational persistence owner.
+//! Desktop lifecycle sink of a Routine run launched over ACP: it maps the
+//! status and outcome of its session onto the shared operational
+//! persistence owner.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -8,7 +9,6 @@ use sqlx::SqlitePool;
 use svode_core::routines::operational::{reconcile_agent_session, record_terminal_outcome};
 
 use crate::AppError;
-use crate::terminal::{AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence};
 use svode_agents::status::{SessionState, StopReason};
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineInvalidationPayload, RoutineRunTerminalStatus,
@@ -41,6 +41,14 @@ fn run_session_status(state: SessionState) -> &'static str {
     } else {
         run_terminal_status(state).as_str()
     }
+}
+
+/// How the turn of a run's session ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RunOutcomeEvidence {
+    pub state: SessionState,
+    pub reason: String,
+    pub observed_at: String,
 }
 
 pub(crate) struct RoutineRunLifecycleSink {
@@ -125,20 +133,16 @@ impl RoutineRunLifecycleSink {
         }
         Ok(pool.clone())
     }
-}
 
-impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
-    fn record_terminal_outcome(
-        &self,
-        evidence: &AgentTerminalOutcomeEvidence,
-    ) -> Result<(), AppError> {
+    /// Records the run's outcome and ends its turn.
+    pub(crate) fn record_outcome(&self, evidence: &RunOutcomeEvidence) -> Result<(), AppError> {
         self.end_turn();
         let pool = self.current_pool()?;
         tauri::async_runtime::block_on(record_terminal_outcome(
             &pool,
             &self.routine_run_id,
             run_terminal_status(evidence.state),
-            evidence.exit_code,
+            None,
             &evidence.reason,
             &evidence.observed_at,
         ))?;
@@ -146,7 +150,8 @@ impl AgentTerminalLifecycleSink for RoutineRunLifecycleSink {
         Ok(())
     }
 
-    fn reconcile_agent_session(
+    /// Records the session status of the run while its turn runs.
+    pub(crate) fn reconcile_agent_session(
         &self,
         source_session_id: &str,
         agent_session_id: &str,
@@ -177,12 +182,10 @@ mod tests {
     use svode_core::routines::model::{
         RoutineAction, RoutineDefinition, RoutineLiveEvidence, RoutineTrigger,
     };
-    use svode_core::routines::operational::{
-        NewRoutineRun, attach_pty, create_run, latest_run_record,
-    };
+    use svode_core::routines::operational::{NewRoutineRun, create_run, latest_run_record};
 
     #[tokio::test]
-    async fn routine_run_mapping_survives_terminal_and_session_reconciliation() {
+    async fn routine_run_mapping_survives_outcome_and_session_reconciliation() {
         let temp = tempdir().unwrap();
         std::fs::create_dir_all(temp.path().join(".svode")).unwrap();
         let key = crate::index::IndexKey::Root(temp.path().to_path_buf());
@@ -210,26 +213,30 @@ mod tests {
                 definition_json: &serde_json::to_string(&definition).unwrap(),
                 launch_id: "launch-one",
                 source: "codex",
-                source_session_id: None,
-                agent_session_id: "codex:launch:launch-one",
+                source_session_id: Some("s1"),
+                agent_session_id: "codex:s1",
                 created_at: "2026-08-07T10:00:00Z",
-                launch: &svode_core::routines::model::RoutineRunLaunch::Terminal {
-                    reason: None,
-                    detail: None,
-                },
+                launch: &svode_core::routines::model::RoutineRunLaunch::Acp,
             },
         )
         .await
         .unwrap();
-        attach_pty(&pool, "run-one", "pty-one", "2026-08-07T10:00:01Z")
-            .await
-            .unwrap();
+        reconcile_agent_session(
+            &pool,
+            "run-one",
+            "s1",
+            "codex:s1",
+            "active",
+            "2026-08-07T10:00:01Z",
+        )
+        .await
+        .unwrap();
 
         let before = latest_run_record(&pool, ".", "routine-one")
             .await
             .unwrap()
             .unwrap();
-        let live = RoutineLiveEvidence::new(HashSet::from(["pty-one".to_string()]), HashSet::new());
+        let live = RoutineLiveEvidence::new(HashSet::from(["run-one".to_string()]));
         assert!(before.blocks_relaunch(&live));
 
         reconcile_agent_session(
@@ -246,7 +253,7 @@ mod tests {
             &pool,
             "run-one",
             RoutineRunTerminalStatus::Done,
-            Some(0),
+            None,
             "turn complete",
             "2026-08-07T10:01:00Z",
         )

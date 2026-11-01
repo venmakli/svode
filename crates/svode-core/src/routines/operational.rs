@@ -355,21 +355,6 @@ pub async fn create_run(pool: &SqlitePool, run: NewRoutineRun<'_>) -> Result<(),
     Ok(())
 }
 
-pub async fn attach_pty(
-    pool: &SqlitePool,
-    routine_run_id: &str,
-    pty_id: &str,
-    observed_at: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE routine_runs SET pty_id = ?, updated_at = ? WHERE routine_run_id = ?")
-        .bind(pty_id)
-        .bind(observed_at)
-        .bind(routine_run_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
 pub async fn record_terminal_outcome(
     pool: &SqlitePool,
     routine_run_id: &str,
@@ -457,7 +442,7 @@ pub async fn latest_run(
 ) -> Result<Option<RoutineRunRow>, sqlx::Error> {
     let row = sqlx::query(
         r#"
-        SELECT routine_run_id, routine_id, owner_path, launch_id, pty_id, source,
+        SELECT routine_run_id, routine_id, owner_path, launch_id, source,
                source_session_id, agent_session_id, created_at, terminal_status,
                terminal_exit_code, terminal_reason, terminal_observed_at, session_status,
                launch_transport, terminal_choice, terminal_choice_detail, launch_refusal
@@ -487,7 +472,6 @@ pub async fn latest_run_record(
             routine_id: row.routine_id,
             owner_path: row.owner_path,
             launch_id: row.launch_id,
-            pty_id: row.pty_id,
             source: row.source,
             source_session_id: row.source_session_id,
             agent_session_id: row.agent_session_id,
@@ -591,7 +575,6 @@ fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRow, s
         routine_id: row.try_get("routine_id")?,
         owner_path: row.try_get("owner_path")?,
         launch_id: row.try_get("launch_id")?,
-        pty_id: row.try_get("pty_id")?,
         source: row.try_get("source")?,
         source_session_id: row.try_get("source_session_id")?,
         agent_session_id: row.try_get("agent_session_id")?,
@@ -623,6 +606,8 @@ fn launch_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<RoutineRunLaunch, sq
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use tempfile::tempdir;
 
     use super::*;
@@ -943,7 +928,12 @@ mod tests {
                 detail: None,
             }
         );
-        assert_eq!(old.pty_id.as_deref(), Some("pty-old"));
+        // Its terminal ended with the app that ran it.
+        assert!(
+            !old.blocks_relaunch(&RoutineLiveEvidence::new(HashSet::from([
+                "run-old".to_string()
+            ])))
+        );
         create_run(
             &pool,
             new_run("2026-10-05T10:00:00Z", &RoutineRunLaunch::Acp),
@@ -961,9 +951,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_live_acp_session_blocks_a_relaunch_like_a_live_pty() {
-        use std::collections::HashSet;
-
+    async fn a_live_acp_session_blocks_a_relaunch() {
         let temp = tempdir().unwrap();
         let pool = routines_pool(&temp.path().join("routines.db")).await;
         let id = "2026-10-05T10:00:00Z";
@@ -977,12 +965,9 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let live = RoutineLiveEvidence::new(HashSet::new(), HashSet::from([id.to_string()]));
-        // A PTY with the run's id is no evidence for an ACP launch.
-        let pty_only = RoutineLiveEvidence::new(HashSet::from([id.to_string()]), HashSet::new());
+        let live = RoutineLiveEvidence::new(HashSet::from([id.to_string()]));
         assert!(run.blocks_relaunch(&live));
         assert!(run.to_ref(&live).active);
-        assert!(!run.blocks_relaunch(&pty_only));
         assert!(!run.blocks_relaunch(&RoutineLiveEvidence::default()));
 
         reconcile_agent_session(&pool, id, "source-one", "codex:source-one", "done", id)

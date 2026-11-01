@@ -133,7 +133,7 @@ test("a hidden window refreshes only hot status of known live sessions", async (
   stop();
 });
 
-test("pending and provisional records and explicit demand accelerate the list", async () => {
+test("pending records and explicit demand accelerate the list", async () => {
   const { api, env, store, stop } = await startCatalog();
 
   const release = store.getState().requestFastRefresh();
@@ -149,19 +149,6 @@ test("pending and provisional records and explicit demand accelerate the list", 
   release();
   secondRelease();
   expect(env.activeIntervals()).toEqual([INTERVALS.listMs]);
-
-  api.listed = [
-    listedSession({
-      id: "codex:launch:1",
-      launchId: "1",
-      runtime: { live: true, provisional: true, ptyId: "pty-routine" },
-    }),
-  ];
-  await store.getState().load();
-  expect(env.activeIntervals()).toEqual([
-    INTERVALS.hotMs,
-    INTERVALS.fastListMs,
-  ]);
   stop();
 });
 

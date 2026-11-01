@@ -361,25 +361,6 @@ test("a pending session keeps its place as the canonical one (R3)", () => {
     "active:codex:new",
     "active:codex:other",
   ]);
-  // A provisional launch continues by its launch id.
-  const provisional = session("codex:launch:l1", {
-    launchId: "l1",
-    runtime: { provisional: true, live: true },
-  });
-  expect(show({ activeSessions: [provisional, other, canonical] })).toEqual([
-    "active:codex:new",
-    "active:codex:other",
-    "active:codex:launch:l1",
-  ]);
-  expect(
-    show({
-      activeSessions: [
-        session("codex:l1", { launchId: "l1", status: RUNNING }),
-        other,
-        canonical,
-      ],
-    }),
-  ).toEqual(["active:codex:new", "active:codex:other", "active:codex:l1"]);
 });
 
 test("new rows come last before the temporary row; a leaving row moves none (R2, R4)", () => {
@@ -450,15 +431,10 @@ test("closing an active session of any source hides it while nothing new happens
       status: RUNNING,
       runtime: { ptyId: "pty-term", live: true },
     }),
-    // A turn of the ACP runtime, an external process, a Routine launch.
+    // A turn of the ACP runtime, an external process.
     session("qwen:acp", { status: RUNNING }),
     session("claude:external", {
       status: { ...RUNNING, source: "native_status_reader" },
-    }),
-    session("codex:launch:r1", {
-      status: RUNNING,
-      launchId: "r1",
-      runtime: { provisional: true, live: true },
     }),
     // A pending new session.
     session("new-session:pty-new", {
@@ -487,7 +463,7 @@ test("closing an active session of any source hides it while nothing new happens
     runtime: { ptyId: "pty-new", live: true },
   });
   expect(
-    show({ activeSessions: [...refreshed.slice(0, 5), canonical] }),
+    show({ activeSessions: [...refreshed.slice(0, 4), canonical] }),
   ).toEqual([]);
 });
 

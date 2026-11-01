@@ -16,7 +16,6 @@ use crate::git::access::{
 };
 use crate::git::{GitState, require_cli};
 use crate::routines::RoutineStoreState;
-use crate::terminal::TerminalManager;
 use svode_core::git::cli::GitCli;
 use svode_core::routines::dispatch::{event_run_key, schedule_candidates, scheduled_run_key};
 use svode_core::routines::model::{
@@ -250,10 +249,10 @@ impl SchedulerHost for AppSchedulerHost {
     }
 
     fn live_evidence(&self) -> Result<RoutineLiveEvidence, AppError> {
-        super::runtime::live_evidence(
-            &self.app.state::<TerminalManager>(),
-            &self.app.state::<super::RoutineAcpLaunches>(),
-        )
+        Ok(self
+            .app
+            .state::<super::RoutineAcpLaunches>()
+            .live_evidence())
     }
 
     async fn dispatch_ready(

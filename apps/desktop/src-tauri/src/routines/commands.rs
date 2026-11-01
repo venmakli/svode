@@ -56,7 +56,6 @@ pub async fn routines_list(
     owner_kind: RoutineOwnerInputKind,
     routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
-    terminal_manager: State<'_, TerminalManager>,
     acp_launches: State<'_, super::RoutineAcpLaunches>,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     let owner = RoutineOwnerInput {
@@ -67,7 +66,7 @@ pub async fn routines_list(
         owner_kind,
     }
     .resolve()?;
-    let live_evidence = super::runtime::live_evidence(&terminal_manager, &acp_launches)?;
+    let live_evidence = acp_launches.live_evidence();
     Ok(service::read_catalog(
         routine_stores.core(),
         &index_state.core,
@@ -86,7 +85,6 @@ pub async fn routines_refresh(
     owner_kind: RoutineOwnerInputKind,
     routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
-    terminal_manager: State<'_, TerminalManager>,
     acp_launches: State<'_, super::RoutineAcpLaunches>,
 ) -> Result<RoutineCatalogSnapshot, AppError> {
     routines_list(
@@ -97,7 +95,6 @@ pub async fn routines_refresh(
         owner_kind,
         routine_stores,
         index_state,
-        terminal_manager,
         acp_launches,
     )
     .await
@@ -197,7 +194,6 @@ pub async fn routines_create(
     access_state: State<'_, RepositoryAccessState>,
     routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
-    terminal_manager: State<'_, TerminalManager>,
     acp_launches: State<'_, super::RoutineAcpLaunches>,
 ) -> Result<RoutineMutationResult, AppError> {
     let owner = RoutineOwnerInput {
@@ -213,7 +209,7 @@ pub async fn routines_create(
         Err(message) => return Ok(RoutineMutationResult::Blocked { message }),
     };
     let access_store_path = access_store_path(&app)?;
-    let live_evidence = super::runtime::live_evidence(&terminal_manager, &acp_launches)?;
+    let live_evidence = acp_launches.live_evidence();
     let host = RoutineMutationRuntime::new(&git_state, &access_state, &access_store_path);
     let context = RoutineMutationContext {
         repositories: git_state.repository(),
@@ -254,7 +250,6 @@ pub async fn routines_update(
     access_state: State<'_, RepositoryAccessState>,
     routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
-    terminal_manager: State<'_, TerminalManager>,
     acp_launches: State<'_, super::RoutineAcpLaunches>,
 ) -> Result<RoutineMutationResult, AppError> {
     let owner = RoutineOwnerInput {
@@ -266,7 +261,7 @@ pub async fn routines_update(
     }
     .resolve()?;
     let access_store_path = access_store_path(&app)?;
-    let live_evidence = super::runtime::live_evidence(&terminal_manager, &acp_launches)?;
+    let live_evidence = acp_launches.live_evidence();
     let host = RoutineMutationRuntime::new(&git_state, &access_state, &access_store_path);
     let context = RoutineMutationContext {
         repositories: git_state.repository(),
@@ -311,7 +306,6 @@ pub async fn routines_delete(
     access_state: State<'_, RepositoryAccessState>,
     routine_stores: State<'_, Arc<RoutineStoreState>>,
     index_state: State<'_, IndexState>,
-    terminal_manager: State<'_, TerminalManager>,
     acp_launches: State<'_, super::RoutineAcpLaunches>,
 ) -> Result<RoutineMutationResult, AppError> {
     let owner = RoutineOwnerInput {
@@ -323,7 +317,7 @@ pub async fn routines_delete(
     }
     .resolve()?;
     let access_store_path = access_store_path(&app)?;
-    let live_evidence = super::runtime::live_evidence(&terminal_manager, &acp_launches)?;
+    let live_evidence = acp_launches.live_evidence();
     let host = RoutineMutationRuntime::new(&git_state, &access_state, &access_store_path);
     let context = RoutineMutationContext {
         repositories: git_state.repository(),

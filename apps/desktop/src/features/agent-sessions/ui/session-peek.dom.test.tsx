@@ -145,8 +145,20 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       isDefault: true,
       icon: null,
     },
-    { id: "terminal", label: "Terminal", kind: "terminal", isDefault: false, icon: null },
-    { id: "iterm2", label: "iTerm2", kind: "terminal", isDefault: false, icon: null },
+    {
+      id: "terminal",
+      label: "Terminal",
+      kind: "terminal",
+      isDefault: false,
+      icon: null,
+    },
+    {
+      id: "iterm2",
+      label: "iTerm2",
+      kind: "terminal",
+      isDefault: false,
+      icon: null,
+    },
   ];
   const openedApps: unknown[] = [];
   const { mockNativeIpc } = await import("@/platform/native/testing");
@@ -210,13 +222,15 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       prompts.push(payload.prompt);
       return "turn-1";
     }
-    if (command === "path_exists") return !missingPaths.has(String(payload.path));
+    if (command === "path_exists")
+      return !missingPaths.has(String(payload.path));
     if (command === "list_project_openers") return externalApps;
     if (command === "open_project_in_tool") {
       openedApps.push(payload);
       return null;
     }
-    if (command === "agent_setup_chat_agents") return { agents: [], last: null };
+    if (command === "agent_setup_chat_agents")
+      return { agents: [], last: null };
     if (command === "routines_resolve_launches") {
       const launchIds = payload.launchIds as string[];
       const sessionIds = payload.sessionIds as string[];
@@ -232,13 +246,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
 
   const m = await import("@/paraglide/messages.js");
   const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
-  const { sessionDraftKey, writeComposerDraft } = await import(
-    "../chat/model/composer"
-  );
+  const { sessionDraftKey, writeComposerDraft } =
+    await import("../chat/model/composer");
   const { TooltipProvider } = await import("@/components/ui/tooltip");
-  const { AttachmentOpenerContext } = await import(
-    "../chat/hooks/use-attachment-opener"
-  );
+  const { AttachmentOpenerContext } =
+    await import("../chat/hooks/use-attachment-opener");
   const {
     subscribeAgentSessionTerminalFollow,
     useAgentSessionCatalog,
@@ -247,7 +259,8 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   let reloadCatalog: () => Promise<void> = async () => {};
   const { AgentSessionPeek } = await import("./session-peek");
   const { AgentSessionMainSurface } = await import("./session-main-surface");
-  const { ProjectExternalOpenButton } = await import("@/features/external-open");
+  const { ProjectExternalOpenButton } =
+    await import("@/features/external-open");
 
   function Harness({
     projectPath,
@@ -375,7 +388,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         expect(
           Boolean(
             changes.compareDocumentPosition(expand) &
-              Node.DOCUMENT_POSITION_FOLLOWING,
+            Node.DOCUMENT_POSITION_FOLLOWING,
           ),
         ).toBe(true);
       } finally {
@@ -406,13 +419,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(
         Boolean(
           openWith.compareDocumentPosition(expand) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
+          Node.DOCUMENT_POSITION_FOLLOWING,
         ),
       ).toBe(true);
       expect(
         Boolean(
           expand.compareDocumentPosition(close) &
-            Node.DOCUMENT_POSITION_FOLLOWING,
+          Node.DOCUMENT_POSITION_FOLLOWING,
         ),
       ).toBe(true);
       expect(expand.textContent).toBe("");
@@ -421,44 +434,47 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     },
   );
 
-  peekTest("the new session draft peek: New session on the left, Close on the right", async () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root: Root = createRoot(container);
-    mounted.push(root);
-    const openChanges: boolean[] = [];
-    await act(async () => {
-      root.render(
-        <TooltipProvider>
-          <AgentSessionPeek
-            target={null}
-            draft={{ draftId: "draft-1", spacePath: "/p-draft" }}
-            onOpenChange={(open) => openChanges.push(open)}
-            onExpand={async () => true}
-            onOpenRoutine={() => undefined}
-          />
-        </TooltipProvider>,
+  peekTest(
+    "the new session draft peek: New session on the left, Close on the right",
+    async () => {
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root: Root = createRoot(container);
+      mounted.push(root);
+      const openChanges: boolean[] = [];
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <AgentSessionPeek
+              target={null}
+              draft={{ draftId: "draft-1", spacePath: "/p-draft" }}
+              onOpenChange={(open) => openChanges.push(open)}
+              onExpand={async () => true}
+              onOpenRoutine={() => undefined}
+            />
+          </TooltipProvider>,
+        );
+      });
+      await settle();
+      const bar = document.querySelector<HTMLElement>("[data-peek-top-bar]")!;
+      expect(bar.querySelector("[data-peek-identity]")?.textContent).toBe(
+        m.sessions_new_title(),
       );
-    });
-    await settle();
-    const bar = document.querySelector<HTMLElement>("[data-peek-top-bar]")!;
-    expect(
-      bar.querySelector("[data-peek-identity]")?.textContent,
-    ).toBe(m.sessions_new_title());
-    expect(
-      [...bar.querySelectorAll("button")].map((button) =>
-        button.getAttribute("aria-label"),
-      ),
-    ).toEqual([m.peek_close()]);
-    // The draft starts no terminal of its own.
-    expect(
-      [...document.querySelectorAll("button")].some((button) =>
-        /terminal/i.test(button.textContent ?? ""),
-      ),
-    ).toBe(false);
-    await click(buttonByLabel(m.peek_close()));
-    expect(openChanges).toEqual([false]);
-  });
+      expect(
+        [...bar.querySelectorAll("button")].map((button) =>
+          button.getAttribute("aria-label"),
+        ),
+      ).toEqual([m.peek_close()]);
+      // The draft starts no terminal of its own.
+      expect(
+        [...document.querySelectorAll("button")].some((button) =>
+          /terminal/i.test(button.textContent ?? ""),
+        ),
+      ).toBe(false);
+      await click(buttonByLabel(m.peek_close()));
+      expect(openChanges).toEqual([false]);
+    },
+  );
 
   peekTest(
     "viewing a history session does not resume it; continuing does once",
@@ -528,7 +544,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   peekTest(
     "a first send while a turn is open waits for the inline confirmation, which sends once",
     async () => {
-      const key = { agent: "grok-build", namespace: "native", sessionId: "open" };
+      const key = {
+        agent: "grok-build",
+        namespace: "native",
+        sessionId: "open",
+      };
       listed = [
         session({
           id: "grok-build:open",
@@ -550,7 +570,10 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       writeComposerDraft(sessionDraftKey("grok-build:open"), {
         parts: [{ type: "text", text: "Continue" }],
       });
-      await mountPeek("/p-open", { sessionId: "grok-build:open", launchId: null });
+      await mountPeek("/p-open", {
+        sessionId: "grok-build:open",
+        launchId: null,
+      });
 
       await click(buttonByLabel(m.sessions_chat_send()));
       expect(openings).toEqual(["read", "send"]);
@@ -606,7 +629,10 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         ],
       });
       try {
-        await mountPeek("/p-files", { sessionId: "codex:files", launchId: null });
+        await mountPeek("/p-files", {
+          sessionId: "codex:files",
+          launchId: null,
+        });
 
         // The replayed links are badges; the one whose file is gone is marked
         // and opens nothing.
@@ -662,13 +688,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       // The history is read; the composer gives way to the manual fallback.
       expect(openings).toEqual(["read"]);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);
-      expect(document.body.textContent?.includes(m.sessions_chat_snapshot())).toBe(
-        true,
-      );
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_snapshot()),
+      ).toBe(true);
       expect(buttonByLabel(m.sessions_chat_send())).toBeNull();
-      expect(Boolean(buttonByText(m.sessions_action_copy_resume_command()))).toBe(
-        true,
-      );
+      expect(
+        Boolean(buttonByText(m.sessions_action_copy_resume_command())),
+      ).toBe(true);
 
       // Refresh reads the history again without attaching; the other
       // process has finished, so the chat may continue the session.
@@ -685,9 +711,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       }
       expect(openings).toEqual(["read", "read"]);
       expect(document.body.textContent?.includes("Later")).toBe(true);
-      expect(document.body.textContent?.includes(m.sessions_chat_snapshot())).toBe(
-        false,
-      );
+      expect(
+        document.body.textContent?.includes(m.sessions_chat_snapshot()),
+      ).toBe(false);
       expect(Boolean(buttonByLabel(m.sessions_chat_send()))).toBe(true);
       expect(commands.includes("agent_runtime_prompt")).toBe(false);
     },
@@ -716,14 +742,18 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(openings).toEqual(["read"]);
       expect(document.body.textContent?.includes("Earlier")).toBe(false);
       expect(
-        document.body.textContent?.includes(m.sessions_chat_load_history_description()),
+        document.body.textContent?.includes(
+          m.sessions_chat_load_history_description(),
+        ),
       ).toBe(true);
       expect(
         document.body.textContent?.includes(
           m.sessions_chat_load_history_turn_open_description(),
         ),
       ).toBe(false);
-      expect(Boolean(buttonByText(m.sessions_action_open_in_terminal()))).toBe(true);
+      expect(Boolean(buttonByText(m.sessions_action_open_in_terminal()))).toBe(
+        true,
+      );
 
       await click(buttonByText(m.sessions_chat_load_history()));
       expect(openings).toEqual(["read", "confirmed"]);
@@ -734,7 +764,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   peekTest(
     "loading the history of a session with an open turn warns that it may interrupt the turn",
     async () => {
-      const key = { agent: "grok-build", namespace: "native", sessionId: "turn" };
+      const key = {
+        agent: "grok-build",
+        namespace: "native",
+        sessionId: "turn",
+      };
       listed = [
         session({
           id: "grok-build:turn",
@@ -749,11 +783,16 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         intent !== "read"
           ? { outcome: "opened", session: key, liveness: "unknown" }
           : { outcome: "confirmation_required", turnOpen: true };
-      await mountPeek("/p-turn", { sessionId: "grok-build:turn", launchId: null });
+      await mountPeek("/p-turn", {
+        sessionId: "grok-build:turn",
+        launchId: null,
+      });
 
       expect(openings).toEqual(["read"]);
       expect(
-        document.body.textContent?.includes(m.sessions_chat_load_history_title()),
+        document.body.textContent?.includes(
+          m.sessions_chat_load_history_title(),
+        ),
       ).toBe(true);
       expect(
         document.body.textContent?.includes(
@@ -761,7 +800,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         ),
       ).toBe(true);
       expect(
-        document.body.textContent?.includes(m.sessions_chat_load_history_description()),
+        document.body.textContent?.includes(
+          m.sessions_chat_load_history_description(),
+        ),
       ).toBe(false);
 
       // The confirmation is of this one attempt: the session is attached.
@@ -792,7 +833,11 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     closedPtys.length = 0;
     toasts.length = 0;
     snapshotWriter = "none";
-    openingOutcome = () => ({ outcome: "opened", session: key, liveness: "unknown" });
+    openingOutcome = () => ({
+      outcome: "opened",
+      session: key,
+      liveness: "unknown",
+    });
   }
 
   function confirmationDialog() {
@@ -886,10 +931,14 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
         dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_title()),
       ).toBe(true);
       expect(
-        dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_interrupt()),
+        dialog?.textContent?.includes(
+          m.sessions_open_in_chat_confirm_interrupt(),
+        ),
       ).toBe(true);
       expect(
-        dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_panel_tab()),
+        dialog?.textContent?.includes(
+          m.sessions_open_in_chat_confirm_panel_tab(),
+        ),
       ).toBe(false);
 
       await click(dialogButton(m.project_cancel()));
@@ -915,22 +964,30 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           launchId: null,
         });
         expect(
-          document.body.textContent?.includes(m.sessions_terminal_in_panel_title()),
+          document.body.textContent?.includes(
+            m.sessions_terminal_in_panel_title(),
+          ),
         ).toBe(true);
 
         await click(primaryButton());
         const dialog = confirmationDialog();
         expect(
-          dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_panel_tab()),
+          dialog?.textContent?.includes(
+            m.sessions_open_in_chat_confirm_panel_tab(),
+          ),
         ).toBe(true);
         expect(
-          dialog?.textContent?.includes(m.sessions_open_in_chat_confirm_interrupt()),
+          dialog?.textContent?.includes(
+            m.sessions_open_in_chat_confirm_interrupt(),
+          ),
         ).toBe(false);
 
         await click(dialogButton(m.sessions_open_in_chat_confirm_action()));
         expect(closedPtys).toEqual(["pty-claude:paneltab"]);
         expect(
-          document.body.textContent?.includes(m.sessions_terminal_in_panel_title()),
+          document.body.textContent?.includes(
+            m.sessions_terminal_in_panel_title(),
+          ),
         ).toBe(false);
         expect(openings).toEqual(["read"]);
         expect(document.body.textContent?.includes("Earlier")).toBe(true);
@@ -982,11 +1039,13 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(closedPtys).toEqual(["pty-codex:heldterm"]);
       expect(terminal()).toBeNull();
       expect(
-        document.body.textContent?.includes(m.sessions_chat_external_writer_title()),
+        document.body.textContent?.includes(
+          m.sessions_chat_external_writer_title(),
+        ),
       ).toBe(true);
-      expect(Boolean(buttonByText(m.sessions_action_copy_resume_command()))).toBe(
-        true,
-      );
+      expect(
+        Boolean(buttonByText(m.sessions_action_copy_resume_command())),
+      ).toBe(true);
       expect(commands.includes("agent_sessions_reenter")).toBe(false);
     },
   );
@@ -1003,10 +1062,15 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       ];
       openings.length = 0;
       openingOutcome = () => ({ outcome: "terminal_active" });
-      await mountPeek("/p-racing", { sessionId: "codex:racing", launchId: null });
+      await mountPeek("/p-racing", {
+        sessionId: "codex:racing",
+        launchId: null,
+      });
 
       expect(
-        document.body.textContent?.includes(m.sessions_chat_terminal_writer_title()),
+        document.body.textContent?.includes(
+          m.sessions_chat_terminal_writer_title(),
+        ),
       ).toBe(true);
       expect(
         document.body.textContent?.includes(
@@ -1036,7 +1100,10 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       openings.length = 0;
       snapshotWriter = "acp";
       snapshotTurn = "none";
-      await mountPeek("/p-driven", { sessionId: "codex:driven", launchId: null });
+      await mountPeek("/p-driven", {
+        sessionId: "codex:driven",
+        launchId: null,
+      });
 
       expect(openings).toEqual([]);
       expect(document.body.textContent?.includes("Earlier")).toBe(true);
@@ -1045,10 +1112,10 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
 
   peekTest("open in terminal is unavailable during a turn", async () => {
     const key = {
-        agent: "codex",
-        namespace: "native",
-        sessionId: "busy",
-      } as const;
+      agent: "codex",
+      namespace: "native",
+      sessionId: "busy",
+    } as const;
     listed = [
       session({
         id: "codex:busy",
@@ -1171,9 +1238,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       expect(
         reason?.textContent?.includes(m.settings_agents_state_disabled()),
       ).toBe(true);
-      expect(Boolean(buttonByText(m.sessions_action_continue_in_terminal()))).toBe(
-        true,
-      );
+      expect(
+        Boolean(buttonByText(m.sessions_action_continue_in_terminal())),
+      ).toBe(true);
       // Opening it in its terminal resumes nothing by itself.
       expect(commands.includes("agent_sessions_reenter")).toBe(false);
 
@@ -1238,7 +1305,10 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
       const ideReason = m.sessions_chat_unavailable_continues_in_ide({
         agent: m.agent_adapter_unknown(),
       });
-      await expectPrimaryUnavailable(m.sessions_action_open_in_chat(), ideReason);
+      await expectPrimaryUnavailable(
+        m.sessions_action_open_in_chat(),
+        ideReason,
+      );
       await openOpenWith();
       const chat = continuationItem("chat");
       expect(chat?.getAttribute("aria-disabled")).toBe("true");
@@ -1356,42 +1426,6 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
   });
 
   peekTest(
-    "a provisional launch keeps its open peek when it becomes canonical",
-    async () => {
-      listed = [
-        session({
-          id: "codex:launch-1",
-          title: "Routine launch",
-          launchId: "launch-1",
-          runtime: { live: true, provisional: true, ptyId: "pty-routine" },
-        }),
-      ];
-      const peek = await mountPeek("/p-launch", {
-        sessionId: "codex:launch-1",
-        launchId: "launch-1",
-      });
-      expect(terminal()?.dataset.terminal).toBe("pty-routine");
-
-      listed = [
-        session({
-          id: "codex:canonical",
-          title: "Canonical routine session",
-          launchId: "launch-1",
-          runtime: { live: true, ptyId: "pty-routine" },
-        }),
-      ];
-      await act(async () => reloadCatalog());
-      await settle();
-
-      expect(
-        document.body.textContent?.includes("Canonical routine session"),
-      ).toBe(true);
-      expect(terminal()?.dataset.terminal).toBe("pty-routine");
-      expect(peek.openChanges).toEqual([]);
-    },
-  );
-
-  peekTest(
     "a terminal that ends while viewed offers to continue again",
     async () => {
       listed = [
@@ -1448,9 +1482,18 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     async () => {
       const original = getLocale();
       const reasons = [
-        ["chat_unavailable", () => m.sessions_routine_terminal_chat_unavailable()],
-        ["binding_not_acp", () => m.sessions_routine_terminal_binding_not_acp()],
-        ["acp_failed_before_prompt", () => m.sessions_routine_terminal_acp_failed()],
+        [
+          "chat_unavailable",
+          () => m.sessions_routine_terminal_chat_unavailable(),
+        ],
+        [
+          "binding_not_acp",
+          () => m.sessions_routine_terminal_binding_not_acp(),
+        ],
+        [
+          "acp_failed_before_prompt",
+          () => m.sessions_routine_terminal_acp_failed(),
+        ],
       ] as const;
       try {
         for (const locale of ["en", "ru"] as const) {
@@ -1477,7 +1520,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
               launchId: `launch-${locale}-${reason}`,
             });
 
-            expect(terminal()?.dataset.terminal).toBe(`pty-${locale}-${reason}`);
+            expect(terminal()?.dataset.terminal).toBe(
+              `pty-${locale}-${reason}`,
+            );
             expect(document.body.textContent?.includes(text())).toBe(true);
             expect(
               document.body.textContent?.includes(
@@ -1500,56 +1545,53 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
     },
   );
 
-  peekTest(
-    "the reason leaves with the Routine's terminal",
-    async () => {
+  peekTest("the reason leaves with the Routine's terminal", async () => {
+    listed = [
+      session({
+        id: "codex:routine-ending",
+        title: "Routine ending",
+        launchId: "launch-ending",
+        runtime: { live: true, ptyId: "pty-routine-ending" },
+      }),
+    ];
+    routineLinks = [
+      routineLink("launch-ending", "codex:routine-ending", {
+        transport: "terminal",
+        reason: "chat_unavailable",
+        detail: null,
+      }),
+    ];
+    try {
+      await mountPeek("/p-routine-ending", {
+        sessionId: "codex:routine-ending",
+        launchId: "launch-ending",
+      });
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_routine_terminal_chat_unavailable(),
+        ),
+      ).toBe(true);
+
       listed = [
         session({
           id: "codex:routine-ending",
           title: "Routine ending",
           launchId: "launch-ending",
-          runtime: { live: true, ptyId: "pty-routine-ending" },
         }),
       ];
-      routineLinks = [
-        routineLink("launch-ending", "codex:routine-ending", {
-          transport: "terminal",
-          reason: "chat_unavailable",
-          detail: null,
-        }),
-      ];
-      try {
-        await mountPeek("/p-routine-ending", {
-          sessionId: "codex:routine-ending",
-          launchId: "launch-ending",
-        });
-        expect(
-          document.body.textContent?.includes(
-            m.sessions_routine_terminal_chat_unavailable(),
-          ),
-        ).toBe(true);
+      await act(async () => exitListener?.("pty-routine-ending"));
+      await settle();
 
-        listed = [
-          session({
-            id: "codex:routine-ending",
-            title: "Routine ending",
-            launchId: "launch-ending",
-          }),
-        ];
-        await act(async () => exitListener?.("pty-routine-ending"));
-        await settle();
-
-        expect(terminal()).toBeNull();
-        expect(
-          document.body.textContent?.includes(
-            m.sessions_routine_terminal_chat_unavailable(),
-          ),
-        ).toBe(false);
-      } finally {
-        routineLinks = [];
-      }
-    },
-  );
+      expect(terminal()).toBeNull();
+      expect(
+        document.body.textContent?.includes(
+          m.sessions_routine_terminal_chat_unavailable(),
+        ),
+      ).toBe(false);
+    } finally {
+      routineLinks = [];
+    }
+  });
 
   peekTest(
     "no reason shows for a manual terminal or a Routine run without one",
@@ -1952,7 +1994,9 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
             "[data-session-terminal='iterm2']",
           )!,
         );
-        expect(openedApps).toEqual([{ projectPath: "/project", app: "iterm2" }]);
+        expect(openedApps).toEqual([
+          { projectPath: "/project", app: "iterm2" },
+        ]);
         expect(primaryButton().getAttribute("aria-label")).toBe(
           m.external_open_in({ name: "iTerm2" }),
         );
@@ -2086,9 +2130,7 @@ if (process.env.SVODE_AGENT_SESSION_PEEK_DOM !== "1") {
           openingKey={1}
           focus={false}
           onOpenRoutine={() => undefined}
-          renderHeader={({ current }) => (
-            <div data-main-header>{current}</div>
-          )}
+          renderHeader={({ current }) => <div data-main-header>{current}</div>}
         />
         <AgentSessionPeek
           target={hosts.peek}

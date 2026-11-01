@@ -10,7 +10,8 @@ export function agentSessionHasId(session: AgentSession, id: string): boolean {
 
 /**
  * The identity every entry point addresses a session by: its catalog id when
- * opened, plus the launch id that survives a provisional → canonical handoff.
+ * opened, plus the launch id a session of an earlier terminal launch
+ * carries.
  */
 export interface AgentSessionTarget {
   sessionId: string;
@@ -34,8 +35,8 @@ export interface AgentSessionOpenOptions {
 
 /**
  * The catalog id a target currently resolves to. A pending terminal follows
- * the CLI session matched to its pty, and a provisional launch follows the
- * canonical session that carries the same launch id.
+ * the CLI session matched to its pty; a target the catalog does not list
+ * follows the session that carries its launch id.
  */
 export function resolveAgentSessionId(
   target: AgentSessionTarget,
@@ -47,13 +48,9 @@ export function resolveAgentSessionId(
     agentSessionHasId(session, handedOff),
   );
   const sessionId = listed?.id ?? handedOff;
-  if (!target.launchId || (listed && listed.runtime?.provisional !== true)) {
-    return sessionId;
-  }
+  if (!target.launchId || listed) return sessionId;
   const canonical = sessions.find(
-    (session) =>
-      session.launchId === target.launchId &&
-      session.runtime?.provisional !== true,
+    (session) => session.launchId === target.launchId,
   );
   return canonical?.id ?? sessionId;
 }

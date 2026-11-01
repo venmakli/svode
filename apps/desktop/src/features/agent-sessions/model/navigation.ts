@@ -8,16 +8,11 @@ import { isPendingSessionId } from "./pending";
 import { agentSessionHasId } from "./target";
 import type { AgentSession } from "./types";
 
-/**
- * Navigation key of a session: its canonical id, or its launch id while the
- * catalog only knows a provisional launch.
- */
+/** Navigation key of a session: its catalog id. */
 export function agentSessionNavigationKey(
   session: AgentSession,
 ): NavigationKey {
-  return session.runtime?.provisional === true && session.launchId
-    ? { kind: "sessionLaunch", launchId: session.launchId }
-    : { kind: "session", sessionId: session.id };
+  return { kind: "session", sessionId: session.id };
 }
 
 export function agentSessionNavigationItem(
@@ -47,18 +42,13 @@ function addressesSession(key: NavigationKey, session: AgentSession) {
 
 /**
  * The catalog session a navigation key addresses, or null while the catalog
- * does not list it. A launch key prefers the canonical session.
+ * does not list it.
  */
 export function agentSessionForNavigationKey(
   key: NavigationKey,
   sessions: readonly AgentSession[],
 ): AgentSession | null {
-  const matches = sessions.filter((session) => addressesSession(key, session));
-  return (
-    matches.find((session) => session.runtime?.provisional !== true) ??
-    matches[0] ??
-    null
-  );
+  return sessions.find((session) => addressesSession(key, session)) ?? null;
 }
 
 /**

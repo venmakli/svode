@@ -58,7 +58,6 @@ pub async fn agent_sessions_list(
                     terminal_manager.list_agent_surfaces()?,
                     runtime.sessions(),
                 )?;
-                terminal_manager.reconcile_agent_sessions(&result.sessions)?;
                 result.agent_terminals_without_session =
                     terminal_agents::without_session(&root, &terminals, &result.sessions);
                 Ok(result)
@@ -143,7 +142,6 @@ pub async fn agent_sessions_refresh(
                     terminal_manager.list_agent_surfaces()?,
                     runtime.sessions(),
                 )?;
-                terminal_manager.reconcile_agent_sessions(&result.sessions)?;
                 result.agent_terminals_without_session =
                     terminal_agents::without_session(&root, &terminals, &result.sessions);
                 Ok(result)
@@ -218,7 +216,6 @@ pub async fn agent_sessions_hot_status(
             terminal_manager.list_agent_surfaces()?,
             runtime.sessions(),
         )?;
-        terminal_manager.reconcile_agent_sessions(&result.sessions)?;
         Ok(result)
     })
     .await;

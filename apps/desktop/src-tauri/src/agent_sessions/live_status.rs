@@ -305,7 +305,6 @@ pub(super) fn map_listed(
     let mut session = AgentSession {
         id,
         launch_id,
-        routine_run_id: None,
         source,
         source_session_id,
         title,
@@ -360,8 +359,7 @@ fn apply_terminal_runtime(
                 &surface.agent_session_id,
                 &surface.source,
                 &surface.source_session_id,
-                // A re-bound terminal no longer runs its launch's session.
-                surface.launch_id.as_ref().filter(|_| !surface.rebound),
+                None,
             )
         })
         .collect::<Vec<_>>();
@@ -374,23 +372,10 @@ fn apply_terminal_runtime(
         return Vec::new();
     };
 
-    // The launch and its run stay with the session of the launch when the
-    // process moved to another one (DF-163 R3).
-    if !runtime_surface.rebound {
-        session.launch_id = session
-            .launch_id
-            .clone()
-            .or_else(|| runtime_surface.launch_id.clone());
-        session.routine_run_id = session
-            .routine_run_id
-            .clone()
-            .or_else(|| runtime_surface.routine_run_id.clone());
-    }
     session.runtime = Some(AgentSessionRuntime {
         pty_id: runtime_surface.live.then(|| runtime_surface.pty_id.clone()),
         pid: None,
         live: runtime_surface.live,
-        provisional: false,
         last_output_at: runtime_surface.last_output_at.clone(),
         last_input_at: runtime_surface.last_input_at.clone(),
         acp_session: None,
@@ -447,74 +432,6 @@ fn saved_outcome_observations(
         .collect()
 }
 
-pub(super) fn map_provisional_surface(
-    surface: &AgentTerminalSurface,
-    scope: AgentSessionScope,
-) -> AgentSession {
-    let (status, status_reason, waiting_since) = match surface_status_evidence(surface) {
-        Some(evidence) => resolve_status(vec![terminal_observation(evidence)]),
-        None if surface.live => (
-            SessionStatus::unknown(),
-            "routine launch is visible in a managed PTY".to_string(),
-            None,
-        ),
-        None => (
-            SessionStatus::unknown(),
-            "routine launch has no source session or terminal outcome evidence".to_string(),
-            None,
-        ),
-    };
-    AgentSession {
-        id: surface.agent_session_id.clone(),
-        launch_id: surface.launch_id.clone(),
-        routine_run_id: surface.routine_run_id.clone(),
-        source: surface.source.clone(),
-        source_session_id: surface.source_session_id.clone(),
-        title: surface.title.clone().unwrap_or_else(|| {
-            surface
-                .launch_id
-                .as_deref()
-                .map(short_id)
-                .unwrap_or_else(|| short_id(&surface.agent_session_id))
-        }),
-        title_source: AgentSessionTitleSource::CliTitle,
-        status,
-        status_reason: Some(status_reason),
-        runtime: Some(AgentSessionRuntime {
-            pty_id: surface.live.then(|| surface.pty_id.clone()),
-            pid: None,
-            live: surface.live,
-            provisional: true,
-            last_output_at: surface.last_output_at.clone(),
-            last_input_at: surface.last_input_at.clone(),
-            acp_session: None,
-            approximate_binding: false,
-        }),
-        project_id: None,
-        project_path: Some(scope.project_path.clone()),
-        scope_kind: scope.kind,
-        scope_status: scope.status,
-        space_id: scope.space_id.clone(),
-        space_path: scope.space_path.clone(),
-        scope_confidence: scope.confidence,
-        cwd: scope.cwd,
-        started_at: Some(surface.created_at.clone()),
-        // Terminal output and input are no turns: a launch the agent has not
-        // listed yet keeps its creation time until its listed turns take over.
-        last_activity_at: surface.created_at.clone(),
-        waiting_since,
-        resume_command: None,
-        capabilities: AgentSessionCapabilities {
-            can_resume: false,
-            can_open_in_chat: false,
-            continues_in_ide: false,
-        },
-        alias_ids: Vec::new(),
-        resume_session_id: None,
-        native_external_writer: false,
-    }
-}
-
 fn rfc3339(time: std::time::SystemTime) -> String {
     chrono::DateTime::<Utc>::from(time).to_rfc3339_opts(SecondsFormat::Secs, true)
 }
@@ -569,7 +486,6 @@ pub(super) fn map_runtime_session(
     AgentSession {
         id: catalog_session_id(&source, &runtime.key),
         launch_id: None,
-        routine_run_id: None,
         source,
         source_session_id,
         title,

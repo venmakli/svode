@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use svode_agents::catalog::{ListedSession, RuntimeSession};
@@ -9,9 +9,7 @@ use svode_core::agent_adapters::AgentId;
 
 use super::AgentSessionsState;
 use super::cache::{CatalogSourceKey, SavedList, SavedSession};
-use super::live_status::{
-    map_listed, map_provisional_surface, map_runtime_session, overlay_runtime,
-};
+use super::live_status::{map_listed, map_runtime_session, overlay_runtime};
 use super::native_catalog::{CatalogEntry, NativeListing};
 use super::native_status::{NativeReads, parse_timestamp_str};
 use super::scope::{ScopeIndex, load_child_spaces, normalize_project_path, resolve_scope};
@@ -154,13 +152,6 @@ fn list(
         &state.home_dir,
         None,
     );
-    append_provisional_sessions(
-        &mut sessions,
-        &terminal_surfaces,
-        &scope_index,
-        &state.home_dir,
-        None,
-    );
     sessions.sort_by(compare_sessions);
     summary.returned_sessions = sessions.len();
 
@@ -233,13 +224,6 @@ pub(crate) fn hot_status(
     );
     let skipped_sessions = requested.len().saturating_sub(sessions.len());
 
-    append_provisional_sessions(
-        &mut sessions,
-        &terminal_surfaces,
-        &scope_index,
-        &state.home_dir,
-        Some(&requested),
-    );
     sessions.sort_by(compare_sessions);
 
     Ok(AgentSessionsHotStatusResult {
@@ -477,42 +461,6 @@ fn apply_runtime_sessions(
     }
 }
 
-fn append_provisional_sessions(
-    sessions: &mut Vec<AgentSession>,
-    terminal_surfaces: &[AgentTerminalSurface],
-    scope_index: &ScopeIndex,
-    home: &Path,
-    requested: Option<&HashSet<String>>,
-) {
-    let canonical_launch_ids = sessions
-        .iter()
-        .filter_map(|session| session.launch_id.clone())
-        .collect::<HashSet<_>>();
-    let existing_ids = sessions
-        .iter()
-        .map(|session| session.id.clone())
-        .collect::<HashSet<_>>();
-
-    for surface in terminal_surfaces.iter().filter(|surface| !surface.rebound) {
-        let Some(launch_id) = surface.launch_id.as_ref() else {
-            continue;
-        };
-        if canonical_launch_ids.contains(launch_id)
-            || existing_ids.contains(&surface.agent_session_id)
-        {
-            continue;
-        }
-        if requested.is_some_and(|ids| !ids.contains(&surface.agent_session_id)) {
-            continue;
-        }
-        let Some(scope) = resolve_scope(scope_index, &PathBuf::from(&surface.shell_cwd), home)
-        else {
-            continue;
-        };
-        sessions.push(map_provisional_surface(surface, scope));
-    }
-}
-
 /// Waiting sessions first, then working ones, then by last activity.
 fn compare_sessions(a: &AgentSession, b: &AgentSession) -> std::cmp::Ordering {
     fn work_priority(session: &AgentSession) -> u8 {
@@ -541,6 +489,8 @@ fn list_status(reports: &[AgentSessionSourceReport]) -> AgentSessionsListStatus 
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use std::fs;
 
     use super::*;
@@ -753,10 +703,7 @@ mod tests {
         AgentTerminalSurface {
             pty_id: pty_id.to_string(),
             agent_session_id: format!("{}:{source_session_id}", source.as_str()),
-            launch_id: None,
-            routine_run_id: None,
             mcp_project_path: None,
-            mcp_routine_caller_token: None,
             title: Some(format!("Session {source_session_id}")),
             initial_agent_argv: terminal_resume_argv(&source, source_session_id, None)
                 .unwrap_or_default(),
@@ -772,8 +719,6 @@ mod tests {
             exit_code: None,
             failure_reason: None,
             status_evidence: evidence,
-            exit_marker_buffer: String::new(),
-            rebound: false,
             approximate_binding: false,
         }
     }
@@ -793,78 +738,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn routine_launch_is_visible_before_source_session_reconciliation() {
-        let (_temp, home, project) = project_dirs();
-        let state = AgentSessionsState::with_home(home);
-        let mut provisional = surface(
-            "pty-routine",
-            AgentAdapterKind::Codex.id(),
-            "launch:launch-123",
-            None,
-        );
-        provisional.agent_session_id = "codex:launch:launch-123".to_string();
-        provisional.launch_id = Some("launch-123".to_string());
-        provisional.routine_run_id = Some("run-123".to_string());
-        provisional.title = Some("Review backlog".to_string());
-        provisional.shell_cwd = project.to_string_lossy().into_owned();
-        provisional.initial_agent_cwd = Some(project.to_string_lossy().into_owned());
-
-        let result = list_with(&state, &project, vec![provisional]);
-
-        assert_eq!(result.sessions.len(), 1);
-        let session = &result.sessions[0];
-        assert_eq!(session.id, "codex:launch:launch-123");
-        assert_eq!(session.launch_id.as_deref(), Some("launch-123"));
-        assert_eq!(session.routine_run_id.as_deref(), Some("run-123"));
-        assert_eq!(session.status.state, SessionState::Unknown);
-        assert_eq!(session.status.source, StatusSource::None);
-        assert!(session.runtime.as_ref().expect("runtime").provisional);
-        assert!(session.runtime.as_ref().expect("runtime").live);
-        assert_eq!(session.title, "Review backlog");
-    }
-
-    /// DF-216 R3: terminal output and input are no turns, so a launch the
-    /// agent has not listed yet keeps its creation time in the list and in hot
-    /// status while its TUI draws and takes keystrokes.
-    #[test]
-    fn a_provisional_launch_keeps_its_creation_time_over_terminal_output_and_input() {
-        let (_temp, home, project) = project_dirs();
-        let state = AgentSessionsState::with_home(home);
-        let mut provisional = surface(
-            "pty-routine",
-            AgentAdapterKind::Codex.id(),
-            "launch:launch-123",
-            None,
-        );
-        provisional.agent_session_id = "codex:launch:launch-123".to_string();
-        provisional.launch_id = Some("launch-123".to_string());
-        provisional.shell_cwd = project.to_string_lossy().into_owned();
-        provisional.last_output_at = Some("2026-07-04T10:01:00Z".to_string());
-        provisional.last_input_at = Some("2026-07-04T10:02:00Z".to_string());
-
-        let result = list_with(&state, &project, vec![provisional.clone()]);
-        let hot = hot_status(
-            &state,
-            project.to_string_lossy().into_owned(),
-            vec!["codex:launch:launch-123".to_string()],
-            vec![provisional],
-            Vec::new(),
-        )
-        .expect("hot status");
-
-        let session = by_id(&result, "codex:launch:launch-123");
-        assert!(session.runtime.as_ref().expect("runtime").provisional);
-        assert_eq!(session.last_activity_at, "2026-07-04T10:00:00Z");
-        assert_eq!(session.started_at.as_deref(), Some("2026-07-04T10:00:00Z"));
-        assert_eq!(hot.sessions.len(), 1);
-        assert_eq!(hot.sessions[0].last_activity_at, "2026-07-04T10:00:00Z");
-    }
-
     /// Condition 1 of `02`: a Codex terminal launch meets its listed session
     /// by the launch marker the reader takes from the first user turn.
     #[test]
-    fn routine_launch_reconciles_to_its_listed_session_by_the_launch_marker() {
+    fn a_listed_session_of_an_earlier_terminal_launch_keeps_its_launch_marker() {
         let (_temp, home, project) = project_dirs();
         let id = codex_id(1);
         let state = AgentSessionsState::with_home(home.clone());
@@ -882,41 +759,12 @@ mod tests {
                 "timestamp": "2026-08-07T10:00:01Z"
             })],
         );
-        let mut provisional = surface(
-            "pty-one",
-            AgentAdapterKind::Codex.id(),
-            "launch:launch-one",
-            None,
-        );
-        provisional.agent_session_id = "codex:launch:launch-one".to_string();
-        provisional.launch_id = Some("launch-one".to_string());
-        provisional.routine_run_id = Some("run-one".to_string());
-        provisional.shell_cwd = project.to_string_lossy().into_owned();
-        provisional.last_output_at = Some("2026-10-01T10:00:00Z".to_string());
-        provisional.last_input_at = Some("2026-10-01T10:00:05Z".to_string());
-        let listed_time = by_id(&list(&state, &project), &format!("codex:{id}"))
-            .last_activity_at
-            .clone();
-
-        let result = list_with(&state, &project, vec![provisional]);
+        let result = list(&state, &project);
 
         assert_eq!(result.sessions.len(), 1);
         let session = &result.sessions[0];
         assert_eq!(session.id, format!("codex:{id}"));
-        assert_eq!(
-            session.last_activity_at, listed_time,
-            "once listed, the session time follows its turns, not the terminal"
-        );
         assert_eq!(session.launch_id.as_deref(), Some("launch-one"));
-        assert_eq!(session.routine_run_id.as_deref(), Some("run-one"));
-        assert_eq!(
-            session
-                .runtime
-                .as_ref()
-                .and_then(|runtime| runtime.pty_id.as_deref()),
-            Some("pty-one")
-        );
-        assert!(!session.runtime.as_ref().expect("runtime").provisional);
     }
 
     #[test]
@@ -2190,13 +2038,12 @@ mod tests {
             true,
             vec![("c-continued", &project, LISTED_AT)],
         );
-        let mut routine_surface = closed_surface(
+        let routine_surface = closed_surface(
             "pty-routine",
             AgentAdapterKind::Codex.id(),
             &routine,
             &closed_at,
         );
-        routine_surface.routine_run_id = Some("run-one".to_string());
         let surfaces = vec![
             closed_surface(
                 "pty-continued",
@@ -2247,12 +2094,6 @@ mod tests {
                 "{session_id}"
             );
         }
-        assert_eq!(
-            by_id(&result, &format!("codex:{routine}"))
-                .routine_run_id
-                .as_deref(),
-            Some("run-one")
-        );
         let held = by_id(&result, &format!("codex:{same_second}"));
         assert_eq!(held.status.state, idle(Some(StopReason::Interrupted)));
         assert_eq!(held.status.confidence, StatusConfidence::Exact);
@@ -2520,8 +2361,6 @@ mod tests {
         routine.live = false;
         routine.finished_at = Some(failed_at);
         routine.exit_code = Some(137);
-        routine.routine_run_id = Some("run-failed".to_string());
-        routine.launch_id = Some("launch-failed".to_string());
         let mut surfaces = terminals.list_agent_surfaces().unwrap();
         surfaces.push(routine);
 

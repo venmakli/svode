@@ -108,7 +108,6 @@ export interface RoutineRunRefDto {
   launchId: string;
   agentSessionId: string;
   sourceSessionId?: string | null;
-  ptyId?: string | null;
   active: boolean;
   refusal?: RoutineLaunchRefusalDto | null;
 }
@@ -185,7 +184,6 @@ export type RoutineManualDispatchResultDto =
       launchId: string;
       agentSessionId: string;
       sourceSessionId?: string | null;
-      ptyId?: string | null;
     }
   | {
       status: "blocked";

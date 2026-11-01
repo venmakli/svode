@@ -3,7 +3,6 @@ pub mod commands;
 pub(crate) mod dispatch;
 pub(crate) mod host;
 pub(crate) mod lifecycle;
-pub(crate) mod runtime;
 mod scheduler;
 mod store_state;
 

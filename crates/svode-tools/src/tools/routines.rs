@@ -423,7 +423,6 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
             launch_id,
             agent_session_id,
             source_session_id,
-            pty_id,
         } => (
             format!("Started routine {routine_id} without waiting for completion."),
             json!({
@@ -433,7 +432,6 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
                 "launchId": launch_id,
                 "agentSessionId": agent_session_id,
                 "sourceSessionId": source_session_id,
-                "ptyId": pty_id,
             }),
         ),
         RoutineDispatchResult::AlreadyRunning {
@@ -442,7 +440,6 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
             launch_id,
             agent_session_id,
             source_session_id,
-            pty_id,
         } => (
             format!("Routine {routine_id} is already running; no second process was started."),
             json!({
@@ -452,7 +449,6 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
                 "launchId": launch_id,
                 "agentSessionId": agent_session_id,
                 "sourceSessionId": source_session_id,
-                "ptyId": pty_id,
             }),
         ),
         RoutineDispatchResult::Blocked {
@@ -477,7 +473,6 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
             launch_id,
             agent_session_id,
             source_session_id,
-            pty_id,
             message,
             ..
         } => (
@@ -489,7 +484,6 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
                 "launchId": launch_id,
                 "agentSessionId": agent_session_id,
                 "sourceSessionId": source_session_id,
-                "ptyId": pty_id,
                 "message": message,
             }),
         ),
@@ -995,7 +989,6 @@ mod tests {
         let launch = RoutineCaller::Launch {
             routine_run_id: "run-one".into(),
             launch_id: "launch-one".into(),
-            pty_id: Some("pty-one".into()),
         };
         // An origin claimed without verification restricts like a verified one.
         for caller in [launch, RoutineCaller::Claimed] {
@@ -1017,21 +1010,19 @@ mod tests {
             launch_id: "launch-one".into(),
             agent_session_id: "codex:session-one".into(),
             source_session_id: Some("session-one".into()),
-            pty_id: Some("pty-one".into()),
         });
         let structured = already_running.structured_content.unwrap();
         assert_eq!(structured["status"], "already_running");
         assert_eq!(structured["routineRunId"], "run-one");
         assert_eq!(structured["agentSessionId"], "codex:session-one");
 
-        // An ACP launch keeps the result's form with a null PTY.
+        // An ACP launch names its session at once.
         let started = dispatch_result(RoutineDispatchResult::Started {
             routine_id: "routine:one".into(),
             routine_run_id: "run-one".into(),
             launch_id: "launch-one".into(),
             agent_session_id: "codex:session-one".into(),
             source_session_id: Some("session-one".into()),
-            pty_id: None,
         });
         assert_eq!(
             started.structured_content.unwrap(),
@@ -1042,7 +1033,6 @@ mod tests {
                 "launchId": "launch-one",
                 "agentSessionId": "codex:session-one",
                 "sourceSessionId": "session-one",
-                "ptyId": null,
             })
         );
 

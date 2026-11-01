@@ -217,7 +217,6 @@ mod tests {
             pty_id: Some("p1".into()),
             pid: None,
             live,
-            provisional: false,
             last_output_at: None,
             last_input_at: None,
             acp_session: None,

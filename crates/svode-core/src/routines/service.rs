@@ -2783,22 +2783,16 @@ mod tests {
                 source_session_id: Some("source-local"),
                 agent_session_id: "codex:source-local",
                 created_at: "2026-09-19T10:00:00Z",
-                launch: &RoutineRunLaunch::Terminal {
-                    reason: None,
-                    detail: None,
-                },
+                launch: &RoutineRunLaunch::Acp,
             },
         )
         .await
         .unwrap();
-        operational::attach_pty(&pool, "run-local", "pty-live", "2026-09-19T10:00:01Z")
-            .await
-            .unwrap();
 
         let local = read_catalog(
             &routine_stores,
             &index_state,
-            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()]), HashSet::new()),
+            &RoutineLiveEvidence::new(HashSet::from(["run-local".to_string()])),
             &owner,
         )
         .await
@@ -2829,7 +2823,7 @@ mod tests {
         let remote = read_catalog(
             &routine_stores,
             &index_state,
-            &RoutineLiveEvidence::new(HashSet::from(["pty-live".to_string()]), HashSet::new()),
+            &RoutineLiveEvidence::new(HashSet::from(["run-local".to_string()])),
             &owner,
         )
         .await

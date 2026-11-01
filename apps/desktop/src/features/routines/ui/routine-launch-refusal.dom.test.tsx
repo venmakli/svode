@@ -67,7 +67,6 @@ function refusedRun(refusal: RoutineLaunchRefusal): RoutineRow {
       active: false,
       agentSessionId: "codex:launch:launch-one",
       launchId: "launch-one",
-      ptyId: null,
       refusal,
       routineRunId: "run-one",
       sourceSessionId: null,

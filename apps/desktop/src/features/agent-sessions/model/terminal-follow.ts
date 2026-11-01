@@ -8,17 +8,14 @@ import {
 import type { AgentSession } from "./types";
 
 /** The pty id of the session's live Svode terminal, if it has one. */
-export function liveTerminalPtyId(
-  session: AgentSession,
-): string | undefined {
+export function liveTerminalPtyId(session: AgentSession): string | undefined {
   return session.runtime?.live ? session.runtime.ptyId : undefined;
 }
 
 /**
  * Sessions whose live Svode terminal the read-model now lists at another
  * session, by the id of the session that had it: the agent CLI in that
- * terminal went on to another session (DF-163 R3). A provisional launch
- * that becomes canonical is not a move; its launch id carries it.
+ * terminal went on to another session (DF-163 R3).
  */
 export function agentSessionTerminalMoves(
   previous: readonly AgentSession[],
@@ -35,7 +32,6 @@ export function agentSessionTerminalMoves(
     const ptyId = liveTerminalPtyId(from);
     const to = ptyId ? nextByPtyId.get(ptyId) : undefined;
     if (!to || agentSessionHasId(to, from.id)) continue;
-    if (from.runtime?.provisional === true) continue;
     if (from.launchId && from.launchId === to.launchId) continue;
     moves.set(from.id, to);
   }

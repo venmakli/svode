@@ -128,7 +128,6 @@ export async function dispatchManualRoutine(
   }
   return {
     ...result,
-    ptyId: result.ptyId ?? null,
     sourceSessionId: result.sourceSessionId ?? null,
   };
 }
@@ -207,7 +206,6 @@ function normalizeRow(
     lastRun: row.lastRun
       ? Object.freeze({
           ...row.lastRun,
-          ptyId: row.lastRun.ptyId ?? null,
           refusal: normalizeRefusal(row.lastRun.refusal),
           sourceSessionId: row.lastRun.sourceSessionId ?? null,
         })

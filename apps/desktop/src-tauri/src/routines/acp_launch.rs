@@ -21,14 +21,13 @@ use svode_agents::{
     AcpLaunch, AgentRuntime, ConnectionId, ConnectionLease, LaunchRefused, LaunchValues,
 };
 use svode_core::agent_adapters::AgentId;
-use svode_core::routines::model::{RoutineDispatchResult, RoutineRunLaunch};
+use svode_core::routines::model::{RoutineDispatchResult, RoutineLiveEvidence, RoutineRunLaunch};
 use svode_core::routines::operational::{self, NewRoutineRun};
 use tokio::sync::broadcast::error::RecvError;
 
-use super::lifecycle::RoutineRunLifecycleSink;
+use super::lifecycle::{RoutineRunLifecycleSink, RunOutcomeEvidence};
 use crate::AppError;
 use crate::agent_sessions::types::catalog_session_id;
-use crate::terminal::{AgentTerminalLifecycleSink, AgentTerminalOutcomeEvidence};
 
 /// The live ACP launches of Routines in this process, by run id.
 pub(crate) struct RoutineAcpLaunches {
@@ -80,6 +79,12 @@ impl RoutineAcpLaunches {
         }
     }
 
+    /// The live launches of Routines: runs whose ACP session holds its
+    /// writer.
+    pub(crate) fn live_evidence(&self) -> RoutineLiveEvidence {
+        RoutineLiveEvidence::new(self.live_run_ids())
+    }
+
     /// Runs whose ACP session holds its writer.
     pub(crate) fn live_run_ids(&self) -> HashSet<String> {
         let writers = self.runtime.writers();
@@ -107,7 +112,6 @@ impl RoutineAcpLaunches {
                 |(routine_run_id, launch)| svode_tools::host::RoutineCaller::Launch {
                     routine_run_id: routine_run_id.clone(),
                     launch_id: launch.launch_id.clone(),
-                    pty_id: None,
                 },
             )
     }
@@ -167,7 +171,6 @@ impl RoutineAcpLaunches {
             launch_id: run.new_run.launch_id.to_string(),
             agent_session_id: agent_session_id.clone(),
             source_session_id: Some(source_session_id.clone()),
-            pty_id: None,
             message,
             refusal: None,
         };
@@ -226,7 +229,6 @@ impl RoutineAcpLaunches {
             launch_id: run.new_run.launch_id.to_string(),
             agent_session_id,
             source_session_id: Some(source_session_id),
-            pty_id: None,
         })
     }
 
@@ -244,7 +246,7 @@ impl RoutineAcpLaunches {
             if launch.finished.load(Ordering::SeqCst) {
                 continue;
             }
-            if let Err(error) = launch.sink.record_terminal_outcome(&outcome_evidence(
+            if let Err(error) = launch.sink.record_outcome(&outcome_evidence(
                 SessionState::Idle {
                     stop_reason: Some(StopReason::Interrupted),
                 },
@@ -325,17 +327,16 @@ async fn follow_run(
 
 async fn record_outcome(sink: Arc<RoutineRunLifecycleSink>, state: SessionState, reason: String) {
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) = sink.record_terminal_outcome(&outcome_evidence(state, reason)) {
+        if let Err(error) = sink.record_outcome(&outcome_evidence(state, reason)) {
             tracing::warn!("routine run outcome was not recorded: {error}");
         }
     })
     .await;
 }
 
-fn outcome_evidence(state: SessionState, reason: String) -> AgentTerminalOutcomeEvidence {
-    AgentTerminalOutcomeEvidence {
+fn outcome_evidence(state: SessionState, reason: String) -> RunOutcomeEvidence {
+    RunOutcomeEvidence {
         state,
-        exit_code: None,
         reason,
         observed_at: now_rfc3339(),
     }

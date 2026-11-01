@@ -33,25 +33,13 @@ test("a live terminal the read-model lists at another session moves to it", () =
   ]);
 });
 
-test("a terminal that stays, ends or becomes canonical is no move", () => {
+test("a terminal that stays or ends is no move", () => {
   const session = listedSession({ id: "claude:a", runtime: live("pty-1") });
   expect(agentSessionTerminalMoves([session], [session]).size).toBe(0);
   expect(
     agentSessionTerminalMoves([session], [{ ...session, runtime: undefined }])
       .size,
   ).toBe(0);
-  // The canonical record of a provisional launch carries its launch id.
-  const provisional = listedSession({
-    id: "codex:launch-a",
-    launchId: "launch-a",
-    runtime: { ...live("pty-2"), provisional: true },
-  });
-  const canonical = listedSession({
-    id: "codex:real",
-    launchId: "launch-a",
-    runtime: live("pty-2"),
-  });
-  expect(agentSessionTerminalMoves([provisional], [canonical]).size).toBe(0);
   // Another link of the same conversation is the same session.
   const chain = listedSession({
     id: "hermes:root",

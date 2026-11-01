@@ -98,7 +98,6 @@ export interface RoutineRunRef {
   launchId: string;
   agentSessionId: string;
   sourceSessionId: string | null;
-  ptyId: string | null;
   active: boolean;
   /** The run's launch was refused before its first prompt. */
   refusal: RoutineLaunchRefusal | null;
@@ -150,7 +149,6 @@ export type RoutineManualDispatchResult =
       launchId: string;
       agentSessionId: string;
       sourceSessionId: string | null;
-      ptyId: string | null;
     }
   | {
       status: "blocked";

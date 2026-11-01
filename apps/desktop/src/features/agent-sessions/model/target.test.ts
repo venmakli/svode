@@ -24,21 +24,11 @@ test("a pending terminal follows the CLI session matched to its pty", () => {
   ).toBe("codex:started");
 });
 
-test("a provisional launch follows its canonical session by launch id", () => {
-  const provisional = listedSession({
-    id: "codex:launch-a",
-    launchId: "launch-a",
-    runtime: { live: true, provisional: true },
-  });
+test("a target the catalog does not list follows the session of its launch id", () => {
   const canonical = listedSession({ id: "codex:real", launchId: "launch-a" });
   const target = { sessionId: "codex:launch-a", launchId: "launch-a" };
 
-  expect(resolveAgentSessionId(target, [provisional], {})).toBe(
-    "codex:launch-a",
-  );
-  expect(resolveAgentSessionId(target, [provisional, canonical], {})).toBe(
-    "codex:real",
-  );
+  expect(resolveAgentSessionId(target, [], {})).toBe("codex:launch-a");
   expect(resolveAgentSessionId(target, [canonical], {})).toBe("codex:real");
 });
 

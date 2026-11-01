@@ -174,7 +174,6 @@ async fn an_acp_launch_records_its_run_and_its_writer_and_token_live_with_the_co
     let RoutineDispatchResult::Started {
         agent_session_id,
         source_session_id,
-        pty_id,
         ..
     } = started
     else {
@@ -182,7 +181,6 @@ async fn an_acp_launch_records_its_run_and_its_writer_and_token_live_with_the_co
     };
     assert_eq!(agent_session_id, "codex:s1");
     assert_eq!(source_session_id.as_deref(), Some("s1"));
-    assert_eq!(pty_id, None);
 
     // The run has the canonical id from the creation of the session.
     let run = fixture
@@ -191,18 +189,13 @@ async fn an_acp_launch_records_its_run_and_its_writer_and_token_live_with_the_co
     assert_eq!(run.launch, RoutineRunLaunch::Acp);
     assert_eq!(run.source_session_id.as_deref(), Some("s1"));
     assert_eq!(run.agent_session_id, "codex:s1");
-    assert_eq!(run.pty_id, None);
 
     let session = SessionKey::from_acp("codex", "s1", true);
     assert_eq!(
         fixture.runtime.writers().writer(&session),
         Some(Writer::Acp)
     );
-    let live = super::super::runtime::live_evidence(
-        &crate::terminal::TerminalManager::new(fixture.runtime.writers()),
-        &fixture.launches,
-    )
-    .unwrap();
+    let live = fixture.launches.live_evidence();
     assert!(run.blocks_relaunch(&live));
 
     let project = fixture.temp.path();
@@ -211,7 +204,6 @@ async fn an_acp_launch_records_its_run_and_its_writer_and_token_live_with_the_co
         Some(svode_tools::host::RoutineCaller::Launch {
             routine_run_id: "run-one".into(),
             launch_id: "launch-one".into(),
-            pty_id: None,
         })
     );
     let other_project = tempdir().unwrap();

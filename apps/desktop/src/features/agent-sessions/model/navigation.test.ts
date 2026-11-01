@@ -89,24 +89,18 @@ test("an unread source keeps its sessions and every launch key", () => {
   ]);
 });
 
-test("a provisional launch is keyed by launch id and keeps its pin after handoff", () => {
-  const provisional = listedSession({
-    id: "claude-code:provisional",
-    launchId: "launch-1",
-    runtime: { live: true, provisional: true },
-  });
+test("a launch key pinned before keeps addressing the session of its launch", () => {
   const canonical = listedSession({
     id: "claude-code:canonical",
     launchId: "launch-1",
   });
   const pinned: NavigationItem[] = [
-    { key: agentSessionNavigationKey(provisional), title: "Routine run" },
+    {
+      key: { kind: "sessionLaunch", launchId: "launch-1" },
+      title: "Routine run",
+    },
   ];
 
-  expect(agentSessionNavigationKey(provisional)).toEqual({
-    kind: "sessionLaunch",
-    launchId: "launch-1",
-  });
   expect(agentSessionNavigationKey(canonical)).toEqual({
     kind: "session",
     sessionId: "claude-code:canonical",
@@ -117,12 +111,7 @@ test("a provisional launch is keyed by launch id and keeps its pin after handoff
   ).toBe(-1);
 });
 
-test("a pinned key resolves to the catalog session, a launch key to the canonical one", () => {
-  const provisional = listedSession({
-    id: "claude-code:provisional",
-    launchId: "launch-1",
-    runtime: { live: true, provisional: true },
-  });
+test("a pinned key resolves to the catalog session, a launch key to the session of its launch", () => {
   const canonical = listedSession({
     id: "claude-code:canonical",
     launchId: "launch-1",
@@ -132,12 +121,7 @@ test("a pinned key resolves to the catalog session, a launch key to the canonica
     launchId: "launch-1",
   };
 
-  expect(agentSessionForNavigationKey(launchKey, [provisional])).toBe(
-    provisional,
-  );
-  expect(
-    agentSessionForNavigationKey(launchKey, [provisional, canonical]),
-  ).toBe(canonical);
+  expect(agentSessionForNavigationKey(launchKey, [canonical])).toBe(canonical);
   expect(
     agentSessionForNavigationKey({ kind: "session", sessionId: "codex:gone" }, [
       canonical,
