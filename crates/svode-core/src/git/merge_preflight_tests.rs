@@ -41,6 +41,19 @@ impl Fixture {
     /// A Git whose release is unknown: background sync only fast-forwards,
     /// as on Git 2.31–2.37.
     fn unchecked() -> Self {
+        Self::with_wrapper("")
+    }
+
+    /// A Git that reports `release` to any version read, whatever arguments
+    /// come first, and logs every other call for [`Self::take_wrapper_log`].
+    fn reporting(release: &str) -> Self {
+        Self::with_wrapper(&format!(
+            "for arg in \"$@\"; do if [ \"$arg\" = --version ]; then echo 'git version {release}'; exit 0; fi; done\n\
+             echo \"$*\" >> \"$(dirname \"$0\")/git.log\"\n"
+        ))
+    }
+
+    fn with_wrapper(prelude: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let global = temp.path().join("gitconfig");
         std::fs::write(
@@ -53,7 +66,7 @@ impl Fixture {
         svode_testkit::write_executable(
             &wrapper,
             &format!(
-                "#!/bin/sh\nexport GIT_CONFIG_GLOBAL='{}' GIT_CONFIG_NOSYSTEM=1\nexec git \"$@\"\n",
+                "#!/bin/sh\nexport GIT_CONFIG_GLOBAL='{}' GIT_CONFIG_NOSYSTEM=1\n{prelude}exec git \"$@\"\n",
                 global.display()
             ),
         )
@@ -184,6 +197,14 @@ impl Fixture {
             self.git(repo, &["status", "--porcelain=v2", "--untracked-files=all"]),
             files,
         )
+    }
+
+    /// Calls of a [`Self::reporting`] Git since the last read, one per line.
+    fn take_wrapper_log(&self) -> String {
+        let log = self.temp.path().join("git.log");
+        let calls = std::fs::read_to_string(&log).unwrap_or_default();
+        std::fs::write(&log, "").unwrap();
+        calls
     }
 
     async fn background(&self) -> SyncResult {
@@ -487,6 +508,45 @@ async fn without_merges_in_memory_background_sync_only_fast_forwards() {
     ));
     assert_ne!(f.head(&f.local), local);
     assert_eq!(f.remote_head(), f.head(&f.local));
+}
+
+#[tokio::test]
+async fn on_a_recognised_git_without_merges_in_memory_background_sync_only_fast_forwards() {
+    let f = Fixture::reporting("2.37.0");
+    let availability = f.cli.check_availability().await;
+    assert_eq!(availability.git_version.as_deref(), Some("2.37.0"));
+    assert_eq!(
+        f.cli.version(),
+        Some(crate::git::version::GitVersion::new(2, 37, 0))
+    );
+    assert!(!f.cli.background_merge());
+
+    let incoming = f.incoming(&[("notes.txt", "theirs\n")]);
+    assert!(matches!(f.background().await, SyncResult::Success { .. }));
+    assert_eq!(f.head(&f.local), incoming);
+    assert!(!f.take_wrapper_log().is_empty());
+
+    // Diverged: even a clean merge waits for an explicit sync.
+    let remote = f.incoming(&[("notes.txt", "theirs again\n")]);
+    f.commit(&f.local, &[("other.md", "mine\n")]);
+    let before = f.state(&f.local);
+    assert!(matches!(
+        f.background().await,
+        SyncResult::ExplicitSyncRequired
+    ));
+    let calls = f.take_wrapper_log();
+    assert!(!calls.is_empty());
+    for call in calls.lines() {
+        assert!(
+            !call
+                .split_whitespace()
+                .any(|arg| matches!(arg, "merge-tree" | "merge")),
+            "{call}"
+        );
+    }
+    assert_eq!(f.state(&f.local), before);
+    assert_eq!(f.remote_head(), remote);
+    assert!(!f.merging(&f.local));
 }
 
 // ---- Races ----

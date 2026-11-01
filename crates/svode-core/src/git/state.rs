@@ -244,6 +244,34 @@ mod tests {
         assert!(runtime.detected().unwrap().background_merge());
     }
 
+    /// The Git answers its release only to the exact arguments of Svode's
+    /// read; a read with other arguments gets another release.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn start_and_the_availability_check_read_the_release_with_one_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("git");
+        svode_testkit::write_executable(
+            &script,
+            format!(
+                "#!/bin/sh\nif [ \"$*\" = '{}' ]; then echo 'git version 2.37.0'; exit 0; fi\n\
+                 for arg in \"$@\"; do if [ \"$arg\" = --version ]; then echo 'git version 2.55.0'; exit 0; fi; done\nexit 1\n",
+                crate::git::cli::VERSION_ARGS.join(" ")
+            ),
+        )
+        .unwrap();
+        let start = crate::git::version::GitVersion::new(2, 37, 0);
+
+        let cli = GitCli::detect_at(script);
+        assert_eq!(cli.version(), Some(start));
+        let availability = cli.check_availability().await;
+        assert_eq!(availability.git_version.as_deref(), Some("2.37.0"));
+        assert_eq!(cli.version(), Some(start));
+        assert!(!cli.background_merge());
+        assert_eq!(cli.refresh_version().await, Some(start));
+        assert_eq!(cli.version(), Some(start));
+    }
+
     #[tokio::test]
     async fn canonical_repository_aliases_share_one_lock() {
         let state = GitRepositoryState::new();

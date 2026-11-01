@@ -82,11 +82,16 @@ impl GitCli {
     }
     /// Detect git binary and LFS availability.
     pub fn detect() -> Result<Self, GitError> {
-        let git_path = resolve_git_binary()?;
+        Ok(Self::detect_at(resolve_git_binary()?))
+    }
 
+    /// [`Self::detect`] of the Git executable at `git_path`.
+    pub(crate) fn detect_at(git_path: PathBuf) -> Self {
         tracing::info!("Found git at: {}", git_path.display());
 
-        let version = detect_version(&git_path);
+        let version = read_version_blocking(&git_path)
+            .as_deref()
+            .and_then(GitVersion::parse);
         match version {
             Some(version) if !version.supported() => {
                 tracing::warn!("Git {version} is older than {}", GitVersion::MINIMUM)
@@ -102,10 +107,10 @@ impl GitCli {
             tracing::debug!("Git LFS extension not available");
         }
 
-        Ok(Self {
+        Self {
             git_path,
             version: Arc::new(RwLock::new(version)),
-        })
+        }
     }
 
     /// Last observed release; `None` when `git version` was not recognised.
@@ -117,10 +122,14 @@ impl GitCli {
     }
 
     fn observe_version(&self, version: Option<GitVersion>) {
-        *self
+        let mut current = self
             .version
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = version;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(change) = version_change(*current, version) {
+            tracing::warn!("{change}");
+        }
+        *current = version;
     }
 
     /// Read the release again, e.g. after the user updated Git in place.
@@ -442,15 +451,11 @@ impl GitCli {
     }
 
     async fn version_output(&self) -> Option<String> {
-        let mut cmd = Command::new(&self.git_path);
-        hide_tokio_window(&mut cmd);
-        apply_common_git_env(&mut cmd);
-        cmd.args(["-c", "core.quotePath=false", "--version"])
-            .env("GIT_TERMINAL_PROMPT", "0")
+        let output = Command::from(version_command(&self.git_path))
             .output()
             .await
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .ok()?;
+        Some(version_stdout(&output))
     }
 
     /// Check git and git-lfs availability with version info. The release read
@@ -473,12 +478,41 @@ impl GitCli {
     }
 }
 
-fn detect_version(git_path: &Path) -> Option<GitVersion> {
+/// The one command of every read of the Git release: at start, by the
+/// availability check and by "Check again". Two reads that differ in their
+/// arguments could get different answers from one executable, and the last
+/// one would decide for the whole process.
+pub(crate) const VERSION_ARGS: [&str; 1] = ["--version"];
+
+fn version_command(git_path: &Path) -> StdCommand {
     let mut cmd = StdCommand::new(git_path);
     hide_window(&mut cmd);
     apply_common_std_git_env(&mut cmd);
-    let output = cmd.arg("--version").output().ok()?;
-    GitVersion::parse(&String::from_utf8_lossy(&output.stdout))
+    cmd.args(VERSION_ARGS);
+    cmd
+}
+
+fn version_stdout(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn read_version_blocking(git_path: &Path) -> Option<String> {
+    let output = version_command(git_path).output().ok()?;
+    Some(version_stdout(&output))
+}
+
+/// The log line of a release that differs from the one read before.
+fn version_change(previous: Option<GitVersion>, observed: Option<GitVersion>) -> Option<String> {
+    let label = |version: Option<GitVersion>| {
+        version.map_or_else(|| "unrecognised".to_string(), |version| version.to_string())
+    };
+    (previous != observed).then(|| {
+        format!(
+            "Git version changed from {} to {}",
+            label(previous),
+            label(observed)
+        )
+    })
 }
 
 /// Every Git process Svode starts runs without optional locks: a read never
@@ -779,9 +813,25 @@ fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GitCli, PATH_SET_COMMAND_LINE_BUDGET, args_with_quote_path, command_line_arg_cost,
-        parse_lfs_version,
+        GitCli, GitVersion, PATH_SET_COMMAND_LINE_BUDGET, args_with_quote_path,
+        command_line_arg_cost, parse_lfs_version, version_change,
     };
+
+    #[test]
+    fn a_release_that_differs_from_the_last_read_is_logged_with_both() {
+        let old = GitVersion::new(2, 37, 0);
+        let new = GitVersion::new(2, 55, 0);
+        assert_eq!(version_change(Some(old), Some(old)), None);
+        assert_eq!(version_change(None, None), None);
+        assert_eq!(
+            version_change(Some(old), Some(new)).as_deref(),
+            Some("Git version changed from 2.37.0 to 2.55.0")
+        );
+        assert_eq!(
+            version_change(Some(new), None).as_deref(),
+            Some("Git version changed from 2.55.0 to unrecognised")
+        );
+    }
 
     /// UTF-16 units of the command line Windows builds for `args`, with the
     /// quoting of the Rust standard library: arguments with spaces, tabs or
