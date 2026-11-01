@@ -9,7 +9,12 @@ const scenario = process.env.SVODE_APP_PROVIDERS_GIT_DOM;
 
 // Each scenario needs a fresh identity store, so each runs in its own process.
 if (!scenario) {
-  for (const name of ["startup", "identity-refusal", "unreadable-config"]) {
+  for (const name of [
+    "startup",
+    "identity-refusal",
+    "version-mismatch",
+    "unreadable-config",
+  ]) {
     test(`root providers Git check: ${name}`, () => {
       const child = spawnSync(
         process.execPath,
@@ -92,6 +97,7 @@ if (!scenario) {
   let gitAvailability = supported;
   let identityAnswer: () => unknown = () => identity;
   let identityReads = 0;
+  let gitChecks = 0;
 
   const settle = () =>
     act(async () => {
@@ -102,7 +108,13 @@ if (!scenario) {
     const dom = await createTestDom();
     mockNativeIpc(
       async (command) => {
-        if (command === "git_check_availability") return gitAvailability;
+        if (command === "git_check_availability") {
+          gitChecks += 1;
+          // A real IPC answer arrives in a later task, so state set before
+          // the check renders on its own instead of batching with the answer.
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return gitAvailability;
+        }
         if (command === "get_git_identity") {
           identityReads += 1;
           return identityAnswer();
@@ -191,6 +203,32 @@ if (!scenario) {
         expect(dialog()).toBeNull();
         expect(text().includes(m.identity_load_error_title())).toBe(false);
         expect(home() !== null).toBe(true);
+      }
+
+      if (scenario === "version-mismatch") {
+        // The availability check accepts Git while the identity read still
+        // refuses its version: one more Git check, no remount and no loop.
+        identityAnswer = () => {
+          throw {
+            kind: "git_unsupported",
+            message: "Git 2.30.1 is older than 2.31.0",
+            version: "2.30.1",
+            minimumVersion: "2.31.0",
+          };
+        };
+        await dom.render(<AppProviders />);
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        });
+        const settled = { identityReads, gitChecks };
+        expect(settled).toEqual({ identityReads: 1, gitChecks: 2 });
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        });
+        expect({ identityReads, gitChecks }).toEqual(settled);
+        expect(dialog()).toBeNull();
+        expect(text().includes(m.identity_load_error_title())).toBe(false);
+        expect(home()).toBeNull();
       }
 
       if (scenario === "unreadable-config") {
