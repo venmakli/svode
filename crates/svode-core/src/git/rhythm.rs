@@ -3,9 +3,13 @@
 //!
 //! Actions start sync: a landed commit publishes, opening a Space, starting
 //! the app and focusing the window check incoming. A timer is only the
-//! safety check while the window stays visible and idle. Background network
-//! of one repository runs at most once per [`MIN_GAP`]; commits in a row go
-//! out as one push; a network error is retried after a growing pause.
+//! safety check while the window stays visible and idle. Implicit network
+//! of one repository, the background sync and the fetch for the counters
+//! alike, runs at most once per [`MIN_GAP`] (DF-285): inside it the counters
+//! come from the last observation, and a background sync integrates the
+//! revision the counters fetched without checking the remote again. Commits
+//! in a row go out as one push; a network error is retried after a growing
+//! pause.
 //!
 //! Pure planning with the clock passed in: the host owns the timers, the
 //! window visibility and running the work; the explicit sync of the user is
@@ -47,6 +51,10 @@ pub enum Work {
     Sync,
     /// The fetch for the counters, with sync off.
     Fetch,
+    /// A background sync of the revision the fetch for the counters
+    /// observed inside [`MIN_GAP`]: it integrates and publishes without the
+    /// light check of the remote.
+    Integrate,
 }
 
 /// A timer the host arms; a newer one replaces it.
@@ -88,6 +96,9 @@ struct Cadence {
     quiet: bool,
     pause: Option<Duration>,
     blocked_until: Option<Instant>,
+    /// The last network call was a fetch for the counters, and no sync has
+    /// integrated what it observed since.
+    observed: bool,
     running: bool,
     publish: bool,
     visible: bool,
@@ -103,6 +114,7 @@ impl Default for Cadence {
             quiet: false,
             pause: None,
             blocked_until: None,
+            observed: false,
             running: false,
             publish: false,
             visible: false,
@@ -146,11 +158,22 @@ impl Cadence {
     }
 
     fn start(&mut self, now: Instant) -> Step {
+        self.last_network = Some(now);
+        self.run(Work::Sync)
+    }
+
+    fn run(&mut self, work: Work) -> Step {
         self.wake = None;
         self.running = true;
         self.publish = false;
+        self.observed = false;
+        Step::Run(work)
+    }
+
+    /// A fetch for the counters reaches the remote now.
+    fn fetch(&mut self, now: Instant) {
         self.last_network = Some(now);
-        Step::Run(Work::Sync)
+        self.observed = true;
     }
 
     /// The timer after a finished check: a waiting publication, else the
@@ -171,12 +194,19 @@ impl Cadence {
     }
 
     fn check(&mut self, now: Instant) -> Step {
-        if self.running || !self.may_run(now) {
-            // The running sync checks; a recent check or a retry pause
-            // keeps its own timer.
+        if self.running {
             return self.next(now);
         }
-        self.start(now)
+        if self.may_run(now) {
+            return self.start(now);
+        }
+        if self.observed {
+            // The counters checked the remote just now: integrate what they
+            // fetched without checking again.
+            return self.run(Work::Integrate);
+        }
+        // A recent check or a retry pause keeps its own timer.
+        self.next(now)
     }
 }
 
@@ -206,7 +236,7 @@ impl Rhythm {
             cadence.wake = None;
             // Without sync only focus fetches, for the counters.
             if trigger == Trigger::Focused && cadence.may_run(now) {
-                cadence.last_network = Some(now);
+                cadence.fetch(now);
                 return Step::Run(Work::Fetch);
             }
             return Step::Nothing;
@@ -218,6 +248,20 @@ impl Rhythm {
             }
             Trigger::Opened | Trigger::Focused => cadence.check(now),
         }
+    }
+
+    /// An implicit fetch for the counters of the repository — the control
+    /// mounting, the Dialog opening, after a commit, a publication or a
+    /// stop. `true` when it may reach the remote now; otherwise the counters
+    /// come from the last observation, as the running sync or a check less
+    /// than [`MIN_GAP`] ago left it.
+    pub fn counters(&mut self, repo: &Path, now: Instant) -> bool {
+        let cadence = self.cadence(repo);
+        if cadence.running || !cadence.may_run(now) {
+            return false;
+        }
+        cadence.fetch(now);
+        true
     }
 
     /// The timer of `generation` fired. `visible` says whether a window
@@ -295,6 +339,7 @@ impl Rhythm {
         cadence.idle = IDLE_FIRST;
         cadence.quiet = false;
         cadence.last_network = Some(now);
+        cadence.observed = false;
         cadence.visible = true;
         if !auto {
             cadence.wake = None;
@@ -304,11 +349,21 @@ impl Rhythm {
     }
 }
 
-/// The revision the upstream tracking ref of `repo` holds, read locally. A
-/// background sync that moved it found incoming commits.
-pub async fn upstream_revision(cli: &super::cli::GitCli, repo: &Path) -> Option<String> {
+/// The revision a background run of `work` found incoming commits by
+/// moving, read locally: the upstream tracking ref a sync fetches into, or
+/// HEAD for [`Work::Integrate`], whose revision was fetched before it.
+pub async fn incoming_revision(
+    cli: &super::cli::GitCli,
+    repo: &Path,
+    work: Work,
+) -> Option<String> {
+    let rev = if work == Work::Integrate {
+        "HEAD"
+    } else {
+        "@{upstream}"
+    };
     let out = cli
-        .exec(repo, &["rev-parse", "--verify", "-q", "@{upstream}"])
+        .exec(repo, &["rev-parse", "--verify", "-q", rev])
         .await
         .ok()?;
     let revision = out.stdout.trim();

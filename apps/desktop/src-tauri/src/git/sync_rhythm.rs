@@ -97,6 +97,23 @@ pub(crate) fn committed(app: &AppHandle, repo: &Path) {
     });
 }
 
+/// The fetch for the counters of the repository of `path`, which every
+/// implicit read of the counters is (DF-285): it reaches the remote only
+/// when the rhythm admits background network of the repository now,
+/// otherwise it reads the counters the last observation left, after the
+/// running sync.
+pub(crate) async fn fetch_status(app: &AppHandle, path: &Path) -> Result<GitStatus, SharedError> {
+    let runtime = runtime(app);
+    let cli = runtime.require_cli()?;
+    let repo = svode_core::git::access::resolve_repository(&cli, path).await?;
+    let network =
+        state(app).is_none_or(|state| state.plan(|rhythm| rhythm.counters(&repo, Instant::now())));
+    if network {
+        return flow::fetch_status(&runtime, &host(app), path).await;
+    }
+    Ok(runtime.status(path, true).await?)
+}
+
 /// The user synced the repository of `path`; the rhythm starts over.
 pub(crate) async fn explicit(app: &AppHandle, path: &Path) {
     let Ok(cli) = runtime(app).require_cli() else {
@@ -123,9 +140,9 @@ pub(crate) fn release_window(app: &AppHandle, window: &str) {
 
 fn apply(app: &AppHandle, repo: PathBuf, step: Step) {
     match step {
-        Step::Run(Work::Sync) => {
+        Step::Run(work @ (Work::Sync | Work::Integrate)) => {
             let app = app.clone();
-            tauri::async_runtime::spawn(async move { run(&app, repo).await });
+            tauri::async_runtime::spawn(async move { run(&app, repo, work).await });
         }
         Step::Arm(wake) => {
             let app = app.clone();
@@ -166,21 +183,25 @@ fn visible(app: &AppHandle, repo: &Path) -> bool {
     })
 }
 
-async fn run(app: &AppHandle, repo: PathBuf) {
+async fn run(app: &AppHandle, repo: PathBuf, work: Work) {
     let runtime = runtime(app);
     let cli = runtime.require_cli().ok();
     let before = match &cli {
-        Some(cli) => rhythm::upstream_revision(cli, &repo).await,
+        Some(cli) => rhythm::incoming_revision(cli, &repo, work).await,
         None => None,
     };
     // Open content groups close before a sync (1.E).
     super::auto_versions::close_all(app, std::slice::from_ref(&repo)).await;
-    let result = flow::sync(&runtime, &host(app), &repo, true).await;
+    let result = if work == Work::Integrate {
+        flow::sync_observed(&runtime, &host(app), &repo).await
+    } else {
+        flow::sync(&runtime, &host(app), &repo, true).await
+    };
     if let Err(error) = &result {
         tracing::warn!(kind = error.kind(), "background sync failed");
     }
     let after = match &cli {
-        Some(cli) => rhythm::upstream_revision(cli, &repo).await,
+        Some(cli) => rhythm::incoming_revision(cli, &repo, work).await,
         None => None,
     };
     let outcome = rhythm::outcome(&result, before.as_deref(), after.as_deref());

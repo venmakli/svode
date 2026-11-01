@@ -272,3 +272,91 @@ fn turning_sync_off_drops_the_planned_work() {
         Step::Nothing
     );
 }
+
+const INTEGRATE: Step = Step::Run(Work::Integrate);
+
+#[test]
+fn the_counters_and_a_background_sync_share_one_check_in_either_order() {
+    // DF-285: the counters first, then opening the Space.
+    let start = Instant::now();
+    let mut rhythm = Rhythm::default();
+    assert!(rhythm.counters(repo(), start));
+    // The sync integrates what the counters fetched, without a check.
+    assert_eq!(
+        rhythm.trigger(repo(), Trigger::Opened, true, start + secs(1)),
+        INTEGRATE
+    );
+    assert!(!rhythm.counters(repo(), start + secs(2)));
+    assert!(!matches!(
+        rhythm.trigger(repo(), Trigger::Focused, true, start + secs(3)),
+        Step::Run(_)
+    ));
+    rhythm.finished(repo(), NO_INCOMING, start + secs(4));
+    // What the counters observed is integrated: the gap holds the next one.
+    assert!(!matches!(
+        rhythm.trigger(repo(), Trigger::Opened, true, start + secs(5)),
+        Step::Run(_)
+    ));
+
+    // Opening the Space first, then the counters.
+    let mut rhythm = Rhythm::default();
+    assert_eq!(rhythm.trigger(repo(), Trigger::Opened, true, start), SYNC);
+    assert!(!rhythm.counters(repo(), start + secs(1)), "the sync checks");
+    rhythm.finished(repo(), NO_INCOMING, start + secs(2));
+    assert!(!rhythm.counters(repo(), start + secs(10)));
+    assert!(rhythm.counters(repo(), start + MIN_GAP));
+}
+
+#[test]
+fn the_counters_reach_the_remote_again_after_the_gap_and_explicit_sync_is_not_held() {
+    let start = Instant::now();
+    let mut rhythm = Rhythm::default();
+    assert!(rhythm.counters(repo(), start));
+    assert!(!rhythm.counters(repo(), start + secs(29)));
+
+    // The explicit sync runs regardless and moves the gap; it also
+    // integrates what the counters fetched.
+    rhythm.explicit(repo(), true, start + secs(10));
+    assert!(!matches!(
+        rhythm.trigger(repo(), Trigger::Opened, true, start + secs(11)),
+        Step::Run(_)
+    ));
+    assert!(!rhythm.counters(repo(), start + MIN_GAP));
+    assert!(rhythm.counters(repo(), start + secs(10) + MIN_GAP));
+    // After the gap a sync checks the remote itself.
+    assert_eq!(
+        rhythm.trigger(
+            repo(),
+            Trigger::Opened,
+            true,
+            start + secs(10) + MIN_GAP * 2
+        ),
+        SYNC
+    );
+}
+
+#[test]
+fn without_sync_the_counters_and_focus_share_the_gap() {
+    let start = Instant::now();
+    let mut rhythm = Rhythm::default();
+    assert!(rhythm.counters(repo(), start));
+    assert_eq!(
+        rhythm.trigger(repo(), Trigger::Focused, false, start + secs(5)),
+        Step::Nothing
+    );
+    assert_eq!(
+        rhythm.trigger(repo(), Trigger::Focused, false, start + MIN_GAP),
+        Step::Run(Work::Fetch)
+    );
+    assert!(!rhythm.counters(repo(), start + MIN_GAP + secs(1)));
+}
+
+#[test]
+fn the_counters_wait_out_the_pause_after_a_network_error() {
+    let start = Instant::now();
+    let mut rhythm = Rhythm::default();
+    assert_eq!(rhythm.trigger(repo(), Trigger::Opened, true, start), SYNC);
+    rhythm.finished(repo(), Outcome::NetworkError, start + secs(1));
+    assert!(!rhythm.counters(repo(), start + MIN_GAP));
+    assert!(rhythm.counters(repo(), start + secs(1) + RETRY_FIRST));
+}

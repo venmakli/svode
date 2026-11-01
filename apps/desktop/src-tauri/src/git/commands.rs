@@ -393,17 +393,14 @@ pub async fn git_sync_preflight(
         .await?)
 }
 
+/// The remote counters of the repository of `space_path`, from a fetch the
+/// sync rhythm limits like the rest of background network (DF-285).
 #[tauri::command]
 pub async fn git_fetch_status(
     app: AppHandle,
     space_path: String,
 ) -> Result<GitStatus, SharedError> {
-    flow::fetch_status(
-        app.state::<GitState>().runtime(),
-        &host(&app),
-        Path::new(&space_path),
-    )
-    .await
+    super::sync_rhythm::fetch_status(&app, Path::new(&space_path)).await
 }
 
 /// The interface language of the author now: version messages are written

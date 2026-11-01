@@ -48,6 +48,9 @@ pub enum Intent {
     Sync {
         background: bool,
     },
+    /// A background sync of the revision the fetch for the counters observed
+    /// inside the rhythm's gap: no light check of the remote (DF-285).
+    SyncObserved,
     /// A Space sync whose parent step only records the pointer: the project
     /// publishes once, after every Space it waits for.
     PublishSpace {
@@ -99,17 +102,20 @@ impl Intent {
                 (
                     Self::Sync { background: false },
                     Self::Sync { background: true }
-                ) | (
-                    Self::PublishSpace { background: false },
-                    Self::PublishSpace { background: true }
-                )
+                ) | (Self::Sync { .. }, Self::SyncObserved)
+                    | (
+                        Self::PublishSpace { background: false },
+                        Self::PublishSpace { background: true }
+                    )
             )
     }
 
     pub fn background(&self) -> bool {
         matches!(
             self,
-            Self::Sync { background: true } | Self::PublishSpace { background: true }
+            Self::Sync { background: true }
+                | Self::SyncObserved
+                | Self::PublishSpace { background: true }
         )
     }
 
@@ -121,6 +127,7 @@ impl Intent {
         matches!(
             self,
             Self::Sync { .. }
+                | Self::SyncObserved
                 | Self::PublishSpace { .. }
                 | Self::Resolve { .. }
                 | Self::MergeServiceFiles { .. }
@@ -584,7 +591,9 @@ impl Operations {
                 {
                     previous = Some(done.clone());
                 }
-            } else if matches!(intent, Intent::Sync { .. }) || intent.reader() {
+            } else if matches!(intent, Intent::Sync { .. } | Intent::SyncObserved)
+                || intent.reader()
+            {
                 let evidence = completed
                     .iter()
                     .map(|done| done.parent.as_ref())

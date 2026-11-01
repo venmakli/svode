@@ -70,7 +70,28 @@ pub async fn sync(
     repo: &Path,
     background: bool,
 ) -> Result<SyncReport, SharedError> {
-    let result = sync_report(runtime, host, repo, Intent::Sync { background }).await;
+    sync_project(runtime, host, repo, Intent::Sync { background }).await
+}
+
+/// The background [`sync`] of the revision the fetch for the counters
+/// observed inside the rhythm's gap (DF-285): it integrates and publishes
+/// without checking the remote of `repo` again.
+pub async fn sync_observed(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    repo: &Path,
+) -> Result<SyncReport, SharedError> {
+    sync_project(runtime, host, repo, Intent::SyncObserved).await
+}
+
+async fn sync_project(
+    runtime: &Arc<GitRuntime>,
+    host: &Arc<dyn GitHost>,
+    repo: &Path,
+    intent: Intent,
+) -> Result<SyncReport, SharedError> {
+    let background = intent.background();
+    let result = sync_report(runtime, host, repo, intent.clone()).await;
     let Err(error) = &result else {
         return result;
     };
@@ -96,7 +117,7 @@ pub async fn sync(
     if taken.is_empty() {
         return result;
     }
-    let published = publish_taken(runtime, host, root, taken, spaces.len(), true).await;
+    let published = publish_taken(runtime, host, root, taken, spaces.len(), intent).await;
     match (published.project, published.project_error) {
         (Some(report), _) => Ok(report),
         (None, Some(error)) => Err(error),
@@ -165,7 +186,15 @@ pub async fn publish_spaces(
         })
         .map(|space| space.path.clone())
         .collect();
-    Ok(publish_taken(runtime, host, &root, taken, blockers.len(), false).await)
+    Ok(publish_taken(
+        runtime,
+        host,
+        &root,
+        taken,
+        blockers.len(),
+        Intent::Sync { background: false },
+    )
+    .await)
 }
 
 async fn publish_taken(
@@ -174,8 +203,9 @@ async fn publish_taken(
     root: &Path,
     taken: Vec<String>,
     blockers: usize,
-    background: bool,
+    project: Intent,
 ) -> SpacesPublication {
+    let background = project.background();
     let complete = taken.len() == blockers;
     let mut steps = Vec::with_capacity(taken.len());
     for path in taken {
@@ -229,7 +259,7 @@ async fn publish_taken(
             .iter()
             .all(|step| step.status == SpaceStepStatus::Published)
     {
-        match sync_report(runtime, host, root, Intent::Sync { background }).await {
+        match sync_report(runtime, host, root, project).await {
             Ok(report) => publication.project = Some(report),
             Err(error) => publication.project_error = Some(error),
         }
@@ -424,7 +454,20 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 host,
                 &cli,
                 repo,
-                *background,
+                SyncMode::of(*background),
+                Step::Sync,
+                true,
+                &request,
+                &mut parent_evidence,
+            )
+            .await
+            .map(Output::Sync),
+            Intent::SyncObserved => sync_locked(
+                runtime,
+                host,
+                &cli,
+                repo,
+                SyncMode::Observed,
                 Step::Sync,
                 true,
                 &request,
@@ -437,7 +480,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 host,
                 &cli,
                 repo,
-                *background,
+                SyncMode::of(*background),
                 Step::Sync,
                 false,
                 &request,
@@ -450,7 +493,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 host,
                 &cli,
                 repo,
-                false,
+                SyncMode::Explicit,
                 Step::Resolve(paths),
                 true,
                 &request,
@@ -463,7 +506,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 host,
                 &cli,
                 repo,
-                false,
+                SyncMode::Explicit,
                 Step::MergeServiceFiles(paths.as_deref()),
                 true,
                 &request,
@@ -476,7 +519,7 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
                 host,
                 &cli,
                 repo,
-                false,
+                SyncMode::Explicit,
                 Step::ResolveFile(path, resolution),
                 true,
                 &request,
@@ -644,12 +687,13 @@ async fn sync_locked(
     host: &dyn GitHost,
     cli: &GitCli,
     repo: &Path,
-    background: bool,
+    mode: SyncMode,
     step: Step<'_>,
     publish_parent: bool,
     request: &Request,
     parent_evidence: &mut Option<ParentEvidence>,
 ) -> Result<SyncReport, GitError> {
+    let background = mode != SyncMode::Explicit;
     if !request.intent.admitted(repo) {
         return Ok(SyncReport {
             child: SyncResult::NoRemote,
@@ -660,7 +704,7 @@ async fn sync_locked(
     if background {
         host.authorize_repository(repo).await?;
     }
-    let child = run_repository(host, cli, repo, step, background).await?;
+    let child = run_repository(host, cli, repo, step, mode).await?;
     if !matches!(child, SyncResult::Success { .. }) {
         return Ok(SyncReport {
             child,
@@ -1173,7 +1217,7 @@ async fn run_repository(
     cli: &GitCli,
     repo: &Path,
     step: Step<'_>,
-    background: bool,
+    mode: SyncMode,
 ) -> Result<SyncResult, GitError> {
     let result = match step {
         Step::Resolve(paths) => super::sync::resolve_and_continue(cli, repo, paths).await,
@@ -1181,7 +1225,7 @@ async fn run_repository(
         Step::ResolveFile(path, resolution) => {
             super::conflict_file::resolve(cli, repo, path, resolution).await
         }
-        Step::Sync => super::sync::sync_with(cli, repo, SyncMode::of(background)).await,
+        Step::Sync => super::sync::sync_with(cli, repo, mode).await,
     };
     let invalidate = match &result {
         Ok(SyncResult::AuthRequired { .. }) => true,

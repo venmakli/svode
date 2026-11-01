@@ -178,6 +178,19 @@ pub async fn fetch_if_changed(
     }
 }
 
+/// The revision of `upstream` the last fetch stored in its tracking ref,
+/// without reaching the remote; an upstream branch of the same repository
+/// is fetched, as that is local.
+pub async fn observed(cli: &GitCli, repo: &Path, upstream: Upstream) -> Result<Observed, GitError> {
+    if upstream.remote == "." {
+        return fetch(cli, repo, upstream).await;
+    }
+    Ok(Observed {
+        revision: tracked(cli, repo, &upstream).await?,
+        upstream,
+    })
+}
+
 /// The revision of `upstream` on its remote, read by one `ls-remote` of
 /// exactly that ref; `None` when the remote has no such branch.
 pub async fn probe(

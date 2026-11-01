@@ -19,6 +19,10 @@ use super::service_merge::{self, ServiceFile};
 pub enum SyncMode {
     Explicit,
     Background,
+    /// A background sync of the revision the fetch for the counters
+    /// observed less than the rhythm's gap ago (DF-285): it integrates and
+    /// publishes without reaching the remote for the upstream revision.
+    Observed,
 }
 
 impl SyncMode {
@@ -169,6 +173,7 @@ pub async fn sync_with(
         SyncMode::Background => super::upstream::fetch_if_changed(cli, space_dir, upstream)
             .await
             .map(|probed| probed.observed),
+        SyncMode::Observed => super::upstream::observed(cli, space_dir, upstream).await,
     };
     let observed = match fetched {
         Ok(observed) => observed,
@@ -183,7 +188,7 @@ pub async fn sync_with(
             observed.upstream.remote, observed.upstream.remote_ref
         )));
     };
-    let merged = if mode == SyncMode::Background && head_contains(cli, space_dir, revision).await? {
+    let merged = if mode != SyncMode::Explicit && head_contains(cli, space_dir, revision).await? {
         Vec::new()
     } else {
         match integration_step(cli, space_dir, &observed.upstream, revision, mode).await? {
@@ -192,7 +197,7 @@ pub async fn sync_with(
         }
     };
     // A background sync publishes only outgoing commits, checked locally.
-    if mode == SyncMode::Background && !has_outgoing(cli, space_dir, revision).await? {
+    if mode != SyncMode::Explicit && !has_outgoing(cli, space_dir, revision).await? {
         let head = self::revision(
             cli,
             space_dir,
@@ -265,7 +270,12 @@ async fn sync_without_upstream(
             "Cannot sync detached HEAD without an upstream".to_string(),
         ));
     };
-    let observed = match super::upstream::fetch(cli, space_dir, upstream).await {
+    let fetched = if mode == SyncMode::Observed {
+        super::upstream::observed(cli, space_dir, upstream).await
+    } else {
+        super::upstream::fetch(cli, space_dir, upstream).await
+    };
+    let observed = match fetched {
         Ok(observed) => observed,
         Err(error) => {
             return remote_error_to_sync_result(

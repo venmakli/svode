@@ -288,3 +288,116 @@ async fn background_sync_after_an_agent_turn_integrates_the_revision_its_own_fet
     assert_eq!(f.head(), incoming, "behind > 0 integrates without a fetch");
     assert_eq!(f.calls(), ["0 git-upload-pack"]);
 }
+
+#[tokio::test]
+async fn observed_sync_integrates_the_revision_the_counters_fetched_without_network() {
+    let f = Fixture::new();
+    let incoming = f.incoming("remote\n");
+    fetch_counted(&f.cli, &f.local).await.unwrap().unwrap();
+    f.calls();
+
+    let result = sync_with(&f.cli, &f.local, SyncMode::Observed)
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(&result, SyncResult::Success { published_head, .. } if *published_head == incoming),
+        "{result:?}"
+    );
+    assert_eq!(f.head(), incoming);
+    assert_eq!(f.calls(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn observed_sync_publishes_outgoing_commits_without_checking_the_remote() {
+    // The calls of a background sync that publishes: the light check, then
+    // the publication.
+    let background = Fixture::new();
+    background.commit(&background.local, "r.md", "local\n");
+    sync_with(&background.cli, &background.local, SyncMode::Background)
+        .await
+        .unwrap();
+    let background = background.calls();
+    assert_eq!(
+        background.first().map(String::as_str),
+        Some("0 git-upload-pack")
+    );
+
+    let f = Fixture::new();
+    fetch_counted(&f.cli, &f.local).await.unwrap().unwrap();
+    let local = f.commit(&f.local, "r.md", "local\n");
+    f.calls();
+
+    let result = sync_with(&f.cli, &f.local, SyncMode::Observed)
+        .await
+        .unwrap();
+
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert_eq!(f.remote_main(), local, "the outgoing commit is published");
+    let calls = f.calls();
+    assert!(
+        calls.iter().any(|call| call == "0 git-receive-pack"),
+        "{calls:?}"
+    );
+    // The same publication, without the light check.
+    assert_eq!(calls, background[1..]);
+}
+
+/// DF-285 acceptance 1: the counters and the background sync of one
+/// repository, planned by the rhythm the way Desktop runs them, reach the
+/// remote once per gap in either order; the explicit sync is not held.
+#[tokio::test]
+async fn the_counters_and_a_background_sync_reach_the_remote_once_per_gap() {
+    use crate::git::rhythm::{MIN_GAP, Rhythm, Step, Trigger, Work};
+    use std::time::{Duration, Instant};
+
+    async fn counters(f: &Fixture, rhythm: &mut Rhythm, now: Instant) {
+        if rhythm.counters(&f.local, now) {
+            fetch_counted(&f.cli, &f.local).await.unwrap();
+        }
+    }
+    async fn opened(f: &Fixture, rhythm: &mut Rhythm, now: Instant) {
+        let mode = match rhythm.trigger(&f.local, Trigger::Opened, true, now) {
+            Step::Run(Work::Sync) => SyncMode::Background,
+            Step::Run(Work::Integrate) => SyncMode::Observed,
+            _ => return,
+        };
+        let result = sync_with(&f.cli, &f.local, mode).await.unwrap();
+        assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+        rhythm.finished(
+            &f.local,
+            crate::git::rhythm::Outcome::Checked { incoming: false },
+            now,
+        );
+    }
+    let second = Duration::from_secs(1);
+    let f = Fixture::new();
+    let start = Instant::now();
+
+    // The counters first, with an incoming change: one call and its fetch,
+    // and the sync integrates that revision.
+    let mut rhythm = Rhythm::default();
+    let incoming = f.incoming("remote\n");
+    counters(&f, &mut rhythm, start).await;
+    opened(&f, &mut rhythm, start + second).await;
+    assert_eq!(f.calls(), ["0 git-upload-pack", "0 git-upload-pack"]);
+    assert_eq!(f.head(), incoming);
+
+    // The sync first: one call, and the counters read the last observation.
+    let mut rhythm = Rhythm::default();
+    opened(&f, &mut rhythm, start).await;
+    counters(&f, &mut rhythm, start + second).await;
+    assert_eq!(f.calls(), ["0 git-upload-pack"]);
+
+    // The explicit sync inside the gap reaches the remote.
+    sync_with(&f.cli, &f.local, SyncMode::Explicit)
+        .await
+        .unwrap();
+    rhythm.explicit(&f.local, true, start + second * 2);
+    assert!(!f.calls().is_empty());
+
+    // After the gap the counters check again, once.
+    counters(&f, &mut rhythm, start + second * 2 + MIN_GAP).await;
+    opened(&f, &mut rhythm, start + second * 3 + MIN_GAP).await;
+    assert_eq!(f.calls(), ["0 git-upload-pack"]);
+}
