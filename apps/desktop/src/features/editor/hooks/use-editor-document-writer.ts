@@ -18,6 +18,7 @@ import {
   dirtyPathsForGitSaveScope,
   explicitCommitRefusal,
   gitSaveShortcutLabel,
+  gitPathInConflict,
   gitStatusHasDirtyPath,
   getGitSpaceStatus,
   notifyGitSaveFailure,
@@ -165,6 +166,7 @@ export function useEditorDocumentWriter({
   saveFailureShown,
 }: UseEditorDocumentWriterInput): UseEditorDocumentWriterResult {
   const sourceWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  const resolutionChainRef = useRef<Promise<void>>(Promise.resolve());
   const autoSavePausedRef = useRef(false);
   const reloadSourceRef = useRef<(path: string) => Promise<void>>(
     async () => {},
@@ -266,6 +268,26 @@ export function useEditorDocumentWriter({
     [baselineKey, editor, ownNoncesRef, projectPath, spacePath],
   );
 
+  /**
+   * After a write of `path`: while Git holds it unresolved, in a merge or
+   * without an operation, the write resolves it, an autosave as much as ⌘S;
+   * `always` continues the merge for any Page, as ⌘S in a merge does. The
+   * backend refuses a file with marker lines left (1.F п. 3). One resolution
+   * at a time, outside the write chain; a refusal is named, never thrown.
+   */
+  const resolveWrittenPage = useCallback(
+    (path: string, always = false): Promise<void> => {
+      const resolve = async () => {
+        if (!always && !gitPathInConflict(spacePath, path)) return;
+        await continueGitResolve(spacePath, path, titleRef.current || path);
+      };
+      const run = resolutionChainRef.current.then(resolve);
+      resolutionChainRef.current = run;
+      return run;
+    },
+    [spacePath, titleRef],
+  );
+
   const setAutoSavePaused = useCallback(
     (paused: boolean) => {
       autoSavePausedRef.current = paused;
@@ -336,7 +358,10 @@ export function useEditorDocumentWriter({
       const cacheKey = currentCacheKeyRef.current;
       const result = await writeSource(false, path, sourceVersion);
       applyAutoSaveResult(result, path, cacheKey);
-      if (result) void refreshGitSpaceStatus(spacePath);
+      if (result) {
+        void refreshGitSpaceStatus(spacePath);
+        void resolveWrittenPage(path);
+      }
       return result;
     },
     setAutoSavePaused,
@@ -398,7 +423,10 @@ export function useEditorDocumentWriter({
     const write = async () => {
       const result = await performWrite(false);
       applyAutoSaveResult(result, path, cacheKey);
-      if (result) void refreshGitSpaceStatus(spacePath);
+      if (result) {
+        void refreshGitSpaceStatus(spacePath);
+        if (path) void resolveWrittenPage(path);
+      }
     };
     try {
       await write();
@@ -422,6 +450,7 @@ export function useEditorDocumentWriter({
     currentPathRef,
     onWriteAccessError,
     performWrite,
+    resolveWrittenPage,
     resumeAutoSave,
     spacePath,
   ]);
@@ -535,16 +564,7 @@ export function useEditorDocumentWriter({
       applySavedDocumentResult(currentDocument);
       const status = getGitSpaceStatus(spacePath);
       if (status?.hasConflicts) {
-        try {
-          await continueGitResolve(
-            spacePath,
-            currentDocument,
-            titleRef.current || currentDocument,
-          );
-        } catch (error) {
-          console.error("git merge resolution failed:", error);
-          toast.error(m.git_sync_failed());
-        }
+        await resolveWrittenPage(currentDocument, true);
         return null;
       }
       return commitWritten(() =>
@@ -560,9 +580,9 @@ export function useEditorDocumentWriter({
       currentDocument,
       performWrite,
       projectPath,
+      resolveWrittenPage,
       resumeAutoSave,
       spacePath,
-      titleRef,
     ]);
 
   const handleSave = useCallback(
@@ -666,6 +686,7 @@ export function useEditorDocumentWriter({
         applySavedDocumentResult(currentDocument, {
           cacheCurrentDocument: false,
         });
+        await resolveWrittenPage(currentDocument);
         return commitWritten(commitScope([currentDocument]));
       };
       let failure: CommitFailure | null;
@@ -696,6 +717,7 @@ export function useEditorDocumentWriter({
       onWriteAccessError,
       performWrite,
       projectPath,
+      resolveWrittenPage,
       resumeAutoSave,
       saveScopeTree,
       spacePath,

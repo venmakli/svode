@@ -5,7 +5,11 @@ import { NodeApi, type Descendant, type TElement } from "platejs";
 import { createPlateEditor, type PlateEditor } from "platejs/react";
 import { toast } from "sonner";
 import type { Page, PageSourceConflict } from "@/features/page";
-import { gitSaveErrorDescription, gitSaveErrorFromError } from "@/features/git";
+import {
+  gitSaveErrorDescription,
+  gitSaveErrorFromError,
+  useGitStore,
+} from "@/features/git";
 import {
   refreshGitSpaceStatus,
   registerPageSaveOwner,
@@ -57,7 +61,14 @@ async function harness(path: string, body: string, markerSize = 7) {
     commitError: null as unknown,
     /** What the next writes fail with. */
     writeError: null as unknown,
+    /** Paths Git holds unresolved, in a merge or without an operation. */
+    conflicted: [] as string[],
+    /** A merge is in progress, so resolving its last path finishes it. */
+    merging: true,
+    /** What the next resolutions fail with, as the backend refuses them. */
+    resolveError: null as unknown,
   };
+  const resolves: string[][] = [];
   /** Errors the Page was handed to block saving, as `recoverSourceWriteError`. */
   const writeBlocks: unknown[] = [];
   const writes: WriteCall[] = [];
@@ -98,6 +109,31 @@ async function harness(path: string, body: string, markerSize = 7) {
       disk.version = `v${writes.length + 1}`;
       return { write_nonce: `n${writes.length}`, source_version: disk.version };
     }
+    if (command === "git_resolve_continue") {
+      const paths = (args as { paths: string[] }).paths;
+      resolves.push(paths);
+      if (disk.resolveError) throw disk.resolveError;
+      disk.conflicted = disk.conflicted.filter((file) => !paths.includes(file));
+      if (disk.conflicted.length)
+        return { type: "conflict", files: [...disk.conflicted] };
+      return disk.merging ? { type: "success" } : { type: "resolved" };
+    }
+    if (command === "git_status" && disk.conflicted.length)
+      return {
+        branch: "main",
+        ahead: 0,
+        behind: 0,
+        hasStaged: true,
+        hasUnstaged: false,
+        hasConflicts: true,
+        tracking: null,
+        files: disk.conflicted.map((file) => ({
+          path: file,
+          state: "conflict",
+        })),
+        totalFiles: disk.conflicted.length,
+        omittedFiles: 0,
+      };
     if (command === "git_status")
       return { files: disk.dirty ? [{ path, state: "modified" }] : [] };
     if (command === "git_conflict_marker_size") {
@@ -197,6 +233,7 @@ async function harness(path: string, body: string, markerSize = 7) {
     editor,
     writes,
     commits,
+    resolves,
     conflicts,
     versionChoices,
     disk,
@@ -214,6 +251,12 @@ async function harness(path: string, body: string, markerSize = 7) {
     },
     reconcile: () =>
       act(() => writerRef.current!.reconcileExternalChange(path)),
+    /** Git holds `paths` unresolved, as the Space status reads it. */
+    conflict: async (paths: string[], merging = true) => {
+      disk.conflicted = paths;
+      disk.merging = merging;
+      await act(() => refreshGitSpaceStatus(SPACE));
+    },
     /** The commit "Changes" sends to the Page, or ⌘S with `"notify"`. */
     commitPage: (commitFailure?: CommitFailurePresentation) =>
       commit((writer) => writer.handleSave(commitFailure)),
@@ -223,6 +266,7 @@ async function harness(path: string, body: string, markerSize = 7) {
       commitFailure?: CommitFailurePresentation,
     ) => commit((writer) => writer.handleSaveAll(scope, commitFailure)),
     cleanup: async () => {
+      useGitStore.getState().clear(SPACE);
       clearNativeMocks();
       await dom.dispose();
     },
@@ -806,6 +850,182 @@ test("⌘S whose write fails blocks saving as before and commits nothing", async
     expect(view.commits).toEqual([]);
     // The Page presents the block; the writer adds no notification.
     expect(shown).toEqual([]);
+  } finally {
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+    await view.cleanup();
+  }
+});
+
+/** Lets the resolution that follows a write run to its end. */
+const settle = () =>
+  act(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
+
+/** Toasts shown while `run` and the resolution after its write ran. */
+const toastsResolving = (run: () => Promise<unknown>) =>
+  toastsDuring(async () => {
+    await run();
+    await settle();
+  });
+
+test("an autosave of a conflicted Page without marker lines resolves its path, and the last one finishes the merge", async () => {
+  const path = "pages/resolved-by-autosave.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    await view.conflict([path, "pages/other.md"]);
+    appendToBlock(view.editor, "Middle", " chosen");
+    const shown = await toastsResolving(() => view.save());
+    expect(view.writes.length).toBe(1);
+    expect(view.resolves).toEqual([[path]]);
+    expect(view.commits).toEqual([]);
+    expect(shown).toEqual([
+      {
+        type: "info",
+        title: m.git_resolve_conflicts_remaining({ page: "Plan", count: "1" }),
+        description: undefined,
+      },
+    ]);
+
+    // The path is resolved: the next autosave writes and resolves nothing.
+    appendToBlock(view.editor, "Middle chosen", "!");
+    await toastsResolving(() => view.save());
+    expect(view.writes.length).toBe(2);
+    expect(view.resolves).toEqual([[path]]);
+
+    // The last unresolved path finishes the merge and publishes it quietly.
+    await view.conflict([path]);
+    appendToBlock(view.editor, "Middle chosen!", "!");
+    const last = await toastsResolving(() => view.save());
+    expect(view.resolves).toEqual([[path], [path]]);
+    expect(last).toEqual([]);
+    expect(useGitStore.getState().statuses[SPACE]?.hasConflicts ?? false).toBe(
+      false,
+    );
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("an autosave of a Page in conflict without an operation resolves its path into an ordinary change", async () => {
+  const path = "pages/resolved-without-merge.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    await view.conflict([path], false);
+    appendToBlock(view.editor, "Middle", " chosen");
+    const shown = await toastsResolving(() => view.save());
+    expect(view.resolves).toEqual([[path]]);
+    expect(view.commits).toEqual([]);
+    expect(shown).toEqual([]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("a Page with an unchosen conflict block is neither written nor resolved", async () => {
+  const path = "pages/markers-left.md";
+  const view = await harness(path, "Plain\n");
+  try {
+    view.disk.body = [
+      "# Plan",
+      "",
+      "<<<<<<< HEAD",
+      "Status: local edit",
+      "=======",
+      "Status: remote edit",
+      ">>>>>>> other",
+      "",
+    ].join("\n");
+    view.disk.version = "v-merge";
+    await view.reconcile();
+    await view.conflict([path]);
+    view.editor.tf.insertText("Typed ", {
+      at: view.editor.api.start([0]),
+    });
+    await toastsResolving(() => view.save());
+    expect(view.writes).toEqual([]);
+    expect(view.resolves).toEqual([]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("an autosave of a Page outside the conflict resolves nothing", async () => {
+  const path = "pages/outside-conflict.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    await view.conflict(["pages/other.md"]);
+    appendToBlock(view.editor, "Middle", " edited");
+    const shown = await toastsResolving(() => view.save());
+    expect(view.writes.length).toBe(1);
+    expect(view.resolves).toEqual([]);
+    expect(shown).toEqual([]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+const markersRefusal = "Git conflict: Conflict markers remain in the Page";
+
+test("a refused resolution after an autosave is named at the editor and the file stays written", async () => {
+  const path = "pages/resolution-refused.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    await view.conflict([path]);
+    view.disk.resolveError = markersRefusal;
+    appendToBlock(view.editor, "Middle", " edited");
+    const shown = await toastsResolving(() => view.save());
+    expect(view.writes.length).toBe(1);
+    expect(view.disk.body.includes("Middle edited")).toBe(true);
+    expect(view.resolves).toEqual([[path]]);
+    // Saving is not blocked: the refusal is not a failed write.
+    expect(view.writeBlocks).toEqual([]);
+    expect(shown).toEqual([
+      {
+        type: "error",
+        title: m.git_resolve_page_failed({ page: "Plan" }),
+        description: markersRefusal,
+      },
+    ]);
+  } finally {
+    await view.cleanup();
+  }
+});
+
+test("⌘S of a conflicted Page goes the same way: it writes, resolves the path, commits nothing and names a refusal without blocking the Page", async () => {
+  const path = "pages/resolved-by-save.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    await view.conflict([path, "pages/other.md"]);
+    appendToBlock(view.editor, "Middle", " chosen");
+    useEditorStore.getState().markUnsaved(SPACE, path);
+    view.disk.resolveError = markersRefusal;
+    let refusal: GitCommitRefusal | null = null;
+    const refused = await toastsResolving(async () => {
+      refusal = await view.commitPage("notify");
+    });
+    expect(refusal).toBeNull();
+    expect(view.writes.length).toBe(1);
+    expect(view.resolves).toEqual([[path]]);
+    expect(view.commits).toEqual([]);
+    expect(view.writeBlocks).toEqual([]);
+    expect(refused).toEqual([
+      {
+        type: "error",
+        title: m.git_resolve_page_failed({ page: "Plan" }),
+        description: markersRefusal,
+      },
+    ]);
+
+    view.disk.resolveError = null;
+    const shown = await toastsResolving(() => view.commitPage("notify"));
+    expect(view.resolves).toEqual([[path], [path]]);
+    expect(view.commits).toEqual([]);
+    expect(shown).toEqual([
+      {
+        type: "info",
+        title: m.git_resolve_conflicts_remaining({ page: "Plan", count: "1" }),
+        description: undefined,
+      },
+    ]);
   } finally {
     useEditorStore.getState().clearUnsaved(SPACE, path);
     await view.cleanup();

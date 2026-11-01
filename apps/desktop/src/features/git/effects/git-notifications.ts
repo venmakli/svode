@@ -91,7 +91,17 @@ export function notifyGitResolveOutcome(
     );
     return;
   }
+  // A refusal to resolve the Page, not a stop of the publication after it.
+  if (outcome.type === "Failed" && !outcome.block && !outcome.stop) {
+    notifyGitResolveFailed(page, outcome.message);
+    return;
+  }
   notifyGitSyncOutcome(outcome);
+}
+
+/** The saved Page `page` stays in conflict: names it and why. */
+export function notifyGitResolveFailed(page: string, reason?: string): void {
+  toast.error(m.git_resolve_page_failed({ page }), { description: reason });
 }
 
 /** A refused explicit commit outside the Page and "Changes": names the Page and leads to its version choice. */

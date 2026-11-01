@@ -15,7 +15,9 @@ import {
   type GitCommitResult,
 } from "./api/git-actions";
 import {
+  notifyGitResolveFailed,
   notifyGitResolveOutcome,
+  notifyGitSyncFailed,
   notifyGitSyncOutcome,
 } from "./effects/git-notifications";
 
@@ -78,23 +80,39 @@ export function commitSaveScopeAndMaybeSync(
   );
 }
 
-/** Continues the merge with the saved Page `path`, named `page` in feedback. */
-export function continueGitResolve(
+/** Git holds the Page `path` of the Space unresolved, in a merge or without an operation. */
+export function gitPathInConflict(spacePath: string, path: string): boolean {
+  const normalized = normalizeGitStatusPath(path);
+  return Boolean(
+    getGitSpaceStatus(spacePath)?.files.some(
+      (file) =>
+        file.state === "conflict" &&
+        normalizeGitStatusPath(file.path) === normalized,
+    ),
+  );
+}
+
+/**
+ * Continues the merge with the saved Page `path`, named `page` in feedback;
+ * a refusal to resolve it is named, never thrown (DF-294 R5).
+ */
+export async function continueGitResolve(
   spacePath: string,
   path: string,
   page: string,
 ): Promise<void> {
-  const normalized = normalizeGitStatusPath(path);
-  const conflicted = getGitSpaceStatus(spacePath)?.files.some(
-    (file) =>
-      file.state === "conflict" &&
-      normalizeGitStatusPath(file.path) === normalized,
-  );
-  return continueGitResolveAction(spacePath, [path], {
-    onSyncOutcome: conflicted
-      ? (outcome) => notifyGitResolveOutcome(outcome, page)
-      : notifyGitSyncOutcome,
-  });
+  const conflicted = gitPathInConflict(spacePath, path);
+  try {
+    await continueGitResolveAction(spacePath, [path], {
+      onSyncOutcome: conflicted
+        ? (outcome) => notifyGitResolveOutcome(outcome, page)
+        : notifyGitSyncOutcome,
+    });
+  } catch (error) {
+    console.error("git merge resolution failed:", error);
+    if (conflicted) notifyGitResolveFailed(page);
+    else notifyGitSyncFailed();
+  }
 }
 
 export async function syncSpace(spacePath: string): Promise<void> {

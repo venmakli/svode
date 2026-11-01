@@ -922,6 +922,7 @@
   "git_remote_confirm_action": "Изменить",
   "git_sync_conflict": "Конфликт синхронизации в {count} файлах",
   "git_resolve_conflicts_remaining": "Конфликт в «{page}» разрешён. Осталось файлов в конфликте: {count}",
+  "git_resolve_page_failed": "Не удалось разрешить конфликт в «{page}»",
   "git_sync_auth_required": "Войдите в Git remote, чтобы выполнить синхронизацию.",
   "git_sync_failed": "Не удалось синхронизировать",
   "git_sync_stop_conflict_title": "Синхронизация остановлена конфликтом",
