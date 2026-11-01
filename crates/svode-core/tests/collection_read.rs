@@ -3,10 +3,10 @@ use std::fs;
 use serde_norway::Value;
 use sqlx::SqlitePool;
 use svode_core::collections::engine::read_collection_schema;
-use svode_core::collections::entries::entries_from_rows;
+use svode_core::collections::items::items_from_rows;
 use svode_core::collections::list::list_collections;
 use svode_core::collections::model::{CollectionSchema, Filter, FilterOp, Sort};
-use svode_core::collections::query::query_entry_rows;
+use svode_core::collections::query::query_item_rows;
 use svode_core::collections::relation_read::{
     RelationTwoWaySchemaStatus, diagnose_two_way_relation, query_relation_backlinks,
     resolve_relation,
@@ -18,7 +18,7 @@ use svode_core::index::reindex::full_reindex;
 async fn core_query_uses_collection_membership_and_bounded_rows() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
-        "CREATE TABLE entries (file_path TEXT PRIMARY KEY, title TEXT, created TEXT, updated TEXT, icon TEXT, collection_root_path TEXT, in_collection INTEGER, is_entry_head INTEGER, fields TEXT)",
+        "CREATE TABLE pages (file_path TEXT PRIMARY KEY, title TEXT, created TEXT, updated TEXT, icon TEXT, collection_root_path TEXT, in_collection INTEGER, is_item_head INTEGER, fields TEXT)",
     )
     .execute(&pool)
     .await
@@ -29,7 +29,7 @@ async fn core_query_uses_collection_membership_and_bounded_rows() {
         ("tasks/unrelated.md", "tasks", 0),
         ("elsewhere/page.md", "elsewhere", 1),
     ] {
-        sqlx::query("INSERT INTO entries (file_path, title, created, updated, icon, collection_root_path, in_collection, is_entry_head, fields) VALUES (?, ?, '', '', NULL, ?, ?, 1, '{}')")
+        sqlx::query("INSERT INTO pages (file_path, title, created, updated, icon, collection_root_path, in_collection, is_item_head, fields) VALUES (?, ?, '', '', NULL, ?, ?, 1, '{}')")
             .bind(path)
             .bind(path)
             .bind(collection)
@@ -39,12 +39,12 @@ async fn core_query_uses_collection_membership_and_bounded_rows() {
             .unwrap();
     }
     let schema = CollectionSchema::default();
-    let rows = query_entry_rows(&pool, &schema, "tasks", &[], &[], None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &[], &[], None, None)
         .await
         .unwrap();
     let paths: Vec<_> = rows.iter().map(|row| row.file_path.as_str()).collect();
     assert_eq!(paths, ["tasks/hidden.md", "tasks/visible.md"]);
-    let page = query_entry_rows(&pool, &schema, "tasks", &[], &[], Some(1), Some(1))
+    let page = query_item_rows(&pool, &schema, "tasks", &[], &[], Some(1), Some(1))
         .await
         .unwrap();
     assert_eq!(page.len(), 1);
@@ -91,11 +91,11 @@ async fn core_relation_reads_source_and_index_without_desktop_runtime() {
     );
 
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-    sqlx::query("CREATE TABLE entries (file_path TEXT PRIMARY KEY, title TEXT, icon TEXT, collection_root_path TEXT)")
+    sqlx::query("CREATE TABLE pages (file_path TEXT PRIMARY KEY, title TEXT, icon TEXT, collection_root_path TEXT)")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO entries VALUES ('people/alice.md', 'Alice', NULL, 'people')")
+    sqlx::query("INSERT INTO pages VALUES ('people/alice.md', 'Alice', NULL, 'people')")
         .execute(&pool)
         .await
         .unwrap();
@@ -156,7 +156,7 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
         .unwrap();
     let schema = read_collection_schema(space.to_str().unwrap(), ".").unwrap();
 
-    let rows = query_entry_rows(&pool, &schema, ".", &[], &[], None, None)
+    let rows = query_item_rows(&pool, &schema, ".", &[], &[], None, None)
         .await
         .unwrap();
     let mut paths = rows
@@ -174,12 +174,12 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
         ]
     );
 
-    let flat = entries_from_rows(space.to_str().unwrap(), ".", rows.clone(), false, false).unwrap();
+    let flat = items_from_rows(space.to_str().unwrap(), ".", rows.clone(), false, false).unwrap();
     assert_eq!(flat.len(), 3);
-    assert!(flat.iter().all(|entry| entry.path != "README.md"));
-    let nested = entries_from_rows(space.to_str().unwrap(), ".", rows, true, false).unwrap();
+    assert!(flat.iter().all(|item| item.path != "README.md"));
+    let nested = items_from_rows(space.to_str().unwrap(), ".", rows, true, false).unwrap();
     assert_eq!(nested.len(), 4);
-    assert!(nested.iter().all(|entry| entry.path != "README.md"));
+    assert!(nested.iter().all(|item| item.path != "README.md"));
 
     let owner_filter = vec![Filter {
         field: "title".into(),
@@ -189,7 +189,7 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
         unknown_keys: Default::default(),
     }];
     assert!(
-        query_entry_rows(&pool, &schema, ".", &owner_filter, &[], None, None)
+        query_item_rows(&pool, &schema, ".", &owner_filter, &[], None, None)
             .await
             .unwrap()
             .is_empty()
@@ -200,7 +200,7 @@ async fn df_087_root_collection_queries_exclude_owner_readme_for_all_query_shape
         desc: false,
         unknown_keys: Default::default(),
     }];
-    let sorted = query_entry_rows(&pool, &schema, ".", &[], &title_sort, None, None)
+    let sorted = query_item_rows(&pool, &schema, ".", &[], &title_sort, None, None)
         .await
         .unwrap();
     assert_eq!(

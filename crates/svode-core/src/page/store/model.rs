@@ -8,7 +8,7 @@ use crate::index::backlinks::ModifiedLinkSource;
 pub const REPOSITORY_ACCESS_DENIED_REASON: &str = "repository_access_denied";
 
 pub use crate::page::Cover;
-pub use crate::page::frontmatter::EntryMeta;
+pub use crate::page::frontmatter::PageMeta;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteResult {
@@ -24,7 +24,7 @@ pub struct WriteResult {
     /// `file:changed` payload so the editor can drop its own echo.
     pub write_nonce: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<EntryWarning>,
+    pub warnings: Vec<PageWarning>,
     /// Version of the resulting source, the precondition of the next write.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_version: Option<String>,
@@ -38,7 +38,7 @@ pub struct DeleteResult {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntryWarning {
+pub struct PageWarning {
     pub kind: String,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -52,7 +52,7 @@ pub struct EntryWarning {
     pub blockers: Vec<RepositoryAccessBlocker>,
 }
 
-impl EntryWarning {
+impl PageWarning {
     pub fn filename_projection(path: &str, reasons: &str) -> Self {
         Self {
             kind: "filename_projection".to_string(),
@@ -122,24 +122,24 @@ impl EntryWarning {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Entry {
-    pub meta: EntryMeta,
+pub struct Page {
+    pub meta: PageMeta,
     pub body: String,
     /// Relative path from space root.
     pub path: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<EntryWarning>,
+    pub warnings: Vec<PageWarning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_conflict: Option<crate::page::naming::DocumentNameConflict>,
-    /// Version of the bytes this entry was read from. Results publish it
-    /// next to the entry, never inside it.
+    /// Version of the bytes this page was read from. Results publish it
+    /// next to the page, never inside it.
     #[serde(skip)]
     pub source_version: Option<crate::page::SourceVersion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum EntryDetailForm {
+pub enum PageDetailForm {
     Leaf,
     Folder,
     NestedCollection,
@@ -147,8 +147,8 @@ pub enum EntryDetailForm {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntryDetailState {
-    pub form: EntryDetailForm,
+pub struct PageDetailState {
+    pub form: PageDetailForm,
     pub subpage_count: usize,
     pub other_file_count: usize,
 }

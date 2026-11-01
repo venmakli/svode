@@ -102,7 +102,7 @@ if (process.env.SVODE_PAGE_DETAIL_ACTIONS_DOM !== "1") {
         case "convert_page_to_leaf":
           return pageDto("roadmap.md");
         case "convert_to_collection":
-          return { entry: pageDto("roadmap/README.md") };
+          return { page: pageDto("roadmap/README.md") };
         case "create_page":
           return pageDto(`${String(args.parentPath)}/Untitled.md`, "Untitled");
         case "create_folder":

@@ -846,7 +846,7 @@ pub fn promote_orphan(
         if schema.columns.iter().any(|column| column.name == field) {
             return Err(schema_error(format!("column '{field}' already exists")));
         }
-        let value = find_entry_extra_by_path(space, collection_path, file_path, field)?
+        let value = find_item_extra_by_path(space, collection_path, file_path, field)?
             .ok_or_else(|| schema_error(format!("orphan field '{field}' not found")))?;
         schema.columns.push(infer_column(field, &value));
         write_schema(space, collection_path, &schema)?;

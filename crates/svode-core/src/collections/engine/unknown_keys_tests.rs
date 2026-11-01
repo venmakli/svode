@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 use super::*;
-use crate::page::entry;
+use crate::page::store;
 
 /// Unknown keys (`x_*`) on every level of the format, the legacy `document`
 /// key and a counter column for `unique_id` allocations.
@@ -468,11 +468,11 @@ fn unique_id_allocations_keep_unknown_keys() {
     let fixture = Fixture::new();
     let space = fixture.space.as_str();
 
-    let created = entry::create(space, Some("tasks"), "First").unwrap();
+    let created = store::create(space, Some("tasks"), "First").unwrap();
     assert!(fixture.raw("tasks").contains("next: 2"));
     assert_eq!(fixture.keys("tasks"), all_keys());
 
-    entry::duplicate_entry(Path::new(space), &created.path).unwrap();
+    store::duplicate_page(Path::new(space), &created.path).unwrap();
     assert!(fixture.raw("tasks").contains("next: 3"));
     assert_eq!(fixture.keys("tasks"), all_keys());
 
@@ -481,7 +481,7 @@ fn unique_id_allocations_keep_unknown_keys() {
         "---\ntitle: Loose\ncreated: now\nupdated: now\n---\n",
     )
     .unwrap();
-    entry::move_entry(Path::new(space), "Loose.md", "tasks", None).unwrap();
+    store::move_page(Path::new(space), "Loose.md", "tasks", None).unwrap();
     assert!(fixture.raw("tasks").contains("next: 4"));
     assert_eq!(fixture.keys("tasks"), all_keys());
 }
@@ -503,7 +503,7 @@ fn two_way_reverse_column_and_collection_rename_keep_unknown_keys() {
     assert!(fixture.keys("people").is_empty());
 
     // Renaming `people` rewrites the relation targets in the `tasks` schema.
-    entry::rename(space, "people", "team").unwrap();
+    store::rename(space, "people", "team").unwrap();
     let tasks = fixture.raw("tasks");
     assert!(tasks.contains("relation: team"), "{tasks}");
     assert_eq!(fixture.keys("tasks"), all_keys());

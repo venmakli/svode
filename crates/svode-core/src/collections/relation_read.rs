@@ -174,7 +174,7 @@ pub async fn resolve_relations_batch(
     }
 
     let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path IN (",
+        "SELECT title, icon, file_path, collection_root_path FROM pages WHERE file_path IN (",
     );
     let mut separated = query.separated(", ");
     for file_path in &lookup_paths {
@@ -204,7 +204,7 @@ async fn fetch_resolved_relation(
     file_path: &str,
 ) -> Result<Option<ResolvedRelation>, CollectionError> {
     let row = sqlx::query(
-        "SELECT title, icon, file_path, collection_root_path FROM entries WHERE file_path = ? LIMIT 1",
+        "SELECT title, icon, file_path, collection_root_path FROM pages WHERE file_path = ? LIMIT 1",
     )
     .bind(file_path)
     .fetch_optional(pool)

@@ -1,12 +1,12 @@
 use sqlx::SqlitePool;
 
-use super::entry::Entry;
+use super::store::Page;
 
 /// Enrich a source read using its selected pool and normalized repository-relative path.
 /// Missing rows and unavailable indexed dates leave filesystem-derived dates intact.
-pub async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mut Entry) {
+pub async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mut Page) {
     let Ok(Some((created, updated))) = sqlx::query_as::<_, (String, String)>(
-        "SELECT created, updated FROM entries WHERE file_path = ?",
+        "SELECT created, updated FROM pages WHERE file_path = ?",
     )
     .bind(path)
     .fetch_optional(pool)
@@ -17,7 +17,7 @@ pub async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mut Entry
     super::dates::apply_date_override(
         &mut page.meta.created,
         &mut page.meta.updated,
-        Some(&super::dates::EntryDateOverride {
+        Some(&super::dates::PageDateOverride {
             created: Some(created),
             updated: Some(updated),
         }),
@@ -27,7 +27,7 @@ pub async fn apply_indexed_dates(pool: &SqlitePool, path: &str, page: &mut Entry
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::page::entry;
+    use crate::page::store;
 
     #[tokio::test]
     async fn enrichment_preserves_source_facts_and_never_writes_sources() {
@@ -37,12 +37,10 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::query(
-            "CREATE TABLE entries (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("CREATE TABLE pages (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
         let space = tmp.path().to_str().unwrap();
         std::fs::write(
             tmp.path().join("duplicate.md"),
@@ -65,12 +63,12 @@ mod tests {
             let abs = tmp.path().join(path);
             std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
             std::fs::write(&abs, source).unwrap();
-            sqlx::query("INSERT INTO entries VALUES (?, 'indexed-created', 'indexed-updated')")
+            sqlx::query("INSERT INTO pages VALUES (?, 'indexed-created', 'indexed-updated')")
                 .bind(path)
                 .execute(&pool)
                 .await
                 .unwrap();
-            let mut page = entry::read(space, path).unwrap();
+            let mut page = store::read(space, path).unwrap();
             if path == "valid.md" {
                 assert!(page.name_conflict.is_some());
             }
@@ -97,7 +95,7 @@ mod tests {
     async fn unavailable_dates_preserve_filesystem_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("note.md"), "Body").unwrap();
-        let mut page = entry::read(tmp.path().to_str().unwrap(), "note.md").unwrap();
+        let mut page = store::read(tmp.path().to_str().unwrap(), "note.md").unwrap();
         let expected = serde_json::to_value(&page).unwrap();
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -107,12 +105,10 @@ mod tests {
         // Missing table, missing row, and closed pool are all best-effort reads.
         apply_indexed_dates(&pool, "note.md", &mut page).await;
         assert_eq!(serde_json::to_value(&page).unwrap(), expected);
-        sqlx::query(
-            "CREATE TABLE entries (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("CREATE TABLE pages (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
         apply_indexed_dates(&pool, "note.md", &mut page).await;
         assert_eq!(serde_json::to_value(&page).unwrap(), expected);
         pool.close().await;

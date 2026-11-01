@@ -1,10 +1,10 @@
 use super::*;
-use crate::collections::query::{entry_order_name, entry_parent_dir};
+use crate::collections::query::{item_order_name, item_parent_dir};
 
 pub fn apply_schema_defaults_for_path(
     space: &str,
     file_path: &str,
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
 ) -> Result<bool, CollectionError> {
     let Some((schema, _)) = resolve_collection_schema_result(space, file_path)? else {
         return Ok(false);
@@ -28,7 +28,7 @@ pub fn apply_schema_defaults_for_path(
 pub fn apply_contextual_defaults_for_path(
     space: &str,
     file_path: &str,
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
     contextual_defaults: &FrontmatterFields,
 ) -> Result<bool, CollectionError> {
     if contextual_defaults.is_empty() {
@@ -53,7 +53,7 @@ pub fn apply_contextual_defaults_for_path(
 pub fn apply_contextual_defaults_for_path_strict(
     space: &str,
     file_path: &str,
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
     contextual_defaults: &FrontmatterFields,
 ) -> Result<bool, CollectionError> {
     if contextual_defaults.is_empty() {
@@ -86,7 +86,7 @@ pub fn apply_contextual_defaults_for_path_strict(
 }
 
 fn apply_contextual_default(
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
     column: &Column,
     value: &Value,
 ) -> Result<(), CollectionError> {
@@ -99,7 +99,7 @@ fn apply_contextual_default(
     Ok(())
 }
 
-pub fn apply_schema_defaults_to_entry_tree(
+pub fn apply_schema_defaults_to_item_tree(
     space: &Path,
     rel_path: &str,
 ) -> Result<(), CollectionError> {
@@ -133,7 +133,7 @@ fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), Col
                     .unwrap_or("untitled"),
             );
             (
-                EntryMeta::synthesized(title, String::new(), String::new()),
+                PageMeta::synthesized(title, String::new(), String::new()),
                 body,
             )
         }
@@ -151,26 +151,25 @@ fn apply_schema_defaults_to_file(space: &Path, rel_path: &str) -> Result<(), Col
     Ok(())
 }
 
-pub fn unique_id_mutation_paths_for_entry(
+pub fn unique_id_mutation_paths_for_item(
     space: &str,
     file_path: &str,
 ) -> Result<Vec<PathBuf>, CollectionError> {
     let mut paths = vec![Path::new(space).join(normalize_rel_path(file_path))];
-    if let Some(schema_path) = unique_id_schema_path_for_entry(space, file_path)? {
+    if let Some(schema_path) = unique_id_schema_path_for_item(space, file_path)? {
         paths.push(schema_path);
     }
     Ok(paths)
 }
 
-pub fn unique_id_mutation_paths_for_entry_tree(
+pub fn unique_id_mutation_paths_for_item_tree(
     space: &Path,
     rel_path: &str,
 ) -> Result<Vec<PathBuf>, CollectionError> {
     let mut paths = Vec::new();
     for file in markdown_files_in_tree(space, rel_path)? {
         let rel = copy_rel_from_abs(space, &file);
-        if let Some(schema_path) = unique_id_schema_path_for_entry(&space.to_string_lossy(), &rel)?
-        {
+        if let Some(schema_path) = unique_id_schema_path_for_item(&space.to_string_lossy(), &rel)? {
             paths.push(file);
             paths.push(schema_path);
         }
@@ -178,7 +177,7 @@ pub fn unique_id_mutation_paths_for_entry_tree(
     dedupe_paths(paths)
 }
 
-pub fn unique_id_schema_path_for_entry(
+pub fn unique_id_schema_path_for_item(
     space: &str,
     file_path: &str,
 ) -> Result<Option<PathBuf>, CollectionError> {
@@ -196,7 +195,7 @@ pub fn unique_id_schema_path_for_entry(
     }
 }
 
-pub fn assign_unique_ids_to_entry_tree(
+pub fn assign_unique_ids_to_item_tree(
     space: &Path,
     rel_path: &str,
     force: bool,
@@ -209,7 +208,7 @@ pub fn assign_unique_ids_to_entry_tree(
 }
 
 pub fn assign_unique_id(space: &str, file_path: &str) -> Result<(), CollectionError> {
-    let paths = unique_id_mutation_paths_for_entry(space, file_path)?;
+    let paths = unique_id_mutation_paths_for_item(space, file_path)?;
     with_rollback(paths, || {
         assign_unique_id_to_file(space, file_path, true)?;
         Ok(())
@@ -261,7 +260,7 @@ fn assign_unique_id_to_file(
                     .unwrap_or("untitled"),
             );
             (
-                EntryMeta::synthesized(title, String::new(), String::new()),
+                PageMeta::synthesized(title, String::new(), String::new()),
                 body,
             )
         }
@@ -285,7 +284,7 @@ fn assign_unique_id_to_file(
 pub fn assign_unique_id_to_meta_for_path(
     space: &str,
     file_path: &str,
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
 ) -> Result<bool, CollectionError> {
     assign_unique_id_to_meta_inner(space, file_path, meta, false)
 }
@@ -293,7 +292,7 @@ pub fn assign_unique_id_to_meta_for_path(
 fn force_assign_unique_id_to_meta(
     space: &str,
     file_path: &str,
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
 ) -> Result<bool, CollectionError> {
     assign_unique_id_to_meta_inner(space, file_path, meta, true)
 }
@@ -301,7 +300,7 @@ fn force_assign_unique_id_to_meta(
 fn assign_unique_id_to_meta_inner(
     space: &str,
     file_path: &str,
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
     force: bool,
 ) -> Result<bool, CollectionError> {
     let Some((mut schema, root)) = resolve_collection_schema_result(space, file_path)? else {
@@ -371,7 +370,7 @@ pub(super) fn materialize_unique_id_column(
                         .unwrap_or("untitled"),
                 );
                 (
-                    EntryMeta::synthesized(title, String::new(), String::new()),
+                    PageMeta::synthesized(title, String::new(), String::new()),
                     body,
                 )
             }
@@ -473,8 +472,8 @@ fn sorted_collection_markdown_files_for_unique_id(
     let mut rows = Vec::new();
     for file in collection_markdown_files(space, collection_path)? {
         let rel = copy_rel_from_abs(Path::new(space), &file);
-        let parent = entry_parent_dir(&rel);
-        let order_name = entry_order_name(&rel);
+        let parent = item_parent_dir(&rel);
+        let order_name = item_order_name(&rel);
         let order_index = order
             .get(if parent.is_empty() {
                 "."

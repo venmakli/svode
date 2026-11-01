@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::git::dates::derive_date_overrides;
 use crate::index::normalize_rel_result;
-use crate::index::reindex::{build_entry_with_dates, markdown_projection, markdown_source_record};
+use crate::index::reindex::{build_page_with_dates, markdown_projection, markdown_source_record};
 use crate::index::{IndexKey, IndexState};
 use crate::routines::{CollectionEventOrigin, RoutineStoreState};
 use svode_core::content_tree::policy::TreeIgnorePolicy;
@@ -68,7 +68,7 @@ impl IndexUpdateState {
 }
 
 #[cfg(test)]
-pub async fn update_entry(
+pub async fn update_page(
     state: &IndexState,
     project: &Path,
     abs_path: &Path,
@@ -171,10 +171,10 @@ pub(crate) async fn repair_space_dir(state: &IndexState, updates: &IndexUpdateSt
         .await
 }
 
-/// Incrementally delete the entry for a single absolute path. Resolves to
+/// Incrementally delete the row for a single absolute path. Resolves to
 /// the owning pool and deletes by relative path.
 #[cfg(test)]
-pub async fn delete_entry(
+pub async fn delete_page(
     state: &IndexState,
     project: &Path,
     abs_path: &Path,
@@ -269,7 +269,7 @@ pub async fn reindex_after_pull(
         let abs = dir.join(&normalized);
 
         // Don't filter by extension — pull may have deleted .md files and we
-        // still want to drop their rows. The branching mirrors update_entry.
+        // still want to drop their rows. The branching mirrors update_page.
         if !abs.exists() {
             if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                 &pool,
@@ -391,15 +391,15 @@ pub async fn reindex_after_pull(
             }
         }
 
-        match build_entry_with_dates(&dir, &abs, date_overrides.get(&normalized), projection) {
-            Ok(entry) => {
+        match build_page_with_dates(&dir, &abs, date_overrides.get(&normalized), projection) {
+            Ok(page) => {
                 if let Err(e) = svode_core::index::update::apply_targeted_source_change(
                     &pool,
                     &routines_pool,
                     key,
                     &dir,
                     &normalized,
-                    Some(&entry),
+                    Some(&page),
                     Some(projection),
                     svode_core::index::update::markdown_frontmatter_diff_safe(&abs),
                     &CollectionEventOrigin::git_sync(),
@@ -410,7 +410,7 @@ pub async fn reindex_after_pull(
                 }
             }
             Err(e) => {
-                tracing::warn!("failed to build index entry for {normalized}: {e}");
+                tracing::warn!("failed to build the index row of {normalized}: {e}");
             }
         }
     }
@@ -589,18 +589,15 @@ mod tests {
             .expect("routines pool")
     }
 
-    async fn entry_index_flags(
-        pool: &SqlitePool,
-        path: &str,
-    ) -> (String, Option<String>, i64, i64) {
+    async fn page_index_flags(pool: &SqlitePool, path: &str) -> (String, Option<String>, i64, i64) {
         sqlx::query_as(
-            "SELECT parent_path, collection_root_path, in_collection, is_entry_head \
-             FROM entries WHERE file_path = ?",
+            "SELECT parent_path, collection_root_path, in_collection, is_item_head \
+             FROM pages WHERE file_path = ?",
         )
         .bind(path)
         .fetch_one(pool)
         .await
-        .expect("entry flags")
+        .expect("page flags")
     }
 
     #[tokio::test]
@@ -611,7 +608,7 @@ mod tests {
         let file = space.join("note.md");
 
         std::fs::write(&file, "alpha searchable body").unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
         let alpha_rows = search_fts(&pool, "alpha", None, None, 10).await.unwrap();
@@ -619,7 +616,7 @@ mod tests {
         assert_eq!(alpha_rows[0].path, "note.md");
 
         std::fs::write(&file, "beta searchable body").unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         let alpha_rows = search_fts(&pool, "alpha", None, None, 10).await.unwrap();
         let beta_rows = search_fts(&pool, "beta", None, None, 10).await.unwrap();
@@ -629,23 +626,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn targeted_delete_removes_entry_and_fts_row() {
+    async fn targeted_delete_removes_page_and_fts_row() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
         let state = IndexState::new();
         let file = space.join("obsolete.md");
 
         std::fs::write(&file, "stale searchable body").unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
         let stale_rows = search_fts(&pool, "stale", None, None, 10).await.unwrap();
         assert_eq!(stale_rows.len(), 1);
 
         std::fs::remove_file(&file).unwrap();
-        delete_entry(&state, space, &file).await.unwrap();
+        delete_page(&state, space, &file).await.unwrap();
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE file_path = ?")
             .bind("obsolete.md")
             .fetch_one(&pool)
             .await
@@ -656,7 +653,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn targeted_update_indexes_entry_flags_and_search_body() {
+    async fn targeted_update_indexes_page_flags_and_search_body() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
         let state = IndexState::new();
@@ -674,14 +671,14 @@ mod tests {
             "---\ntitle: Indexed Task\nStatus: Open\n---\nneedle body",
         )
         .unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
         assert_eq!(
-            entry_index_flags(&pool, "tasks/item.md").await,
+            page_index_flags(&pool, "tasks/item.md").await,
             ("tasks".to_string(), Some("tasks".to_string()), 1, 1)
         );
-        let fields: String = sqlx::query_scalar("SELECT fields FROM entries WHERE file_path = ?")
+        let fields: String = sqlx::query_scalar("SELECT fields FROM pages WHERE file_path = ?")
             .bind("tasks/item.md")
             .fetch_one(&pool)
             .await
@@ -696,7 +693,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn targeted_delete_path_removes_stale_renamed_entry_and_fts() {
+    async fn targeted_delete_path_removes_stale_renamed_page_and_fts() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
         let state = IndexState::new();
@@ -704,14 +701,14 @@ mod tests {
         let new_file = space.join("New.md");
 
         std::fs::write(&old_file, "stale-rename-token").unwrap();
-        update_entry(&state, space, &old_file).await.unwrap();
+        update_page(&state, space, &old_file).await.unwrap();
         std::fs::rename(&old_file, &new_file).unwrap();
-        update_entry(&state, space, &new_file).await.unwrap();
-        delete_entry(&state, space, &old_file).await.unwrap();
+        update_page(&state, space, &new_file).await.unwrap();
+        delete_page(&state, space, &old_file).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
         let paths =
-            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM pages ORDER BY file_path")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
@@ -724,7 +721,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn targeted_replace_after_rename_removes_stale_entry_and_fts_row() {
+    async fn targeted_replace_after_rename_removes_stale_page_and_fts_row() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
         let state = IndexState::new();
@@ -732,20 +729,20 @@ mod tests {
         let new_file = space.join("new-name.md");
 
         std::fs::write(&old_file, "oldtoken searchable body").unwrap();
-        update_entry(&state, space, &old_file).await.unwrap();
+        update_page(&state, space, &old_file).await.unwrap();
         std::fs::rename(&old_file, &new_file).unwrap();
         std::fs::write(&new_file, "newtoken searchable body").unwrap();
 
-        delete_entry(&state, space, &old_file).await.unwrap();
-        update_entry(&state, space, &new_file).await.unwrap();
+        delete_page(&state, space, &old_file).await.unwrap();
+        update_page(&state, space, &new_file).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
-        let old_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+        let old_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE file_path = ?")
             .bind("old-name.md")
             .fetch_one(&pool)
             .await
             .unwrap();
-        let new_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+        let new_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE file_path = ?")
             .bind("new-name.md")
             .fetch_one(&pool)
             .await
@@ -777,11 +774,11 @@ mod tests {
         let file = collection_dir.join("item.md");
 
         std::fs::write(&file, "task body").unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
         let before: (Option<String>, i64, i64) = sqlx::query_as(
-            "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
+            "SELECT collection_root_path, in_collection, is_item_head FROM pages WHERE file_path = ?",
         )
         .bind("tasks/item.md")
         .fetch_one(&pool)
@@ -794,10 +791,10 @@ mod tests {
             "columns: []\nviews: []\n",
         )
         .unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         let after: (Option<String>, i64, i64) = sqlx::query_as(
-            "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
+            "SELECT collection_root_path, in_collection, is_item_head FROM pages WHERE file_path = ?",
         )
         .bind("tasks/item.md")
         .fetch_one(&pool)
@@ -824,11 +821,11 @@ mod tests {
         .unwrap();
         let state = IndexState::new();
 
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
         let pool = indexed_pool(&state, space).await;
         let hidden: (Option<String>, i64, i64, String, String) = sqlx::query_as(
             "SELECT collection_root_path,in_collection,is_discoverable,body_preview,fields \
-             FROM entries WHERE file_path = 'hidden.md'",
+             FROM pages WHERE file_path = 'hidden.md'",
         )
         .fetch_one(&pool)
         .await
@@ -863,10 +860,10 @@ mod tests {
         );
 
         write_tree_config(space, &["hidden.md"], &["hidden.md"]);
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT is_discoverable FROM entries WHERE file_path = 'hidden.md'",
+                "SELECT is_discoverable FROM pages WHERE file_path = 'hidden.md'",
             )
             .fetch_one(&pool)
             .await
@@ -889,9 +886,9 @@ mod tests {
         );
 
         write_tree_config(space, &["hidden.md"], &[]);
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
         let final_row: (i64, i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*),MAX(in_collection),MAX(is_discoverable) FROM entries \
+            "SELECT COUNT(*),MAX(in_collection),MAX(is_discoverable) FROM pages \
              WHERE file_path = 'hidden.md'",
         )
         .fetch_one(&pool)
@@ -917,16 +914,16 @@ mod tests {
         std::fs::write(&owner, "# Owner").unwrap();
         std::fs::write(&child, "# Child").unwrap();
 
-        update_entry(&state, space, &owner).await.unwrap();
-        update_entry(&state, space, &child).await.unwrap();
+        update_page(&state, space, &owner).await.unwrap();
+        update_page(&state, space, &child).await.unwrap();
 
         let pool = indexed_pool(&state, space).await;
         assert_eq!(
-            entry_index_flags(&pool, "README.md").await,
+            page_index_flags(&pool, "README.md").await,
             (".".to_string(), None, 0, 1)
         );
         assert_eq!(
-            entry_index_flags(&pool, "child.md").await,
+            page_index_flags(&pool, "child.md").await,
             (".".to_string(), Some(".".to_string()), 1, 1)
         );
         let routines = routines_pool(&state, space).await;
@@ -961,10 +958,10 @@ mod tests {
             },
         );
 
-        update_entry(&state, project, &project.join("root.md"))
+        update_page(&state, project, &project.join("root.md"))
             .await
             .unwrap();
-        update_entry(&state, project, &child.join("child.md"))
+        update_page(&state, project, &child.join("child.md"))
             .await
             .unwrap();
 
@@ -979,12 +976,12 @@ mod tests {
         let child_pool = state.get_or_create(&child_key).await.unwrap();
 
         let root_paths =
-            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM pages ORDER BY file_path")
                 .fetch_all(&root_pool)
                 .await
                 .unwrap();
         let child_paths =
-            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM pages ORDER BY file_path")
                 .fetch_all(&child_pool)
                 .await
                 .unwrap();
@@ -1165,7 +1162,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn git_sync_preserves_changed_entry_events_when_schema_also_changed() {
+    async fn git_sync_preserves_changed_item_events_when_schema_also_changed() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path();
         let collection = space.join("tasks");
@@ -1282,7 +1279,7 @@ mod tests {
 
         let file = collection.join("item.md");
         std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\nBody\n").unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
@@ -1292,7 +1289,7 @@ mod tests {
             0
         );
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entries WHERE file_path = ?")
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pages WHERE file_path = ?")
                 .bind("tasks/item.md")
                 .fetch_one(&pool)
                 .await
@@ -1335,12 +1332,12 @@ mod tests {
         )
         .await;
 
-        let tasks_entry = space.join("tasks/item.md");
-        let notes_entry = space.join("notes/item.md");
-        std::fs::write(&tasks_entry, "---\ntitle: Task\nStatus: Open\n---\n").unwrap();
-        std::fs::write(&notes_entry, "---\ntitle: Note\nStatus: Open\n---\n").unwrap();
-        update_entry(&state, space, &tasks_entry).await.unwrap();
-        update_entry(&state, space, &notes_entry).await.unwrap();
+        let tasks_item = space.join("tasks/item.md");
+        let notes_item = space.join("notes/item.md");
+        std::fs::write(&tasks_item, "---\ntitle: Task\nStatus: Open\n---\n").unwrap();
+        std::fs::write(&notes_item, "---\ntitle: Note\nStatus: Open\n---\n").unwrap();
+        update_page(&state, space, &tasks_item).await.unwrap();
+        update_page(&state, space, &notes_item).await.unwrap();
 
         let queued = sqlx::query_scalar::<_, String>(
             "SELECT routine_id FROM routine_event_queue ORDER BY routine_id",
@@ -1350,7 +1347,7 @@ mod tests {
         .unwrap();
         assert_eq!(queued, vec!["tasks-created"]);
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entries")
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pages")
                 .fetch_one(&pool)
                 .await
                 .unwrap(),
@@ -1388,7 +1385,7 @@ mod tests {
 
         let file = collection.join("item.md");
         std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\n").unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
 
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
@@ -1399,7 +1396,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM entries WHERE file_path = 'tasks/item.md'",
+                "SELECT COUNT(*) FROM pages WHERE file_path = 'tasks/item.md'",
             )
             .fetch_one(&pool)
             .await
@@ -1449,7 +1446,7 @@ mod tests {
 
         let file = collection.join("item.md");
         std::fs::write(&file, "---\ntitle: Item\nStatus: Open\n---\nBody\n").unwrap();
-        update_entry(&state, space, &file).await.unwrap();
+        update_page(&state, space, &file).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routine_event_queue")
                 .fetch_one(&routines_pool)

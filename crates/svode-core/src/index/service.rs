@@ -37,7 +37,7 @@ pub struct SearchItem {
     pub path: String,
     pub title: String,
     #[serde(rename = "type")]
-    pub entry_type: String,
+    pub page_type: String,
     pub table_name: Option<String>,
     pub snippet: Option<String>,
     pub icon: String,
@@ -77,8 +77,8 @@ async fn scope_to_keys(
     }
 }
 
-fn icon_for(entry_type: &str) -> String {
-    match entry_type {
+fn icon_for(page_type: &str) -> String {
+    match page_type {
         "table_row" => ICON_TABLE_ROW.to_string(),
         _ => ICON_PAGE.to_string(),
     }
@@ -140,10 +140,10 @@ async fn enrich(state: &IndexState, key: &IndexKey, hit: SearchResult) -> Search
         space_name: state.space_name(key).await,
         path: hit.path,
         title: hit.title,
-        entry_type: hit.entry_type.clone(),
+        page_type: hit.page_type.clone(),
         table_name: hit.table_name,
         snippet: hit.snippet,
-        icon: icon_for(&hit.entry_type),
+        icon: icon_for(&hit.page_type),
     }
 }
 
@@ -241,7 +241,7 @@ pub async fn search_content(
     state: &IndexState,
     project: PathBuf,
     query: String,
-    entry_type: Option<String>,
+    page_type: Option<String>,
     table_name: Option<String>,
     scope: Option<SearchScope>,
     limit: Option<i64>,
@@ -251,13 +251,13 @@ pub async fn search_content(
     let limit = search_limit(limit);
     let (pools, indexed) = fan_out(state.clone(), keys, move |pool| {
         let query = query.clone();
-        let entry_type = entry_type.clone();
+        let page_type = page_type.clone();
         let table_name = table_name.clone();
         async move {
             search::search_fts(
                 &pool,
                 &query,
-                entry_type.as_deref(),
+                page_type.as_deref(),
                 table_name.as_deref(),
                 limit,
             )
@@ -403,7 +403,7 @@ mod tests {
             id: path.to_string(),
             path: path.to_string(),
             title: title.to_string(),
-            entry_type: "page".to_string(),
+            page_type: "page".to_string(),
             snippet: None,
             table_name: None,
             updated_at: Some(updated.to_string()),
@@ -721,7 +721,7 @@ mod tests {
         // below the item `b`.
         let pool = state.get_or_create(&key).await.unwrap();
         sqlx::query(
-            "UPDATE entries SET in_collection = 1, collection_root_path = 'tasks' \
+            "UPDATE pages SET in_collection = 1, collection_root_path = 'tasks' \
              WHERE file_path = 'tasks/b/note.md'",
         )
         .execute(&pool)
@@ -742,7 +742,7 @@ mod tests {
             .unwrap();
 
         let members: Vec<String> = sqlx::query_scalar(
-            "SELECT file_path FROM entries WHERE in_collection = 1 ORDER BY file_path",
+            "SELECT file_path FROM pages WHERE in_collection = 1 ORDER BY file_path",
         )
         .fetch_all(&pool)
         .await

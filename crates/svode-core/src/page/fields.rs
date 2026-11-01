@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::collections::CollectionError;
-use crate::collections::engine::{EntryFieldBatchIntent, prepare_entry_field_batch};
+use crate::collections::engine::{ItemFieldBatchIntent, prepare_item_field_batch};
 use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
-use crate::page::entry;
+use crate::page::store;
 
 use super::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
@@ -18,11 +18,11 @@ pub struct PageFieldUpdate<'a> {
     pub path: &'a str,
     pub project: Option<&'a str>,
     pub values: &'a BTreeMap<String, Value>,
-    pub intent: EntryFieldBatchIntent,
+    pub intent: ItemFieldBatchIntent,
 }
 
 pub struct PageFieldOutcome {
-    pub page: entry::Entry,
+    pub page: store::Page,
     pub changed_paths: Vec<PathBuf>,
 }
 
@@ -58,8 +58,8 @@ where
         result,
         changed_paths,
     } = super::write::on_current_source(path, || async move {
-        let current = entry::read(space, path)?;
-        let batch = prepare_entry_field_batch(space, project, path, values, intent)
+        let current = store::read(space, path)?;
+        let batch = prepare_item_field_batch(space, project, path, values, intent)
             .map_err(PageError::from)?;
         let has_title = batch.title().is_some();
         super::write::write(
@@ -86,7 +86,7 @@ where
     })
     .await?;
     let current_path = result.new_path.as_deref().unwrap_or(path);
-    let mut page = entry::read(space, current_path)?;
+    let mut page = store::read(space, current_path)?;
     page.warnings = result.warnings;
     Ok(PageFieldOutcome {
         page,
@@ -107,7 +107,7 @@ mod tests {
         root: &Path,
         path: &str,
         values: BTreeMap<String, Value>,
-        intent: EntryFieldBatchIntent,
+        intent: ItemFieldBatchIntent,
     ) -> Result<PageFieldOutcome, PageError> {
         update(
             PageFieldUpdate {
@@ -131,7 +131,7 @@ mod tests {
         path: &str,
         values: BTreeMap<String, Value>,
     ) -> Result<PageFieldOutcome, PageError> {
-        update_fields(root, path, values, EntryFieldBatchIntent::Literal).await
+        update_fields(root, path, values, ItemFieldBatchIntent::Literal).await
     }
 
     #[tokio::test]
@@ -175,7 +175,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome.page.path, "tasks/New.md");
-        let item = entry::read(root.to_str().unwrap(), "tasks/New.md").unwrap();
+        let item = store::read(root.to_str().unwrap(), "tasks/New.md").unwrap();
         assert_eq!(
             item.meta
                 .extra
@@ -199,7 +199,7 @@ mod tests {
                 .and_then(serde_norway::Value::as_str),
             Some("kept")
         );
-        let person = entry::read(root.to_str().unwrap(), "people/Ada.md").unwrap();
+        let person = store::read(root.to_str().unwrap(), "people/Ada.md").unwrap();
         assert_eq!(
             person
                 .meta
@@ -310,7 +310,7 @@ mod tests {
                 path: "tasks/item.md",
                 project: None,
                 values: &values,
-                intent: EntryFieldBatchIntent::Literal,
+                intent: ItemFieldBatchIntent::Literal,
             },
             runtime(&IndexRuntimeState::default(), &WriteNonceRegistry::new()),
             |mut paths| {
@@ -332,7 +332,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
-        let item = entry::read(root.to_str().unwrap(), "tasks/item.md").unwrap();
+        let item = store::read(root.to_str().unwrap(), "tasks/item.md").unwrap();
         assert_eq!(item.body, "Other body\n");
         assert_eq!(
             item.meta
@@ -394,7 +394,7 @@ mod tests {
                 ("note".into(), Value::Null),
                 ("reviewed".into(), Value::Bool(true)),
             ]),
-            EntryFieldBatchIntent::Routine,
+            ItemFieldBatchIntent::Routine,
         )
         .await
         .unwrap();
@@ -438,7 +438,7 @@ mod tests {
                 ("note".into(), Value::String("after".into())),
                 ("title".into(), Value::String("Renamed".into())),
             ]),
-            EntryFieldBatchIntent::Routine,
+            ItemFieldBatchIntent::Routine,
         )
         .await
         .err()
@@ -485,7 +485,7 @@ mod tests {
                 ("A_Link".into(), Value::String("person.md".into())),
                 ("Z_Count".into(), Value::String("not-a-number".into())),
             ]),
-            EntryFieldBatchIntent::Routine,
+            ItemFieldBatchIntent::Routine,
         )
         .await
         .err()

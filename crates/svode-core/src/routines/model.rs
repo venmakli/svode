@@ -299,11 +299,11 @@ impl RoutineLaunchRefusal {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CollectionEvent {
     #[serde(rename = "collection.entry_created")]
-    EntryCreated,
+    ItemCreated,
     #[serde(rename = "collection.field_changed")]
     FieldChanged,
     #[serde(rename = "collection.entry_deleted")]
-    EntryDeleted,
+    ItemDeleted,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -360,9 +360,9 @@ impl CollectionEventOrigin {
 impl CollectionEvent {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::EntryCreated => "collection.entry_created",
+            Self::ItemCreated => "collection.entry_created",
             Self::FieldChanged => "collection.field_changed",
-            Self::EntryDeleted => "collection.entry_deleted",
+            Self::ItemDeleted => "collection.entry_deleted",
         }
     }
 }
@@ -879,7 +879,7 @@ impl RoutineManualDispatchResult {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RoutineActionTarget {
     #[serde(rename = "trigger.entry")]
-    TriggerEntry,
+    TriggerItem,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -462,7 +462,7 @@ async fn a_failed_step_of_an_import_into_a_leaf_restores_the_sources_and_the_pro
             .await
             .unwrap();
         let indexed =
-            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM pages ORDER BY file_path")
                 .fetch_all(&pool)
                 .await
                 .unwrap();

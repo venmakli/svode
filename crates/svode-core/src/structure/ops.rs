@@ -23,16 +23,16 @@ use crate::index::state::IndexRuntimeState;
 use crate::index::update::{self, IndexUpdateState};
 use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
-use crate::page::entry::{self, Entry};
+use crate::page::store::{self, Page};
 use crate::page::write::{SourceSnapshot, mapped_path};
 
 use super::commit::{StructuralCommitSink, schedule_structural_paths};
 use super::naming::{
-    abs_entry_path, basename, collection_schema_path, collection_schema_path_rel,
-    entry_commit_name, entry_entity, entry_history_commit_name, entry_history_name,
-    entry_in_sensitive_collection, entry_paths_with_order, entry_relocation, entry_rename_op,
-    grouped_abs_paths_by_space, normalize_rel_lossy, order_path, rel_changed_path,
-    root_path_for_head, same_parent,
+    abs_page_path, basename, collection_schema_path, collection_schema_path_rel,
+    grouped_abs_paths_by_space, normalize_rel_lossy, order_path, page_commit_name, page_entity,
+    page_history_commit_name, page_history_name, page_in_sensitive_collection,
+    page_paths_with_order, page_relocation, page_rename_op, rel_changed_path, root_path_for_head,
+    same_parent,
 };
 use super::plan::{delete_mutation_paths, revalidate_backlink_plan};
 
@@ -68,14 +68,14 @@ pub struct ConvertToCollectionOutcome {
     pub collection_path: String,
     pub readme_path: String,
     pub schema_path: String,
-    pub entry: Entry,
+    pub page: Page,
 }
 
 /// A folder Page turned into a leaf, with the service files removed together
 /// with its directory.
 #[derive(Debug, Clone)]
 pub struct ConvertToLeafOutcome {
-    pub entry: Entry,
+    pub page: Page,
     pub removed_paths: Vec<PathBuf>,
 }
 
@@ -86,7 +86,7 @@ pub struct CollectionCreate {
     pub body: Option<String>,
     pub icon: Option<String>,
     pub description: Option<String>,
-    pub cover: Option<entry::Cover>,
+    pub cover: Option<store::Cover>,
     pub schema: CollectionSchema,
     pub allocate_unique_title: bool,
     pub project: Option<String>,
@@ -96,7 +96,7 @@ pub struct CollectionCreate {
 #[serde(rename_all = "camelCase")]
 pub struct CollectionCreateOutcome {
     pub collection_path: String,
-    pub collection: Entry,
+    pub collection: Page,
     pub schema: CollectionSchema,
     pub changed_paths: Vec<PathBuf>,
 }
@@ -381,7 +381,7 @@ pub async fn delete<E: GitDateExecutor>(
     ensure_mutation_paths_were_authorized(&planned)?;
     let state = runtime.index;
     let backlink_index = state.backlinks_for_space_dir(Path::new(space)).await;
-    let deleted = entry::delete_with_project(
+    let deleted = store::delete_with_project(
         space,
         path,
         Some(&backlink_index),
@@ -444,11 +444,11 @@ pub async fn delete<E: GitDateExecutor>(
         paths_by_space
             .entry(PathBuf::from(space))
             .or_default()
-            .extend(entry_paths_with_order(
+            .extend(page_paths_with_order(
                 space,
-                [abs_entry_path(space, &deleted.deleted_root)],
+                [abs_page_path(space, &deleted.deleted_root)],
             ));
-        let change = StructuralChange::new(StructuralOp::Delete(entry_commit_name(space, path)));
+        let change = StructuralChange::new(StructuralOp::Delete(page_commit_name(space, path)));
         for (owner_space, paths) in paths_by_space {
             schedule_structural_paths(
                 runtime.commits,
@@ -475,14 +475,14 @@ pub fn create_folder(
     project_path: Option<&str>,
     commits: Option<&dyn StructuralCommitSink>,
 ) -> Result<String, PageError> {
-    let folder_path = entry::create_folder(space, parent_path, name)?;
+    let folder_path = store::create_folder(space, parent_path, name)?;
     schedule_structural_paths(
         commits,
         project_path,
         space,
-        StructuralChange::new(StructuralOp::Create(entry_commit_name(space, &folder_path)))
-            .creating(entry_entity(space, &folder_path)),
-        entry_paths_with_order(space, [abs_entry_path(space, &folder_path)]),
+        StructuralChange::new(StructuralOp::Create(page_commit_name(space, &folder_path)))
+            .creating(page_entity(space, &folder_path)),
+        page_paths_with_order(space, [abs_page_path(space, &folder_path)]),
     );
     Ok(folder_path)
 }
@@ -525,7 +525,7 @@ pub(crate) fn resolved_create_parent(
     };
     // The leaf parent becomes a directory of this name: a sibling that takes
     // it portably refuses the create before its first write.
-    if entry::name_taken_portably(&root.join(&parent), None)? {
+    if store::name_taken_portably(&root.join(&parent), None)? {
         return Err(PageError::FileAlreadyExists(parent));
     }
     Ok((Some(parent), true))
@@ -610,7 +610,7 @@ where
     let (parent, converts_parent) =
         resolved_create_parent(&request.space, request.parent_path.as_deref())
             .map_err(Err::from)?;
-    let planned = entry::planned_collection_source(
+    let planned = store::planned_collection_source(
         &request.space,
         parent.as_deref(),
         &request.title,
@@ -665,7 +665,7 @@ where
             project: request.project.clone(),
             publish_projection: false,
         },
-        entry::SourceNames::FileAndDirectory,
+        store::SourceNames::FileAndDirectory,
         runtime.index,
         runtime.updates,
         runtime.git_dates,
@@ -789,7 +789,7 @@ where
     .await;
     let mut changed_paths = page.changed_paths;
     changed_paths.extend(schema_outcome.changed_paths);
-    changed_paths.push(abs_entry_path(&request.space, &conversion.readme_path));
+    changed_paths.push(abs_page_path(&request.space, &conversion.readme_path));
     changed_paths.push(collection_schema_path(&request.space, &collection_path));
     changed_paths.sort();
     changed_paths.dedup();
@@ -797,16 +797,16 @@ where
         runtime.commits,
         request.project.as_deref(),
         &request.space,
-        StructuralChange::new(StructuralOp::Create(entry_history_commit_name(
+        StructuralChange::new(StructuralOp::Create(page_history_commit_name(
             &request.space,
             &conversion.readme_path,
         )))
-        .creating(entry_entity(&request.space, &conversion.readme_path)),
+        .creating(page_entity(&request.space, &conversion.readme_path)),
         changed_paths.clone(),
     );
     // Name allocation warnings of the written Page describe the Collection
     // that the conversion made of it.
-    let mut collection = conversion.entry;
+    let mut collection = conversion.page;
     collection
         .warnings
         .extend(page.page.warnings.into_iter().map(|mut warning| {
@@ -828,7 +828,7 @@ pub async fn convert_to_folder<E: GitDateExecutor>(
     file_path: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     convert_to_folder_with_publication(
         space,
         file_path,
@@ -847,13 +847,13 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
     runtime: StructureRuntime<'_, E>,
     publish_projection: bool,
     operation: OperationId,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     let state = runtime.index;
     let backlinks = state.backlinks_for_space_dir(Path::new(space)).await;
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, file_path, false).await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
-    let converted = entry::convert_entry_to_folder(
+    let converted = store::convert_page_to_folder(
         Path::new(space),
         file_path,
         if project_aware {
@@ -866,9 +866,9 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
     let old_leaf = format!("{folder_root}.md");
     let change = StructuralChange::of(
         operation,
-        StructuralOp::ConvertToFolder(entry_history_commit_name(space, &converted.path)),
+        StructuralOp::ConvertToFolder(page_history_commit_name(space, &converted.path)),
     )
-    .relocating(entry_relocation(space, &old_leaf, &converted.path));
+    .relocating(page_relocation(space, &old_leaf, &converted.path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
         let target_space_id = state.space_id_for_dir(Path::new(space)).await;
@@ -932,11 +932,11 @@ async fn convert_to_folder_with_publication<E: GitDateExecutor>(
         project_path,
         space,
         change,
-        entry_paths_with_order(
+        page_paths_with_order(
             space,
             [
-                abs_entry_path(space, &old_leaf),
-                abs_entry_path(space, &converted.path),
+                abs_page_path(space, &old_leaf),
+                abs_page_path(space, &converted.path),
             ],
         ),
     );
@@ -954,7 +954,7 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
     ensure_backlinks_before_structural(state, project_path).await;
     revalidate_backlink_plan(state, space, project_path, file_path, false).await?;
     let project_aware = project_path.filter(|path| !path.is_empty()).is_some();
-    let (converted, removed_files) = entry::convert_entry_to_leaf(
+    let (converted, removed_files) = store::convert_page_to_leaf(
         Path::new(space),
         file_path,
         if project_aware {
@@ -968,11 +968,11 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
         .strip_suffix(".md")
         .map(|root| format!("{root}/README.md"))
         .unwrap_or_else(|| converted.path.clone());
-    let change = StructuralChange::new(StructuralOp::ConvertToLeaf(entry_history_commit_name(
+    let change = StructuralChange::new(StructuralOp::ConvertToLeaf(page_history_commit_name(
         space,
         &converted.path,
     )))
-    .relocating(entry_relocation(space, &old_readme, &converted.path));
+    .relocating(page_relocation(space, &old_readme, &converted.path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
         let target_space_id = state.space_id_for_dir(Path::new(space)).await;
@@ -1031,25 +1031,25 @@ pub async fn convert_to_leaf<E: GitDateExecutor>(
     .await;
     let removed_paths = removed_files
         .iter()
-        .map(|path| abs_entry_path(space, path))
+        .map(|path| abs_page_path(space, path))
         .collect::<Vec<_>>();
     schedule_structural_paths(
         runtime.commits,
         project_path,
         space,
         change,
-        entry_paths_with_order(
+        page_paths_with_order(
             space,
             [
-                abs_entry_path(space, &old_readme),
-                abs_entry_path(space, &converted.path),
+                abs_page_path(space, &old_readme),
+                abs_page_path(space, &converted.path),
             ]
             .into_iter()
             .chain(removed_paths.iter().cloned()),
         ),
     );
     Ok(ConvertToLeafOutcome {
-        entry: converted,
+        page: converted,
         removed_paths,
     })
 }
@@ -1147,20 +1147,20 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
 
     let (collection_path, readme_path, converted, source_moved) = if metadata.is_dir() {
         let schema_path = collection_schema_path(space, &old_path);
-        if entry::name_taken_portably(&schema_path, None)? {
+        if store::name_taken_portably(&schema_path, None)? {
             return Err(PageError::FileAlreadyExists(rel_changed_path(
                 space,
                 &schema_path,
             )));
         }
-        if let Some(readme_name) = entry::dir_readme_name(&source_abs) {
+        if let Some(readme_name) = store::dir_readme_name(&source_abs) {
             let readme_path = format!("{old_path}/{readme_name}");
             let collection_path =
-                entry::convert_entry_to_nested_collection(Path::new(space), &readme_path)?;
-            let converted = entry::read(space, &readme_path)?;
+                store::convert_page_to_nested_collection(Path::new(space), &readme_path)?;
+            let converted = store::read(space, &readme_path)?;
             (collection_path, readme_path, converted, false)
         } else {
-            let converted = entry::convert_bare_folder_to_collection(Path::new(space), &old_path)?;
+            let converted = store::convert_bare_folder_to_collection(Path::new(space), &old_path)?;
             let readme_path = format!("{old_path}/README.md");
             (old_path.clone(), readme_path, converted, false)
         }
@@ -1172,7 +1172,7 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
             .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
         if is_readme
             && let Some(schema) = parent_schema.as_ref()
-            && entry::name_taken_portably(schema, None)?
+            && store::name_taken_portably(schema, None)?
         {
             return Err(PageError::General(format!(
                 "{old_path} is already a collection README.md; convert_to_collection cannot convert an existing collection"
@@ -1183,8 +1183,8 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
                 .parent()
                 .map(normalize_rel_lossy)
                 .unwrap_or_default();
-            entry::convert_entry_to_nested_collection(Path::new(space), &old_path)?;
-            let converted = entry::read(space, &old_path)?;
+            store::convert_page_to_nested_collection(Path::new(space), &old_path)?;
+            let converted = store::read(space, &old_path)?;
             (collection_path, old_path.clone(), converted, false)
         } else {
             let converted = convert_to_folder_with_publication(
@@ -1205,10 +1205,10 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
                 .ok_or_else(|| {
                     PageError::General("converted entry has no collection folder".to_string())
                 })?;
-            entry::convert_entry_to_nested_collection(Path::new(space), &readme_path)?;
+            store::convert_page_to_nested_collection(Path::new(space), &readme_path)?;
             #[cfg(test)]
             crate::page::write::checkpoint("convert_schema")?;
-            let converted = entry::read(space, &readme_path)?;
+            let converted = store::read(space, &readme_path)?;
             (collection_path, readme_path, converted, true)
         }
     } else {
@@ -1233,12 +1233,12 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
     crate::page::write::checkpoint("convert_publish")?;
     if runtime.commits.is_some() {
         let mut paths = vec![
-            abs_entry_path(space, &readme_path),
+            abs_page_path(space, &readme_path),
             collection_schema_path(space, &collection_path),
         ];
         if source_moved {
-            paths = entry_paths_with_order(space, paths);
-            paths.push(abs_entry_path(space, &old_path));
+            paths = page_paths_with_order(space, paths);
+            paths.push(abs_page_path(space, &old_path));
         }
         schedule_structural_paths(
             runtime.commits,
@@ -1246,7 +1246,7 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
             space,
             StructuralChange::of(
                 operation,
-                StructuralOp::MakeCollection(entry_history_commit_name(space, &readme_path)),
+                StructuralOp::MakeCollection(page_history_commit_name(space, &readme_path)),
             ),
             paths,
         );
@@ -1256,7 +1256,7 @@ async fn convert_to_collection_with_publication<E: GitDateExecutor>(
         collection_path: collection_path.clone(),
         readme_path,
         schema_path: collection_schema_path_rel(&collection_path),
-        entry: converted,
+        page: converted,
     })
 }
 
@@ -1273,7 +1273,7 @@ pub async fn rename<E: GitDateExecutor>(
         .map(|outcome| outcome.modified_paths)
 }
 
-pub async fn move_entry<E: GitDateExecutor>(
+pub async fn move_page<E: GitDateExecutor>(
     space: &str,
     from: &str,
     to_parent: &str,
@@ -1423,7 +1423,7 @@ async fn apply_move<E: GitDateExecutor>(
         )
         .await?;
         let unique_id_paths = if rename_to.is_none() {
-            engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &new_path)?
+            engine::unique_id_mutation_paths_for_item_tree(Path::new(space), &new_path)?
         } else {
             Vec::new()
         };
@@ -1448,11 +1448,11 @@ async fn apply_move<E: GitDateExecutor>(
     };
 
     let change = StructuralChange::new(if rename_to.is_some() {
-        entry_rename_op(space, from, &new_path)
+        page_rename_op(space, from, &new_path)
     } else {
-        StructuralOp::Move(entry_commit_name(space, &new_path))
+        StructuralOp::Move(page_commit_name(space, &new_path))
     })
-    .relocating(entry_relocation(space, from, &new_path));
+    .relocating(page_relocation(space, from, &new_path));
     if let Some(commits) = runtime.commits {
         for (owner, mut paths) in grouped_abs_paths_by_space(project_path, space, &changed) {
             let owner_path = owner.to_string_lossy();
@@ -1481,7 +1481,7 @@ async fn apply_move<E: GitDateExecutor>(
                     project_path,
                     space,
                     paths,
-                    if entry_in_sensitive_collection(space, &new_path) {
+                    if page_in_sensitive_collection(space, &new_path) {
                         "Move collection entry with unique_id".to_string()
                     } else {
                         format!("Move {} with unique_id", basename(&new_path))
@@ -1519,10 +1519,10 @@ async fn move_sources<E: GitDateExecutor>(
 ) -> Result<String, PageError> {
     let state = runtime.index;
     let new_path = if let Some(to) = rename_to {
-        entry::rename_with_project(space, from, to, project_path)?;
+        store::rename_with_project(space, from, to, project_path)?;
         to.to_string()
     } else {
-        entry::move_entry_with_project(
+        store::move_page_with_project(
             Path::new(space),
             from,
             to_parent.unwrap_or_default(),
@@ -1573,9 +1573,9 @@ async fn move_sources<E: GitDateExecutor>(
         #[cfg(test)]
         crate::page::write::checkpoint("move_links")?;
         let operation_context = if rename_to.is_some() {
-            "rename_entry"
+            "rename_page"
         } else {
-            "move_entry"
+            "move_page"
         };
         if was_dir {
             rebase_project_source_tree_after_move(
@@ -1693,14 +1693,14 @@ async fn reshape<E: GitDateExecutor>(
         .then_some(&*backlinks);
     let (new_path, removed_files) = if nesting {
         (
-            entry::nest_entry(Path::new(space), path, local_backlinks)?,
+            store::nest_page(Path::new(space), path, local_backlinks)?,
             Vec::new(),
         )
     } else {
-        entry::unnest_entry(Path::new(space), path, local_backlinks)?
+        store::unnest_page(Path::new(space), path, local_backlinks)?
     };
-    let change = StructuralChange::new(StructuralOp::Move(entry_commit_name(space, &new_path)))
-        .relocating(entry_relocation(space, path, &new_path));
+    let change = StructuralChange::new(StructuralOp::Move(page_commit_name(space, &new_path)))
+        .relocating(page_relocation(space, path, &new_path));
     if let Some(project) = project_path.filter(|path| !path.is_empty()) {
         let project = Path::new(project);
         let space_id = state.space_id_for_dir(Path::new(space)).await;
@@ -1727,11 +1727,7 @@ async fn reshape<E: GitDateExecutor>(
                 space_id.as_deref(),
                 path,
                 &new_path,
-                if nesting {
-                    "nest_entry"
-                } else {
-                    "unnest_entry"
-                },
+                if nesting { "nest_page" } else { "unnest_page" },
                 true,
             )
             .await,
@@ -1752,14 +1748,11 @@ async fn reshape<E: GitDateExecutor>(
         project_path,
         space,
         change,
-        entry_paths_with_order(
+        page_paths_with_order(
             space,
-            [
-                abs_entry_path(space, path),
-                abs_entry_path(space, &new_path),
-            ]
-            .into_iter()
-            .chain(removed_files.iter().map(|file| abs_entry_path(space, file))),
+            [abs_page_path(space, path), abs_page_path(space, &new_path)]
+                .into_iter()
+                .chain(removed_files.iter().map(|file| abs_page_path(space, file))),
         ),
     );
     Ok(new_path)
@@ -1770,9 +1763,9 @@ pub async fn duplicate<E: GitDateExecutor>(
     file_path: &str,
     project_path: Option<&str>,
     runtime: StructureRuntime<'_, E>,
-) -> Result<Entry, PageError> {
-    let old_name = entry_history_commit_name(space, file_path);
-    let duplicated = entry::duplicate_entry(Path::new(space), file_path)?;
+) -> Result<Page, PageError> {
+    let old_name = page_history_commit_name(space, file_path);
+    let duplicated = store::duplicate_page(Path::new(space), file_path)?;
     let root_path = duplicated
         .path
         .rsplit_once('/')
@@ -1786,13 +1779,13 @@ pub async fn duplicate<E: GitDateExecutor>(
         project_path,
         space,
         root_path,
-        "duplicate_entry",
+        "duplicate_page",
     )
     .await;
     if let Some(commits) = runtime.commits {
-        let mut paths = entry_paths_with_order(space, [abs_entry_path(space, root_path)]);
+        let mut paths = page_paths_with_order(space, [abs_page_path(space, root_path)]);
         let unique_id_paths =
-            engine::unique_id_mutation_paths_for_entry_tree(Path::new(space), &duplicated.path)?;
+            engine::unique_id_mutation_paths_for_item_tree(Path::new(space), &duplicated.path)?;
         if unique_id_paths.is_empty() {
             schedule_structural_paths(
                 Some(commits),
@@ -1800,9 +1793,9 @@ pub async fn duplicate<E: GitDateExecutor>(
                 space,
                 StructuralChange::new(StructuralOp::Duplicate {
                     old: old_name,
-                    new: entry_history_commit_name(space, &duplicated.path),
+                    new: page_history_commit_name(space, &duplicated.path),
                 })
-                .creating(entry_entity(space, root_path)),
+                .creating(page_entity(space, root_path)),
                 paths,
             );
         } else {
@@ -1812,14 +1805,14 @@ pub async fn duplicate<E: GitDateExecutor>(
                 project_path,
                 space,
                 paths,
-                if entry_in_sensitive_collection(space, file_path)
-                    || entry_in_sensitive_collection(space, &duplicated.path)
+                if page_in_sensitive_collection(space, file_path)
+                    || page_in_sensitive_collection(space, &duplicated.path)
                 {
                     "Duplicate collection entry".to_string()
                 } else {
                     format!(
                         "Duplicate {old_name} → {}",
-                        entry_history_name(&duplicated.path)
+                        page_history_name(&duplicated.path)
                     )
                 },
             )

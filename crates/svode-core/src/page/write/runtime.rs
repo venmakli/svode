@@ -68,7 +68,7 @@ where
             else {
                 return Err(refusal);
             };
-            let deferred = EntryWarning::filename_rename_access_deferred(request.path, &blockers);
+            let deferred = PageWarning::filename_rename_access_deferred(request.path, &blockers);
             plan = prepare(&request, state, &backlink_index, Some(deferred)).await?;
             match authorize(plan.authorization_paths()).await {
                 Ok(authorized) => authorized,
@@ -149,11 +149,11 @@ where
     )
     .await;
     if let Err(error) = projection {
-        outcome.result.warnings.push(EntryWarning {
+        outcome.result.warnings.push(PageWarning {
             kind: "projection_update_failed".into(),
             message: format!("Page was saved, but derived projection needs refresh: {error}"),
             path: Some(current.to_string()),
-            ..EntryWarning::default()
+            ..PageWarning::default()
         });
     }
     Ok(outcome)
@@ -165,11 +165,11 @@ async fn prepare(
     request: &PageWrite<'_>,
     state: &IndexRuntimeState,
     backlinks: &BacklinkIndex,
-    deferred: Option<EntryWarning>,
+    deferred: Option<PageWarning>,
 ) -> Result<WritePlan, PageError> {
     let mut rename = match deferred {
         Some(_) => None,
-        None => entry::planned_write_rename(
+        None => store::planned_write_rename(
             request.space,
             request.path,
             requested_title(request),
@@ -190,7 +190,7 @@ async fn prepare(
         ) {
             Ok(paths) => relation_paths = paths,
             Err(crate::collections::CollectionError::Schema(message)) => {
-                warning = Some(EntryWarning::filename_rename_deferred(
+                warning = Some(PageWarning::filename_rename_deferred(
                     request.path,
                     &format!("schema error: {message}"),
                 ));

@@ -515,10 +515,10 @@ impl Templates {
             super::facts::General::Settings => "settings".to_string(),
             super::facts::General::Spaces if ru => "пространства и указатели".to_string(),
             super::facts::General::Spaces => "spaces and pointers".to_string(),
-            super::facts::General::Entries if ru => {
+            super::facts::General::Items if ru => {
                 format!("правки {pages} {}", ru_genitive(pages, "записи", "записей"))
             }
-            super::facts::General::Entries => {
+            super::facts::General::Items => {
                 format!("edit {pages} {}", en_plural(pages, "entry", "entries"))
             }
             super::facts::General::Files => self.counted_files(pages, files),
@@ -573,13 +573,13 @@ impl Templates {
             Sensitive::Moved => "Move collection entry".into(),
             Sensitive::Schema if ru => "Изменена схема коллекции".into(),
             Sensitive::Schema => "Update collection schema".into(),
-            Sensitive::Entries(1) if ru => "Правка записи коллекции".into(),
-            Sensitive::Entries(1) => "Update collection entry".into(),
-            Sensitive::Entries(n) if ru => format!(
+            Sensitive::Items(1) if ru => "Правка записи коллекции".into(),
+            Sensitive::Items(1) => "Update collection entry".into(),
+            Sensitive::Items(n) if ru => format!(
                 "Правки {n} {} коллекции",
                 ru_genitive(n, "записи", "записей")
             ),
-            Sensitive::Entries(n) => format!("Update {n} collection entries"),
+            Sensitive::Items(n) => format!("Update {n} collection entries"),
         }
     }
 }

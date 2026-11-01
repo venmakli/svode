@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use chrono::{SecondsFormat, TimeDelta, Utc};
-use svode_core::collections::engine::EntryFieldBatchIntent;
+use svode_core::collections::engine::ItemFieldBatchIntent;
 use svode_core::git::cli::GitCli;
 use svode_core::index::IndexKey;
 use svode_core::index::state::IndexRuntimeState;
@@ -280,7 +280,7 @@ async fn an_event_written_by_svode_mcp_without_a_window_is_dispatched() {
             path: "tasks/alpha.md",
             project: Some(&space),
             values: &values,
-            intent: EntryFieldBatchIntent::Literal,
+            intent: ItemFieldBatchIntent::Literal,
         },
         PageRuntime {
             index: session.index(),
@@ -303,7 +303,7 @@ async fn an_event_written_by_svode_mcp_without_a_window_is_dispatched() {
     assert_eq!(events.len(), 1);
     let payload: svode_core::routines::observation::CollectionEventPayload =
         serde_json::from_str(&events[0].payload_json).unwrap();
-    assert_eq!(payload.entry_path, "tasks/alpha.md");
+    assert_eq!(payload.item_path, "tasks/alpha.md");
     let pool = host
         .stores
         .get_or_create(&tasks.index_key, &tasks.space_path)

@@ -36,7 +36,7 @@ fn runtime(index: &IndexRuntimeState) -> StructureRuntime<'_, SystemGitDateExecu
     }
 }
 
-/// A Space with `files` and a sidebar order naming its top-level entries.
+/// A Space with `files` and a sidebar order naming its top-level names.
 fn space(files: &[(String, &str)], order: &str) -> TempDir {
     let tmp = TempDir::new().unwrap();
     scaffold_space(tmp.path(), "Root");
@@ -256,7 +256,7 @@ async fn moving_into_another_parent_refuses_a_portably_equal_sibling() {
             let before = tree(root);
             let state = IndexRuntimeState::default();
             let result =
-                super::move_entry(root.to_str().unwrap(), from, "y", None, runtime(&state)).await;
+                super::move_page(root.to_str().unwrap(), from, "y", None, runtime(&state)).await;
             assert_refused(result, root, &before, &format!("move {from:?}"));
         }
     }
@@ -309,7 +309,7 @@ async fn a_folder_collection_takes_a_readme_in_another_case_as_its_readme() {
                     .await
                     .unwrap_or_else(|error| panic!("{readme} {title}: {error:?}"));
             assert_eq!(outcome.readme_path, format!("docs/{readme}"));
-            assert_eq!(outcome.entry.meta.title, title);
+            assert_eq!(outcome.page.meta.title, title);
             let mut expected = vec![readme.to_string(), "Note.md".into(), "schema.yaml".into()];
             expected.sort();
             assert_eq!(names_in(&root.join("docs")), expected, "{readme} {title}");
@@ -369,10 +369,10 @@ async fn a_folder_page_readme_refuses_a_schema_in_another_case() {
         );
         assert_eq!(tree(root), before, "{schema} changed the tree");
         assert_refused(
-            crate::page::entry::convert_entry_to_nested_collection(root, "docs/README.md"),
+            crate::page::store::convert_page_to_nested_collection(root, "docs/README.md"),
             root,
             &before,
-            &format!("convert_entry_to_nested_collection {schema}"),
+            &format!("convert_page_to_nested_collection {schema}"),
         );
     }
 }
@@ -388,7 +388,7 @@ fn a_bare_folder_collection_refuses_a_fixed_name_in_another_case() {
         let root = tmp.path();
         let before = tree(root);
         assert_refused(
-            crate::page::entry::convert_bare_folder_to_collection(root, "docs"),
+            crate::page::store::convert_bare_folder_to_collection(root, "docs"),
             root,
             &before,
             &format!("convert_bare_folder_to_collection {taken}"),

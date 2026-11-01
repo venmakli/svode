@@ -7,13 +7,13 @@ use std::path::Path;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use svode_core::collections::engine::EntryFieldBatchIntent;
+use svode_core::collections::engine::ItemFieldBatchIntent;
 use svode_core::page::SourceVersion;
 use svode_core::page::create::PageCreate;
-use svode_core::page::entry::{self, Cover};
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::identity::ContentOwnerKind;
 use svode_core::page::metadata::{PageMetadataPatch, relative_changed_paths};
+use svode_core::page::store::{self, Cover};
 use svode_core::page::write::{PageWrite, PageWriteOutcome};
 
 use crate::args::deserialize_present;
@@ -403,7 +403,7 @@ pub(crate) async fn update_collection_item_fields(
     ensure_inside(Path::new(&space), &path)?;
     require_collection_item(&space, &path)?;
     if args.fields.is_empty() {
-        let item = entry::read(&space, &path)?;
+        let item = store::read(&space, &path)?;
         return Ok(ToolCallResult::ok(
             format!("No field changes for {path}."),
             json!({ "sourceVersion": source_version(&item), "item": item, "changedPaths": [] }),
@@ -416,7 +416,7 @@ pub(crate) async fn update_collection_item_fields(
             path: &path,
             project: Some(&target.project_path),
             values: &args.fields,
-            intent: EntryFieldBatchIntent::Literal,
+            intent: ItemFieldBatchIntent::Literal,
         },
         handles.page(),
         |paths| authorize(host, &space, paths),

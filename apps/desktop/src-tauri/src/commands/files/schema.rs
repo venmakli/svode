@@ -88,16 +88,16 @@ pub async fn assign_unique_id(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let mutation = engine::prepare_assign_unique_id(&space, &file_path)?;
     let outcome = apply_collection_mutation(&app, &space, mutation).await?;
-    let entry = entry::read(&space, &file_path)?;
+    let page = store::read(&space, &file_path)?;
     let _ = crate::index::update::publish_paths_or_repair(
         &index_state,
         &index_updates,
         project_path.as_deref(),
         &space,
-        vec![Path::new(&space).join(&entry.path)],
+        vec![Path::new(&space).join(&page.path)],
         "assign_unique_id",
     )
     .await;
@@ -106,14 +106,14 @@ pub async fn assign_unique_id(
         project_path.as_deref(),
         &space,
         outcome.changed_paths,
-        if entry_in_sensitive_collection(&space, &entry.path) {
+        if page_in_sensitive_collection(&space, &page.path) {
             "Repair unique_id for collection entry".to_string()
         } else {
-            format!("Repair unique_id for {}", entry_history_name(&entry.path))
+            format!("Repair unique_id for {}", page_history_name(&page.path))
         },
     )
     .await;
-    Ok(entry)
+    Ok(page)
 }
 
 #[tauri::command]

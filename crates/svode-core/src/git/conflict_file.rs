@@ -1259,7 +1259,7 @@ async fn keep_both(
             .any(|conflict| conflict.path == order_path);
         let before = std::fs::read(&order).ok();
         place(repo, &mine, path)?;
-        let copy = crate::page::entry::write_incoming_copy(&space, &within, &content, suffix)
+        let copy = crate::page::store::write_incoming_copy(&space, &within, &content, suffix)
             .map_err(|error| GitError::GitCommandFailed(error.to_string()))?;
         staged.push(repository_path(&prefix, &copy)?);
         if !order_conflicted && std::fs::read(&order).ok() != before && order.exists() {

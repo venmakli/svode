@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use tempfile::TempDir;
 
 use super::*;
-use crate::page::entry;
+use crate::page::store;
 
 /// A newer value in every position R4 names: property type, `limit` and
 /// `relation_scope` type, view type, filter operator, status group of an
@@ -351,7 +351,7 @@ fn every_schema_writer_keeps_newer_values() {
     update_system_field_label(space, "tasks", "title", Some("Name".into())).unwrap();
     assert_newer_values_kept(&fixture, "templates and title label");
 
-    let created = entry::create(space, Some("tasks"), "Second").unwrap();
+    let created = store::create(space, Some("tasks"), "Second").unwrap();
     assert!(fixture.raw("tasks/schema.yaml").contains("next: 3"));
     assert_newer_values_kept(&fixture, "unique_id allocation");
     // The new item takes no default of a newer property.
@@ -365,7 +365,7 @@ fn every_schema_writer_keeps_newer_values() {
     assert_newer_values_kept(&fixture, "two-way reverse column");
 
     // Renaming `people` rewrites the known relation targets only.
-    entry::rename(space, "people", "team").unwrap();
+    store::rename(space, "people", "team").unwrap();
     let raw = fixture.raw("tasks/schema.yaml");
     assert!(raw.contains("relation: team"), "{raw}");
     assert_newer_values_kept(&fixture, "collection rename");
@@ -405,30 +405,30 @@ fn a_newer_property_is_read_and_kept_but_never_changed() {
         clear_field_values(space, "tasks", "Score")
     });
     assert_newer_refusal(&fixture, "write a value", || {
-        prepare_entry_field_batch(
+        prepare_item_field_batch(
             space,
             None,
             "tasks/a.md",
             &fields("Score", serde_json::json!(7)),
-            EntryFieldBatchIntent::Literal,
+            ItemFieldBatchIntent::Literal,
         )
-        .map(PreparedEntryFieldBatch::into_metadata)
+        .map(PreparedItemFieldBatch::into_metadata)
     });
     assert_newer_refusal(&fixture, "clear a value", || {
-        prepare_entry_field_batch(
+        prepare_item_field_batch(
             space,
             None,
             "tasks/a.md",
             &fields("Elsewhere", serde_json::Value::Null),
-            EntryFieldBatchIntent::Literal,
+            ItemFieldBatchIntent::Literal,
         )
-        .map(PreparedEntryFieldBatch::into_metadata)
+        .map(PreparedItemFieldBatch::into_metadata)
     });
     assert_newer_refusal(&fixture, "two-way diagnosis", || {
         diagnose_two_way_relation(space, "tasks", "Links")
     });
     let error =
-        entry::update_field(space, None, "tasks/a.md", "Score", serde_json::json!(7)).unwrap_err();
+        store::update_field(space, None, "tasks/a.md", "Score", serde_json::json!(7)).unwrap_err();
     assert!(error.to_string().contains("newer Svode version"), "{error}");
     let duplicate = add_schema_column(
         space,
@@ -439,7 +439,7 @@ fn a_newer_property_is_read_and_kept_but_never_changed() {
     assert!(duplicate.to_string().contains("already exists"));
 
     // Edits of other fields, renames, duplicates and moves keep its values.
-    entry::update_field(
+    store::update_field(
         space,
         None,
         "tasks/a.md",
@@ -447,8 +447,8 @@ fn a_newer_property_is_read_and_kept_but_never_changed() {
         serde_json::json!("edited"),
     )
     .unwrap();
-    let copy = entry::duplicate_entry(Path::new(space), "tasks/a.md").unwrap();
-    let moved = entry::move_entry(Path::new(space), &copy.path, "people", None).unwrap();
+    let copy = store::duplicate_page(Path::new(space), "tasks/a.md").unwrap();
+    let moved = store::move_page(Path::new(space), &copy.path, "people", None).unwrap();
     for item in [fixture.raw("tasks/a.md"), fixture.raw(&moved)] {
         assert!(
             item.contains("Score: 42") && item.contains("Links:\n- p"),
@@ -567,12 +567,12 @@ fn known_parts_with_newer_values_keep_working() {
     let space = fixture.space.as_str();
 
     // An option of a newer status group: values, renames, edits, deletion.
-    prepare_entry_field_batch(
+    prepare_item_field_batch(
         space,
         None,
         "tasks/a.md",
         &fields("Status", serde_json::json!("Blocked")),
-        EntryFieldBatchIntent::Literal,
+        ItemFieldBatchIntent::Literal,
     )
     .unwrap();
     rename_option(space, "tasks", "Status", "Blocked", "Stuck").unwrap();
@@ -599,12 +599,12 @@ fn known_parts_with_newer_values_keep_working() {
     );
 
     // A known column with a newer color, display or sensitivity.
-    prepare_entry_field_batch(
+    prepare_item_field_batch(
         space,
         None,
         "tasks/a.md",
         &fields("Count", serde_json::json!(4)),
-        EntryFieldBatchIntent::Literal,
+        ItemFieldBatchIntent::Literal,
     )
     .unwrap();
     // Input may repeat a stored newer value, and setting the field replaces it.
@@ -707,7 +707,7 @@ async fn items_stay_members_in_the_index_and_unshowable_views_refuse() {
         .await
         .unwrap();
     let members = sqlx::query_scalar::<_, String>(
-        "SELECT file_path FROM entries WHERE in_collection = 1 AND collection_root_path = 'tasks'",
+        "SELECT file_path FROM pages WHERE in_collection = 1 AND collection_root_path = 'tasks'",
     )
     .fetch_all(&pool)
     .await
@@ -716,7 +716,7 @@ async fn items_stay_members_in_the_index_and_unshowable_views_refuse() {
 
     let actors = crate::actors::resolver::ActorCatalogState::new();
     let list = |view: &'static str| {
-        crate::collections::entries::list_entries_for_view(
+        crate::collections::items::list_items_for_view(
             &pool, &actors, None, space, "tasks", view, None,
         )
     };

@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use crate::collections::engine;
 use crate::content_tree;
 use crate::page::PageError;
-use crate::page::entry::{self, Entry, EntryMeta};
 use crate::page::filename;
 use crate::page::frontmatter::{self, FrontmatterFields};
+use crate::page::store::{self, Page, PageMeta};
 
 use crate::collections::engine::{
     README_FILE, TEMPLATES_DIR, TemplateSource, humanize_template_slug as humanize_slug,
@@ -31,13 +31,13 @@ pub struct DuplicatedTemplate {
 }
 
 pub struct InstantiatedTemplate {
-    pub entry: Entry,
+    pub page: Page,
     pub template_title: String,
 }
 
 struct MarkdownDoc {
     path: PathBuf,
-    meta: EntryMeta,
+    meta: PageMeta,
     body: String,
 }
 
@@ -51,7 +51,7 @@ pub fn create(
     let templates_abs = templates_dir(space, collection_path);
     fs::create_dir_all(&templates_abs)?;
 
-    let base_slug = entry::slugify(title);
+    let base_slug = store::slugify(title);
     let slug = unique_template_slug(&templates_abs, &base_slug);
     let (head_abs, head_rel) = match kind {
         TemplateKind::Leaf => {
@@ -66,7 +66,7 @@ pub fn create(
         }
     };
 
-    let mut meta = EntryMeta::new_persisted(title.to_string());
+    let mut meta = PageMeta::new_persisted(title.to_string());
     engine::apply_schema_defaults_for_path(space, &head_rel, &mut meta)?;
     fs::write(&head_abs, frontmatter::serialize(&meta, ""))?;
 
@@ -103,7 +103,7 @@ pub fn duplicate(
     let source = resolve_template_source(space, collection_path, template_slug)?;
     let templates_abs = templates_dir(space, collection_path);
     let new_title = format!("{} (copy)", source.title);
-    let new_slug = unique_template_slug(&templates_abs, &entry::slugify(&new_title));
+    let new_slug = unique_template_slug(&templates_abs, &store::slugify(&new_title));
 
     let (dest_root, head_path) = if source.is_dir {
         let dest_root = templates_abs.join(&new_slug);
@@ -260,14 +260,14 @@ fn instantiate_inner(
         );
     }
 
-    let mut entry = entry::read(space, &head_rel)?;
-    entry.warnings.extend(entry::filename_allocation_warnings(
+    let mut page = store::read(space, &head_rel)?;
+    page.warnings.extend(store::filename_allocation_warnings(
         &projection,
         &actual_projection,
         &head_rel,
     ));
     Ok(InstantiatedTemplate {
-        entry,
+        page,
         template_title: source.title,
     })
 }
@@ -284,7 +284,7 @@ mod tests {
         fs::create_dir(tmp.path().join("collection")).unwrap();
         engine::write_default_collection_schema(&space, "collection").unwrap();
         create(&space, "collection", "Template", TemplateKind::Leaf).unwrap();
-        entry::create_with_options(&space, Some("collection"), "Shared", None, false, false)
+        store::create_with_options(&space, Some("collection"), "Shared", None, false, false)
             .unwrap();
 
         let conflict = instantiate(
@@ -310,7 +310,7 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(allocated.entry.meta.title, "Shared 2");
+        assert_eq!(allocated.page.meta.title, "Shared 2");
 
         let unicode = instantiate(
             &space,
@@ -323,8 +323,8 @@ mod tests {
             None,
         )
         .unwrap();
-        assert_eq!(unicode.entry.path, "collection/日本語 Template 🚀.md");
-        assert!(unicode.entry.warnings.is_empty());
+        assert_eq!(unicode.page.path, "collection/日本語 Template 🚀.md");
+        assert!(unicode.page.warnings.is_empty());
     }
 
     #[test]
@@ -473,7 +473,7 @@ fn read_markdown_doc(path: &Path) -> Result<MarkdownDoc, PageError> {
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("untitled");
-            (EntryMeta::new_persisted(humanize_slug(stem)), raw)
+            (PageMeta::new_persisted(humanize_slug(stem)), raw)
         }
     };
     Ok(MarkdownDoc {
@@ -488,7 +488,7 @@ fn validate_contextual_defaults(
     head_rel: &str,
     contextual_defaults: &FrontmatterFields,
 ) -> Result<(), PageError> {
-    let mut meta = EntryMeta::new_persisted("");
+    let mut meta = PageMeta::new_persisted("");
     engine::apply_contextual_defaults_for_path_strict(
         space,
         head_rel,

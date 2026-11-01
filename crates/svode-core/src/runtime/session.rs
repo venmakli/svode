@@ -378,9 +378,9 @@ mod tests {
         session.close().await;
     }
 
-    async fn entries(session: &ProjectSession, key: &IndexKey) -> Vec<String> {
+    async fn pages(session: &ProjectSession, key: &IndexKey) -> Vec<String> {
         let pool = session.index().existing_pool(key).await.unwrap();
-        sqlx::query_scalar("SELECT file_path FROM entries ORDER BY file_path")
+        sqlx::query_scalar("SELECT file_path FROM pages ORDER BY file_path")
             .fetch_all(&pool)
             .await
             .unwrap()
@@ -407,8 +407,8 @@ mod tests {
             .unwrap();
         assert_eq!(first.status, IndexFreshnessStatus::Fresh);
         assert!(first.verified_at.is_some());
-        assert_eq!(entries(&session, &root_key).await, ["note.md"]);
-        assert_eq!(entries(&session, &child_key).await, ["inner.md"]);
+        assert_eq!(pages(&session, &root_key).await, ["note.md"]);
+        assert_eq!(pages(&session, &child_key).await, ["inner.md"]);
 
         // Two reads inside the recheck window share one completed check:
         // an edit made meanwhile waits for the next check.
@@ -419,7 +419,7 @@ mod tests {
         );
         assert_eq!(again.unwrap().verified_at, first.verified_at);
         assert_eq!(concurrent.unwrap().verified_at, first.verified_at);
-        assert_eq!(entries(&session, &root_key).await, ["note.md"]);
+        assert_eq!(pages(&session, &root_key).await, ["note.md"]);
 
         tokio::time::sleep(INDEX_RECHECK_WINDOW).await;
         let rechecked = session
@@ -427,7 +427,7 @@ mod tests {
             .await
             .unwrap();
         assert!(rechecked.verified_at > first.verified_at);
-        assert_eq!(entries(&session, &root_key).await, ["later.md", "note.md"]);
+        assert_eq!(pages(&session, &root_key).await, ["later.md", "note.md"]);
         session.close().await;
     }
 
@@ -452,7 +452,7 @@ mod tests {
             .await
             .unwrap();
         let root_key = IndexKey::Root(root.clone());
-        assert_eq!(entries(&session, &root_key).await, ["note.md"]);
+        assert_eq!(pages(&session, &root_key).await, ["note.md"]);
         let child_key = IndexKey::Space {
             project: root.clone(),
             space_id: "child".to_string(),

@@ -32,7 +32,7 @@ pub async fn create_template(
             &collection_path,
             title,
         ))),
-        vec![abs_entry_path(&space, root)],
+        vec![abs_page_path(&space, root)],
     );
     Ok(path)
 }
@@ -57,7 +57,7 @@ pub async fn delete_template(
             &collection_path,
             deleted.title,
         ))),
-        vec![abs_entry_path(&space, &deleted.root_path)],
+        vec![abs_page_path(&space, &deleted.root_path)],
     );
     Ok(())
 }
@@ -82,7 +82,7 @@ pub async fn duplicate_template(
             old: template_name_for_commit(&space, &collection_path, duplicated.old_title),
             new: template_name_for_commit(&space, &collection_path, duplicated.new_title),
         }),
-        vec![abs_entry_path(&space, root)],
+        vec![abs_page_path(&space, root)],
     );
     Ok(duplicated.head_path)
 }
@@ -102,7 +102,7 @@ pub async fn instantiate_template(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
     let contextual_defaults = contextual_defaults
         .map(|defaults| {
@@ -122,7 +122,7 @@ pub async fn instantiate_template(
         force_folder,
         contextual_defaults,
     )?;
-    let root = root_path_for_head(&instantiated.entry.path);
+    let root = root_path_for_head(&instantiated.page.path);
     crate::index::update::publish_tree_or_repair(
         &index_state,
         &index_updates,
@@ -144,10 +144,10 @@ pub async fn instantiate_template(
                 parent_dir
             },
         })
-        .creating(entry_entity(&space, root)),
-        entry_paths_with_order(&space, [abs_entry_path(&space, root)]),
+        .creating(page_entity(&space, root)),
+        page_paths_with_order(&space, [abs_page_path(&space, root)]),
     );
-    Ok(instantiated.entry)
+    Ok(instantiated.page)
 }
 
 #[tauri::command]
@@ -385,7 +385,7 @@ pub async fn list_collection_view_items(
 ) -> Result<Vec<read::CollectionItemRead>, AppError> {
     let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.detected().cloned();
-    read::entries_for_view(
+    read::items_for_view(
         &index_state,
         &actor_catalog,
         git_cli.as_ref(),
@@ -413,7 +413,7 @@ pub async fn query_collection_items(
 ) -> Result<Vec<read::CollectionItemRead>, AppError> {
     let target = read::target_for_space(&index_state, space, project_path.as_deref()).await?;
     let git_cli = git_state.detected().cloned();
-    read::query_entries(
+    read::query_items(
         &index_state,
         &actor_catalog,
         git_cli.as_ref(),

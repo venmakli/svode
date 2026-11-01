@@ -14,8 +14,8 @@ use super::query::{collection_root_for_sql, json_path};
 use super::schema::{normalize_rel_path, resolve_collection_schema_result};
 use super::schema_support::unique_id_value;
 use super::traversal::collection_markdown_files;
-use crate::page::entry::Entry;
-use crate::page::frontmatter::{self, EntryMeta};
+use crate::page::frontmatter::{self, PageMeta};
+use crate::page::store::Page;
 
 /// The other item of the Collection that holds the same number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -74,8 +74,8 @@ impl UniqueIdNumbers {
         };
         let path = json_path(&field);
         let rows = sqlx::query(
-            "SELECT file_path, title, json_extract(fields, ?1) AS number FROM entries \
-             WHERE collection_root_path = ?2 AND in_collection = 1 AND is_entry_head = 1 \
+            "SELECT file_path, title, json_extract(fields, ?1) AS number FROM pages \
+             WHERE collection_root_path = ?2 AND in_collection = 1 AND is_item_head = 1 \
              AND json_type(fields, ?1) = 'integer'",
         )
         .bind(&path)
@@ -108,7 +108,7 @@ impl UniqueIdNumbers {
 
     /// The first other item, by path, that holds the number of the item at
     /// `path` with `meta`. Only a valid number repeats.
-    pub fn duplicate_of(&self, path: &str, meta: &EntryMeta) -> Option<UniqueIdDuplicate> {
+    pub fn duplicate_of(&self, path: &str, meta: &PageMeta) -> Option<UniqueIdDuplicate> {
         let number = number_of(meta, &self.field)?;
         let path = normalize_rel_path(path);
         self.holders
@@ -136,18 +136,18 @@ impl UniqueIdNumbers {
 
 /// Duplicate marks of Collection items read from their sources, against the
 /// indexed numbers of the other items.
-pub async fn unique_id_duplicates_of_entries(
+pub async fn unique_id_duplicates_of_items(
     pool: &SqlitePool,
     space: &str,
     collection_path: &str,
-    entries: &[Entry],
+    items: &[Page],
 ) -> Result<Vec<Option<UniqueIdDuplicate>>, CollectionError> {
     let Some(numbers) = UniqueIdNumbers::indexed(pool, space, collection_path).await? else {
-        return Ok(vec![None; entries.len()]);
+        return Ok(vec![None; items.len()]);
     };
-    Ok(entries
+    Ok(items
         .iter()
-        .map(|entry| numbers.duplicate_of(&entry.path, &entry.meta))
+        .map(|item| numbers.duplicate_of(&item.path, &item.meta))
         .collect())
 }
 
@@ -192,7 +192,7 @@ fn unique_id_field_of(
     Ok(unique_id_field(&schema).map(str::to_string))
 }
 
-fn number_of(meta: &EntryMeta, field: &str) -> Option<u64> {
+fn number_of(meta: &PageMeta, field: &str) -> Option<u64> {
     meta.extra.get(field).and_then(unique_id_value)
 }
 
@@ -209,11 +209,11 @@ mod tests {
     use crate::collections::engine::{
         CollectionIntegrityIssue, assign_unique_id, validate_collection_integrity_with_project,
     };
-    use crate::collections::entries::entries_from_rows;
-    use crate::collections::query::query_entry_rows;
+    use crate::collections::items::items_from_rows;
+    use crate::collections::query::query_item_rows;
     use crate::index::db;
     use crate::index::reindex::full_reindex;
-    use crate::page::entry;
+    use crate::page::store;
     use crate::page::test_support::scaffold_space;
     use tempfile::TempDir;
 
@@ -327,7 +327,7 @@ mod tests {
         assign_unique_id(space, "tasks/c/README.md").unwrap();
 
         assert!(duplicate_issues(space).is_empty());
-        let meta = entry::read(space, "tasks/c/README.md").unwrap().meta;
+        let meta = store::read(space, "tasks/c/README.md").unwrap().meta;
         assert_eq!(meta.extra.get("Key").and_then(unique_id_value), Some(5));
     }
 
@@ -363,18 +363,18 @@ mod tests {
         let space = temp.path().to_str().unwrap();
         let pool = index_pool(temp.path()).await;
         let schema = crate::collections::engine::read_collection_schema(space, "tasks").unwrap();
-        let rows = query_entry_rows(&pool, &schema, "tasks", &[], &[], None, None)
+        let rows = query_item_rows(&pool, &schema, "tasks", &[], &[], None, None)
             .await
             .unwrap();
-        let entries = entries_from_rows(space, "tasks", rows, true, false).unwrap();
+        let items = items_from_rows(space, "tasks", rows, true, false).unwrap();
 
-        let marks = unique_id_duplicates_of_entries(&pool, space, "tasks", &entries)
+        let marks = unique_id_duplicates_of_items(&pool, space, "tasks", &items)
             .await
             .unwrap();
 
-        let marked = entries
+        let marked = items
             .iter()
-            .map(|entry| entry.path.as_str())
+            .map(|item| item.path.as_str())
             .zip(marks)
             .collect::<BTreeMap<_, _>>();
         assert_eq!(marked["tasks/a.md"], other("tasks/c/README.md", "From C"));

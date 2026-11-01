@@ -1,7 +1,6 @@
 pub mod changes;
 pub mod create;
 pub mod dates;
-pub mod entry;
 mod error;
 #[cfg(test)]
 mod field_order_tests;
@@ -17,6 +16,7 @@ pub mod nonce;
 #[cfg(test)]
 mod order_tests;
 mod source;
+pub mod store;
 mod target;
 pub mod templates;
 #[cfg(test)]

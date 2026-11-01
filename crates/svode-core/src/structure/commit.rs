@@ -4,11 +4,11 @@ use std::pin::Pin;
 
 use crate::git::pending::StructuralChange;
 
-use super::naming::{entry_relocation, entry_rename_op, grouped_abs_paths_by_space};
+use super::naming::{grouped_abs_paths_by_space, page_relocation, page_rename_op};
 
 /// Host seam for the Git history a structural operation produces.
 ///
-/// The operation decides which paths belong to which Space and what the entry
+/// The operation decides which paths belong to which Space and what the page
 /// is called in history; the host owns pending batching, task scheduling and
 /// the actual commit. A missing sink means "record no history", not "skip the
 /// source change".
@@ -59,10 +59,10 @@ pub fn schedule_rename(
     if commits.is_none() || changed_paths.is_empty() {
         return;
     }
-    let change = StructuralChange::new(entry_rename_op(space, from, to));
+    let change = StructuralChange::new(page_rename_op(space, from, to));
     for (owner, paths) in grouped_abs_paths_by_space(project_path, space, changed_paths) {
         let change = if owner == Path::new(space) {
-            change.clone().relocating(entry_relocation(space, from, to))
+            change.clone().relocating(page_relocation(space, from, to))
         } else {
             change.companion()
         };

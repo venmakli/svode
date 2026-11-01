@@ -35,7 +35,7 @@ pub struct FrontmatterKeys {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct EntryMeta {
+pub struct PageMeta {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -52,7 +52,7 @@ pub struct EntryMeta {
     pub frontmatter_keys: FrontmatterKeys,
 }
 
-impl EntryMeta {
+impl PageMeta {
     pub fn from_source_meta(source: PageSourceMeta) -> Self {
         Self::from_frontmatter(
             source.title,
@@ -147,12 +147,12 @@ impl EntryMeta {
     }
 }
 
-impl Serialize for EntryMeta {
+impl Serialize for PageMeta {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("EntryMeta", 7)?;
+        let mut state = serializer.serialize_struct("PageMeta", 7)?;
         state.serialize_field("title", &self.title)?;
         state.serialize_field("icon", &self.icon)?;
         state.serialize_field("description", &self.description)?;
@@ -165,10 +165,10 @@ impl Serialize for EntryMeta {
 }
 
 /// Reads the persisted frontmatter model of an existing Markdown source.
-pub fn read_page_meta(space: &Path, path: &str) -> Result<EntryMeta, PageSourceError> {
+pub fn read_page_meta(space: &Path, path: &str) -> Result<PageMeta, PageSourceError> {
     let target = resolve_page_target(space, path)?;
     let source = read_page_source(target)?;
-    Ok(EntryMeta::from_page_source(&source))
+    Ok(PageMeta::from_page_source(&source))
 }
 
 /// Generate a title from a filename stem: "my-notes" → "My notes".
@@ -187,7 +187,7 @@ const FRONTMATTER_DELIMITER: &str = "---";
 #[allow(clippy::large_enum_variant)]
 pub enum ParseStatus {
     Missing { body: String },
-    Valid { meta: EntryMeta, body: String },
+    Valid { meta: PageMeta, body: String },
     Malformed { message: String, body: String },
 }
 
@@ -198,7 +198,7 @@ struct FrontmatterParts {
 /// Parse a markdown file's content into (frontmatter, body).
 /// Returns `Ok(Some((meta, body)))` on success, `Ok(None)` if no frontmatter found,
 /// or `Err` if frontmatter is present but malformed.
-pub fn try_parse(content: &str) -> Result<Option<(EntryMeta, String)>, FrontmatterError> {
+pub fn try_parse(content: &str) -> Result<Option<(PageMeta, String)>, FrontmatterError> {
     match parse_status(content) {
         ParseStatus::Missing { .. } => Ok(None),
         ParseStatus::Valid { meta, body } => Ok(Some((meta, body))),
@@ -206,7 +206,7 @@ pub fn try_parse(content: &str) -> Result<Option<(EntryMeta, String)>, Frontmatt
     }
 }
 
-pub fn parse(content: &str) -> Result<(EntryMeta, String), FrontmatterError> {
+pub fn parse(content: &str) -> Result<(PageMeta, String), FrontmatterError> {
     match parse_status(content) {
         ParseStatus::Valid { meta, body } => Ok((meta, body)),
         ParseStatus::Missing { .. } => Err(FrontmatterError::Parse(
@@ -220,7 +220,7 @@ pub fn parse_status(content: &str) -> ParseStatus {
     match parse_markdown(content, "") {
         ParsedMarkdown::Missing(body) => ParseStatus::Missing { body },
         ParsedMarkdown::Valid(meta, body) => ParseStatus::Valid {
-            meta: EntryMeta::from_source_meta(meta),
+            meta: PageMeta::from_source_meta(meta),
             body,
         },
         ParsedMarkdown::Malformed(message, body) => ParseStatus::Malformed { message, body },
@@ -287,13 +287,13 @@ fn split_frontmatter(content: &str) -> Result<FrontmatterParts, FrontmatterError
 }
 
 /// Serialize frontmatter + body into a full markdown string.
-pub fn serialize(meta: &EntryMeta, body: &str) -> String {
+pub fn serialize(meta: &PageMeta, body: &str) -> String {
     let yaml = serialize_yaml(meta);
     // serde_norway adds a trailing newline, so we don't need an extra one
     format!("---\n{yaml}---\n{body}")
 }
 
-fn serialize_yaml(meta: &EntryMeta) -> String {
+fn serialize_yaml(meta: &PageMeta) -> String {
     let mut mapping = serde_norway::Mapping::new();
     if meta.frontmatter_keys.title {
         mapping.insert(
@@ -359,35 +359,35 @@ pub fn order_fields(
     ordered
 }
 
-fn invalid_entry_field(message: impl Into<String>) -> FrontmatterError {
+fn invalid_item_field(message: impl Into<String>) -> FrontmatterError {
     FrontmatterError::InvalidField(message.into())
 }
 
 fn expect_string(value: serde_json::Value, field: &str) -> Result<String, FrontmatterError> {
     match value {
         serde_json::Value::String(s) => Ok(s),
-        _ => Err(invalid_entry_field(format!("{field} must be a string"))),
+        _ => Err(invalid_item_field(format!("{field} must be a string"))),
     }
 }
 
 fn cover_from_json(value: serde_json::Value) -> Result<Cover, FrontmatterError> {
     let serde_json::Value::Object(mut object) = value else {
-        return Err(invalid_entry_field("cover must be an object or null"));
+        return Err(invalid_item_field("cover must be an object or null"));
     };
 
     let cover_type = object
         .remove("type")
         .and_then(|v| v.as_str().map(ToOwned::to_owned))
-        .ok_or_else(|| invalid_entry_field("cover.type must be 'color' or 'image'"))?;
+        .ok_or_else(|| invalid_item_field("cover.type must be 'color' or 'image'"))?;
 
     match cover_type.as_str() {
         "color" => {
             let value = object
                 .remove("value")
                 .and_then(|v| v.as_str().map(ToOwned::to_owned))
-                .ok_or_else(|| invalid_entry_field("cover.value must be a color name"))?;
+                .ok_or_else(|| invalid_item_field("cover.value must be a color name"))?;
             let value = ColorName::from_name(&value).ok_or_else(|| {
-                invalid_entry_field(
+                invalid_item_field(
                     "cover.value must be one of neutral, gray, red, orange, yellow, green, blue, purple, pink, brown",
                 )
             })?;
@@ -397,36 +397,36 @@ fn cover_from_json(value: serde_json::Value) -> Result<Cover, FrontmatterError> 
             let path = object
                 .remove("path")
                 .and_then(|v| v.as_str().map(ToOwned::to_owned))
-                .ok_or_else(|| invalid_entry_field("cover.path must be a string"))?;
+                .ok_or_else(|| invalid_item_field("cover.path must be a string"))?;
             let position = match object.remove("position") {
                 None | Some(serde_json::Value::Null) => None,
                 Some(serde_json::Value::Number(n)) => {
                     let pos = n
                         .as_u64()
-                        .ok_or_else(|| invalid_entry_field("cover.position must be 0..=100"))?;
+                        .ok_or_else(|| invalid_item_field("cover.position must be 0..=100"))?;
                     if pos > 100 {
-                        return Err(invalid_entry_field("cover.position must be 0..=100"));
+                        return Err(invalid_item_field("cover.position must be 0..=100"));
                     }
                     Some(pos as u8)
                 }
-                Some(_) => return Err(invalid_entry_field("cover.position must be 0..=100")),
+                Some(_) => return Err(invalid_item_field("cover.position must be 0..=100")),
             };
             Ok(Cover::Image { path, position })
         }
-        _ => Err(invalid_entry_field(
+        _ => Err(invalid_item_field(
             "cover.type must be either 'color' or 'image'",
         )),
     }
 }
 
 /// Applies one system or custom frontmatter field value to the model.
-pub fn apply_entry_field_update(
-    meta: &mut EntryMeta,
+pub fn apply_item_field_update(
+    meta: &mut PageMeta,
     field: &str,
     value: serde_json::Value,
 ) -> Result<(), FrontmatterError> {
     match field {
-        "created" | "updated" => Err(invalid_entry_field(format!("{field} is read-only"))),
+        "created" | "updated" => Err(invalid_item_field(format!("{field} is read-only"))),
         "title" => {
             meta.title = expect_string(value, "title")?;
             meta.mark_title_present();
@@ -447,13 +447,13 @@ pub fn apply_entry_field_update(
                 serde_json::Value::Null => None,
                 serde_json::Value::String(s) => {
                     if s.chars().count() > 500 {
-                        return Err(invalid_entry_field(
+                        return Err(invalid_item_field(
                             "description must be at most 500 characters",
                         ));
                     }
                     if s.is_empty() { None } else { Some(s) }
                 }
-                _ => return Err(invalid_entry_field("description must be a string or null")),
+                _ => return Err(invalid_item_field("description must be a string or null")),
             };
             if meta.description.is_some() {
                 meta.mark_description_present();
@@ -475,7 +475,7 @@ pub fn apply_entry_field_update(
                 meta.extra.shift_remove(custom);
             } else {
                 let yaml_value = serde_norway::to_value(value)
-                    .map_err(|e| invalid_entry_field(format!("{custom}: {e}")))?;
+                    .map_err(|e| invalid_item_field(format!("{custom}: {e}")))?;
                 meta.extra.insert(custom.to_string(), yaml_value);
             }
             Ok(())
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let mut meta = EntryMeta::new_persisted("Hello World");
+        let mut meta = PageMeta::new_persisted("Hello World");
         meta.description = Some("A short summary".into());
         meta.mark_description_present();
         meta.cover = Some(super::Cover::Color {
@@ -533,7 +533,7 @@ Body
 
     #[test]
     fn extra_fields_stay_flat_in_frontmatter() {
-        let mut meta = EntryMeta::new_persisted("With Extra");
+        let mut meta = PageMeta::new_persisted("With Extra");
         meta.extra.insert(
             "Статус".into(),
             serde_norway::Value::String("В работе".into()),
@@ -547,8 +547,8 @@ Body
     }
 
     #[test]
-    fn entry_meta_json_serialization_nests_extra_fields() {
-        let mut meta = EntryMeta::new_persisted("With Extra");
+    fn page_meta_json_serialization_nests_extra_fields() {
+        let mut meta = PageMeta::new_persisted("With Extra");
         meta.created = "2026-03-17T00:00:00Z".into();
         meta.updated = "2026-03-17T00:00:00Z".into();
         meta.extra.insert(

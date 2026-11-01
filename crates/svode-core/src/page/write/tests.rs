@@ -49,7 +49,7 @@ async fn body_only_preserves_raw_frontmatter_and_noop_does_not_publish() {
         fs::write(root.join("Old.md"), source).unwrap();
         let state = IndexState::default();
         let nonces = WriteNonceRegistry::new();
-        let current = entry::read(root.to_str().unwrap(), "Old.md").unwrap();
+        let current = store::read(root.to_str().unwrap(), "Old.md").unwrap();
         let result = save(root, "Old.md", &current.body, None, &state, &nonces)
             .await
             .unwrap();
@@ -106,7 +106,7 @@ async fn combined_failure_restores_all_source_bytes_paths_and_prior_edits() {
                 .await
                 .unwrap();
             let before: Vec<(String, String)> =
-                sqlx::query_as("SELECT file_path, title FROM entries ORDER BY file_path")
+                sqlx::query_as("SELECT file_path, title FROM pages ORDER BY file_path")
                     .fetch_all(&pool)
                     .await
                     .unwrap();
@@ -153,7 +153,7 @@ async fn combined_failure_restores_all_source_bytes_paths_and_prior_edits() {
             assert!(nonces.take_metadata(&root.join(path)).is_none());
             assert!(nonces.take_metadata(&root.join("New.md")).is_none());
             let after: Vec<(String, String)> =
-                sqlx::query_as("SELECT file_path, title FROM entries ORDER BY file_path")
+                sqlx::query_as("SELECT file_path, title FROM pages ORDER BY file_path")
                     .fetch_all(&pool)
                     .await
                     .unwrap();
@@ -285,7 +285,7 @@ async fn root_owner_title_and_filename_collision_keep_canonical_path() {
             .unwrap();
         assert!(result.result.new_path.is_none());
         assert_eq!(
-            entry::read(root.to_str().unwrap(), path)
+            store::read(root.to_str().unwrap(), path)
                 .unwrap()
                 .meta
                 .title,
@@ -486,7 +486,7 @@ async fn a_write_from_the_current_version_returns_the_version_of_its_result() {
     fs::create_dir_all(root.join(".git")).unwrap();
     fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nOld\n").unwrap();
     let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
-    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let read = store::read(root.to_str().unwrap(), "Page.md").unwrap();
 
     let written = save_from(
         root,
@@ -499,7 +499,7 @@ async fn a_write_from_the_current_version_returns_the_version_of_its_result() {
     .await
     .unwrap();
 
-    let after = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let after = store::read(root.to_str().unwrap(), "Page.md").unwrap();
     assert_eq!(after.body, "New\n");
     assert_eq!(
         written.result.source_version.as_deref(),
@@ -531,7 +531,7 @@ async fn a_write_from_an_outdated_version_is_stale_without_effects() {
     fs::create_dir_all(root.join(".git")).unwrap();
     fs::write(root.join("Page.md"), "---\ntitle: Page\n---\nOld\n").unwrap();
     let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
-    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let read = store::read(root.to_str().unwrap(), "Page.md").unwrap();
     let external = "---\ntitle: Page\n---\nExternal\n";
     fs::write(root.join("Page.md"), external).unwrap();
 
@@ -559,7 +559,7 @@ async fn a_write_to_a_repository_held_by_another_writer_is_busy_without_effects(
     fs::create_dir_all(root.join(".git")).unwrap();
     fs::write(root.join("Page.md"), "Old\n").unwrap();
     let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
-    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let read = store::read(root.to_str().unwrap(), "Page.md").unwrap();
     let held =
         crate::git::write_guard::acquire(&std::collections::BTreeSet::from([root.clone()]), &[])
             .await
@@ -603,7 +603,7 @@ async fn a_reader_sees_the_old_or_the_new_bytes_of_a_write() {
     let new_body = "b".repeat(4 << 20);
     fs::write(root.join("Page.md"), &old).unwrap();
     let (state, nonces) = (IndexState::default(), WriteNonceRegistry::new());
-    let read = entry::read(root.to_str().unwrap(), "Page.md").unwrap();
+    let read = store::read(root.to_str().unwrap(), "Page.md").unwrap();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let reader = std::thread::spawn({
         let path = root.join("Page.md");
@@ -703,7 +703,7 @@ async fn save_denied(
     denied: &[PathBuf],
     requests: &std::sync::Mutex<Vec<Vec<PathBuf>>>,
 ) -> Result<PageWriteOutcome, Refused> {
-    let content = entry::read(space.to_str().unwrap(), path).unwrap().body;
+    let content = store::read(space.to_str().unwrap(), path).unwrap().body;
     write(
         PageWrite {
             space: space.to_str().unwrap(),
@@ -776,7 +776,7 @@ async fn a_refusing_linking_repository_defers_the_filename_and_the_same_title_re
     .unwrap();
 
     assert!(deferred.result.new_path.is_none());
-    let page = entry::read(root.to_str().unwrap(), "Tasks/Page.md").unwrap();
+    let page = store::read(root.to_str().unwrap(), "Tasks/Page.md").unwrap();
     assert_eq!(page.meta.title, "Новое имя");
     assert_eq!(page.body, "Body\n");
     assert!(!root.join("Tasks/Новое имя.md").exists());
@@ -786,7 +786,7 @@ async fn a_refusing_linking_repository_defers_the_filename_and_the_same_title_re
     assert_eq!(warning.path.as_deref(), Some("Tasks/Page.md"));
     assert_eq!(
         warning.reason.as_deref(),
-        Some(entry::REPOSITORY_ACCESS_DENIED_REASON)
+        Some(store::REPOSITORY_ACCESS_DENIED_REASON)
     );
     assert_eq!(
         warning
@@ -860,7 +860,7 @@ async fn two_refusing_repositories_are_named_and_a_folder_page_keeps_its_directo
 
     assert!(deferred.result.new_path.is_none());
     assert_eq!(
-        entry::read(root.to_str().unwrap(), "protsessy/README.md")
+        store::read(root.to_str().unwrap(), "protsessy/README.md")
             .unwrap()
             .meta
             .title,

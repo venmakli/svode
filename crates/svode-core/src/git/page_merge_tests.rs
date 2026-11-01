@@ -202,7 +202,7 @@ fn assert_stable(content: &str) {
     assert_eq!(frontmatter::serialize(&meta, &body), content);
 }
 
-fn meta_of(content: &str) -> EntryMeta {
+fn meta_of(content: &str) -> PageMeta {
     match frontmatter::parse_status(content) {
         ParseStatus::Valid { meta, .. } => meta,
         _ => panic!("{content}"),

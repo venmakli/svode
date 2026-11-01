@@ -301,6 +301,6 @@ pub fn folded_collection_artifact(space_dir: &Path, rel_path: &str) -> Option<Kn
             .ok()?;
     Some(build_collection_artifact(
         &projection,
-        &crate::index::entry_projection::file_modified_iso(&schema_path),
+        &crate::index::page_projection::file_modified_iso(&schema_path),
     ))
 }

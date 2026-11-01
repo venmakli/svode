@@ -282,7 +282,7 @@ mod tests {
 
     fn update_properties() -> RoutineAction {
         RoutineAction::UpdateProperties {
-            target: RoutineActionTarget::TriggerEntry,
+            target: RoutineActionTarget::TriggerItem,
             set: BTreeMap::from([("reviewed".into(), serde_json::Value::Bool(true))]),
         }
     }
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn each_trigger_only_answers_its_own_dispatch() {
         let event_trigger = RoutineTrigger::Event {
-            event: CollectionEvent::EntryCreated,
+            event: CollectionEvent::ItemCreated,
             match_: None,
         };
         let catalog = snapshot(vec![

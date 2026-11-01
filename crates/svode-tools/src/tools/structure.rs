@@ -14,9 +14,9 @@ use serde_json::json;
 use svode_core::collections::engine::{self, CollectionSchema, Column, View};
 use svode_core::git::cli::GitCli;
 use svode_core::page::PageError;
-use svode_core::page::entry::Cover;
 use svode_core::page::identity::ContentOwnerKind;
 use svode_core::page::metadata::relative_changed_paths;
+use svode_core::page::store::Cover;
 use svode_core::structure::{self, CollectionCreate, ConvertToCollectionOutcome, StructureRuntime};
 
 use crate::args::{CollectionArgs, PathArgs};
@@ -248,8 +248,8 @@ pub(crate) async fn delete_collection(
     delete_markdown_content(host, target, &space, path, "Collection").await
 }
 
-/// Deletes an entry with its relation cleanup; the touched-set includes every
-/// source whose relations reference a deleted entry.
+/// Deletes a page with its relation cleanup; the touched-set includes every
+/// source whose relations reference a deleted page.
 async fn delete_markdown_content(
     host: &impl ToolHost,
     target: &RequestTarget,
@@ -355,7 +355,7 @@ pub(crate) async fn move_content(
     let (new_path, changes) = within_authorized(
         authorized,
         observe_structural_change(&space, project, async {
-            Ok(Box::pin(structure::move_entry(
+            Ok(Box::pin(structure::move_page(
                 &space,
                 &from,
                 &to_parent,
@@ -482,7 +482,7 @@ pub(crate) async fn convert_page_to_leaf(
     .await
     .map_err(|error| space_relative_busy(&space, error))?;
     changes.include(&space, project, &converted.removed_paths);
-    let page = converted.entry;
+    let page = converted.page;
     let mut result = structural_operation_result(
         "Converted directory-backed Page to leaf Page",
         &path,
@@ -586,7 +586,7 @@ fn collection_conversion_result(
     let collection_path = conversion.collection_path;
     let readme_path = conversion.readme_path;
     let index_paths = vec![old_path.clone(), readme_path.clone()];
-    let warnings = conversion.entry.warnings.clone();
+    let warnings = conversion.page.warnings.clone();
 
     ToolCallResult::ok(
         format!("Converted {} to collection {}.", old_path, collection_path),
@@ -595,7 +595,7 @@ fn collection_conversion_result(
             "collectionPath": collection_path,
             "readmePath": readme_path,
             "schemaPath": conversion.schema_path,
-            "collection": conversion.entry,
+            "collection": conversion.page,
             "changedPaths": changes.space,
             "affectedProjectPaths": changes.project,
             "touchedPaths": {

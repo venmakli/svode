@@ -10,15 +10,15 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use super::engine;
-use super::entries::entries_from_rows;
+use super::items::items_from_rows;
 use super::list::list_collections;
-use super::query::query_entry_rows;
+use super::query::query_item_rows;
 use super::schema::{find_collection_root, resolve_collection_schema_result};
 use super::traversal::collection_markdown_files;
 use crate::index::IndexKey;
 use crate::index::db;
-use crate::index::entry_projection::build_entry_with_dates;
 use crate::index::inventory::MarkdownProjection;
+use crate::index::page_projection::build_page_with_dates;
 use crate::index::reindex::full_reindex;
 use crate::index::state::IndexRuntimeState;
 use crate::index::update;
@@ -26,9 +26,9 @@ use crate::page::create::{PageCreate, create};
 use crate::page::dates::SystemGitDateExecutor;
 use crate::page::identity::{ContentOwnerKind, PageRole, resolve_markdown_identity_for_path};
 use crate::page::test_support::{scaffold_space, update_state};
-use crate::page::{PageError, entry, templates};
-use crate::routines::observation::snapshot_from_entry;
-use crate::structure::{StructureRuntime, entry_commit_name, move_entry};
+use crate::page::{PageError, store, templates};
+use crate::routines::observation::snapshot_from_item;
+use crate::structure::{StructureRuntime, move_page, page_commit_name};
 
 const TASKS_COLUMNS: &str = "columns:
   - { name: Status, type: text, default: Todo }
@@ -139,7 +139,7 @@ async fn index_pool(root: &Path) -> SqlitePool {
 
 async fn indexed_members(pool: &SqlitePool, collection: &str) -> Vec<String> {
     sqlx::query_scalar::<_, String>(
-        "SELECT file_path FROM entries WHERE in_collection = 1 AND collection_root_path = ? \
+        "SELECT file_path FROM pages WHERE in_collection = 1 AND collection_root_path = ? \
          ORDER BY file_path",
     )
     .bind(collection)
@@ -150,13 +150,13 @@ async fn indexed_members(pool: &SqlitePool, collection: &str) -> Vec<String> {
 
 async fn queried_members(pool: &SqlitePool, space: &str, include_nested: bool) -> Vec<String> {
     let schema = engine::read_collection_schema(space, "tasks").unwrap();
-    let rows = query_entry_rows(pool, &schema, "tasks", &[], &[], None, None)
+    let rows = query_item_rows(pool, &schema, "tasks", &[], &[], None, None)
         .await
         .unwrap();
-    let mut paths = entries_from_rows(space, "tasks", rows, include_nested, false)
+    let mut paths = items_from_rows(space, "tasks", rows, include_nested, false)
         .unwrap()
         .into_iter()
-        .map(|entry| entry.path)
+        .map(|page| page.path)
         .collect::<Vec<_>>();
     paths.sort();
     paths
@@ -188,7 +188,7 @@ fn row_count(space: &str) -> usize {
 }
 
 fn write_relation(space: &str, target: &str) -> Result<(), super::CollectionError> {
-    engine::update_relation_entry_field(
+    engine::update_relation_item_field(
         space,
         None,
         "links/x.md",
@@ -210,14 +210,14 @@ fn outside_target_issues(space: &str) -> Vec<String> {
 
 /// Whether a change of the Page reaches the event Routines of a Collection.
 fn observed_by_collection_routines(root: &Path, path: &str) -> bool {
-    let entry = build_entry_with_dates(
+    let page = build_page_with_dates(
         root,
         &root.join(path),
         None,
         MarkdownProjection::Discoverable,
     )
     .unwrap();
-    snapshot_from_entry(root, &entry).unwrap().is_some()
+    snapshot_from_item(root, &page).unwrap().is_some()
 }
 
 fn role(space: &Path, path: &str) -> Option<PageRole> {
@@ -290,7 +290,7 @@ async fn deep_pages_without_the_flag_are_plain_pages_for_every_membership_path()
     assert!(write_relation(space, "b/note.md").is_err());
     write_relation(space, "a.md").unwrap();
     assert_eq!(
-        entry_commit_name(space, "tasks/b/note.md"),
+        page_commit_name(space, "tasks/b/note.md"),
         "collection entry"
     );
     db::close_pool(&pool).await;
@@ -467,7 +467,7 @@ fn create_request(root: &Path, parent: &str) -> PageCreate {
     }
 }
 
-async fn create_child(root: &Path, parent: &str) -> entry::Entry {
+async fn create_child(root: &Path, parent: &str) -> store::Page {
     create(
         create_request(root, parent),
         &IndexRuntimeState::default(),
@@ -518,7 +518,7 @@ async fn only_new_items_receive_schema_defaults_and_unique_ids() {
         git_dates: None::<&SystemGitDateExecutor>,
         commits: None,
     };
-    let moved = move_entry(space, "Loose.md", "tasks/b", Some(space), runtime())
+    let moved = move_page(space, "Loose.md", "tasks/b", Some(space), runtime())
         .await
         .unwrap();
     assert_eq!(moved, "tasks/b/Loose.md");
@@ -526,7 +526,7 @@ async fn only_new_items_receive_schema_defaults_and_unique_ids() {
         fs::read_to_string(root.join(&moved)).unwrap(),
         "---\ntitle: Loose\n---\n"
     );
-    let moved = move_entry(space, &moved, "tasks", Some(space), runtime())
+    let moved = move_page(space, &moved, "tasks", Some(space), runtime())
         .await
         .unwrap();
     let moved = fs::read_to_string(root.join(moved)).unwrap();

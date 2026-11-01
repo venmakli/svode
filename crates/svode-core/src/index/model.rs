@@ -35,7 +35,7 @@ pub struct KnowledgeEdgeArtifact {
     pub byte_end: i64,
 }
 
-pub struct IndexedEntry {
+pub struct IndexedPage {
     pub rel_path: String,
     pub parent_path: String,
     pub title: String,
@@ -46,7 +46,7 @@ pub struct IndexedEntry {
     pub updated: String,
     pub collection_root_path: Option<String>,
     pub in_collection: bool,
-    pub is_entry_head: bool,
+    pub is_item_head: bool,
     pub fields_json: String,
     pub body_preview: String,
     pub is_discoverable: bool,

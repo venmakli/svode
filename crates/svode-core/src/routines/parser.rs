@@ -381,7 +381,7 @@ pub fn validate_definition(
                         );
                     }
                 }
-                CollectionEvent::EntryCreated | CollectionEvent::EntryDeleted => {
+                CollectionEvent::ItemCreated | CollectionEvent::ItemDeleted => {
                     if match_.is_some() {
                         diagnostics.push(
                             RoutineDiagnostic::new(
@@ -395,9 +395,9 @@ pub fn validate_definition(
             }
             match (&definition.action, event) {
                 (RoutineAction::RunAgent { .. }, _) => {}
-                (RoutineAction::UpdateProperties { .. }, CollectionEvent::EntryCreated)
+                (RoutineAction::UpdateProperties { .. }, CollectionEvent::ItemCreated)
                 | (RoutineAction::UpdateProperties { .. }, CollectionEvent::FieldChanged) => {}
-                (RoutineAction::UpdateProperties { .. }, CollectionEvent::EntryDeleted) => {
+                (RoutineAction::UpdateProperties { .. }, CollectionEvent::ItemDeleted) => {
                     diagnostics.push(incompatible_action("collection.entry_deleted", "run_agent"));
                 }
             }
@@ -1145,6 +1145,44 @@ mod tests {
             diagnostic.code == "routine_timezone_invalid"
                 && diagnostic.field.as_deref() == Some("trigger.timeBasis.timezone")
         }));
+    }
+
+    /// Definitions as the build before the item rename wrote them: the
+    /// stored event names and the action target read and write back byte
+    /// for byte, with the same execution fingerprint.
+    #[test]
+    fn stored_event_names_and_action_target_keep_their_bytes() {
+        for (raw, fingerprint, event) in [
+            (
+                "---\nid: 01bx5zzkbkactav9wevgemmvrz\nname: On Created\ndescription: Mark new items\nenabled: true\ntrigger:\n  type: event\n  event: collection.entry_created\naction:\n  type: update_properties\n  target: trigger.entry\n  set:\n    Status: Done\n    Tags:\n    - a\n    - b\n---\nMark created.\n",
+                "c71b0806a4a820c8",
+                CollectionEvent::ItemCreated,
+            ),
+            (
+                "---\nid: 01bx5zzkbkactav9wevgemmvrw\nname: On Deleted\ntrigger:\n  type: event\n  event: collection.entry_deleted\naction:\n  type: run_agent\n  executor: agent:01arz3ndektsv4rrffq69g5fav\n---\nReview the deletion.\n",
+                "01e472ce323549d4",
+                CollectionEvent::ItemDeleted,
+            ),
+        ] {
+            let parsed = parse_routine(raw, "stored.md", RoutineOwnerKind::Collection);
+            assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+            let definition = parsed.definition.expect("typed definition");
+            let RoutineTrigger::Event {
+                event: parsed_event,
+                ..
+            } = &definition.trigger
+            else {
+                panic!("expected an event trigger");
+            };
+            assert_eq!(*parsed_event, event);
+            if let RoutineAction::UpdateProperties { target, .. } = &definition.action {
+                assert_eq!(*target, RoutineActionTarget::TriggerItem);
+            }
+            let written =
+                serialize_definition(&definition, parsed.portable_id.as_deref().unwrap()).unwrap();
+            assert_eq!(written, raw);
+            assert_eq!(execution_fingerprint(&definition), fingerprint);
+        }
     }
 
     #[test]

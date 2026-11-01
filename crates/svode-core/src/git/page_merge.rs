@@ -25,7 +25,7 @@ use super::conflict_file::{self, ResolutionFinding};
 use super::markers;
 use super::service_merge;
 use super::stage_merge::{self, ConflictStyle, StageTexts};
-use crate::page::frontmatter::{self, EntryMeta, ParseStatus};
+use crate::page::frontmatter::{self, PageMeta, ParseStatus};
 
 type Value = serde_norway::Value;
 
@@ -109,7 +109,7 @@ pub enum PageMergeResult {
 
 /// A version of a side read as a Page.
 struct Version {
-    meta: EntryMeta,
+    meta: PageMeta,
     body: String,
     frontmatter: bool,
 }
@@ -152,7 +152,7 @@ fn read_version(stage: Stage, content: &[u8]) -> Result<Version, NoMerge> {
             frontmatter: true,
         }),
         ParseStatus::Missing { body } => Ok(Version {
-            meta: EntryMeta::synthesized(String::new(), String::new(), String::new()),
+            meta: PageMeta::synthesized(String::new(), String::new(), String::new()),
             body,
             frontmatter: false,
         }),
@@ -173,7 +173,7 @@ fn read_sides(texts: &StageTexts) -> Result<Sides, NoMerge> {
 }
 
 /// The properties the writer of Page frontmatter writes for `meta`, by key.
-fn values(meta: &EntryMeta) -> IndexMap<String, Value> {
+fn values(meta: &PageMeta) -> IndexMap<String, Value> {
     let mut values = IndexMap::new();
     if meta.frontmatter_keys.title {
         values.insert("title".to_owned(), Value::String(meta.title.clone()));
@@ -198,7 +198,7 @@ fn values(meta: &EntryMeta) -> IndexMap<String, Value> {
 }
 
 /// The key `key` of `side` set in `meta`; nothing when `side` has none.
-fn take(meta: &mut EntryMeta, key: &str, side: &EntryMeta) {
+fn take(meta: &mut PageMeta, key: &str, side: &PageMeta) {
     match key {
         "title" => {
             if side.frontmatter_keys.title {
@@ -399,7 +399,7 @@ pub async fn compose(
         Stage::Ours => &sides.ours.meta,
         _ => &sides.theirs.meta,
     };
-    let mut meta = EntryMeta::synthesized(String::new(), String::new(), String::new());
+    let mut meta = PageMeta::synthesized(String::new(), String::new(), String::new());
     for (key, outcome) in &merge.keys {
         let decision = match outcome {
             Outcome::Take(stage) => {
@@ -438,19 +438,19 @@ pub async fn compose(
 /// `value` set as the property `key` of `meta` by the rules of an edit of
 /// the field of the Page at `path` in `space`.
 fn set_value(
-    meta: &mut EntryMeta,
+    meta: &mut PageMeta,
     space: &str,
     path: &str,
     key: &str,
     value: &serde_json::Value,
 ) -> Result<(), String> {
-    frontmatter::apply_entry_field_update(meta, key, value.clone())
+    frontmatter::apply_item_field_update(meta, key, value.clone())
         .map_err(|error| error.to_string())?;
     if let Some(slot) = meta.extra.get_mut(key) {
         let normalized =
-            crate::collections::engine::normalize_entry_field_value(space, path, key, slot.clone())
+            crate::collections::engine::normalize_item_field_value(space, path, key, slot.clone())
                 .map_err(|error| error.to_string())?;
-        crate::collections::engine::validate_entry_field_value(space, path, key, &normalized)
+        crate::collections::engine::validate_item_field_value(space, path, key, &normalized)
             .map_err(|error| error.to_string())?;
         *slot = normalized;
     }

@@ -16,10 +16,10 @@ use super::IndexError;
 /// file_name`, `mime_type → mime`, `size → size_bytes`) and `asset_type`
 /// is dropped (derived from mime at render time).
 ///
-/// Bumped to 4 in stage-4 Phase 1: entries use the page metadata schema
+/// Bumped to 4 in stage-4 Phase 1: pages use the page metadata schema
 /// with description/cover system fields and collection placeholder columns.
 ///
-/// Bumped to 5 in stage-6 Phase 12: entries are keyed by file_path; legacy
+/// Bumped to 5 in stage-6 Phase 12: pages are keyed by file_path; legacy
 /// YAML id is indexed only as a custom field.
 ///
 /// Bumped to 6 in Stage 7 Phase 7.1: adds the rebuildable routine definition
@@ -39,7 +39,7 @@ use super::IndexError;
 /// per-pool freshness manifest).
 ///
 /// Bumped to 11 in Stage 7 Phase 8.2: generalizes the projection to logical
-/// Collections, entries and project Agent Context artifacts, typed explicit
+/// Collections, Collection items and project Agent Context artifacts, typed explicit
 /// edges, safe provenance and fragment source locations.
 ///
 /// Bumped to 12 in Stage 7 Phase 8.3: stores target-specific Agent Context
@@ -52,7 +52,7 @@ use super::IndexError;
 /// mismatch now quarantines and recreates the whole derived index file.
 ///
 /// Bumped to 15 in Stage 8 Slice 1A: rebuilds the Knowledge projection with
-/// canonical Page nodes instead of the legacy document/entry split.
+/// canonical Page nodes instead of the legacy split into document and item nodes.
 ///
 /// Bumped to 16 in Stage 8 DF-087: rebuilds Collection membership so a root
 /// Space owner README cannot retain a stale self-membership row.
@@ -74,7 +74,11 @@ use super::IndexError;
 ///
 /// Bumped to 21 in Stage 11 DF-251: rebuilds link rows (`knowledge_links`,
 /// `broken_links`) with the links of link reference definitions.
-pub const SCHEMA_VERSION: i64 = 21;
+///
+/// Bumped to 22 in Stage 11 `04` (4.1): renames the Page table `entries`
+/// to `pages`, its FTS table to `pages_fts` and the column `is_entry_head`
+/// to `is_item_head` after the vocabulary of Pages and Collection items.
+pub const SCHEMA_VERSION: i64 = 22;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaStatus {
@@ -309,7 +313,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), IndexError> {
 
     let ddl = [
         r#"
-        CREATE TABLE IF NOT EXISTS entries (
+        CREATE TABLE IF NOT EXISTS pages (
             file_path            TEXT PRIMARY KEY,
             parent_path          TEXT NOT NULL,
             title                TEXT NOT NULL,
@@ -320,37 +324,37 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), IndexError> {
             updated              TEXT NOT NULL,
             collection_root_path TEXT,
             in_collection        INTEGER NOT NULL,
-            is_entry_head        INTEGER NOT NULL,
+            is_item_head        INTEGER NOT NULL,
             fields               TEXT NOT NULL,
             body_preview         TEXT,
             is_discoverable      INTEGER NOT NULL
         )
         "#,
         r#"
-        CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-            title, description, body_preview, content=entries, content_rowid=rowid
+        CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
+            title, description, body_preview, content=pages, content_rowid=rowid
         )
         "#,
         r#"
-        CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries
+        CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages
         WHEN new.is_discoverable = 1 BEGIN
-            INSERT INTO entries_fts(rowid, title, description, body_preview)
+            INSERT INTO pages_fts(rowid, title, description, body_preview)
             VALUES (new.rowid, new.title, new.description, new.body_preview);
         END
         "#,
         r#"
-        CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries
+        CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages
         WHEN old.is_discoverable = 1 BEGIN
-            INSERT INTO entries_fts(entries_fts, rowid, title, description, body_preview)
+            INSERT INTO pages_fts(pages_fts, rowid, title, description, body_preview)
             VALUES ('delete', old.rowid, old.title, old.description, old.body_preview);
         END
         "#,
         r#"
-        CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-            INSERT INTO entries_fts(entries_fts, rowid, title, description, body_preview)
+        CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
+            INSERT INTO pages_fts(pages_fts, rowid, title, description, body_preview)
             SELECT 'delete', old.rowid, old.title, old.description, old.body_preview
             WHERE old.is_discoverable = 1;
-            INSERT INTO entries_fts(rowid, title, description, body_preview)
+            INSERT INTO pages_fts(rowid, title, description, body_preview)
             SELECT new.rowid, new.title, new.description, new.body_preview
             WHERE new.is_discoverable = 1;
         END
@@ -366,11 +370,11 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), IndexError> {
             created_at TEXT NOT NULL
         )
         "#,
-        "CREATE INDEX IF NOT EXISTS idx_entries_parent ON entries(parent_path)",
-        "CREATE INDEX IF NOT EXISTS idx_entries_collection_root ON entries(collection_root_path)",
-        "CREATE INDEX IF NOT EXISTS idx_entries_in_collection ON entries(in_collection)",
-        "CREATE INDEX IF NOT EXISTS idx_entries_is_entry_head ON entries(is_entry_head)",
-        "CREATE INDEX IF NOT EXISTS idx_entries_is_discoverable ON entries(is_discoverable)",
+        "CREATE INDEX IF NOT EXISTS idx_pages_parent ON pages(parent_path)",
+        "CREATE INDEX IF NOT EXISTS idx_pages_collection_root ON pages(collection_root_path)",
+        "CREATE INDEX IF NOT EXISTS idx_pages_in_collection ON pages(in_collection)",
+        "CREATE INDEX IF NOT EXISTS idx_pages_is_item_head ON pages(is_item_head)",
+        "CREATE INDEX IF NOT EXISTS idx_pages_is_discoverable ON pages(is_discoverable)",
         "CREATE INDEX IF NOT EXISTS idx_assets_document ON assets(document_id)",
         // Per-pool broken-link registry (Stage 3.5 Phase 5 §5.6). Source side
         // owns the row — `source_space_id` is the pool; `target_space_id`
@@ -787,10 +791,63 @@ mod tests {
             SchemaStatus::Current
         );
         let stale_rows: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md'")
+            sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE file_path = 'hidden.md'")
                 .fetch_one(&replacement)
                 .await
                 .unwrap();
         assert_eq!(stale_rows, 0);
+    }
+
+    #[tokio::test]
+    async fn index_of_version_21_is_rebuilt_with_the_pages_table() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let db_path = temp.path().join("index.db");
+        let legacy = create_pool(&db_path).await.unwrap();
+        sqlx::raw_sql(include_str!("fixtures/index-v17.sql"))
+            .execute(&legacy)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE schema_version SET version = 21")
+            .execute(&legacy)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO entries (file_path, parent_path, title, created, updated, in_collection, is_entry_head, fields, is_discoverable) VALUES ('note.md', '', 'Note', '', '', 0, 0, '{}', 1)",
+        )
+        .execute(&legacy)
+        .await
+        .unwrap();
+        close_pool(&legacy).await;
+
+        let replacement = crate::index::open_prepared_pool(&db_path).await.unwrap();
+
+        assert_eq!(
+            schema_status(&replacement).await.unwrap(),
+            SchemaStatus::Current
+        );
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('entries', 'entries_fts', 'pages', 'pages_fts') ORDER BY name",
+        )
+        .fetch_all(&replacement)
+        .await
+        .unwrap();
+        assert_eq!(tables, ["pages", "pages_fts"]);
+        let item_head: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'is_item_head'",
+        )
+        .fetch_one(&replacement)
+        .await
+        .unwrap();
+        assert_eq!(item_head, 1);
+        assert!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .flatten()
+                .any(|file| file
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".incompatible-"))
+        );
+        close_pool(&replacement).await;
     }
 }

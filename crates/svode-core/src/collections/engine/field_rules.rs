@@ -73,7 +73,7 @@ pub(super) fn autopick_calendar_date_field(schema: &CollectionSchema) -> Option<
 
 pub(super) use crate::collections::schema_validation::{FieldContext, FieldType, field_type};
 
-pub fn validate_entry_field_value(
+pub fn validate_item_field_value(
     space: &str,
     file_path: &str,
     field: &str,
@@ -88,7 +88,7 @@ pub fn validate_entry_field_value(
     validate_property_value(column, value)
 }
 
-pub fn ensure_entry_field_writable(
+pub fn ensure_item_field_writable(
     space: &str,
     file_path: &str,
     field: &str,
@@ -110,7 +110,7 @@ pub fn ensure_entry_field_writable(
     Ok(())
 }
 
-pub fn normalize_entry_field_value(
+pub fn normalize_item_field_value(
     space: &str,
     file_path: &str,
     field: &str,

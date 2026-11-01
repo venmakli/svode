@@ -58,12 +58,12 @@ pub fn project_collection(
     })
 }
 
-pub fn project_entry_relations(
+pub fn project_item_relations(
     space_root: &Path,
-    entry_path: &str,
+    item_path: &str,
     fields_json: &str,
 ) -> Result<Vec<KnowledgeRelationProjection>, CollectionError> {
-    let Some((schema, collection_root)) = resolve_collection_schema_result(space_root, entry_path)?
+    let Some((schema, collection_root)) = resolve_collection_schema_result(space_root, item_path)?
     else {
         return Ok(Vec::new());
     };
@@ -219,7 +219,7 @@ mod tests {
         })
         .to_string();
 
-        let projected = project_entry_relations(temp.path(), "tasks/item.md", &fields).unwrap();
+        let projected = project_item_relations(temp.path(), "tasks/item.md", &fields).unwrap();
         assert_eq!(projected.len(), 1);
         assert_eq!(projected[0].field_name, "Project");
         assert_eq!(projected[0].target_path, "projects/alpha.md");

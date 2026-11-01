@@ -1,4 +1,4 @@
-//! Tauri adapters for entry reads, writes, and structural mutations.
+//! Tauri adapters for page reads, writes, and structural mutations.
 
 use super::*;
 
@@ -90,8 +90,8 @@ pub fn get_scope_owner_facts(
 pub fn get_page_detail_state(
     space: String,
     path: String,
-) -> Result<entry::EntryDetailState, AppError> {
-    Ok(entry::entry_detail_state(Path::new(&space), &path)?)
+) -> Result<store::PageDetailState, AppError> {
+    Ok(store::page_detail_state(Path::new(&space), &path)?)
 }
 
 #[tauri::command]
@@ -107,7 +107,7 @@ pub async fn create_page(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
     let created = crate::page::create(
         svode_core::page::create::PageCreate {
@@ -131,24 +131,24 @@ pub async fn create_page(
     )
     .await?
     .page;
-    if engine::unique_id_schema_path_for_entry(&space, &created.path)?.is_some() {
-        let mut paths = engine::unique_id_mutation_paths_for_entry(&space, &created.path)?;
+    if engine::unique_id_schema_path_for_item(&space, &created.path)?.is_some() {
+        let mut paths = engine::unique_id_mutation_paths_for_item(&space, &created.path)?;
         paths.push(order_path(&space));
-        let message = if entry_in_sensitive_collection(&space, &created.path) {
+        let message = if page_in_sensitive_collection(&space, &created.path) {
             "Create collection entry with unique_id".to_string()
         } else {
             format!("Create {} with unique_id", basename(&created.path))
         };
         maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     } else {
-        schedule_created_entry(&autocommit, project_path.as_deref(), &space, &created.path);
+        schedule_created_page(&autocommit, project_path.as_deref(), &space, &created.path);
     }
     Ok(created)
 }
 
-/// Register a created entry for its group of creation (Stage 11 1.G): the
-/// entry is the created object, the order file its tail.
-pub(crate) fn schedule_created_entry(
+/// Register a created page for its group of creation (Stage 11 1.G): the
+/// page is the created object, the order file its tail.
+pub(crate) fn schedule_created_page(
     autocommit: &AutocommitService,
     project_path: Option<&str>,
     space: &str,
@@ -158,9 +158,9 @@ pub(crate) fn schedule_created_entry(
         autocommit,
         project_path,
         space,
-        StructuralChange::new(StructuralOp::Create(entry_commit_name(space, path)))
-            .creating(entry_entity(space, path)),
-        entry_paths_with_order(space, [abs_entry_path(space, path)]),
+        StructuralChange::new(StructuralOp::Create(page_commit_name(space, path)))
+            .creating(page_entity(space, path)),
+        page_paths_with_order(space, [abs_page_path(space, path)]),
     );
 }
 
@@ -174,7 +174,7 @@ pub async fn create_collection(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let authorization_space = space.clone();
     let outcome = crate::structure::create_collection(
         crate::structure::CollectionCreate {
@@ -217,23 +217,23 @@ pub async fn create_folder(
     )
 }
 
-/// An entry with the version of the bytes it was read from, the baseline
+/// A page with the version of the bytes it was read from, the baseline
 /// of the editor's next body write.
 #[derive(Debug, Serialize)]
-pub struct EntryRead {
+pub struct PageRead {
     #[serde(flatten)]
-    entry: Entry,
+    page: Page,
     source_version: Option<String>,
 }
 
-impl From<Entry> for EntryRead {
-    fn from(entry: Entry) -> Self {
-        let source_version = entry
+impl From<Page> for PageRead {
+    fn from(page: Page) -> Self {
+        let source_version = page
             .source_version
             .as_ref()
             .map(|version| version.as_str().to_string());
         Self {
-            entry,
+            page,
             source_version,
         }
     }
@@ -244,10 +244,10 @@ pub async fn read_page(
     space: String,
     path: String,
     index_state: State<'_, IndexState>,
-) -> Result<EntryRead, AppError> {
-    let mut entry = entry::read(&space, &path)?;
-    apply_indexed_entry_dates(&index_state, &space, &path, &mut entry).await;
-    Ok(entry.into())
+) -> Result<PageRead, AppError> {
+    let mut page = store::read(&space, &path)?;
+    apply_indexed_page_dates(&index_state, &space, &path, &mut page).await;
+    Ok(page.into())
 }
 
 /// The schema of a Collection item with the other item that holds its
@@ -256,7 +256,7 @@ pub async fn read_page(
 #[serde(rename_all = "camelCase")]
 pub struct PageSchemaRead {
     #[serde(flatten)]
-    response: EntrySchemaResponse,
+    response: ItemSchemaResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
     unique_id_duplicate: Option<UniqueIdDuplicate>,
 }
@@ -297,7 +297,7 @@ pub async fn update_page_field(
     index_updates: State<'_, IndexUpdateState>,
     nonces: State<'_, Arc<WriteNonceRegistry>>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let fields = std::collections::BTreeMap::from([(field, value)]);
     let authorization_space = space.clone();
     // A title change may rename the Page file.
@@ -308,7 +308,7 @@ pub async fn update_page_field(
             path: &file_path,
             project: project_path.as_deref().filter(|path| !path.is_empty()),
             values: &fields,
-            intent: EntryFieldBatchIntent::Literal,
+            intent: ItemFieldBatchIntent::Literal,
         },
         &index_state,
         &index_updates,
@@ -338,7 +338,7 @@ pub async fn write_page_body(
     nonces: State<'_, Arc<WriteNonceRegistry>>,
 ) -> Result<WriteResult, AppError> {
     write_page_body_shared(
-        WriteEntryAuthorization::App(&app),
+        WritePageAuthorization::App(&app),
         space,
         path,
         content,
@@ -352,7 +352,7 @@ pub async fn write_page_body(
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum WriteEntryAuthorization<'a> {
+pub(super) enum WritePageAuthorization<'a> {
     App(&'a AppHandle),
     #[cfg(test)]
     Preauthorized,
@@ -361,7 +361,7 @@ pub(super) enum WriteEntryAuthorization<'a> {
 /// Writes the body of a Page. The title, metadata and filename are not part
 /// of a body write; they change through the Page field update.
 pub(super) async fn write_page_body_shared(
-    authorization: WriteEntryAuthorization<'_>,
+    authorization: WritePageAuthorization<'_>,
     space: String,
     path: String,
     content: String,
@@ -393,11 +393,11 @@ pub(super) async fn write_page_body_shared(
         nonces,
         |paths| async move {
             match authorization {
-                WriteEntryAuthorization::App(app) => {
+                WritePageAuthorization::App(app) => {
                     require_planned_mutation_paths(app, authorization_space, paths).await
                 }
                 #[cfg(test)]
-                WriteEntryAuthorization::Preauthorized => {
+                WritePageAuthorization::Preauthorized => {
                     let mut paths = paths;
                     paths.push(PathBuf::from(authorization_space));
                     Ok(paths)
@@ -453,7 +453,7 @@ pub async fn rename_content(
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<Vec<String>, AppError> {
-    let authorized_paths = require_entry_rename_mutation_plan(
+    let authorized_paths = require_page_rename_mutation_plan(
         &app,
         &index_state,
         &space,
@@ -500,7 +500,7 @@ pub async fn move_content(
     } else {
         format!("{to_parent}/{file_name}")
     };
-    let authorized_paths = require_entry_move_mutation_plan(
+    let authorized_paths = require_page_move_mutation_plan(
         &app,
         &index_state,
         &space,
@@ -511,7 +511,7 @@ pub async fn move_content(
     .await?;
     let _changing = crate::navigation::path_change(&space);
     let new_path = scope_authorized_mutation_paths(authorized_paths, async {
-        crate::structure::move_entry(
+        crate::structure::move_page(
             &space,
             &from,
             &to_parent,

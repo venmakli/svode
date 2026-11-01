@@ -77,7 +77,7 @@ mod tests {
     }
 
     #[test]
-    fn build_entry_indexes_legacy_keys_as_fields() {
+    fn build_page_indexes_legacy_keys_as_fields() {
         let tmp = TempDir::new().unwrap();
         let file = tmp.path().join("note.md");
         std::fs::write(
@@ -86,40 +86,38 @@ mod tests {
         )
         .unwrap();
 
-        let entry =
-            build_entry_with_dates(tmp.path(), &file, None, MarkdownProjection::Discoverable)
-                .expect("build entry");
+        let page = build_page_with_dates(tmp.path(), &file, None, MarkdownProjection::Discoverable)
+            .expect("build page");
         let fields: serde_json::Value =
-            serde_json::from_str(&entry.fields_json).expect("fields json");
+            serde_json::from_str(&page.fields_json).expect("fields json");
 
-        assert_eq!(entry.rel_path, "note.md");
-        assert_eq!(entry.title, "Note");
+        assert_eq!(page.rel_path, "note.md");
+        assert_eq!(page.title, "Note");
         assert_eq!(fields["id"], "imported");
         assert_eq!(fields["created"], "yaml-created");
         assert_eq!(fields["updated"], "yaml-updated");
-        assert_ne!(entry.created, "yaml-created");
-        assert_ne!(entry.updated, "yaml-updated");
+        assert_ne!(page.created, "yaml-created");
+        assert_ne!(page.updated, "yaml-updated");
     }
 
     #[test]
-    fn build_entry_indexes_malformed_frontmatter_as_plain_markdown() {
+    fn build_page_indexes_malformed_frontmatter_as_plain_markdown() {
         let tmp = TempDir::new().unwrap();
         let file = tmp.path().join("broken.md");
         let raw = "---\ntitle: [broken\n---\nBody\n";
         std::fs::write(&file, raw).unwrap();
 
-        let entry =
-            build_entry_with_dates(tmp.path(), &file, None, MarkdownProjection::Discoverable)
-                .expect("build entry");
+        let page = build_page_with_dates(tmp.path(), &file, None, MarkdownProjection::Discoverable)
+            .expect("build page");
 
-        assert_eq!(entry.rel_path, "broken.md");
-        assert_eq!(entry.title, "Broken");
-        assert_eq!(entry.fields_json, "{}");
-        assert_eq!(entry.body_preview, raw);
+        assert_eq!(page.rel_path, "broken.md");
+        assert_eq!(page.title, "Broken");
+        assert_eq!(page.fields_json, "{}");
+        assert_eq!(page.body_preview, raw);
     }
 
     #[test]
-    fn df_087_build_entry_uses_ancestor_only_membership_for_owner_readmes() {
+    fn df_087_build_page_uses_ancestor_only_membership_for_owner_readmes() {
         let tmp = TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join("notes")).unwrap();
         std::fs::create_dir_all(tmp.path().join("archive")).unwrap();
@@ -135,7 +133,7 @@ mod tests {
         std::fs::write(tmp.path().join("archive/README.md"), "# Archive").unwrap();
         std::fs::write(tmp.path().join("archive/item.md"), "# Archived item").unwrap();
 
-        let owner = build_entry_with_dates(
+        let owner = build_page_with_dates(
             tmp.path(),
             &tmp.path().join("README.md"),
             None,
@@ -146,18 +144,18 @@ mod tests {
         assert!(!owner.in_collection);
 
         for path in ["child.md", "notes/README.md", "archive/README.md"] {
-            let entry = build_entry_with_dates(
+            let page = build_page_with_dates(
                 tmp.path(),
                 &tmp.path().join(path),
                 None,
                 MarkdownProjection::Discoverable,
             )
             .expect("build root member");
-            assert_eq!(entry.collection_root_path.as_deref(), Some("."));
-            assert!(entry.in_collection);
+            assert_eq!(page.collection_root_path.as_deref(), Some("."));
+            assert!(page.in_collection);
         }
 
-        let nested = build_entry_with_dates(
+        let nested = build_page_with_dates(
             tmp.path(),
             &tmp.path().join("archive/item.md"),
             None,
@@ -293,7 +291,7 @@ mod tests {
 
         let row: (Option<String>, i64, i64, String, String) = sqlx::query_as(
             "SELECT collection_root_path,in_collection,is_discoverable,body_preview,fields \
-             FROM entries WHERE file_path = 'hidden.md'",
+             FROM pages WHERE file_path = 'hidden.md'",
         )
         .fetch_one(&pool)
         .await
@@ -305,7 +303,7 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&row.4).unwrap()["Key"],
             7
         );
-        let collection_rows = svode_core::collections::entries::query_entries(
+        let collection_rows = svode_core::collections::items::query_items(
             &pool,
             &crate::actors::ActorCatalogState::new(),
             None,
@@ -319,11 +317,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            collection_rows
-                .iter()
-                .any(|entry| entry.path == "hidden.md")
-        );
+        assert!(collection_rows.iter().any(|page| page.path == "hidden.md"));
 
         assert!(
             svode_core::index::search::search_by_title(&pool, "Hidden Needle", 10)
@@ -367,7 +361,7 @@ mod tests {
         full_reindex(&pool, tmp.path(), &[]).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md'",
+                "SELECT COUNT(*) FROM pages WHERE file_path = 'hidden.md'",
             )
             .fetch_one(&pool)
             .await
@@ -378,7 +372,7 @@ mod tests {
         full_reindex(&pool, tmp.path(), &[]).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md'",
+                "SELECT COUNT(*) FROM pages WHERE file_path = 'hidden.md'",
             )
             .fetch_one(&pool)
             .await
@@ -393,7 +387,7 @@ mod tests {
         full_reindex(&pool, tmp.path(), &[]).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM entries WHERE file_path = 'hidden.md' \
+                "SELECT COUNT(*) FROM pages WHERE file_path = 'hidden.md' \
                  AND in_collection = 1 AND is_discoverable = 0",
             )
             .fetch_one(&pool)
@@ -445,7 +439,7 @@ mod tests {
             .await
             .unwrap();
 
-        let direct = svode_core::collections::entries::query_entries(
+        let direct = svode_core::collections::items::query_items(
             &root_pool,
             &crate::actors::ActorCatalogState::new(),
             None,
@@ -462,7 +456,7 @@ mod tests {
         assert_eq!(
             direct
                 .iter()
-                .map(|entry| entry.path.as_str())
+                .map(|page| page.path.as_str())
                 .collect::<Vec<_>>(),
             vec![
                 "archive/README.md",
@@ -472,7 +466,7 @@ mod tests {
             ]
         );
 
-        let nested = svode_core::collections::entries::query_entries(
+        let nested = svode_core::collections::items::query_items(
             &root_pool,
             &crate::actors::ActorCatalogState::new(),
             None,
@@ -488,7 +482,7 @@ mod tests {
         .unwrap();
         let mut nested_paths = nested
             .iter()
-            .map(|entry| entry.path.as_str())
+            .map(|page| page.path.as_str())
             .collect::<Vec<_>>();
         nested_paths.sort_unstable();
         assert_eq!(
@@ -503,7 +497,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM entries WHERE in_collection = 1 AND is_discoverable = 0",
+                "SELECT COUNT(*) FROM pages WHERE in_collection = 1 AND is_discoverable = 0",
             )
             .fetch_one(&root_pool)
             .await
@@ -512,7 +506,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM entries WHERE file_path LIKE 'team/%'",
+                "SELECT COUNT(*) FROM pages WHERE file_path LIKE 'team/%'",
             )
             .fetch_one(&root_pool)
             .await
@@ -529,7 +523,7 @@ mod tests {
         full_reindex(&child_pool, &child, &[]).await.unwrap();
         assert_eq!(
             sqlx::query_as::<_, (i64, i64, i64)>(
-                "SELECT COUNT(*),MAX(in_collection),MAX(is_discoverable) FROM entries \
+                "SELECT COUNT(*),MAX(in_collection),MAX(is_discoverable) FROM pages \
                  WHERE file_path = 'item.md'",
             )
             .fetch_one(&child_pool)
@@ -548,7 +542,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             sqlx::query_as::<_, (i64, i64)>(
-                "SELECT COUNT(*),MAX(is_discoverable) FROM entries WHERE file_path = 'roadmap.md'",
+                "SELECT COUNT(*),MAX(is_discoverable) FROM pages WHERE file_path = 'roadmap.md'",
             )
             .fetch_one(&root_pool)
             .await
@@ -560,7 +554,7 @@ mod tests {
         full_reindex(&child_pool, &child, &[]).await.unwrap();
         assert_eq!(
             sqlx::query_as::<_, (i64, i64)>(
-                "SELECT COUNT(*),MAX(is_discoverable) FROM entries WHERE file_path = 'item.md'",
+                "SELECT COUNT(*),MAX(is_discoverable) FROM pages WHERE file_path = 'item.md'",
             )
             .fetch_one(&child_pool)
             .await
@@ -570,7 +564,7 @@ mod tests {
     }
 }
 
-pub(crate) use svode_core::index::entry_projection::build_entry_with_dates;
+pub(crate) use svode_core::index::page_projection::build_page_with_dates;
 
 #[cfg(test)]
 pub async fn full_reindex(

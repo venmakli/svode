@@ -278,8 +278,8 @@ impl AutocommitService {
     }
 
     /// Register an explicit touched-path set of a schema or `unique_id`
-    /// mutation (`schema.yaml`, its `next` and the entries it rewrote) as
-    /// content changes. Schemas and entries are content: the set stays
+    /// mutation (`schema.yaml`, its `next` and the items it rewrote) as
+    /// content changes. Schemas and items are content: the set stays
     /// pending until a manual commit, or an automatic content version when
     /// content commits are enabled. Nothing is committed here and the message
     /// is unused.
@@ -2257,7 +2257,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_entry_message() {
+    fn duplicate_page_message() {
         let ops = vec![StructuralOp::Duplicate {
             old: s("tasks"),
             new: s("tasks-copy"),

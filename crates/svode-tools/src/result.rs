@@ -53,12 +53,9 @@ impl ToolCallResult {
 }
 
 /// Top-level `sourceVersion` of a result carrying one source: the version
-/// of the bytes the entry was read from.
-pub(crate) fn source_version(entry: &svode_core::page::entry::Entry) -> Value {
-    entry
-        .source_version
-        .as_ref()
-        .map_or(Value::Null, |version| {
-            Value::String(version.as_str().to_string())
-        })
+/// of the bytes the page was read from.
+pub(crate) fn source_version(page: &svode_core::page::store::Page) -> Value {
+    page.source_version.as_ref().map_or(Value::Null, |version| {
+        Value::String(version.as_str().to_string())
+    })
 }

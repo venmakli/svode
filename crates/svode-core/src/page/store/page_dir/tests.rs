@@ -6,7 +6,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::page::PageError;
-use crate::page::entry::{convert_entry_to_leaf, entry_detail_state, unnest_entry};
+use crate::page::store::{convert_page_to_leaf, page_detail_state, unnest_page};
 
 const ORDER: &str = "{\".\": [\"Doc\", \"Other.md\"], \"Doc\": []}";
 
@@ -85,7 +85,7 @@ fn every_item_besides_the_page_blocks_the_leaf_conversion_without_changes() {
         let tmp = space_with_doc(files);
         let before = snapshot(tmp.path());
 
-        let error = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
+        let error = convert_page_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
 
         assert!(not_empty(&error, folders, other), "{files:?}: {error}");
         assert_eq!(snapshot(tmp.path()), before, "{files:?}");
@@ -98,7 +98,7 @@ fn every_item_besides_the_page_blocks_unnest_without_changes() {
         let tmp = space_with_doc(files);
         let before = snapshot(tmp.path());
 
-        let error = unnest_entry(tmp.path(), "Doc/README.md", None).unwrap_err();
+        let error = unnest_page(tmp.path(), "Doc/README.md", None).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -117,7 +117,7 @@ fn the_root_of_a_child_space_is_not_turned_into_a_leaf() {
     ]);
     let before = snapshot(tmp.path());
 
-    let error = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
+    let error = convert_page_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
 
     assert!(error.to_string().starts_with("EntryNotEmpty"), "{error}");
     assert_eq!(snapshot(tmp.path()), before);
@@ -127,9 +127,9 @@ fn the_root_of_a_child_space_is_not_turned_into_a_leaf() {
 fn an_empty_gitkeep_goes_with_the_directory_of_a_new_leaf() {
     let tmp = space_with_doc(&[("Doc/.gitkeep", b"")]);
 
-    let (entry, removed) = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap();
+    let (page, removed) = convert_page_to_leaf(tmp.path(), "Doc/README.md", None).unwrap();
 
-    assert_eq!(entry.path, "Doc.md");
+    assert_eq!(page.path, "Doc.md");
     assert_eq!(removed, vec!["Doc/.gitkeep".to_string()]);
     assert!(!tmp.path().join("Doc").exists());
     assert!(
@@ -143,7 +143,7 @@ fn an_empty_gitkeep_goes_with_the_directory_of_a_new_leaf() {
 fn an_empty_gitkeep_goes_with_the_directory_on_unnest() {
     let tmp = space_with_doc(&[("Doc/.gitkeep", b"")]);
 
-    let (path, removed) = unnest_entry(tmp.path(), "Doc/README.md", None).unwrap();
+    let (path, removed) = unnest_page(tmp.path(), "Doc/README.md", None).unwrap();
 
     assert_eq!(path, "Doc.md");
     assert_eq!(removed, vec!["Doc/.gitkeep".to_string()]);
@@ -156,9 +156,9 @@ fn finder_view_settings_go_with_the_directory_with_an_empty_gitkeep() {
         let tmp = space_with_doc(&[("Doc/.gitkeep", b""), ("Doc/.DS_Store", b"finder")]);
 
         let mut removed = if unnest {
-            unnest_entry(tmp.path(), "Doc/README.md", None).unwrap().1
+            unnest_page(tmp.path(), "Doc/README.md", None).unwrap().1
         } else {
-            convert_entry_to_leaf(tmp.path(), "Doc/README.md", None)
+            convert_page_to_leaf(tmp.path(), "Doc/README.md", None)
                 .unwrap()
                 .1
         };
@@ -184,7 +184,7 @@ fn finder_view_settings_are_restored_when_the_conversion_rolls_back() {
         Box::new(move || fs::write(late, "late").unwrap()),
     );
 
-    let error = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
+    let error = convert_page_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
 
     assert!(not_empty(&error, &[], &["late.txt"]), "{error}");
     let mut expected = before;
@@ -197,9 +197,9 @@ fn finder_view_settings_are_restored_when_the_conversion_rolls_back() {
 fn a_page_alone_in_its_directory_removes_nothing_else() {
     let tmp = space_with_doc(&[]);
 
-    let (entry, removed) = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap();
+    let (page, removed) = convert_page_to_leaf(tmp.path(), "Doc/README.md", None).unwrap();
 
-    assert_eq!(entry.path, "Doc.md");
+    assert_eq!(page.path, "Doc.md");
     assert!(removed.is_empty());
     assert!(!tmp.path().join("Doc").exists());
 }
@@ -214,7 +214,7 @@ fn an_item_that_appears_before_the_directory_is_removed_fails_the_conversion() {
         Box::new(move || fs::write(late, "late").unwrap()),
     );
 
-    let error = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
+    let error = convert_page_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
 
     assert!(not_empty(&error, &[], &[".late.txt"]), "{error}");
     let mut expected = before;
@@ -233,7 +233,7 @@ fn an_item_that_appears_before_the_directory_is_removed_fails_unnest() {
         Box::new(move || fs::write(late, "late").unwrap()),
     );
 
-    let error = unnest_entry(tmp.path(), "Doc/README.md", None).unwrap_err();
+    let error = unnest_page(tmp.path(), "Doc/README.md", None).unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -254,7 +254,7 @@ fn a_failed_restore_names_the_paths_left_changed() {
         Box::new(move || fs::write(gitkeep, "concurrent").unwrap()),
     );
 
-    let error = convert_entry_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
+    let error = convert_page_to_leaf(tmp.path(), "Doc/README.md", None).unwrap_err();
 
     match error {
         PageError::Recovery { paths, .. } => assert_eq!(paths, vec!["Doc/.gitkeep"]),
@@ -277,12 +277,12 @@ fn the_page_detail_counts_hidden_items_but_not_service_files() {
         ("Doc/Child.md", b"---\ntitle: Child\n---\n"),
     ]);
 
-    let state = entry_detail_state(tmp.path(), "Doc/README.md").unwrap();
+    let state = page_detail_state(tmp.path(), "Doc/README.md").unwrap();
 
     assert_eq!(state.subpage_count, 1);
     assert_eq!(state.other_file_count, 2);
 
     let only_service = space_with_doc(&[("Doc/.gitkeep", b""), ("Doc/.DS_Store", b"finder")]);
-    let state = entry_detail_state(only_service.path(), "Doc").unwrap();
+    let state = page_detail_state(only_service.path(), "Doc").unwrap();
     assert_eq!((state.subpage_count, state.other_file_count), (0, 0));
 }

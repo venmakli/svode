@@ -214,7 +214,7 @@ fn merged<'a>(groups: impl Iterator<Item = &'a GroupFacts>) -> GroupFacts {
             all.general = General::Files;
             all.sensitive = match (all.sensitive, group.sensitive) {
                 (None, None) => None,
-                _ => Some(Sensitive::Entries(0)),
+                _ => Some(Sensitive::Items(0)),
             };
         }
         all.facts.extend(group.facts.iter().cloned());
@@ -222,8 +222,8 @@ fn merged<'a>(groups: impl Iterator<Item = &'a GroupFacts>) -> GroupFacts {
         all.pages += group.pages;
         all.files += group.files;
     }
-    if let Some(Sensitive::Entries(_)) = all.sensitive {
-        all.sensitive = Some(Sensitive::Entries(all.pages.max(1)));
+    if let Some(Sensitive::Items(_)) = all.sensitive {
+        all.sensitive = Some(Sensitive::Items(all.pages.max(1)));
     }
     all
 }

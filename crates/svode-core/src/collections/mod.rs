@@ -1,5 +1,5 @@
 pub mod engine;
-pub mod entries;
+pub mod items;
 pub mod knowledge_projection;
 pub mod list;
 #[cfg(test)]

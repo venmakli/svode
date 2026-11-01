@@ -3,7 +3,7 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use super::*;
-use crate::collections::query::{query_entry_rows, reorder_visible_entry_names};
+use crate::collections::query::{query_item_rows, reorder_visible_item_names};
 use crate::collections::relation_read::validate_relation_value_shape;
 use crate::collections::schema::read_schema_at;
 use crate::collections::schema_validation::validate_filter_op;
@@ -86,7 +86,7 @@ views: []
     let space = tmp.path();
     fs::create_dir_all(space.join("tasks")).unwrap();
     fs::write(space.join("tasks/schema.yaml"), raw).unwrap();
-    let mut meta = EntryMeta::new_persisted("Item");
+    let mut meta = PageMeta::new_persisted("Item");
     assert!(
         apply_schema_defaults_for_path(space.to_str().unwrap(), "tasks/item.md", &mut meta,)
             .unwrap()
@@ -98,7 +98,7 @@ views: []
         "columns:\n  - { name: Active, type: boolean }\nviews: []\n",
     )
     .unwrap();
-    let mut meta_without_default = EntryMeta::new_persisted("No default");
+    let mut meta_without_default = PageMeta::new_persisted("No default");
     assert!(
         !apply_schema_defaults_for_path(
             space.to_str().unwrap(),
@@ -337,7 +337,7 @@ async fn move_to_another_collection_keeps_old_relation_out_of_scope() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
         r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT NOT NULL,
                 title TEXT NOT NULL,
                 icon TEXT,
@@ -346,7 +346,7 @@ async fn move_to_another_collection_keeps_old_relation_out_of_scope() {
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
-                is_entry_head INTEGER NOT NULL,
+                is_item_head INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -356,9 +356,9 @@ async fn move_to_another_collection_keeps_old_relation_out_of_scope() {
     .unwrap();
     sqlx::query(
             r#"
-            INSERT INTO entries (
+            INSERT INTO pages (
                 file_path, title, icon, description, created, updated, collection_root_path,
-                in_collection, is_entry_head, fields
+                in_collection, is_item_head, fields
             ) VALUES ('archive/a.md', 'A', NULL, NULL, '2026-01-01', '2026-01-01', 'archive', 1, 1, '{}')
             "#,
         )
@@ -522,7 +522,7 @@ views: []
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
         r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
@@ -530,7 +530,7 @@ views: []
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
-                is_entry_head INTEGER NOT NULL,
+                is_item_head INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -563,9 +563,9 @@ views: []
     ] {
         sqlx::query(
             r#"
-                INSERT INTO entries (
+                INSERT INTO pages (
                     file_path, title, description, created, updated, collection_root_path,
-                    in_collection, is_entry_head, fields
+                    in_collection, is_item_head, fields
                 ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
                 "#,
         )
@@ -584,7 +584,7 @@ views: []
         values: None,
         unknown_keys: Default::default(),
     }];
-    let rows = query_entry_rows(&pool, &schema, "tasks", &filters, &[], None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &filters, &[], None, None)
         .await
         .unwrap();
     let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
@@ -595,7 +595,7 @@ views: []
         desc: false,
         unknown_keys: Default::default(),
     }];
-    let rows = query_entry_rows(&pool, &schema, "tasks", &[], &sort, None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &[], &sort, None, None)
         .await
         .unwrap();
     let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
@@ -606,7 +606,7 @@ views: []
         desc: false,
         unknown_keys: Default::default(),
     }];
-    let rows = query_entry_rows(&pool, &schema, "tasks", &[], &sort, None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &[], &sort, None, None)
         .await
         .unwrap();
     let titles: Vec<_> = rows.into_iter().map(|row| row.title).collect();
@@ -624,7 +624,7 @@ fn filtered_reorder_inserts_against_visible_positions() {
     ];
     let visible = vec!["a.md".to_string(), "b.md".to_string(), "c.md".to_string()];
 
-    let reordered = reorder_visible_entry_names(&full, &visible, "c.md", 1).unwrap();
+    let reordered = reorder_visible_item_names(&full, &visible, "c.md", 1).unwrap();
     assert_eq!(
         reordered,
         vec![
@@ -636,7 +636,7 @@ fn filtered_reorder_inserts_against_visible_positions() {
         ]
     );
 
-    let reordered = reorder_visible_entry_names(&full, &visible, "a.md", 2).unwrap();
+    let reordered = reorder_visible_item_names(&full, &visible, "a.md", 2).unwrap();
     assert_eq!(
         reordered,
         vec![
@@ -675,7 +675,7 @@ views: []
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
         r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
@@ -683,7 +683,7 @@ views: []
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
-                is_entry_head INTEGER NOT NULL,
+                is_item_head INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -721,9 +721,9 @@ views: []
     ] {
         sqlx::query(
             r#"
-                INSERT INTO entries (
+                INSERT INTO pages (
                     file_path, title, description, created, updated, collection_root_path,
-                    in_collection, is_entry_head, fields
+                    in_collection, is_item_head, fields
                 ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
                 "#,
         )
@@ -756,7 +756,7 @@ views: []
         desc: false,
         unknown_keys: Default::default(),
     }];
-    let rows = query_entry_rows(&pool, &schema, "tasks", &filters, &sort, None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &filters, &sort, None, None)
         .await
         .unwrap();
     let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
@@ -769,7 +769,7 @@ views: []
         values: None,
         unknown_keys: Default::default(),
     }];
-    let rows = query_entry_rows(&pool, &schema, "tasks", &date_eq, &[], None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &date_eq, &[], None, None)
         .await
         .unwrap();
     let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
@@ -787,7 +787,7 @@ views: []
         desc: false,
         unknown_keys: Default::default(),
     }];
-    let rows = query_entry_rows(
+    let rows = query_item_rows(
         &pool,
         &schema,
         "tasks",
@@ -808,7 +808,7 @@ views: []
         values: None,
         unknown_keys: Default::default(),
     }];
-    let rows = query_entry_rows(&pool, &schema, "tasks", &date_after, &[], None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &date_after, &[], None, None)
         .await
         .unwrap();
     let titles: Vec<String> = rows.into_iter().map(|row| row.title).collect();
@@ -824,7 +824,7 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
         r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
@@ -832,7 +832,7 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
-                is_entry_head INTEGER NOT NULL,
+                is_item_head INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -858,9 +858,9 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
     ] {
         sqlx::query(
             r#"
-                INSERT INTO entries (
+                INSERT INTO pages (
                     file_path, title, description, created, updated, collection_root_path,
-                    in_collection, is_entry_head, fields
+                    in_collection, is_item_head, fields
                 ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
                 "#,
         )
@@ -878,7 +878,7 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
         (FilterOp::Eq, true, vec!["True"]),
         (FilterOp::Neq, false, vec!["True"]),
     ] {
-        let rows = query_entry_rows(
+        let rows = query_item_rows(
             &pool,
             &schema,
             "tasks",
@@ -909,7 +909,7 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
         (false, vec!["False", "Missing", "Null", "True", "Invalid"]),
         (true, vec!["True", "False", "Missing", "Null", "Invalid"]),
     ] {
-        let rows = query_entry_rows(
+        let rows = query_item_rows(
             &pool,
             &schema,
             "tasks",

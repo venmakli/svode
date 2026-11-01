@@ -60,14 +60,6 @@ export interface ConvertToCollectionResultDto {
   page: PageDto;
 }
 
-interface PrivateConvertToCollectionResultDto {
-  oldPath: string;
-  collectionPath: string;
-  readmePath: string;
-  schemaPath: string;
-  entry: PageDto;
-}
-
 interface CollectionPathInput {
   spacePath: string;
   collectionPath: string;
@@ -102,21 +94,16 @@ export function createCollection(input: {
   });
 }
 
-export async function convertToCollection(input: {
+export function convertToCollection(input: {
   spacePath: string;
   path: string;
   projectPath?: string | null;
-}): Promise<ConvertToCollectionResultDto> {
-  const { entry, ...result } =
-    await invokeCommand<PrivateConvertToCollectionResultDto>(
-      "convert_to_collection",
-      {
-        space: input.spacePath,
-        path: input.path,
-        projectPath: input.projectPath ?? null,
-      },
-    );
-  return { ...result, page: entry };
+}) {
+  return invokeCommand<ConvertToCollectionResultDto>("convert_to_collection", {
+    space: input.spacePath,
+    path: input.path,
+    projectPath: input.projectPath ?? null,
+  });
 }
 
 export function getCollectionSchema(input: CollectionPathInput) {

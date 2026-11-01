@@ -63,7 +63,7 @@ if (process.env.SVODE_COLLECTION_ENTRY_MENU_HOOK_DOM !== "1") {
         if (command === "create_folder") return "Tasks/Roadmap/New folder";
         if (command === "convert_page_to_leaf") return page("Tasks/Launch.md");
         if (command === "convert_to_collection")
-          return { entry: page("Tasks/Roadmap/README.md") };
+          return { page: page("Tasks/Roadmap/README.md") };
         return [];
       },
     },

@@ -699,7 +699,7 @@ mod tests {
     async fn event_queue_is_ordered_and_one_active_per_routine() {
         let temp = tempdir().unwrap();
         let pool = routines_pool(&temp.path().join("routines.db")).await;
-        for (queue_key, routine_id, entry_path, observed_at) in [
+        for (queue_key, routine_id, item_path, observed_at) in [
             (
                 "second",
                 "routine-a",
@@ -718,7 +718,7 @@ mod tests {
                 .bind(queue_key)
                 .bind(queue_key)
                 .bind(routine_id)
-                .bind(entry_path)
+                .bind(item_path)
                 .bind(observed_at)
                 .execute(&pool)
                 .await

@@ -842,7 +842,7 @@ fn general_and_sensitive_wordings_exist_in_both_languages() {
     empty.general = General::Settings;
     assert_eq!(compose(&empty, RU).header, "Docs: настройки");
     assert_eq!(compose(&empty, EN).header, "Docs: settings");
-    empty.sensitive = Some(Sensitive::Entries(3));
+    empty.sensitive = Some(Sensitive::Items(3));
     assert_eq!(compose(&empty, RU).header, "Правки 3 записей коллекции");
     assert_eq!(compose(&empty, EN).header, "Update 3 collection entries");
 }

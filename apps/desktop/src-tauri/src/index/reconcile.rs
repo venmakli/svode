@@ -161,7 +161,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, String>(
-                "SELECT body_preview FROM entries WHERE file_path = 'note.md'",
+                "SELECT body_preview FROM pages WHERE file_path = 'note.md'",
             )
             .fetch_one(&pool)
             .await
@@ -177,7 +177,7 @@ mod tests {
             ReconcileOutcome::Applied
         );
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entries")
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pages")
                 .fetch_one(&pool)
                 .await
                 .unwrap(),
@@ -207,7 +207,7 @@ mod tests {
             .unwrap();
 
         let paths =
-            sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+            sqlx::query_scalar::<_, String>("SELECT file_path FROM pages ORDER BY file_path")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
@@ -267,7 +267,7 @@ mod tests {
             ReconcileOutcome::Applied
         );
         let hidden: (i64, String) = sqlx::query_as(
-            "SELECT is_discoverable,body_preview FROM entries WHERE file_path = 'item.md'",
+            "SELECT is_discoverable,body_preview FROM pages WHERE file_path = 'item.md'",
         )
         .fetch_one(&pool)
         .await
@@ -296,7 +296,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT is_discoverable FROM entries WHERE file_path = 'item.md'",
+                "SELECT is_discoverable FROM pages WHERE file_path = 'item.md'",
             )
             .fetch_one(&pool)
             .await

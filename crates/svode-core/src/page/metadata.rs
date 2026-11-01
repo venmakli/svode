@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
-use crate::page::entry;
+use crate::page::store;
 
 use super::write::{PageRuntime, PageWrite, PageWriteOutcome};
 
@@ -10,7 +10,7 @@ pub struct PageMetadataPatch {
     pub title: Option<String>,
     pub icon: Option<Option<String>>,
     pub description: Option<Option<String>>,
-    pub cover: Option<Option<entry::Cover>>,
+    pub cover: Option<Option<store::Cover>>,
 }
 
 impl PageMetadataPatch {
@@ -23,7 +23,7 @@ impl PageMetadataPatch {
 }
 
 pub struct PageMetadataOutcome {
-    pub page: entry::Entry,
+    pub page: store::Page,
     pub changed_paths: Vec<PathBuf>,
 }
 
@@ -45,7 +45,7 @@ where
 {
     if patch.is_empty() {
         return Ok(PageMetadataOutcome {
-            page: entry::read(space, path)?,
+            page: store::read(space, path)?,
             changed_paths: Vec::new(),
         });
     }
@@ -56,7 +56,7 @@ where
         result,
         changed_paths,
     } = super::write::on_current_source(path, || async move {
-        let current = entry::read(space, path)?;
+        let current = store::read(space, path)?;
         let candidate = patched_metadata(&current.meta, patch)?;
         super::write::write(
             PageWrite {
@@ -82,7 +82,7 @@ where
     })
     .await?;
     let current_path = result.new_path.as_deref().unwrap_or(path);
-    let mut page = entry::read(space, current_path)?;
+    let mut page = store::read(space, current_path)?;
     page.warnings = result.warnings;
     Ok(PageMetadataOutcome {
         page,
@@ -92,19 +92,19 @@ where
 
 /// Tri-state patch over the current metadata, validated by the field rules.
 fn patched_metadata(
-    current: &entry::EntryMeta,
+    current: &store::PageMeta,
     patch: &PageMetadataPatch,
-) -> Result<entry::EntryMeta, PageError> {
+) -> Result<store::PageMeta, PageError> {
     let mut candidate = current.clone();
     if let Some(title) = patch.title.as_ref() {
-        entry::apply_entry_field_update(
+        store::apply_item_field_update(
             &mut candidate,
             "title",
             serde_json::Value::String(title.clone()),
         )?;
     }
     if let Some(icon) = patch.icon.clone() {
-        entry::apply_entry_field_update(
+        store::apply_item_field_update(
             &mut candidate,
             "icon",
             icon.map(serde_json::Value::String)
@@ -112,7 +112,7 @@ fn patched_metadata(
         )?;
     }
     if let Some(description) = patch.description.clone() {
-        entry::apply_entry_field_update(
+        store::apply_item_field_update(
             &mut candidate,
             "description",
             description
@@ -121,7 +121,7 @@ fn patched_metadata(
         )?;
     }
     if let Some(cover) = patch.cover.clone() {
-        entry::apply_entry_field_update(
+        store::apply_item_field_update(
             &mut candidate,
             "cover",
             cover

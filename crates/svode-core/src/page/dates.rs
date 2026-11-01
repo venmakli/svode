@@ -9,12 +9,12 @@ use super::PageSource;
 const GIT_DATE_TIMEOUT_SECS: u64 = 3;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct EntryDateOverride {
+pub struct PageDateOverride {
     pub created: Option<String>,
     pub updated: Option<String>,
 }
 
-pub type EntryDateOverrides = HashMap<String, EntryDateOverride>;
+pub type PageDateOverrides = HashMap<String, PageDateOverride>;
 
 pub struct GitDateOutput {
     pub stdout: String,
@@ -120,7 +120,7 @@ fn git_fallback_candidates() -> Vec<PathBuf> {
 pub fn apply_date_override(
     created: &mut String,
     updated: &mut String,
-    override_dates: Option<&EntryDateOverride>,
+    override_dates: Option<&PageDateOverride>,
 ) {
     if let Some(dates) = override_dates {
         if let Some(value) = &dates.created {
@@ -150,7 +150,7 @@ pub async fn derive_date_overrides<E: GitDateExecutor>(
     executor: &E,
     space: &Path,
     paths: &[String],
-) -> EntryDateOverrides {
+) -> PageDateOverrides {
     let mut paths = paths
         .iter()
         .filter_map(|path| normalized_path(path))
@@ -158,21 +158,21 @@ pub async fn derive_date_overrides<E: GitDateExecutor>(
     paths.sort();
     paths.dedup();
     if paths.is_empty() {
-        return EntryDateOverrides::new();
+        return PageDateOverrides::new();
     }
     let Some(prefix) = run(executor, space, &["rev-parse", "--show-prefix"])
         .await
         .filter(|out| out.exit_code == 0)
         .map(|out| out.stdout.trim().replace('\\', "/"))
     else {
-        return EntryDateOverrides::new();
+        return PageDateOverrides::new();
     };
     let shallow = run(executor, space, &["rev-parse", "--is-shallow-repository"]).await;
     if shallow.is_none_or(|out| out.exit_code == 0 && out.stdout.trim() == "true") {
-        return EntryDateOverrides::new();
+        return PageDateOverrides::new();
     }
     let Some(dirty) = dirty_status(executor, space, &prefix, &paths).await else {
-        return EntryDateOverrides::new();
+        return PageDateOverrides::new();
     };
     log_dates(executor, space, &paths, &dirty).await
 }
@@ -213,8 +213,8 @@ async fn log_dates<E: GitDateExecutor>(
     space: &Path,
     paths: &[String],
     dirty: &HashSet<String>,
-) -> EntryDateOverrides {
-    let mut overrides = EntryDateOverrides::new();
+) -> PageDateOverrides {
+    let mut overrides = PageDateOverrides::new();
     let log = [
         "log",
         "--relative",
@@ -285,7 +285,7 @@ fn strip_git_prefix(path: &str, prefix: &str) -> Option<String> {
     normalized_path(path)
 }
 
-fn parse_log_paths(stdout: &str, dirty: &HashSet<String>, overrides: &mut EntryDateOverrides) {
+fn parse_log_paths(stdout: &str, dirty: &HashSet<String>, overrides: &mut PageDateOverrides) {
     for segment in stdout.split('\x1e').skip(1) {
         let mut records = segment.split('\0');
         let Some(date) = records
@@ -355,7 +355,7 @@ mod tests {
             "\x1e2026-01-01T05:00:00+02:00\0\na.md\0\0",
         );
         let dirty = HashSet::from(["a.md".to_string()]);
-        let mut dates = EntryDateOverrides::new();
+        let mut dates = PageDateOverrides::new();
         parse_log_paths(stdout, &dirty, &mut dates);
         assert_eq!(
             dates.get("a.md").unwrap().created.as_deref(),

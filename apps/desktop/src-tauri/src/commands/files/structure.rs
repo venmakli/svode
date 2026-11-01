@@ -1,4 +1,4 @@
-//! Tauri adapters for nesting and entry-shape conversions.
+//! Tauri adapters for nesting and page-shape conversions.
 
 use super::*;
 #[tauri::command]
@@ -11,8 +11,8 @@ pub async fn nest_page(
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    let _new_path = nested_entry_path(&path)?;
-    let authorized_paths = require_entry_backlink_mutation_plan(
+    let _new_path = nested_page_path(&path)?;
+    let authorized_paths = require_page_backlink_mutation_plan(
         &app,
         &index_state,
         &space,
@@ -48,8 +48,8 @@ pub async fn unnest_page(
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
 ) -> Result<String, AppError> {
-    let _new_path = leaf_entry_path(&path)?;
-    let authorized_paths = require_entry_backlink_mutation_plan(
+    let _new_path = leaf_page_path(&path)?;
+    let authorized_paths = require_page_backlink_mutation_plan(
         &app,
         &index_state,
         &space,
@@ -84,9 +84,9 @@ pub async fn convert_page_to_folder(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
-    let _new_path = nested_entry_path(&file_path)?;
-    let authorized_paths = require_entry_backlink_mutation_plan(
+) -> Result<Page, AppError> {
+    let _new_path = nested_page_path(&file_path)?;
+    let authorized_paths = require_page_backlink_mutation_plan(
         &app,
         &index_state,
         &space,
@@ -156,9 +156,9 @@ pub async fn convert_page_to_leaf(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
-    let _new_path = leaf_entry_path(&file_path)?;
-    let authorized_paths = require_entry_backlink_mutation_plan(
+) -> Result<Page, AppError> {
+    let _new_path = leaf_page_path(&file_path)?;
+    let authorized_paths = require_page_backlink_mutation_plan(
         &app,
         &index_state,
         &space,
@@ -193,7 +193,7 @@ pub async fn convert_bare_folder_to_collection(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let authorized_paths = require_convert_to_collection_mutation_plan(
         &app,
         &index_state,
@@ -214,7 +214,7 @@ pub async fn convert_bare_folder_to_collection(
         .await
     })
     .await?
-    .entry)
+    .page)
 }
 
 #[tauri::command]
@@ -226,7 +226,7 @@ pub async fn duplicate_page(
     index_state: State<'_, IndexState>,
     index_updates: State<'_, IndexUpdateState>,
     autocommit: State<'_, Arc<AutocommitService>>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     require_repository_mutation(&app, Path::new(&space)).await?;
     crate::structure::duplicate(
         &space,

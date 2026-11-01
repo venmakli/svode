@@ -6,7 +6,7 @@ use std::process::Command;
 
 use crate::collections::engine::write_default_collection_schema;
 use crate::content_tree::{list_tree_children, reorder_content};
-use crate::page::entry;
+use crate::page::store;
 use crate::page::templates::{self, TemplateKind};
 use indexmap::IndexMap;
 
@@ -186,7 +186,7 @@ fn creating_a_page_changes_only_its_parent_section() {
     assert_order_change(
         |_| {},
         |root| {
-            entry::create(space_str(root), Some("alpha"), "Created").unwrap();
+            store::create(space_str(root), Some("alpha"), "Created").unwrap();
         },
         KEYS,
         &["alpha"],
@@ -198,8 +198,8 @@ fn creating_a_folder_and_its_first_page_inserts_the_new_section_by_key() {
     assert_order_change(
         |_| {},
         |root| {
-            entry::create_folder(space_str(root), Some("beta"), "fresh").unwrap();
-            entry::create(space_str(root), Some("beta/fresh"), "Inner").unwrap();
+            store::create_folder(space_str(root), Some("beta"), "fresh").unwrap();
+            store::create(space_str(root), Some("beta/fresh"), "Inner").unwrap();
         },
         &[
             "beta/fresh",
@@ -219,7 +219,7 @@ fn creating_a_folder_and_its_first_page_inserts_the_new_section_by_key() {
 fn renaming_a_page_changes_only_its_parent_section() {
     assert_order_change(
         |_| {},
-        |root| entry::rename(space_str(root), "alpha/a1.md", "alpha/a3.md").unwrap(),
+        |root| store::rename(space_str(root), "alpha/a1.md", "alpha/a3.md").unwrap(),
         KEYS,
         &["alpha"],
     );
@@ -229,7 +229,7 @@ fn renaming_a_page_changes_only_its_parent_section() {
 fn renaming_a_folder_keeps_its_nested_sections_in_place() {
     let after = assert_order_change(
         |_| {},
-        |root| entry::rename(space_str(root), "zeta", "omega").unwrap(),
+        |root| store::rename(space_str(root), "zeta", "omega").unwrap(),
         &[
             "omega",
             ".",
@@ -251,7 +251,7 @@ fn moving_a_folder_keeps_its_nested_sections_in_place() {
     assert_order_change(
         |_| {},
         |root| {
-            entry::move_entry_with_project(root, "beta", "alpha", None, None).unwrap();
+            store::move_page_with_project(root, "beta", "alpha", None, None).unwrap();
         },
         &[
             "zeta",
@@ -278,7 +278,7 @@ fn nesting_a_page_changes_only_its_parent_section() {
     assert_order_change(
         |_| {},
         |root| {
-            entry::convert_entry_to_folder(root, "notes.md", None).unwrap();
+            store::convert_page_to_folder(root, "notes.md", None).unwrap();
         },
         KEYS,
         &["."],
@@ -290,7 +290,7 @@ fn converting_a_folder_to_a_leaf_removes_its_section_without_moving_others() {
     assert_order_change(
         |_| {},
         |root| {
-            entry::convert_entry_to_leaf(root, "solo/README.md", None).unwrap();
+            store::convert_page_to_leaf(root, "solo/README.md", None).unwrap();
         },
         &["zeta", ".", "beta/sub", "alpha", "zeta/deep", "beta"],
         &[".", "solo"],
@@ -302,7 +302,7 @@ fn duplicating_a_page_changes_only_its_parent_section() {
     assert_order_change(
         |_| {},
         |root| {
-            entry::duplicate_entry(root, "alpha/a1.md").unwrap();
+            store::duplicate_page(root, "alpha/a1.md").unwrap();
         },
         KEYS,
         &["alpha"],
@@ -314,7 +314,7 @@ fn deleting_a_folder_removes_its_nested_sections_without_moving_others() {
     assert_order_change(
         |_| {},
         |root| {
-            entry::delete(space_str(root), "zeta/README.md", None).unwrap();
+            store::delete(space_str(root), "zeta/README.md", None).unwrap();
         },
         &[".", "beta/sub", "solo", "alpha", "beta"],
         &[".", "zeta", "zeta/deep"],
@@ -371,12 +371,12 @@ fn the_same_order_reached_by_different_operation_sequences_has_the_same_bytes() 
         let space = fixture();
         let root = space_str(space.path());
         let create_alpha = || {
-            entry::create_folder(root, Some("alpha"), "x").unwrap();
-            entry::create(root, Some("alpha/x"), "X").unwrap();
+            store::create_folder(root, Some("alpha"), "x").unwrap();
+            store::create(root, Some("alpha/x"), "X").unwrap();
         };
         let create_beta = || {
-            entry::create_folder(root, Some("beta"), "y").unwrap();
-            entry::create(root, Some("beta/y"), "Y").unwrap();
+            store::create_folder(root, Some("beta"), "y").unwrap();
+            store::create(root, Some("beta/y"), "Y").unwrap();
         };
         if first_alpha {
             create_alpha();
@@ -447,7 +447,7 @@ fn order_changes_in_different_folders_on_two_branches_merge_without_conflict() {
     git(&root, &["commit", "-m", "base"]);
 
     git(&root, &["checkout", "-b", "a"]);
-    let created = entry::create(space_str(&root), Some("alpha"), "Created").unwrap();
+    let created = store::create(space_str(&root), Some("alpha"), "Created").unwrap();
     git(&root, &["add", "-A"]);
     git(&root, &["commit", "-m", "create in alpha"]);
 

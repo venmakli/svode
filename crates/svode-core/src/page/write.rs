@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::collections::engine::{self as collections, PreparedEntryFieldBatch};
+use crate::collections::engine::{self as collections, PreparedItemFieldBatch};
 use crate::git::access::{RepositoryAccessBlocker, RepositoryAccessRefusal};
 use crate::index::backlinks::ModifiedLinkSource;
 use crate::index::backlinks::{
     link_stem, rebase_source_links_between_moved_tree, replace_link_urls_between,
 };
-use crate::page::entry::{self, EntryWarning, WriteResult};
+use crate::page::store::{self, PageWarning, WriteResult};
 use crate::page::{PageError, SourceVersion, current_source_version};
 
 mod runtime;
@@ -21,8 +21,8 @@ pub struct PageWrite<'a> {
     pub title: Option<&'a str>,
     pub icon: Option<&'a str>,
     pub extra: Option<crate::page::frontmatter::FrontmatterFields>,
-    pub metadata: Option<entry::EntryMeta>,
-    pub field_batch: Option<PreparedEntryFieldBatch>,
+    pub metadata: Option<store::PageMeta>,
+    pub field_batch: Option<PreparedItemFieldBatch>,
     pub skip_rename: bool,
     pub project: Option<&'a str>,
     /// Version of the source the caller prepared `content` from. The write
@@ -102,11 +102,11 @@ struct LinkSource {
 }
 
 struct WritePlan {
-    rename: Option<entry::PlannedWriteRename>,
+    rename: Option<store::PlannedWriteRename>,
     links: Vec<LinkSource>,
     moved_sources: Vec<PathBuf>,
     link_targets: Vec<PathBuf>,
-    warning: Option<EntryWarning>,
+    warning: Option<PageWarning>,
     paths: Vec<PathBuf>,
     /// Parent repository whose gitlink records a rename inside a submodule
     /// Space; it is authorized with the rename but holds no Page source.
@@ -121,7 +121,7 @@ impl WritePlan {
     }
 }
 
-fn rename_roots(request: &PageWrite<'_>, rename: &entry::PlannedWriteRename) -> (PathBuf, PathBuf) {
+fn rename_roots(request: &PageWrite<'_>, rename: &store::PlannedWriteRename) -> (PathBuf, PathBuf) {
     let root = Path::new(request.space);
     if let Some(old) = &rename.folder_rename_old {
         (
@@ -154,7 +154,7 @@ pub(crate) struct SourceSnapshot {
     created_dirs: Vec<PathBuf>,
 }
 
-/// Whether `path` names an existing entry with exactly this name, so a
+/// Whether `path` names an existing directory entry with exactly this name, so a
 /// case-only relocation is told apart on a case-insensitive file system.
 fn present_as_named(path: &Path) -> bool {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
@@ -299,7 +299,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
             });
         }
         let title = requested_title(&request).map(str::to_string);
-        let current = entry::planned_write_rename(
+        let current = store::planned_write_rename(
             request.space,
             request.path,
             title.as_deref(),
@@ -313,7 +313,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
         if plan.warning.is_some() {
             let title = match title.as_deref() {
                 Some(title) => title.to_string(),
-                None => entry::read(request.space, request.path)?.meta.title,
+                None => store::read(request.space, request.path)?.meta.title,
             };
             crate::page::naming::ensure_document_name_available(
                 Path::new(request.space),
@@ -328,7 +328,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
         let snapshot = SourceSnapshot::capture(&plan.paths, roots.clone())?;
         let operation = (|| {
             if let Some(batch) = request.field_batch.as_ref() {
-                collections::apply_prepared_entry_field_relations(batch)?;
+                collections::apply_prepared_item_field_relations(batch)?;
             }
             let relation_paths = if let Some((old, new)) = &roots {
                 let current_paths = collections::relation_move_mutation_paths_with_project(
@@ -350,7 +350,7 @@ fn apply_sources(request: PageWrite<'_>, plan: WritePlan) -> Result<PageWriteOut
                 .field_batch
                 .map(|batch| batch.into_metadata())
                 .or(request.metadata);
-            let mut result = entry::write_under_name_lock(
+            let mut result = store::write_under_name_lock(
                 request.space,
                 request.path,
                 request.content,

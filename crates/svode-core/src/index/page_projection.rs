@@ -1,8 +1,8 @@
 use crate::git::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use crate::index::IndexError;
 use crate::index::inventory::{MarkdownProjection, markdown_source_record};
-use crate::index::model::IndexedEntry;
-use crate::page::dates::EntryDateOverride;
+use crate::index::model::IndexedPage;
+use crate::page::dates::PageDateOverride;
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::fs;
 use std::path::Path;
@@ -13,15 +13,15 @@ fn format_system_time(time: SystemTime) -> String {
     dt.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// Build an `IndexedEntry` using precomputed runtime date overrides when
+/// Build an `IndexedPage` using precomputed runtime date overrides when
 /// available. The filesystem remains the fallback for untracked, dirty, or
 /// unavailable Git history cases.
-pub fn build_entry_with_dates(
+pub fn build_page_with_dates(
     space_dir: &Path,
     abs_path: &Path,
-    date_override: Option<&EntryDateOverride>,
+    date_override: Option<&PageDateOverride>,
     projection: MarkdownProjection,
-) -> Result<IndexedEntry, IndexError> {
+) -> Result<IndexedPage, IndexError> {
     let rel_path = repo_relative_from_base(space_dir, abs_path, RootMode::Reject)?;
 
     let source_record = markdown_source_record(space_dir, abs_path, projection)?;
@@ -119,7 +119,7 @@ pub fn build_entry_with_dates(
             })
     });
     let knowledge = if projection.is_discoverable() {
-        let relations = crate::collections::knowledge_projection::project_entry_relations(
+        let relations = crate::collections::knowledge_projection::project_item_relations(
             space_dir,
             &rel_path,
             &fields_json,
@@ -141,7 +141,7 @@ pub fn build_entry_with_dates(
         None
     };
 
-    Ok(IndexedEntry {
+    Ok(IndexedPage {
         parent_path: parent_path_for(&rel_path)?,
         rel_path,
         title,
@@ -152,7 +152,7 @@ pub fn build_entry_with_dates(
         updated,
         collection_root_path,
         in_collection,
-        is_entry_head: true,
+        is_item_head: true,
         fields_json,
         body_preview: if projection.is_discoverable() {
             body_preview

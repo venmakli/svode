@@ -1,9 +1,9 @@
 use crate::git::path::{RootMode, repo_relative_from_base};
 use crate::index::IndexError;
-use crate::index::entry_projection::{build_entry_with_dates, file_modified_iso};
 use crate::index::inventory::collect_reindex_inventory;
-use crate::index::model::IndexedEntry;
-use crate::index::rows::upsert_entry;
+use crate::index::model::IndexedPage;
+use crate::index::page_projection::{build_page_with_dates, file_modified_iso};
+use crate::index::rows::upsert_page;
 use crate::page::dates::{GitDateExecutor, derive_date_overrides};
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::{Executor, Sqlite, SqlitePool};
@@ -109,7 +109,7 @@ fn build_asset(space_dir: &Path, abs_path: &Path) -> Result<IndexedAsset, IndexE
     })
 }
 
-/// Full reindex of a space: wipes `entries` and `assets`, then rescans.
+/// Full reindex of a space: wipes `pages` and `assets`, then rescans.
 ///
 /// `skip_top_level` lists folder names directly under `space_dir` to exclude
 /// — used by the root project's reindex to keep child-space directories out
@@ -162,7 +162,7 @@ pub async fn full_reindex_for_target<E: GitDateExecutor>(
             repo_relative_from_base(space_dir, &source.path, RootMode::Reject).ok()
         })
         .collect::<Vec<_>>();
-    let entry_date_overrides = match executor {
+    let page_date_overrides = match executor {
         Some(executor) => derive_date_overrides(executor, space_dir, &md_rel_paths).await,
         None => Default::default(),
     };
@@ -173,25 +173,25 @@ pub async fn full_reindex_for_target<E: GitDateExecutor>(
         collect_asset_files(&assets_dir, &mut asset_files)?;
     }
 
-    let mut entries: Vec<IndexedEntry> = Vec::with_capacity(markdown_sources.len());
-    let mut entries_skipped = 0usize;
+    let mut pages: Vec<IndexedPage> = Vec::with_capacity(markdown_sources.len());
+    let mut pages_skipped = 0usize;
     for source in &markdown_sources {
         tokio::task::yield_now().await;
         let rel_path = repo_relative_from_base(space_dir, &source.path, RootMode::Reject).ok();
         let date_overrides = rel_path
             .as_ref()
-            .and_then(|rel_path| entry_date_overrides.get(rel_path));
-        match build_entry_with_dates(space_dir, &source.path, date_overrides, source.projection) {
-            Ok(entry) => {
+            .and_then(|rel_path| page_date_overrides.get(rel_path));
+        match build_page_with_dates(space_dir, &source.path, date_overrides, source.projection) {
+            Ok(page) => {
                 if let Some(record) = source_manifest.iter_mut().find(|record| {
-                    record.source_kind == "markdown" && record.source_path == entry.rel_path
+                    record.source_kind == "markdown" && record.source_path == page.rel_path
                 }) {
-                    record.diagnostic_code = entry.source_diagnostic.clone();
+                    record.diagnostic_code = page.source_diagnostic.clone();
                 }
-                entries.push(entry)
+                pages.push(page)
             }
             Err(e) => {
-                entries_skipped += 1;
+                pages_skipped += 1;
                 if let Some(rel_path) = rel_path.as_ref() {
                     if let Some(record) = source_manifest.iter_mut().find(|record| {
                         record.source_kind == "markdown" && record.source_path == *rel_path
@@ -200,7 +200,7 @@ pub async fn full_reindex_for_target<E: GitDateExecutor>(
                     }
                 }
                 tracing::warn!(
-                    "failed to build index entry for {}: {e}",
+                    "failed to build the index row of {}: {e}",
                     source.path.display()
                 );
             }
@@ -219,9 +219,9 @@ pub async fn full_reindex_for_target<E: GitDateExecutor>(
         }
     }
 
-    let mut knowledge_artifacts = entries
+    let mut knowledge_artifacts = pages
         .iter()
-        .filter_map(|entry| entry.knowledge.clone())
+        .filter_map(|page| page.knowledge.clone())
         .collect::<Vec<_>>();
     let mut knowledge_failures = 0usize;
     for collection_source in collection_sources
@@ -308,7 +308,7 @@ pub async fn full_reindex_for_target<E: GitDateExecutor>(
     // ── Phase 2: short pure-SQL transaction ──────────────────────────────
     let mut tx = pool.begin().await?;
 
-    sqlx::query("DELETE FROM entries").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM pages").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM assets").execute(&mut *tx).await?;
 
     crate::index::knowledge_rows::replace_all(
@@ -319,14 +319,14 @@ pub async fn full_reindex_for_target<E: GitDateExecutor>(
             .iter()
             .filter(|record| record.diagnostic_code.is_some())
             .count(),
-        entries_skipped + knowledge_failures + scan_failure_count,
+        pages_skipped + knowledge_failures + scan_failure_count,
     )
     .await?;
     crate::index::manifest::replace_source_manifest(&mut tx, &source_manifest).await?;
     crate::index::manifest::advance_generation(&mut tx, true, true).await?;
 
-    for entry in &entries {
-        upsert_entry(&mut *tx, entry).await?;
+    for page in &pages {
+        upsert_page(&mut *tx, page).await?;
     }
     for asset in &assets {
         insert_asset(&mut *tx, asset).await?;
@@ -334,13 +334,13 @@ pub async fn full_reindex_for_target<E: GitDateExecutor>(
     tx.commit().await?;
 
     tracing::debug!(
-        "full reindex done: {} entries ({} skipped), {} assets ({} skipped)",
-        entries.len(),
-        entries_skipped,
+        "full reindex done: {} pages ({} skipped), {} assets ({} skipped)",
+        pages.len(),
+        pages_skipped,
         assets.len(),
         assets_skipped
     );
-    Ok(entries_skipped + assets_skipped + knowledge_failures + scan_failure_count == 0)
+    Ok(pages_skipped + assets_skipped + knowledge_failures + scan_failure_count == 0)
 }
 
 /// Insert a pre-built asset row. Pure SQL — no FS access.
@@ -398,19 +398,18 @@ mod tests {
                 .unwrap()
         );
         let hidden: (i64, i64, String) = sqlx::query_as(
-            "SELECT in_collection, is_discoverable, body_preview FROM entries WHERE file_path = 'hidden.md'",
+            "SELECT in_collection, is_discoverable, body_preview FROM pages WHERE file_path = 'hidden.md'",
         )
         .fetch_one(&index_pool)
         .await
         .unwrap();
         assert_eq!((hidden.0, hidden.1), (1, 0));
         assert!(hidden.2.is_empty());
-        let visible: i64 = sqlx::query_scalar(
-            "SELECT is_discoverable FROM entries WHERE file_path = 'visible.md'",
-        )
-        .fetch_one(&index_pool)
-        .await
-        .unwrap();
+        let visible: i64 =
+            sqlx::query_scalar("SELECT is_discoverable FROM pages WHERE file_path = 'visible.md'")
+                .fetch_one(&index_pool)
+                .await
+                .unwrap();
         assert_eq!(visible, 1);
         assert!(root.join(".svode/routines.db").exists());
         assert!(!routines_pool.is_closed());

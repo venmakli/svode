@@ -26,7 +26,7 @@ fn runtime<'a>(index: &'a IndexRuntimeState) -> StructureRuntime<'a, SystemGitDa
 }
 
 async fn indexed_paths(pool: &SqlitePool) -> Vec<String> {
-    sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+    sqlx::query_scalar::<_, String>("SELECT file_path FROM pages ORDER BY file_path")
         .fetch_all(pool)
         .await
         .expect("indexed paths")
@@ -178,7 +178,7 @@ async fn moved_collection_tree_replaces_descendant_index_paths() {
         ]
     );
     let item_flags: (Option<String>, i64, i64) = sqlx::query_as(
-        "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
+        "SELECT collection_root_path, in_collection, is_item_head FROM pages WHERE file_path = ?",
     )
     .bind("Renamed collection/Item.md")
     .fetch_one(&pool)
@@ -225,7 +225,7 @@ async fn content_reorder_rejects_a_stale_child_set() {
 #[tokio::test]
 async fn unreadable_order_is_kept_by_content_changes_and_refuses_reorder() {
     use crate::content_tree::{ContentTreeError, list_tree_children, reorder_content};
-    use crate::page::entry;
+    use crate::page::store;
 
     let dir = TempDir::new().expect("space");
     let space = dir.path().to_str().expect("utf8 path");
@@ -242,9 +242,9 @@ async fn unreadable_order_is_kept_by_content_changes_and_refuses_reorder() {
     let conflicted = "{\n<<<<<<< HEAD\n  \".\": [\"folder\", \"b.md\", \"a.md\"]\n=======\n  \".\": [\"folder\", \"a.md\", \"b.md\"]\n>>>>>>> origin/main\n}\n";
     fs::write(&order_path, conflicted).expect("order");
 
-    let created = entry::create(space, None, "Created").expect("create");
-    entry::create_folder(space, None, "Bare").expect("create folder");
-    let renamed = entry::write(
+    let created = store::create(space, None, "Created").expect("create");
+    store::create_folder(space, None, "Bare").expect("create folder");
+    let renamed = store::write(
         space,
         &created.path,
         "",
@@ -258,9 +258,9 @@ async fn unreadable_order_is_kept_by_content_changes_and_refuses_reorder() {
     .expect("rename by title")
     .new_path
     .expect("renamed path");
-    entry::rename(space, "Bare", "Bare renamed").expect("rename folder");
-    entry::move_entry_with_project(dir.path(), "b.md", "folder", None, None).expect("move");
-    entry::delete(space, "a.md", None).expect("delete");
+    store::rename(space, "Bare", "Bare renamed").expect("rename folder");
+    store::move_page_with_project(dir.path(), "b.md", "folder", None, None).expect("move");
+    store::delete(space, "a.md", None).expect("delete");
     assert_eq!(fs::read_to_string(&order_path).expect("order"), conflicted);
 
     let children = list_tree_children(space, None).expect("tree");
@@ -759,7 +759,7 @@ async fn moving_a_folder_rewrites_relation_schemas_of_nested_collections() {
         );
     }
 
-    let moved = super::move_entry(
+    let moved = super::move_page(
         alpha.to_str().unwrap(),
         "Area",
         "Archive",
@@ -907,7 +907,7 @@ async fn df_154_move_rename_and_conversion_rewrite_percent_encoded_links() {
     fs::write(root.join("tasks/Ship.md"), "[R](../Roadmap%20Draft.md)\n").unwrap();
     let state = IndexRuntimeState::default();
 
-    let moved = super::ops::move_entry(
+    let moved = super::ops::move_page(
         space,
         "Roadmap Draft.md",
         "notes",
@@ -1107,7 +1107,7 @@ async fn rename_and_move_register_every_changed_file_in_one_group() {
         vec!["Zone/Tasks".to_string()]
     );
 
-    let moved = super::move_entry(
+    let moved = super::move_page(
         space,
         "Zone/Tasks/Item.md",
         "Zone/Tasks/Sub",
@@ -1163,7 +1163,7 @@ async fn a_move_with_unique_ids_registers_the_whole_changed_set_in_one_group() {
     let state = IndexRuntimeState::default();
     let sink = GroupSink::default();
 
-    super::move_entry(
+    super::move_page(
         space,
         "Loose.md",
         "Tasks",
@@ -1263,7 +1263,7 @@ async fn a_failed_step_of_a_rename_or_move_restores_the_touched_set() {
         "move_sources",
     ] {
         assert_failure_restores(stage, async |space, runtime| {
-            super::move_entry(
+            super::move_page(
                 space,
                 "Area/Tasks/Item.md",
                 "Area/Tasks/Sub",
@@ -1276,7 +1276,7 @@ async fn a_failed_step_of_a_rename_or_move_restores_the_touched_set() {
         .await;
         assert_failure_restores(stage, async |space, runtime| {
             fs::create_dir_all(Path::new(space).join("Archive")).unwrap();
-            let error = super::move_entry(space, "Area", "Archive", Some(space), runtime)
+            let error = super::move_page(space, "Area", "Archive", Some(space), runtime)
                 .await
                 .expect_err("injected folder move failure");
             fs::remove_dir(Path::new(space).join("Archive")).unwrap();
@@ -1385,7 +1385,7 @@ async fn a_read_only_source_fails_the_operation_without_a_false_recovery() {
         let result = if rename {
             super::rename(space, "Area", "Zone", Some(space), runtime).await
         } else {
-            super::move_entry(
+            super::move_page(
                 space,
                 "Area/Tasks/Item.md",
                 "Area/Tasks/Sub",
@@ -2163,7 +2163,7 @@ async fn service_files_removed_with_a_folder_page_join_its_structural_commit() {
             let outcome = super::convert_to_leaf(space, "Doc/README.md", Some(space), runtime)
                 .await
                 .unwrap();
-            assert_eq!(outcome.entry.path, "Doc.md");
+            assert_eq!(outcome.page.path, "Doc.md");
             assert_eq!(outcome.removed_paths, vec![tmp.path().join("Doc/.gitkeep")]);
         }
 
@@ -2241,12 +2241,12 @@ async fn df_251_moves_renames_and_conversions_rewrite_and_rebase_definitions() {
     let read = |path: &str| fs::read_to_string(root.join(path)).unwrap();
 
     // The moved source rebases its definition like its inline link.
-    super::ops::move_entry(space, "docs/inner.md", "", Some(space), runtime(&state))
+    super::ops::move_page(space, "docs/inner.md", "", Some(space), runtime(&state))
         .await
         .unwrap();
     assert_eq!(read("inner.md"), "[x](Plan.md)\n\n[r]: Plan.md\n");
 
-    super::ops::move_entry(space, "Plan.md", "notes", Some(space), runtime(&state))
+    super::ops::move_page(space, "Plan.md", "notes", Some(space), runtime(&state))
         .await
         .unwrap();
     assert_eq!(
@@ -2280,7 +2280,7 @@ async fn df_251_moves_renames_and_conversions_rewrite_and_rebase_definitions() {
 
     // A target inside the moved subtree follows it, one outside keeps its
     // absolute path.
-    super::ops::move_entry(space, "Old Notes", "tasks", Some(space), runtime(&state))
+    super::ops::move_page(space, "Old Notes", "tasks", Some(space), runtime(&state))
         .await
         .unwrap();
     assert_eq!(
@@ -2364,7 +2364,7 @@ async fn df_251_a_failed_step_restores_the_sources_with_rewritten_definitions() 
                     .await
                     .map(|_| ()),
                 Some(to_parent) => {
-                    super::move_entry(space, from, to_parent, Some(space), runtime(&state))
+                    super::move_page(space, from, to_parent, Some(space), runtime(&state))
                         .await
                         .map(|_| ())
                 }

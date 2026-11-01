@@ -433,7 +433,7 @@ mod tests {
         let path = project.join("note.md");
         fs::write(&path, "[old](old.md)").unwrap();
         let state = IndexState::new();
-        update::update_entry(&state, project, &path).await.unwrap();
+        update::update_page(&state, project, &path).await.unwrap();
         let pool = state
             .existing_pool(&IndexKey::Root(project.to_path_buf()))
             .await
@@ -442,7 +442,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        update::update_entry(&state, project, &path).await.unwrap();
+        update::update_page(&state, project, &path).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT checked_at FROM knowledge_manifest")
                 .fetch_one(&pool)
@@ -451,7 +451,7 @@ mod tests {
             "sentinel"
         );
         fs::write(&path, "[new](new.md)").unwrap();
-        update::update_entry(&state, project, &path).await.unwrap();
+        update::update_page(&state, project, &path).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT target_url FROM knowledge_links")
                 .fetch_one(&pool)
@@ -460,7 +460,7 @@ mod tests {
             "new.md"
         );
         fs::remove_file(&path).unwrap();
-        update::delete_entry(&state, project, &path).await.unwrap();
+        update::delete_page(&state, project, &path).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM knowledge_documents")
                 .fetch_one(&pool)
@@ -680,9 +680,7 @@ mod tests {
             .unwrap();
         full_reindex(&pool, project, &[]).await.unwrap();
         fs::write(&readme, "# Tasks\nNew body").unwrap();
-        update::update_entry(&state, project, &readme)
-            .await
-            .unwrap();
+        update::update_page(&state, project, &readme).await.unwrap();
         let fragment: String =
             sqlx::query_scalar("SELECT text FROM knowledge_fragments WHERE source_path='tasks'")
                 .fetch_one(&pool)

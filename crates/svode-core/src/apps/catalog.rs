@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::content_tree::ContentTreeError;
 use crate::content_tree::app_owners::{app_owner_sources, owner_readme_path};
 use crate::page::PageError;
-use crate::page::entry::{self, EntryMeta, EntryWarning};
+use crate::page::store::{self, PageMeta, PageWarning};
 
 use super::manifest::{
     AppManifestDiagnostic, AppManifestError, AppRuntimeType, ValidatedRuntime,
@@ -65,11 +65,11 @@ pub struct AppReadme {
     /// Path relative to the Space.
     pub path: String,
     /// Frontmatter of a readable README.
-    pub meta: Option<EntryMeta>,
+    pub meta: Option<PageMeta>,
     /// Body of a readable README, cut at [`APP_README_TEXT_LIMIT_BYTES`].
     pub body: Option<String>,
     pub truncated: bool,
-    pub warnings: Vec<EntryWarning>,
+    pub warnings: Vec<PageWarning>,
     /// Why the README could not be read.
     pub diagnostic: Option<AppReadmeDiagnostic>,
 }
@@ -145,7 +145,7 @@ pub fn describe_app(space: &Path, owner_path: &str) -> Result<AppDescription, Ap
 }
 
 fn read_readme(space: &Path, path: String) -> AppReadme {
-    match entry::read(&space.to_string_lossy(), &path) {
+    match store::read(&space.to_string_lossy(), &path) {
         Ok(source) => {
             let (body, truncated) = cut(source.body, APP_README_TEXT_LIMIT_BYTES);
             AppReadme {
@@ -345,7 +345,7 @@ mod tests {
         assert!(body.starts_with(&text));
         // The full text stays readable on the same path.
         assert_eq!(
-            entry::read(&space.to_string_lossy(), &readme.path)
+            store::read(&space.to_string_lossy(), &readme.path)
                 .unwrap()
                 .body,
             body

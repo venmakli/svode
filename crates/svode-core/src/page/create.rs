@@ -7,7 +7,7 @@ use crate::index::state::IndexRuntimeState;
 use crate::index::update::IndexUpdateState;
 use crate::page::PageError;
 use crate::page::dates::GitDateExecutor;
-use crate::page::entry::{self, EntryWarning};
+use crate::page::store::{self, PageWarning};
 use crate::page::write::SourceSnapshot;
 
 pub struct PageCreate {
@@ -17,7 +17,7 @@ pub struct PageCreate {
     pub body: Option<String>,
     pub icon: Option<String>,
     pub description: Option<String>,
-    pub cover: Option<entry::Cover>,
+    pub cover: Option<store::Cover>,
     pub properties: Option<IndexMap<String, serde_json::Value>>,
     pub contextual_defaults: bool,
     pub allocate_unique_title: bool,
@@ -27,7 +27,7 @@ pub struct PageCreate {
 }
 
 pub struct PageCreateOutcome {
-    pub page: entry::Entry,
+    pub page: store::Page,
     pub changed_paths: Vec<PathBuf>,
 }
 
@@ -49,7 +49,7 @@ where
 {
     create_with_source_names(
         request,
-        entry::SourceNames::File,
+        store::SourceNames::File,
         state,
         updates,
         git_dates,
@@ -61,7 +61,7 @@ where
 /// [`create`] whose source filename also keeps the other `names` free.
 pub(crate) async fn create_with_source_names<E, F, Fut, Err>(
     request: PageCreate,
-    names: entry::SourceNames,
+    names: store::SourceNames,
     state: &IndexRuntimeState,
     updates: &IndexUpdateState,
     git_dates: Option<&E>,
@@ -99,7 +99,7 @@ where
 
 async fn create_page<E, F, Fut>(
     request: PageCreate,
-    names: entry::SourceNames,
+    names: store::SourceNames,
     state: &IndexRuntimeState,
     updates: &IndexUpdateState,
     git_dates: Option<&E>,
@@ -138,15 +138,15 @@ where
         }
     }
 
-    let mut candidate = entry::EntryMeta::new_persisted(request.title.clone());
+    let mut candidate = store::PageMeta::new_persisted(request.title.clone());
     if let Some(icon) = request.icon.clone() {
-        entry::apply_entry_field_update(&mut candidate, "icon", icon.into())?;
+        store::apply_item_field_update(&mut candidate, "icon", icon.into())?;
     }
     if let Some(description) = request.description.clone() {
-        entry::apply_entry_field_update(&mut candidate, "description", description.into())?;
+        store::apply_item_field_update(&mut candidate, "description", description.into())?;
     }
     if let Some(cover) = request.cover.clone() {
-        entry::apply_entry_field_update(&mut candidate, "cover", serde_json::to_value(cover)?)?;
+        store::apply_item_field_update(&mut candidate, "cover", serde_json::to_value(cover)?)?;
     }
 
     let schema_root = collections::resolve_collection_schema_result(&request.space, &probe)?
@@ -155,7 +155,7 @@ where
         Path::new(&request.space).join(".svode/order.json"),
         PathBuf::from(&request.space),
     ];
-    planned_paths.extend(collections::unique_id_mutation_paths_for_entry(
+    planned_paths.extend(collections::unique_id_mutation_paths_for_item(
         &request.space,
         &probe,
     )?);
@@ -196,12 +196,12 @@ where
         if request.contextual_defaults {
             continue;
         }
-        collections::ensure_entry_field_writable(&request.space, &probe, field)?;
+        collections::ensure_item_field_writable(&request.space, &probe, field)?;
         let yaml = serde_norway::to_value(value)
             .map_err(|error| PageError::General(format!("invalid property '{field}': {error}")))?;
         let normalized =
-            collections::normalize_entry_field_value(&request.space, &probe, field, yaml)?;
-        collections::validate_entry_field_value(&request.space, &probe, field, &normalized)?;
+            collections::normalize_item_field_value(&request.space, &probe, field, yaml)?;
+        collections::validate_item_field_value(&request.space, &probe, field, &normalized)?;
         if let Some(collection) = schema_root.as_deref() {
             planned_paths.extend(
                 collections::relation_field_target_mutation_paths_for_value_with_project(
@@ -239,23 +239,23 @@ where
         async {
             if let Some((old, new_parent)) = parent_conversion.as_ref() {
                 let root = Path::new(&request.space);
-                let converted =
-                    match entry::convert_entry_to_folder(root, old, backlinks.as_deref()) {
-                        Ok(converted) => converted,
-                        Err(error) => {
-                            // A directory that already has the name is not this create's.
-                            if !matches!(error, PageError::FileAlreadyExists(_)) {
-                                snapshot.track_created_dir(root.join(new_parent));
-                            }
-                            // The snapshot holds the leaf, its README path and the folder,
-                            // so its rollback restores what the conversion left changed
-                            // and reports only what stays changed.
-                            return Err(match error {
-                                PageError::Recovery { cause, .. } => PageError::General(cause),
-                                error => error,
-                            });
+                let converted = match store::convert_page_to_folder(root, old, backlinks.as_deref())
+                {
+                    Ok(converted) => converted,
+                    Err(error) => {
+                        // A directory that already has the name is not this create's.
+                        if !matches!(error, PageError::FileAlreadyExists(_)) {
+                            snapshot.track_created_dir(root.join(new_parent));
                         }
-                    };
+                        // The snapshot holds the leaf, its README path and the folder,
+                        // so its rollback restores what the conversion left changed
+                        // and reports only what stays changed.
+                        return Err(match error {
+                            PageError::Recovery { cause, .. } => PageError::General(cause),
+                            error => error,
+                        });
+                    }
+                };
                 if converted.path != format!("{new_parent}/README.md") {
                     return Err(PageError::General(
                         "parent Page conversion returned an unexpected path".into(),
@@ -264,7 +264,7 @@ where
                 snapshot.track_created(Path::new(&request.space).join(&converted.path));
                 snapshot.track_created_dir(Path::new(&request.space).join(new_parent));
             }
-            let created = entry::create_source_with_options(
+            let created = store::create_source_with_options(
                 &request.space,
                 parent.as_deref(),
                 &request.title,
@@ -295,7 +295,7 @@ where
                 &page.path,
                 &mut initial_metadata,
             )?;
-            entry::write_under_name_lock(
+            store::write_under_name_lock(
                 &request.space,
                 &page.path,
                 &page.body,
@@ -309,7 +309,7 @@ where
                 request.project.as_deref(),
                 None,
             )?;
-            page = entry::read(&request.space, &page.path)?;
+            page = store::read(&request.space, &page.path)?;
 
             let mut fields = std::collections::BTreeMap::new();
             if !request.contextual_defaults {
@@ -325,15 +325,15 @@ where
                 fields.insert("cover".to_string(), serde_json::to_value(cover)?);
             }
             if !fields.is_empty() {
-                let batch = collections::prepare_entry_field_batch(
+                let batch = collections::prepare_item_field_batch(
                     &request.space,
                     request.project.as_deref(),
                     &page.path,
                     &fields,
-                    collections::EntryFieldBatchIntent::Literal,
+                    collections::ItemFieldBatchIntent::Literal,
                 )?;
-                collections::apply_prepared_entry_field_relations(&batch)?;
-                entry::write_under_name_lock(
+                collections::apply_prepared_item_field_relations(&batch)?;
+                store::write_under_name_lock(
                     &request.space,
                     &page.path,
                     &page.body,
@@ -347,11 +347,11 @@ where
                     request.project.as_deref(),
                     None,
                 )?;
-                page = entry::read(&request.space, &page.path)?;
+                page = store::read(&request.space, &page.path)?;
             }
             checkpoint("properties")?;
             if let Some(body) = request.body.as_deref() {
-                page = entry::replace_created_body(&request.space, &page.path, body)?;
+                page = store::replace_created_body(&request.space, &page.path, body)?;
             }
             checkpoint("body")?;
             page.warnings.extend(warnings);
@@ -398,18 +398,18 @@ where
         Vec::new()
     };
     if !projection_errors.is_empty() {
-        page.warnings.push(EntryWarning {
+        page.warnings.push(PageWarning {
             kind: "projection_update_failed".into(),
             message: format!(
                 "Page was created, but derived projection needs refresh: {}",
                 projection_errors.join("; ")
             ),
             path: Some(page.path.clone()),
-            ..EntryWarning::default()
+            ..PageWarning::default()
         });
     }
     let warnings = page.warnings;
-    page = entry::read(&request.space, &page.path)?;
+    page = store::read(&request.space, &page.path)?;
     page.warnings = warnings;
     Ok(PageCreateOutcome {
         page,

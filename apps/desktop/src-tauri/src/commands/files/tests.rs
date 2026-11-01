@@ -22,7 +22,7 @@ async fn update_title(
     project: Option<&Path>,
     index_state: &IndexState,
     nonces: &WriteNonceRegistry,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let values =
         std::collections::BTreeMap::from([("title".to_string(), serde_json::json!(title))]);
     let space_str = space.to_string_lossy().into_owned();
@@ -33,7 +33,7 @@ async fn update_title(
             path,
             project: project.as_deref(),
             values: &values,
-            intent: EntryFieldBatchIntent::Literal,
+            intent: ItemFieldBatchIntent::Literal,
         },
         index_state,
         updates(),
@@ -282,9 +282,9 @@ async fn page_read_dates_without_registered_pool_preserve_all_native_roles() {
     ] {
         let source = "Body without frontmatter\n";
         fs::write(tmp.path().join(path), source).unwrap();
-        let mut page = entry::read(space, path).unwrap();
+        let mut page = store::read(space, path).unwrap();
         let expected = serde_json::to_value(&page).unwrap();
-        apply_indexed_entry_dates(&state, space, path, &mut page).await;
+        apply_indexed_page_dates(&state, space, path, &mut page).await;
         assert_eq!(serde_json::to_value(page).unwrap(), expected);
         assert_eq!(fs::read_to_string(tmp.path().join(path)).unwrap(), source);
     }
@@ -343,7 +343,7 @@ async fn delete_for_test(tmp: &TempDir, path: &str) -> crate::structure::DeleteO
         None,
     )
     .await
-    .expect("delete entry")
+    .expect("delete page")
 }
 
 async fn indexed_pool(state: &IndexState, space: &Path) -> SqlitePool {
@@ -354,7 +354,7 @@ async fn indexed_pool(state: &IndexState, space: &Path) -> SqlitePool {
 }
 
 async fn indexed_paths(pool: &SqlitePool) -> Vec<String> {
-    sqlx::query_scalar::<_, String>("SELECT file_path FROM entries ORDER BY file_path")
+    sqlx::query_scalar::<_, String>("SELECT file_path FROM pages ORDER BY file_path")
         .fetch_all(pool)
         .await
         .expect("indexed paths")
@@ -390,7 +390,7 @@ fn targeted_markdown_collection_uses_tree_ignore_policy() {
 }
 
 #[tokio::test]
-async fn shared_delete_entry_deletes_document_and_reports_changed_paths() {
+async fn shared_delete_page_deletes_document_and_reports_changed_paths() {
     let tmp = TempDir::new().unwrap();
     std::fs::write(tmp.path().join("Note.md"), "note").unwrap();
 
@@ -403,13 +403,13 @@ async fn shared_delete_entry_deletes_document_and_reports_changed_paths() {
 }
 
 #[tokio::test]
-async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
+async fn shared_delete_page_removes_targeted_index_rows_and_fts() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
     let state = IndexState::new();
     write_tree_config(&tmp, vec![], vec![]);
     std::fs::write(space.join("Note.md"), "search-token body").unwrap();
-    index::update::update_entry(&state, space, &space.join("Note.md"))
+    index::update::update_page(&state, space, &space.join("Note.md"))
         .await
         .unwrap();
     let pool = indexed_pool(&state, space).await;
@@ -423,7 +423,7 @@ async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
         None,
     )
     .await
-    .expect("delete entry");
+    .expect("delete page");
 
     assert_eq!(result.deleted_paths, vec!["Note.md".to_string()]);
     assert!(indexed_paths(&pool).await.is_empty());
@@ -434,7 +434,7 @@ async fn shared_delete_entry_removes_targeted_index_rows_and_fts() {
 }
 
 #[tokio::test]
-async fn shared_delete_entry_deletes_collection_entry_without_schema() {
+async fn shared_delete_page_deletes_collection_item_without_schema() {
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("Tasks")).unwrap();
     std::fs::write(
@@ -454,7 +454,7 @@ async fn shared_delete_entry_deletes_collection_entry_without_schema() {
 }
 
 #[tokio::test]
-async fn shared_delete_entry_deletes_folder_document_from_readme_path() {
+async fn shared_delete_page_deletes_folder_document_from_readme_path() {
     let tmp = TempDir::new().unwrap();
     std::fs::create_dir_all(tmp.path().join("Folder")).unwrap();
     std::fs::write(tmp.path().join("Folder").join("README.md"), "folder").unwrap();
@@ -492,12 +492,12 @@ async fn targeted_convert_to_folder_replaces_stale_leaf_index_row() {
     let space = tmp.path();
     let state = IndexState::new();
     std::fs::write(space.join("Topic.md"), "leaf-body-token").unwrap();
-    index::update::update_entry(&state, space, &space.join("Topic.md"))
+    index::update::update_page(&state, space, &space.join("Topic.md"))
         .await
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let entry = entry::convert_entry_to_folder(space, "Topic.md", None).unwrap();
+    let page = store::convert_page_to_folder(space, "Topic.md", None).unwrap();
     crate::index::update::publish_paths_or_repair(
         &state,
         updates(),
@@ -505,14 +505,14 @@ async fn targeted_convert_to_folder_replaces_stale_leaf_index_row() {
         space.to_str().unwrap(),
         ["Topic.md".to_string()]
             .iter()
-            .chain(std::slice::from_ref(&entry.path))
+            .chain(std::slice::from_ref(&page.path))
             .map(|path| space.join(path))
             .collect(),
-        "convert_entry_to_folder",
+        "convert_page_to_folder",
     )
     .await;
 
-    assert_eq!(entry.path, "Topic/README.md");
+    assert_eq!(page.path, "Topic/README.md");
     assert_eq!(
         indexed_paths(&pool).await,
         vec!["Topic/README.md".to_string()]
@@ -533,12 +533,12 @@ async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
     let state = IndexState::new();
     std::fs::create_dir_all(space.join("Topic")).unwrap();
     std::fs::write(space.join("Topic").join("README.md"), "readme-body-token").unwrap();
-    index::update::update_entry(&state, space, &space.join("Topic").join("README.md"))
+    index::update::update_page(&state, space, &space.join("Topic").join("README.md"))
         .await
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let (entry, _) = entry::convert_entry_to_leaf(space, "Topic/README.md", None).unwrap();
+    let (page, _) = store::convert_page_to_leaf(space, "Topic/README.md", None).unwrap();
     crate::index::update::publish_paths_or_repair(
         &state,
         updates(),
@@ -546,14 +546,14 @@ async fn targeted_convert_to_leaf_replaces_stale_readme_index_row() {
         space.to_str().unwrap(),
         ["Topic/README.md".to_string()]
             .iter()
-            .chain(std::slice::from_ref(&entry.path))
+            .chain(std::slice::from_ref(&page.path))
             .map(|path| space.join(path))
             .collect(),
-        "convert_entry_to_leaf",
+        "convert_page_to_leaf",
     )
     .await;
 
-    assert_eq!(entry.path, "Topic.md");
+    assert_eq!(page.path, "Topic.md");
     assert_eq!(indexed_paths(&pool).await, vec!["Topic.md".to_string()]);
     assert!(
         svode_core::index::search::search_fts(&pool, "readme-body-token", None, None, 10)
@@ -574,12 +574,12 @@ async fn targeted_duplicate_indexes_created_tree_only() {
         "---\ntitle: Original\n---\noriginal-token",
     )
     .unwrap();
-    index::update::update_entry(&state, space, &space.join("Original.md"))
+    index::update::update_page(&state, space, &space.join("Original.md"))
         .await
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
-    let entry = crate::structure::duplicate(
+    let page = crate::structure::duplicate(
         space.to_str().unwrap(),
         "Original.md",
         Some(space.to_str().unwrap()),
@@ -590,7 +590,7 @@ async fn targeted_duplicate_indexes_created_tree_only() {
     .await
     .unwrap();
 
-    assert_eq!(entry.path, "Original (copy).md");
+    assert_eq!(page.path, "Original (copy).md");
     assert_eq!(
         indexed_paths(&pool).await,
         vec!["Original (copy).md".to_string(), "Original.md".to_string()]
@@ -664,7 +664,7 @@ async fn title_update_renames_collection_tree_and_rebases_indexes_and_backlinks(
         ]
     );
     let item_flags: (Option<String>, i64, i64) = sqlx::query_as(
-        "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
+        "SELECT collection_root_path, in_collection, is_item_head FROM pages WHERE file_path = ?",
     )
     .bind("Renamed collection/Item.md")
     .fetch_one(&pool)
@@ -775,7 +775,7 @@ async fn title_update_ignores_unrelated_broken_schemas_for_standalone_pages() {
                     backlinks.update_file(root, "Source.md").unwrap();
                 }
                 let nonces = WriteNonceRegistry::new();
-                let before = entry::read(root.to_str().unwrap(), path).unwrap();
+                let before = store::read(root.to_str().unwrap(), path).unwrap();
                 let updated = update_title(
                     root,
                     path,
@@ -887,30 +887,30 @@ async fn targeted_nested_collection_convert_recomputes_descendant_flags() {
     std::fs::create_dir_all(space.join("Tasks")).unwrap();
     std::fs::write(space.join("Tasks").join("README.md"), "Tasks").unwrap();
     std::fs::write(space.join("Tasks").join("Item.md"), "item-token").unwrap();
-    index::update::update_entry(&state, space, &space.join("Tasks").join("Item.md"))
+    index::update::update_page(&state, space, &space.join("Tasks").join("Item.md"))
         .await
         .unwrap();
     let pool = indexed_pool(&state, space).await;
 
     let collection_path =
-        entry::convert_entry_to_nested_collection(space, "Tasks/README.md").unwrap();
+        store::convert_page_to_nested_collection(space, "Tasks/README.md").unwrap();
     crate::index::update::publish_tree_or_repair(
         &state,
         updates(),
         Some(space.to_str().unwrap()),
         space.to_str().unwrap(),
         &collection_path,
-        "convert_entry_to_nested_collection",
+        "convert_page_to_nested_collection",
     )
     .await;
 
     let flags: (Option<String>, i64, i64) = sqlx::query_as(
-            "SELECT collection_root_path, in_collection, is_entry_head FROM entries WHERE file_path = ?",
-        )
-        .bind("Tasks/Item.md")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        "SELECT collection_root_path, in_collection, is_item_head FROM pages WHERE file_path = ?",
+    )
+    .bind("Tasks/Item.md")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(flags, (Some("Tasks".to_string()), 1, 1));
 }
 
@@ -925,10 +925,10 @@ async fn shared_convert_to_collection_preserves_leaf_and_refreshes_index_tree() 
     )
     .unwrap();
     std::fs::write(space.join("Reference.md"), "[Topic](Topic.md)").unwrap();
-    index::update::update_entry(&state, space, &space.join("Topic.md"))
+    index::update::update_page(&state, space, &space.join("Topic.md"))
         .await
         .unwrap();
-    index::update::update_entry(&state, space, &space.join("Reference.md"))
+    index::update::update_page(&state, space, &space.join("Reference.md"))
         .await
         .unwrap();
     let pool = indexed_pool(&state, space).await;
@@ -948,10 +948,10 @@ async fn shared_convert_to_collection_preserves_leaf_and_refreshes_index_tree() 
     assert_eq!(result.collection_path, "Topic");
     assert_eq!(result.readme_path, "Topic/README.md");
     assert_eq!(result.schema_path, "Topic/schema.yaml");
-    assert_eq!(result.entry.body, "leaf-body-token");
+    assert_eq!(result.page.body, "leaf-body-token");
     assert_eq!(
         result
-            .entry
+            .page
             .meta
             .extra
             .get("status")
@@ -1013,7 +1013,7 @@ async fn shared_convert_to_collection_supports_folder_document_and_bare_folder()
 
     assert_eq!(folder_result.collection_path, "Folder");
     assert_eq!(folder_result.readme_path, "Folder/README.md");
-    assert_eq!(folder_result.entry.body, "folder-document-token");
+    assert_eq!(folder_result.page.body, "folder-document-token");
     assert!(space.join("Folder").join("schema.yaml").exists());
     assert_eq!(bare_result.collection_path, "Bare");
     assert_eq!(bare_result.readme_path, "Bare/README.md");
@@ -1071,7 +1071,7 @@ async fn shared_convert_to_collection_preserves_leaf_when_target_folder_exists()
 }
 
 #[tokio::test]
-async fn shared_delete_entry_returns_error_for_missing_path() {
+async fn shared_delete_page_returns_error_for_missing_path() {
     let tmp = TempDir::new().unwrap();
     let index_state = IndexState::new();
 
@@ -1089,7 +1089,7 @@ async fn shared_delete_entry_returns_error_for_missing_path() {
 }
 
 #[test]
-fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
+fn shared_reorder_pages_handles_semantic_paths_and_preserves_other_keys() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
     std::fs::write(space.join("note.md"), "note").unwrap();
@@ -1169,7 +1169,7 @@ fn shared_reorder_entries_handles_semantic_paths_and_preserves_other_keys() {
 }
 
 #[test]
-fn shared_reorder_entries_rejects_invalid_permutation_without_writing() {
+fn shared_reorder_pages_rejects_invalid_permutation_without_writing() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
     std::fs::write(space.join("a.md"), "a").unwrap();
@@ -1299,7 +1299,7 @@ async fn shared_move_nest_and_unnest_use_the_structural_owner() {
     let state = IndexState::new();
 
     let moved =
-        crate::structure::move_entry(space, "Page.md", "target", None, &state, updates(), None)
+        crate::structure::move_page(space, "Page.md", "target", None, &state, updates(), None)
             .await
             .unwrap();
     assert_eq!(moved, "target/Page.md");
@@ -1376,7 +1376,7 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
         assert_eq!(updated.path, "Tasks/Новое имя.md");
         assert!(updated.warnings.is_empty());
         assert_eq!(std::fs::read_to_string(&child_schema).unwrap(), schema);
-        let row = entry::read(child.to_str().unwrap(), "Decisions/Decision.md").unwrap();
+        let row = store::read(child.to_str().unwrap(), "Decisions/Decision.md").unwrap();
         let expected = if with_relation {
             "Новое имя.md"
         } else {
@@ -1390,7 +1390,7 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
 }
 
 #[tokio::test]
-async fn write_entry_keeps_the_path_of_a_page_with_a_deferred_filename() {
+async fn write_page_keeps_the_path_of_a_page_with_a_deferred_filename() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
     write_tree_config(&tmp, vec![], vec![]);
@@ -1418,14 +1418,14 @@ async fn write_entry_keeps_the_path_of_a_page_with_a_deferred_filename() {
     assert_eq!(renamed.meta.title, "New name");
     std::fs::remove_file(space.join("New name.md")).unwrap();
 
-    let version = entry::read(&space_str, "Old name.md")
+    let version = store::read(&space_str, "Old name.md")
         .unwrap()
         .source_version
         .unwrap()
         .as_str()
         .to_string();
     let saved = write_page_body_shared(
-        WriteEntryAuthorization::Preauthorized,
+        WritePageAuthorization::Preauthorized,
         space_str.clone(),
         "Old name.md".into(),
         "Edited\n".into(),
@@ -1441,25 +1441,25 @@ async fn write_entry_keeps_the_path_of_a_page_with_a_deferred_filename() {
     assert_eq!(saved.new_path, None);
     assert!(saved.warnings.is_empty());
     assert!(!space.join("New name.md").exists());
-    let page = entry::read(&space_str, "Old name.md").unwrap();
+    let page = store::read(&space_str, "Old name.md").unwrap();
     assert_eq!(page.meta.title, "New name");
     assert_eq!(page.body, "Edited\n");
 }
 
 #[tokio::test]
-async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_result() {
+async fn write_page_passes_the_source_version_and_returns_the_version_of_its_result() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
     write_tree_config(&tmp, vec![], vec![]);
     std::fs::create_dir_all(space.join(".git")).unwrap();
     std::fs::write(space.join("Page.md"), "---\ntitle: Page\n---\nLoaded\n").unwrap();
     let space_str = space.to_string_lossy().into_owned();
-    let loaded = entry::read(&space_str, "Page.md").unwrap();
+    let loaded = store::read(&space_str, "Page.md").unwrap();
     let loaded = loaded.source_version.unwrap().as_str().to_string();
     let (index_state, nonces) = (IndexState::new(), WriteNonceRegistry::new());
     let save = |content: &'static str, version: Option<String>| {
         write_page_body_shared(
-            WriteEntryAuthorization::Preauthorized,
+            WritePageAuthorization::Preauthorized,
             space_str.clone(),
             "Page.md".into(),
             content.into(),
@@ -1472,9 +1472,9 @@ async fn write_entry_passes_the_source_version_and_returns_the_version_of_its_re
     };
 
     let saved = save("Draft\n", Some(loaded.clone())).await.unwrap();
-    // The editor reads its baseline next to the entry fields.
+    // The editor reads its baseline next to the page fields.
     let read =
-        serde_json::to_value(EntryRead::from(entry::read(&space_str, "Page.md").unwrap())).unwrap();
+        serde_json::to_value(PageRead::from(store::read(&space_str, "Page.md").unwrap())).unwrap();
     assert_eq!(read["body"], "Draft\n");
     assert_eq!(read["meta"]["title"], "Page");
     assert_eq!(
@@ -1553,7 +1553,7 @@ async fn collection_item_reads_carry_the_item_with_the_same_unique_id_number() {
     ] {
         fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
         fs::write(root.join(path), content).unwrap();
-        index::update::update_entry(&state, root, &root.join(path))
+        index::update::update_page(&state, root, &root.join(path))
             .await
             .unwrap();
     }
@@ -1563,7 +1563,7 @@ async fn collection_item_reads_carry_the_item_with_the_same_unique_id_number() {
     let schema = |path: &'static str| {
         let state = &state;
         async move {
-            let read = entries::page_schema_read(state, space, path)
+            let read = pages::page_schema_read(state, space, path)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1587,7 +1587,7 @@ async fn collection_item_reads_carry_the_item_with_the_same_unique_id_number() {
         .await
         .unwrap();
     let actors = crate::actors::ActorCatalogState::new();
-    let items = read::entries_for_view(&state, &actors, None, &target, "tasks", "Table", None)
+    let items = read::items_for_view(&state, &actors, None, &target, "tasks", "Table", None)
         .await
         .unwrap();
     let items = serde_json::to_value(items).unwrap();

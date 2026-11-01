@@ -600,7 +600,7 @@ async fn managed_mutations_publish_into_an_existing_session_only() {
         .await
         .unwrap();
     let fields: String =
-        sqlx::query_scalar("SELECT fields FROM entries WHERE file_path = 'tasks/alpha.md'")
+        sqlx::query_scalar("SELECT fields FROM pages WHERE file_path = 'tasks/alpha.md'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -634,7 +634,7 @@ async fn source_reads_take_index_dates_only_from_an_existing_session() {
         .existing_pool(&root(project))
         .await
         .unwrap();
-    sqlx::query("UPDATE entries SET updated = 'indexed-updated' WHERE file_path = 'notes.md'")
+    sqlx::query("UPDATE pages SET updated = 'indexed-updated' WHERE file_path = 'notes.md'")
         .execute(&pool)
         .await
         .unwrap();

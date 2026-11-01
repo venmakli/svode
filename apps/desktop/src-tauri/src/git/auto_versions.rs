@@ -457,14 +457,14 @@ mod tests {
             other => panic!("versions expected, got {other:?}"),
         };
 
-        // The page and its order entry as the create command writes them,
+        // The page and its order key as the create command writes them,
         // registered the way it registers them.
         std::fs::write(root.join("Untitled.md"), "---\ntitle: Untitled\n---\n").unwrap();
         std::fs::create_dir_all(root.join(".svode")).unwrap();
         std::fs::write(root.join(".svode/order.json"), r#"{".":["Untitled"]}"#).unwrap();
         let space = root.to_str().unwrap();
         let service = AutocommitService::new(runtime.clone(), host.clone());
-        crate::commands::files::schedule_created_entry(&service, Some(space), space, "Untitled.md");
+        crate::commands::files::schedule_created_page(&service, Some(space), space, "Untitled.md");
 
         // The operation plans the check a second later; it commits nothing
         // and plans the next one at the pause.

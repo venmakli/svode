@@ -19,8 +19,8 @@ use super::state::GitRuntime;
 use crate::index::IndexKey;
 use crate::index::state::IndexRuntimeState;
 use crate::page::dates::SystemGitDateExecutor;
-use crate::page::entry;
 use crate::page::nonce::WriteNonceRegistry;
+use crate::page::store;
 use crate::page::test_support::{runtime as page_runtime, scaffold_space, update_state};
 use crate::page::write::{PageWrite, write as write_page};
 use crate::structure::{self, StructuralCommitSink, StructureRuntime};
@@ -125,7 +125,7 @@ impl Fixture {
         body: Option<&str>,
         title: Option<&str>,
     ) -> Result<String, String> {
-        let current = entry::read(self.space(), path).map_err(|error| error.to_string())?;
+        let current = store::read(self.space(), path).map_err(|error| error.to_string())?;
         let outcome = write_page(
             PageWrite {
                 space: self.space(),
@@ -351,7 +351,7 @@ async fn rename_move_and_folder_relocations_commit_from_the_final_folder() {
     .await;
     let root = fixture.space();
     assert_eq!(fixture.rename("Page.md", "Plan").await, "Plan.md");
-    let moved = structure::move_entry(root, "Plan.md", "Area", Some(root), fixture.structure())
+    let moved = structure::move_page(root, "Plan.md", "Area", Some(root), fixture.structure())
         .await
         .unwrap();
     assert_eq!(moved, "Area/Plan.md");
@@ -626,7 +626,7 @@ async fn a_scoped_save_after_a_structural_rename_or_move_leaves_a_clean_status()
     );
     assert!(fixture.pending().is_empty());
 
-    let moved = structure::move_entry(
+    let moved = structure::move_page(
         root,
         "Zone/Tasks/Item.md",
         "Zone/Tasks/Sub",
@@ -791,7 +791,7 @@ async fn unique_id_allocated_by_move_and_duplicate_stays_pending_until_a_manual_
     let root = fixture.space();
     let before = fixture.head().await;
 
-    let moved = structure::move_entry(root, "Loose.md", "Tasks", Some(root), runtime())
+    let moved = structure::move_page(root, "Loose.md", "Tasks", Some(root), runtime())
         .await
         .unwrap();
     let duplicated = structure::duplicate(root, "Tasks/Item.md", Some(root), runtime())

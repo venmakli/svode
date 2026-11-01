@@ -893,14 +893,14 @@ fn a_change_in_a_child_space_publishes_into_the_index_of_that_space() {
     use sqlx::Row;
     let child = runtime.block_on(rows(
         &root.join("child/.svode/index.db"),
-        "SELECT fields FROM entries WHERE file_path = 'bugs/one.md'",
+        "SELECT fields FROM pages WHERE file_path = 'bugs/one.md'",
     ));
     assert_eq!(child.len(), 1);
     assert!(child[0].get::<String, _>("fields").contains("Closed"));
     if root.join(".svode/index.db").exists() {
         let leaked = runtime.block_on(rows(
             &root.join(".svode/index.db"),
-            "SELECT file_path FROM entries WHERE file_path LIKE 'child/%'",
+            "SELECT file_path FROM pages WHERE file_path LIKE 'child/%'",
         ));
         assert!(leaked.is_empty(), "the root index holds no child source");
     }

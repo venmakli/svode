@@ -473,7 +473,7 @@ pub fn prepare_assign_unique_id(
     space: &str,
     file_path: &str,
 ) -> Result<PreparedCollectionMutation<()>, CollectionError> {
-    let paths = unique_id_mutation_paths_for_entry(space, file_path)?;
+    let paths = unique_id_mutation_paths_for_item(space, file_path)?;
     let space = space.to_string();
     let file_path = file_path.to_string();
     Ok(PreparedCollectionMutation::new(paths, move || {

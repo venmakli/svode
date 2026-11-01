@@ -1686,11 +1686,11 @@ mod tests {
             description: None,
             enabled: Some(enabled),
             trigger: RoutineTrigger::Event {
-                event: CollectionEvent::EntryCreated,
+                event: CollectionEvent::ItemCreated,
                 match_: None,
             },
             action: RoutineAction::UpdateProperties {
-                target: RoutineActionTarget::TriggerEntry,
+                target: RoutineActionTarget::TriggerItem,
                 set: BTreeMap::from([("reviewed".into(), serde_json::Value::Bool(true))]),
             },
             body: "Managed by Svode.".into(),

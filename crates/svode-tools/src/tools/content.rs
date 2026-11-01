@@ -4,8 +4,8 @@ use serde::Deserialize;
 use serde_json::json;
 use svode_core::collections::engine;
 use svode_core::git::path::{RootMode, normalize_repo_relative};
-use svode_core::page::entry::{self, Entry};
 use svode_core::page::identity::ContentOwnerKind;
+use svode_core::page::store::{self, Page};
 use svode_core::page::{PageSourceError, ResolvedSpaceTarget, resolve_owned_page_target};
 
 use crate::args::{CollectionArgs, PathArgs, SpaceArgs, clamp_limit, offset};
@@ -168,14 +168,14 @@ async fn read_source(
     requested_space_id: Option<&str>,
     space: &str,
     path: &str,
-) -> Result<Entry, ToolError> {
+) -> Result<Page, ToolError> {
     let pool = host
         .index_pool(&index_key(target, requested_space_id), Path::new(space))
         .await;
     let Some(pool) = pool else {
-        return Ok(entry::read_with_git_dates(space, path).await?);
+        return Ok(store::read_with_git_dates(space, path).await?);
     };
-    let mut source = entry::read(space, path)?;
+    let mut source = store::read(space, path)?;
     if let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject) {
         svode_core::page::indexed_dates::apply_indexed_dates(&pool, &normalized, &mut source).await;
     }

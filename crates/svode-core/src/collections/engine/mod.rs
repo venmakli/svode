@@ -38,7 +38,7 @@ use crate::collections::traversal::collection_markdown_files;
 use crate::content_tree::child_folder_names;
 use crate::git::access::ensure_mutation_paths_were_authorized;
 use crate::page::ColorName;
-use crate::page::frontmatter::{self, EntryMeta, FrontmatterFields};
+use crate::page::frontmatter::{self, FrontmatterFields, PageMeta};
 
 const SCHEMA_FILE: &str = "schema.yaml";
 const RESERVED_FIELDS: &[&str] = &[
@@ -64,10 +64,10 @@ use actor_values::{actor_multiple, canonical_actor_email, is_actor_type, normali
 mod defaults;
 pub use defaults::{
     apply_contextual_defaults_for_path, apply_contextual_defaults_for_path_strict,
-    apply_schema_defaults_for_path, apply_schema_defaults_to_entry_tree, assign_unique_id,
-    assign_unique_id_to_meta_for_path, assign_unique_ids_to_entry_tree,
-    normalize_unique_id_counter, unique_id_mutation_paths_for_entry,
-    unique_id_mutation_paths_for_entry_tree, unique_id_schema_path_for_entry,
+    apply_schema_defaults_for_path, apply_schema_defaults_to_item_tree, assign_unique_id,
+    assign_unique_id_to_meta_for_path, assign_unique_ids_to_item_tree, normalize_unique_id_counter,
+    unique_id_mutation_paths_for_item, unique_id_mutation_paths_for_item_tree,
+    unique_id_schema_path_for_item,
 };
 use defaults::{dedupe_paths, materialize_unique_id_column};
 
@@ -89,8 +89,8 @@ use field_rules::{
     normalize_property_value_for_write, normalize_view,
 };
 pub use field_rules::{
-    ensure_entry_field_writable, normalize_entry_field_value, normalize_schema,
-    validate_entry_field_value, validate_schema,
+    ensure_item_field_writable, normalize_item_field_value, normalize_schema,
+    validate_item_field_value, validate_schema,
 };
 
 mod schema_mutations;
@@ -112,7 +112,7 @@ pub use templates::*;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EntrySchemaResponse {
+pub struct ItemSchemaResponse {
     pub schema: CollectionSchema,
     pub collection_root_path: String,
 }
@@ -248,10 +248,10 @@ pub fn resolve_collection_schema_result(
 pub fn schema_response(
     space: &str,
     file_path: &str,
-) -> Result<Option<EntrySchemaResponse>, CollectionError> {
+) -> Result<Option<ItemSchemaResponse>, CollectionError> {
     Ok(
         resolve_collection_schema_result(space, file_path)?.map(|(schema, root)| {
-            EntrySchemaResponse {
+            ItemSchemaResponse {
                 schema,
                 collection_root_path: rel_path_string(&root),
             }
@@ -983,14 +983,14 @@ fn detach_two_way_relation_with_project(
 }
 
 #[allow(dead_code)]
-pub fn cascade_clean_deleted_entries(
+pub fn cascade_clean_deleted_items(
     space: &str,
     deleted_paths: &[String],
 ) -> Result<Vec<PathBuf>, CollectionError> {
-    cascade_clean_deleted_entries_with_project(space, None, deleted_paths)
+    cascade_clean_deleted_items_with_project(space, None, deleted_paths)
 }
 
-pub fn cascade_clean_deleted_entries_with_project(
+pub fn cascade_clean_deleted_items_with_project(
     space: &str,
     project_path: Option<&str>,
     deleted_paths: &[String],
@@ -998,7 +998,7 @@ pub fn cascade_clean_deleted_entries_with_project(
     if deleted_paths.is_empty() {
         return Ok(Vec::new());
     }
-    let touched = cascade_clean_deleted_entries_mutation_paths_with_project(
+    let touched = cascade_clean_deleted_items_mutation_paths_with_project(
         space,
         project_path,
         deleted_paths,
@@ -1065,7 +1065,7 @@ pub fn cascade_clean_deleted_entries_with_project(
     Ok(changed)
 }
 
-pub fn cascade_clean_deleted_entries_mutation_paths_with_project(
+pub fn cascade_clean_deleted_items_mutation_paths_with_project(
     space: &str,
     project_path: Option<&str>,
     deleted_paths: &[String],
@@ -1119,7 +1119,7 @@ pub fn cascade_clean_deleted_entries_mutation_paths_with_project(
 }
 
 #[allow(dead_code)]
-fn cascade_clean_deleted_entries_current_scope(
+fn cascade_clean_deleted_items_current_scope(
     space: &str,
     deleted_paths: &[String],
 ) -> Result<Vec<PathBuf>, CollectionError> {
@@ -1923,13 +1923,13 @@ fn rewrite_relation_value_refs_for_target_space(
 
 /// Writes one relation field and its two-way reverse values as a single
 /// rollback scope. Returns `None` when the field is not a schema relation.
-pub fn update_relation_entry_field(
+pub fn update_relation_item_field(
     space: &str,
     project_path: Option<&str>,
     file_path: &str,
     field: &str,
     value: Value,
-) -> Result<Option<(EntryMeta, String)>, CollectionError> {
+) -> Result<Option<(PageMeta, String)>, CollectionError> {
     let Some((schema, collection_root)) = resolve_collection_schema_result(space, file_path)?
     else {
         return Ok(None);
@@ -2007,7 +2007,7 @@ pub fn update_relation_entry_field(
 }
 
 #[derive(Clone, Copy)]
-pub enum EntryFieldBatchIntent {
+pub enum ItemFieldBatchIntent {
     Literal,
     Routine,
 }
@@ -2030,15 +2030,15 @@ struct PreparedRelationField {
     mutation_paths: Vec<PathBuf>,
 }
 
-pub struct PreparedEntryFieldBatch {
-    metadata: EntryMeta,
+pub struct PreparedItemFieldBatch {
+    metadata: PageMeta,
     title: Option<String>,
     relation_updates: Vec<PreparedRelationFieldUpdate>,
     mutation_paths: Vec<PathBuf>,
 }
 
-impl PreparedEntryFieldBatch {
-    pub fn into_metadata(self) -> EntryMeta {
+impl PreparedItemFieldBatch {
+    pub fn into_metadata(self) -> PageMeta {
         self.metadata
     }
 
@@ -2051,13 +2051,13 @@ impl PreparedEntryFieldBatch {
     }
 }
 
-pub fn prepare_entry_field_batch(
+pub fn prepare_item_field_batch(
     space: &str,
     project_path: Option<&str>,
     file_path: &str,
     values: &std::collections::BTreeMap<String, serde_json::Value>,
-    intent: EntryFieldBatchIntent,
-) -> Result<PreparedEntryFieldBatch, CollectionError> {
+    intent: ItemFieldBatchIntent,
+) -> Result<PreparedItemFieldBatch, CollectionError> {
     let mut metadata = frontmatter::read_page_meta(Path::new(space), file_path)?;
     let mut title = None;
     let mut relation_updates = Vec::new();
@@ -2068,24 +2068,24 @@ pub fn prepare_entry_field_batch(
             field.as_str(),
             "title" | "icon" | "description" | "cover" | "created" | "updated"
         );
-        if matches!(intent, EntryFieldBatchIntent::Routine) && is_system {
+        if matches!(intent, ItemFieldBatchIntent::Routine) && is_system {
             return Err(schema_error(format!(
                 "routine property batch cannot update system field '{field}'"
             )));
         }
         let value = match intent {
-            EntryFieldBatchIntent::Literal => raw.clone(),
-            EntryFieldBatchIntent::Routine => resolve_routine_runtime_value(raw),
+            ItemFieldBatchIntent::Literal => raw.clone(),
+            ItemFieldBatchIntent::Routine => resolve_routine_runtime_value(raw),
         };
         if is_system {
-            frontmatter::apply_entry_field_update(&mut metadata, field, value)?;
+            frontmatter::apply_item_field_update(&mut metadata, field, value)?;
             if field == "title" {
                 title = Some(metadata.title.clone());
             }
             continue;
         }
 
-        ensure_entry_field_writable(space, file_path, field)?;
+        ensure_item_field_writable(space, file_path, field)?;
         let yaml_value = serde_norway::to_value(value)
             .map_err(|error| schema_error(format!("{field}: {error}")))?;
         let prepared_relation = prepare_relation_field_update(
@@ -2102,8 +2102,8 @@ pub fn prepare_entry_field_batch(
                 (prepared.normalized, prepared.reverse_update)
             }
             None => {
-                let normalized = normalize_entry_field_value(space, file_path, field, yaml_value)?;
-                validate_entry_field_value(space, file_path, field, &normalized)?;
+                let normalized = normalize_item_field_value(space, file_path, field, yaml_value)?;
+                validate_item_field_value(space, file_path, field, &normalized)?;
                 (normalized, None)
             }
         };
@@ -2121,7 +2121,7 @@ pub fn prepare_entry_field_batch(
         }
     }
 
-    Ok(PreparedEntryFieldBatch {
+    Ok(PreparedItemFieldBatch {
         metadata,
         title,
         relation_updates,
@@ -2134,7 +2134,7 @@ fn prepare_relation_field_update(
     project_path: Option<&str>,
     file_path: &str,
     field: &str,
-    metadata: &EntryMeta,
+    metadata: &PageMeta,
     value: &Value,
 ) -> Result<Option<PreparedRelationField>, CollectionError> {
     let Some((schema, collection_root)) = resolve_collection_schema_result(space, file_path)?
@@ -2191,8 +2191,8 @@ fn prepare_relation_field_update(
     }))
 }
 
-pub fn apply_prepared_entry_field_relations(
-    batch: &PreparedEntryFieldBatch,
+pub fn apply_prepared_item_field_relations(
+    batch: &PreparedItemFieldBatch,
 ) -> Result<(), CollectionError> {
     for update in &batch.relation_updates {
         sync_reverse_relation_values(
@@ -2210,21 +2210,21 @@ pub fn apply_prepared_entry_field_relations(
     Ok(())
 }
 
-/// Plans every file that may be touched by an entry property batch.  The
+/// Plans every file that may be touched by an item property batch.  The
 /// returned set is suitable for the repository access gate and is re-used by
 /// the atomic executor below.
-pub fn entry_property_batch_mutation_paths_with_project(
+pub fn item_property_batch_mutation_paths_with_project(
     space: &str,
     project_path: Option<&str>,
     file_path: &str,
     values: &std::collections::BTreeMap<String, serde_json::Value>,
 ) -> Result<Vec<PathBuf>, CollectionError> {
-    prepare_entry_field_batch(
+    prepare_item_field_batch(
         space,
         project_path,
         file_path,
         values,
-        EntryFieldBatchIntent::Routine,
+        ItemFieldBatchIntent::Routine,
     )
     .map(|batch| batch.mutation_paths)
 }
@@ -3063,7 +3063,7 @@ fn detach_current_two_way_relation(
 
 fn mutate_frontmatter<F>(path: &Path, mut f: F) -> Result<bool, CollectionError>
 where
-    F: FnMut(&mut EntryMeta) -> Result<(), CollectionError>,
+    F: FnMut(&mut PageMeta) -> Result<(), CollectionError>,
 {
     let raw = fs::read_to_string(path)?;
     let Some((mut meta, body)) = frontmatter::try_parse(&raw)? else {
@@ -3149,7 +3149,7 @@ where
     }
 }
 
-fn find_entry_extra_by_path(
+fn find_item_extra_by_path(
     space: &str,
     collection_path: &str,
     file_path: &str,

@@ -607,9 +607,9 @@ mod tests {
             .unwrap()
     }
 
-    async fn entry_paths(state: &IndexState, key: &IndexKey) -> Vec<String> {
+    async fn page_paths(state: &IndexState, key: &IndexKey) -> Vec<String> {
         let pool = state.core.existing_pool(key).await.unwrap();
-        sqlx::query_scalar("SELECT file_path FROM entries ORDER BY file_path")
+        sqlx::query_scalar("SELECT file_path FROM pages ORDER BY file_path")
             .fetch_all(&pool)
             .await
             .unwrap()
@@ -649,8 +649,8 @@ mod tests {
         }
         let opened = state.core.freshness(&keys).await.unwrap();
         assert!(opened.verified_at.is_some());
-        assert_eq!(entry_paths(&state, &keys[0]).await, ["note.md"]);
-        assert_eq!(entry_paths(&state, &child_key).await, ["inner.md"]);
+        assert_eq!(page_paths(&state, &keys[0]).await, ["note.md"]);
+        assert_eq!(page_paths(&state, &child_key).await, ["inner.md"]);
 
         fs::write(project.join("later.md"), "# Later\n").unwrap();
         let keys = state.open_project(&project).await.unwrap();
@@ -668,7 +668,7 @@ mod tests {
                 .verified_at
                 .is_some()
         );
-        assert_eq!(entry_paths(&state, &keys[0]).await, ["later.md", "note.md"]);
+        assert_eq!(page_paths(&state, &keys[0]).await, ["later.md", "note.md"]);
 
         assert!(
             state
@@ -700,10 +700,10 @@ mod tests {
         let state = IndexState::new();
         install_child_space_cache(&state, project).await;
 
-        update::update_entry(&state, project, &project.join("shared.md"))
+        update::update_page(&state, project, &project.join("shared.md"))
             .await
             .unwrap();
-        update::update_entry(&state, project, &child.join("shared.md"))
+        update::update_page(&state, project, &child.join("shared.md"))
             .await
             .unwrap();
 
@@ -714,11 +714,11 @@ mod tests {
         };
         let root_pool = state.get_or_create(&root_key).await.unwrap();
         let child_pool = state.get_or_create(&child_key).await.unwrap();
-        let root_paths = sqlx::query_scalar::<_, String>("SELECT file_path FROM entries")
+        let root_paths = sqlx::query_scalar::<_, String>("SELECT file_path FROM pages")
             .fetch_all(&root_pool)
             .await
             .unwrap();
-        let child_paths = sqlx::query_scalar::<_, String>("SELECT file_path FROM entries")
+        let child_paths = sqlx::query_scalar::<_, String>("SELECT file_path FROM pages")
             .fetch_all(&child_pool)
             .await
             .unwrap();

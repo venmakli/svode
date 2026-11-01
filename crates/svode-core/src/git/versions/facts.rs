@@ -95,7 +95,7 @@ pub struct PlacedFact {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum General {
     Page,
-    Entries,
+    Items,
     Schema,
     Order,
     Settings,
@@ -111,7 +111,7 @@ pub enum Sensitive {
     Renamed,
     Moved,
     Schema,
-    Entries(usize),
+    Items(usize),
 }
 
 /// Everything a message is composed of.
@@ -175,7 +175,7 @@ pub(crate) fn facts_of(repo: &Path, group: &VersionGroup, sources: &Sources) -> 
         }
         GroupKind::Fields => {
             facts.place = names.place(&group.owner);
-            facts.general = General::Entries;
+            facts.general = General::Items;
             for change in &group.changes {
                 let old = PageVersion::read(sources.head(&change.path).unwrap_or_default());
                 let new = PageVersion::read(&sources.work(&change.path).unwrap_or_default());
@@ -409,7 +409,7 @@ fn sensitive_wording(group: &VersionGroup, facts: &GroupFacts) -> Sensitive {
         (_, Some(ChangeFact::PageMoved { .. })) => Sensitive::Moved,
         (_, Some(ChangeFact::PageRenamed { .. })) => Sensitive::Renamed,
         (GroupKind::Creation, _) => Sensitive::Created,
-        _ => Sensitive::Entries(facts.pages.max(1)),
+        _ => Sensitive::Items(facts.pages.max(1)),
     }
 }
 

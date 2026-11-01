@@ -12,14 +12,15 @@ use super::model::{
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 use crate::collections::model::CollectionSchema;
-use crate::index::model::IndexedEntry;
+use crate::index::model::IndexedPage;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct IndexedEntrySnapshot {
+pub struct IndexedItemSnapshot {
     pub repository_path: String,
     pub collection_path: String,
-    pub entry_path: String,
+    #[serde(rename = "entryPath")]
+    pub item_path: String,
     pub title: String,
     pub fields: BTreeMap<String, Value>,
     pub created: String,
@@ -34,33 +35,33 @@ pub enum ObservationError {
     Serde(#[from] serde_json::Error),
 }
 
-pub fn snapshot_from_entry(
+pub fn snapshot_from_item(
     repository_path: &Path,
-    entry: &IndexedEntry,
-) -> Result<Option<IndexedEntrySnapshot>, ObservationError> {
-    let Some(collection_path) = entry.collection_root_path.as_deref() else {
+    item: &IndexedPage,
+) -> Result<Option<IndexedItemSnapshot>, ObservationError> {
+    let Some(collection_path) = item.collection_root_path.as_deref() else {
         return Ok(None);
     };
-    Ok(Some(IndexedEntrySnapshot {
+    Ok(Some(IndexedItemSnapshot {
         repository_path: repository_path.to_string_lossy().to_string(),
         collection_path: collection_path.to_string(),
-        entry_path: entry.rel_path.clone(),
-        title: entry.title.clone(),
-        fields: serde_json::from_str(&entry.fields_json)?,
-        created: entry.created.clone(),
-        updated: entry.updated.clone(),
+        item_path: item.rel_path.clone(),
+        title: item.title.clone(),
+        fields: serde_json::from_str(&item.fields_json)?,
+        created: item.created.clone(),
+        updated: item.updated.clone(),
     }))
 }
 
 pub fn snapshot_from_row(
     row: sqlx::sqlite::SqliteRow,
     repository_path: &Path,
-) -> Result<IndexedEntrySnapshot, ObservationError> {
+) -> Result<IndexedItemSnapshot, ObservationError> {
     let fields_json: String = row.try_get("fields")?;
-    Ok(IndexedEntrySnapshot {
+    Ok(IndexedItemSnapshot {
         repository_path: repository_path.to_string_lossy().to_string(),
         collection_path: row.try_get("collection_root_path")?,
-        entry_path: row.try_get("file_path")?,
+        item_path: row.try_get("file_path")?,
         title: row.try_get("title")?,
         fields: serde_json::from_str(&fields_json)?,
         created: row.try_get("created")?,
@@ -75,7 +76,7 @@ pub async fn reconcile_projection_from_index(
 ) -> Result<(), ObservationError> {
     let rows = sqlx::query(
         "SELECT file_path, title, collection_root_path, fields, created, updated \
-         FROM entries WHERE in_collection = 1 AND is_entry_head = 1 ORDER BY file_path",
+         FROM pages WHERE in_collection = 1 AND is_item_head = 1 ORDER BY file_path",
     )
     .fetch_all(index_pool)
     .await?;
@@ -120,7 +121,7 @@ pub async fn reconcile_projection_from_index(
         sqlx::query(
             "INSERT INTO routine_observation_baseline (entry_path, snapshot_json, observed_at) VALUES (?, ?, ?)",
         )
-        .bind(&snapshot.entry_path)
+        .bind(&snapshot.item_path)
         .bind(serde_json::to_string(&snapshot)?)
         .bind(&observed_at)
         .execute(&mut *transaction)
@@ -132,12 +133,12 @@ pub async fn reconcile_projection_from_index(
 
 pub async fn read_snapshot(
     transaction: &mut Transaction<'_, Sqlite>,
-    entry_path: &str,
-) -> Result<Option<IndexedEntrySnapshot>, ObservationError> {
+    item_path: &str,
+) -> Result<Option<IndexedItemSnapshot>, ObservationError> {
     let raw = sqlx::query_scalar::<_, String>(
         "SELECT snapshot_json FROM routine_observation_baseline WHERE entry_path = ?",
     )
-    .bind(entry_path)
+    .bind(item_path)
     .fetch_optional(&mut **transaction)
     .await?;
     raw.map(|raw| serde_json::from_str(&raw).map_err(ObservationError::from))
@@ -146,8 +147,8 @@ pub async fn read_snapshot(
 
 pub async fn write_snapshot(
     transaction: &mut Transaction<'_, Sqlite>,
-    entry_path: &str,
-    current: Option<&IndexedEntrySnapshot>,
+    item_path: &str,
+    current: Option<&IndexedItemSnapshot>,
 ) -> Result<(), ObservationError> {
     match current {
         Some(current) => {
@@ -158,7 +159,7 @@ pub async fn write_snapshot(
                        snapshot_json = excluded.snapshot_json,
                        observed_at = excluded.observed_at"#,
             )
-            .bind(entry_path)
+            .bind(item_path)
             .bind(serde_json::to_string(current)?)
             .bind(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true))
             .execute(&mut **transaction)
@@ -166,7 +167,7 @@ pub async fn write_snapshot(
         }
         None => {
             sqlx::query("DELETE FROM routine_observation_baseline WHERE entry_path = ?")
-                .bind(entry_path)
+                .bind(item_path)
                 .execute(&mut **transaction)
                 .await?;
         }
@@ -179,7 +180,8 @@ pub async fn write_snapshot(
 pub struct CollectionEventPayload {
     pub repository_path: String,
     pub collection_path: String,
-    pub entry_path: String,
+    #[serde(rename = "entryPath")]
+    pub item_path: String,
     pub event_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub property_key: Option<String>,
@@ -188,9 +190,11 @@ pub struct CollectionEventPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_entry: Option<IndexedEntrySnapshot>,
+    #[serde(rename = "oldEntry")]
+    pub old_item: Option<IndexedItemSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub new_entry: Option<IndexedEntrySnapshot>,
+    #[serde(rename = "newEntry")]
+    pub new_item: Option<IndexedItemSnapshot>,
     pub observed_at: String,
     pub source_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -206,19 +210,19 @@ pub struct CollectionEventPayload {
 pub async fn queue_collection_events(
     transaction: &mut Transaction<'_, Sqlite>,
     space_dir: &Path,
-    previous: Option<&IndexedEntrySnapshot>,
-    current: Option<&IndexedEntrySnapshot>,
+    previous: Option<&IndexedItemSnapshot>,
+    current: Option<&IndexedItemSnapshot>,
     current_frontmatter_diff_safe: bool,
     origin: &CollectionEventOrigin,
 ) -> Result<usize, ObservationError> {
     let collection_path = current
-        .map(|entry| entry.collection_path.as_str())
-        .or_else(|| previous.map(|entry| entry.collection_path.as_str()));
+        .map(|item| item.collection_path.as_str())
+        .or_else(|| previous.map(|item| item.collection_path.as_str()));
     let Some(collection_path) = collection_path else {
         return Ok(0);
     };
-    if previous.is_some_and(|entry| entry.collection_path != collection_path)
-        || current.is_some_and(|entry| entry.collection_path != collection_path)
+    if previous.is_some_and(|item| item.collection_path != collection_path)
+        || current.is_some_and(|item| item.collection_path != collection_path)
     {
         return Ok(0);
     }
@@ -266,19 +270,19 @@ pub async fn queue_collection_events(
 async fn queue_collection_events_with_columns(
     transaction: &mut Transaction<'_, Sqlite>,
     column_names: &[String],
-    previous: Option<&IndexedEntrySnapshot>,
-    current: Option<&IndexedEntrySnapshot>,
+    previous: Option<&IndexedItemSnapshot>,
+    current: Option<&IndexedItemSnapshot>,
     current_frontmatter_diff_safe: bool,
     origin: &CollectionEventOrigin,
 ) -> Result<usize, ObservationError> {
     let collection_path = current
-        .map(|entry| entry.collection_path.as_str())
-        .or_else(|| previous.map(|entry| entry.collection_path.as_str()));
+        .map(|item| item.collection_path.as_str())
+        .or_else(|| previous.map(|item| item.collection_path.as_str()));
     let Some(collection_path) = collection_path else {
         return Ok(0);
     };
-    if previous.is_some_and(|entry| entry.collection_path != collection_path)
-        || current.is_some_and(|entry| entry.collection_path != collection_path)
+    if previous.is_some_and(|item| item.collection_path != collection_path)
+        || current.is_some_and(|item| item.collection_path != collection_path)
     {
         return Ok(0);
     }
@@ -318,7 +322,7 @@ async fn queue_collection_events_with_columns(
             if definition.enabled != Some(true) || !change.matches(*event, match_.as_ref()) {
                 continue;
             }
-            let entry = current.or(previous).expect("change always has an entry");
+            let item = current.or(previous).expect("change always has an item");
             if !lineage_allows(parent.as_ref(), routine_id) {
                 continue;
             }
@@ -341,10 +345,10 @@ async fn queue_collection_events_with_columns(
             )
             .bind(collection_path)
             .bind(routine_id)
-            .bind(&entry.entry_path)
+            .bind(&item.item_path)
             .bind(collection_path)
             .bind(routine_id)
-            .bind(&entry.entry_path)
+            .bind(&item.item_path)
             .fetch_one(&mut **transaction)
             .await?;
             if already_active {
@@ -356,15 +360,15 @@ async fn queue_collection_events_with_columns(
                 collection_path, routine_id, routine.execution_fingerprint, event_key
             ));
             let payload = CollectionEventPayload {
-                repository_path: entry.repository_path.clone(),
+                repository_path: item.repository_path.clone(),
                 collection_path: collection_path.to_string(),
-                entry_path: entry.entry_path.clone(),
+                item_path: item.item_path.clone(),
                 event_type: change.event.as_str().to_string(),
                 property_key: change.property_key.clone(),
                 old_value: change.old_value.clone(),
                 new_value: change.new_value.clone(),
-                old_entry: previous.cloned(),
-                new_entry: current.cloned(),
+                old_item: previous.cloned(),
+                new_item: current.cloned(),
                 observed_at: observed_at.clone(),
                 source_kind: origin.source_kind.as_str().to_string(),
                 origin: origin.origin.clone(),
@@ -384,7 +388,7 @@ async fn queue_collection_events_with_columns(
             .bind(routine_id)
             .bind(&routine.execution_fingerprint)
             .bind(change.event.as_str())
-            .bind(&entry.entry_path)
+            .bind(&item.item_path)
             .bind(change.property_key.as_deref())
             .bind(serde_json::to_string(&payload)?)
             .bind(&observed_at)
@@ -443,14 +447,14 @@ async fn event_routines(
 }
 
 #[derive(Debug)]
-struct EntryChange {
+struct ItemChange {
     event: CollectionEvent,
     property_key: Option<String>,
     old_value: Option<Value>,
     new_value: Option<Value>,
 }
 
-impl EntryChange {
+impl ItemChange {
     fn matches(&self, event: CollectionEvent, matcher: Option<&EventMatch>) -> bool {
         if self.event != event {
             return false;
@@ -473,24 +477,24 @@ impl EntryChange {
 
     fn key_material(
         &self,
-        previous: Option<&IndexedEntrySnapshot>,
-        current: Option<&IndexedEntrySnapshot>,
+        previous: Option<&IndexedItemSnapshot>,
+        current: Option<&IndexedItemSnapshot>,
     ) -> String {
-        let entry = current.or(previous).expect("change always has an entry");
+        let item = current.or(previous).expect("change always has an item");
         let material = match self.event {
             CollectionEvent::FieldChanged => serde_json::json!({
                 "eventType": self.event.as_str(),
-                "collectionPath": entry.collection_path,
-                "entryPath": entry.entry_path,
+                "collectionPath": item.collection_path,
+                "entryPath": item.item_path,
                 "propertyKey": self.property_key,
                 "oldValue": self.old_value,
                 "newValue": self.new_value,
             }),
-            CollectionEvent::EntryCreated => serde_json::json!({
+            CollectionEvent::ItemCreated => serde_json::json!({
                 "eventType": self.event.as_str(),
                 "entry": current.map(portable_snapshot_key),
             }),
-            CollectionEvent::EntryDeleted => serde_json::json!({
+            CollectionEvent::ItemDeleted => serde_json::json!({
                 "eventType": self.event.as_str(),
                 "entry": previous.map(portable_snapshot_key),
             }),
@@ -499,30 +503,30 @@ impl EntryChange {
     }
 }
 
-fn portable_snapshot_key(entry: &IndexedEntrySnapshot) -> Value {
+fn portable_snapshot_key(item: &IndexedItemSnapshot) -> Value {
     serde_json::json!({
-        "collectionPath": entry.collection_path,
-        "entryPath": entry.entry_path,
-        "title": entry.title,
-        "fields": entry.fields,
+        "collectionPath": item.collection_path,
+        "entryPath": item.item_path,
+        "title": item.title,
+        "fields": item.fields,
     })
 }
 
 fn derive_changes(
-    previous: Option<&IndexedEntrySnapshot>,
-    current: Option<&IndexedEntrySnapshot>,
+    previous: Option<&IndexedItemSnapshot>,
+    current: Option<&IndexedItemSnapshot>,
     current_frontmatter_diff_safe: bool,
     column_names: &[String],
-) -> Vec<EntryChange> {
+) -> Vec<ItemChange> {
     match (previous, current) {
-        (None, Some(_)) if current_frontmatter_diff_safe => vec![EntryChange {
-            event: CollectionEvent::EntryCreated,
+        (None, Some(_)) if current_frontmatter_diff_safe => vec![ItemChange {
+            event: CollectionEvent::ItemCreated,
             property_key: None,
             old_value: None,
             new_value: None,
         }],
-        (Some(_), None) => vec![EntryChange {
-            event: CollectionEvent::EntryDeleted,
+        (Some(_), None) => vec![ItemChange {
+            event: CollectionEvent::ItemDeleted,
             property_key: None,
             old_value: None,
             new_value: None,
@@ -533,7 +537,7 @@ fn derive_changes(
                 .filter_map(|key| {
                     let old_value = old.fields.get(&key).cloned().unwrap_or(Value::Null);
                     let new_value = new.fields.get(&key).cloned().unwrap_or(Value::Null);
-                    (old_value != new_value).then_some(EntryChange {
+                    (old_value != new_value).then_some(ItemChange {
                         event: CollectionEvent::FieldChanged,
                         property_key: Some(key),
                         old_value: Some(old_value),
@@ -563,11 +567,11 @@ fn stable_key(material: &str) -> String {
 mod event_tests {
     use super::*;
 
-    fn snapshot(repository_path: &str) -> IndexedEntrySnapshot {
-        IndexedEntrySnapshot {
+    fn snapshot(repository_path: &str) -> IndexedItemSnapshot {
+        IndexedItemSnapshot {
             repository_path: repository_path.to_string(),
             collection_path: "tasks".to_string(),
-            entry_path: "tasks/item.md".to_string(),
+            item_path: "tasks/item.md".to_string(),
             title: "Item".to_string(),
             fields: BTreeMap::from([("Status".to_string(), Value::String("Done".to_string()))]),
             created: "2026-08-08T00:00:00Z".to_string(),
@@ -575,9 +579,78 @@ mod event_tests {
         }
     }
 
+    /// Event keys and queued payloads of the build before the item
+    /// rename: the key material keeps its stored keys, so the keys
+    /// of the same snapshots stay the same, and a queued payload with
+    /// the stored payload keys reads and writes back as is.
+    #[test]
+    fn stored_names_keep_event_keys_and_queued_payloads() {
+        let item = snapshot("/repo");
+        let field = ItemChange {
+            event: CollectionEvent::FieldChanged,
+            property_key: Some("Status".to_string()),
+            old_value: Some(Value::String("Open".to_string())),
+            new_value: Some(Value::String("Done".to_string())),
+        };
+        let created = ItemChange {
+            event: CollectionEvent::ItemCreated,
+            property_key: None,
+            old_value: None,
+            new_value: None,
+        };
+        let deleted = ItemChange {
+            event: CollectionEvent::ItemDeleted,
+            property_key: None,
+            old_value: None,
+            new_value: None,
+        };
+        for (change, previous, current, material, key) in [
+            (
+                &created,
+                None,
+                Some(&item),
+                r#"{"entry":{"collectionPath":"tasks","entryPath":"tasks/item.md","fields":{"Status":"Done"},"title":"Item"},"eventType":"collection.entry_created"}"#,
+                "52302e2b78f0173104a61817e5d29e32",
+            ),
+            (
+                &deleted,
+                Some(&item),
+                None,
+                r#"{"entry":{"collectionPath":"tasks","entryPath":"tasks/item.md","fields":{"Status":"Done"},"title":"Item"},"eventType":"collection.entry_deleted"}"#,
+                "ca1610ac94b9f790ae5a70b505ebd21f",
+            ),
+            (
+                &field,
+                Some(&item),
+                Some(&item),
+                r#"{"collectionPath":"tasks","entryPath":"tasks/item.md","eventType":"collection.field_changed","newValue":"Done","oldValue":"Open","propertyKey":"Status"}"#,
+                "16952219bcecaacc245bff3e245e2dfd",
+            ),
+        ] {
+            assert_eq!(change.key_material(previous, current), material);
+            assert_eq!(stable_key(material), key);
+        }
+
+        for stored in [
+            r#"{"repositoryPath":"/repo","collectionPath":"tasks","entryPath":"tasks/item.md","eventType":"collection.field_changed","propertyKey":"Status","oldValue":"Open","newValue":"Done","oldEntry":{"repositoryPath":"/repo","collectionPath":"tasks","entryPath":"tasks/item.md","title":"Item","fields":{"Status":"Done"},"created":"2026-08-08T00:00:00Z","updated":"2026-08-08T00:01:00Z"},"newEntry":{"repositoryPath":"/repo","collectionPath":"tasks","entryPath":"tasks/item.md","title":"Item","fields":{"Status":"Done"},"created":"2026-08-08T00:00:00Z","updated":"2026-08-08T00:01:00Z"},"observedAt":"2026-08-08T00:02:00Z","sourceKind":"watcher","origin":"external","lineageDepth":0}"#,
+            r#"{"repositoryPath":"/repo","collectionPath":"tasks","entryPath":"tasks/item.md","eventType":"collection.entry_deleted","oldEntry":{"repositoryPath":"/repo","collectionPath":"tasks","entryPath":"tasks/item.md","title":"Item","fields":{"Status":"Done"},"created":"2026-08-08T00:00:00Z","updated":"2026-08-08T00:01:00Z"},"observedAt":"2026-08-08T00:02:00Z","sourceKind":"managed","routineRunId":"run-0","lineageDepth":1,"executionRunId":"run-1"}"#,
+        ] {
+            let payload: CollectionEventPayload = serde_json::from_str(stored).unwrap();
+            assert_eq!(payload.item_path, "tasks/item.md");
+            assert_eq!(payload.old_item.as_ref(), Some(&item));
+            assert_eq!(serde_json::to_string(&payload).unwrap(), stored);
+        }
+        let snapshot_json = r#"{"repositoryPath":"/repo","collectionPath":"tasks","entryPath":"tasks/item.md","title":"Item","fields":{"Status":"Done"},"created":"2026-08-08T00:00:00Z","updated":"2026-08-08T00:01:00Z"}"#;
+        assert_eq!(serde_json::to_string(&item).unwrap(), snapshot_json);
+        assert_eq!(
+            serde_json::from_str::<IndexedItemSnapshot>(snapshot_json).unwrap(),
+            item
+        );
+    }
+
     #[test]
     fn event_key_material_is_portable_between_clones() {
-        let change = EntryChange {
+        let change = ItemChange {
             event: CollectionEvent::FieldChanged,
             property_key: Some("Status".to_string()),
             old_value: Some(Value::String("Open".to_string())),
@@ -711,7 +784,7 @@ mod projection_tests {
             1
         );
 
-        sqlx::query("DELETE FROM entries")
+        sqlx::query("DELETE FROM pages")
             .execute(&index_pool)
             .await
             .unwrap();

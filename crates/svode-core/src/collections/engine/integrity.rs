@@ -55,7 +55,7 @@ pub use crate::collections::list::CollectionInfo;
 
 /// Validate collection references which can be damaged by deliberate raw filesystem edits.
 ///
-/// This is intentionally read-only. Mutation flows should use the structural entry commands,
+/// This is intentionally read-only. Mutation flows should use the structural page commands,
 /// but an agent that performed an explicit filesystem migration needs one product-level check
 /// for relation, `unique_id` and sidebar-order invariants afterwards.
 pub fn validate_collection_integrity_with_project(

@@ -23,14 +23,14 @@ fn status_group_name(group: StatusGroup) -> &'static str {
 }
 
 #[derive(Debug, Clone)]
-pub struct EntryQueryRow {
+pub struct ItemQueryRow {
     pub file_path: String,
     pub title: String,
     pub created: String,
     pub updated: String,
 }
 
-pub async fn query_entry_rows(
+pub async fn query_item_rows(
     pool: &SqlitePool,
     schema: &CollectionSchema,
     collection_path: &str,
@@ -38,13 +38,13 @@ pub async fn query_entry_rows(
     sort: &[Sort],
     limit: Option<i64>,
     offset: Option<i64>,
-) -> Result<Vec<EntryQueryRow>, CollectionError> {
+) -> Result<Vec<ItemQueryRow>, CollectionError> {
     let collection = collection_root_for_sql(collection_path);
     let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT file_path, title, created, updated FROM entries WHERE collection_root_path = ",
+        "SELECT file_path, title, created, updated FROM pages WHERE collection_root_path = ",
     );
     query.push_bind(collection);
-    query.push(" AND in_collection = 1 AND is_entry_head = 1");
+    query.push(" AND in_collection = 1 AND is_item_head = 1");
     for filter in filters {
         push_filter_sql(&mut query, schema, filter)?;
     }
@@ -73,7 +73,7 @@ pub async fn query_entry_rows(
         .map_err(|e| CollectionError::Index(format!("collection query failed: {e}")))?;
     Ok(rows
         .into_iter()
-        .map(|row| EntryQueryRow {
+        .map(|row| ItemQueryRow {
             file_path: row.get("file_path"),
             title: row.get("title"),
             created: row.get("created"),
@@ -678,9 +678,9 @@ fn escape_like(query: &str) -> String {
 pub fn order_rows(
     space: &str,
     collection_path: &str,
-    rows: Vec<EntryQueryRow>,
+    rows: Vec<ItemQueryRow>,
     include_nested: bool,
-) -> Vec<EntryQueryRow> {
+) -> Vec<ItemQueryRow> {
     let collection = collection_root_for_sql(collection_path);
     let order = read_order(Path::new(space));
     if !include_nested {
@@ -688,10 +688,10 @@ pub fn order_rows(
         sort_sibling_rows(&mut rows, &order, &collection);
         return rows;
     }
-    let mut by_parent: HashMap<String, Vec<EntryQueryRow>> = HashMap::new();
+    let mut by_parent: HashMap<String, Vec<ItemQueryRow>> = HashMap::new();
     for row in rows {
         by_parent
-            .entry(entry_parent_dir(&row.file_path))
+            .entry(item_parent_dir(&row.file_path))
             .or_default()
             .push(row);
     }
@@ -703,13 +703,13 @@ pub fn order_rows(
 fn flatten_ordered_rows(
     dir: &str,
     order: &HashMap<String, Vec<String>>,
-    by_parent: &mut HashMap<String, Vec<EntryQueryRow>>,
-    output: &mut Vec<EntryQueryRow>,
+    by_parent: &mut HashMap<String, Vec<ItemQueryRow>>,
+    output: &mut Vec<ItemQueryRow>,
 ) {
     let mut rows = by_parent.remove(dir).unwrap_or_default();
     sort_sibling_rows(&mut rows, order, dir);
     for row in rows {
-        let child_dir = entry_folder_dir(&row.file_path);
+        let child_dir = item_folder_dir(&row.file_path);
         output.push(row);
         if let Some(child_dir) = child_dir {
             flatten_ordered_rows(&child_dir, order, by_parent, output);
@@ -717,7 +717,7 @@ fn flatten_ordered_rows(
     }
 }
 
-fn sort_sibling_rows(rows: &mut [EntryQueryRow], order: &HashMap<String, Vec<String>>, dir: &str) {
+fn sort_sibling_rows(rows: &mut [ItemQueryRow], order: &HashMap<String, Vec<String>>, dir: &str) {
     let key = if dir.is_empty() { "." } else { dir };
     let positions: HashMap<&str, usize> = order
         .get(key)
@@ -727,8 +727,8 @@ fn sort_sibling_rows(rows: &mut [EntryQueryRow], order: &HashMap<String, Vec<Str
         .map(|(index, name)| (name.as_str(), index))
         .collect();
     rows.sort_by(|left, right| {
-        let left_name = entry_order_name(&left.file_path);
-        let right_name = entry_order_name(&right.file_path);
+        let left_name = item_order_name(&left.file_path);
+        let right_name = item_order_name(&right.file_path);
         match (
             positions.get(left_name.as_str()),
             positions.get(right_name.as_str()),
@@ -744,7 +744,7 @@ fn sort_sibling_rows(rows: &mut [EntryQueryRow], order: &HashMap<String, Vec<Str
     });
 }
 
-pub fn entry_parent_dir(file_path: &str) -> String {
+pub fn item_parent_dir(file_path: &str) -> String {
     let path = Path::new(file_path);
     if path
         .file_name()
@@ -764,7 +764,7 @@ pub fn entry_parent_dir(file_path: &str) -> String {
     }
 }
 
-fn entry_folder_dir(file_path: &str) -> Option<String> {
+fn item_folder_dir(file_path: &str) -> Option<String> {
     let path = Path::new(file_path);
     path.file_name()
         .and_then(|name| name.to_str())
@@ -777,7 +777,7 @@ fn entry_folder_dir(file_path: &str) -> Option<String> {
         .filter(|parent| !parent.is_empty())
 }
 
-pub fn entry_order_name(file_path: &str) -> String {
+pub fn item_order_name(file_path: &str) -> String {
     let path = Path::new(file_path);
     if path
         .file_name()
@@ -796,7 +796,7 @@ pub fn entry_order_name(file_path: &str) -> String {
 }
 
 #[allow(dead_code)]
-pub fn reorder_visible_entry_names(
+pub fn reorder_visible_item_names(
     full_order: &[String],
     visible_order: &[String],
     moved_name: &str,

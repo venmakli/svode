@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use sqlx::SqlitePool;
 
 use super::manifest::SourceManifestRecord;
-use super::model::{IndexedEntry, KnowledgeArtifact};
+use super::model::{IndexedPage, KnowledgeArtifact};
 use super::reconcile::{ReconcileOutcome, reconcile_pool};
 use super::state::IndexRuntimeState;
 use super::{IndexError, IndexKey};
@@ -145,7 +145,7 @@ mod tests {
         let index_pool = index.get_or_create(&key).await.unwrap();
         let routines_pool = updates.routines_pool(&index, &key).await.unwrap();
         sqlx::query(
-            "INSERT INTO entries (file_path, parent_path, title, created, updated, collection_root_path, in_collection, is_entry_head, fields, body_preview, is_discoverable) VALUES ('tasks/item.md', 'tasks', 'Item', '2026-01-01', '2026-01-02', 'tasks', 1, 1, '{}', '', 0)",
+            "INSERT INTO pages (file_path, parent_path, title, created, updated, collection_root_path, in_collection, is_item_head, fields, body_preview, is_discoverable) VALUES ('tasks/item.md', 'tasks', 'Item', '2026-01-01', '2026-01-02', 'tasks', 1, 1, '{}', '', 0)",
         )
         .execute(&index_pool)
         .await
@@ -170,26 +170,22 @@ pub async fn apply_targeted_change(
     index_key: &IndexKey,
     space_dir: &Path,
     normalized: &str,
-    entry: Option<&IndexedEntry>,
+    page: Option<&IndexedPage>,
     source_record: Option<&SourceManifestRecord>,
     folded_collection: Option<&KnowledgeArtifact>,
     current_frontmatter_diff_safe: bool,
     origin: &CollectionEventOrigin,
 ) -> Result<(), IndexUpdateError> {
-    let current = entry
-        .map(|entry| observation::snapshot_from_entry(space_dir, entry))
+    let current = page
+        .map(|page| observation::snapshot_from_item(space_dir, page))
         .transpose()?
         .flatten();
     let mut routines_transaction = routines_pool.begin().await?;
     let previous = observation::read_snapshot(&mut routines_transaction, &normalized).await?;
     let collection_path = current
         .as_ref()
-        .map(|entry| entry.collection_path.as_str())
-        .or_else(|| {
-            previous
-                .as_ref()
-                .map(|entry| entry.collection_path.as_str())
-        });
+        .map(|page| page.collection_path.as_str())
+        .or_else(|| previous.as_ref().map(|page| page.collection_path.as_str()));
     let automatic_authority = match collection_path {
         Some(collection_path) => {
             match crate::routines::authority::read_key(
@@ -224,9 +220,9 @@ pub async fn apply_targeted_change(
 
     let mut transaction = index_pool.begin().await?;
     let mut knowledge_changed = false;
-    if let Some(entry) = entry {
-        super::rows::upsert_entry(&mut *transaction, entry).await?;
-        if let Some(artifact) = entry.knowledge.as_ref() {
+    if let Some(page) = page {
+        super::rows::upsert_page(&mut *transaction, page).await?;
+        if let Some(artifact) = page.knowledge.as_ref() {
             knowledge_changed |=
                 super::knowledge_rows::upsert_artifact(&mut transaction, artifact).await?;
         } else if let Some(artifact) = folded_collection {
@@ -239,7 +235,7 @@ pub async fn apply_targeted_change(
                 super::knowledge_rows::delete_artifact(&mut transaction, &normalized).await?;
         }
     } else {
-        sqlx::query("DELETE FROM entries WHERE file_path = ?")
+        sqlx::query("DELETE FROM pages WHERE file_path = ?")
             .bind(&normalized)
             .execute(&mut *transaction)
             .await?;
@@ -462,7 +458,7 @@ pub async fn publish_path_with_origin<E: GitDateExecutor>(
 ///
 /// - If the file no longer exists on disk → delete the row.
 /// - If the file exists but isn't a markdown file → also delete (e.g. user
-///   renamed `foo.md` → `foo.txt`, leaving a stale entry).
+///   renamed `foo.md` → `foo.txt`, leaving a stale row).
 /// - Otherwise → upsert.
 pub async fn update_path_with_origin<E: GitDateExecutor>(
     state: &IndexRuntimeState,
@@ -516,7 +512,7 @@ pub async fn update_path_with_origin<E: GitDateExecutor>(
         .map(|e| e.eq_ignore_ascii_case("md"))
         .unwrap_or(false);
     if !is_md {
-        tracing::debug!("non-md file in update_entry, removing any stale row: {normalized}");
+        tracing::debug!("non-md file in update_page, removing any stale row: {normalized}");
         return remove().await;
     }
 
@@ -550,7 +546,7 @@ pub async fn update_path_with_origin<E: GitDateExecutor>(
         }
         None => Default::default(),
     };
-    let entry = super::entry_projection::build_entry_with_dates(
+    let page = super::page_projection::build_page_with_dates(
         &dir,
         &abs,
         date_overrides.get(&normalized),
@@ -563,7 +559,7 @@ pub async fn update_path_with_origin<E: GitDateExecutor>(
         &key,
         &dir,
         &normalized,
-        Some(&entry),
+        Some(&page),
         Some(projection),
         frontmatter_valid,
         &origin,
@@ -579,7 +575,7 @@ pub async fn apply_targeted_source_change(
     index_key: &IndexKey,
     space_dir: &Path,
     rel_path: &str,
-    entry: Option<&IndexedEntry>,
+    page: Option<&IndexedPage>,
     source_projection: Option<super::inventory::MarkdownProjection>,
     current_frontmatter_diff_safe: bool,
     origin: &CollectionEventOrigin,
@@ -601,8 +597,8 @@ pub async fn apply_targeted_source_change(
     } else {
         None
     };
-    if let (Some(record), Some(entry)) = (source_record.as_mut(), entry) {
-        record.diagnostic_code = entry.source_diagnostic.clone();
+    if let (Some(record), Some(page)) = (source_record.as_mut(), page) {
+        record.diagnostic_code = page.source_diagnostic.clone();
     }
     let folded_collection =
         super::knowledge_artifact::folded_collection_artifact(space_dir, &normalized);
@@ -612,7 +608,7 @@ pub async fn apply_targeted_source_change(
         index_key,
         space_dir,
         &normalized,
-        entry,
+        page,
         source_record.as_ref(),
         folded_collection.as_ref(),
         current_frontmatter_diff_safe,

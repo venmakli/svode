@@ -2835,7 +2835,7 @@ mod tests {
         let cli = GitCli::detect().expect("git");
         init_repository(&cli, &parent).await;
         init_repository(&cli, &child).await;
-        let child_target = child.join("entry.md");
+        let child_target = child.join("page.md");
         let parent_target = parent.join(".svode").join("config.json");
 
         scope_authorized_mutation_paths(

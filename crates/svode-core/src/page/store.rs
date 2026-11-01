@@ -3,10 +3,10 @@ mod page_dir;
 mod persistence;
 
 pub use model::{
-    Cover, DeleteResult, Entry, EntryDetailForm, EntryDetailState, EntryMeta, EntryWarning,
+    Cover, DeleteResult, Page, PageDetailForm, PageDetailState, PageMeta, PageWarning,
     REPOSITORY_ACCESS_DENIED_REASON, WriteResult,
 };
-pub use persistence::{entry_from_source, read, read_with_git_dates, replaced_by_staged_copy};
+pub use persistence::{page_from_source, read, read_with_git_dates, replaced_by_staged_copy};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ fn resolve(space: &str, rel: &str) -> PathBuf {
 
 pub use crate::page::naming::slugify;
 
-pub use crate::page::frontmatter::{apply_entry_field_update, title_from_stem};
+pub use crate::page::frontmatter::{apply_item_field_update, title_from_stem};
 
 /// Append a filename to order.json for a given directory key.
 fn order_append(space: &Path, dir_key: &str, name: &str) {
@@ -40,7 +40,7 @@ fn order_append(space: &Path, dir_key: &str, name: &str) {
     });
 }
 
-/// Rename an entry in order.json (replace old_name with new_name in the given directory).
+/// Rename a page in order.json (replace old_name with new_name in the given directory).
 fn order_rename(space: &Path, dir_key: &str, old_name: &str, new_name: &str) {
     let _ = order_rename_checked(space, dir_key, old_name, new_name);
 }
@@ -145,22 +145,22 @@ fn unique_child_path(parent: &Path, stem: &str, extension: Option<&str>) -> Path
 pub fn filename_projection_warning(
     projection: &FilenameProjection,
     actual_path: &str,
-) -> Option<EntryWarning> {
+) -> Option<PageWarning> {
     projection
         .is_lossy()
-        .then(|| EntryWarning::filename_projection(actual_path, &projection.reason_codes()))
+        .then(|| PageWarning::filename_projection(actual_path, &projection.reason_codes()))
 }
 
 pub fn filename_allocation_warnings(
     requested: &FilenameProjection,
     actual: &FilenameProjection,
     actual_path: &str,
-) -> Vec<EntryWarning> {
+) -> Vec<PageWarning> {
     let mut warnings = filename_projection_warning(actual, actual_path)
         .into_iter()
         .collect::<Vec<_>>();
     if actual.stem != requested.stem {
-        warnings.push(EntryWarning::filename_collision_allocated(actual_path));
+        warnings.push(PageWarning::filename_collision_allocated(actual_path));
     }
     warnings
 }
@@ -244,7 +244,7 @@ fn undo_leaf_to_folder(
     }
 }
 
-fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), PageError> {
+fn collect_page_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), PageError> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
@@ -254,7 +254,7 @@ fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), Pag
             continue;
         }
         if path.is_dir() {
-            collect_entry_md_files(&path, out)?;
+            collect_page_md_files(&path, out)?;
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
             out.push(path);
         }
@@ -262,7 +262,7 @@ fn collect_entry_md_files(root: &Path, out: &mut Vec<PathBuf>) -> Result<(), Pag
     Ok(())
 }
 
-fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, PageError> {
+fn normalize_page_path_arg(space: &Path, path: &str) -> Result<String, PageError> {
     let rel = path.trim_matches('/').replace('\\', "/");
     if rel.is_empty() {
         return Err(PageError::FileNotFound(path.to_string()));
@@ -273,21 +273,21 @@ fn normalize_entry_path_arg(space: &Path, path: &str) -> Result<String, PageErro
     Ok(rel)
 }
 
-/// Create a new entry on disk. Returns the created Entry.
+/// Create a new page on disk. Returns the created Page.
 #[allow(dead_code)]
 #[cfg(test)]
-pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Entry, PageError> {
+pub fn create(space: &str, parent_path: Option<&str>, title: &str) -> Result<Page, PageError> {
     create_with_contextual_defaults(space, parent_path, title, None)
 }
 
-/// Create a new entry on disk with optional schema-validated contextual defaults.
+/// Create a new page on disk with optional schema-validated contextual defaults.
 #[cfg(test)]
 pub fn create_with_contextual_defaults(
     space: &str,
     parent_path: Option<&str>,
     title: &str,
     contextual_defaults: Option<frontmatter::FrontmatterFields>,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     create_with_options(space, parent_path, title, contextual_defaults, false, false)
 }
 
@@ -299,7 +299,7 @@ pub fn create_with_options(
     contextual_defaults: Option<frontmatter::FrontmatterFields>,
     allocate_unique_title: bool,
     as_readme: bool,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     let created = create_source_with_options(
         space,
         parent_path,
@@ -351,7 +351,7 @@ pub fn create_source_with_options(
     allocate_unique_title: bool,
     as_readme: bool,
     names: SourceNames,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     crate::page::naming::with_document_name_lock(space, || {
         create_source_with_options_inner(
             space,
@@ -440,7 +440,7 @@ fn create_source_with_options_inner(
     allocate_unique_title: bool,
     as_readme: bool,
     names: SourceNames,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     let parent_path = parent_path
         .map(str::trim)
         .filter(|parent| !parent.is_empty());
@@ -488,7 +488,7 @@ fn create_source_with_options_inner(
         fs::create_dir_all(parent_dir)?;
     }
 
-    let mut meta = EntryMeta::new_persisted(title);
+    let mut meta = PageMeta::new_persisted(title);
     let body = "";
     persistence::write_serialized(&abs_path, &meta, body)?;
     apply_runtime_metadata(&mut meta, &abs_path, &rel_path)?;
@@ -508,7 +508,7 @@ fn create_source_with_options_inner(
         .as_ref()
         .map(|actual| filename_allocation_warnings(&projection, actual, &rel_path))
         .unwrap_or_default();
-    Ok(Entry {
+    Ok(Page {
         meta,
         body: body.to_string(),
         path: rel_path,
@@ -564,7 +564,7 @@ pub struct PlannedWriteRename {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum EntryFilenamePlan {
+enum PageFilenamePlan {
     Unchanged(FilenameProjection),
     Rename {
         projection: FilenameProjection,
@@ -573,14 +573,10 @@ enum EntryFilenamePlan {
     Collision(FilenameProjection),
 }
 
-fn entry_filename_plan(
-    space: &str,
-    path: &str,
-    title: &str,
-) -> Result<EntryFilenamePlan, PageError> {
+fn page_filename_plan(space: &str, path: &str, title: &str) -> Result<PageFilenamePlan, PageError> {
     let projection = filename::project(title);
     if !crate::page::naming::is_user_document(path) {
-        return Ok(EntryFilenamePlan::Unchanged(projection));
+        return Ok(PageFilenamePlan::Unchanged(projection));
     }
 
     let current = Path::new(path);
@@ -593,7 +589,7 @@ fn entry_filename_plan(
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
         else {
-            return Ok(EntryFilenamePlan::Unchanged(projection));
+            return Ok(PageFilenamePlan::Unchanged(projection));
         };
         let grandparent = parent.parent().unwrap_or(Path::new(""));
         let current_component = parent
@@ -601,7 +597,7 @@ fn entry_filename_plan(
             .and_then(|name| name.to_str())
             .unwrap_or("");
         if projection.stem == current_component {
-            return Ok(EntryFilenamePlan::Unchanged(projection));
+            return Ok(PageFilenamePlan::Unchanged(projection));
         }
         let target_parent = resolve(space, &grandparent.to_string_lossy());
         if filename::component_conflicts_portably(
@@ -609,7 +605,7 @@ fn entry_filename_plan(
             &projection.stem,
             Some(current_component),
         )? {
-            return Ok(EntryFilenamePlan::Collision(projection));
+            return Ok(PageFilenamePlan::Collision(projection));
         }
         let new_dir = if grandparent.as_os_str().is_empty() {
             projection.stem.clone()
@@ -617,7 +613,7 @@ fn entry_filename_plan(
             format!("{}/{}", grandparent.to_string_lossy(), projection.stem)
         };
         let readme = current.file_name().unwrap_or_default().to_string_lossy();
-        return Ok(EntryFilenamePlan::Rename {
+        return Ok(PageFilenamePlan::Rename {
             projection,
             rename: PlannedWriteRename {
                 new_path: format!("{new_dir}/{readme}"),
@@ -632,7 +628,7 @@ fn entry_filename_plan(
         .unwrap_or("");
     let target_component = filename::component_name(&projection.stem, Some("md"));
     if target_component == current_component {
-        return Ok(EntryFilenamePlan::Unchanged(projection));
+        return Ok(PageFilenamePlan::Unchanged(projection));
     }
     let parent = current.parent().unwrap_or(Path::new(""));
     let target_parent = resolve(space, &parent.to_string_lossy());
@@ -641,14 +637,14 @@ fn entry_filename_plan(
         &target_component,
         Some(current_component),
     )? {
-        return Ok(EntryFilenamePlan::Collision(projection));
+        return Ok(PageFilenamePlan::Collision(projection));
     }
     let new_path = if parent.as_os_str().is_empty() {
         target_component
     } else {
         format!("{}/{target_component}", parent.to_string_lossy())
     };
-    Ok(EntryFilenamePlan::Rename {
+    Ok(PageFilenamePlan::Rename {
         projection,
         rename: PlannedWriteRename {
             new_path,
@@ -669,9 +665,9 @@ pub fn planned_write_rename(
     if !resolve(space, path).exists() {
         return Err(PageError::FileNotFound(path.to_string()));
     }
-    match entry_filename_plan(space, path, title)? {
-        EntryFilenamePlan::Rename { rename, .. } => Ok(Some(rename)),
-        EntryFilenamePlan::Unchanged(_) | EntryFilenamePlan::Collision(_) => Ok(None),
+    match page_filename_plan(space, path, title)? {
+        PageFilenamePlan::Rename { rename, .. } => Ok(Some(rename)),
+        PageFilenamePlan::Unchanged(_) | PageFilenamePlan::Collision(_) => Ok(None),
     }
 }
 
@@ -784,7 +780,7 @@ pub fn write_under_name_lock(
     title: Option<&str>,
     icon: Option<&str>,
     extra: Option<frontmatter::FrontmatterFields>,
-    metadata: Option<EntryMeta>,
+    metadata: Option<PageMeta>,
     _existing_id: Option<&str>,
     backlink_index: Option<&BacklinkIndex>,
     skip_rename: bool,
@@ -815,7 +811,7 @@ pub fn write_under_name_lock(
         crate::page::naming::ensure_document_name_available(Path::new(space), path, naming_title)?;
     }
     let filename_plan = naming_title
-        .map(|naming_title| entry_filename_plan(space, path, naming_title))
+        .map(|naming_title| page_filename_plan(space, path, naming_title))
         .transpose()?;
     let metadata_requested = metadata.is_some()
         || match &parsed_existing {
@@ -945,18 +941,18 @@ pub fn write_under_name_lock(
     let mut new_path: Option<String> = None;
     let mut warnings = Vec::new();
     match filename_plan {
-        Some(EntryFilenamePlan::Unchanged(projection)) => {
+        Some(PageFilenamePlan::Unchanged(projection)) => {
             if let Some(warning) = filename_projection_warning(&projection, path) {
                 warnings.push(warning);
             }
         }
-        Some(EntryFilenamePlan::Collision(projection)) => {
+        Some(PageFilenamePlan::Collision(projection)) => {
             if let Some(warning) = filename_projection_warning(&projection, path) {
                 warnings.push(warning);
             }
-            warnings.push(EntryWarning::filename_rename_collision(path));
+            warnings.push(PageWarning::filename_rename_collision(path));
         }
-        Some(EntryFilenamePlan::Rename { projection, rename }) => {
+        Some(PageFilenamePlan::Rename { projection, rename }) => {
             let target_abs = resolve(space, &rename.new_path);
             if let Some(old_folder) = rename.folder_rename_old.as_deref() {
                 let old_folder_abs = resolve(space, old_folder);
@@ -1032,7 +1028,7 @@ pub fn write_under_name_lock(
             } else {
                 grandparent.to_string_lossy().to_string()
             };
-            // Rename folder entry in parent's order list
+            // Rename folder page in parent's order list
             order_rename_checked(sp_path, &dir_key, &old_dir_name, &new_dir_name)?;
             // Carry the folder's own and nested order keys to the new dir name
             let old_dir = dir_key_for(Path::new(path).parent().unwrap_or(Path::new("")));
@@ -1119,7 +1115,7 @@ pub fn update_field(
     path: &str,
     field: &str,
     value: serde_json::Value,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     if field == "title" {
         return crate::page::naming::with_document_name_lock(space, || {
             update_field_inner(space, project_path, path, field, value)
@@ -1128,7 +1124,7 @@ pub fn update_field(
     update_field_inner(space, project_path, path, field, value)
 }
 
-pub fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Entry, PageError> {
+pub fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Page, PageError> {
     let abs_path = resolve(space, path);
     let (_, parsed) = persistence::read_existing(&abs_path)?;
     let mut meta = match parsed {
@@ -1144,7 +1140,7 @@ pub fn replace_created_body(space: &str, path: &str, body: &str) -> Result<Entry
     };
     persistence::write_serialized(&abs_path, &meta, body)?;
     apply_runtime_metadata(&mut meta, &abs_path, path)?;
-    Ok(Entry {
+    Ok(Page {
         meta,
         body: body.to_string(),
         path: path.to_string(),
@@ -1161,19 +1157,19 @@ fn update_field_inner(
     path: &str,
     field: &str,
     value: serde_json::Value,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     let is_custom = !matches!(
         field,
         "created" | "updated" | "title" | "icon" | "description" | "cover"
     );
     if is_custom {
-        crate::collections::engine::ensure_entry_field_writable(space, path, field)?;
+        crate::collections::engine::ensure_item_field_writable(space, path, field)?;
         let yaml_value = serde_norway::to_value(value.clone()).map_err(|e| {
             PageError::from(crate::page::frontmatter::FrontmatterError::InvalidField(
                 format!("{field}: {e}"),
             ))
         })?;
-        if let Some((meta, body)) = crate::collections::engine::update_relation_entry_field(
+        if let Some((meta, body)) = crate::collections::engine::update_relation_item_field(
             space,
             project_path,
             path,
@@ -1183,7 +1179,7 @@ fn update_field_inner(
             let path = crate::collections::schema::normalize_rel_path(path);
             let name_conflict =
                 crate::page::naming::document_name_conflict(Path::new(space), &path, &meta.title)?;
-            return Ok(Entry {
+            return Ok(Page {
                 meta,
                 body,
                 path,
@@ -1218,15 +1214,14 @@ fn update_field_inner(
                 format!("{field}: {e}"),
             ))
         })?;
-        let yaml_value = crate::collections::engine::normalize_entry_field_value(
-            space, path, field, yaml_value,
-        )?;
-        crate::collections::engine::validate_entry_field_value(space, path, field, &yaml_value)?;
+        let yaml_value =
+            crate::collections::engine::normalize_item_field_value(space, path, field, yaml_value)?;
+        crate::collections::engine::validate_item_field_value(space, path, field, &yaml_value)?;
         meta.extra.insert(field.to_string(), yaml_value);
     } else if is_custom {
         meta.extra.shift_remove(field);
     } else {
-        apply_entry_field_update(&mut meta, field, value)?;
+        apply_item_field_update(&mut meta, field, value)?;
     }
     if field == "title" {
         crate::page::naming::ensure_document_name_available(Path::new(space), path, &meta.title)?;
@@ -1236,7 +1231,7 @@ fn update_field_inner(
     let name_conflict =
         crate::page::naming::document_name_conflict(Path::new(space), path, &meta.title)?;
 
-    Ok(Entry {
+    Ok(Page {
         meta,
         body,
         path: path.to_string(),
@@ -1249,20 +1244,20 @@ fn update_field_inner(
 /// Move a file or directory to a new parent directory.
 /// Updates backlinks. Returns the new relative path.
 #[allow(dead_code)]
-pub fn move_entry(
+pub fn move_page(
     space: &Path,
     from: &str,
     to_parent: &str,
     backlink_index: Option<&BacklinkIndex>,
 ) -> Result<String, PageError> {
-    move_entry_with_project(space, from, to_parent, backlink_index, None)
+    move_page_with_project(space, from, to_parent, backlink_index, None)
 }
 
 /// Move a path under a new parent with its order, schema defaults, relations
 /// and Space-local backlinks. A failure after the filesystem rename is
 /// returned as is: structural move restores the whole touched set from its
 /// snapshot.
-pub fn move_entry_with_project(
+pub fn move_page_with_project(
     space: &Path,
     from: &str,
     to_parent: &str,
@@ -1318,7 +1313,7 @@ pub fn move_entry_with_project(
     update_order_after_move(space, from, &new_rel, from_is_dir, &target_sibling_order)?;
     #[cfg(test)]
     crate::page::write::checkpoint("move_order")?;
-    crate::collections::engine::apply_schema_defaults_to_entry_tree(space, &new_rel)?;
+    crate::collections::engine::apply_schema_defaults_to_item_tree(space, &new_rel)?;
     #[cfg(test)]
     crate::page::write::checkpoint("move_defaults")?;
     crate::collections::engine::rewrite_relation_paths_for_move_with_authorized_plan(
@@ -1346,7 +1341,7 @@ pub fn move_entry_with_project(
     Ok(new_rel)
 }
 
-/// Keep the sidebar order coherent after moving an entry between parents.
+/// Keep the sidebar order coherent after moving a page between parents.
 /// Directory keys belong to the physical directory path, so a moved directory
 /// also carries its nested order keys to its new path.
 fn update_order_after_move(
@@ -1384,9 +1379,9 @@ fn update_order_after_move(
     })?)
 }
 
-/// Nest an entry: convert `foo.md` → `foo/readme.md`, making it a category.
+/// Nest a page: convert `foo.md` → `foo/readme.md`, making it a category.
 /// Returns the new relative path (e.g. "foo/readme.md").
-pub fn nest_entry(
+pub fn nest_page(
     space: &Path,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
@@ -1452,11 +1447,11 @@ pub fn nest_entry(
     Ok(new_rel)
 }
 
-/// Unnest an entry: convert `foo/readme.md` → `foo.md` when the folder holds
+/// Unnest a page: convert `foo/readme.md` → `foo.md` when the folder holds
 /// nothing but the Page. Returns the new relative path (e.g. "foo.md") and
 /// the service files removed with the folder.
 /// If the folder still has children, returns an error.
-pub fn unnest_entry(
+pub fn unnest_page(
     space: &Path,
     path: &str,
     backlink_index: Option<&BacklinkIndex>,
@@ -1535,12 +1530,12 @@ pub fn unnest_entry(
     Ok((new_rel, removed.removed_files(space)))
 }
 
-pub fn convert_entry_to_folder(
+pub fn convert_page_to_folder(
     space: &Path,
-    entry_path: &str,
+    page_path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<Entry, PageError> {
-    let path = normalize_entry_path_arg(space, entry_path)?;
+) -> Result<Page, PageError> {
+    let path = normalize_page_path_arg(space, page_path)?;
     let abs_path = space.join(&path);
     if abs_path.is_dir()
         || path
@@ -1610,7 +1605,7 @@ pub fn convert_entry_to_folder(
     read(&space.to_string_lossy(), &new_rel)
 }
 
-pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, PageError> {
+pub fn page_detail_state(space: &Path, path: &str) -> Result<PageDetailState, PageError> {
     let rel = path.trim_matches('/').replace('\\', "/");
     let abs = space.join(&rel);
     if abs.is_dir() {
@@ -1618,11 +1613,11 @@ pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, 
             return Err(PageError::FileNotFound(rel));
         }
         let (subpage_count, other_file_count) = folder_child_counts(&abs)?;
-        return Ok(EntryDetailState {
+        return Ok(PageDetailState {
             form: if abs.join("schema.yaml").exists() {
-                EntryDetailForm::NestedCollection
+                PageDetailForm::NestedCollection
             } else {
-                EntryDetailForm::Folder
+                PageDetailForm::Folder
             },
             subpage_count,
             other_file_count,
@@ -1638,8 +1633,8 @@ pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, 
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
     if !is_readme {
-        return Ok(EntryDetailState {
-            form: EntryDetailForm::Leaf,
+        return Ok(PageDetailState {
+            form: PageDetailForm::Leaf,
             subpage_count: 0,
             other_file_count: 0,
         });
@@ -1649,11 +1644,11 @@ pub fn entry_detail_state(space: &Path, path: &str) -> Result<EntryDetailState, 
         .parent()
         .ok_or_else(|| PageError::General("README.md has no parent folder".to_string()))?;
     let (subpage_count, other_file_count) = folder_child_counts(folder)?;
-    Ok(EntryDetailState {
+    Ok(PageDetailState {
         form: if folder.join("schema.yaml").exists() {
-            EntryDetailForm::NestedCollection
+            PageDetailForm::NestedCollection
         } else {
-            EntryDetailForm::Folder
+            PageDetailForm::Folder
         },
         subpage_count,
         other_file_count,
@@ -1681,12 +1676,12 @@ pub(crate) fn dir_readme_name(dir: &Path) -> Option<String> {
 
 /// Turn a folder Page that holds nothing but itself into a leaf. Returns the
 /// leaf and the service files removed with the folder.
-pub fn convert_entry_to_leaf(
+pub fn convert_page_to_leaf(
     space: &Path,
-    entry_path: &str,
+    page_path: &str,
     backlink_index: Option<&BacklinkIndex>,
-) -> Result<(Entry, Vec<String>), PageError> {
-    let path = normalize_entry_path_arg(space, entry_path)?;
+) -> Result<(Page, Vec<String>), PageError> {
+    let path = normalize_page_path_arg(space, page_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
         .file_name()
@@ -1757,15 +1752,15 @@ pub fn convert_entry_to_leaf(
         let _ = index.update_links_on_rename(space, &path, &new_rel, None);
         let _ = index.update_file(space, &new_rel);
     }
-    let entry = read(&space.to_string_lossy(), &new_rel)?;
-    Ok((entry, removed.removed_files(space)))
+    let page = read(&space.to_string_lossy(), &new_rel)?;
+    Ok((page, removed.removed_files(space)))
 }
 
-pub fn convert_entry_to_nested_collection(
+pub fn convert_page_to_nested_collection(
     space: &Path,
-    entry_path: &str,
+    page_path: &str,
 ) -> Result<String, PageError> {
-    let path = normalize_entry_path_arg(space, entry_path)?;
+    let path = normalize_page_path_arg(space, page_path)?;
     let readme_abs = space.join(&path);
     if !readme_abs
         .file_name()
@@ -1797,7 +1792,7 @@ pub fn convert_entry_to_nested_collection(
 pub fn convert_bare_folder_to_collection(
     space: &Path,
     folder_path: &str,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     crate::page::naming::with_document_name_lock(&space.to_string_lossy(), || {
         convert_bare_folder_to_collection_inner(space, folder_path)
     })
@@ -1806,7 +1801,7 @@ pub fn convert_bare_folder_to_collection(
 fn convert_bare_folder_to_collection_inner(
     space: &Path,
     folder_path: &str,
-) -> Result<Entry, PageError> {
+) -> Result<Page, PageError> {
     let rel = folder_path.trim_matches('/').replace('\\', "/");
     let folder_abs = space.join(&rel);
     if !folder_abs.is_dir() {
@@ -1831,7 +1826,7 @@ fn convert_bare_folder_to_collection_inner(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("Collection");
-    let mut meta = EntryMeta::new_persisted(humanize_slug(folder_name));
+    let mut meta = PageMeta::new_persisted(humanize_slug(folder_name));
     crate::page::naming::ensure_document_name_available(
         space,
         &format!("{rel}/README.md"),
@@ -1898,13 +1893,13 @@ pub fn write_incoming_copy(
     Ok(rel_from_abs(space, &dest))
 }
 
-pub fn duplicate_entry(space: &Path, file_path: &str) -> Result<Entry, PageError> {
+pub fn duplicate_page(space: &Path, file_path: &str) -> Result<Page, PageError> {
     crate::page::naming::with_document_name_lock(&space.to_string_lossy(), || {
-        duplicate_entry_inner(space, file_path)
+        duplicate_page_inner(space, file_path)
     })
 }
 
-fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, PageError> {
+fn duplicate_page_inner(space: &Path, file_path: &str) -> Result<Page, PageError> {
     let rel = file_path.trim_matches('/').replace('\\', "/");
     let source_abs = space.join(&rel);
     if !source_abs.exists() {
@@ -1947,7 +1942,7 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, PageErr
     };
 
     let requested_copy_title = read(&space.to_string_lossy(), &root_head_rel)
-        .map(|entry| format!("{} (copy)", entry.meta.title))
+        .map(|page| format!("{} (copy)", page.meta.title))
         .unwrap_or_else(|_| format!("{} (copy)", source_order_name));
     let copy_title =
         crate::page::naming::allocate_document_title(space, &root_head_rel, &requested_copy_title)?;
@@ -1965,7 +1960,7 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, PageErr
             refresh_markdown_copy_metadata(&head, Some(&copy_title))?;
         }
         let mut files = Vec::new();
-        collect_entry_md_files(&dest_abs, &mut files)?;
+        collect_page_md_files(&dest_abs, &mut files)?;
         for file in files {
             if file != head {
                 refresh_markdown_copy_metadata(&file, None)?;
@@ -1981,7 +1976,7 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, PageErr
         &rel_from_abs(space, &root_source_abs),
         &rel_from_abs(space, &dest_abs),
     )?;
-    crate::collections::engine::assign_unique_ids_to_entry_tree(
+    crate::collections::engine::assign_unique_ids_to_item_tree(
         space,
         &rel_from_abs(space, &dest_abs),
         true,
@@ -2000,18 +1995,18 @@ fn duplicate_entry_inner(space: &Path, file_path: &str) -> Result<Entry, PageErr
         .to_string();
     order_insert_after(space, &dir_key, &source_order_name, &dest_order_name);
 
-    let entry_rel = if dest_abs.is_dir() {
+    let page_rel = if dest_abs.is_dir() {
         rel_from_abs(space, &dest_abs.join("README.md"))
     } else {
         rel_from_abs(space, &dest_abs)
     };
-    let mut entry = read(&space.to_string_lossy(), &entry_rel)?;
-    entry.warnings.extend(filename_allocation_warnings(
+    let mut page = read(&space.to_string_lossy(), &page_rel)?;
+    page.warnings.extend(filename_allocation_warnings(
         &projection,
         &actual_projection,
-        &entry_rel,
+        &page_rel,
     ));
-    Ok(entry)
+    Ok(page)
 }
 
 fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), PageError> {
@@ -2032,7 +2027,7 @@ fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), PageError> {
     Ok(())
 }
 
-/// Delete an entry from disk. Removes from backlink index if provided.
+/// Delete a page from disk. Removes from backlink index if provided.
 #[allow(dead_code)]
 pub fn delete(
     space: &str,
@@ -2057,16 +2052,15 @@ pub fn delete_with_project(
     }
 
     let deleted_root = rel_from_abs(space_path, &abs_path);
-    let deleted_paths = collect_deleted_entry_paths(space_path, &abs_path)?;
-    let cascade_touched =
-        match crate::collections::engine::cascade_clean_deleted_entries_with_project(
-            space,
-            project_path,
-            &deleted_paths,
-        ) {
-            Ok(paths) => paths,
-            Err(error) => return Err(error.into()),
-        };
+    let deleted_paths = collect_deleted_page_paths(space_path, &abs_path)?;
+    let cascade_touched = match crate::collections::engine::cascade_clean_deleted_items_with_project(
+        space,
+        project_path,
+        &deleted_paths,
+    ) {
+        Ok(paths) => paths,
+        Err(error) => return Err(error.into()),
+    };
 
     let delete_parent = abs_path.parent().unwrap_or(Path::new(space));
     let tombstone = unique_child_path(delete_parent, ".svode-delete", None);
@@ -2116,10 +2110,10 @@ fn delete_root_for_path(space: &Path, abs_path: &Path) -> PathBuf {
     abs_path.to_path_buf()
 }
 
-fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<String>, PageError> {
+fn collect_deleted_page_paths(space: &Path, abs_path: &Path) -> Result<Vec<String>, PageError> {
     if abs_path.is_dir() {
         let mut files = Vec::new();
-        collect_entry_md_files(abs_path, &mut files)?;
+        collect_page_md_files(abs_path, &mut files)?;
         Ok(files
             .into_iter()
             .map(|file| rel_from_abs(space, &file))
@@ -2129,14 +2123,14 @@ fn collect_deleted_entry_paths(space: &Path, abs_path: &Path) -> Result<Vec<Stri
     }
 }
 
-pub fn planned_deleted_entry_paths(space: &str, path: &str) -> Result<Vec<String>, PageError> {
+pub fn planned_deleted_page_paths(space: &str, path: &str) -> Result<Vec<String>, PageError> {
     let space_path = Path::new(space);
     let requested = resolve(space, path);
     let root = delete_root_for_path(space_path, &requested);
     if !root.exists() {
         return Err(PageError::FileNotFound(path.to_string()));
     }
-    collect_deleted_entry_paths(space_path, &root)
+    collect_deleted_page_paths(space_path, &root)
 }
 
 fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
@@ -2161,7 +2155,7 @@ fn cleanup_deleted_order(space: &Path, deleted_root: &str) {
     });
 }
 
-/// Rename/move an entry on disk.
+/// Rename/move a page on disk.
 #[allow(dead_code)]
 pub fn rename(space: &str, from: &str, to: &str) -> Result<(), PageError> {
     rename_with_project(space, from, to, None)
@@ -2209,7 +2203,7 @@ pub fn rename_with_project(
     #[cfg(test)]
     crate::page::write::checkpoint("move_relations")?;
 
-    // Update order.json: rename entry in parent's order list
+    // Update order.json: rename page in parent's order list
     let old_name = Path::new(from)
         .file_name()
         .unwrap_or_default()
@@ -2241,7 +2235,7 @@ pub fn rename_with_project(
     Ok(())
 }
 
-/// Whether the target name is taken in its parent by an entry other than the
+/// Whether the target name is taken in its parent by a page other than the
 /// source, compared portably, so an operation that creates or moves a named
 /// item gives the same result on every file system. A case-only or
 /// normalization-only rename of the source itself stays free.
@@ -2317,8 +2311,8 @@ mod tests {
         assert_eq!(slug.len(), 60);
     }
 
-    fn test_meta() -> EntryMeta {
-        let mut meta = EntryMeta::new_persisted("Title");
+    fn test_meta() -> PageMeta {
+        let mut meta = PageMeta::new_persisted("Title");
         meta.created = "2026-03-17T00:00:00Z".into();
         meta.updated = "2026-03-17T00:00:00Z".into();
         meta
@@ -2327,7 +2321,7 @@ mod tests {
     #[test]
     fn test_update_field_validates_description() {
         let mut meta = test_meta();
-        apply_entry_field_update(
+        apply_item_field_update(
             &mut meta,
             "description",
             serde_json::Value::String("Summary".into()),
@@ -2335,7 +2329,7 @@ mod tests {
         .unwrap();
         assert_eq!(meta.description.as_deref(), Some("Summary"));
 
-        apply_entry_field_update(
+        apply_item_field_update(
             &mut meta,
             "description",
             serde_json::Value::String(String::new()),
@@ -2343,7 +2337,7 @@ mod tests {
         .unwrap();
         assert_eq!(meta.description, None);
 
-        let err = apply_entry_field_update(
+        let err = apply_item_field_update(
             &mut meta,
             "description",
             serde_json::Value::String("x".repeat(501)),
@@ -2355,7 +2349,7 @@ mod tests {
     #[test]
     fn test_update_field_validates_cover() {
         let mut meta = test_meta();
-        apply_entry_field_update(
+        apply_item_field_update(
             &mut meta,
             "cover",
             serde_json::json!({ "type": "color", "value": "blue" }),
@@ -2368,7 +2362,7 @@ mod tests {
             })
         );
 
-        apply_entry_field_update(
+        apply_item_field_update(
             &mut meta,
             "cover",
             serde_json::json!({ "type": "image", "path": ".assets/cover.jpg", "position": 100 }),
@@ -2382,7 +2376,7 @@ mod tests {
             })
         );
 
-        let err = apply_entry_field_update(
+        let err = apply_item_field_update(
             &mut meta,
             "cover",
             serde_json::json!({ "type": "image", "path": ".assets/cover.jpg", "position": 101 }),
@@ -2396,7 +2390,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
 
-        // Create first entry
+        // Create first page
         let e1 = create(ws, None, "Test Doc").unwrap();
         assert_eq!(e1.path, "Test Doc.md");
 
@@ -2406,7 +2400,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_entry_and_collection_flows_preserve_readable_unicode_paths() {
+    fn managed_page_and_collection_flows_preserve_readable_unicode_paths() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
 
@@ -2415,8 +2409,8 @@ mod tests {
         assert!(leaf.warnings.is_empty());
 
         let head = create(ws, None, "Καλημέρα κόσμε").unwrap();
-        let head = convert_entry_to_folder(tmp.path(), &head.path, None).unwrap();
-        convert_entry_to_nested_collection(tmp.path(), &head.path).unwrap();
+        let head = convert_page_to_folder(tmp.path(), &head.path, None).unwrap();
+        convert_page_to_nested_collection(tmp.path(), &head.path).unwrap();
         assert_eq!(head.path, "Καλημέρα κόσμε/README.md");
 
         let row = create(ws, Some("Καλημέρα κόσμε"), "مرحبا بالعالم").unwrap();
@@ -2429,8 +2423,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
 
-        let entry = create(ws, None, "Clean Doc").unwrap();
-        let raw = fs::read_to_string(resolve(ws, &entry.path)).unwrap();
+        let page = create(ws, None, "Clean Doc").unwrap();
+        let raw = fs::read_to_string(resolve(ws, &page.path)).unwrap();
 
         assert!(raw.contains("\ntitle: Clean Doc\n"));
         assert!(!raw.contains("\nid:"));
@@ -2473,13 +2467,13 @@ mod tests {
 
         let folder = create_folder(ws, None, "Tasks").unwrap();
         let collection = convert_bare_folder_to_collection(Path::new(ws), &folder).unwrap();
-        let entry = create(ws, Some("Tasks"), "Task A").unwrap();
+        let page = create(ws, Some("Tasks"), "Task A").unwrap();
 
         let result = delete(ws, &collection.path, None).unwrap();
 
         assert_eq!(result.deleted_root, "Tasks");
         assert!(result.deleted_paths.contains(&collection.path));
-        assert!(result.deleted_paths.contains(&entry.path));
+        assert!(result.deleted_paths.contains(&page.path));
         assert!(!resolve(ws, "Tasks").exists());
         assert!(
             !content_tree::read_order(Path::new(ws))
@@ -2493,12 +2487,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
 
-        let entry = create(ws, None, "Original Title").unwrap();
-        assert_eq!(entry.path, "Original Title.md");
+        let page = create(ws, None, "Original Title").unwrap();
+        assert_eq!(page.path, "Original Title.md");
 
         let result = write(
             ws,
-            &entry.path,
+            &page.path,
             "body content",
             Some("New Title"),
             None,
@@ -2546,11 +2540,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
 
-        let entry = create(ws, None, "Keep Same").unwrap();
+        let page = create(ws, None, "Keep Same").unwrap();
 
         let result = write(
             ws,
-            &entry.path,
+            &page.path,
             "new body",
             Some("Keep Same"),
             None,
@@ -2677,16 +2671,16 @@ mod tests {
         let raw = "---\ntitle: [broken\n---\nBody\n";
         fs::write(resolve(ws, "broken.md"), raw).unwrap();
 
-        let entry = read(ws, "broken.md").unwrap();
-        assert_eq!(entry.body, raw);
+        let page = read(ws, "broken.md").unwrap();
+        assert_eq!(page.body, raw);
         assert_eq!(
-            entry.warnings.first().map(|warning| warning.kind.as_str()),
+            page.warnings.first().map(|warning| warning.kind.as_str()),
             Some("malformed_frontmatter")
         );
         write(
             ws,
             "broken.md",
-            &(entry.body + "More\n"),
+            &(page.body + "More\n"),
             None,
             None,
             None,
@@ -2704,12 +2698,12 @@ mod tests {
     fn test_update_field_treats_id_as_custom_property() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
-        let entry = create(ws, None, "Imported").unwrap();
+        let page = create(ws, None, "Imported").unwrap();
 
         let updated = update_field(
             ws,
             None,
-            &entry.path,
+            &page.path,
             "id",
             serde_json::Value::String("obsidian-id".into()),
         )
@@ -2723,17 +2717,17 @@ mod tests {
                 .and_then(serde_norway::Value::as_str),
             Some("obsidian-id")
         );
-        let raw = fs::read_to_string(resolve(ws, &entry.path)).unwrap();
+        let raw = fs::read_to_string(resolve(ws, &page.path)).unwrap();
         assert!(raw.contains("\nid: obsidian-id\n"));
     }
 
     #[test]
-    fn test_convert_entry_to_folder_accepts_path_without_legacy_id() {
+    fn test_convert_page_to_folder_accepts_path_without_legacy_id() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path();
         fs::write(ws.join("note.md"), "---\ntitle: Note\n---\nBody\n").unwrap();
 
-        let converted = convert_entry_to_folder(ws, "note.md", None).unwrap();
+        let converted = convert_page_to_folder(ws, "note.md", None).unwrap();
 
         assert_eq!(converted.path, "note/README.md");
         assert!(ws.join("note").join("README.md").is_file());
@@ -2741,7 +2735,7 @@ mod tests {
     }
 
     #[test]
-    fn move_entry_updates_source_target_and_nested_order_keys() {
+    fn move_page_updates_source_target_and_nested_order_keys() {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path();
         fs::create_dir_all(ws.join("source/child")).unwrap();
@@ -2760,7 +2754,7 @@ mod tests {
         order.insert("source/child".to_string(), vec!["note.md".to_string()]);
         content_tree::replace_order(ws, order).unwrap();
 
-        let moved = move_entry_with_project(ws, "source", "target", None, None).unwrap();
+        let moved = move_page_with_project(ws, "source", "target", None, None).unwrap();
 
         assert_eq!(moved, "target/source");
         let order = content_tree::read_order(ws);
@@ -2821,8 +2815,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = tmp.path().to_str().unwrap();
         let head = create(ws, None, "Без названия").unwrap();
-        let head = convert_entry_to_folder(tmp.path(), &head.path, None).unwrap();
-        convert_entry_to_nested_collection(tmp.path(), &head.path).unwrap();
+        let head = convert_page_to_folder(tmp.path(), &head.path, None).unwrap();
+        convert_page_to_nested_collection(tmp.path(), &head.path).unwrap();
 
         let result = write(
             ws,
@@ -2903,7 +2897,7 @@ mod tests {
 
         let quick =
             create_with_options(&space, Some("collection"), "Shared", None, true, false).unwrap();
-        let copy = duplicate_entry(tmp.path(), &first.path).unwrap();
+        let copy = duplicate_page(tmp.path(), &first.path).unwrap();
         assert_eq!(quick.meta.title, "Shared 2");
         assert_eq!(copy.meta.title, "Shared (copy)");
     }
@@ -2962,8 +2956,8 @@ mod tests {
         let space = tmp.path().to_string_lossy();
         let source = create_with_options(&space, None, "Source", None, false, false).unwrap();
 
-        let first = duplicate_entry(tmp.path(), &source.path).unwrap();
-        let second = duplicate_entry(tmp.path(), &source.path).unwrap();
+        let first = duplicate_page(tmp.path(), &source.path).unwrap();
+        let second = duplicate_page(tmp.path(), &source.path).unwrap();
 
         assert_eq!(first.meta.title, "Source (copy)");
         assert_eq!(second.meta.title, "Source (copy) 2");
@@ -3076,7 +3070,7 @@ mod tests {
             Some(2)
         );
 
-        let duplicated = duplicate_entry(space, &second.path).unwrap();
+        let duplicated = duplicate_page(space, &second.path).unwrap();
         assert_eq!(
             duplicated
                 .meta

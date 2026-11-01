@@ -484,7 +484,7 @@ mod tests {
                 }),
             },
             action: RoutineAction::UpdateProperties {
-                target: svode_core::routines::model::RoutineActionTarget::TriggerEntry,
+                target: svode_core::routines::model::RoutineActionTarget::TriggerItem,
                 set: BTreeMap::from([("reviewed".into(), serde_json::Value::Bool(true))]),
             },
             body: String::new(),
@@ -496,10 +496,10 @@ mod tests {
         )
         .unwrap();
         let row = parser::discover_owner(&owner).routines.remove(0);
-        let snapshot = svode_core::routines::observation::IndexedEntrySnapshot {
+        let snapshot = svode_core::routines::observation::IndexedItemSnapshot {
             repository_path: project.to_string_lossy().into_owned(),
             collection_path: "tasks".into(),
-            entry_path: "tasks/item.md".into(),
+            item_path: "tasks/item.md".into(),
             title: "Item".into(),
             fields: BTreeMap::from([("reviewed".into(), serde_json::Value::Bool(false))]),
             created: "2026-08-08T00:00:00Z".into(),
@@ -508,13 +508,13 @@ mod tests {
         let payload = svode_core::routines::observation::CollectionEventPayload {
             repository_path: snapshot.repository_path.clone(),
             collection_path: snapshot.collection_path.clone(),
-            entry_path: snapshot.entry_path.clone(),
+            item_path: snapshot.item_path.clone(),
             event_type: CollectionEvent::FieldChanged.as_str().into(),
             property_key: Some("reviewed".into()),
             old_value: Some(serde_json::Value::Bool(false)),
             new_value: Some(serde_json::Value::Bool(true)),
-            old_entry: Some(snapshot.clone()),
-            new_entry: Some(snapshot),
+            old_item: Some(snapshot.clone()),
+            new_item: Some(snapshot),
             observed_at: "2026-08-08T00:00:01Z".into(),
             source_kind: "watcher".into(),
             origin: None,

@@ -149,7 +149,7 @@ mod tests {
             ("hidden.md", "Needle Secret", 0),
         ] {
             sqlx::query(
-                "INSERT INTO entries (file_path,parent_path,title,description,body_preview,created,updated,collection_root_path,in_collection,is_entry_head,is_discoverable,fields) VALUES (?,'',?,NULL,?,'2026-09-18T00:00:00Z','2026-09-18T00:00:00Z',NULL,0,0,?,'{}')",
+                "INSERT INTO pages (file_path,parent_path,title,description,body_preview,created,updated,collection_root_path,in_collection,is_item_head,is_discoverable,fields) VALUES (?,'',?,NULL,?,'2026-09-18T00:00:00Z','2026-09-18T00:00:00Z',NULL,0,0,?,'{}')",
             )
             .bind(path)
             .bind(title)

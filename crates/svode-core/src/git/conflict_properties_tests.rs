@@ -266,7 +266,7 @@ fn the_saved_frontmatter_is_stable_on_later_saves() {
             let file = space.path().join("page.md");
             std::fs::write(&file, &conflicted).unwrap();
             let write = |content: &str| {
-                crate::page::entry::write(
+                crate::page::store::write(
                     root, "page.md", content, None, None, None, None, None, true,
                 )
                 .unwrap();

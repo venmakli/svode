@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::collections::engine::{self, CollectionSchema};
 use crate::index::state::IndexRuntimeState;
 use crate::page::PageError;
-use crate::page::entry;
+use crate::page::store;
 use crate::storage::routes::managed_attachment_policy_paths;
 
 pub async fn move_mutation_paths(
@@ -100,8 +100,8 @@ pub fn delete_mutation_paths(
     project_path: Option<&str>,
     path: &str,
 ) -> Result<Vec<PathBuf>, PageError> {
-    let deleted = entry::planned_deleted_entry_paths(space, path)?;
-    let mut paths = engine::cascade_clean_deleted_entries_mutation_paths_with_project(
+    let deleted = store::planned_deleted_page_paths(space, path)?;
+    let mut paths = engine::cascade_clean_deleted_items_mutation_paths_with_project(
         space,
         project_path.filter(|path| !path.is_empty()),
         &deleted,
@@ -122,7 +122,7 @@ pub fn collection_create_schema_paths(
 ) -> Result<Vec<PathBuf>, PageError> {
     let (parent, _) = super::ops::resolved_create_parent(space, parent_path)?;
     let planned =
-        entry::planned_collection_source(space, parent.as_deref(), title, allocate_unique_title)?;
+        store::planned_collection_source(space, parent.as_deref(), title, allocate_unique_title)?;
     let collection_path = planned
         .path
         .strip_suffix(".md")

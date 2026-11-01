@@ -11,8 +11,8 @@ use serde_norway::Value;
 use tempfile::TempDir;
 
 use crate::collections::engine::{self as collections, Column};
-use crate::page::entry;
 use crate::page::frontmatter::{self, FrontmatterFields};
+use crate::page::store;
 use crate::page::templates::{self, TemplateKind};
 
 const SCHEMA: &str = "columns:
@@ -72,7 +72,7 @@ fn changing_one_field_keeps_the_others_in_place() {
     let tmp = TempDir::new().unwrap();
     let space = collection(tmp.path());
 
-    entry::update_field(&space, None, "tasks/Task.md", "Status", json!("Done")).unwrap();
+    store::update_field(&space, None, "tasks/Task.md", "Status", json!("Done")).unwrap();
 
     assert_eq!(
         item(tmp.path()),
@@ -85,7 +85,7 @@ fn clearing_one_field_removes_only_its_line() {
     let tmp = TempDir::new().unwrap();
     let space = collection(tmp.path());
 
-    entry::update_field(&space, None, "tasks/Task.md", "Priority", json!(null)).unwrap();
+    store::update_field(&space, None, "tasks/Task.md", "Priority", json!(null)).unwrap();
 
     assert_eq!(item(tmp.path()), ITEM.replace("Priority: 2\n", ""));
 }
@@ -114,7 +114,7 @@ fn replacing_the_field_set_keeps_file_order_and_appends_new_columns_in_schema_or
         ("note", text("free")),
     ]);
 
-    entry::write(
+    store::write(
         &space,
         "tasks/Task.md",
         "Body\n",
@@ -143,7 +143,7 @@ fn replacing_the_field_set_of_a_page_appends_new_keys_by_name() {
     let page = "---\ntitle: Note\nmood: calm\nweather: rain\n---\nBody\n";
     fs::write(tmp.path().join("Note.md"), page).unwrap();
 
-    entry::write(
+    store::write(
         &space,
         "Note.md",
         "Body\n",
@@ -174,7 +174,7 @@ fn saving_the_same_title_and_metadata_keeps_the_bytes() {
     let mut metadata = frontmatter::parse(ITEM).unwrap().0;
     metadata.extra.reverse();
 
-    entry::write_under_name_lock(
+    store::write_under_name_lock(
         &space,
         "tasks/Task.md",
         "Body\n",
@@ -250,7 +250,7 @@ fn backfilled_defaults_follow_existing_fields_in_schema_order() {
     )
     .unwrap();
 
-    collections::apply_schema_defaults_to_entry_tree(tmp.path(), "tasks/Task.md").unwrap();
+    collections::apply_schema_defaults_to_item_tree(tmp.path(), "tasks/Task.md").unwrap();
 
     assert_eq!(
         item(tmp.path()),
@@ -287,7 +287,7 @@ fn moving_a_page_into_a_collection_keeps_its_fields_and_appends_defaults() {
     let page = "---\ntitle: Loose\nzone: west\nOwner: Bob\nalpha: a\n---\n";
     fs::write(tmp.path().join("Loose.md"), page).unwrap();
 
-    let moved = entry::move_entry(Path::new(&space), "Loose.md", "tasks", None).unwrap();
+    let moved = store::move_page(Path::new(&space), "Loose.md", "tasks", None).unwrap();
 
     assert_eq!(
         fs::read_to_string(tmp.path().join(moved)).unwrap(),
@@ -321,7 +321,7 @@ fn template_instance_keeps_template_order_and_contextual_defaults_change_values_
     .unwrap();
 
     assert_eq!(
-        fs::read_to_string(tmp.path().join(&instantiated.entry.path)).unwrap(),
+        fs::read_to_string(tmp.path().join(&instantiated.page.path)).unwrap(),
         "---\ntitle: Crash\nSprint: S0\nPriority: 1\nStatus: Doing\nArea: Core\nOwner: Eve\n---\nSteps\n"
     );
 }
@@ -339,7 +339,7 @@ fn new_item_fields_follow_schema_order_and_repeat_byte_for_byte() {
             ),
         )
         .unwrap();
-        let created = entry::create_with_options(
+        let created = store::create_with_options(
             &space,
             Some("tasks"),
             "Fresh",

@@ -52,7 +52,7 @@ mod tests {
         let pool = state.get_or_create(&key).await.unwrap();
         state.cleanup_reconciled_index(&key, &pool).await;
         assert!(old.exists());
-        sqlx::query("DROP TABLE entries")
+        sqlx::query("DROP TABLE pages")
             .execute(&pool)
             .await
             .unwrap();
@@ -118,7 +118,7 @@ mod tests {
         assert!(!old.exists());
         let pool = state.existing_pool(&key).await.unwrap();
         let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE file_path = 'page.md'")
+            sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE file_path = 'page.md'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();

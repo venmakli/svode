@@ -1,9 +1,9 @@
-use crate::index::entry_projection::build_entry_with_dates;
 use crate::index::manifest::{
     SourceManifestRecord, advance_generation, read_generation, read_source_manifest,
     reconcile_source_manifest,
 };
-use crate::index::rows::upsert_entry;
+use crate::index::page_projection::build_page_with_dates;
+use crate::index::rows::upsert_page;
 use crate::index::state::IndexRuntimeState;
 use crate::index::{IndexError, IndexKey};
 use crate::page::dates::{GitDateExecutor, derive_date_overrides};
@@ -133,7 +133,7 @@ pub async fn reconcile_pool<E: GitDateExecutor>(
         Some(executor) => derive_date_overrides(executor, &dir, &changed_paths).await,
         None => Default::default(),
     };
-    let mut built_entries = HashMap::new();
+    let mut built_pages = HashMap::new();
     for record in &mut changed_records {
         tokio::task::yield_now().await;
         if record.diagnostic_code.is_some() {
@@ -148,15 +148,15 @@ pub async fn reconcile_pool<E: GitDateExecutor>(
             record.diagnostic_code = Some("projection_unavailable".to_string());
             continue;
         };
-        match build_entry_with_dates(
+        match build_page_with_dates(
             &dir,
             &path,
             date_overrides.get(&record.source_path),
             projection,
         ) {
-            Ok(entry) => {
-                record.diagnostic_code = entry.source_diagnostic.clone();
-                built_entries.insert(record.source_path.clone(), entry);
+            Ok(page) => {
+                record.diagnostic_code = page.source_diagnostic.clone();
+                built_pages.insert(record.source_path.clone(), page);
             }
             Err(error) => {
                 tracing::warn!(
@@ -182,15 +182,15 @@ pub async fn reconcile_pool<E: GitDateExecutor>(
     let mut tx = pool.begin().await?;
     let mut knowledge_changed = false;
     for path in &deleted_paths {
-        sqlx::query("DELETE FROM entries WHERE file_path = ?")
+        sqlx::query("DELETE FROM pages WHERE file_path = ?")
             .bind(path)
             .execute(&mut *tx)
             .await?;
         knowledge_changed |= crate::index::knowledge_rows::delete_artifact(&mut tx, path).await?;
     }
     for record in &changed_records {
-        let Some(entry) = built_entries.get(&record.source_path) else {
-            sqlx::query("DELETE FROM entries WHERE file_path = ?")
+        let Some(page) = built_pages.get(&record.source_path) else {
+            sqlx::query("DELETE FROM pages WHERE file_path = ?")
                 .bind(&record.source_path)
                 .execute(&mut *tx)
                 .await?;
@@ -198,8 +198,8 @@ pub async fn reconcile_pool<E: GitDateExecutor>(
                 crate::index::knowledge_rows::delete_artifact(&mut tx, &record.source_path).await?;
             continue;
         };
-        upsert_entry(&mut *tx, entry).await?;
-        if let Some(artifact) = entry.knowledge.as_ref() {
+        upsert_page(&mut *tx, page).await?;
+        if let Some(artifact) = page.knowledge.as_ref() {
             knowledge_changed |=
                 crate::index::knowledge_rows::upsert_artifact(&mut tx, artifact).await?;
         } else if let Some(artifact) =

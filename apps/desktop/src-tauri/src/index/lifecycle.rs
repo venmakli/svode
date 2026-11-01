@@ -305,7 +305,7 @@ mod tests {
             assert!(!old.exists());
             assert_eq!(
                 sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM entries WHERE file_path = 'page.md'"
+                    "SELECT COUNT(*) FROM pages WHERE file_path = 'page.md'"
                 )
                 .fetch_one(&index)
                 .await

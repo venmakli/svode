@@ -5,7 +5,7 @@ use crate::collections::engine;
 use crate::git::pending::{Relocation, StructuralOp};
 use crate::page::registered_space_dirs;
 
-pub fn abs_entry_path(space: &str, rel_path: &str) -> PathBuf {
+pub fn abs_page_path(space: &str, rel_path: &str) -> PathBuf {
     Path::new(space).join(rel_path)
 }
 
@@ -14,8 +14,8 @@ pub fn order_path(space: &str) -> PathBuf {
 }
 
 /// Sidebar order is rewritten by every structural change, so it travels with
-/// the entry paths of that change.
-pub fn entry_paths_with_order(
+/// the page paths of that change.
+pub fn page_paths_with_order(
     space: &str,
     paths: impl IntoIterator<Item = PathBuf>,
 ) -> Vec<PathBuf> {
@@ -80,8 +80,8 @@ pub fn basename(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
-/// Commit-message name of an entry: a README stands for its folder.
-pub fn entry_history_name(path: &str) -> String {
+/// Commit-message name of a page: a README stands for its folder.
+pub fn page_history_name(path: &str) -> String {
     let normalized = path.trim_matches('/').replace('\\', "/");
     let path = Path::new(&normalized);
     if path
@@ -104,47 +104,47 @@ pub fn entry_history_name(path: &str) -> String {
 
 /// Pages inside a Collection with sensitive columns never expose their
 /// filename in history, whether or not they are its items.
-pub fn entry_in_sensitive_collection(space: &str, path: &str) -> bool {
+pub fn page_in_sensitive_collection(space: &str, path: &str) -> bool {
     crate::collections::schema::resolve_collection_schema_by_location(Path::new(space), path)
         .ok()
         .flatten()
         .is_some_and(|(schema, _)| engine::schema_has_sensitive_columns(&schema))
 }
 
-pub fn entry_commit_name(space: &str, path: &str) -> String {
-    if entry_in_sensitive_collection(space, path) {
+pub fn page_commit_name(space: &str, path: &str) -> String {
+    if page_in_sensitive_collection(space, path) {
         "collection entry".to_string()
     } else {
         basename(path)
     }
 }
 
-pub fn entry_history_commit_name(space: &str, path: &str) -> String {
-    if entry_in_sensitive_collection(space, path) {
+pub fn page_history_commit_name(space: &str, path: &str) -> String {
+    if page_in_sensitive_collection(space, path) {
         "collection entry".to_string()
     } else {
-        entry_history_name(path)
+        page_history_name(path)
     }
 }
 
-/// The relocation of an entry from `from` to `to`; a folder entry is
+/// The relocation of a page from `from` to `to`; a folder page is
 /// represented by its directory.
-pub fn entry_relocation(space: &str, from: &str, to: &str) -> Relocation {
+pub fn page_relocation(space: &str, from: &str, to: &str) -> Relocation {
     Relocation {
-        source: entry_entity(space, from),
-        target: entry_entity(space, to),
+        source: page_entity(space, from),
+        target: page_entity(space, to),
     }
 }
 
-/// The entity of the entry at `path` as a relocation names it: the Page
-/// file, or the directory of a folder entry. A creation registers it so that
+/// The entity of the page at `path` as a relocation names it: the Page
+/// file, or the directory of a folder page. A creation registers it so that
 /// later relocations continue the creation.
-pub fn entry_entity(space: &str, path: &str) -> PathBuf {
-    abs_entry_path(space, root_path_for_head(path))
+pub fn page_entity(space: &str, path: &str) -> PathBuf {
+    abs_page_path(space, root_path_for_head(path))
 }
 
-pub fn entry_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {
-    if entry_in_sensitive_collection(space, from) || entry_in_sensitive_collection(space, to) {
+pub fn page_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {
+    if page_in_sensitive_collection(space, from) || page_in_sensitive_collection(space, to) {
         StructuralOp::Rename {
             old: "collection entry".to_string(),
             new: "collection entry".to_string(),

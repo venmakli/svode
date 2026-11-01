@@ -21,7 +21,7 @@ pub struct SearchResult {
     pub path: String,
     pub title: String,
     #[serde(rename = "type")]
-    pub entry_type: String,
+    pub page_type: String,
     pub snippet: Option<String>,
     pub table_name: Option<String>,
     #[serde(skip)]
@@ -97,7 +97,7 @@ impl TitleQuery {
     }
 }
 
-/// Search entries by title or path, ranked by `TitleQuery` level, then by
+/// Search pages by title or path, ranked by `TitleQuery` level, then by
 /// `updated_at DESC`, before the limit is applied. Matching happens in Rust
 /// because SQLite `LIKE` folds only ASCII case.
 pub async fn search_by_title(
@@ -115,7 +115,7 @@ pub async fn search_by_title(
             'page' AS type,
             NULL AS table_name,
             updated AS updated_at
-        FROM entries
+        FROM pages
         WHERE is_discoverable = 1
           AND NOT (
               LOWER(file_path) = 'readme.md'
@@ -143,7 +143,7 @@ pub async fn search_by_title(
                 id: r.get::<String, _>("id"),
                 path: r.get::<String, _>("path"),
                 title: r.get::<String, _>("title"),
-                entry_type: r.get::<String, _>("type"),
+                page_type: r.get::<String, _>("type"),
                 snippet: None,
                 table_name: r.get::<Option<String>, _>("table_name"),
                 updated_at: r.get::<Option<String>, _>("updated_at"),
@@ -162,7 +162,7 @@ pub async fn search_by_title(
 
 /// Exact lookup for collection `unique_id` display values such as `ISSUE-24`.
 ///
-/// The SQLite index has entry fields, but not schema column config. The command
+/// The SQLite index has page fields, but not schema column config. The command
 /// layer passes the source space path so this lookup can read each collection
 /// schema and interpret prefix/number semantics correctly.
 pub async fn search_unique_id_exact(
@@ -179,7 +179,7 @@ pub async fn search_unique_id_exact(
     let collections = sqlx::query(
         r#"
         SELECT DISTINCT collection_root_path
-        FROM entries
+        FROM pages
         WHERE is_discoverable = 1
           AND in_collection = 1 AND collection_root_path IS NOT NULL
         "#,
@@ -246,7 +246,7 @@ async fn unique_id_rows(
             'page' AS type,
             collection_root_path AS table_name,
             updated AS updated_at
-        FROM entries
+        FROM pages
         WHERE is_discoverable = 1
           AND in_collection = 1
           AND collection_root_path = ?
@@ -269,7 +269,7 @@ async fn unique_id_rows(
             id: r.get::<String, _>("id"),
             path: r.get::<String, _>("path"),
             title: r.get::<String, _>("title"),
-            entry_type: r.get::<String, _>("type"),
+            page_type: r.get::<String, _>("type"),
             snippet: None,
             table_name: r.get::<Option<String>, _>("table_name"),
             updated_at: r.get::<Option<String>, _>("updated_at"),
@@ -286,11 +286,11 @@ fn json_path(field: &str) -> String {
 pub async fn search_fts(
     pool: &SqlitePool,
     query: &str,
-    entry_type_filter: Option<&str>,
+    page_type_filter: Option<&str>,
     table_name_filter: Option<&str>,
     limit: i64,
 ) -> Result<Vec<SearchResult>, AppError> {
-    if entry_type_filter.is_some_and(|t| t != "page") || table_name_filter.is_some() {
+    if page_type_filter.is_some_and(|t| t != "page") || table_name_filter.is_some() {
         return Ok(Vec::new());
     }
 
@@ -310,10 +310,10 @@ pub async fn search_fts(
             'page' AS type,
             NULL AS table_name,
             e.updated AS updated_at,
-            snippet(entries_fts, 2, '<mark>', '</mark>', '...', 32) AS snippet
-        FROM entries_fts
-        JOIN entries e ON e.rowid = entries_fts.rowid
-        WHERE entries_fts MATCH ?
+            snippet(pages_fts, 2, '<mark>', '</mark>', '...', 32) AS snippet
+        FROM pages_fts
+        JOIN pages e ON e.rowid = pages_fts.rowid
+        WHERE pages_fts MATCH ?
           AND e.is_discoverable = 1
           AND NOT (
               LOWER(e.file_path) = 'readme.md'
@@ -330,7 +330,7 @@ pub async fn search_fts(
           )
         "#,
     );
-    sql.push_str(" ORDER BY bm25(entries_fts) ASC LIMIT ?");
+    sql.push_str(" ORDER BY bm25(pages_fts) ASC LIMIT ?");
 
     let mut q = sqlx::query(&sql).bind(fts_query);
     q = q.bind(limit);
@@ -340,7 +340,7 @@ pub async fn search_fts(
         .await
         .map_err(|e| {
             AppError::Index(format!(
-                "search_fts query={query:?} type={entry_type_filter:?} table={table_name_filter:?} failed: {e}"
+                "search_fts query={query:?} type={page_type_filter:?} table={table_name_filter:?} failed: {e}"
             ))
         })?;
 
@@ -350,7 +350,7 @@ pub async fn search_fts(
             id: r.get::<String, _>("id"),
             path: r.get::<String, _>("path"),
             title: r.get::<String, _>("title"),
-            entry_type: r.get::<String, _>("type"),
+            page_type: r.get::<String, _>("type"),
             snippet: r.get::<Option<String>, _>("snippet"),
             table_name: r.get::<Option<String>, _>("table_name"),
             updated_at: r.get::<Option<String>, _>("updated_at"),
@@ -358,7 +358,7 @@ pub async fn search_fts(
         .collect())
 }
 
-/// Recently updated entries.
+/// Recently updated pages.
 pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, AppError> {
     let rows = sqlx::query(
         r#"
@@ -369,7 +369,7 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
             'page' AS type,
             NULL AS table_name,
             updated AS updated_at
-        FROM entries
+        FROM pages
         WHERE is_discoverable = 1
           AND NOT (
             LOWER(file_path) = 'readme.md'
@@ -399,7 +399,7 @@ pub async fn recent(pool: &SqlitePool, limit: i64) -> Result<Vec<SearchResult>, 
             id: r.get::<String, _>("id"),
             path: r.get::<String, _>("path"),
             title: r.get::<String, _>("title"),
-            entry_type: r.get::<String, _>("type"),
+            page_type: r.get::<String, _>("type"),
             snippet: None,
             table_name: r.get::<Option<String>, _>("table_name"),
             updated_at: r.get::<Option<String>, _>("updated_at"),
@@ -416,7 +416,7 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 updated TEXT NOT NULL,
@@ -431,7 +431,7 @@ mod tests {
         .unwrap();
         for (path, title, updated, discoverable) in rows {
             sqlx::query(
-                "INSERT INTO entries (file_path,title,updated,collection_root_path,in_collection,is_discoverable) VALUES (?,?,?,NULL,0,?)",
+                "INSERT INTO pages (file_path,title,updated,collection_root_path,in_collection,is_discoverable) VALUES (?,?,?,NULL,0,?)",
             )
             .bind(path)
             .bind(title)
@@ -512,7 +512,7 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 updated TEXT NOT NULL,
@@ -528,7 +528,7 @@ mod tests {
         .unwrap();
         sqlx::query(
             r#"
-            INSERT INTO entries (
+            INSERT INTO pages (
                 file_path, title, updated, collection_root_path, in_collection,
                 is_discoverable, fields
             ) VALUES ('tasks/a.md', 'A', '2026-01-01', 'tasks', 1, 1, '{"Key":24}')
@@ -550,7 +550,7 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 description TEXT,
@@ -568,11 +568,11 @@ mod tests {
         .unwrap();
         sqlx::query(
             r#"
-            CREATE VIRTUAL TABLE entries_fts USING fts5(
+            CREATE VIRTUAL TABLE pages_fts USING fts5(
                 title,
                 description,
                 body_preview,
-                content='entries',
+                content='pages',
                 content_rowid='rowid'
             )
             "#,
@@ -582,7 +582,7 @@ mod tests {
         .unwrap();
         sqlx::query(
             r#"
-            INSERT INTO entries (
+            INSERT INTO pages (
                 rowid, file_path, title, description, body_preview,
                 updated, collection_root_path, in_collection, is_discoverable, fields
             ) VALUES (
@@ -597,8 +597,8 @@ mod tests {
         .unwrap();
         sqlx::query(
             r#"
-            INSERT INTO entries_fts(rowid, title, description, body_preview)
-            SELECT rowid, title, description, body_preview FROM entries
+            INSERT INTO pages_fts(rowid, title, description, body_preview)
+            SELECT rowid, title, description, body_preview FROM pages
             "#,
         )
         .execute(&pool)
@@ -619,7 +619,7 @@ mod tests {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 description TEXT,
@@ -637,11 +637,11 @@ mod tests {
         .unwrap();
         sqlx::query(
             r#"
-            CREATE VIRTUAL TABLE entries_fts USING fts5(
+            CREATE VIRTUAL TABLE pages_fts USING fts5(
                 title,
                 description,
                 body_preview,
-                content='entries',
+                content='pages',
                 content_rowid='rowid'
             )
             "#,
@@ -668,7 +668,7 @@ mod tests {
             ),
         ] {
             sqlx::query(
-                "INSERT INTO entries (file_path,title,description,body_preview,updated,collection_root_path,in_collection,is_discoverable,fields) VALUES (?,?,NULL,'Needle body',?,?,?,1,'{}')",
+                "INSERT INTO pages (file_path,title,description,body_preview,updated,collection_root_path,in_collection,is_discoverable,fields) VALUES (?,?,NULL,'Needle body',?,?,?,1,'{}')",
             )
             .bind(path)
             .bind(title)
@@ -680,7 +680,7 @@ mod tests {
             .unwrap();
         }
         sqlx::query(
-            "INSERT INTO entries_fts(rowid,title,description,body_preview) SELECT rowid,title,description,body_preview FROM entries",
+            "INSERT INTO pages_fts(rowid,title,description,body_preview) SELECT rowid,title,description,body_preview FROM pages",
         )
         .execute(&pool)
         .await

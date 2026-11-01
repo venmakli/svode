@@ -7,10 +7,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use svode_core::collections::engine::*;
-use svode_core::collections::query::query_entry_rows;
+use svode_core::collections::query::query_item_rows;
 use svode_core::git::cli::GitCli;
-use svode_core::page::entry;
 use svode_core::page::frontmatter;
+use svode_core::page::store;
 use svode_core::space_config::TreeSpaceConfig;
 use tempfile::TempDir;
 
@@ -130,7 +130,7 @@ fn prepared_schema_mutation_reports_only_sources_that_changed() {
         vec![changed_item.clone(), schema_path.clone()]
     );
     assert_eq!(
-        entry::read(space.to_str().unwrap(), "tasks/changed.md")
+        store::read(space.to_str().unwrap(), "tasks/changed.md")
             .unwrap()
             .meta
             .extra
@@ -176,7 +176,7 @@ fn prepared_relation_schema_mutation_reports_reverse_schema_and_values() {
             space.join("tasks/schema.yaml"),
         ]
     );
-    let reverse = entry::read(space.to_str().unwrap(), "people/person.md").unwrap();
+    let reverse = store::read(space.to_str().unwrap(), "people/person.md").unwrap();
     assert_eq!(
         reverse.meta.extra["Tasks"].as_sequence().unwrap()[0].as_str(),
         Some("task.md")
@@ -216,9 +216,9 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
         "columns:\n  - { name: Active, type: boolean }\nviews:\n  - { name: Table, type: table, visible_fields: [title, Active] }\n",
     )
     .unwrap();
-    let entry_path = space.join("tasks/item.md");
-    fs::write(&entry_path, "---\ntitle: Item\nActive: false\n---\nBody\n").unwrap();
-    let entry_before = fs::read_to_string(&entry_path).unwrap();
+    let item_path = space.join("tasks/item.md");
+    fs::write(&item_path, "---\ntitle: Item\nActive: false\n---\nBody\n").unwrap();
+    let item_before = fs::read_to_string(&item_path).unwrap();
 
     let updated = update_schema_column(
         space.to_str().unwrap(),
@@ -234,7 +234,7 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
         .find(|column| column.name == "Active")
         .unwrap();
     assert_eq!(active.display.as_deref(), Some("switch"));
-    assert_eq!(fs::read_to_string(&entry_path).unwrap(), entry_before);
+    assert_eq!(fs::read_to_string(&item_path).unwrap(), item_before);
     assert_eq!(updated.views.len(), 1);
 
     let error = update_schema_column(
@@ -255,7 +255,7 @@ fn boolean_display_is_strict_and_mutates_only_the_portable_schema() {
     )
     .unwrap();
     assert_eq!(defaulted.columns[0].display, None);
-    assert_eq!(fs::read_to_string(&entry_path).unwrap(), entry_before);
+    assert_eq!(fs::read_to_string(&item_path).unwrap(), item_before);
 }
 
 #[test]
@@ -286,7 +286,7 @@ fn conversion_to_boolean_preserves_unrecognized_values_as_conflicts() {
     .unwrap();
 
     assert_eq!(
-        entry::read(space.to_str().unwrap(), "tasks/yes.md")
+        store::read(space.to_str().unwrap(), "tasks/yes.md")
             .unwrap()
             .meta
             .extra
@@ -294,7 +294,7 @@ fn conversion_to_boolean_preserves_unrecognized_values_as_conflicts() {
         Some(&Value::Bool(true))
     );
     assert_eq!(
-        entry::read(space.to_str().unwrap(), "tasks/zero.md")
+        store::read(space.to_str().unwrap(), "tasks/zero.md")
             .unwrap()
             .meta
             .extra
@@ -302,7 +302,7 @@ fn conversion_to_boolean_preserves_unrecognized_values_as_conflicts() {
         Some(&Value::Bool(false))
     );
     assert_eq!(
-        entry::read(space.to_str().unwrap(), "tasks/invalid.md")
+        store::read(space.to_str().unwrap(), "tasks/invalid.md")
             .unwrap()
             .meta
             .extra
@@ -320,7 +320,7 @@ fn conversion_to_boolean_preserves_unrecognized_values_as_conflicts() {
     )
     .unwrap();
     assert_eq!(
-        entry::read(space.to_str().unwrap(), "tasks/yes.md")
+        store::read(space.to_str().unwrap(), "tasks/yes.md")
             .unwrap()
             .meta
             .extra
@@ -329,7 +329,7 @@ fn conversion_to_boolean_preserves_unrecognized_values_as_conflicts() {
         Some("true")
     );
     assert_eq!(
-        entry::read(space.to_str().unwrap(), "tasks/zero.md")
+        store::read(space.to_str().unwrap(), "tasks/zero.md")
             .unwrap()
             .meta
             .extra
@@ -436,7 +436,7 @@ fn scoped_relation_update_validates_targets_in_root_and_space() {
     )
     .unwrap();
 
-    let updated_child = update_relation_entry_field(
+    let updated_child = update_relation_item_field(
         child.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "decisions/decision-1.md",
@@ -456,7 +456,7 @@ fn scoped_relation_update_validates_targets_in_root_and_space() {
         Some("task-1.md")
     );
 
-    let updated_root = update_relation_entry_field(
+    let updated_root = update_relation_item_field(
         root.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "roadmap/item-1.md",
@@ -477,7 +477,7 @@ fn scoped_relation_update_validates_targets_in_root_and_space() {
     );
 
     assert!(
-        update_relation_entry_field(
+        update_relation_item_field(
             child.to_str().unwrap(),
             Some(root.to_str().unwrap()),
             "decisions/decision-1.md",
@@ -545,7 +545,7 @@ fn cross_scope_two_way_root_to_space_materializes_and_syncs_reverse() {
     assert_eq!(reverse.relation_scope, Some(RelationScope::root()));
     assert_eq!(reverse.two_way.as_deref(), Some("Decision"));
 
-    update_relation_entry_field(
+    update_relation_item_field(
         root.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "tasks/a.md",
@@ -575,7 +575,7 @@ fn cross_scope_two_way_root_to_space_materializes_and_syncs_reverse() {
     assert_eq!(diagnostics.drift.missing_reverse_count, 0);
     assert_eq!(diagnostics.drift.missing_source_count, 0);
 
-    update_relation_entry_field(
+    update_relation_item_field(
         child.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "decisions/decision-1.md",
@@ -645,7 +645,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
     assert_eq!(reverse.relation_scope, Some(RelationScope::space("design")));
     assert_eq!(reverse.two_way.as_deref(), Some("Task"));
 
-    update_relation_entry_field(
+    update_relation_item_field(
         child.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "decisions/decision-1.md",
@@ -664,7 +664,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
         Some("decision-1.md")
     );
 
-    update_relation_entry_field(
+    update_relation_item_field(
         root.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "tasks/a.md",
@@ -676,7 +676,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
     let (meta, _) = frontmatter::try_parse(&raw).unwrap().unwrap();
     assert!(!meta.extra.contains_key("Task"));
 
-    update_relation_entry_field(
+    update_relation_item_field(
         child.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "decisions/decision-1.md",
@@ -702,7 +702,7 @@ fn cross_scope_two_way_space_to_root_materializes_and_syncs_reverse() {
             .and_then(Value::as_str),
         Some("b.md")
     );
-    entry::delete_with_project(
+    store::delete_with_project(
         root.to_str().unwrap(),
         "tasks/b.md",
         None,
@@ -788,7 +788,7 @@ fn cross_scope_two_way_rejects_child_to_sibling_space() {
     )
     .unwrap();
 
-    let error = update_relation_entry_field(
+    let error = update_relation_item_field(
         design.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "decisions/decision-1.md",
@@ -863,7 +863,7 @@ fn cross_scope_one_way_child_to_sibling_space_updates_without_reverse_sync() {
     )
     .unwrap();
 
-    update_relation_entry_field(
+    update_relation_item_field(
         design.to_str().unwrap(),
         Some(root.to_str().unwrap()),
         "decisions/decision-1.md",
@@ -1319,7 +1319,7 @@ fn two_way_relation_reverse_side_update_allows_paired_limit_one() {
     )
     .unwrap();
 
-    update_relation_entry_field(
+    update_relation_item_field(
         space.to_str().unwrap(),
         None,
         "sprints/sprint-1.md",
@@ -1335,7 +1335,7 @@ fn two_way_relation_reverse_side_update_allows_paired_limit_one() {
         Some("sprint-1.md")
     );
 
-    let conflict = update_relation_entry_field(
+    let conflict = update_relation_item_field(
         space.to_str().unwrap(),
         None,
         "sprints/sprint-2.md",
@@ -1562,8 +1562,8 @@ fn add_unique_id_materializes_existing_rows_and_sets_next() {
     let schema = add_schema_column(space.to_str().unwrap(), "tasks", column).unwrap();
     assert_eq!(schema.columns[0].next, Some(3));
 
-    let b = entry::read(space.to_str().unwrap(), "tasks/b.md").unwrap();
-    let a = entry::read(space.to_str().unwrap(), "tasks/a.md").unwrap();
+    let b = store::read(space.to_str().unwrap(), "tasks/b.md").unwrap();
+    let a = store::read(space.to_str().unwrap(), "tasks/a.md").unwrap();
     assert_eq!(b.meta.extra.get("Key").and_then(unique_id_value), Some(1));
     assert_eq!(a.meta.extra.get("Key").and_then(unique_id_value), Some(2));
 }
@@ -1625,7 +1625,7 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
     let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
     sqlx::query(
         r#"
-            CREATE TABLE entries (
+            CREATE TABLE pages (
                 file_path TEXT NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
@@ -1633,7 +1633,7 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
                 updated TEXT NOT NULL,
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
-                is_entry_head INTEGER NOT NULL,
+                is_item_head INTEGER NOT NULL,
                 fields TEXT NOT NULL
             )
             "#,
@@ -1647,9 +1647,9 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
     ] {
         sqlx::query(
             r#"
-                INSERT INTO entries (
+                INSERT INTO pages (
                     file_path, title, description, created, updated, collection_root_path,
-                    in_collection, is_entry_head, fields
+                    in_collection, is_item_head, fields
                 ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
                 "#,
         )
@@ -1660,7 +1660,7 @@ async fn actor_query_filters_expand_canonical_email_to_stored_aliases() {
         .await
         .unwrap();
     }
-    let rows = query_entry_rows(&pool, &schema, "tasks", &resolved, &[], None, None)
+    let rows = query_item_rows(&pool, &schema, "tasks", &resolved, &[], None, None)
         .await
         .unwrap();
     assert_eq!(

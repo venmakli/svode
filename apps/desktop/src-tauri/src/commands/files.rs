@@ -18,37 +18,37 @@ use crate::index::{IndexState, ResolvedDocLink};
 use crate::properties::read;
 use crate::repo_path::{RootMode, normalize_repo_relative};
 use svode_core::collections::engine::{
-    self as engine, CollectionInfo, CollectionSchema, Column, EntryFieldBatchIntent,
-    EntrySchemaResponse, Filter, PropertyOption, PropertyType, RelationBacklink,
-    RelationTwoWayDiagnostics, ResolvedRelation, SchemaMutationWarning, Sort, View,
+    self as engine, CollectionInfo, CollectionSchema, Column, Filter, ItemFieldBatchIntent,
+    ItemSchemaResponse, PropertyOption, PropertyType, RelationBacklink, RelationTwoWayDiagnostics,
+    ResolvedRelation, SchemaMutationWarning, Sort, View,
 };
 use svode_core::collections::unique_id_duplicates::{
     UniqueIdDuplicate, unique_id_duplicate_of_item,
 };
 use svode_core::git::autocommit::{AutocommitService, StructuralChange, StructuralOp};
 use svode_core::index::backlinks::{BacklinkInfo, LinkValidation};
-use svode_core::page::entry::{self, Entry, WriteResult};
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
+use svode_core::page::store::{self, Page, WriteResult};
 use svode_core::page::templates::{self, TemplateInfo, TemplateKind};
 
 mod collections;
-mod entries;
+mod pages;
 mod schema;
 mod structure;
 mod tree_links;
 
 pub use crate::files::link_fix::LinkFixSuggestion;
 pub use collections::*;
-pub use entries::*;
+pub use pages::*;
 pub use schema::*;
 pub use structure::*;
 pub use tree_links::*;
 
 pub(crate) use crate::structure::{
-    abs_entry_path, basename, entry_commit_name, entry_entity, entry_history_name,
-    entry_in_sensitive_collection, entry_paths_with_order, maybe_autocommit_structural_paths,
-    order_path, root_path_for_head,
+    abs_page_path, basename, maybe_autocommit_structural_paths, order_path, page_commit_name,
+    page_entity, page_history_name, page_in_sensitive_collection, page_paths_with_order,
+    root_path_for_head,
 };
 
 fn path_name(path: &str) -> String {
@@ -66,11 +66,11 @@ fn count_tree_nodes(nodes: &[TreeNode]) -> usize {
         .sum()
 }
 
-async fn apply_indexed_entry_dates(
+async fn apply_indexed_page_dates(
     index_state: &IndexState,
     space: &str,
     path: &str,
-    entry: &mut Entry,
+    page: &mut Page,
 ) {
     let Ok(normalized) = normalize_repo_relative(path, RootMode::Reject) else {
         return;
@@ -81,7 +81,7 @@ async fn apply_indexed_entry_dates(
     let Ok(pool) = index_state.get_or_create(&key).await else {
         return;
     };
-    svode_core::page::indexed_dates::apply_indexed_dates(&pool, &normalized, entry).await;
+    svode_core::page::indexed_dates::apply_indexed_dates(&pool, &normalized, page).await;
 }
 
 /// The duplicate mark of a Collection item while its Space index is open;
@@ -218,7 +218,7 @@ where
     .await
 }
 
-async fn require_entry_move_mutation_plan(
+async fn require_page_move_mutation_plan(
     app: &AppHandle,
     index_state: &IndexState,
     space: &str,
@@ -231,7 +231,7 @@ async fn require_entry_move_mutation_plan(
     require_planned_mutation_paths(app, space, paths).await
 }
 
-async fn require_entry_rename_mutation_plan(
+async fn require_page_rename_mutation_plan(
     app: &AppHandle,
     index_state: &IndexState,
     space: &str,
@@ -244,7 +244,7 @@ async fn require_entry_rename_mutation_plan(
     require_planned_mutation_paths(app, space, paths).await
 }
 
-async fn require_entry_backlink_mutation_plan(
+async fn require_page_backlink_mutation_plan(
     app: &AppHandle,
     index_state: &IndexState,
     space: &str,
@@ -253,13 +253,12 @@ async fn require_entry_backlink_mutation_plan(
     folder_rename: bool,
 ) -> Result<Vec<PathBuf>, AppError> {
     let paths =
-        entry_backlink_mutation_paths(index_state, space, project_path, from, folder_rename)
-            .await?;
+        page_backlink_mutation_paths(index_state, space, project_path, from, folder_rename).await?;
     require_repository_mutation_paths(app, paths.clone()).await?;
     Ok(paths)
 }
 
-pub(crate) async fn entry_backlink_mutation_paths(
+pub(crate) async fn page_backlink_mutation_paths(
     index_state: &IndexState,
     space: &str,
     project_path: Option<&str>,
@@ -285,14 +284,14 @@ async fn require_convert_to_collection_mutation_plan(
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.eq_ignore_ascii_case("README.md"));
     if needs_leaf_move {
-        require_entry_backlink_mutation_plan(app, index_state, space, project_path, &path, false)
+        require_page_backlink_mutation_plan(app, index_state, space, project_path, &path, false)
             .await
     } else {
         require_planned_mutation_paths(app, space, Vec::new()).await
     }
 }
 
-fn nested_entry_path(path: &str) -> Result<String, AppError> {
+fn nested_page_path(path: &str) -> Result<String, AppError> {
     let path = normalize_repo_relative(path, RootMode::Reject)?;
     if Path::new(&path)
         .file_name()
@@ -313,7 +312,7 @@ fn nested_entry_path(path: &str) -> Result<String, AppError> {
     })
 }
 
-fn leaf_entry_path(path: &str) -> Result<String, AppError> {
+fn leaf_page_path(path: &str) -> Result<String, AppError> {
     let path = normalize_repo_relative(path, RootMode::Reject)?;
     let folder = Path::new(&path)
         .parent()

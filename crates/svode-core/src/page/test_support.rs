@@ -4,9 +4,9 @@ use std::sync::{Arc, OnceLock};
 use crate::index::state::IndexRuntimeState;
 use crate::index::update::IndexUpdateState;
 use crate::page::dates::SystemGitDateExecutor;
-use crate::page::entry::EntryMeta;
 use crate::page::frontmatter;
 use crate::page::nonce::WriteNonceRegistry;
+use crate::page::store::PageMeta;
 use crate::page::write::PageRuntime;
 use crate::routines::store_state::RoutineStoreState;
 
@@ -23,7 +23,7 @@ pub(crate) fn scaffold_space(path: &Path, name: &str) {
     std::fs::write(path.join(".svode/local.json"), "{}").unwrap();
     std::fs::write(
         path.join("README.md"),
-        frontmatter::serialize(&EntryMeta::new_persisted(name.to_string()), ""),
+        frontmatter::serialize(&PageMeta::new_persisted(name.to_string()), ""),
     )
     .unwrap();
 }

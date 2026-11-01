@@ -186,13 +186,15 @@ impl Snapshot {
 }
 
 // Fingerprints of complete sqlite_master definitions from the shipped schemas:
-// 14: 68edf6b; 15: d7653f1; 16: 5d7c1f4; 17: 65c0607; 18 to 21 keep the DDL of 17.
+// 14: 68edf6b; 15: d7653f1; 16: 5d7c1f4; 17: 65c0607; 18 to 21 keep the DDL of 17;
+// 22 renames the Page table, its FTS table and the item head column.
 // Include tables, columns, constraints, FTS shadows, indexes, views and triggers.
 fn known_schema(version: i64) -> Option<&'static str> {
     match version {
         14 => Some("a6ae1f41bce86ebdbbb6c617fa23aa4733d0d49470913f90e6712dcbe712eedc"),
         15 | 16 => Some("f4d6d0171937d6834a6dd827294e53ac15f9f321a9fc9d9edbabf60d0731f723"),
         17..=21 => Some("ff16232afdc78ca4e0728fdee24e1b312e08550d694344d45d5403db8f974a34"),
+        22 => Some("a5d9e9b76ddb412a89bd89a1f513f450fe2e3b171654cbfa41e74d48b27e8a75"),
         _ => None,
     }
 }
@@ -409,7 +411,7 @@ mod tests {
             "CREATE TABLE routine_runs (id TEXT); INSERT INTO routine_runs VALUES ('keep');",
         )
         .await;
-        fixture(&directory, "2", 22, "").await;
+        fixture(&directory, "2", 23, "").await;
         fixture(
             &directory,
             "3",

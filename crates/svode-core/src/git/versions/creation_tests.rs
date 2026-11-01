@@ -15,7 +15,7 @@ use crate::git::save_chain_tests::{Fixture, page, records, without_order};
 use crate::git::staging_tests::{TestHost, cli, git, write};
 use crate::page::dates::SystemGitDateExecutor;
 use crate::structure::{
-    self, CollectionCreate, abs_entry_path, entry_commit_name, entry_entity, entry_paths_with_order,
+    self, CollectionCreate, abs_page_path, page_commit_name, page_entity, page_paths_with_order,
 };
 
 const PAUSE: Duration = Duration::from_secs(60);
@@ -39,7 +39,7 @@ async fn fixture() -> Fixture {
 }
 
 /// Create a Page with the default title and register it the way the
-/// Desktop `create_entry` command does: `Create` with the order file first.
+/// Desktop `create_page` command does: `Create` with the order file first.
 async fn create_page(fixture: &Fixture) -> String {
     let space = fixture.space();
     let created = crate::page::create::create(
@@ -66,16 +66,13 @@ async fn create_page(fixture: &Fixture) -> String {
     .await
     .unwrap()
     .page;
-    let paths = entry_paths_with_order(space, [abs_entry_path(space, &created.path)]);
+    let paths = page_paths_with_order(space, [abs_page_path(space, &created.path)]);
     assert!(paths[0].ends_with(".svode/order.json"));
     fixture.git.pending().record(
         Path::new(space),
         Some(
-            StructuralChange::new(StructuralOp::Create(entry_commit_name(
-                space,
-                &created.path,
-            )))
-            .creating(entry_entity(space, &created.path)),
+            StructuralChange::new(StructuralOp::Create(page_commit_name(space, &created.path)))
+                .creating(page_entity(space, &created.path)),
         ),
         paths,
     );
@@ -174,7 +171,7 @@ async fn a_created_page_moved_and_edited_closes_when_the_user_leaves_it() {
         .write(&created, Some("First notes\n"), None)
         .await
         .unwrap();
-    let moved = structure::move_entry(root, &created, "Docs", Some(root), fixture.structure())
+    let moved = structure::move_page(root, &created, "Docs", Some(root), fixture.structure())
         .await
         .unwrap();
     assert_eq!(moved, "Docs/Untitled.md");

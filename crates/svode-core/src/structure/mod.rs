@@ -13,14 +13,14 @@ mod tests;
 
 pub use commit::{StructuralCommitSink, schedule_rename};
 pub use naming::{
-    abs_entry_path, basename, entry_commit_name, entry_entity, entry_history_commit_name,
-    entry_history_name, entry_in_sensitive_collection, entry_paths_with_order, entry_relocation,
-    entry_rename_op, grouped_abs_paths_by_space, order_path, root_path_for_head,
+    abs_page_path, basename, grouped_abs_paths_by_space, order_path, page_commit_name, page_entity,
+    page_history_commit_name, page_history_name, page_in_sensitive_collection,
+    page_paths_with_order, page_relocation, page_rename_op, root_path_for_head,
 };
 pub use ops::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, ConvertToLeafOutcome,
     DeleteOutcome, StructureRuntime, convert_to_collection, convert_to_folder, convert_to_leaf,
-    create_collection, create_folder, delete, duplicate, move_entry, nest, rename, unnest,
+    create_collection, create_folder, delete, duplicate, move_page, nest, rename, unnest,
 };
 pub use plan::{
     backlink_mutation_paths, collection_create_schema_paths, delete_mutation_paths,

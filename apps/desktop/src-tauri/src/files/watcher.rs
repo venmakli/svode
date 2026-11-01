@@ -276,7 +276,7 @@ fn process_published_events(
                     event_kind_is_folder(&event_kind),
                 ));
             }
-            if let Some(source) = svode_core::page::entry::replaced_by_staged_copy(path) {
+            if let Some(source) = svode_core::page::store::replaced_by_staged_copy(path) {
                 replaced_in_place.insert(source);
             }
             if path
@@ -356,7 +356,7 @@ fn process_published_events(
             if !policy.is_ignored_abs(path, path_kind(path, &event_kind)) {
                 any_dirty = true;
             }
-            // Per-file file:* events are emitted for document entries and
+            // Per-file file:* events are emitted for pages and
             // collection schemas. Schema changes are derived-state inputs only;
             // they do not trigger autocommit from the watcher.
             let Some(classification) =
@@ -1441,7 +1441,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(500));
         while rx.try_recv().is_ok() {}
 
-        svode_core::page::entry::write_under_name_lock(
+        svode_core::page::store::write_under_name_lock(
             space.to_str().unwrap(),
             "note.md",
             "New body\n",
@@ -1473,7 +1473,7 @@ mod tests {
         for event in events.iter().filter(|event| changes_files(event)) {
             for (index, path) in event.paths.iter().enumerate() {
                 let kind = event_kind_for_path(event, index);
-                replaced.extend(svode_core::page::entry::replaced_by_staged_copy(path));
+                replaced.extend(svode_core::page::store::replaced_by_staged_copy(path));
                 assert!(
                     classify_attachment_invalidations(&space, path, &kind)
                         .iter()

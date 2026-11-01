@@ -374,12 +374,12 @@ async fn dated_pool() -> SqlitePool {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::query("CREATE TABLE entries (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)")
+    sqlx::query("CREATE TABLE pages (file_path TEXT PRIMARY KEY, created TEXT, updated TEXT)")
         .execute(&pool)
         .await
         .unwrap();
     for (path, _) in SOURCES {
-        sqlx::query("INSERT INTO entries VALUES (?, 'indexed-created', 'indexed-updated')")
+        sqlx::query("INSERT INTO pages VALUES (?, 'indexed-created', 'indexed-updated')")
             .bind(path)
             .execute(&pool)
             .await

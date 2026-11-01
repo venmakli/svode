@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use svode_core::git::pending::StructuralChange;
-use svode_core::page::entry::Entry;
+use svode_core::page::store::Page;
 use svode_core::structure::{StructuralCommitSink, StructureRuntime};
 
 use crate::error::AppError;
@@ -18,8 +18,8 @@ use svode_core::git::cli::GitCli;
 pub use svode_core::structure::delete_mutation_paths;
 pub use svode_core::structure::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, DeleteOutcome,
-    abs_entry_path, basename, entry_commit_name, entry_entity, entry_history_name,
-    entry_in_sensitive_collection, entry_paths_with_order, order_path, root_path_for_head,
+    abs_page_path, basename, order_path, page_commit_name, page_entity, page_history_name,
+    page_in_sensitive_collection, page_paths_with_order, root_path_for_head,
 };
 use svode_core::structure::{
     backlink_mutation_paths as core_backlink_mutation_paths,
@@ -193,7 +193,7 @@ pub async fn convert_to_folder(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::convert_to_folder(
@@ -212,7 +212,7 @@ pub async fn convert_to_leaf(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::convert_to_leaf(
@@ -222,7 +222,7 @@ pub async fn convert_to_leaf(
         runtime(state, updates, cli.as_ref(), sink.as_ref()),
     )
     .await?
-    .entry)
+    .page)
 }
 
 pub async fn convert_to_collection(
@@ -265,7 +265,7 @@ pub async fn rename(
     .await?)
 }
 
-pub async fn move_entry(
+pub async fn move_page(
     space: &str,
     from: &str,
     to_parent: &str,
@@ -276,7 +276,7 @@ pub async fn move_entry(
 ) -> Result<String, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
-    Ok(svode_core::structure::move_entry(
+    Ok(svode_core::structure::move_page(
         space,
         from,
         to_parent,
@@ -331,7 +331,7 @@ pub async fn duplicate(
     state: &IndexState,
     updates: &IndexUpdateState,
     autocommit: Option<&AutocommitService>,
-) -> Result<Entry, AppError> {
+) -> Result<Page, AppError> {
     let cli = crate::git::dates::detected_cli();
     let sink = sink(autocommit);
     Ok(svode_core::structure::duplicate(

@@ -169,7 +169,7 @@ pub(crate) async fn query_collection_items(
         })?;
     let runtime = host.read_runtime();
     let git_cli = runtime.git.require_cli().ok();
-    let items = svode_core::collections::entries::query_entries(
+    let items = svode_core::collections::items::query_items(
         &pool,
         runtime.actors,
         git_cli.as_ref(),

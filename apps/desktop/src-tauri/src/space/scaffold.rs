@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::error::AppError;
-use svode_core::page::entry::EntryMeta;
 use svode_core::page::frontmatter;
+use svode_core::page::store::PageMeta;
 
 use super::types::{AssetsSpaceConfig, SpaceConfig};
 
@@ -18,7 +18,7 @@ pub fn ensure_readme(path: &Path, title: &str) -> Result<bool, AppError> {
     }
 
     std::fs::create_dir_all(path)?;
-    let meta = EntryMeta::new_persisted(if title.trim().is_empty() {
+    let meta = PageMeta::new_persisted(if title.trim().is_empty() {
         "Home".to_string()
     } else {
         title.to_string()

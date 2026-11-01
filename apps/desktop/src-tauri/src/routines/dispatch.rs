@@ -26,7 +26,7 @@ use svode_core::agent_actors::executor::{
 };
 use svode_core::agent_actors::{AgentSettingValue, inherited_root};
 use svode_core::agent_adapters::AgentId;
-use svode_core::collections::engine::EntryFieldBatchIntent;
+use svode_core::collections::engine::ItemFieldBatchIntent;
 use svode_core::page::fields::PageFieldUpdate;
 use svode_core::page::nonce::WriteNonceRegistry;
 use svode_core::page::write::PageRuntime;
@@ -148,15 +148,15 @@ pub(crate) async fn event_dispatch_preflight(
             >(&event.payload_json) else {
                 return None;
             };
-            if payload.event_type == CollectionEvent::EntryDeleted.as_str()
-                || payload.new_entry.is_none()
+            if payload.event_type == CollectionEvent::ItemDeleted.as_str()
+                || payload.new_item.is_none()
             {
                 return None;
             }
-            svode_core::collections::engine::entry_property_batch_mutation_paths_with_project(
+            svode_core::collections::engine::item_property_batch_mutation_paths_with_project(
                 &owner.space_path.to_string_lossy(),
                 Some(&owner.project_path.to_string_lossy()),
-                &payload.entry_path,
+                &payload.item_path,
                 set,
             )
             .ok()
@@ -429,8 +429,7 @@ async fn dispatch_in_turn(
         },
     ) = (&definition.action, &dispatch_kind)
     {
-        if payload.event_type == CollectionEvent::EntryDeleted.as_str()
-            || payload.new_entry.is_none()
+        if payload.event_type == CollectionEvent::ItemDeleted.as_str() || payload.new_item.is_none()
         {
             return Ok(dispatch_blocked(
                 routine_id,
@@ -474,10 +473,10 @@ async fn dispatch_in_turn(
         let mutation = svode_core::page::fields::update(
             PageFieldUpdate {
                 space: &space,
-                path: &payload.entry_path,
+                path: &payload.item_path,
                 project: Some(&project),
                 values: set,
-                intent: EntryFieldBatchIntent::Routine,
+                intent: ItemFieldBatchIntent::Routine,
             },
             runtime,
             |paths| async move {
