@@ -275,6 +275,21 @@ export function getGitConflictMarkerSize(input: {
   return invokeCommand<number>("git_conflict_marker_size", input);
 }
 
+/**
+ * The base of each conflict block of the Page `content` the editor read at
+ * `path` (relative to `spacePath`) with conflict markers of `markerSize`, in
+ * the order of the blocks: `null` for a block without one, ambiguous blocks
+ * included; `""` is an empty base.
+ */
+export function getPageConflictBases(input: {
+  spacePath: string;
+  path: string;
+  content: string;
+  markerSize: number;
+}): Promise<(string | null)[]> {
+  return invokeCommand<(string | null)[]>("git_page_conflict_bases", input);
+}
+
 /** Abandon the merge a sync stopped in; returns the status after it. */
 export function abortGitMerge(spacePath: string): Promise<GitStatusDto> {
   return invokeCommand<GitStatusDto>("git_merge_abort", { spacePath });

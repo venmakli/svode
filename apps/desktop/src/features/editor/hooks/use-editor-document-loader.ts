@@ -306,6 +306,7 @@ export function useEditorDocumentLoader({
       page: Page,
       markerSize: number,
       properties: PropertiesConflict | null,
+      bases: (string | null)[],
     ) => {
       setPropertiesConflict(currentCacheKey, properties);
       applyLoadedPage(page);
@@ -314,6 +315,7 @@ export function useEditorDocumentLoader({
         editor,
         properties?.body ?? page.body,
         markerSize,
+        bases,
       );
       const loadedValue = loadEditorValue(value);
       setCachedDocumentValue(spacePath, currentDocument, loadedValue);
@@ -337,13 +339,13 @@ export function useEditorDocumentLoader({
           if (sequence !== loadSeqRef.current) return;
           if (page && page.source_version !== cachedBaseline.version) {
             source = "read-page";
-            const { markerSize, properties } = await readPageConflicts(
+            const { markerSize, properties, bases } = await readPageConflicts(
               spacePath,
               currentDocument,
               page,
             );
             if (sequence !== loadSeqRef.current) return;
-            openSourcePage(page, markerSize, properties);
+            openSourcePage(page, markerSize, properties, bases);
             finish("ok", false, source);
             return;
           }
@@ -371,13 +373,13 @@ export function useEditorDocumentLoader({
             initialForDocument ??
             (await readPage({ spacePath, path: currentDocument }));
           if (sequence !== loadSeqRef.current) return;
-          const { markerSize, properties } = await readPageConflicts(
+          const { markerSize, properties, bases } = await readPageConflicts(
             spacePath,
             currentDocument,
             page,
           );
           if (sequence !== loadSeqRef.current) return;
-          openSourcePage(page, markerSize, properties);
+          openSourcePage(page, markerSize, properties, bases);
           finish("ok", false, source);
         } catch (err) {
           if (sequence !== loadSeqRef.current) return;

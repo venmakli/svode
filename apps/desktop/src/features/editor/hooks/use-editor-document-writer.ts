@@ -299,7 +299,7 @@ export function useEditorDocumentWriter({
   const loadSource = useCallback(
     async (path: string, page: Page) => {
       if (!editor) return;
-      const { markerSize, properties } = await readPageConflicts(
+      const { markerSize, properties, bases } = await readPageConflicts(
         spacePath,
         path,
         page,
@@ -312,6 +312,7 @@ export function useEditorDocumentWriter({
             editor,
             properties?.body ?? page.body,
             markerSize,
+            bases,
           ),
         );
         setCachedDocumentValue(spacePath, path, loadedValue);

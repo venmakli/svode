@@ -208,6 +208,7 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
     const writes: string[] = [];
     const resolutions: { choices: string[]; markerSize: number }[] = [];
     const sides: unknown[] = [];
+    const baseContents: string[] = [];
     let reads = 0;
     mockNativeIpc(
       (command, args) => {
@@ -234,6 +235,10 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
           };
         }
         if (command === "git_conflict_marker_size") return 7;
+        if (command === "git_page_conflict_bases") {
+          baseContents.push(input.content as string);
+          return ["# Heading base"];
+        }
         if (command === "git_page_properties_conflict")
           return (options.properties ?? propertiesOf)(input.content as string);
         if (command === "git_resolve_page_properties") {
@@ -366,6 +371,7 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
       writes,
       resolutions,
       sides,
+      baseContents,
       reads: () => reads,
       resolvedCalls: () => resolvedCalls,
       state: () => getPropertiesConflict(key),
@@ -482,6 +488,12 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
   test("a text conflict still blocks the save after the properties are chosen", async () => {
     const view = await harness("pages/plan.md", PLAN);
     try {
+      // The bases are read for the text after the frontmatter.
+      expect(view.baseContents).toEqual([PLAN_TEXT]);
+      const conflict = view.editor.children.find(
+        (node) => (node as TElement).type === "conflict",
+      ) as unknown as ConflictElement;
+      expect(conflict.base).toBe("# Heading base");
       await view.click(view.sideButton("ours"));
       await view.save();
       expect(view.writes).toEqual([]);

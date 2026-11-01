@@ -478,6 +478,20 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     "DOMParser",
   ] as const;
 
+  // The rendered side views of the conflict blocks, ours then theirs.
+  const sideViews = (root: ParentNode) =>
+    [...root.querySelectorAll("section")].map(
+      (section) => section.querySelector("[data-slate-editor]")!,
+    );
+  // The text of a side view without its deletions or without its insertions.
+  const textWithout = (view: Element, tag: "del" | "ins") => {
+    const copy = view.cloneNode(true) as Element;
+    for (const node of copy.querySelectorAll(tag)) node.remove();
+    return (copy.textContent ?? "").replaceAll("\uFEFF", "").trim();
+  };
+  const sideTexts = (root: ParentNode) =>
+    sideViews(root).map((view) => textWithout(view, "del"));
+
   test("an ambiguous block shows its whole text and only Edit, which leaves marker lines as text paragraphs", async () => {
     const { createTestDom } = await import("@/shared/testing/dom");
     const dom = await createTestDom();
@@ -543,7 +557,12 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
             (line) => line.textContent?.trimEnd(),
           ),
         ).toEqual(expected.markers);
-        expect(buttons(m.git_conflict_accept())).toEqual([]);
+        for (const accept of [
+          m.changes_conflict_accept_ours(),
+          m.changes_conflict_accept_theirs(),
+          m.changes_conflict_accept_both(),
+        ])
+          expect(buttons(accept)).toEqual([]);
         const edit = buttons(m.git_conflict_edit());
         expect(edit.length).toBe(1);
 
@@ -561,7 +580,7 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
         expect(reopened).toEqual(editor.children);
       }
 
-      // A plain block of the same Page keeps its sides and Accept.
+      // A plain block of the same Page keeps its sides and Accept, without Edit.
       const mixed = `${fixtures.twoBlocks.merge.split("\n\nMiddle one")[0]}\n\nMiddle\n\n${ambiguousFixtures.setext7.slice("# T\n\n".length)}`;
       const editor = createPlateEditor({
         plugins: EditorKit,
@@ -579,13 +598,21 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
           </Plate>
         </TooltipProvider>,
       );
-      expect(dom.document.querySelectorAll('[role="group"]').length).toBe(1);
-      expect(buttons(m.git_conflict_accept()).length).toBe(2);
-      expect(buttons(m.git_conflict_edit()).length).toBe(2);
-      await act(async () => buttons(m.git_conflict_accept())[0].click());
+      expect(dom.document.querySelectorAll('[role="group"]').length).toBe(2);
+      expect(buttons(m.changes_conflict_accept_ours()).length).toBe(1);
+      expect(buttons(m.changes_conflict_accept_theirs()).length).toBe(1);
+      expect(buttons(m.changes_conflict_accept_both()).length).toBe(1);
+      expect(buttons(m.git_conflict_edit()).length).toBe(1);
+      await act(async () =>
+        buttons(m.changes_conflict_accept_ours())[0].click(),
+      );
       // The ambiguous block still blocks the save.
       expect(hasUnresolvedConflicts(editor.children)).toBe(true);
-      expect(dom.document.querySelectorAll('[role="group"]').length).toBe(1);
+      const left = dom.document.querySelectorAll('[role="group"]');
+      expect(left.length).toBe(1);
+      expect(
+        left[0].textContent?.includes(m.git_conflict_ambiguous_title()),
+      ).toBe(true);
     } finally {
       await dom.dispose();
     }
@@ -632,23 +659,225 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
             </Plate>
           </TooltipProvider>,
         );
-        const sides = [...dom.document.querySelectorAll("pre")].map(
-          (pre) => pre.textContent,
-        );
-        expect(sides).toEqual(["Status: local edit", "Status: remote edit"]);
+        expect(sideTexts(dom.document)).toEqual([
+          "Status: local edit",
+          "Status: remote edit",
+        ]);
         const shown = dom.document.body.textContent ?? "";
         expect(shown.includes("|||||||")).toBe(false);
         expect(shown.includes("Status: draft")).toBe(false);
-        const accept = [...dom.document.querySelectorAll("button")].filter(
-          (button) => button.textContent === m.git_conflict_accept(),
+        const accept = [
+          m.changes_conflict_accept_ours(),
+          m.changes_conflict_accept_theirs(),
+        ].map(
+          (label) =>
+            [...dom.document.querySelectorAll("button")].filter(
+              (button) => button.textContent === label,
+            )[0],
         );
-        expect(accept.length).toBe(2);
         await act(async () => accept[index].click());
         expect(hasUnresolvedConflicts(editor.children)).toBe(false);
         expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
           `# Title\n\nStatus: ${side} edit\n\nFooter\n`,
         );
       }
+    } finally {
+      await dom.dispose();
+    }
+  }, 30_000);
+
+  test("a conflict block marks what each side changed in the base, or theirs against ours without one, and accepts mine, incoming or both", async () => {
+    const { createTestDom } = await import("@/shared/testing/dom");
+    const dom = await createTestDom();
+    for (const key of domGlobals)
+      Object.defineProperty(globalThis, key, {
+        configurable: true,
+        value: window[key],
+      });
+    const { MarkdownPlugin } = await import("@platejs/markdown");
+    const { Plate, PlateContent, createPlateEditor } =
+      await import("platejs/react");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const m = await import("@/paraglide/messages.js");
+    const { EditorKit } = await import("../plate/editor-kit");
+    const { deserializeWithConflicts, hasUnresolvedConflicts } =
+      await import("./parse-conflicts");
+    const { DEFAULT_CONFLICT_MARKER_SIZE } = await import("./conflict-markers");
+    const buttons = (label: string) =>
+      [...dom.document.querySelectorAll("button")].filter(
+        (button) => button.textContent === label,
+      );
+    let run = 0;
+    const open = async (
+      source: string,
+      bases: (string | null)[],
+      readOnly = false,
+    ) => {
+      const editor = createPlateEditor({
+        plugins: EditorKit,
+        value: (instance) =>
+          deserializeWithConflicts(
+            instance,
+            source,
+            DEFAULT_CONFLICT_MARKER_SIZE,
+            bases,
+          ) as Value,
+      });
+      await dom.render(
+        <TooltipProvider>
+          <Plate key={run++} editor={editor} readOnly={readOnly}>
+            <PlateContent />
+          </Plate>
+        </TooltipProvider>,
+      );
+      return editor;
+    };
+    const section = [
+      "# Онбординг",
+      "",
+      "<<<<<<< HEAD",
+      "## Первый день",
+      "",
+      "- Получить доступы и встретиться с командой.",
+      "- Настроить **рабочее** место.",
+      "=======",
+      "## Первый день",
+      "",
+      "- Получить доступы, ноутбук и пропуск.",
+      "- Настроить рабочее место.",
+      ">>>>>>> other",
+      "",
+      "Конец",
+      "",
+    ].join("\n");
+    const base = [
+      "## Первый день",
+      "",
+      "- Получить доступы.",
+      "- Настроить рабочее место.",
+    ].join("\n");
+    try {
+      // With a base: each side is rendered text marked against it.
+      let editor = await open(section, [base]);
+      const block = dom.document.querySelector('[role="group"]')!;
+      const title = dom.document.getElementById(
+        block.getAttribute("aria-labelledby")!,
+      );
+      expect(title?.textContent).toBe(`⚠ ${m.git_conflict_title()}`);
+      expect(block.textContent?.includes(m.git_conflict_no_base())).toBe(false);
+      expect(
+        [...block.querySelectorAll("section")].map((side) =>
+          side.getAttribute("aria-label"),
+        ),
+      ).toEqual([m.git_conflict_ours(), m.git_conflict_theirs()]);
+      expect(block.querySelectorAll("pre").length).toBe(0);
+      const baseText = "Первый деньПолучить доступы.Настроить рабочее место.";
+      const [ours, theirs] = sideViews(block);
+      for (const view of [ours, theirs]) {
+        expect(view.querySelector("h2")?.textContent).toBe("Первый день");
+        expect(view.querySelectorAll("li").length).toBe(2);
+        expect(view.querySelectorAll("ins").length > 0).toBe(true);
+        expect(textWithout(view, "ins")).toBe(baseText);
+      }
+      expect(textWithout(ours, "del")).toBe(
+        "Первый деньПолучить доступы и встретиться с командой.Настроить рабочее место.",
+      );
+      expect(textWithout(theirs, "del")).toBe(
+        "Первый деньПолучить доступы, ноутбук и пропуск.Настроить рабочее место.",
+      );
+      expect(ours.querySelector("strong")?.textContent).toBe("рабочее");
+      // Three equal actions, no Edit; the save waits for a choice.
+      for (const label of [
+        m.changes_conflict_accept_ours(),
+        m.changes_conflict_accept_theirs(),
+        m.changes_conflict_accept_both(),
+      ])
+        expect(buttons(label).length).toBe(1);
+      expect(buttons(m.git_conflict_edit()).length).toBe(0);
+      expect(hasUnresolvedConflicts(editor.children)).toBe(true);
+      await act(async () =>
+        buttons(m.changes_conflict_accept_both())[0].click(),
+      );
+      expect(hasUnresolvedConflicts(editor.children)).toBe(false);
+      expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
+        [
+          "# Онбординг",
+          "",
+          "## Первый день",
+          "",
+          "- Получить доступы и встретиться с командой.",
+          "- Настроить **рабочее** место.",
+          "",
+          "## Первый день",
+          "",
+          "- Получить доступы, ноутбук и пропуск.",
+          "- Настроить рабочее место.",
+          "",
+          "Конец",
+          "",
+        ].join("\n"),
+      );
+
+      // Without a base, or when the bases do not read: theirs against ours.
+      for (const bases of [[null], []]) {
+        editor = await open(section, bases);
+        const plain = dom.document.querySelector('[role="group"]')!;
+        expect(plain.textContent?.includes(m.git_conflict_no_base())).toBe(
+          true,
+        );
+        const [mine, incoming] = sideViews(plain);
+        expect(mine.querySelectorAll("ins, del").length).toBe(0);
+        expect(textWithout(incoming, "ins")).toBe(textWithout(mine, "del"));
+        expect(textWithout(incoming, "del")).toBe(
+          "Первый деньПолучить доступы, ноутбук и пропуск.Настроить рабочее место.",
+        );
+        expect(incoming.querySelectorAll("ins").length > 0).toBe(true);
+        expect(incoming.querySelectorAll("del").length > 0).toBe(true);
+      }
+
+      // A side that removed the text of the block shows the base deleted; an
+      // empty base shows each side inserted.
+      editor = await open(fixtures.emptySide.merge, ["Status: draft"]);
+      const [removed, edited] = sideViews(dom.document);
+      expect(textWithout(removed, "del")).toBe("");
+      expect(textWithout(removed, "ins")).toBe("Status: draft");
+      expect(textWithout(edited, "del")).toBe("Status: remote edit");
+      // Both, with mine empty, is incoming alone.
+      await act(async () =>
+        buttons(m.changes_conflict_accept_both())[0].click(),
+      );
+      expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
+        "# Title\n\nKeep\n\nStatus: remote edit\n\nFooter\n",
+      );
+      editor = await open(fixtures.oneLine.merge, [""]);
+      for (const view of sideViews(dom.document)) {
+        expect(textWithout(view, "ins")).toBe("");
+        expect(view.querySelectorAll("del").length).toBe(0);
+      }
+      expect(
+        dom.document.body.textContent?.includes(m.git_conflict_no_base()),
+      ).toBe(false);
+
+      // Accept mine and incoming put that side alone in place of the block.
+      for (const [label, side] of [
+        [m.changes_conflict_accept_ours(), "local"],
+        [m.changes_conflict_accept_theirs(), "remote"],
+      ] as const) {
+        editor = await open(fixtures.oneLine.merge, ["Status: draft"]);
+        await act(async () => buttons(label)[0].click());
+        expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
+          `# Title\n\nStatus: ${side} edit\n\nFooter\n`,
+        );
+      }
+
+      // Read only: the actions are unavailable.
+      await open(fixtures.oneLine.merge, ["Status: draft"], true);
+      for (const label of [
+        m.changes_conflict_accept_ours(),
+        m.changes_conflict_accept_theirs(),
+        m.changes_conflict_accept_both(),
+      ])
+        expect(buttons(label)[0].disabled).toBe(true);
     } finally {
       await dom.dispose();
     }

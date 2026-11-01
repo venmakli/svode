@@ -100,6 +100,7 @@ async function harness(path: string, body: string, markerSize = 7) {
   const commits: { command: string; paths: string[] }[] = [];
   const versionChoices: string[] = [];
   const markerSizeReads: string[] = [];
+  const baseReads: { content: unknown; markerSize: unknown }[] = [];
   const conflicts: (PageSourceConflict | null)[] = [];
   let reads = 0;
   mockNativeIpc((command, args) => {
@@ -164,6 +165,10 @@ async function harness(path: string, body: string, markerSize = 7) {
     if (command === "git_conflict_marker_size") {
       markerSizeReads.push(input.path);
       return markerSize;
+    }
+    if (command === "git_page_conflict_bases") {
+      baseReads.push({ content: input.content, markerSize: input.markerSize });
+      return ["Status: draft"];
     }
     return null;
   });
@@ -264,6 +269,7 @@ async function harness(path: string, body: string, markerSize = 7) {
     disk,
     writeBlocks,
     markerSizeReads,
+    baseReads,
     reads: () => reads,
     /** Marks the edited value as a draft whose autosave is not due yet. */
     holdDraft: () => {
@@ -517,6 +523,11 @@ test("a reloaded CRLF source parses blocks with the marker size of its path and 
     expect([conflict.ours, conflict.theirs]).toEqual([
       "Status: local edit\r\n=======",
       "Status: remote edit",
+    ]);
+    // The reload reads the base of each block for the text it parses.
+    expect(conflict.base).toBe("Status: draft");
+    expect(view.baseReads).toEqual([
+      { content: view.disk.body, markerSize: 10 },
     ]);
 
     await view.save();

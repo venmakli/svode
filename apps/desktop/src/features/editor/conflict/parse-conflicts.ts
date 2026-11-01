@@ -25,6 +25,11 @@ export interface ConflictElement extends TElement {
   type: "conflict";
   ours: string;
   theirs: string;
+  /**
+   * The common version of the block both sides changed, `null` when it is
+   * unavailable; `""` is an empty one.
+   */
+  base: string | null;
   children: [{ text: "" }];
 }
 
@@ -48,19 +53,21 @@ export function isAmbiguousConflict(
  * Split raw markdown on the Git conflict blocks of markers of `markerSize` and
  * deserialize each non-conflict segment via the Plate Markdown plugin.
  * Conflict blocks become custom `conflict` elements with `ours` / `theirs`
- * stored as raw markdown strings, ambiguous blocks with their text. Text keeps
- * its line endings. Reference links of a segment resolve by the link
+ * stored as raw markdown strings with the base of the block, `bases[i]` for
+ * the block `i` in document order, ambiguous blocks with their text. Text
+ * keeps its line endings. Reference links of a segment resolve by the link
  * definitions of all segments.
  */
 export function deserializeWithConflicts(
   editor: PlateEditor,
   body: string,
   markerSize: number,
+  bases: readonly (string | null)[] = [],
 ): Descendant[] {
   let cursor = 0;
   const parts: (string | ConflictElement | AmbiguousConflictElement)[] = [];
 
-  for (const block of findConflictBlocks(body, markerSize)) {
+  for (const [index, block] of findConflictBlocks(body, markerSize).entries()) {
     parts.push(
       body.slice(cursor, block.start),
       block.ambiguous
@@ -73,6 +80,7 @@ export function deserializeWithConflicts(
             type: "conflict",
             ours: block.ours,
             theirs: block.theirs,
+            base: bases[index] ?? null,
             children: [{ text: "" }],
           },
     );
@@ -102,15 +110,22 @@ export function deserializeWithConflicts(
 }
 
 /**
- * Deserialize a conflict branch, or both joined for Edit, to replace its
- * conflict element. Reference links resolve by the branch's own link
- * definitions first, then by the document's.
+ * Deserialize the conflict branches `markdowns` to replace their conflict
+ * element, each branch as it stands, one after another; an empty branch adds
+ * nothing beside another one. Reference links resolve by the link
+ * definitions of the branches first, then by the document's.
  */
-export function deserializeConflictBranch(
+export function deserializeConflictBranches(
   editor: PlateEditor,
-  markdown: string,
+  markdowns: string[],
 ): Descendant[] {
-  return deserializeConflictRuns(editor, [markdown])[0];
+  const present = markdowns.filter((markdown) => markdown.trim().length > 0);
+  return deserializeConflictRuns(
+    editor,
+    (present.length > 0 ? present : markdowns.slice(0, 1)).map(
+      (markdown) => markdown.trim() + "\n",
+    ),
+  ).flat();
 }
 
 /**

@@ -51,11 +51,21 @@ async function harness(disk: Map<string, Page>, markerSize = 7) {
   const validations: string[] = [];
   const heldReads = new Map<string, () => void>();
   const markerSizeReads: string[] = [];
+  const baseReads: { path: string; content: string; markerSize: number }[] = [];
   mockNativeIpc(async (command, args) => {
     const path = String((args as { path: string }).path);
     if (command === "git_conflict_marker_size") {
       markerSizeReads.push(path);
       return markerSize;
+    }
+    if (command === "git_page_conflict_bases") {
+      const { content, markerSize: size } = args as {
+        content: string;
+        markerSize: number;
+      };
+      baseReads.push({ path, content, markerSize: size });
+      if (path.includes("other")) throw new Error("No index stages");
+      return [`base of ${path}`];
     }
     if (command === "validate_links") {
       validations.push(path);
@@ -159,12 +169,13 @@ async function harness(disk: Map<string, Page>, markerSize = 7) {
   return {
     reads,
     markerSizeReads,
+    baseReads,
     conflicts: () =>
       (editor.children as Descendant[])
         .filter((node) => (node as { type?: string }).type === "conflict")
         .map((node) => {
-          const { ours, theirs } = node as unknown as ConflictElement;
-          return { ours, theirs };
+          const { ours, theirs, base } = node as unknown as ConflictElement;
+          return { ours, theirs, base };
         }),
     loading,
     validations,
@@ -400,9 +411,13 @@ test("every load path parses conflict blocks with the marker size of the path", 
     // initial-page
     await view.open(path, first);
     expect(view.conflicts()).toEqual([
-      { ours: "first\r\n=======", theirs: "theirs" },
+      { ours: "first\r\n=======", theirs: "theirs", base: `base of ${path}` },
     ]);
     expect(view.markerSizeReads).toEqual([path]);
+    // The bases are read for the text the editor parses, with its size.
+    expect(view.baseReads).toEqual([
+      { path, content: first.body, markerSize: 10 },
+    ]);
     expectValidated(view, path);
     await view.leave();
 
@@ -411,15 +426,16 @@ test("every load path parses conflict blocks with the marker size of the path", 
     await view.open(path, null);
     expect(view.reads).toEqual([path]);
     expect(view.conflicts()).toEqual([
-      { ours: "second\r\n=======", theirs: "theirs" },
+      { ours: "second\r\n=======", theirs: "theirs", base: `base of ${path}` },
     ]);
     expect(view.markerSizeReads).toEqual([path, path]);
     await view.leave();
 
     // read-page
     await view.open(other, null);
+    // Bases that do not read leave the block without one.
     expect(view.conflicts()).toEqual([
-      { ours: "other\r\n=======", theirs: "theirs" },
+      { ours: "other\r\n=======", theirs: "theirs", base: null },
     ]);
     expect(view.markerSizeReads).toEqual([path, path, other]);
     await view.leave();
@@ -428,6 +444,11 @@ test("every load path parses conflict blocks with the marker size of the path", 
     await view.open(plain, null);
     expect(view.conflicts()).toEqual([]);
     expect(view.markerSizeReads).toEqual([path, path, other]);
+    expect(view.baseReads.map((read) => read.path)).toEqual([
+      path,
+      path,
+      other,
+    ]);
   } finally {
     await view.cleanup();
   }

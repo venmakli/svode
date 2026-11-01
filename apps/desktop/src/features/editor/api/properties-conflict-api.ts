@@ -5,7 +5,10 @@ import {
 } from "@/platform/git/git-api";
 
 import { hasConflictMarkerCandidate } from "../conflict/conflict-markers";
-import { readConflictMarkerSize } from "./conflict-marker-api";
+import {
+  readConflictBases,
+  readConflictMarkerSize,
+} from "./conflict-marker-api";
 import type {
   PropertiesConflict,
   PropertiesResolution,
@@ -60,17 +63,26 @@ export async function resolvePropertiesConflict(
 }
 
 /**
- * The conflict marker size of the Page `page` read at `path` and the
- * conflict of its properties, if it has one.
+ * The conflict marker size of the Page `page` read at `path`, the conflict
+ * of its properties, if it has one, and the base of each conflict block of
+ * the text the editor gets.
  */
 export async function readPageConflicts(
   spacePath: string,
   path: string,
   page: Pick<Page, "body" | "warnings">,
-): Promise<{ markerSize: number; properties: PropertiesConflict | null }> {
+): Promise<{
+  markerSize: number;
+  properties: PropertiesConflict | null;
+  bases: (string | null)[];
+}> {
   const markerSize = await readConflictMarkerSize(spacePath, path, page.body);
-  return {
+  const properties = await readPropertiesConflict(page, markerSize);
+  const bases = await readConflictBases(
+    spacePath,
+    path,
+    properties?.body ?? page.body,
     markerSize,
-    properties: await readPropertiesConflict(page, markerSize),
-  };
+  );
+  return { markerSize, properties, bases };
 }
