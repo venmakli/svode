@@ -1,13 +1,13 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     future::Future,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Notify, OnceCell, futures::Notified, watch};
 
 use super::GitError;
 use super::{
@@ -391,6 +391,12 @@ impl Completion {
 struct Flight {
     request: Request,
     result: watch::Sender<Option<Completion>>,
+    /// The repository after the completion, read once for all the requests
+    /// that waited for it, however many they are.
+    settled: OnceCell<Result<Snapshot, SharedError>>,
+    /// Whether a completed publication inspection is still current, read
+    /// once for all the inspections that waited for it.
+    inspection: OnceCell<Result<bool, SharedError>>,
 }
 
 impl Flight {
@@ -406,20 +412,103 @@ impl Flight {
                 .map_err(|_| GitError::General("Git operation stopped".into()))?;
         }
     }
+
+    async fn settled(&self, cli: &GitCli) -> Result<Snapshot, SharedError> {
+        self.settled
+            .get_or_init(|| async {
+                Snapshot::read(cli, &self.request.repo)
+                    .await
+                    .map_err(SharedError::from)
+            })
+            .await
+            .clone()
+    }
+
+    async fn inspection_current(
+        &self,
+        cli: &GitCli,
+        read: &super::readers::PublicationRead,
+    ) -> Result<bool, SharedError> {
+        self.inspection
+            .get_or_init(|| async { read.is_current(cli).await.map_err(SharedError::from) })
+            .await
+            .clone()
+    }
+}
+
+#[derive(Default)]
+struct Queue {
+    flights: HashMap<PathBuf, Arc<Flight>>,
+    /// Requests that have neither started an operation nor returned, by
+    /// repository and arrival: only the earliest of a repository starts its
+    /// next operation, so a later request never overtakes a waiting one.
+    turns: HashMap<PathBuf, BTreeSet<u64>>,
+    arrivals: u64,
+}
+
+enum Step<'a> {
+    Wait(Vec<Arc<Flight>>),
+    Turn(Notified<'a>),
+    Start(Arc<Flight>),
 }
 
 #[derive(Default)]
 pub struct Operations {
-    flights: Mutex<HashMap<PathBuf, Arc<Flight>>>,
+    /// Held only to look at or change the queue, never across a Git read.
+    queue: Mutex<Queue>,
+    /// Signalled when an operation starts or ends or a request leaves its turn.
+    changed: Notify,
+}
+
+/// The place of a request in the arrival order of its repository, left when
+/// the request starts its operation, returns or its caller goes away.
+struct Turn<'a> {
+    owner: &'a Operations,
+    repo: PathBuf,
+    arrival: u64,
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        let mut queue = self.owner.queue();
+        if let Some(turns) = queue.turns.get_mut(&self.repo) {
+            turns.remove(&self.arrival);
+            if turns.is_empty() {
+                queue.turns.remove(&self.repo);
+            }
+        }
+        drop(queue);
+        self.owner.changed.notify_waiters();
+    }
 }
 
 impl Operations {
+    fn queue(&self) -> MutexGuard<'_, Queue> {
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn arrive(&self, repo: &Path) -> Turn<'_> {
+        let mut queue = self.queue();
+        queue.arrivals += 1;
+        let arrival = queue.arrivals;
+        queue
+            .turns
+            .entry(repo.to_path_buf())
+            .or_default()
+            .insert(arrival);
+        Turn {
+            owner: self,
+            repo: repo.to_path_buf(),
+            arrival,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn wait_for_parent_reader(&self, parent: &Path) {
         let parent = std::fs::canonicalize(parent).unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
             loop {
-                if self.flights.lock().await.values().any(|f| {
+                if self.queue().flights.values().any(|f| {
                     f.request
                         .parent
                         .as_ref()
@@ -441,9 +530,8 @@ impl Operations {
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
             loop {
                 if self
+                    .queue()
                     .flights
-                    .lock()
-                    .await
                     .get(&repo)
                     .is_some_and(|f| f.result.receiver_count() >= count)
                 {
@@ -470,9 +558,10 @@ impl Operations {
         Fut: Future<Output = Completion> + Send + 'static,
     {
         let repo = super::access::resolve_repository(&cli, path).await?;
-        // Admission is ordered before local observations so a later root
-        // request sees the child reservation even before its Git lock is free.
-        let mut flights = self.flights.lock().await;
+        // The arrival, not the end of the reads below, orders the requests
+        // of a repository. The reads take no lock shared with other
+        // repositories or with the requests already waiting.
+        let turn = self.arrive(&repo);
         let original = Snapshot::read(&cli, &repo).await?;
         let parent = if intent.reserves_parent() {
             match super::branch::parent(&cli, &repo).await? {
@@ -485,57 +574,82 @@ impl Operations {
         let mut snapshot = original.clone();
         let mut previous = None;
         loop {
-            let mut waiting = if let Some(flight) = flights.get(&repo) {
-                vec![flight.clone()]
-            } else {
-                flights
-                    .values()
-                    .filter(|flight| {
-                        flight
-                            .request
-                            .parent
-                            .as_ref()
-                            .is_some_and(|(root, _)| root == &repo)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
-            if waiting.is_empty() {
-                let request = Request {
-                    repo: repo.clone(),
-                    intent,
-                    snapshot,
-                    parent,
-                    previous,
+            let step = {
+                let mut queue = self.queue();
+                let waiting = if let Some(flight) = queue.flights.get(&repo) {
+                    vec![flight.clone()]
+                } else {
+                    queue
+                        .flights
+                        .values()
+                        .filter(|flight| {
+                            flight
+                                .request
+                                .parent
+                                .as_ref()
+                                .is_some_and(|(root, _)| root == &repo)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
                 };
-                let (sender, _) = watch::channel(None);
-                let flight = Arc::new(Flight {
-                    request: request.clone(),
-                    result: sender,
-                });
-                flights.insert(repo.clone(), flight.clone());
-                drop(flights);
-                let owner = self.clone();
-                let worker = flight.clone();
-                tokio::spawn(async move {
-                    let fallback = request.snapshot.clone();
-                    let result = match tokio::spawn(execute(request)).await {
-                        Ok(result) => result,
-                        Err(_) => Completion {
-                            result: Err(GitError::General("Git operation stopped".into()).into()),
-                            before: fallback.clone(),
-                            after: fallback,
-                            parent: None,
-                            read_sync: None,
+                if !waiting.is_empty() {
+                    Step::Wait(waiting)
+                } else if queue.turns.get(&repo).and_then(BTreeSet::first) != Some(&turn.arrival) {
+                    Step::Turn(self.changed.notified())
+                } else {
+                    let (sender, _) = watch::channel(None);
+                    let flight = Arc::new(Flight {
+                        request: Request {
+                            repo: repo.clone(),
+                            intent: intent.clone(),
+                            snapshot: snapshot.clone(),
+                            parent: parent.clone(),
+                            previous: previous.clone(),
                         },
-                    };
-                    let mut flights = owner.flights.lock().await;
-                    worker.result.send_replace(Some(result));
-                    flights.remove(&repo);
-                });
-                return flight.wait().await?.result;
-            }
-            drop(flights);
+                        result: sender,
+                        settled: OnceCell::new(),
+                        inspection: OnceCell::new(),
+                    });
+                    queue.flights.insert(repo.clone(), flight.clone());
+                    Step::Start(flight)
+                }
+            };
+            let mut waiting = match step {
+                Step::Wait(waiting) => waiting,
+                Step::Turn(notified) => {
+                    notified.await;
+                    continue;
+                }
+                Step::Start(flight) => {
+                    drop(turn);
+                    let owner = self.clone();
+                    let worker = flight.clone();
+                    let request = flight.request.clone();
+                    tokio::spawn(async move {
+                        let fallback = request.snapshot.clone();
+                        let repo = request.repo.clone();
+                        let result = match tokio::spawn(execute(request)).await {
+                            Ok(result) => result,
+                            Err(_) => Completion {
+                                result: Err(
+                                    GitError::General("Git operation stopped".into()).into()
+                                ),
+                                before: fallback.clone(),
+                                after: fallback,
+                                parent: None,
+                                read_sync: None,
+                            },
+                        };
+                        {
+                            let mut queue = owner.queue();
+                            worker.result.send_replace(Some(result));
+                            queue.flights.remove(&repo);
+                        }
+                        owner.changed.notify_waiters();
+                    });
+                    return flight.wait().await?.result;
+                }
+            };
             let mut completed = Vec::new();
             loop {
                 for flight in &waiting[completed.len()..] {
@@ -544,8 +658,9 @@ impl Operations {
                 if waiting[0].request.repo == repo {
                     break;
                 }
-                let flights = self.flights.lock().await;
-                let additional = flights
+                let additional = self
+                    .queue()
+                    .flights
                     .values()
                     .filter(|flight| {
                         flight
@@ -562,13 +677,19 @@ impl Operations {
                 }
                 waiting.extend(additional);
             }
-            let current = Snapshot::read(&cli, &repo).await?;
+            // Every request that waited for an operation of its repository
+            // shares one read of the repository after it.
+            let current = if waiting[0].request.repo == repo {
+                waiting[0].settled(&cli).await?
+            } else {
+                Snapshot::read(&cli, &repo).await?
+            };
             if waiting[0].request.repo == repo {
                 let flight = &waiting[0];
                 let done = &completed[0];
                 let inspection_current = match &done.result {
                     Ok(Output::Inspection(read)) if intent == Intent::InspectPublication => {
-                        read.is_current(&cli).await?
+                        flight.inspection_current(&cli, read).await?
                     }
                     _ => true,
                 };
@@ -639,7 +760,6 @@ impl Operations {
             // New generations coalesce at the next admission. An incompatible
             // explicit intent keeps its authority without upgrading the old task.
             snapshot = current;
-            flights = self.flights.lock().await;
         }
     }
 }

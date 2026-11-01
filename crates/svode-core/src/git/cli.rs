@@ -7,12 +7,34 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use super::GitError;
 use super::version::{GitVersion, release_label};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// The most Git processes the app runs at once. Each holds descriptors for
+/// its pipes while it runs; the bound keeps a burst of concurrent reads, such
+/// as the eleven processes of every operation snapshot, within the default
+/// descriptor limit of macOS (256).
+pub const GIT_PROCESS_LIMIT: usize = 16;
+
+static GIT_PROCESSES: Semaphore = Semaphore::const_new(GIT_PROCESS_LIMIT);
+
+/// A place for one Git process, held until the process has exited and its
+/// pipes are closed. Waiting for a place never fails, and the timeout of a
+/// process starts only once it has one. Every asynchronous Git process takes
+/// one; blocking ones (the release read at start, the LFS detection and the
+/// removal of publication evidence) run one at a time on the thread of their
+/// caller, which must not wait for a place held by tasks of its runtime.
+pub(crate) async fn process_slot() -> SemaphorePermit<'static> {
+    GIT_PROCESSES
+        .acquire()
+        .await
+        .expect("the Git process limit is never closed")
+}
 
 pub(crate) fn hide_window(command: &mut StdCommand) {
     #[cfg(windows)]
@@ -231,6 +253,7 @@ impl GitCli {
             cmd.env(k, v);
         }
 
+        let _slot = process_slot().await;
         let output = cmd
             .output()
             .await
@@ -282,6 +305,7 @@ impl GitCli {
             cmd.env(key, value);
         }
 
+        let _slot = process_slot().await;
         let mut child = cmd
             .spawn()
             .map_err(|error| GitError::GitCommandFailed(format!("Failed to spawn git: {error}")))?;
@@ -340,6 +364,7 @@ impl GitCli {
         for (key, value) in extra_env {
             cmd.env(key, value);
         }
+        let _slot = process_slot().await;
         let mut child = cmd
             .spawn()
             .map_err(|error| GitError::GitCommandFailed(format!("Failed to spawn git: {error}")))?;
@@ -384,6 +409,7 @@ impl GitCli {
         let mut cmd = Command::new(&self.git_path);
         hide_tokio_window(&mut cmd);
         apply_common_git_env(&mut cmd);
+        let _slot = process_slot().await;
         let output = cmd
             .args(&git_args)
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -422,6 +448,7 @@ impl GitCli {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        let _slot = process_slot().await;
         let mut child = cmd
             .spawn()
             .map_err(|e| GitError::GitCommandFailed(format!("Failed to spawn git: {e}")))?;
@@ -451,6 +478,7 @@ impl GitCli {
     }
 
     async fn version_output(&self) -> Option<String> {
+        let _slot = process_slot().await;
         let output = Command::from(version_command(&self.git_path))
             .output()
             .await
@@ -813,7 +841,7 @@ fn git_lfs_fallback_candidates() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GitCli, GitVersion, PATH_SET_COMMAND_LINE_BUDGET, args_with_quote_path,
+        GIT_PROCESS_LIMIT, GitCli, GitVersion, PATH_SET_COMMAND_LINE_BUDGET, args_with_quote_path,
         command_line_arg_cost, parse_lfs_version, version_change,
     };
 
@@ -1081,6 +1109,90 @@ mod tests {
             let (_, source) = found.iter().find(|(found, _)| found == name).unwrap();
             assert!(source.contains(marker), "{name} does not apply {marker}");
         }
+        // Asynchronous Git processes of the app wait for a place. Outside the
+        // bound: the blocking removal of publication evidence, the LFS
+        // transfer agent (a process of its own) and the clone or Submodule
+        // Space add of Desktop, one long process per person's gesture.
+        for name in [
+            "crates/svode-core/src/git/cli.rs",
+            "crates/svode-core/src/page/dates.rs",
+        ] {
+            let (_, source) = found.iter().find(|(found, _)| found == name).unwrap();
+            assert!(
+                source.contains("process_slot().await"),
+                "{name} starts Git without a place"
+            );
+        }
+    }
+
+    /// N concurrent Git processes started every asynchronous way of
+    /// [`GitCli`] never run more than [`GIT_PROCESS_LIMIT`] at once.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn at_most_the_limit_of_git_processes_run_at_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let running = dir.path().join("running");
+        std::fs::create_dir(&running).unwrap();
+        let counts = dir.path().join("counts");
+        let recorder = dir.path().join("git");
+        svode_testkit::write_executable(
+            &recorder,
+            format!(
+                "#!/bin/sh\ntouch '{running}/'$$\nls '{running}' | wc -l >> '{counts}'\nsleep 0.05\nrm '{running}/'$$\nprintf 'a\\0'\n",
+                running = running.display(),
+                counts = counts.display(),
+            ),
+        )
+        .unwrap();
+        let cli = GitCli::for_test(recorder);
+        let repo = dir.path().to_path_buf();
+        let timeout = std::time::Duration::from_secs(30);
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..4 {
+            let (cli, repo) = (cli.clone(), repo.clone());
+            tasks.spawn(async move {
+                let repo = repo.as_path();
+                let results = tokio::join!(
+                    cli.exec(repo, &["status"]),
+                    cli.exec_redacted(repo, &["status"]),
+                    cli.exec_with_input(repo, &["status"], &[], b""),
+                    cli.exec_sensitive_with_stdin(repo, &["status"], &[], None, timeout),
+                    cli.exec_no_dir(&["status"]),
+                    cli.exec_no_dir_with_stdin(&["status"], ""),
+                    super::read_records(&cli, repo, &["status"], Some(timeout), |_| Ok(())),
+                    super::read_bounded(&cli, repo, &["status"], 16),
+                    super::read_with_input(&cli, repo, &["status"], b"", 16, timeout),
+                    super::write_within(&cli, repo, &["status"], timeout),
+                    cli.refresh_version(),
+                );
+                for exit_code in [
+                    results.0.unwrap().exit_code,
+                    results.1.unwrap().exit_code,
+                    results.2.unwrap().exit_code,
+                    results.3.unwrap().exit_code,
+                    results.4.unwrap().exit_code,
+                    results.5.unwrap().exit_code,
+                ] {
+                    assert_eq!(exit_code, 0);
+                }
+                assert_eq!(results.6.unwrap(), Some(true));
+                assert!(results.7.unwrap().0);
+                assert!(results.8.unwrap().is_some());
+                assert_eq!(results.9.unwrap(), Some(true));
+            });
+        }
+        tasks.join_all().await;
+        let counts = std::fs::read_to_string(&counts).unwrap();
+        let counts = counts
+            .lines()
+            .map(|line| line.trim().parse::<usize>().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(counts.len(), 44);
+        let most = counts.into_iter().max().unwrap();
+        assert!(
+            most <= GIT_PROCESS_LIMIT,
+            "{most} Git processes ran at once"
+        );
     }
 
     #[test]
@@ -1131,6 +1243,7 @@ pub async fn read_bounded(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    let _slot = process_slot().await;
     let mut child = command.spawn()?;
     let result = tokio::time::timeout(Duration::from_secs(3), async {
         let mut bytes = Vec::new();
@@ -1173,6 +1286,7 @@ pub async fn read_with_input(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    let _slot = process_slot().await;
     let mut child = command.spawn()?;
     let stdin = child.stdin.take();
     let mut stdout = child.stdout.take().unwrap();
@@ -1226,6 +1340,7 @@ pub async fn read_records(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    let _slot = process_slot().await;
     let mut child = command.spawn()?;
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let read = async {
@@ -1269,9 +1384,17 @@ pub async fn write_within(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    let slot = process_slot().await;
     let mut child = command.spawn()?;
     match tokio::time::timeout(timeout, child.wait()).await {
         Ok(status) => Ok(Some(status?.success())),
-        Err(_) => Ok(None),
+        Err(_) => {
+            // The command left running keeps its place until it exits.
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+                drop(slot);
+            });
+            Ok(None)
+        }
     }
 }

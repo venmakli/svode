@@ -53,6 +53,7 @@ pub struct SystemGitDateExecutor;
 impl GitDateExecutor for SystemGitDateExecutor {
     async fn exec(&self, directory: &Path, args: &[&str]) -> Option<GitDateOutput> {
         let binary = detect_git_binary()?;
+        let _slot = crate::git::cli::process_slot().await;
         let output = tokio::process::Command::new(binary)
             .args(args)
             .current_dir(directory)

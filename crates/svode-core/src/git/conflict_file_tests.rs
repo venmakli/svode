@@ -788,3 +788,79 @@ fn a_repeated_key_does_not_read_as_json() {
 
 #[path = "conflict_whole_file_tests.rs"]
 mod whole_file;
+
+/// R4 of DF-289: under the default descriptor limit of macOS, a file of a
+/// merge with 11 conflicted paths resolves while a burst of operation
+/// snapshot reads runs. The check runs in a child process of this test
+/// binary started with `ulimit -n 256`.
+#[tokio::test]
+async fn a_file_resolves_under_a_256_descriptor_limit_during_a_burst_of_reads() {
+    const CHILD: &str = "SVODE_TEST_DESCRIPTOR_LIMIT";
+    if std::env::var_os(CHILD).is_none() {
+        let name = format!(
+            "{}::a_file_resolves_under_a_256_descriptor_limit_during_a_burst_of_reads",
+            module_path!().split_once("::").unwrap().1
+        );
+        let out = Command::new("/bin/sh")
+            .args([
+                "-c",
+                "ulimit -n 256 && exec \"$0\" --exact \"$1\" --test-threads=1",
+            ])
+            .arg(std::env::current_exe().unwrap())
+            .arg(&name)
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return;
+    }
+    let limit = Command::new("/bin/sh")
+        .args(["-c", "ulimit -n"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&limit.stdout).trim(), "256");
+    let files = (0..11)
+        .map(|index| format!("file{index}.txt"))
+        .collect::<Vec<_>>();
+    let each = |repo: &Path, value: &[u8]| {
+        for file in &files {
+            write(repo, file, value);
+        }
+    };
+    let (merge, result) = Merge::new(
+        "",
+        |repo| each(repo, b"base\n"),
+        |repo| each(repo, b"theirs\n"),
+        |repo| each(repo, b"ours\n"),
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(unmerged_paths(&merge).len(), 11);
+    let burst = (0..40)
+        .map(|_| {
+            let (cli, repo) = (merge.cli.clone(), merge.local.clone());
+            tokio::spawn(async move { crate::git::operations::Snapshot::read(&cli, &repo).await })
+        })
+        .collect::<Vec<_>>();
+    let side = FileResolution::Side { side: Side::Ours };
+    resolve(&merge.cli, &merge.local, "file0.txt", &side)
+        .await
+        .unwrap();
+    for read in burst {
+        read.await.unwrap().unwrap();
+    }
+    assert_eq!(text_of(&merge.local, "file0.txt"), "ours\n");
+    assert_eq!(unmerged_paths(&merge).len(), 10);
+}
+
+fn unmerged_paths(merge: &Merge) -> std::collections::BTreeSet<String> {
+    git(&merge.local, &["diff", "--name-only", "--diff-filter=U"])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}

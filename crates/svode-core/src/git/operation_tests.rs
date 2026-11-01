@@ -38,6 +38,8 @@ struct Run {
     parent_calls: Arc<AtomicUsize>,
     parent_permission: bool,
     parent_lock: Arc<tokio::sync::Mutex<()>>,
+    /// The intents of the operations in the order they start.
+    started: Option<Arc<std::sync::Mutex<Vec<Intent>>>>,
 }
 
 impl Default for Run {
@@ -51,6 +53,7 @@ impl Default for Run {
             parent_calls: Arc::default(),
             parent_permission: true,
             parent_lock: Arc::default(),
+            started: None,
         }
     }
 }
@@ -58,6 +61,9 @@ impl Default for Run {
 // Uses the production admission owner and native publisher/parent primitives.
 // Gates bound the observable Git stages without a GUI or timing-based races.
 async fn execute(cli: crate::git::cli::GitCli, request: Request, run: Run) -> Completion {
+    if let Some(started) = &run.started {
+        started.lock().unwrap().push(request.intent.clone());
+    }
     if let Some(entered) = run.entered {
         let _ = entered.send(());
     }
@@ -217,6 +223,146 @@ fn start(
 
 fn sync_intent(background: bool) -> Intent {
     Intent::Sync { background }
+}
+
+/// A Git of the fixture that logs every operation snapshot read (its one
+/// `rev-parse --absolute-git-dir`) to `reads` and holds a `show-ref` in
+/// `held` until the file `release` exists, after creating `holding`.
+fn observed_cli(
+    f: &Fixture,
+    held: Option<&Path>,
+) -> (crate::git::cli::GitCli, [std::path::PathBuf; 3]) {
+    let dir = f._temp.path();
+    let files = [dir.join("reads"), dir.join("holding"), dir.join("release")];
+    let [reads, holding, release] = &files;
+    let held = held.map_or_else(String::new, |repo| {
+        format!(
+            "if [ \"$(pwd -P)\" = '{}' ]; then case \" $* \" in *' show-ref '*) touch '{}'; while [ ! -e '{}' ]; do sleep 0.01; done;; esac; fi\n",
+            std::fs::canonicalize(repo).unwrap().display(),
+            holding.display(),
+            release.display(),
+        )
+    });
+    let wrapper = dir.join("git-observed");
+    svode_testkit::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexport GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1\ncase \" $* \" in *' --absolute-git-dir '*) echo read >> '{}';; esac\n{held}exec git -c protocol.file.allow=always \"$@\"\n",
+            reads.display()
+        ),
+    )
+    .unwrap();
+    (crate::git::cli::GitCli::for_test(wrapper), files)
+}
+
+fn lines(path: &Path) -> usize {
+    std::fs::read_to_string(path).map_or(0, |text| text.lines().count())
+}
+
+#[tokio::test]
+async fn a_snapshot_read_does_not_hold_up_the_operations_of_another_repository() {
+    let f = Fixture::new();
+    let (cli, [_, holding, release]) = observed_cli(&f, Some(&f.root));
+    let owner = Arc::new(Operations::default());
+    let held = {
+        let (owner, cli, root) = (owner.clone(), cli.clone(), f.root.clone());
+        tokio::spawn(async move {
+            owner
+                .run(cli.clone(), &root, Intent::FetchStatus, move |request| {
+                    execute(cli, request, Run::default())
+                })
+                .await
+        })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        while !holding.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the root snapshot read did not start");
+    let other = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        owner.run(cli.clone(), &f.child, Intent::FetchStatus, {
+            let cli = cli.clone();
+            move |request| execute(cli, request, Run::default())
+        }),
+    )
+    .await
+    .expect("an operation waited for the snapshot read of another repository");
+    other.unwrap();
+    std::fs::write(&release, "").unwrap();
+    held.await.unwrap().unwrap();
+}
+
+/// R3 of DF-289: a writer that arrived before readers of its repository
+/// starts before all of them, and each completion costs one snapshot read
+/// for every request that waited for it, so the reads after the first
+/// operation do not grow with the number of waiting requests.
+#[tokio::test]
+async fn waiting_requests_take_turns_by_arrival_and_share_one_read_per_completion() {
+    let mut reads = Vec::new();
+    for readers in [2, 6] {
+        let f = Fixture::new();
+        commit(&f.child, "note", "outgoing child change");
+        let (cli, [log, ..]) = observed_cli(&f, None);
+        let owner = Arc::new(Operations::default());
+        let started = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let begin = |intent: Intent, run: Run| {
+            let (owner, cli, child) = (owner.clone(), cli.clone(), f.child.clone());
+            let run = Run {
+                started: Some(started.clone()),
+                ..run
+            };
+            tokio::spawn(async move {
+                owner
+                    .run(cli.clone(), &child, intent, move |request| {
+                        execute(cli, request, run)
+                    })
+                    .await
+            })
+        };
+        let gate = Arc::new(Notify::new());
+        let (tx, rx) = oneshot::channel();
+        let first = begin(
+            Intent::FetchStatus,
+            Run {
+                entered: Some(tx),
+                before: Some(gate.clone()),
+                ..Run::default()
+            },
+        );
+        rx.await.unwrap();
+        let writer = begin(Intent::Push, Run::default());
+        owner.wait_for_readers(&f.child, 2).await;
+        let inspections = (0..readers)
+            .map(|_| begin(Intent::InspectPublication, Run::default()))
+            .collect::<Vec<_>>();
+        owner.wait_for_readers(&f.child, 2 + readers).await;
+        let admitted = lines(&log);
+        gate.notify_one();
+        first.await.unwrap().unwrap();
+        writer.await.unwrap().unwrap();
+        for inspection in inspections {
+            let Output::Inspection(_) = inspection.await.unwrap().unwrap() else {
+                panic!("inspection")
+            };
+        }
+        assert_eq!(
+            *started.lock().unwrap(),
+            vec![
+                Intent::FetchStatus,
+                Intent::Push,
+                Intent::InspectPublication
+            ],
+            "the writer goes first, the inspections share one operation"
+        );
+        reads.push(lines(&log) - admitted);
+    }
+    assert_eq!(
+        reads[0], reads[1],
+        "snapshot reads after the first operation"
+    );
 }
 
 #[tokio::test]
