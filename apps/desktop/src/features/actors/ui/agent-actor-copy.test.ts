@@ -2,48 +2,26 @@ import { expect, test } from "bun:test";
 
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 
-import type {
-  AgentActorAdapterDiagnostic,
-  AgentActorApprovalMapping,
-} from "../model/agent-actor-types";
+import type { AgentActorAdapterDiagnostic } from "../model/agent-actor-types";
 import {
-  agentActorApprovalDescription,
-  agentActorApprovalLabel,
+  agentActorBindingLabel,
   agentActorDiagnosticStatus,
   agentActorDiagnosticSummary,
-  agentActorEffectiveBoundary,
-  agentActorSelectorLabel,
 } from "./agent-actor-copy";
 
-const nativeModes: readonly AgentActorApprovalMapping["native"][] = [
-  "codex_user_review",
-  "codex_auto_review",
-  "codex_full_access",
-  "claude_default",
-  "claude_auto",
-  "claude_bypass_permissions",
-];
+const agents = [{ id: "codex", label: "Codex" }];
 
 test("Agent Actor semantic copy follows locale without backend presentation strings", async () => {
   const originalLocale = getLocale();
   try {
     await setLocale("en", { reload: false });
-    expect(String(agentActorApprovalLabel("full"))).toBe("Full access");
     expect(
-      String(agentActorEffectiveBoundary("codex_full_access")).includes(
-        "Codex bypasses confirmations",
-      ),
-    ).toBe(true);
-    expect(agentActorSelectorLabel(null)).toBe("Client default");
+      String(agentActorBindingLabel({ kind: "participant" }, agents)),
+    ).toBe("Participant's agent");
 
     await setLocale("ru", { reload: false });
     const copy = [
-      ...(["ask", "auto", "full"] as const).flatMap((mode) => [
-        agentActorApprovalLabel(mode),
-        agentActorApprovalDescription(mode),
-      ]),
-      ...nativeModes.map(agentActorEffectiveBoundary),
-      agentActorSelectorLabel(null),
+      agentActorBindingLabel({ kind: "participant" }, agents),
       agentActorDiagnosticStatus(undefined),
       agentActorDiagnosticStatus(diagnostic("ready")),
       agentActorDiagnosticStatus(diagnostic("missing")),
@@ -52,17 +30,27 @@ test("Agent Actor semantic copy follows locale without backend presentation stri
       agentActorDiagnosticSummary(diagnostic("unknown")) ?? "",
     ].join(" ");
 
-    expect(copy.includes("Полный доступ")).toBe(true);
-    expect(copy.includes("По умолчанию клиента")).toBe(true);
+    expect(copy.includes("Агент участника")).toBe(true);
     expect(copy.includes("Клиент не найден")).toBe(true);
-    expect(
-      /Full access|native boundary|first-run|Client default|Fallback|\bModel\b|\bEffort\b/.test(
-        copy,
-      ),
-    ).toBe(false);
+    expect(/Participant|Ready|Missing/.test(copy)).toBe(false);
   } finally {
     await setLocale(originalLocale, { reload: false });
   }
+});
+
+test("a binding is named by its agent, an unknown id as it is, or the participant's agent", () => {
+  expect(
+    agentActorBindingLabel(
+      { agent: "codex", kind: "agent", settings: [] },
+      agents,
+    ),
+  ).toBe("Codex");
+  expect(
+    agentActorBindingLabel(
+      { agent: "future-agent", kind: "agent", settings: [] },
+      agents,
+    ),
+  ).toBe("future-agent");
 });
 
 function diagnostic(

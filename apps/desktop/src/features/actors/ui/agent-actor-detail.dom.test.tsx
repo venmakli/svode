@@ -8,36 +8,17 @@ import { JSDOM } from "jsdom";
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 
 import type {
-  AgentActorAdapterDescriptor,
   AgentActorAdapterDiagnostic,
-  AgentActorApprovalMapping,
+  AgentActorAgentOption,
   AgentActorBinding,
-  AgentActorBindingRuntime,
   AgentActorDraft,
+  AgentAdapterId,
 } from "../model/agent-actor-types";
 
-const descriptors: readonly AgentActorAdapterDescriptor[] = [
-  {
-    defaultEffortLabel: "BACKEND DEFAULT EFFORT",
-    defaultModelLabel: "BACKEND DEFAULT MODEL",
-    id: "codex",
-    label: "Codex",
-    modelOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
-  },
-  {
-    defaultEffortLabel: "BACKEND DEFAULT EFFORT",
-    defaultModelLabel: "BACKEND DEFAULT MODEL",
-    id: "claude-code",
-    label: "Claude Code",
-    modelOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
-  },
-  {
-    defaultEffortLabel: "BACKEND DEFAULT EFFORT",
-    defaultModelLabel: "BACKEND DEFAULT MODEL",
-    id: "hermes",
-    label: "Hermes",
-    modelOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
-  },
+const agents: readonly AgentActorAgentOption[] = [
+  { id: "codex", label: "Codex" },
+  { id: "claude-code", label: "Claude Code" },
+  { id: "hermes", label: "Hermes" },
 ];
 
 const isolatedDetailDomProcess =
@@ -62,264 +43,54 @@ if (!isolatedDetailDomProcess) {
     expect(child.status).toBe(0);
   });
 } else {
-  test("read-only Detail keeps access unique and adapter status and check visible", async () => {
+  test("read-only Detail shows the one binding agent with its status and check, without approval modes", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
-    const checks: AgentActorBinding["adapter"][] = [];
+    const checks: AgentAdapterId[] = [];
     const harness = await renderDetail({
       diagnostics: { codex: diagnostic("codex", "ready") },
-      draft: draft("full", [binding("codex")]),
+      draft: draft(codexBinding()),
       onCheck: (adapter) => checks.push(adapter),
-      runtime: { codex: bindingRuntime("codex_full_access", "full") },
     });
     try {
+      const detail = textOf(harness.dom, "[data-agent-actor-read-only-detail]");
       expect(
-        textOf(harness.dom, "[data-agent-actor-access]").includes(
-          "Full access",
-        ),
-      ).toBe(true);
+        harness.dom.window.document.querySelector("[data-agent-actor-access]"),
+      ).toBeNull();
       expect(
-        occurrences(
-          textOf(harness.dom, "[data-agent-actor-read-only-detail]"),
-          "Full access",
-        ),
+        /Full access|Ask|Primary|Fallback|gpt-6\.1-sol|Model/.test(detail),
+      ).toBe(false);
+      expect(
+        harness.dom.window.document.querySelectorAll("[data-agent-adapter]")
+          .length,
       ).toBe(1);
-      expect(
-        harness.dom.window.document.body.textContent?.includes(
-          "Saving this mode",
-        ) ?? false,
-      ).toBe(false);
-      expect(
-        harness.dom.window.document.body.textContent?.includes(
-          "BACKEND BOUNDARY",
-        ) ?? false,
-      ).toBe(false);
-      expect(findButton(harness.dom, "Check Codex").disabled).toBe(false);
       expect(
         textOf(harness.dom, '[data-agent-adapter="codex"]').includes("Ready"),
       ).toBe(true);
-
       await clickButton(harness.dom, "Check Codex");
       expect(checks).toEqual(["codex"]);
-      expect(
-        harness.dom.window.document
-          .querySelector(
-            '[data-agent-adapter="codex"] [data-slot="collapsible-content"]',
-          )
-          ?.getAttribute("data-state"),
-      ).toBe("closed");
-
-      await clickButton(harness.dom, "Show or hide Codex details");
-      const detail = textOf(harness.dom, '[data-agent-adapter="codex"]');
-      expect(detail.includes("Client access rules")).toBe(true);
-      expect(detail.includes("Codex bypasses confirmations")).toBe(true);
-      expect(detail.includes("BACKEND BOUNDARY")).toBe(false);
-      expect(occurrences(detail, "Client access rules")).toBe(1);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
     }
   });
 
-  test("Russian multi-adapter Detail localizes structured states and keeps raw evidence secondary", async () => {
+  test("the participant's agent is named without a check", async () => {
     const originalLocale = getLocale();
     await setLocale("ru", { reload: false });
     const harness = await renderDetail({
-      diagnostics: {
-        codex: diagnostic("codex", "ready"),
-        "claude-code": diagnostic(
-          "claude-code",
-          "unauthenticated",
-          "raw claude auth detail",
-        ),
-      },
-      draft: draft("auto", [
-        binding("codex", "gpt-5.6", "high"),
-        binding("claude-code"),
-      ]),
-      pendingAdapter: "codex",
-      runtime: {
-        codex: bindingRuntime("codex_auto_review", "auto"),
-        "claude-code": bindingRuntime("claude_auto", "auto", true),
-      },
+      diagnostics: {},
+      draft: draft({ kind: "participant" }),
     });
     try {
-      const body = harness.dom.window.document.body.textContent ?? "";
-      expect(body.includes("Автопроверка")).toBe(true);
-      expect(body.includes("Основной")).toBe(true);
-      expect(body.includes("Резервный")).toBe(true);
-      expect(body.includes("Проверка…")).toBe(true);
-      expect(body.includes("Требует внимания")).toBe(true);
-      expect(body.includes("Модель: gpt-5.6")).toBe(true);
-      expect(body.includes("По умолчанию клиента")).toBe(true);
-      expect(
-        /Full access|native boundary|first-run|Client default|Fallback|\bModel\b|\bEffort\b|BACKEND/.test(
-          body,
-        ),
-      ).toBe(false);
-
-      const cards = Array.from(
-        harness.dom.window.document.querySelectorAll("[data-agent-adapter]"),
+      expect(textOf(harness.dom, "[data-agent-actor-binding]")).toBe(
+        "Агент участника",
       );
       expect(
-        cards.map((card) => card.getAttribute("data-agent-adapter")),
-      ).toEqual(["codex", "claude-code"]);
-      expect(findButton(harness.dom, "Проверить Codex").disabled).toBe(true);
-      expect(findButton(harness.dom, "Проверить Claude Code").disabled).toBe(
-        true,
-      );
-
-      await clickButton(
-        harness.dom,
-        "Показать или скрыть сведения о Claude Code",
-      );
-      const claudeDetail = textOf(
-        harness.dom,
-        '[data-agent-adapter="claude-code"]',
-      );
-      expect(claudeDetail.includes("Правила доступа клиента")).toBe(true);
-      expect(
-        claudeDetail.includes(
-          "Claude Code может разрешить, запретить или запросить подтверждение",
-        ),
-      ).toBe(true);
-      expect(claudeDetail.includes("Войдите в этот клиент")).toBe(true);
-      expect(
-        claudeDetail.indexOf("Войдите в этот клиент") <
-          claudeDetail.indexOf("raw claude auth detail"),
-      ).toBe(true);
-      expect(claudeDetail.includes("Сохранённый уровень усилий")).toBe(true);
+        harness.dom.window.document.querySelector("[data-agent-adapter]"),
+      ).toBeNull();
     } finally {
       await harness.cleanup();
-      await setLocale(originalLocale, { reload: false });
-    }
-  });
-
-  test("all approval modes keep the same read-only hierarchy through loading and missing-client states", async () => {
-    const originalLocale = getLocale();
-    await setLocale("en", { reload: false });
-    const cases = [
-      { mode: "ask" as const, native: "codex_user_review" as const },
-      { mode: "auto" as const, native: "codex_auto_review" as const },
-      { mode: "full" as const, native: "codex_full_access" as const },
-    ];
-    try {
-      for (const [index, scenario] of cases.entries()) {
-        const harness = await renderDetail({
-          diagnostics:
-            index === 0
-              ? { codex: diagnostic("codex", "missing", "raw missing detail") }
-              : {},
-          draft: draft(scenario.mode, [binding("codex")]),
-          runtime:
-            index === 0
-              ? {}
-              : {
-                  codex: bindingRuntime(scenario.native, scenario.mode),
-                },
-        });
-        try {
-          expect(
-            harness.dom.window.document.querySelectorAll(
-              "[data-agent-actor-access]",
-            ).length,
-          ).toBe(1);
-          expect(
-            harness.dom.window.document.querySelectorAll(
-              "[data-agent-actor-adapters]",
-            ).length,
-          ).toBe(1);
-          expect(findButton(harness.dom, "Check Codex").disabled).toBe(false);
-          expect(harness.dom.window.document.querySelector("form")).toBeNull();
-          if (index === 0) {
-            await clickButton(harness.dom, "Show or hide Codex details");
-            const content = textOf(harness.dom, '[data-agent-adapter="codex"]');
-            expect(content.includes("current adapter settings")).toBe(true);
-            expect(content.includes("client was not found")).toBe(true);
-          }
-        } finally {
-          await harness.cleanup();
-        }
-      }
-    } finally {
-      await setLocale(originalLocale, { reload: false });
-    }
-  });
-
-  test("a Hermes binding shows its boundary, and its reason without an equivalent of the mode, in en and ru", async () => {
-    const originalLocale = getLocale();
-    // Hermes has no sign-in status command: found, its launch checks the sign-in.
-    const hermes: AgentActorAdapterDiagnostic = {
-      ...diagnostic("hermes", "unknown"),
-      code: "auth_status_unavailable",
-      version: "2026.9.24",
-    };
-    const unmapped: AgentActorBindingRuntime = {
-      ...bindingRuntime("hermes_default", "full"),
-      approval: null,
-    };
-    const cases = [
-      {
-        locale: "en" as const,
-        mode: "auto" as const,
-        runtime: bindingRuntime("hermes_accept_edits", "auto"),
-        status: "Found",
-        expected: "Hermes allows edits in the workspace and temporary folders",
-        toggle: "Show or hide Hermes details",
-      },
-      {
-        locale: "en" as const,
-        mode: "full" as const,
-        runtime: unmapped,
-        status: "Found",
-        expected:
-          "Unavailable: Hermes has no equivalent of “Full access”. The binding stays",
-        toggle: "Show or hide Hermes details",
-      },
-      {
-        locale: "ru" as const,
-        mode: "ask" as const,
-        runtime: bindingRuntime("hermes_default", "ask"),
-        status: "Найден",
-        expected: "Hermes спрашивает перед правкой файлов",
-        toggle: "Показать или скрыть сведения о Hermes",
-      },
-      {
-        locale: "ru" as const,
-        mode: "full" as const,
-        runtime: unmapped,
-        status: "Найден",
-        expected:
-          "Недоступно: у Hermes нет эквивалента режима «Полный доступ».",
-        toggle: "Показать или скрыть сведения о Hermes",
-      },
-    ];
-    try {
-      for (const scenario of cases) {
-        await setLocale(scenario.locale, { reload: false });
-        const harness = await renderDetail({
-          diagnostics: { hermes },
-          draft: draft(scenario.mode, [binding("hermes")]),
-          runtime: { hermes: scenario.runtime },
-        });
-        try {
-          const header = textOf(harness.dom, '[data-agent-adapter="hermes"]');
-          expect(header.includes(scenario.status)).toBe(true);
-          await clickButton(harness.dom, scenario.toggle);
-          const card = textOf(harness.dom, '[data-agent-adapter="hermes"]');
-          expect(card.includes(scenario.expected)).toBe(true);
-          // Found is not a failed check.
-          expect(
-            harness.dom.window.document.querySelector(
-              "[data-agent-adapter-diagnostic]",
-            ),
-          ).toBeNull();
-          expect(card.includes("BACKEND")).toBe(false);
-        } finally {
-          await harness.cleanup();
-        }
-      }
-    } finally {
       await setLocale(originalLocale, { reload: false });
     }
   });
@@ -328,32 +99,42 @@ if (!isolatedDetailDomProcess) {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     const harness = await renderDetail({
-      diagnostics: { codex: diagnostic("codex", "ready") },
-      draft: draft("ask", [binding("codex"), binding("future-agent", "m1")]),
-      runtime: {
-        codex: bindingRuntime("codex_user_review", "ask"),
-        "future-agent": {
-          approval: null,
-          effortOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
-          validation: {
-            issues: [
-              {
-                code: "unknown_adapter",
-                field: "adapter",
-                message: "BACKEND VALIDATION",
-              },
-            ],
-            status: "unavailable",
-          },
-        },
-      },
+      diagnostics: {},
+      draft: draft({ agent: "future-agent", kind: "agent", settings: [] }),
     });
     try {
-      await clickButton(harness.dom, "Show or hide future-agent details");
-      const card = textOf(harness.dom, '[data-agent-adapter="future-agent"]');
-      expect(card.includes("not part of this version of Svode")).toBe(true);
-      expect(card.includes("Checking")).toBe(false);
-      expect(card.includes("BACKEND VALIDATION")).toBe(false);
+      expect(textOf(harness.dom, "[data-agent-actor-binding]")).toBe(
+        "future-agent",
+      );
+      expect(
+        textOf(harness.dom, "[data-agent-adapter-unknown]").includes(
+          "not part of this version of Svode",
+        ),
+      ).toBe(true);
+    } finally {
+      await harness.cleanup();
+      await setLocale(originalLocale, { reload: false });
+    }
+  });
+
+  test("the edit form offers only the agent, keeping its values and mode as they are", async () => {
+    const originalLocale = getLocale();
+    await setLocale("en", { reload: false });
+    const harness = await renderDetail({
+      diagnostics: {},
+      draft: draft(codexBinding()),
+      editMode: true,
+    });
+    try {
+      const document = harness.dom.window.document;
+      expect(
+        document.querySelectorAll('[data-slot="select-trigger"]').length,
+      ).toBe(1);
+      const labels = Array.from(
+        document.querySelectorAll('[data-slot="field-label"]'),
+      ).map((label) => label.textContent?.trim());
+      expect(labels).toEqual(["Name", "Description", "Agent"]);
+      expect(document.body.textContent?.includes("Approval")).toBe(false);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
@@ -364,19 +145,17 @@ if (!isolatedDetailDomProcess) {
 async function renderDetail({
   diagnostics,
   draft: value,
+  editMode = false,
   onCheck = () => undefined,
   pendingAdapter = null,
-  runtime,
 }: {
   diagnostics: Readonly<
-    Partial<Record<AgentActorBinding["adapter"], AgentActorAdapterDiagnostic>>
+    Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>
   >;
   draft: AgentActorDraft;
-  onCheck?(adapter: AgentActorBinding["adapter"]): void;
-  pendingAdapter?: AgentActorBinding["adapter"] | null;
-  runtime: Partial<
-    Record<AgentActorBinding["adapter"], AgentActorBindingRuntime>
-  >;
+  editMode?: boolean;
+  onCheck?(adapter: AgentAdapterId): void;
+  pendingAdapter?: AgentAdapterId | null;
 }) {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
@@ -385,12 +164,11 @@ async function renderDetail({
   await act(async () => {
     root.render(
       <AgentActorDetail
-        descriptors={descriptors}
+        agents={agents}
         diagnostics={diagnostics}
         draft={value}
-        editMode={false}
+        editMode={editMode}
         pendingAdapter={pendingAdapter}
-        runtime={runtime}
         onChange={() => undefined}
         onCheck={onCheck}
         onSave={() => undefined}
@@ -411,59 +189,27 @@ async function renderDetail({
   };
 }
 
-function draft(
-  approvalMode: AgentActorDraft["approvalMode"],
-  adapters: AgentActorBinding[],
-): AgentActorDraft {
+function codexBinding(): AgentActorBinding {
   return {
-    adapters,
-    approvalMode,
+    agent: "codex",
+    kind: "agent",
+    settings: [{ setting: "model", value: "gpt-6.1-sol" }],
+  };
+}
+
+function draft(binding: AgentActorBinding): AgentActorDraft {
+  return {
+    binding,
     description: "",
     id: "01arz3ndektsv4rrffq69g5fav",
+    mode: { agent: "codex", setting: "mode", value: "agent" },
     name: "Documentation Agent",
     ownerPath: "/repo",
   };
 }
 
-function binding(
-  adapter: AgentActorBinding["adapter"],
-  model: string | null = null,
-  effort: string | null = null,
-): AgentActorBinding {
-  return { adapter, effort, model };
-}
-
-function bindingRuntime(
-  native: AgentActorApprovalMapping["native"],
-  requested: AgentActorDraft["approvalMode"],
-  invalidEffort = false,
-): AgentActorBindingRuntime {
-  return {
-    approval: {
-      danger: requested === "full",
-      effectiveBoundary: "BACKEND BOUNDARY",
-      label: "BACKEND LABEL",
-      native,
-      requested,
-    },
-    effortOptions: [{ label: "BACKEND CLIENT DEFAULT", value: null }],
-    validation: {
-      issues: invalidEffort
-        ? [
-            {
-              code: "unknown_effort_selector",
-              field: "effort",
-              message: "BACKEND VALIDATION",
-            },
-          ]
-        : [],
-      status: invalidEffort ? "unavailable" : "valid",
-    },
-  };
-}
-
 function diagnostic(
-  adapter: AgentActorBinding["adapter"],
+  adapter: AgentAdapterId,
   status: AgentActorAdapterDiagnostic["status"],
   message: string | null = null,
 ): AgentActorAdapterDiagnostic {
@@ -497,10 +243,6 @@ async function clickButton(dom: JSDOM, ariaLabel: string) {
   });
 }
 
-function occurrences(value: string, query: string) {
-  return value.split(query).length - 1;
-}
-
 function textOf(dom: JSDOM, selector: string) {
   return dom.window.document.querySelector(selector)?.textContent ?? "";
 }
@@ -518,6 +260,7 @@ function nextTurn() {
 
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
+    DocumentFragment: dom.window.DocumentFragment,
     CustomEvent: dom.window.CustomEvent,
     Element: dom.window.Element,
     Event: dom.window.Event,

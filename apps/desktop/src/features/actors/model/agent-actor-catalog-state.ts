@@ -56,8 +56,7 @@ export function agentActorCatalogSignature(
   snapshot: AgentActorCatalogSnapshot,
 ): string {
   return JSON.stringify({
-    adapterDescriptors: snapshot.adapterDescriptors,
-    bindingRuntime: snapshot.bindingRuntime,
+    agents: snapshot.agents,
     diagnostics: snapshot.diagnostics,
     fingerprints: snapshot.fingerprints,
     launchSpacePath: snapshot.launchSpacePath,

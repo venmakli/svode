@@ -9,6 +9,7 @@ import {
   mutateAgentActor,
   previewAgentActorDeleteReferences,
   toAgentActorMutationActor,
+  toAgentActorModeDto,
 } from "../api/agent-actors-api";
 import {
   actorPersistenceNeedsAttention,
@@ -201,7 +202,7 @@ async function portableMutation(
   return {
     kind,
     actor: toAgentActorMutationActor({ ...draft, id }),
-    approvalMode: draft.approvalMode,
+    mode: toAgentActorModeDto(draft.mode),
   } as const;
 }
 

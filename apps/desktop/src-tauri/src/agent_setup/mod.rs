@@ -23,6 +23,7 @@ use svode_agents::registry::{
 };
 use svode_agents::{AcpLaunch, AgentCheck, AgentInfo};
 use svode_core::agent_adapters::{AgentAdapterKind, CustomAgentId, resolve_executable_path};
+use svode_core::default_agent::{self, DefaultAgent};
 
 use crate::agent_runtime::connections::{KeepFuture, LaunchPlanner, PlanFuture};
 use crate::error::AppError;
@@ -94,6 +95,24 @@ impl AgentSetupState {
             root.insert(LAST_CHAT_AGENT.into(), agent.into());
             Ok(())
         })
+    }
+
+    /// Stores the initial default agent of the device once: the last used
+    /// chat agent without setting values, or none.
+    pub(crate) fn seed_default_agent(&self) -> Result<(), AppError> {
+        let _guard = self.choices.lock().unwrap();
+        default_agent::seed(&self.config_dir, self.last_chat_agent().as_deref())?;
+        Ok(())
+    }
+
+    /// The default agent of this device for every project.
+    pub(crate) fn default_agent(&self) -> Result<Option<DefaultAgent>, AppError> {
+        Ok(default_agent::read(&self.config_dir)?)
+    }
+
+    pub(crate) fn set_default_agent(&self, default: Option<&DefaultAgent>) -> Result<(), AppError> {
+        let _guard = self.choices.lock().unwrap();
+        Ok(default_agent::write(&self.config_dir, default)?)
     }
 
     /// How a new session offers `agent` for chat (Stage 10 `04`, chat and
@@ -643,6 +662,34 @@ pub(crate) async fn live_setup_with_pinned_adapters(root: &std::path::Path) -> A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_agent_starts_as_the_last_used_chat_agent_and_keeps_its_own_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = AgentSetupState::new(dir.path(), dir.path().to_path_buf());
+        setup.set_last_chat_agent("claude-code").unwrap();
+        setup.seed_default_agent().unwrap();
+        let seeded = setup.default_agent().unwrap().unwrap();
+        assert_eq!(seeded.agent.as_str(), "claude-code");
+        assert!(seeded.settings.is_empty());
+
+        // A later chat agent no longer changes it; a choice and a clear do.
+        setup.set_last_chat_agent("codex").unwrap();
+        setup.seed_default_agent().unwrap();
+        assert_eq!(setup.default_agent().unwrap(), Some(seeded));
+        let chosen = DefaultAgent {
+            agent: svode_core::agent_adapters::AgentId::parse("custom-mine").unwrap(),
+            settings: vec![svode_core::agent_actors::AgentSettingValue {
+                setting: "mode".into(),
+                value: "yolo".into(),
+            }],
+        };
+        setup.set_default_agent(Some(&chosen)).unwrap();
+        assert_eq!(setup.default_agent().unwrap(), Some(chosen));
+        setup.set_default_agent(None).unwrap();
+        setup.seed_default_agent().unwrap();
+        assert_eq!(setup.default_agent().unwrap(), None);
+    }
 
     #[test]
     fn enable_choices_round_trip_and_keep_unknown_agents() {

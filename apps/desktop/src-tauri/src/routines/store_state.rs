@@ -88,7 +88,6 @@ mod tests {
     use std::sync::Arc;
 
     use crate::routines::ResolvedRoutineOwner;
-    use crate::space::config;
     use svode_core::routines::authority;
 
     #[tokio::test]
@@ -105,7 +104,7 @@ mod tests {
         assert!(authority::recovery_required(temp.path()).unwrap());
         assert!(!authority::read_key(temp.path(), &owner_key).unwrap());
         assert!(
-            config::read_local_config(temp.path())
+            svode_core::routines::local::read(temp.path())
                 .unwrap()
                 .routines
                 .unwrap()

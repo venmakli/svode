@@ -917,7 +917,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
         ),
         def(
             "list_agent_actors",
-            "Return the Agent Actors of one explicit Space: exactly the agents a Routine of that Space or of its Collections may name as action.executor. Each agent has its reference (the agent:<ulid> executor value), name, description, ownerSpaceId (the Space itself, or \"root\" for an agent a child Space inherits) and bindings in catalog order. Read-only; it returns no device-local approval mode or binding readiness. diagnostics report a catalog that cannot be read (catalog_unavailable) and an id defined by both the Space and root (ambiguous_actor_id, left out of agents): an empty agents list with diagnostics does not mean the Space has no agents.",
+            "Return the Agent Actors of one explicit Space: exactly the agents a Routine of that Space or of its Collections may name as action.executor. Each agent has its reference (the agent:<ulid> executor value), name, description, ownerSpaceId (the Space itself, or \"root\" for an agent a child Space inherits) and its one binding: kind agent with the agent id and the values of its settings in the agent's own terms (a setting it leaves out runs with the agent's native default), or kind participant, which runs on each device with that device's default agent. Read-only; it returns no device-local approval mode, default agent, readiness or device paths. diagnostics report a catalog that cannot be read (catalog_unavailable) and an id defined by both the Space and root (ambiguous_actor_id, left out of agents): an empty agents list with diagnostics does not mean the Space has no agents.",
             schema(&[agent_actors_space_id()], &["spaceId"]),
             read_only_ann(),
             Some(list_agent_actors_output_schema()),
@@ -1041,7 +1041,7 @@ Index-backed reads:
 Routine workflow:
 - Call list_spaces, then list_collections when needed, before working with Routines. Every Routine tool requires a non-null explicit spaceId: use "root" for the project owner or a child id from list_spaces; add collectionPath only for an existing Collection owner.
 - Use list_routines for bounded body-less discovery and get_routine for the normalized definition, Markdown body, and fingerprint. Definitions with missing, malformed, or duplicate portable id remain visible with routineId null and an exact recovery path, but fail closed for addressed tools. Device-local automatic authority and last/next run fields are evidence, not a promise that a Routine can run now.
-- A run_agent action names its executor by reference: call list_agent_actors with the same spaceId (for a Collection owner, the Space of that Collection) and pass one of its agents[].reference values as action.executor. Its agents are the Space's own Agent Actors and, for a child Space, those of root; diagnostics catalog_unavailable and ambiguous_actor_id mean an empty or short agents list is not proof that the Space has no agents. list_actors returns people for actor fields, never executors.
+- A run_agent action names its executor by reference: call list_agent_actors with the same spaceId (for a Collection owner, the Space of that Collection) and pass one of its agents[].reference values as action.executor. Its agents are the Space's own Agent Actors and, for a child Space, those of root; diagnostics catalog_unavailable and ambiguous_actor_id mean an empty or short agents list is not proof that the Space has no agents. Each agent has one binding: kind agent names the agent and the values of its settings as the agent names them (a setting left out runs with the agent's native default), kind participant runs on each device with the default agent its participant chose; the approval mode and the default agent stay on the device and are not in the list. list_actors returns people for actor fields, never executors.
 - Use create_routine, update_routine, and delete_routine for managed source changes. Update/delete require the last-read fingerprint; a conflict returns the current fingerprint without writing. Create/update validate the complete candidate and return canonical changedPaths. These tools never autocommit.
 - run_routine is served only through the running Svode desktop app; `svode-mcp --project` and the `svode` CLI do not launch Routines. Use run_routine only for an explicit one-time launch of a manual or schedule Routine, with the last-read fingerprint. It returns started or already_running launch/session identity immediately; blocked and failed outcomes keep stable recovery evidence. It never runs event Routines, waits for completion, changes automatic authority/checkpoints, or autocommits. A Routine-launched agent cannot use run_routine or save enabled automation, preventing hidden recursive agent execution.
 - Saving an enabled schedule/event requires confirmAutomaticExecution=true, but that acknowledgement never enables owner-local device authority. Never address or edit raw .routines paths through MCP; Routine definitions belong to the Routine domain tools and owner resolver.
@@ -1994,21 +1994,42 @@ fn list_agent_actors_output_schema() -> Value {
                         "name": { "type": "string" },
                         "description": nullable_string,
                         "ownerSpaceId": { "type": "string", "description": "Space whose catalog defines the agent: the requested Space or \"root\"." },
-                        "bindings": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                    "adapter": { "type": "string" },
-                                    "model": { "type": ["string", "null"], "description": "Null means the native default." },
-                                    "effort": { "type": ["string", "null"], "description": "Null means the native default." }
+                        "binding": {
+                            "oneOf": [
+                                {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "kind": { "const": "agent" },
+                                        "agent": { "type": "string", "description": "Agent id, such as codex or claude-code; an id this version does not know is an unavailable binding." },
+                                        "settings": {
+                                            "type": "array",
+                                            "description": "Values of the agent's settings as the agent names them, each setting at most once; a setting left out runs with the agent's native default.",
+                                            "items": {
+                                                "type": "object",
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                    "setting": { "type": "string" },
+                                                    "value": { "type": "string" }
+                                                },
+                                                "required": ["setting", "value"]
+                                            }
+                                        }
+                                    },
+                                    "required": ["kind", "agent", "settings"]
                                 },
-                                "required": ["adapter", "model", "effort"]
-                            }
+                                {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "kind": { "const": "participant", "description": "The participant's agent: each device runs it with its own default agent." }
+                                    },
+                                    "required": ["kind"]
+                                }
+                            ]
                         }
                     },
-                    "required": ["reference", "name", "description", "ownerSpaceId", "bindings"]
+                    "required": ["reference", "name", "description", "ownerSpaceId", "binding"]
                 }
             },
             "diagnostics": {
@@ -2800,13 +2821,23 @@ mod tests {
                 "name",
                 "description",
                 "ownerSpaceId",
-                "bindings"
+                "binding"
             ])
         );
+        let binding = &output["properties"]["agents"]["items"]["properties"]["binding"]["oneOf"];
+        assert_eq!(binding[0]["required"], json!(["kind", "agent", "settings"]));
+        assert_eq!(binding[0]["properties"]["kind"]["const"], "agent");
         assert_eq!(
-            output["properties"]["agents"]["items"]["properties"]["bindings"]["items"]["required"],
-            json!(["adapter", "model", "effort"])
+            binding[0]["properties"]["settings"]["items"]["required"],
+            json!(["setting", "value"])
         );
+        assert_eq!(binding[1]["required"], json!(["kind"]));
+        assert_eq!(binding[1]["properties"]["kind"]["const"], "participant");
+        let description = &definition.description;
+        for absent in ["approvalMode", "\"mode\"", "defaultAgent"] {
+            assert!(!output.to_string().contains(absent), "{absent}");
+        }
+        assert!(description.contains("no device-local approval mode, default agent"));
         assert_eq!(
             output["properties"]["diagnostics"]["items"]["required"],
             json!(["code", "ownerSpaceId", "reference", "message"])

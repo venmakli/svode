@@ -24,12 +24,11 @@ import * as m from "@/paraglide/messages.js";
 
 import { createAgentActorDraft } from "../model/agent-actor-draft";
 import type {
-  AgentActorAdapterDescriptor,
   AgentActorAdapterDiagnostic,
-  AgentActorBinding,
-  AgentActorBindingRuntime,
+  AgentActorAgentOption,
   AgentActorDraft,
   AgentActorRow,
+  AgentAdapterId,
 } from "../model/agent-actor-types";
 import { AgentActorDetail } from "../ui/agent-actor-detail";
 import { agentActorRowId } from "../ui/agent-actors-presentation";
@@ -37,19 +36,17 @@ import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
 export function useAgentActorDetail({
   accessRecovery,
+  agents,
   applyMutation,
-  descriptors,
   detailController,
   diagnose,
   diagnostics,
-  editRuntime,
   editSession,
   instanceKey,
   mutationPending,
   readOnly = false,
   pendingAdapter,
   rows,
-  savedRuntimeFor,
   setEditSession,
 }: {
   accessRecovery?: RepositoryAccessPreflightController;
@@ -58,37 +55,30 @@ export function useAgentActorDetail({
     ownerPath: string,
     draft: AgentActorDraft,
   ): void | Promise<void>;
-  descriptors: readonly AgentActorAdapterDescriptor[];
+  agents: readonly AgentActorAgentOption[];
   detailController: CollectionDetailController | null;
-  diagnose(adapter: AgentActorBinding["adapter"]): void;
+  diagnose(adapter: AgentAdapterId): void;
   diagnostics: Readonly<
-    Partial<Record<AgentActorBinding["adapter"], AgentActorAdapterDiagnostic>>
-  >;
-  editRuntime: Partial<
-    Record<AgentActorBinding["adapter"], AgentActorBindingRuntime>
+    Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>
   >;
   editSession: AgentActorEditSession | null;
   instanceKey: string;
   mutationPending: boolean;
   readOnly?: boolean;
-  pendingAdapter: AgentActorBinding["adapter"] | null;
+  pendingAdapter: AgentAdapterId | null;
   /** The agents of the ready catalog; null until it is read. */
   rows: readonly AgentActorRow[] | null;
-  savedRuntimeFor(
-    row: AgentActorRow,
-  ): Partial<Record<AgentActorBinding["adapter"], AgentActorBindingRuntime>>;
   setEditSession: Dispatch<SetStateAction<AgentActorEditSession | null>>;
 }): CollectionDetailRowBinding<AgentActorRow> {
   const createReadOnlyDetail = useCallback(
     (row: AgentActorRow): CollectionDetailContent => ({
       content: (
         <AgentActorDetail
-          descriptors={descriptors}
+          agents={agents}
           diagnostics={diagnostics}
           draft={createAgentActorDraft(row.ownerPath, row)}
           editMode={false}
           pendingAdapter={pendingAdapter}
-          runtime={savedRuntimeFor(row)}
           onChange={() => undefined}
           onCheck={diagnose}
           onSave={() => undefined}
@@ -99,7 +89,7 @@ export function useAgentActorDetail({
       ),
       title: detailTitle(row),
     }),
-    [descriptors, diagnose, diagnostics, pendingAdapter, savedRuntimeFor],
+    [agents, diagnose, diagnostics, pendingAdapter],
   );
   const findRow = useMemo(
     () =>
@@ -146,12 +136,11 @@ export function useAgentActorDetail({
         content: (
           <div className="flex min-w-0 flex-col gap-4">
             <AgentActorDetail
-              descriptors={descriptors}
+              agents={agents}
               diagnostics={diagnostics}
               draft={editSession.draft}
               editMode={!readOnly}
               pendingAdapter={pendingAdapter}
-              runtime={editRuntime}
               onChange={(draft) =>
                 setEditSession((current) => {
                   if (!current) return current;
@@ -230,13 +219,12 @@ export function useAgentActorDetail({
       });
   }, [
     accessRecovery,
+    agents,
     applyMutation,
-    descriptors,
     detail,
     detailController,
     diagnose,
     diagnostics,
-    editRuntime,
     editSession,
     instanceKey,
     mutationPending,

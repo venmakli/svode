@@ -7,11 +7,12 @@ import { JSDOM } from "jsdom";
 
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
-import { createAgentActorDraft } from "../model/agent-actor-draft";
+import {
+  cloneBinding,
+  createAgentActorDraft,
+} from "../model/agent-actor-draft";
 import type {
-  AgentActorAdapterDescriptor,
-  AgentActorBinding,
-  AgentActorBindingRuntime,
+  AgentActorAgentOption,
   AgentActorDraft,
 } from "../model/agent-actor-types";
 
@@ -19,27 +20,9 @@ type EditorComponent =
   typeof import("./agent-actor-editor-dialog").AgentActorEditorDialog;
 let useRepositoryAccessPreflight: typeof import("@/features/git").useRepositoryAccessPreflight;
 
-const descriptors: readonly AgentActorAdapterDescriptor[] = [
-  {
-    defaultEffortLabel: "Medium",
-    defaultModelLabel: "GPT default",
-    id: "codex",
-    label: "Codex",
-    modelOptions: [
-      { label: "GPT default", value: null },
-      { label: "GPT 5.6", value: "gpt-5.6" },
-    ],
-  },
-  {
-    defaultEffortLabel: "Client default",
-    defaultModelLabel: "Claude default",
-    id: "claude-code",
-    label: "Claude Code",
-    modelOptions: [
-      { label: "Claude default", value: null },
-      { label: "Sonnet", value: "sonnet" },
-    ],
-  },
+const agents: readonly AgentActorAgentOption[] = [
+  { id: "codex", label: "Codex" },
+  { id: "claude-code", label: "Claude Code" },
 ];
 
 const isolatedDialogDomProcess =
@@ -101,10 +84,6 @@ if (!isolatedDialogDomProcess) {
       ).toBe("Documentation Agent");
       await clickButton(harness.dom, "Continue");
       await clickButton(harness.dom, "Continue");
-      expect(currentStep(harness.dom)).toBe("permissions");
-      expect(textOf(harness.dom, "[data-save-count]")).toBe("0");
-
-      await clickButton(harness.dom, "Continue");
       expect(currentStep(harness.dom)).toBe("review");
       expect(
         harness.dom.window.document
@@ -131,98 +110,42 @@ if (!isolatedDialogDomProcess) {
     }
   });
 
-  test("adapter disclosure keeps one editor open and Review preserves primary and device-local permission semantics", async () => {
+  test("the agent step holds one binding and Review names its agent without approval modes", async () => {
     const initial = createAgentActorDraft("/repo/docs");
     initial.name = "Documentation Agent";
-    initial.approvalMode = "full";
-    initial.adapters.push({
-      adapter: "claude-code",
-      effort: null,
-      model: "sonnet",
-    });
+    initial.binding = {
+      agent: "claude-code",
+      kind: "agent",
+      settings: [{ setting: "model", value: "sonnet" }],
+    };
+    initial.mode = { agent: "claude-code", setting: "mode", value: "plan" };
     const harness = await renderHarness({ initial });
     try {
       await clickButton(harness.dom, "Continue");
       expect(currentStep(harness.dom)).toBe("adapters");
+      const document = harness.dom.window.document;
+      expect(document.querySelectorAll("[data-agent-adapter]").length).toBe(1);
       expect(
-        harness.dom.window.document.querySelectorAll(
-          '[data-slot="collapsible-content"][data-state="open"]',
-        ).length,
+        document.querySelector('[data-agent-adapter="claude-code"]') === null,
+      ).toBe(false);
+      expect(
+        document.querySelectorAll('[data-slot="select-trigger"]').length,
       ).toBe(1);
-
-      const claudeCard = harness.dom.window.document.querySelector(
-        '[data-agent-adapter="claude-code"]',
-      );
-      const toggleClaude = claudeCard?.querySelector<HTMLButtonElement>(
-        '[aria-label="Toggle adapter details"]',
-      );
-      if (!toggleClaude) throw new Error("Claude Code disclosure not found");
-      await act(async () => {
-        toggleClaude.click();
-        await nextTurn();
-      });
       expect(
-        harness.dom.window.document.querySelectorAll(
-          '[data-slot="collapsible-content"][data-state="open"]',
-        ).length,
-      ).toBe(1);
-      await clickButton(harness.dom, "Make primary");
-      expect(claudeCard?.textContent?.includes("Primary")).toBe(true);
-
-      const codexCard = harness.dom.window.document.querySelector(
-        '[data-agent-adapter="codex"]',
-      )!;
-      const toggleCodex = codexCard.querySelector<HTMLButtonElement>(
-        '[aria-label="Toggle adapter details"]',
-      );
-      if (!toggleCodex) throw new Error("Codex disclosure not found");
-      await act(async () => {
-        toggleCodex.click();
-        await nextTurn();
-      });
-      const removeCodex = Array.from(codexCard.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === "Remove",
-      )!;
-      await act(async () => {
-        removeCodex.click();
-        await nextTurn();
-      });
-      expect(
-        harness.dom.window.document.querySelector(
-          '[data-agent-adapter="codex"]',
-        ),
-      ).toBeNull();
-      expect(findButton(harness.dom, "Remove").disabled).toBe(true);
-
-      await clickButton(harness.dom, "Continue");
-      expect(currentStep(harness.dom)).toBe("permissions");
-      expect(
-        harness.dom.window.document.body.textContent?.includes(
-          "Full access can make unrestricted changes",
-        ),
-      ).toBe(true);
-      expect(
-        harness.dom.window.document.body.textContent?.includes(
-          "Claude Code bypasses permission checks",
-        ),
-      ).toBe(true);
-      expect(
-        harness.dom.window.document.body.textContent?.includes(
-          "Claude full boundary",
+        /Make primary|Remove|Model|Effort/.test(
+          document.body.textContent ?? "",
         ),
       ).toBe(false);
 
       await clickButton(harness.dom, "Continue");
       expect(currentStep(harness.dom)).toBe("review");
-      const review = harness.dom.window.document.querySelector(
-        "[data-agent-actor-review]",
-      )!;
-      expect(review.textContent?.includes("Claude Code")).toBe(true);
-      expect(review.textContent?.includes("Primary")).toBe(true);
-      expect(review.textContent?.includes("Device-local")).toBe(true);
+      const review = document.querySelector("[data-agent-actor-review]")!;
+      expect(textOf(harness.dom, "[data-agent-actor-binding]")).toBe(
+        "Claude Code",
+      );
       expect(
-        review.textContent?.includes("Claude Code bypasses permission checks"),
-      ).toBe(true);
+        /Device-local|Full access|Ask|Primary/.test(review.textContent ?? ""),
+      ).toBe(false);
     } finally {
       await harness.cleanup();
     }
@@ -385,14 +308,13 @@ function JourneyHarness({
       <span data-draft-open>{draft ? "open" : "closed"}</span>
       <Editor
         accessRecovery={accessRecovery}
-        descriptors={descriptors}
+        agents={agents}
         diagnostics={{}}
         draft={draft}
         failure={failure}
         pending={pending}
         pendingAdapter={null}
         requesting={false}
-        runtime={readyRuntime(draft)}
         onChange={setDraft}
         onCheck={() => undefined}
         onClose={() => {
@@ -487,7 +409,6 @@ async function renderHarness({
 async function navigateToReview(dom: JSDOM) {
   await clickButton(dom, "Continue");
   await clickButton(dom, "Continue");
-  await clickButton(dom, "Continue");
   expect(currentStep(dom)).toBe("review");
 }
 
@@ -495,44 +416,6 @@ function validDraft() {
   const draft = createAgentActorDraft("/repo/docs");
   draft.name = "Documentation Agent";
   return draft;
-}
-
-function readyRuntime(draft: AgentActorDraft | null) {
-  if (!draft) return { phase: "idle" as const, runtime: {} };
-  return {
-    phase: "ready" as const,
-    runtime: Object.fromEntries(
-      draft.adapters.map((binding) => [
-        binding.adapter,
-        bindingRuntime(binding.adapter, draft.approvalMode === "full"),
-      ]),
-    ),
-  };
-}
-
-function bindingRuntime(
-  adapter: AgentActorBinding["adapter"],
-  full: boolean,
-): AgentActorBindingRuntime {
-  return {
-    approval: {
-      danger: full,
-      effectiveBoundary:
-        adapter === "codex" ? "Codex native boundary" : "Claude full boundary",
-      label: full ? "Full access" : "Ask",
-      native:
-        adapter === "codex"
-          ? full
-            ? "codex_full_access"
-            : "codex_user_review"
-          : full
-            ? "claude_bypass_permissions"
-            : "claude_default",
-      requested: full ? "full" : "ask",
-    },
-    effortOptions: [{ label: "Client default", value: null }],
-    validation: { issues: [], status: "valid" },
-  };
 }
 
 function accessSnapshot() {
@@ -548,10 +431,7 @@ function accessSnapshot() {
 }
 
 function cloneDraft(draft: AgentActorDraft): AgentActorDraft {
-  return {
-    ...draft,
-    adapters: draft.adapters.map((binding) => ({ ...binding })),
-  };
+  return { ...draft, binding: cloneBinding(draft.binding) };
 }
 
 function currentStep(dom: JSDOM) {

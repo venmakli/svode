@@ -6,7 +6,6 @@ import {
   diagnoseAgentActorAdapter,
   listenAgentActorCatalogInvalidated,
   loadAgentActors,
-  runtimeKey,
 } from "../api/agent-actors-api";
 import {
   beginAgentActorCatalogRefresh,
@@ -17,8 +16,6 @@ import {
 import { resolveAgentActorRuntimeStatus } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDiagnostic,
-  AgentActorApprovalMapping,
-  AgentActorBindingValidation,
   AgentActorCatalogSnapshot,
   AgentAdapterId,
 } from "../model/agent-actor-types";
@@ -169,31 +166,18 @@ export function useAgentActorCatalog(
 
   const projectedState = useMemo<AgentActorCatalogState>(() => {
     if (state.phase !== "ready") return state;
-    const rows = state.snapshot.rows.map((row) => {
-      const runtime =
-        state.snapshot.bindingRuntime[runtimeKey(row.ownerPath, row.id)] ?? [];
-      const validations: Partial<
-        Record<AgentAdapterId, AgentActorBindingValidation>
-      > = {};
-      const approvals: Partial<
-        Record<AgentAdapterId, AgentActorApprovalMapping | null>
-      > = {};
-      row.adapters.forEach((binding, index) => {
-        const bindingRuntime = runtime[index];
-        if (!bindingRuntime) return;
-        validations[binding.adapter] = bindingRuntime.validation;
-        approvals[binding.adapter] = bindingRuntime.approval;
-      });
-      return Object.freeze({
+    const known = new Set(state.snapshot.agents.map((agent) => agent.id));
+    const rows = state.snapshot.rows.map((row) =>
+      Object.freeze({
         ...row,
         runtimeStatus: resolveAgentActorRuntimeStatus({
-          approvals,
-          bindings: row.adapters,
+          binding: row.binding,
           diagnostics,
-          validations,
+          known:
+            row.binding.kind === "participant" || known.has(row.binding.agent),
         }),
-      });
-    });
+      }),
+    );
     return {
       ...state,
       snapshot: Object.freeze({

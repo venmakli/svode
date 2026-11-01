@@ -1,13 +1,14 @@
 //! Agent Actors of one explicit Space: the executor domain of its Routine
 //! owners, from the one core resolution Routine validation uses.
 //!
-//! The answer is the portable catalog: no device paths, approval modes or
-//! binding readiness, so the bridge and a standalone process agree.
+//! The answer is the portable catalog: one binding per agent, no device
+//! paths, modes, default agent or readiness, so the bridge and a standalone
+//! process agree.
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use svode_core::agent_actors::{
-    AgentActorCatalogDiagnostic, ResolvedAgentActor, resolve_space_catalogs,
+    ActorBinding, AgentActorCatalogDiagnostic, ResolvedAgentActor, resolve_space_catalogs,
 };
 
 use crate::error::ToolError;
@@ -74,16 +75,19 @@ fn agent(resolved: &ResolvedAgentActor, owner_space_id: &str) -> Value {
         "name": actor.name,
         "description": actor.description,
         "ownerSpaceId": owner_space_id,
-        "bindings": actor
-            .adapters
-            .iter()
-            .map(|binding| json!({
-                "adapter": binding.adapter.as_str(),
-                "model": binding.model,
-                "effort": binding.effort,
-            }))
-            .collect::<Vec<_>>(),
+        "binding": binding(&actor.binding),
     })
+}
+
+fn binding(binding: &ActorBinding) -> Value {
+    match binding {
+        ActorBinding::Agent { agent, settings } => json!({
+            "kind": "agent",
+            "agent": agent.as_str(),
+            "settings": settings,
+        }),
+        ActorBinding::Participant => json!({ "kind": "participant" }),
+    }
 }
 
 fn catalog_diagnostic(diagnostic: &AgentActorCatalogDiagnostic, owner_space_id: &str) -> Value {

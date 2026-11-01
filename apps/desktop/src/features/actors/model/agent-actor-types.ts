@@ -1,21 +1,41 @@
 /** An agent id from the registry; a catalog may hold one this build does not know. */
 export type AgentAdapterId = string;
-export type AgentActorApprovalMode = "ask" | "auto" | "full";
 export type AgentActorRuntimeStatus = "ready" | "attention" | "unchecked";
 
-export interface AgentActorBinding {
-  adapter: AgentAdapterId;
-  model: string | null;
-  effort: string | null;
+/** A value of one setting as the agent names the setting and the value. */
+export interface AgentActorSetting {
+  setting: string;
+  value: string;
+}
+
+/**
+ * The one binding of an Actor: a concrete agent with the values of its
+ * settings, or the participant's agent, which runs with the default agent
+ * of the device that launches it.
+ */
+export type AgentActorBinding =
+  | {
+      agent: AgentAdapterId;
+      kind: "agent";
+      settings: readonly AgentActorSetting[];
+    }
+  | { kind: "participant" };
+
+/** The device mode of an Actor, kept with the agent it was chosen for. */
+export interface AgentActorMode {
+  agent: AgentAdapterId;
+  setting: string;
+  value: string;
 }
 
 export interface AgentActorRow {
   actorRef: `agent:${string}`;
-  adapters: readonly AgentActorBinding[];
-  approvalMode: AgentActorApprovalMode;
+  binding: AgentActorBinding;
   description: string | null;
   id: string;
   inherited: boolean;
+  /** The effective mode on this device; `null` is the agent's native default. */
+  mode: AgentActorMode | null;
   name: string;
   ownerLabel: string;
   ownerPath: string;
@@ -28,17 +48,10 @@ export interface AgentActorCatalogDiagnostic {
   ownerPath: string;
 }
 
-export interface AgentActorSelectOption {
-  label: string;
-  value: string | null;
-}
-
-export interface AgentActorAdapterDescriptor {
-  defaultEffortLabel: string;
-  defaultModelLabel: string;
+/** A built-in agent a binding can name. */
+export interface AgentActorAgentOption {
   id: AgentAdapterId;
   label: string;
-  modelOptions: readonly AgentActorSelectOption[];
 }
 
 export interface AgentActorAdapterDiagnostic {
@@ -51,58 +64,20 @@ export interface AgentActorAdapterDiagnostic {
   version: string | null;
 }
 
-export interface AgentActorBindingValidation {
-  issues: readonly {
-    code: string;
-    field: string;
-    message: string;
-  }[];
-  status: "valid" | "unavailable";
-}
-
-export interface AgentActorApprovalMapping {
-  danger: boolean;
-  effectiveBoundary: string;
-  label: string;
-  native:
-    | "codex_user_review"
-    | "codex_auto_review"
-    | "codex_full_access"
-    | "claude_default"
-    | "claude_auto"
-    | "claude_bypass_permissions"
-    | "hermes_default"
-    | "hermes_accept_edits"
-    | "qwen_default"
-    | "qwen_auto_edit"
-    | "qwen_yolo"
-    | "kimi_default"
-    | "kimi_auto"
-    | "kimi_yolo";
-  requested: AgentActorApprovalMode;
-}
-
 export interface AgentActorCatalogSnapshot {
-  adapterDescriptors: readonly AgentActorAdapterDescriptor[];
-  bindingRuntime: Readonly<Record<string, readonly AgentActorBindingRuntime[]>>;
+  agents: readonly AgentActorAgentOption[];
   diagnostics: readonly AgentActorCatalogDiagnostic[];
   fingerprints: Readonly<Record<string, string>>;
   launchSpacePath: string;
   rows: readonly AgentActorRow[];
 }
 
-export interface AgentActorBindingRuntime {
-  /** `null` for a binding of an agent without an approval mapping. */
-  approval: AgentActorApprovalMapping | null;
-  effortOptions: readonly AgentActorSelectOption[];
-  validation: AgentActorBindingValidation;
-}
-
 export interface AgentActorDraft {
-  adapters: AgentActorBinding[];
-  approvalMode: AgentActorApprovalMode;
+  binding: AgentActorBinding;
   description: string;
   id: string | null;
+  /** Kept as it is until the binding editor edits it. */
+  mode: AgentActorMode | null;
   name: string;
   ownerPath: string;
 }

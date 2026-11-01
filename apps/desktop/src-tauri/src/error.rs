@@ -118,6 +118,15 @@ impl From<svode_core::routines::local::LocalConfigError> for AppError {
     }
 }
 
+impl From<svode_core::default_agent::DefaultAgentError> for AppError {
+    fn from(error: svode_core::default_agent::DefaultAgentError) -> Self {
+        match error {
+            svode_core::default_agent::DefaultAgentError::Io(error) => Self::Io(error),
+            error => Self::General(error.to_string()),
+        }
+    }
+}
+
 impl From<svode_core::space_config::SpaceConfigError> for AppError {
     fn from(error: svode_core::space_config::SpaceConfigError) -> Self {
         use svode_core::space_config::SpaceConfigError;

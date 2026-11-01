@@ -8,6 +8,7 @@ pub mod apps;
 pub mod attachments;
 pub mod collections;
 pub mod content_tree;
+pub mod default_agent;
 pub mod git;
 pub mod index;
 pub mod page;

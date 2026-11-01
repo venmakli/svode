@@ -15,11 +15,6 @@ pub fn write_space_config(path: &Path, config: &SpaceConfig) -> Result<(), AppEr
     Ok(svode_core::space_config::write(path, config)?)
 }
 
-/// Read local config from {space_path}/.svode/local.json.
-pub fn read_local_config(path: &Path) -> Result<LocalConfig, AppError> {
-    Ok(svode_core::routines::local::read(path)?)
-}
-
 pub fn mutate_local_config<T>(
     path: &Path,
     mutate: impl FnOnce(&mut LocalConfig) -> Result<T, AppError>,
@@ -140,7 +135,7 @@ mod tests {
             writer.join().unwrap();
         }
 
-        let local = read_local_config(&path).unwrap();
+        let local = svode_core::routines::local::read(&path).unwrap();
         assert!(local.git.unwrap().auto_sync);
         assert_eq!(local.agent, Some(serde_json::json!({ "cliPaths": {} })));
         assert_eq!(

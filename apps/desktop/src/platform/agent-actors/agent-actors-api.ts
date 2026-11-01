@@ -7,69 +7,35 @@ import {
 
 /** An agent id from the registry; a catalog may hold one this build does not know. */
 export type AgentAdapterIdDto = string;
-export type AgentActorApprovalModeDto = "ask" | "auto" | "full";
 
-export interface AgentActorBindingDto {
-  adapter: AgentAdapterIdDto;
-  model?: string | null;
-  effort?: string | null;
+/** A value of one setting as the agent names the setting and the value. */
+export interface AgentActorSettingValueDto {
+  setting: string;
+  value: string;
+}
+
+/** The one binding of an Actor: a concrete agent or the participant's agent. */
+export type AgentActorBindingDto =
+  | { agent: AgentAdapterIdDto; settings: AgentActorSettingValueDto[] }
+  | { participant: true };
+
+/** The device mode of an Actor, kept with the agent it was chosen for. */
+export interface AgentActorModeDto {
+  agent: AgentAdapterIdDto;
+  setting: string;
+  value: string;
 }
 
 export interface AgentActorDto {
   id: string;
   name: string;
   description?: string | null;
-  adapters: AgentActorBindingDto[];
+  binding: AgentActorBindingDto;
 }
 
-export interface AgentActorSelectOptionDto {
-  value: string | null;
-  label: string;
-}
-
-export interface AgentActorAdapterDescriptorDto {
+export interface AgentActorAgentLabelDto {
   id: AgentAdapterIdDto;
-  label: string;
-  modelOptions: AgentActorSelectOptionDto[];
-  defaultModelLabel: string;
-  defaultEffortLabel: string;
-}
-
-export interface AgentActorBindingValidationDto {
-  status: "valid" | "unavailable";
-  issues: { code: string; field: string; message: string }[];
-}
-
-export interface AgentActorApprovalMappingDto {
-  requested: AgentActorApprovalModeDto;
-  native:
-    | "codex_user_review"
-    | "codex_auto_review"
-    | "codex_full_access"
-    | "claude_default"
-    | "claude_auto"
-    | "claude_bypass_permissions"
-    | "hermes_default"
-    | "hermes_accept_edits"
-    | "qwen_default"
-    | "qwen_auto_edit"
-    | "qwen_yolo"
-    | "kimi_default"
-    | "kimi_auto"
-    | "kimi_yolo";
-  label: string;
-  effectiveBoundary: string;
-  danger: boolean;
-}
-
-export interface AgentActorBindingRuntimeDto {
-  actorId: string;
-  ownerPath: string;
-  bindingIndex: number;
-  validation: AgentActorBindingValidationDto;
-  effortOptions: AgentActorSelectOptionDto[];
-  approval: AgentActorApprovalMappingDto | null;
-  readiness: "unchecked";
+  displayName: string;
 }
 
 export interface AgentActorsReadResultDto {
@@ -77,13 +43,12 @@ export interface AgentActorsReadResultDto {
     actors: {
       actor: AgentActorDto;
       ownerPath: string;
-      approvalMode: AgentActorApprovalModeDto;
+      mode: AgentActorModeDto | null;
     }[];
     diagnostics: { ownerPath: string; code: string; message: string }[];
   };
   ownerFingerprints: Record<string, string>;
-  adapterDescriptors: AgentActorAdapterDescriptorDto[];
-  bindings: AgentActorBindingRuntimeDto[];
+  bindableAgents: AgentActorAgentLabelDto[];
 }
 
 export interface AgentActorCatalogInvalidatedEventDto {
@@ -98,12 +63,6 @@ export interface AgentActorAdapterDiagnosticDto {
   authenticated: boolean | null;
   code: string | null;
   message: string | null;
-}
-
-export interface AgentActorBindingInspectionDto {
-  validation: AgentActorBindingValidationDto;
-  effortOptions: AgentActorSelectOptionDto[];
-  approval: AgentActorApprovalMappingDto | null;
 }
 
 export interface AgentActorRoutineReferenceDto {
@@ -128,7 +87,7 @@ export type AgentActorMutationInputDto =
   | {
       kind: "create" | "update";
       actor: AgentActorDto;
-      approvalMode: AgentActorApprovalModeDto;
+      mode: AgentActorModeDto | null;
     }
   | { kind: "delete"; actorId: string };
 
@@ -205,16 +164,6 @@ export function diagnoseAgentActorAdapter(
   return invokeCommand<AgentActorAdapterDiagnosticDto>(
     "agent_actors_diagnose_adapter",
     { adapter, targetSpacePath },
-  );
-}
-
-export function inspectAgentActorBinding(
-  binding: AgentActorBindingDto,
-  approvalMode: AgentActorApprovalModeDto,
-) {
-  return invokeCommand<AgentActorBindingInspectionDto>(
-    "agent_actors_inspect_binding",
-    { approvalMode, binding },
   );
 }
 

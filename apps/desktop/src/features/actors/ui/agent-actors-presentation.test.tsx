@@ -21,11 +21,15 @@ const agents = createAgentAdapterDictionary([
 ]);
 const own: AgentActorRow = {
   actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
-  adapters: [{ adapter: "codex", effort: "medium", model: "gpt-5.4" }],
-  approvalMode: "auto",
+  binding: {
+    agent: "codex",
+    kind: "agent",
+    settings: [{ setting: "model", value: "gpt-5.4" }],
+  },
   description: "Writes documentation",
   id: "01arz3ndektsv4rrffq69g5fav",
   inherited: false,
+  mode: { agent: "codex", setting: "mode", value: "agent" },
   name: "Documentation Agent",
   ownerLabel: "docs",
   ownerPath: "/repo/docs",
@@ -39,6 +43,14 @@ const inherited: AgentActorRow = {
   ownerLabel: "repo",
   ownerPath: "/repo",
   runtimeStatus: "unchecked",
+};
+const participant: AgentActorRow = {
+  ...own,
+  actorRef: "agent:01arz3ndektsv4rrffq69g5fax",
+  binding: { kind: "participant" },
+  id: "01arz3ndektsv4rrffq69g5fax",
+  mode: null,
+  name: "Mine",
 };
 
 test("Agent Actors uses the fixed schema and one shared edit/delete descriptor set", async () => {
@@ -72,6 +84,24 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
   await descriptor.create?.intents[0]?.run();
   for (const action of descriptor.rowActions ?? []) await action.run(inherited);
   expect(calls).toEqual(["add", "edit:/repo", "delete:/repo"]);
+});
+
+test("Agent Actors show the one binding and the device mode in the agent's terms", () => {
+  const descriptor = createAgentActorsPresentationDescriptor({
+    actions: disabledActions(),
+    agents,
+    inheritedVisible: false,
+    rows: [own, participant],
+  });
+  const value = (key: string, row: AgentActorRow) =>
+    descriptor.properties
+      .find((property) => property.key === key)
+      ?.getValue(row);
+  expect(value("clients", own)).toEqual(["Codex"]);
+  expect(value("primary", own)).toBe("Codex");
+  expect(value("approval", own)).toBe("agent");
+  expect(value("primary", participant)).toBe("Participant's agent");
+  expect(value("approval", participant)).toBeNull();
 });
 
 test("Agent Actors rows lead with the shared rounded agent avatar", () => {

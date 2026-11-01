@@ -132,6 +132,25 @@ pub async fn agent_setup_chat_agents(
     })
 }
 
+/// The default agent of this device: the agent and the values of its
+/// settings a new chat draft starts with and an Actor bound to the
+/// participant's agent runs with; `None` when none is chosen.
+#[tauri::command]
+pub fn agent_default_get(
+    state: State<'_, AgentSetupState>,
+) -> Result<Option<svode_core::default_agent::DefaultAgent>, AppError> {
+    state.default_agent()
+}
+
+/// Chooses the default agent of this device, or clears it with `None`.
+#[tauri::command]
+pub fn agent_default_set(
+    state: State<'_, AgentSetupState>,
+    default_agent: Option<svode_core::default_agent::DefaultAgent>,
+) -> Result<(), AppError> {
+    state.set_default_agent(default_agent.as_ref())
+}
+
 /// An agent was enabled or disabled; every window reads what depends on the
 /// enabled agents again, such as the Agent Context of a Space.
 const AGENTS_ENABLED_CHANGED_EVENT: &str = "agents:enabled-changed";

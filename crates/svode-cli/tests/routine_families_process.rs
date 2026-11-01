@@ -468,6 +468,11 @@ fn agent_list_names_the_executors_routine_create_accepts() {
 
     // The Space of the current directory is passed explicitly; a child
     // Space inherits the agents of root.
+    // A V1 approval mode on this device stays out of the answer.
+    write(
+        &root.join(".svode/local.json"),
+        &json!({ "agentActors": { ACTOR: { "approvalMode": "full" } } }).to_string(),
+    );
     let listed = ok(&child, &["agent", "list"]);
     assert_eq!(listed["target"]["spaceId"], "child", "{listed}");
     assert_eq!(listed["spaceId"], "child", "{listed}");
@@ -478,9 +483,21 @@ fn agent_list_names_the_executors_routine_create_accepts() {
             "name": "Reviewer",
             "description": null,
             "ownerSpaceId": "root",
-            "bindings": [{ "adapter": "codex", "model": null, "effort": null }]
+            "binding": { "kind": "agent", "agent": "codex", "settings": [] }
         }]),
         "{listed}"
+    );
+    for local in ["approval", "agent-full-access", "defaultAgent"] {
+        assert!(!listed.to_string().contains(local), "{local}: {listed}");
+    }
+    // Reading a V1 catalog writes neither the catalog nor the local overlay.
+    assert_eq!(
+        std::fs::read_to_string(root.join(".svode/agent-actors.json")).unwrap(),
+        json!({
+            "schemaVersion": 1,
+            "actors": [{ "id": ACTOR, "name": "Reviewer", "adapters": [{ "adapter": "codex" }] }]
+        })
+        .to_string()
     );
     assert_eq!(listed["diagnostics"], json!([]));
     assert!(!root.join(".svode/routines.db").exists());

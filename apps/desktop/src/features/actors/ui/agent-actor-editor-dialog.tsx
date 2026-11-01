@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -13,19 +13,18 @@ import {
 } from "@/features/git";
 import * as m from "@/paraglide/messages.js";
 
-import type { AgentActorDraftRuntimeState } from "../hooks/use-agent-actor-draft-runtime";
 import {
   areAgentActorDraftsEqual,
+  cloneBinding,
   firstInvalidAgentActorCreateStep,
-  validateAgentActorCreateDraft,
+  validateAgentActorDraft,
   type AgentActorCreateStep,
 } from "../model/agent-actor-draft";
 import type {
-  AgentActorAdapterDescriptor,
   AgentActorAdapterDiagnostic,
-  AgentActorBinding,
-  AgentActorBindingRuntime,
+  AgentActorAgentOption,
   AgentActorDraft,
+  AgentAdapterId,
 } from "../model/agent-actor-types";
 import { AgentActorCreateReview } from "./agent-actor-create-review";
 import { AgentActorForm, type AgentActorFormSection } from "./agent-actor-form";
@@ -33,25 +32,23 @@ import { AgentActorForm, type AgentActorFormSection } from "./agent-actor-form";
 const CREATE_STEPS: readonly AgentActorCreateStep[] = [
   "identity",
   "adapters",
-  "permissions",
   "review",
 ];
 
 interface AgentActorEditorDialogProps {
   accessRecovery: RepositoryAccessPreflightController;
-  descriptors: readonly AgentActorAdapterDescriptor[];
+  agents: readonly AgentActorAgentOption[];
   diagnostics: Readonly<
-    Partial<Record<AgentActorBinding["adapter"], AgentActorAdapterDiagnostic>>
+    Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>
   >;
   draft: AgentActorDraft | null;
   failure: string | null;
   pending: boolean;
-  pendingAdapter: AgentActorBinding["adapter"] | null;
+  pendingAdapter: AgentAdapterId | null;
   readOnly?: boolean;
   requesting: boolean;
-  runtime: AgentActorDraftRuntimeState;
   onChange(draft: AgentActorDraft): void;
-  onCheck(adapter: AgentActorBinding["adapter"]): void;
+  onCheck(adapter: AgentAdapterId): void;
   onClose(): void;
   onSave(): void;
 }
@@ -63,7 +60,7 @@ export function AgentActorEditorDialog(props: AgentActorEditorDialogProps) {
 
 function AgentActorCreateJourney({
   accessRecovery,
-  descriptors,
+  agents,
   diagnostics,
   draft,
   failure,
@@ -71,7 +68,6 @@ function AgentActorCreateJourney({
   pendingAdapter,
   readOnly = false,
   requesting,
-  runtime,
   onChange,
   onCheck,
   onClose,
@@ -85,30 +81,11 @@ function AgentActorCreateJourney({
       id: 0,
       target: "control",
     });
-  const [expandedAdapter, setExpandedAdapter] = useState<
-    AgentActorBinding["adapter"] | null
-  >(draft.adapters[0]?.adapter ?? null);
   const [attemptedSteps, setAttemptedSteps] = useState<
     ReadonlySet<AgentActorCreateStep>
   >(new Set());
 
-  const approvalMappings = useMemo(
-    () => mapRuntime(runtime.runtime, "approval"),
-    [runtime.runtime],
-  );
-  const effortOptions = useMemo(
-    () => mapRuntime(runtime.runtime, "effortOptions"),
-    [runtime.runtime],
-  );
-  const validations = useMemo(
-    () => mapRuntime(runtime.runtime, "validation"),
-    [runtime.runtime],
-  );
-  const validation = validateAgentActorCreateDraft({
-    draft,
-    runtimePhase: runtime.phase,
-    validations,
-  });
+  const validation = validateAgentActorDraft(draft);
   const stepIndex = CREATE_STEPS.indexOf(step);
   const stepLabel = createStepLabel(step);
   const progressLabel = m.agent_actors_create_progress({
@@ -160,19 +137,8 @@ function AgentActorCreateJourney({
       focusInvalid("identity");
       return;
     }
-    if (step === "adapters" && validation.adapters) {
+    if (step === "adapters" && validation.binding) {
       focusInvalid("adapters");
-      return;
-    }
-    if (step === "permissions" && validation.adapters) {
-      if (
-        validation.adapters === "binding_inspection_pending" ||
-        validation.adapters === "binding_inspection_failed"
-      ) {
-        focusInvalid("permissions");
-      } else {
-        focusInvalid("adapters");
-      }
       return;
     }
     const next = CREATE_STEPS[stepIndex + 1];
@@ -259,9 +225,8 @@ function AgentActorCreateJourney({
       {step === "review" ? (
         <div className="flex flex-col gap-4">
           <AgentActorCreateReview
-            descriptors={descriptors}
+            agents={agents}
             draft={draft}
-            runtime={runtime.runtime}
             onEdit={(target) => moveTo(target, "control")}
           />
           {activeAccessRecovery ? (
@@ -275,23 +240,18 @@ function AgentActorCreateJourney({
         </div>
       ) : (
         <AgentActorForm
-          approvalMappings={approvalMappings}
-          descriptors={descriptors}
+          agents={agents}
           diagnostics={diagnostics}
           draft={draft}
-          effortOptions={effortOptions}
-          expandedAdapter={expandedAdapter}
           formId="agent-actor-create-form"
           pendingAdapter={pendingAdapter}
           readOnly={readOnly}
           sections={[step as AgentActorFormSection]}
           showValidation={attemptedSteps.has(step)}
           validation={validation}
-          validations={validations}
           validateOnSubmit={false}
           onChange={onChange}
           onCheck={onCheck}
-          onExpandedAdapterChange={setExpandedAdapter}
           onSubmit={continueFromStep}
         />
       )}
@@ -301,8 +261,7 @@ function AgentActorCreateJourney({
 
 function createStepLabel(step: AgentActorCreateStep) {
   if (step === "identity") return m.agent_actors_step_identity();
-  if (step === "adapters") return m.agent_actors_step_adapters();
-  if (step === "permissions") return m.agent_actors_step_permissions();
+  if (step === "adapters") return m.agent_actors_agent_label();
   return m.agent_actors_step_review();
 }
 
@@ -318,19 +277,7 @@ function getAgentActorControlFocusTarget(
 function cloneDraft(draft: AgentActorDraft): AgentActorDraft {
   return {
     ...draft,
-    adapters: draft.adapters.map((binding) => ({ ...binding })),
+    binding: cloneBinding(draft.binding),
+    mode: draft.mode ? { ...draft.mode } : null,
   };
-}
-
-function mapRuntime<Key extends keyof AgentActorBindingRuntime>(
-  runtime: Partial<
-    Record<AgentActorBinding["adapter"], AgentActorBindingRuntime>
-  >,
-  key: Key,
-): Partial<
-  Record<AgentActorBinding["adapter"], AgentActorBindingRuntime[Key]>
-> {
-  return Object.fromEntries(
-    Object.entries(runtime).map(([adapter, value]) => [adapter, value?.[key]]),
-  );
 }

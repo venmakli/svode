@@ -65,8 +65,23 @@ export function createAgentActorsPresentationDescriptor({
   rows: readonly AgentActorRow[];
 }): CollectionPresentationDescriptor<AgentActorRow> {
   const agentOptions = agents.options(
-    rows.flatMap((row) => row.adapters.map((binding) => binding.adapter)),
+    rows.flatMap((row) =>
+      row.binding.kind === "agent" ? [row.binding.agent] : [],
+    ),
   );
+  const bindingLabel = (row: AgentActorRow) =>
+    row.binding.kind === "agent"
+      ? agents.label(row.binding.agent)
+      : m.agent_actors_participant_agent();
+  const bindingOptions = rows.some((row) => row.binding.kind === "participant")
+    ? [
+        ...agentOptions,
+        { color: "neutral" as const, name: m.agent_actors_participant_agent() },
+      ]
+    : agentOptions;
+  const modeOptions = [
+    ...new Set(rows.flatMap((row) => (row.mode ? [row.mode.value] : []))),
+  ].map((name) => ({ color: "neutral" as const, name }));
   const ownerOptions = [...new Set(rows.map((row) => row.ownerLabel))].map(
     (name) => ({ color: "neutral" as const, name }),
   );
@@ -77,12 +92,11 @@ export function createAgentActorsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "actors",
-      getValue: (row) =>
-        row.adapters.map((binding) => agents.label(binding.adapter)),
+      getValue: (row) => [bindingLabel(row)],
       key: "clients",
       label: m.agent_actors_field_clients(),
       standard: {
-        options: agentOptions,
+        options: bindingOptions,
         type: "multi_select",
       },
     }),
@@ -92,11 +106,11 @@ export function createAgentActorsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "actors",
-      getValue: (row) => agents.label(row.adapters[0]!.adapter),
+      getValue: (row) => bindingLabel(row),
       key: "primary",
       label: m.agent_actors_field_primary(),
       standard: {
-        options: agentOptions,
+        options: bindingOptions,
         type: "select",
       },
     }),
@@ -106,15 +120,13 @@ export function createAgentActorsPresentationDescriptor({
         sort: { kind: "standard" },
       },
       featureId: "actors",
-      getValue: (row) => approvalLabel(row.approvalMode),
+      // The value in the agent's terms until the binding editor shows the
+      // agent's own names.
+      getValue: (row) => row.mode?.value ?? null,
       key: "approval",
       label: m.agent_actors_field_approval(),
       standard: {
-        options: [
-          { color: "neutral", name: m.agent_actors_approval_ask() },
-          { color: "yellow", name: m.agent_actors_approval_auto() },
-          { color: "red", name: m.agent_actors_approval_full() },
-        ],
+        options: modeOptions,
         type: "select",
       },
     }),
@@ -183,9 +195,7 @@ export function createAgentActorsPresentationDescriptor({
     query: {
       defaultCompare: compareAgentActorsByDefault,
       getSearchText: (row) =>
-        `${row.name} ${row.description ?? ""} ${row.ownerLabel} ${row.adapters
-          .map((binding) => agents.label(binding.adapter))
-          .join(" ")}`,
+        `${row.name} ${row.description ?? ""} ${row.ownerLabel} ${bindingLabel(row)}`,
     },
     rowActions: [
       {
@@ -206,12 +216,6 @@ export function createAgentActorsPresentationDescriptor({
 
 export function agentActorRowId(row: AgentActorRow): string {
   return JSON.stringify([row.ownerPath, row.id]);
-}
-
-function approvalLabel(mode: AgentActorRow["approvalMode"]) {
-  if (mode === "auto") return m.agent_actors_approval_auto();
-  if (mode === "full") return m.agent_actors_approval_full();
-  return m.agent_actors_approval_ask();
 }
 
 function runtimeStatusLabel(status: AgentActorRow["runtimeStatus"]) {

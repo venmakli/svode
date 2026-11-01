@@ -6,79 +6,127 @@ import {
   createAgentActorDraft,
   firstInvalidAgentActorCreateStep,
   resolveAgentActorRuntimeStatus,
-  validateAgentActorCreateDraft,
   validateAgentActorDraft,
+  withBindingAgent,
 } from "./agent-actor-draft";
 import type { AgentActorRow } from "./agent-actor-types";
 
+const codexMode = { agent: "codex", setting: "mode", value: "agent" };
+
+function row(name: string, inherited: boolean): AgentActorRow {
+  return {
+    actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
+    binding: {
+      agent: "codex",
+      kind: "agent",
+      settings: [{ setting: "model", value: "gpt-6.1-sol" }],
+    },
+    description: null,
+    id: "01arz3ndektsv4rrffq69g5fav",
+    inherited,
+    mode: codexMode,
+    name,
+    ownerLabel: inherited ? "root" : "space",
+    ownerPath: inherited ? "/repo" : "/repo/space",
+    runtimeStatus: "unchecked",
+  };
+}
+
 test("agent actor draft starts artifact-free with one default binding", () => {
   expect(createAgentActorDraft("/repo/space")).toEqual({
-    adapters: [{ adapter: "codex", effort: null, model: null }],
-    approvalMode: "ask",
+    binding: { agent: "codex", kind: "agent", settings: [] },
     description: "",
     id: null,
+    mode: null,
     name: "",
     ownerPath: "/repo/space",
   });
 });
 
-test("agent actor draft requires a name and one unique binding", () => {
+test("an edit draft keeps the binding values and the device mode as they are", () => {
+  const draft = createAgentActorDraft("/repo/space", row("Docs", false));
+  expect(draft.binding).toEqual(row("Docs", false).binding);
+  expect(draft.mode).toEqual(codexMode);
+  expect(
+    areAgentActorDraftsEqual(
+      draft,
+      createAgentActorDraft("/repo/space", row("Docs", false)),
+    ),
+  ).toBe(true);
+});
+
+test("changing the agent drops the values and the mode of the previous agent", () => {
+  const draft = createAgentActorDraft("/repo/space", row("Docs", false));
+  expect(withBindingAgent(draft, "codex")).toBe(draft);
+  const claude = withBindingAgent(draft, "claude-code");
+  expect(claude.binding).toEqual({
+    agent: "claude-code",
+    kind: "agent",
+    settings: [],
+  });
+  expect(claude.mode).toBeNull();
+  expect(areAgentActorDraftsEqual(draft, claude)).toBe(false);
+});
+
+test("agent actor draft requires a name", () => {
   const draft = createAgentActorDraft("/repo");
   draft.name = "  ";
-  draft.adapters.push({ adapter: "codex", effort: null, model: null });
+  const validation = validateAgentActorDraft(draft);
+  expect(validation).toEqual({ binding: null, name: "name_required" });
+  expect(firstInvalidAgentActorCreateStep(validation)).toBe("identity");
+  draft.name = "Docs";
   expect(validateAgentActorDraft(draft)).toEqual({
-    adapters: "binding_duplicate",
-    name: "name_required",
+    binding: null,
+    name: null,
   });
-  draft.name = "Docs";
-  draft.adapters = [];
-  expect(validateAgentActorDraft(draft).adapters).toBe("binding_required");
+  expect(
+    validateAgentActorDraft({ ...draft, binding: { kind: "participant" } })
+      .binding,
+  ).toBeNull();
 });
 
-test("create validation waits for binding inspection and fails closed on invalid selectors", () => {
-  const draft = createAgentActorDraft("/repo");
-  draft.name = "Docs";
+test("runtime status follows the diagnostic of the binding's agent", () => {
+  const binding = { agent: "codex", kind: "agent" as const, settings: [] };
+  const ready = {
+    adapter: "codex",
+    authenticated: true,
+    code: null,
+    executablePath: "/bin/codex",
+    message: null,
+    status: "ready" as const,
+    version: "1",
+  };
   expect(
-    validateAgentActorCreateDraft({
-      draft,
-      runtimePhase: "loading",
-      validations: {},
-    }).adapters,
-  ).toBe("binding_inspection_pending");
-
-  const invalid = validateAgentActorCreateDraft({
-    draft,
-    runtimePhase: "ready",
-    validations: {
-      codex: {
-        issues: [{ code: "unknown_model", field: "model", message: "Bad" }],
-        status: "unavailable",
-      },
-    },
-  });
-  expect(invalid.adapters).toBe("binding_invalid");
-  expect(firstInvalidAgentActorCreateStep(invalid)).toBe("adapters");
-
+    resolveAgentActorRuntimeStatus({ binding, diagnostics: {}, known: true }),
+  ).toBe("unchecked");
   expect(
-    validateAgentActorCreateDraft({
-      draft,
-      runtimePhase: "ready",
-      validations: { codex: { issues: [], status: "valid" } },
+    resolveAgentActorRuntimeStatus({
+      binding,
+      diagnostics: { codex: ready },
+      known: true,
     }),
-  ).toEqual({ adapters: null, name: null });
+  ).toBe("ready");
+  expect(
+    resolveAgentActorRuntimeStatus({
+      binding,
+      diagnostics: { codex: { ...ready, status: "missing" } },
+      known: true,
+    }),
+  ).toBe("attention");
+  // An agent this version does not know needs another agent.
+  expect(
+    resolveAgentActorRuntimeStatus({ binding, diagnostics: {}, known: false }),
+  ).toBe("attention");
+  expect(
+    resolveAgentActorRuntimeStatus({
+      binding: { kind: "participant" },
+      diagnostics: {},
+      known: true,
+    }),
+  ).toBe("unchecked");
 });
 
-test("dirty create comparison includes ordered adapter configuration", () => {
-  const initial = createAgentActorDraft("/repo");
-  const same = createAgentActorDraft("/repo");
-  expect(areAgentActorDraftsEqual(initial, same)).toBe(true);
-  same.adapters.push({ adapter: "claude-code", effort: null, model: null });
-  expect(areAgentActorDraftsEqual(initial, same)).toBe(false);
-  same.adapters = [...same.adapters].reverse();
-  expect(areAgentActorDraftsEqual(initial, same)).toBe(false);
-});
-
-test("a binding without an equivalent of the approval mode does not make the actor ready", () => {
+test("an agent found without a sign-in status command is ready", () => {
   const hermes = {
     adapter: "hermes",
     authenticated: null,
@@ -88,87 +136,24 @@ test("a binding without an equivalent of the approval mode does not make the act
     status: "unknown" as const,
     version: "2026.9.24",
   };
-  const bindings = [{ adapter: "hermes", effort: null, model: null }];
-  // Found without a sign-in status command: the launch checks the sign-in.
+  const binding = { agent: "hermes", kind: "agent" as const, settings: [] };
   expect(
     resolveAgentActorRuntimeStatus({
-      approvals: {},
-      bindings,
+      binding,
       diagnostics: { hermes },
-      validations: {},
+      known: true,
     }),
   ).toBe("ready");
   expect(
     resolveAgentActorRuntimeStatus({
-      approvals: { hermes: null },
-      bindings,
-      diagnostics: { hermes },
-      validations: {},
-    }),
-  ).toBe("attention");
-  expect(
-    resolveAgentActorRuntimeStatus({
-      approvals: {},
-      bindings,
+      binding,
       diagnostics: { hermes: { ...hermes, code: "version_failed" } },
-      validations: {},
+      known: true,
     }),
   ).toBe("unchecked");
-});
-
-test("runtime status stays unchecked until valid bindings have evidence", () => {
-  const bindings = [{ adapter: "codex" as const, effort: null, model: null }];
-  expect(
-    resolveAgentActorRuntimeStatus({
-      approvals: {},
-      bindings,
-      diagnostics: {},
-      validations: {},
-    }),
-  ).toBe("unchecked");
-  expect(
-    resolveAgentActorRuntimeStatus({
-      approvals: {},
-      bindings,
-      diagnostics: {
-        codex: {
-          adapter: "codex",
-          authenticated: true,
-          code: null,
-          executablePath: "/bin/codex",
-          message: null,
-          status: "ready",
-          version: "1",
-        },
-      },
-      validations: {},
-    }),
-  ).toBe("ready");
-  expect(
-    resolveAgentActorRuntimeStatus({
-      approvals: {},
-      bindings,
-      diagnostics: {},
-      validations: {
-        codex: { issues: [], status: "unavailable" },
-      },
-    }),
-  ).toBe("attention");
 });
 
 test("default order keeps own actors ahead of inherited actors", () => {
-  const row = (name: string, inherited: boolean): AgentActorRow => ({
-    actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
-    adapters: [{ adapter: "codex", effort: null, model: null }],
-    approvalMode: "ask",
-    description: null,
-    id: "01arz3ndektsv4rrffq69g5fav",
-    inherited,
-    name,
-    ownerLabel: inherited ? "root" : "space",
-    ownerPath: inherited ? "/repo" : "/repo/space",
-    runtimeStatus: "unchecked",
-  });
   expect(
     compareAgentActorsByDefault(row("Zed", false), row("Ada", true)) < 0,
   ).toBe(true);

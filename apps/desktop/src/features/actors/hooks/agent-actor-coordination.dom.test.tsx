@@ -18,11 +18,11 @@ import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
 const actor: AgentActorRow = {
   actorRef: "agent:01arz3ndektsv4rrffq69g5fav",
-  adapters: [{ adapter: "codex", effort: null, model: null }],
-  approvalMode: "ask",
+  binding: { agent: "codex", kind: "agent", settings: [] },
   description: "Writes documentation",
   id: "01arz3ndektsv4rrffq69g5fav",
   inherited: false,
+  mode: null,
   name: "Documentation Agent",
   ownerLabel: "repo",
   ownerPath: "/repo",
@@ -331,17 +331,15 @@ function DetailHarness({
   const [, setRenderVersion] = useState(0);
   useAgentActorDetail({
     applyMutation: () => undefined,
-    descriptors: [],
+    agents: [],
     detailController,
     diagnose: () => undefined,
     diagnostics: {},
-    editRuntime: {},
     editSession,
     instanceKey: "actors:space:root",
     mutationPending: false,
     pendingAdapter: null,
     rows: actorRows,
-    savedRuntimeFor: () => ({}),
     setEditSession,
   });
   return (
@@ -371,17 +369,15 @@ function ReadOnlyDetailHarness({
   };
   const detail = useAgentActorDetail({
     applyMutation: () => undefined,
-    descriptors: [],
+    agents: [],
     detailController,
     diagnose: () => undefined,
     diagnostics,
-    editRuntime: {},
     editSession,
     instanceKey: "actors:space:root",
     mutationPending: false,
     pendingAdapter: null,
     rows,
-    savedRuntimeFor: () => ({}),
     setEditSession,
   });
   const rename = () => {

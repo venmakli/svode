@@ -1,33 +1,15 @@
 import type {
   AgentActorAdapterDiagnostic,
-  AgentActorApprovalMapping,
   AgentActorBinding,
-  AgentActorBindingValidation,
   AgentActorDraft,
   AgentActorRow,
   AgentActorRuntimeStatus,
 } from "./agent-actor-types";
 
-export type AgentActorCreateStep =
-  | "identity"
-  | "adapters"
-  | "permissions"
-  | "review";
-
-export type AgentActorDraftRuntimePhase =
-  | "idle"
-  | "loading"
-  | "ready"
-  | "error";
+export type AgentActorCreateStep = "identity" | "adapters" | "review";
 
 export interface AgentActorDraftValidation {
-  adapters:
-    | "binding_required"
-    | "binding_duplicate"
-    | "binding_inspection_pending"
-    | "binding_inspection_failed"
-    | "binding_invalid"
-    | null;
+  binding: "binding_required" | null;
   name: "name_required" | null;
 }
 
@@ -36,69 +18,60 @@ export function createAgentActorDraft(
   row?: AgentActorRow,
 ): AgentActorDraft {
   return {
-    adapters: row
-      ? row.adapters.map((binding) => ({ ...binding }))
-      : [{ adapter: "codex", effort: null, model: null }],
-    approvalMode: row?.approvalMode ?? "ask",
+    binding: row ? cloneBinding(row.binding) : agentBinding("codex"),
     description: row?.description ?? "",
     id: row?.id ?? null,
+    mode: row?.mode ? { ...row.mode } : null,
     name: row?.name ?? "",
     ownerPath,
   };
 }
 
-export function validateAgentActorDraft(draft: AgentActorDraft): {
-  adapters: "binding_required" | "binding_duplicate" | null;
-  name: "name_required" | null;
-} {
-  const name = draft.name.trim();
-  const adapterIds = draft.adapters.map((binding) => binding.adapter);
-  return {
-    adapters:
-      adapterIds.length === 0
-        ? "binding_required"
-        : new Set(adapterIds).size !== adapterIds.length
-          ? "binding_duplicate"
-          : null,
-    name: name.length === 0 ? "name_required" : null,
-  };
+/** A binding of `agent` without values: they belong to the agent. */
+export function agentBinding(agent: string): AgentActorBinding {
+  return { agent, kind: "agent", settings: [] };
 }
 
-export function validateAgentActorCreateDraft({
-  draft,
-  runtimePhase,
-  validations,
-}: {
-  draft: AgentActorDraft;
-  runtimePhase: AgentActorDraftRuntimePhase;
-  validations: Readonly<
-    Partial<Record<AgentActorBinding["adapter"], AgentActorBindingValidation>>
-  >;
-}): AgentActorDraftValidation {
-  const base = validateAgentActorDraft(draft);
-  if (base.adapters) return base;
+export function cloneBinding(binding: AgentActorBinding): AgentActorBinding {
+  return binding.kind === "agent"
+    ? { ...binding, settings: binding.settings.map((value) => ({ ...value })) }
+    : { kind: "participant" };
+}
 
-  if (runtimePhase === "loading" || runtimePhase === "idle") {
-    return { ...base, adapters: "binding_inspection_pending" };
-  }
-  if (runtimePhase === "error") {
-    return { ...base, adapters: "binding_inspection_failed" };
-  }
-  if (
-    draft.adapters.some(
-      (binding) => validations[binding.adapter]?.status !== "valid",
-    )
-  ) {
-    return { ...base, adapters: "binding_invalid" };
-  }
-  return base;
+/** The agent of a binding; `null` for the participant's agent. */
+export function bindingAgent(binding: AgentActorBinding): string | null {
+  return binding.kind === "agent" ? binding.agent : null;
+}
+
+/**
+ * Change the agent of the draft's binding. Its values and the device mode
+ * belong to the previous agent, so the new binding starts without them.
+ */
+export function withBindingAgent(
+  draft: AgentActorDraft,
+  agent: string,
+): AgentActorDraft {
+  if (bindingAgent(draft.binding) === agent) return draft;
+  return { ...draft, binding: agentBinding(agent), mode: null };
+}
+
+export function validateAgentActorDraft(
+  draft: AgentActorDraft,
+): AgentActorDraftValidation {
+  return {
+    binding:
+      draft.binding.kind === "agent" && !draft.binding.agent
+        ? "binding_required"
+        : null,
+    name: draft.name.trim().length === 0 ? "name_required" : null,
+  };
 }
 
 export function firstInvalidAgentActorCreateStep(
   validation: AgentActorDraftValidation,
 ): AgentActorCreateStep | null {
   if (validation.name) return "identity";
-  if (validation.adapters) return "adapters";
+  if (validation.binding) return "adapters";
   return null;
 }
 
@@ -111,16 +84,8 @@ export function areAgentActorDraftsEqual(
     left.ownerPath === right.ownerPath &&
     left.name === right.name &&
     left.description === right.description &&
-    left.approvalMode === right.approvalMode &&
-    left.adapters.length === right.adapters.length &&
-    left.adapters.every((binding, index) => {
-      const candidate = right.adapters[index];
-      return (
-        candidate?.adapter === binding.adapter &&
-        candidate.model === binding.model &&
-        candidate.effort === binding.effort
-      );
-    })
+    JSON.stringify(left.binding) === JSON.stringify(right.binding) &&
+    JSON.stringify(left.mode) === JSON.stringify(right.mode)
   );
 }
 
@@ -150,39 +115,21 @@ export function isAgentActorFoundWithoutSignInStatus(
 }
 
 export function resolveAgentActorRuntimeStatus({
-  approvals,
-  bindings,
+  binding,
   diagnostics,
-  validations,
+  known,
 }: {
-  /** `null`: the agent has no equivalent of the Actor's approval mode. */
-  approvals: Readonly<
-    Partial<
-      Record<AgentActorBinding["adapter"], AgentActorApprovalMapping | null>
-    >
-  >;
-  bindings: readonly AgentActorBinding[];
-  diagnostics: Readonly<
-    Partial<Record<AgentActorBinding["adapter"], AgentActorAdapterDiagnostic>>
-  >;
-  validations: Readonly<
-    Partial<Record<AgentActorBinding["adapter"], AgentActorBindingValidation>>
-  >;
+  binding: AgentActorBinding;
+  diagnostics: Readonly<Partial<Record<string, AgentActorAdapterDiagnostic>>>;
+  /** Whether this version knows the agent of a concrete binding. */
+  known: boolean;
 }): AgentActorRuntimeStatus {
-  let unchecked = false;
-  for (const binding of bindings) {
-    const validation = validations[binding.adapter];
-    if (validation?.status === "unavailable") continue;
-    if (approvals[binding.adapter] === null) continue;
-    const diagnostic = diagnostics[binding.adapter];
-    if (isAgentActorFoundWithoutSignInStatus(diagnostic)) return "ready";
-    if (!diagnostic || diagnostic.status === "unknown") {
-      unchecked = true;
-      continue;
-    }
-    if (diagnostic.status === "ready") return "ready";
-  }
-  return unchecked ? "unchecked" : "attention";
+  if (binding.kind === "participant") return "unchecked";
+  if (!known) return "attention";
+  const diagnostic = diagnostics[binding.agent];
+  if (isAgentActorFoundWithoutSignInStatus(diagnostic)) return "ready";
+  if (!diagnostic || diagnostic.status === "unknown") return "unchecked";
+  return diagnostic.status === "ready" ? "ready" : "attention";
 }
 
 export function actorOwnerLabel(path: string): string {

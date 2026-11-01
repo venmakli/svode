@@ -9,8 +9,7 @@ import {
 import type { AgentActorCatalogSnapshot } from "./agent-actor-types";
 
 const snapshot: AgentActorCatalogSnapshot = {
-  adapterDescriptors: [],
-  bindingRuntime: {},
+  agents: [],
   diagnostics: [],
   fingerprints: { "/repo": "fingerprint:one" },
   launchSpacePath: "/repo/docs",

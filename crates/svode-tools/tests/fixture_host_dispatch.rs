@@ -3203,9 +3203,41 @@ fn agent_actors_fixture() -> Fixture {
             &json!({ "name": space }).to_string(),
         );
     }
-    write_agent_catalog(
-        &project,
-        &[(ROOT_REVIEWER, "Reviewer"), (ROOT_WRITER, "Writer")],
+    // Root is a V2 catalog with a device mode in its local overlay; the
+    // child and the sibling are V1 catalogs read as V2.
+    write(
+        &project.join(".svode/agent-actors.json"),
+        &json!({
+            "schemaVersion": 2,
+            "actors": [
+                {
+                    "id": ROOT_REVIEWER,
+                    "name": "Reviewer",
+                    "description": "Reviewer agent",
+                    "binding": {
+                        "agent": "claude-code",
+                        "settings": [{ "setting": "model", "value": "opus" }]
+                    }
+                },
+                {
+                    "id": ROOT_WRITER,
+                    "name": "Writer",
+                    "description": "Writer agent",
+                    "binding": { "participant": true }
+                }
+            ]
+        })
+        .to_string(),
+    );
+    write(
+        &project.join(".svode/local.json"),
+        &json!({
+            "agentActorsLocalVersion": 2,
+            "agentActors": {
+                ROOT_REVIEWER: { "mode": { "agent": "claude-code", "setting": "mode", "value": "plan" } }
+            }
+        })
+        .to_string(),
     );
     write_agent_catalog(&project.join("child"), &[(CHILD_RESEARCHER, "Researcher")]);
     write_agent_catalog(&project.join("sibling"), &[(SIBLING_EDITOR, "Editor")]);
@@ -3282,6 +3314,17 @@ fn assert_matches_schema(value: &Value, schema: &Value, at: &str) {
             assert_matches_schema(field, property, &format!("{at}.{key}"));
         }
     }
+    if let Some(expected) = schema.get("const") {
+        assert_eq!(value, expected, "{at}: const");
+    }
+    if let Some(branches) = schema.get("oneOf").and_then(Value::as_array) {
+        // The published unions are tagged by `kind`.
+        let branch = branches
+            .iter()
+            .find(|branch| branch["properties"]["kind"]["const"] == value["kind"])
+            .unwrap_or_else(|| panic!("{at}: no oneOf branch for {value}"));
+        assert_matches_schema(value, branch, at);
+    }
     if let (Some(items), Some(schema)) = (value.as_array(), schema.get("items")) {
         for (index, item) in items.iter().enumerate() {
             assert_matches_schema(item, schema, &format!("{at}[{index}]"));
@@ -3325,20 +3368,49 @@ async fn agent_actors_are_the_executor_domain_of_a_space_and_its_collections() {
             "name": "Researcher",
             "description": "Researcher agent",
             "ownerSpaceId": "child",
-            "bindings": [
-                { "adapter": "codex", "model": "gpt-5.5", "effort": "high" },
-                { "adapter": "claude-code", "model": null, "effort": null }
-            ]
+            "binding": {
+                "kind": "agent",
+                "agent": "codex",
+                "settings": [
+                    { "setting": "model", "value": "gpt-5.5" },
+                    { "setting": "reasoning_effort", "value": "high" }
+                ]
+            }
         })
     );
     let root = call("list_agent_actors", json!({ "spaceId": "root" })).await;
+    let root = structured(&root).clone();
+    assert_matches_schema(&root, &agent_actors_output_schema(), "root");
     assert_eq!(
-        references(structured(&root)),
+        references(&root),
         [
             (agent_ref(ROOT_REVIEWER), "root".to_string()),
             (agent_ref(ROOT_WRITER), "root".to_string()),
         ]
     );
+    assert_eq!(
+        root["agents"][0]["binding"],
+        json!({
+            "kind": "agent",
+            "agent": "claude-code",
+            "settings": [{ "setting": "model", "value": "opus" }]
+        })
+    );
+    assert_eq!(
+        root["agents"][1]["binding"],
+        json!({ "kind": "participant" })
+    );
+    // The device mode, the default agent and device paths stay local.
+    let text = root.to_string();
+    for local in [
+        "plan",
+        "\"mode\"",
+        "approval",
+        "defaultAgent",
+        fixture.project.to_str().unwrap(),
+    ] {
+        assert!(!text.contains(local), "{local}");
+    }
 
     // Every listed reference is accepted by the Space owner and by its
     // Collection; the agent of a sibling is refused without a write.

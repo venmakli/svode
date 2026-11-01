@@ -7,50 +7,7 @@ import { JSDOM } from "jsdom";
 
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 
-import type {
-  AgentActorAdapterDescriptor,
-  AgentActorApprovalMapping,
-  AgentActorApprovalMode,
-  AgentActorBinding,
-  AgentActorSelectOption,
-} from "../model/agent-actor-types";
-
-const clientDefault: AgentActorSelectOption = {
-  label: "Client default",
-  value: null,
-};
-
-const codex: AgentActorAdapterDescriptor = {
-  defaultEffortLabel: "Client default",
-  defaultModelLabel: "Client default",
-  id: "codex",
-  label: "Codex",
-  modelOptions: [clientDefault, { label: "GPT-5.6", value: "gpt-5.6" }],
-};
-
-const hermes: AgentActorAdapterDescriptor = {
-  defaultEffortLabel: "Client default",
-  defaultModelLabel: "Client default",
-  id: "hermes",
-  label: "Hermes",
-  modelOptions: [clientDefault],
-};
-
-const qwen: AgentActorAdapterDescriptor = {
-  defaultEffortLabel: "Client default",
-  defaultModelLabel: "Client default",
-  id: "qwen-code",
-  label: "Qwen Code",
-  modelOptions: [clientDefault],
-};
-
-const kimi: AgentActorAdapterDescriptor = {
-  defaultEffortLabel: "Client default",
-  defaultModelLabel: "Client default",
-  id: "kimi-code",
-  label: "Kimi Code",
-  modelOptions: [clientDefault],
-};
+import type { AgentActorAdapterDiagnostic } from "../model/agent-actor-types";
 
 const isolatedCardDomProcess =
   process.env.SVODE_AGENT_ADAPTER_CARD_DOM_PROCESS === "1";
@@ -74,158 +31,69 @@ if (!isolatedCardDomProcess) {
     expect(child.status).toBe(0);
   });
 } else {
-  test("an agent without selectors runs with its native default and shows its boundary", async () => {
+  test("the card shows only the agent with its readiness, without selectors or approval modes", async () => {
+    const checks: string[] = [];
     const harness = await renderCard({
-      approvalMapping: mapping("hermes_accept_edits", "auto"),
-      approvalMode: "auto",
-      binding: binding("hermes"),
-      descriptor: hermes,
-      effortOptions: [clientDefault],
+      diagnostic: undefined,
       locale: "en",
+      onCheck: () => checks.push("codex"),
     });
     try {
-      const card = harness.text();
-      expect(harness.labels()).toEqual([]);
-      expect(card.includes("Client default · Client default")).toBe(true);
+      const card = harness.card();
+      expect(card?.textContent?.includes("Codex")).toBe(true);
       expect(
-        card.includes(
-          "Hermes allows edits in the workspace and temporary folders",
-        ),
-      ).toBe(true);
+        card?.querySelectorAll('[data-slot="select-trigger"]').length,
+      ).toBe(0);
+      expect(card?.querySelectorAll('[data-slot="field-label"]').length).toBe(
+        0,
+      );
       expect(
-        harness.dom.window.document.querySelector(
-          "[data-agent-adapter-no-mode-equivalent]",
-        ),
-      ).toBeNull();
+        /Model|Effort|Primary|Fallback|approval/i.test(card?.textContent ?? ""),
+      ).toBe(false);
+      await act(async () => {
+        harness.button()?.click();
+        await nextTurn();
+      });
+      expect(checks).toEqual(["codex"]);
     } finally {
       await harness.cleanup();
     }
   });
 
-  test("each Qwen Code mode shows its boundary in ru", async () => {
-    for (const [native, requested, boundary] of [
-      ["qwen_default", "ask", "спрашивает перед правкой файлов и командами shell"],
-      ["qwen_auto_edit", "auto", "правит файлы без вопроса"],
-      ["qwen_yolo", "full", "одобряет все вызовы инструментов без вопроса"],
-    ] as const) {
-      const harness = await renderCard({
-        approvalMapping: mapping(native, requested),
-        approvalMode: requested,
-        binding: binding("qwen-code"),
-        descriptor: qwen,
-        effortOptions: [clientDefault],
-        locale: "ru",
-      });
-      try {
-        expect(harness.labels()).toEqual([]);
-        expect(harness.text().includes(`Qwen Code ${boundary}`)).toBe(true);
-      } finally {
-        await harness.cleanup();
-      }
-    }
-  });
-
-  test("each Kimi Code mode shows its boundary in ru", async () => {
-    for (const [native, requested, boundary] of [
-      ["kimi_default", "ask", "правит файлы в папке сессии без вопроса"],
-      ["kimi_auto", "auto", "без вопроса одобряет операции, которые считает безопасными"],
-      ["kimi_yolo", "full", "одобряет все вызовы инструментов без вопроса"],
-    ] as const) {
-      const harness = await renderCard({
-        approvalMapping: mapping(native, requested),
-        approvalMode: requested,
-        binding: binding("kimi-code"),
-        descriptor: kimi,
-        effortOptions: [clientDefault],
-        locale: "ru",
-      });
-      try {
-        expect(harness.labels()).toEqual([]);
-        expect(harness.text().includes(`Kimi Code ${boundary}`)).toBe(true);
-      } finally {
-        await harness.cleanup();
-      }
-    }
-  });
-
-  test("an agent with selectors keeps its model and effort fields", async () => {
+  test("a failed check names why the agent is not ready", async () => {
     const harness = await renderCard({
-      approvalMapping: mapping("codex_user_review", "ask"),
-      approvalMode: "ask",
-      binding: binding("codex"),
-      descriptor: codex,
-      effortOptions: [clientDefault, { label: "Low", value: "low" }],
-      locale: "en",
+      diagnostic: {
+        adapter: "codex",
+        authenticated: null,
+        code: "adapter_missing",
+        executablePath: null,
+        message: "raw client detail",
+        status: "missing",
+        version: null,
+      },
+      locale: "ru",
+      onCheck: () => undefined,
     });
     try {
-      expect(harness.labels()).toEqual(["Model", "Effort"]);
+      const alert = harness.dom.window.document.querySelector(
+        "[data-agent-adapter-diagnostic]",
+      );
+      expect(alert?.textContent?.includes("Клиент не найден")).toBe(true);
+      expect(alert?.textContent?.includes("raw client detail")).toBe(true);
     } finally {
       await harness.cleanup();
-    }
-  });
-
-  test("a stored selector the agent does not map stays visible to be reset", async () => {
-    const harness = await renderCard({
-      approvalMapping: mapping("hermes_default", "ask"),
-      approvalMode: "ask",
-      binding: binding("hermes", "gpt-5.6-luna"),
-      descriptor: hermes,
-      effortOptions: [clientDefault],
-      locale: "en",
-    });
-    try {
-      expect(harness.labels()).toEqual(["Model"]);
-    } finally {
-      await harness.cleanup();
-    }
-  });
-
-  test("a binding without an equivalent of the Actor mode names why it is unavailable", async () => {
-    for (const [locale, expected] of [
-      [
-        "en",
-        "Unavailable: Hermes has no equivalent of “Full access”. The binding stays and works with another access mode.",
-      ],
-      [
-        "ru",
-        "Недоступно: у Hermes нет эквивалента режима «Полный доступ». Привязка сохраняется и работает при другом режиме доступа.",
-      ],
-    ] as const) {
-      const harness = await renderCard({
-        approvalMapping: null,
-        approvalMode: "full",
-        binding: binding("hermes"),
-        descriptor: hermes,
-        effortOptions: [clientDefault],
-        locale,
-      });
-      try {
-        expect(
-          harness.dom.window.document.querySelector(
-            "[data-agent-adapter-no-mode-equivalent]",
-          )?.textContent,
-        ).toBe(expected);
-      } finally {
-        await harness.cleanup();
-      }
     }
   });
 }
 
 async function renderCard({
-  approvalMapping,
-  approvalMode,
-  binding: value,
-  descriptor,
-  effortOptions,
+  diagnostic,
   locale,
+  onCheck,
 }: {
-  approvalMapping: AgentActorApprovalMapping | null;
-  approvalMode: AgentActorApprovalMode;
-  binding: AgentActorBinding;
-  descriptor: AgentActorAdapterDescriptor;
-  effortOptions: readonly AgentActorSelectOption[];
+  diagnostic: AgentActorAdapterDiagnostic | undefined;
   locale: "en" | "ru";
+  onCheck(): void;
 }) {
   const originalLocale = getLocale();
   await setLocale(locale, { reload: false });
@@ -236,30 +104,22 @@ async function renderCard({
   await act(async () => {
     root.render(
       <AgentAdapterCard
-        approvalMapping={approvalMapping}
-        approvalMode={approvalMode}
-        binding={value}
-        canRemove
+        agent="codex"
         checkDisabled={false}
-        descriptor={descriptor}
-        effortOptions={effortOptions}
+        diagnostic={diagnostic}
+        label="Codex"
         pending={false}
-        primary
         readOnly={false}
-        validation={{ issues: [], status: "valid" }}
-        onChange={() => undefined}
-        onCheck={() => undefined}
-        onMakePrimary={() => undefined}
-        onRemove={() => undefined}
+        onCheck={onCheck}
       />,
     );
     await nextTurn();
   });
   const card = () =>
-    dom.window.document.querySelector(
-      `[data-agent-adapter="${value.adapter}"]`,
-    );
+    dom.window.document.querySelector('[data-agent-adapter="codex"]');
   return {
+    button: () => card()?.querySelector("button") ?? null,
+    card,
     cleanup: async () => {
       await act(async () => {
         root.unmount();
@@ -270,31 +130,6 @@ async function renderCard({
       await setLocale(originalLocale, { reload: false });
     },
     dom,
-    labels: () =>
-      Array.from(
-        card()?.querySelectorAll('[data-slot="field-label"]') ?? [],
-      ).map((label) => label.textContent?.trim()),
-    text: () => card()?.textContent ?? "",
-  };
-}
-
-function binding(
-  adapter: AgentActorBinding["adapter"],
-  model: string | null = null,
-): AgentActorBinding {
-  return { adapter, effort: null, model };
-}
-
-function mapping(
-  native: AgentActorApprovalMapping["native"],
-  requested: AgentActorApprovalMode,
-): AgentActorApprovalMapping {
-  return {
-    danger: false,
-    effectiveBoundary: "BACKEND BOUNDARY",
-    label: "BACKEND LABEL",
-    native,
-    requested,
   };
 }
 

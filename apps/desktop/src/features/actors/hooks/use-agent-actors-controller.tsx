@@ -9,11 +9,7 @@ import { RepositoryAccessPreflightDialog } from "@/features/git";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
-import { runtimeKey } from "../api/agent-actors-api";
-import type {
-  AgentActorBindingRuntime,
-  AgentActorRow,
-} from "../model/agent-actor-types";
+import type { AgentActorRow } from "../model/agent-actor-types";
 import {
   useAgentActorAccessCoordinator,
   type AgentActorAccessIntent,
@@ -21,7 +17,6 @@ import {
 import { useAgentActorCatalog } from "./use-agent-actor-catalog";
 import { useAgentActorCatalogSave } from "./use-agent-actor-catalog-save";
 import { useAgentActorDetail } from "./use-agent-actor-detail";
-import { useAgentActorDraftRuntime } from "./use-agent-actor-draft-runtime";
 import {
   useAgentActorMutations,
   type AgentActorMutationAccessContext,
@@ -95,8 +90,6 @@ export function useAgentActorsController({
     setCreateDraft,
     setEditSession,
   } = mutations;
-  const createRuntime = useAgentActorDraftRuntime(createDraft);
-  const editRuntime = useAgentActorDraftRuntime(editSession?.draft ?? null);
 
   const continueIntent = useCallback(
     (intent: AgentActorAccessIntent) => {
@@ -123,37 +116,19 @@ export function useAgentActorsController({
   });
   const requestAccess = accessCoordinator.request;
 
-  const savedRuntimeFor = useCallback(
-    (row: AgentActorRow) => {
-      const runtime =
-        snapshot?.bindingRuntime[runtimeKey(row.ownerPath, row.id)] ?? [];
-      return Object.fromEntries(
-        row.adapters.map((binding, index) => [binding.adapter, runtime[index]]),
-      ) as Partial<
-        Record<
-          AgentActorRow["adapters"][number]["adapter"],
-          AgentActorBindingRuntime
-        >
-      >;
-    },
-    [snapshot?.bindingRuntime],
-  );
-
   const detail = useAgentActorDetail({
     accessRecovery: accessCoordinator.recovery,
     applyMutation,
-    descriptors: snapshot?.adapterDescriptors ?? [],
+    agents: snapshot?.agents ?? [],
     detailController,
     diagnose: catalog.diagnose,
     diagnostics: catalog.diagnostics,
-    editRuntime: editRuntime.runtime,
     editSession,
     instanceKey,
     mutationPending,
     readOnly,
     pendingAdapter: catalog.pendingAdapter,
     rows: snapshot?.rows ?? null,
-    savedRuntimeFor,
     setEditSession,
   });
 
@@ -270,14 +245,13 @@ export function useAgentActorsController({
       <RepositoryAccessPreflightDialog recovery={accessCoordinator.recovery} />
       <AgentActorEditorDialog
         accessRecovery={accessCoordinator.recovery}
-        descriptors={snapshot?.adapterDescriptors ?? []}
+        agents={snapshot?.agents ?? []}
         diagnostics={catalog.diagnostics}
         draft={createDraft}
         failure={mutationFailure}
         pending={mutationPending}
         requesting={accessCoordinator.requesting}
         pendingAdapter={catalog.pendingAdapter}
-        runtime={createRuntime}
         readOnly={readOnly}
         onChange={setCreateDraft}
         onCheck={(adapter) => void catalog.diagnose(adapter)}

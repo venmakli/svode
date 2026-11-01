@@ -3,91 +3,22 @@ import * as m from "@/paraglide/messages.js";
 import { isAgentActorFoundWithoutSignInStatus } from "../model/agent-actor-draft";
 import type {
   AgentActorAdapterDiagnostic,
-  AgentActorApprovalMapping,
-  AgentActorBindingValidation,
-  AgentActorDraft,
+  AgentActorAgentOption,
+  AgentActorBinding,
 } from "../model/agent-actor-types";
 
-export function agentActorApprovalLabel(mode: AgentActorDraft["approvalMode"]) {
-  if (mode === "auto") return m.agent_actors_approval_auto();
-  if (mode === "full") return m.agent_actors_approval_full();
-  return m.agent_actors_approval_ask();
-}
-
-export function agentActorApprovalDescription(
-  mode: AgentActorDraft["approvalMode"],
-) {
-  if (mode === "auto") return m.agent_actors_approval_auto_hint();
-  if (mode === "full") return m.agent_actors_approval_full_hint();
-  return m.agent_actors_approval_ask_hint();
-}
-
-export function agentActorEffectiveBoundary(
-  native: AgentActorApprovalMapping["native"],
-) {
-  switch (native) {
-    case "codex_user_review":
-      return m.agent_actors_boundary_codex_user_review();
-    case "codex_auto_review":
-      return m.agent_actors_boundary_codex_auto_review();
-    case "codex_full_access":
-      return m.agent_actors_boundary_codex_full_access();
-    case "claude_default":
-      return m.agent_actors_boundary_claude_default();
-    case "claude_auto":
-      return m.agent_actors_boundary_claude_auto();
-    case "claude_bypass_permissions":
-      return m.agent_actors_boundary_claude_bypass_permissions();
-    case "hermes_default":
-      return m.agent_actors_boundary_hermes_default();
-    case "hermes_accept_edits":
-      return m.agent_actors_boundary_hermes_accept_edits();
-    case "qwen_default":
-      return m.agent_actors_boundary_qwen_default();
-    case "qwen_auto_edit":
-      return m.agent_actors_boundary_qwen_auto_edit();
-    case "qwen_yolo":
-      return m.agent_actors_boundary_qwen_yolo();
-    case "kimi_default":
-      return m.agent_actors_boundary_kimi_default();
-    case "kimi_auto":
-      return m.agent_actors_boundary_kimi_auto();
-    case "kimi_yolo":
-      return m.agent_actors_boundary_kimi_yolo();
-  }
-}
-
-/** Why a binding of an agent Actors can use is unavailable with `mode`. */
-export function agentActorNoModeEquivalent(
-  client: string,
-  mode: AgentActorDraft["approvalMode"],
-) {
-  return m.agent_actors_binding_no_mode_equivalent({
-    client,
-    mode: agentActorApprovalLabel(mode),
-  });
-}
-
 /**
- * The approval boundary of a binding: its mapping, unavailable without one
- * (with the reason when the agent has no equivalent of the Actor's mode
- * only), or checking while the mapping is not read yet.
+ * The name of a binding: its agent, an agent id this version does not know
+ * as it is, or the participant's agent.
  */
-export function agentActorBoundarySummary(
-  mapping: AgentActorApprovalMapping | null | undefined,
-  noEquivalent?: { client: string; mode: AgentActorDraft["approvalMode"] },
+export function agentActorBindingLabel(
+  binding: AgentActorBinding,
+  agents: readonly AgentActorAgentOption[],
 ) {
-  if (mapping === null) {
-    return noEquivalent
-      ? agentActorNoModeEquivalent(noEquivalent.client, noEquivalent.mode)
-      : m.agent_actors_binding_unavailable();
-  }
-  if (!mapping) return m.agent_actors_binding_checking();
-  return `${agentActorApprovalLabel(mapping.requested)}: ${agentActorEffectiveBoundary(mapping.native)}`;
-}
-
-export function agentActorSelectorLabel(value: string | null) {
-  return value ?? m.agent_actors_client_default();
+  if (binding.kind === "participant") return m.agent_actors_participant_agent();
+  return (
+    agents.find((agent) => agent.id === binding.agent)?.label ?? binding.agent
+  );
 }
 
 export function agentActorDiagnosticStatus(
@@ -119,22 +50,4 @@ export function agentActorDiagnosticSummary(
     return m.agent_actors_diagnostic_unauthenticated();
   }
   return m.agent_actors_diagnostic_failed();
-}
-
-export function agentActorValidationIssueLabel(
-  issue: AgentActorBindingValidation["issues"][number],
-) {
-  if (issue.code === "unknown_model_selector") {
-    return m.agent_actors_model_selector_unknown();
-  }
-  if (issue.code === "unknown_effort_selector") {
-    return m.agent_actors_effort_selector_unknown();
-  }
-  if (issue.code === "unknown_adapter") {
-    return m.agent_actors_adapter_unknown();
-  }
-  if (issue.code === "approval_mapping_missing") {
-    return m.agent_actors_adapter_not_bindable();
-  }
-  return m.agent_actors_binding_invalid();
 }

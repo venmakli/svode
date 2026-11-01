@@ -3,13 +3,13 @@ import {
   generateAgentActorId,
   getAgentActorCatalogSaveReview,
   getAgentActors,
-  inspectAgentActorBinding as inspectAgentActorBindingCommand,
   listenAgentActorCatalogInvalidated as listenAgentActorCatalogInvalidatedCommand,
   mutateAgentActor as mutateAgentActorCommand,
   previewAgentActorDeleteReferences as previewAgentActorDeleteReferencesCommand,
   saveAgentActorCatalog,
   type AgentActorBindingDto,
   type AgentActorCatalogSaveReviewDto,
+  type AgentActorModeDto,
   type AgentActorMutationInputDto,
 } from "@/platform/agent-actors/agent-actors-api";
 
@@ -21,9 +21,10 @@ import {
 import type {
   AgentActorAdapterDiagnostic,
   AgentActorBinding,
-  AgentActorBindingRuntime,
   AgentActorCatalogSnapshot,
+  AgentActorMode,
   AgentActorMutationApplied,
+  AgentAdapterId,
 } from "../model/agent-actor-types";
 
 export async function loadAgentActors(
@@ -31,44 +32,10 @@ export async function loadAgentActors(
   launchSpacePath: string,
 ): Promise<AgentActorCatalogSnapshot> {
   const dto = await getAgentActors(projectPath, launchSpacePath);
-  const runtimeByRow: Record<string, AgentActorBindingRuntime[]> = {};
-  for (const runtime of dto.bindings) {
-    const key = runtimeKey(runtime.ownerPath, runtime.actorId);
-    const values = runtimeByRow[key] ?? [];
-    values[runtime.bindingIndex] = Object.freeze({
-      approval: runtime.approval && Object.freeze({ ...runtime.approval }),
-      effortOptions: Object.freeze(
-        runtime.effortOptions.map((option) => Object.freeze({ ...option })),
-      ),
-      validation: Object.freeze({
-        ...runtime.validation,
-        issues: Object.freeze(
-          runtime.validation.issues.map((issue) => Object.freeze({ ...issue })),
-        ),
-      }),
-    });
-    runtimeByRow[key] = values;
-  }
-
   return Object.freeze({
-    adapterDescriptors: Object.freeze(
-      dto.adapterDescriptors.map((descriptor) =>
-        Object.freeze({
-          ...descriptor,
-          modelOptions: Object.freeze(
-            descriptor.modelOptions.map((option) =>
-              Object.freeze({ ...option }),
-            ),
-          ),
-        }),
-      ),
-    ),
-    bindingRuntime: Object.freeze(
-      Object.fromEntries(
-        Object.entries(runtimeByRow).map(([key, values]) => [
-          key,
-          Object.freeze(values),
-        ]),
+    agents: Object.freeze(
+      dto.bindableAgents.map((agent) =>
+        Object.freeze({ id: agent.id, label: agent.displayName }),
       ),
     ),
     diagnostics: Object.freeze(
@@ -79,16 +46,14 @@ export async function loadAgentActors(
     fingerprints: Object.freeze({ ...dto.ownerFingerprints }),
     launchSpacePath,
     rows: Object.freeze(
-      dto.resolution.actors.map(({ actor, approvalMode, ownerPath }) =>
+      dto.resolution.actors.map(({ actor, mode, ownerPath }) =>
         Object.freeze({
           actorRef: `agent:${actor.id}` as const,
-          adapters: Object.freeze(
-            actor.adapters.map((binding) => normalizeBinding(binding)),
-          ),
-          approvalMode,
+          binding: normalizeBinding(actor.binding),
           description: actor.description?.trim() || null,
           id: actor.id,
           inherited: ownerPath !== launchSpacePath,
+          mode: mode ? Object.freeze({ ...mode }) : null,
           name: actor.name,
           ownerLabel: actorOwnerLabel(ownerPath),
           ownerPath,
@@ -129,31 +94,9 @@ export async function loadAgentActorOptions(
 
 export function diagnoseAgentActorAdapter(
   launchSpacePath: string,
-  adapter: AgentActorBinding["adapter"],
+  adapter: AgentAdapterId,
 ): Promise<AgentActorAdapterDiagnostic> {
   return diagnoseAgentActorAdapterCommand(launchSpacePath, adapter);
-}
-
-export async function inspectAgentActorBinding(
-  binding: AgentActorBinding,
-  approvalMode: AgentActorCatalogSnapshot["rows"][number]["approvalMode"],
-): Promise<AgentActorBindingRuntime> {
-  const result = await inspectAgentActorBindingCommand(
-    toBindingDto(binding),
-    approvalMode,
-  );
-  return Object.freeze({
-    approval: result.approval && Object.freeze({ ...result.approval }),
-    effortOptions: Object.freeze(
-      result.effortOptions.map((option) => Object.freeze({ ...option })),
-    ),
-    validation: Object.freeze({
-      ...result.validation,
-      issues: Object.freeze(
-        result.validation.issues.map((issue) => Object.freeze({ ...issue })),
-      ),
-    }),
-  });
 }
 
 export async function createAgentActorId(): Promise<string> {
@@ -208,35 +151,40 @@ export { getAgentActorCatalogSaveReview, saveAgentActorCatalog };
 export type { AgentActorCatalogSaveReviewDto };
 
 export function toAgentActorMutationActor(input: {
-  adapters: readonly AgentActorBinding[];
+  binding: AgentActorBinding;
   description: string;
   id: string;
   name: string;
 }) {
   return {
-    adapters: input.adapters.map(toBindingDto),
+    binding: toBindingDto(input.binding),
     description: input.description.trim() || null,
     id: input.id,
     name: input.name.trim(),
   };
 }
 
-export function runtimeKey(ownerPath: string, actorId: string): string {
-  return JSON.stringify([ownerPath, actorId]);
+export function toAgentActorModeDto(
+  mode: AgentActorMode | null,
+): AgentActorModeDto | null {
+  return mode ? { ...mode } : null;
 }
 
 function normalizeBinding(binding: AgentActorBindingDto): AgentActorBinding {
+  if ("participant" in binding) return Object.freeze({ kind: "participant" });
   return Object.freeze({
-    adapter: binding.adapter,
-    effort: binding.effort ?? null,
-    model: binding.model ?? null,
+    agent: binding.agent,
+    kind: "agent",
+    settings: Object.freeze(
+      binding.settings.map((value) => Object.freeze({ ...value })),
+    ),
   });
 }
 
 function toBindingDto(binding: AgentActorBinding): AgentActorBindingDto {
+  if (binding.kind === "participant") return { participant: true };
   return {
-    adapter: binding.adapter,
-    ...(binding.effort ? { effort: binding.effort } : {}),
-    ...(binding.model ? { model: binding.model } : {}),
+    agent: binding.agent,
+    settings: binding.settings.map((value) => ({ ...value })),
   };
 }

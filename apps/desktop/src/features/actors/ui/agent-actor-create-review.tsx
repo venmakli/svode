@@ -1,4 +1,3 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,28 +12,18 @@ import * as m from "@/paraglide/messages.js";
 import { actorOwnerLabel } from "../model/agent-actor-draft";
 import type { AgentActorCreateStep } from "../model/agent-actor-draft";
 import type {
-  AgentActorAdapterDescriptor,
-  AgentActorBinding,
-  AgentActorBindingRuntime,
+  AgentActorAgentOption,
   AgentActorDraft,
 } from "../model/agent-actor-types";
-import {
-  agentActorApprovalLabel,
-  agentActorBoundarySummary,
-  agentActorSelectorLabel,
-} from "./agent-actor-copy";
+import { agentActorBindingLabel } from "./agent-actor-copy";
 
 export function AgentActorCreateReview({
-  descriptors,
+  agents,
   draft,
-  runtime,
   onEdit,
 }: {
-  descriptors: readonly AgentActorAdapterDescriptor[];
+  agents: readonly AgentActorAgentOption[];
   draft: AgentActorDraft;
-  runtime: Partial<
-    Record<AgentActorBinding["adapter"], AgentActorBindingRuntime>
-  >;
   onEdit(step: Exclude<AgentActorCreateStep, "review">): void;
 }) {
   return (
@@ -64,70 +53,12 @@ export function AgentActorCreateReview({
 
       <ReviewCard
         description={m.agent_actors_review_adapters_description()}
-        title={m.agent_actors_step_adapters()}
+        title={m.agent_actors_agent_label()}
         onEdit={() => onEdit("adapters")}
       >
-        <ol className="flex flex-col gap-3">
-          {draft.adapters.map((binding, index) => {
-            const descriptor = descriptors.find(
-              (candidate) => candidate.id === binding.adapter,
-            );
-            return (
-              <li key={binding.adapter} className="flex flex-col gap-1 text-sm">
-                <span className="flex flex-wrap items-center gap-2 font-medium">
-                  {descriptor?.label ?? binding.adapter}
-                  <Badge variant={index === 0 ? "default" : "secondary"}>
-                    {index === 0
-                      ? m.agent_actors_primary()
-                      : m.agent_actors_fallback()}
-                  </Badge>
-                </span>
-                <span className="text-muted-foreground">
-                  {m.agent_actors_review_adapter_configuration({
-                    effort: agentActorSelectorLabel(binding.effort),
-                    model: agentActorSelectorLabel(binding.model),
-                  })}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-      </ReviewCard>
-
-      <ReviewCard
-        description={m.agent_actors_review_permissions_description()}
-        title={m.agent_actors_step_permissions()}
-        onEdit={() => onEdit("permissions")}
-      >
-        <div className="flex flex-col gap-3">
-          <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-            {agentActorApprovalLabel(draft.approvalMode)}
-            <Badge variant="outline">
-              {m.agent_actors_review_device_local()}
-            </Badge>
-          </span>
-          <dl className="grid gap-3 text-sm">
-            {draft.adapters.map((binding) => {
-              const descriptor = descriptors.find(
-                (candidate) => candidate.id === binding.adapter,
-              );
-              const mapping = runtime[binding.adapter]?.approval;
-              return (
-                <ReviewValue
-                  key={binding.adapter}
-                  label={descriptor?.label ?? binding.adapter}
-                  value={agentActorBoundarySummary(
-                    mapping,
-                    descriptor && {
-                      client: descriptor.label,
-                      mode: draft.approvalMode,
-                    },
-                  )}
-                />
-              );
-            })}
-          </dl>
-        </div>
+        <p className="text-sm font-medium" data-agent-actor-binding>
+          {agentActorBindingLabel(draft.binding, agents)}
+        </p>
       </ReviewCard>
     </div>
   );

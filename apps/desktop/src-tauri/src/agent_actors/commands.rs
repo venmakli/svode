@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
 
-use super::{AgentActorMutationInput, mutate_catalog_compound, set_local_approval};
+use super::{AgentActorMutationInput, mutate_catalog_compound};
 use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, access_store_path};
@@ -13,12 +13,14 @@ use crate::git::require_cli;
 use crate::process::path_env::ProcessPath;
 use crate::space::types::SpaceGitType;
 use svode_agents::registry::{
-    AdapterDiagnostic, AdapterRuntimeDescriptor, AdapterRuntimeRegistry, AdapterSelectOption,
-    AdapterTarget, ApprovalMapping, BindingValidation, SystemRuntimeCommandRunner,
+    AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, SystemRuntimeCommandRunner,
+};
+use svode_core::agent_actors::local::{
+    ActorMode, read_actor_modes, set_actor_mode, translate_local_modes,
 };
 use svode_core::agent_actors::{
-    AgentActorResolution, AgentAdapter, ApprovalMode, CatalogError, catalog_path, inherited_root,
-    read_catalog, resolve_space_catalogs,
+    AgentActor, AgentActorCatalogDiagnostic, AgentActorResolution, CatalogError, catalog_path,
+    inherited_root, read_catalog, resolve_space_catalogs,
 };
 use svode_core::agent_adapters::{
     AgentAdapterIdentity, AgentAdapterKind, AgentAdapterRegistry, AgentId,
@@ -56,38 +58,28 @@ enum RootPointerPlan {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentActorsReadResult {
-    pub resolution: AgentActorResolution,
+    pub resolution: AgentActorsReadResolution,
     pub owner_fingerprints: HashMap<String, String>,
-    pub adapter_descriptors: Vec<AdapterRuntimeDescriptor>,
-    pub bindings: Vec<AgentActorBindingRuntime>,
+    /// The built-in agents a binding can name, ready or not, in registry
+    /// order.
+    pub bindable_agents: Vec<AgentLabel>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentActorsReadResolution {
+    pub actors: Vec<AgentActorRead>,
+    pub diagnostics: Vec<AgentActorCatalogDiagnostic>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentActorBindingRuntime {
-    pub actor_id: String,
+pub struct AgentActorRead {
+    pub actor: AgentActor,
     pub owner_path: String,
-    pub binding_index: usize,
-    pub validation: BindingValidation,
-    pub effort_options: Vec<AdapterSelectOption>,
-    /// `None` for a binding of an agent without an approval mapping.
-    pub approval: Option<ApprovalMapping>,
-    pub readiness: AgentActorBindingReadiness,
-}
-
-#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentActorBindingReadiness {
-    Unchecked,
-}
-
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentActorBindingInspection {
-    pub validation: BindingValidation,
-    pub effort_options: Vec<AdapterSelectOption>,
-    /// `None` for a binding of an agent without an approval mapping.
-    pub approval: Option<ApprovalMapping>,
+    /// The effective mode of the Actor on this device; `None` is the
+    /// agent's native default, and always for the participant's agent.
+    pub mode: Option<ActorMode>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -202,7 +194,6 @@ pub async fn agent_actors_get(
             own.clone()
         }
     };
-    let registry = AdapterRuntimeRegistry;
     let resolution = resolve_space_catalogs(&project, &own);
     let owner_fingerprints = std::iter::once(own.as_path())
         .chain(inherited_root(&project, &own))
@@ -212,40 +203,51 @@ pub async fn agent_actors_get(
                 .map(|(_, fingerprint)| (owner.to_string_lossy().into_owned(), fingerprint))
         })
         .collect();
-    let bindings = binding_runtime_projection(&registry, &resolution);
     Ok(AgentActorsReadResult {
-        resolution,
+        resolution: read_rows(resolution),
         owner_fingerprints,
-        adapter_descriptors: registry.descriptors(),
-        bindings,
+        bindable_agents: agent_labels(AgentAdapterRegistry.identities(), Vec::new()),
     })
 }
 
-fn binding_runtime_projection(
-    registry: &AdapterRuntimeRegistry,
-    resolution: &AgentActorResolution,
-) -> Vec<AgentActorBindingRuntime> {
-    resolution
+/// The actors with their effective device modes. The device translates the
+/// V1 approval modes of each owner once, here or at the owner's first write.
+fn read_rows(resolution: AgentActorResolution) -> AgentActorsReadResolution {
+    let mut modes = HashMap::<String, HashMap<String, ActorMode>>::new();
+    let actors = resolution
         .actors
-        .iter()
-        .flat_map(|resolved| {
-            resolved
-                .actor
-                .adapters
-                .iter()
-                .enumerate()
-                .map(|(binding_index, binding)| AgentActorBindingRuntime {
-                    actor_id: resolved.actor.id.clone(),
-                    owner_path: resolved.owner_path.clone(),
-                    binding_index,
-                    validation: registry.validate_binding(binding),
-                    effort_options: registry
-                        .effort_options(&binding.adapter, binding.model.as_deref()),
-                    approval: registry.approval_mapping(&binding.adapter, resolved.approval_mode),
-                    readiness: AgentActorBindingReadiness::Unchecked,
-                })
+        .into_iter()
+        .map(|resolved| {
+            let owner_modes = modes
+                .entry(resolved.owner_path.clone())
+                .or_insert_with(|| owner_modes(Path::new(&resolved.owner_path)));
+            AgentActorRead {
+                mode: owner_modes.get(&resolved.actor.id).cloned(),
+                actor: resolved.actor,
+                owner_path: resolved.owner_path,
+            }
         })
-        .collect()
+        .collect();
+    AgentActorsReadResolution {
+        actors,
+        diagnostics: resolution.diagnostics,
+    }
+}
+
+fn owner_modes(owner: &Path) -> HashMap<String, ActorMode> {
+    if let Err(error) = translate_local_modes(owner) {
+        tracing::warn!(
+            "agent actor modes of {} were not translated: {error}",
+            owner.display()
+        );
+    }
+    read_actor_modes(owner).unwrap_or_else(|error| {
+        tracing::warn!(
+            "agent actor modes of {} are unreadable: {error}",
+            owner.display()
+        );
+        HashMap::new()
+    })
 }
 
 #[tauri::command]
@@ -269,7 +271,7 @@ pub async fn agent_actors_diagnose_adapter(
 }
 
 /// An agent's id and the name every surface labels it with.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentLabel {
     id: AgentId,
@@ -305,19 +307,6 @@ fn agent_labels(
 #[tauri::command]
 pub fn agent_actors_generate_id() -> String {
     ulid::Ulid::new().to_string().to_ascii_lowercase()
-}
-
-#[tauri::command]
-pub fn agent_actors_inspect_binding(
-    binding: AgentAdapter,
-    approval_mode: ApprovalMode,
-) -> AgentActorBindingInspection {
-    let registry = AdapterRuntimeRegistry;
-    AgentActorBindingInspection {
-        validation: registry.validate_binding(&binding),
-        effort_options: registry.effort_options(&binding.adapter, binding.model.as_deref()),
-        approval: registry.approval_mapping(&binding.adapter, approval_mode),
-    }
 }
 
 #[tauri::command]
@@ -640,12 +629,9 @@ pub async fn agent_actors_mutate(
         }
     }
     let mutation = match mutation {
-        AgentActorMutationInput::SetApproval {
-            actor_id,
-            approval_mode,
-        } => {
+        AgentActorMutationInput::SetMode { actor_id, mode } => {
             let fingerprint =
-                match set_local_approval(&owner, &expected_fingerprint, &actor_id, approval_mode) {
+                match set_actor_mode(&owner, &expected_fingerprint, &actor_id, mode.as_ref()) {
                     Ok(fingerprint) => fingerprint,
                     Err(CatalogError::Stale) => {
                         return Ok(AgentActorMutationResult::Stale {
@@ -952,60 +938,66 @@ mod tests {
     }
 
     #[test]
-    fn binding_inspection_is_process_free_and_adapter_owned() {
-        let inspection = agent_actors_inspect_binding(
-            AgentAdapter {
-                adapter: AgentAdapterKind::ClaudeCode.id(),
-                model: Some("haiku".into()),
-                effort: None,
-            },
-            ApprovalMode::Full,
-        );
-        assert!(inspection.validation.issues.is_empty());
-        assert_eq!(inspection.effort_options.len(), 1);
-        assert!(inspection.approval.unwrap().danger);
-    }
+    fn read_rows_carry_the_effective_device_mode_and_translate_v1_once() {
+        let owner = tempdir().unwrap();
+        fs::create_dir_all(owner.path().join(".svode")).unwrap();
+        let codex = "01arz3ndektsv4rrffq69g5fav";
+        let participant = "01arz3ndektsv4rrffq69g5faw";
+        fs::write(
+            catalog_path(owner.path()),
+            serde_json::json!({"schemaVersion": 1, "actors": [
+                {"id": codex, "name": "Codex", "adapters": [{"adapter": "codex"}, {"adapter": "claude-code"}]}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            svode_core::agent_actors::local_path(owner.path()),
+            serde_json::json!({"agentActors": {codex: {"approvalMode": "auto"}}}).to_string(),
+        )
+        .unwrap();
 
-    #[test]
-    fn a_binding_of_an_unknown_agent_is_shown_unavailable_without_a_mapping() {
-        let inspection = agent_actors_inspect_binding(
-            AgentAdapter {
-                adapter: svode_core::agent_adapters::AgentId::parse("future-agent").unwrap(),
-                model: Some("m".into()),
-                effort: None,
-            },
-            ApprovalMode::Ask,
+        let rows = read_rows(resolve_space_catalogs(owner.path(), owner.path()));
+        assert_eq!(rows.actors.len(), 1);
+        let row = serde_json::to_value(&rows.actors[0]).unwrap();
+        assert_eq!(
+            row["actor"]["binding"],
+            serde_json::json!({"agent": "codex", "settings": []})
         );
         assert_eq!(
-            inspection.validation.status,
-            svode_agents::registry::BindingValidationStatus::Unavailable
+            row["mode"],
+            serde_json::json!({"agent": "codex", "setting": "mode", "value": "agent"})
         );
-        assert_eq!(inspection.validation.issues[0].code, "unknown_adapter");
-        assert_eq!(inspection.approval, None);
+        assert!(row.get("approvalMode").is_none());
+        let local: serde_json::Value = serde_json::from_slice(
+            &fs::read(svode_core::agent_actors::local_path(owner.path())).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(local["agentActorsLocalVersion"], 2);
+        // The catalog stays V1 until it is written.
+        assert!(
+            fs::read_to_string(catalog_path(owner.path()))
+                .unwrap()
+                .contains("\"schemaVersion\":1")
+        );
+
+        fs::write(
+            catalog_path(owner.path()),
+            serde_json::json!({"schemaVersion": 2, "actors": [
+                {"id": participant, "name": "Mine", "binding": {"participant": true}}
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let rows = read_rows(resolve_space_catalogs(owner.path(), owner.path()));
+        assert_eq!(rows.actors[0].mode, None);
     }
 
     #[test]
-    fn binding_projection_preserves_owner_and_stays_unchecked() {
-        let resolution = AgentActorResolution {
-            actors: vec![svode_core::agent_actors::ResolvedAgentActor {
-                actor: svode_core::agent_actors::AgentActor {
-                    id: "01arz3ndektsv4rrffq69g5fav".into(),
-                    name: "Docs".into(),
-                    description: None,
-                    adapters: vec![AgentAdapter {
-                        adapter: AgentAdapterKind::Codex.id(),
-                        model: None,
-                        effort: None,
-                    }],
-                },
-                owner_path: "/project".into(),
-                approval_mode: ApprovalMode::Ask,
-            }],
-            diagnostics: vec![],
-        };
-        let rows = binding_runtime_projection(&AdapterRuntimeRegistry, &resolution);
-        assert_eq!(rows[0].owner_path, "/project");
-        assert_eq!(rows[0].readiness, AgentActorBindingReadiness::Unchecked);
+    fn bindable_agents_are_every_built_in_agent() {
+        let labels = agent_labels(AgentAdapterRegistry.identities(), Vec::new());
+        assert_eq!(labels.len(), AgentAdapterKind::ALL.len());
+        assert!(labels.iter().all(|label| label.id.builtin().is_some()));
     }
 
     #[test]

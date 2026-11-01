@@ -143,6 +143,9 @@ pub fn run() {
                 &app.path().app_data_dir()?,
                 app.path().app_config_dir()?,
             );
+            if let Err(error) = agent_setup.seed_default_agent() {
+                tracing::warn!("the initial default agent was not stored: {error}");
+            }
             app.manage(agent_setup.clone());
             let speech = speech::SpeechState::new(
                 &app.path().app_data_dir()?,
@@ -236,7 +239,6 @@ pub fn run() {
             agent_actors::commands::agent_actors_get,
             agent_actors::commands::agent_actors_mutate,
             agent_actors::commands::agent_actors_generate_id,
-            agent_actors::commands::agent_actors_inspect_binding,
             agent_actors::commands::agent_actors_diagnose_adapter,
             agent_actors::commands::agent_actors_get_catalog_save_review,
             agent_actors::commands::agent_actors_save_catalog,
@@ -387,6 +389,8 @@ pub fn run() {
             agent_runtime::commands::agent_runtime_release_session,
             agent_setup::commands::agent_setup_list,
             agent_setup::commands::agent_setup_chat_agents,
+            agent_setup::commands::agent_default_get,
+            agent_setup::commands::agent_default_set,
             agent_setup::commands::agent_setup_enable,
             agent_setup::commands::agent_setup_disable,
             agent_setup::commands::agent_setup_update_adapter,

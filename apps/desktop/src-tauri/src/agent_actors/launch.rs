@@ -1,4 +1,11 @@
-//! Process-free actor resolution and adapter selection for routine launches.
+//! Process-free actor resolution for routine launches.
+//!
+//! Transitional until Routine dispatch takes the executor resolver of
+//! `svode_core::agent_actors::executor` directly (Stage 11 slice 3.3): the
+//! registry launch path still takes a V1 binding and approval strategy, so
+//! the resolved V2 binding is expressed in them here. A value or mode the V1
+//! shape cannot carry refuses the launch instead of being dropped, and the
+//! participant's agent is not launched by this path.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -9,10 +16,11 @@ use svode_agents::registry::{
     AdapterDiagnostic, AdapterRuntimeRegistry, AgentLaunchRequest, PreStartBindingAttempt,
     PreStartSelection,
 };
-use svode_core::agent_actors::{
-    AgentAdapter, ApprovalMode, CanonicalActorResolution, ResolvedAgentActor, read_local_approval,
-    resolve_canonical_reference,
+use svode_core::agent_actors::executor::{
+    ExecutorResolution, ExecutorSource, ResolvedExecutor, resolve_executor,
 };
+use svode_core::agent_actors::v1::mode_equivalent;
+use svode_core::agent_actors::{AgentAdapter, ApprovalMode};
 use svode_core::agent_adapters::AgentAdapterKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,7 +76,7 @@ pub enum AgentLaunchResolution {
 }
 
 /// Resolve a routine executor against its enclosing Space and optional project
-/// root, then choose the first binding eligible to start. The supplied
+/// root, then check that the one binding is eligible to start. The supplied
 /// diagnostics must already have been collected for `launch_space`; this
 /// function performs no executable detection, repository access probe, or
 /// process/session creation.
@@ -78,88 +86,108 @@ pub fn resolve_agent_launch_request(
     executor: Option<&str>,
     diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
 ) -> AgentLaunchResolution {
-    let Some(reference) = executor else {
-        return AgentLaunchResolution::MissingExecutor {
-            code: AgentLaunchValidationCode::MissingExecutor,
-        };
-    };
-
-    let resolved = match resolve_canonical_reference(launch_space, inherited_root, reference) {
-        CanonicalActorResolution::Resolved { actor } => actor,
-        CanonicalActorResolution::Missing { .. } => {
-            return AgentLaunchResolution::MissingActorId {
-                code: AgentLaunchValidationCode::MissingActorId,
-                executor: reference.to_string(),
-            };
-        }
-        CanonicalActorResolution::Ambiguous { .. } => {
-            return AgentLaunchResolution::AmbiguousActorId {
-                code: AgentLaunchValidationCode::AmbiguousActorId,
-                executor: reference.to_string(),
-            };
-        }
-    };
-
-    select_resolved_actor(launch_space, reference, resolved, diagnostics)
-}
-
-fn select_resolved_actor(
-    launch_space: &Path,
-    reference: &str,
-    resolved: ResolvedAgentActor,
-    diagnostics: &BTreeMap<AgentAdapterKind, AdapterDiagnostic>,
-) -> AgentLaunchResolution {
     let launch_space_path = launch_space.to_string_lossy().into_owned();
-    let approval_mode =
-        match read_local_approval(Path::new(&resolved.owner_path), resolved.actor.id.as_str()) {
-            Ok(mode) => mode,
-            Err(_) => {
-                let attempts = resolved
-                    .actor
-                    .adapters
-                    .iter()
-                    .enumerate()
-                    .map(|(binding_index, binding)| AgentLaunchBindingAttempt {
-                        binding_index,
-                        binding: binding.clone(),
-                        diagnostic: binding_diagnostic(binding, diagnostics),
-                        eligible: false,
-                        reason_code: Some("approval_mode_unavailable".into()),
-                    })
-                    .collect();
-                return AgentLaunchResolution::UnavailableExecutor {
-                    code: AgentLaunchValidationCode::UnavailableExecutor,
-                    actor_reference: reference.to_string(),
-                    actor_owner_path: resolved.owner_path,
-                    launch_space_path,
-                    approval_mode: None,
-                    attempts,
-                };
+    let unavailable =
+        |reference: String, actor_owner_path: String, attempts: Vec<AgentLaunchBindingAttempt>| {
+            AgentLaunchResolution::UnavailableExecutor {
+                code: AgentLaunchValidationCode::UnavailableExecutor,
+                actor_reference: reference,
+                actor_owner_path,
+                launch_space_path: launch_space_path.clone(),
+                approval_mode: None,
+                attempts,
             }
         };
-    let selection = AdapterRuntimeRegistry.select_pre_start(
-        &resolved.actor.adapters,
-        approval_mode,
-        diagnostics,
-    );
-    let attempts = launch_attempts(&resolved.actor.adapters, diagnostics, &selection);
-
+    let executor = match resolve_executor(launch_space, inherited_root, executor, None) {
+        ExecutorResolution::MissingExecutor => {
+            return AgentLaunchResolution::MissingExecutor {
+                code: AgentLaunchValidationCode::MissingExecutor,
+            };
+        }
+        ExecutorResolution::MissingActor { reference } => {
+            return AgentLaunchResolution::MissingActorId {
+                code: AgentLaunchValidationCode::MissingActorId,
+                executor: reference,
+            };
+        }
+        ExecutorResolution::AmbiguousActor { reference } => {
+            return AgentLaunchResolution::AmbiguousActorId {
+                code: AgentLaunchValidationCode::AmbiguousActorId,
+                executor: reference,
+            };
+        }
+        ExecutorResolution::ModeUnavailable {
+            reference,
+            actor_owner_path,
+            ..
+        }
+        | ExecutorResolution::DefaultAgentNotSet {
+            reference,
+            actor_owner_path,
+        } => return unavailable(reference, actor_owner_path, Vec::new()),
+        ExecutorResolution::UnknownAgent {
+            reference,
+            actor_owner_path,
+            agent,
+        } => {
+            let attempt = AgentLaunchBindingAttempt {
+                binding_index: 0,
+                binding: AgentAdapter {
+                    adapter: agent,
+                    model: None,
+                    effort: None,
+                },
+                diagnostic: None,
+                eligible: false,
+                reason_code: Some("unknown_adapter".into()),
+            };
+            return unavailable(reference, actor_owner_path, vec![attempt]);
+        }
+        ExecutorResolution::Resolved(executor) => executor,
+    };
+    let (binding, approval_mode) = match legacy_launch_shape(&executor) {
+        Ok(shape) => shape,
+        Err(reason) => {
+            let attempt = AgentLaunchBindingAttempt {
+                binding_index: 0,
+                binding: AgentAdapter {
+                    adapter: executor.agent.clone(),
+                    model: None,
+                    effort: None,
+                },
+                diagnostic: executor
+                    .agent
+                    .builtin()
+                    .and_then(|agent| diagnostics.get(&agent))
+                    .cloned(),
+                eligible: false,
+                reason_code: Some(reason.into()),
+            };
+            return unavailable(
+                executor.actor_reference,
+                executor.actor_owner_path,
+                vec![attempt],
+            );
+        }
+    };
+    let bindings = [binding];
+    let selection = AdapterRuntimeRegistry.select_pre_start(&bindings, approval_mode, diagnostics);
+    let attempts = launch_attempts(&bindings, diagnostics, &selection);
+    let [binding] = bindings;
     let Some(selected_binding_index) = selection.selected_binding_index else {
         return AgentLaunchResolution::UnavailableExecutor {
             code: AgentLaunchValidationCode::UnavailableExecutor,
-            actor_reference: reference.to_string(),
-            actor_owner_path: resolved.owner_path,
+            actor_reference: executor.actor_reference,
+            actor_owner_path: executor.actor_owner_path,
             launch_space_path,
             approval_mode: Some(approval_mode),
             attempts,
         };
     };
-    let binding = resolved.actor.adapters[selected_binding_index].clone();
-
     AgentLaunchResolution::Ready {
         request: AgentLaunchRequest {
-            actor_reference: reference.to_string(),
-            actor_owner_path: resolved.owner_path,
+            actor_reference: executor.actor_reference,
+            actor_owner_path: executor.actor_owner_path,
             launch_space_path,
             binding,
             approval_mode,
@@ -167,6 +195,50 @@ fn select_resolved_actor(
         selected_binding_index,
         attempts,
     }
+}
+
+/// The resolved V2 binding as the V1 binding and approval strategy the
+/// registry launch path takes: `model`, the effort setting of Codex or
+/// Claude Code, and the strategy whose equivalent is the device mode (`ask`
+/// without one, as a V1 Actor without a local row ran). Anything else the
+/// V1 shape cannot carry is a reason the launch is refused.
+fn legacy_launch_shape(
+    executor: &ResolvedExecutor,
+) -> Result<(AgentAdapter, ApprovalMode), &'static str> {
+    if executor.source != ExecutorSource::Binding {
+        return Err("participant_launch_unsupported");
+    }
+    let agent = executor.agent.builtin().ok_or("unknown_adapter")?;
+    let effort_setting = match agent {
+        AgentAdapterKind::Codex => Some("reasoning_effort"),
+        AgentAdapterKind::ClaudeCode => Some("effort"),
+        _ => None,
+    };
+    let mut binding = AgentAdapter {
+        adapter: executor.agent.clone(),
+        model: None,
+        effort: None,
+    };
+    for value in &executor.portable_settings {
+        if value.setting == "model" {
+            binding.model = Some(value.value.clone());
+        } else if Some(value.setting.as_str()) == effort_setting {
+            binding.effort = Some(value.value.clone());
+        } else {
+            return Err("binding_setting_unsupported");
+        }
+    }
+    let approval_mode = match executor.device_settings.as_slice() {
+        [] => ApprovalMode::Ask,
+        [mode] if mode.setting == "mode" => {
+            [ApprovalMode::Ask, ApprovalMode::Auto, ApprovalMode::Full]
+                .into_iter()
+                .find(|candidate| mode_equivalent(agent, *candidate) == Some(mode.value.as_str()))
+                .ok_or("mode_unsupported")?
+        }
+        _ => return Err("mode_unsupported"),
+    };
+    Ok((binding, approval_mode))
 }
 
 fn launch_attempts(
@@ -211,26 +283,31 @@ mod tests {
     use tempfile::{TempDir, tempdir};
 
     use super::*;
-    use crate::agent_actors::{CatalogMutation, mutate_catalog, write_local_approval};
+    use crate::agent_actors::{CatalogMutation, mutate_catalog};
     use svode_agents::registry::AdapterDiagnosticStatus;
-    use svode_core::agent_actors::{AgentActor, local_path, read_catalog};
+    use svode_core::agent_actors::local::{ActorMode, store_mode};
+    use svode_core::agent_actors::{
+        ActorBinding, AgentActor, AgentSettingValue, local_path, read_catalog,
+    };
 
     const ACTOR_ID: &str = "01arz3ndektsv4rrffq69g5fav";
 
-    fn binding(
-        adapter: AgentAdapterKind,
-        model: Option<&str>,
-        effort: Option<&str>,
-    ) -> AgentAdapter {
-        AgentAdapter {
-            adapter: adapter.id(),
-            model: model.map(str::to_string),
-            effort: effort.map(str::to_string),
+    fn binding(adapter: AgentAdapterKind, settings: &[(&str, &str)]) -> ActorBinding {
+        ActorBinding::Agent {
+            agent: adapter.id(),
+            settings: settings
+                .iter()
+                .map(|(setting, value)| AgentSettingValue {
+                    setting: (*setting).into(),
+                    value: (*value).into(),
+                })
+                .collect(),
         }
     }
 
-    fn add_actor(owner: &TempDir, adapters: Vec<AgentAdapter>, approval_mode: ApprovalMode) {
+    fn add_actor(owner: &TempDir, binding: ActorBinding, mode: Option<&str>) {
         let (_, fingerprint) = read_catalog(owner.path()).unwrap();
+        let agent = binding.agent().cloned();
         mutate_catalog(
             owner.path(),
             &fingerprint,
@@ -238,11 +315,16 @@ mod tests {
                 id: ACTOR_ID.into(),
                 name: "Routine agent".into(),
                 description: None,
-                adapters,
+                binding,
             }),
         )
         .unwrap();
-        write_local_approval(owner.path(), ACTOR_ID.into(), approval_mode).unwrap();
+        let mode = mode.zip(agent).map(|(value, agent)| ActorMode {
+            agent,
+            setting: "mode".into(),
+            value: value.into(),
+        });
+        store_mode(owner.path(), ACTOR_ID, mode.as_ref()).unwrap();
     }
 
     fn diagnostic(adapter: AgentAdapterKind, status: AdapterDiagnosticStatus) -> AdapterDiagnostic {
@@ -267,8 +349,21 @@ mod tests {
         }
     }
 
+    fn ready(adapter: AgentAdapterKind) -> BTreeMap<AgentAdapterKind, AdapterDiagnostic> {
+        BTreeMap::from([(adapter, diagnostic(adapter, AdapterDiagnosticStatus::Ready))])
+    }
+
     fn actor_reference() -> String {
         format!("agent:{ACTOR_ID}")
+    }
+
+    fn attempt_reason(resolution: AgentLaunchResolution) -> Option<String> {
+        let AgentLaunchResolution::UnavailableExecutor { attempts, .. } = resolution else {
+            panic!("the launch is unavailable");
+        };
+        attempts
+            .first()
+            .and_then(|attempt| attempt.reason_code.clone())
     }
 
     #[test]
@@ -309,9 +404,9 @@ mod tests {
     fn own_root_collision_is_ambiguous() {
         let root = tempdir().unwrap();
         let child = tempdir().unwrap();
-        let adapter = binding(AgentAdapterKind::Codex, Some("gpt-5.6"), None);
-        add_actor(&root, vec![adapter.clone()], ApprovalMode::Ask);
-        add_actor(&child, vec![adapter], ApprovalMode::Full);
+        let codex = binding(AgentAdapterKind::Codex, &[("model", "gpt-5.6")]);
+        add_actor(&root, codex.clone(), None);
+        add_actor(&child, codex, None);
 
         assert!(matches!(
             resolve_agent_launch_request(
@@ -331,11 +426,7 @@ mod tests {
     fn standalone_space_does_not_inherit_an_external_root_actor() {
         let root = tempdir().unwrap();
         let standalone = tempdir().unwrap();
-        add_actor(
-            &root,
-            vec![binding(AgentAdapterKind::Codex, None, None)],
-            ApprovalMode::Ask,
-        );
+        add_actor(&root, binding(AgentAdapterKind::Codex, &[]), None);
 
         assert!(matches!(
             resolve_agent_launch_request(
@@ -349,18 +440,18 @@ mod tests {
     }
 
     #[test]
-    fn inherited_actor_keeps_root_owner_and_approval_but_launches_in_child() {
+    fn inherited_actor_keeps_root_owner_and_mode_but_launches_in_child() {
         let root = tempdir().unwrap();
         let child = tempdir().unwrap();
         add_actor(
             &root,
-            vec![binding(AgentAdapterKind::Codex, Some("gpt-5.6"), None)],
-            ApprovalMode::Full,
+            binding(
+                AgentAdapterKind::Codex,
+                &[("model", "gpt-5.6"), ("reasoning_effort", "high")],
+            ),
+            Some("agent-full-access"),
         );
-        let diagnostics = BTreeMap::from([(
-            AgentAdapterKind::Codex,
-            diagnostic(AgentAdapterKind::Codex, AdapterDiagnosticStatus::Ready),
-        )]);
+        let diagnostics = ready(AgentAdapterKind::Codex);
 
         let AgentLaunchResolution::Ready {
             request,
@@ -379,116 +470,105 @@ mod tests {
         assert_eq!(request.actor_owner_path, root.path().to_string_lossy());
         assert_eq!(request.launch_space_path, child.path().to_string_lossy());
         assert_eq!(request.approval_mode, ApprovalMode::Full);
+        assert_eq!(request.binding.model.as_deref(), Some("gpt-5.6"));
+        assert_eq!(request.binding.effort.as_deref(), Some("high"));
         assert_eq!(selected_binding_index, 0);
+        assert_eq!(attempts.len(), 1);
         assert_eq!(attempts[0].diagnostic, diagnostics.values().next().cloned());
     }
 
     #[test]
-    fn a_hermes_binding_runs_with_the_actor_mode_it_has_an_equivalent_of() {
-        let diagnostics = BTreeMap::from([
-            (
-                AgentAdapterKind::Codex,
-                diagnostic(AgentAdapterKind::Codex, AdapterDiagnosticStatus::Ready),
-            ),
-            (
-                AgentAdapterKind::Hermes,
-                // Hermes has no sign-in status command (A5).
-                AdapterDiagnostic {
-                    code: Some("auth_status_unavailable".into()),
-                    version: Some("2026.9.24".into()),
-                    ..diagnostic(AgentAdapterKind::Hermes, AdapterDiagnosticStatus::Unknown)
-                },
-            ),
-        ]);
-        let bindings = vec![
-            binding(AgentAdapterKind::Hermes, None, None),
-            binding(AgentAdapterKind::Codex, None, None),
-        ];
-        for (mode, selected) in [
-            (ApprovalMode::Ask, 0),
-            (ApprovalMode::Auto, 0),
-            (ApprovalMode::Full, 1),
-        ] {
-            let space = tempdir().unwrap();
-            add_actor(&space, bindings.clone(), mode);
-            let AgentLaunchResolution::Ready {
-                selected_binding_index,
-                attempts,
-                ..
-            } = resolve_agent_launch_request(
-                space.path(),
-                None,
-                Some(&actor_reference()),
-                &diagnostics,
-            )
-            else {
-                panic!("an actor with a Codex binding is ready with {mode:?}");
-            };
-            assert_eq!(selected_binding_index, selected, "{mode:?}");
-            assert_eq!(
-                attempts[0].reason_code.as_deref(),
-                (mode == ApprovalMode::Full).then_some("approval_mapping_missing"),
-                "{mode:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn unavailable_primary_falls_back_in_declared_binding_order() {
+    fn an_actor_without_a_mode_launches_as_a_v1_actor_without_a_row() {
         let space = tempdir().unwrap();
-        add_actor(
-            &space,
-            vec![
-                binding(AgentAdapterKind::Codex, Some("gpt-5.6"), None),
-                binding(AgentAdapterKind::ClaudeCode, Some("sonnet"), None),
-            ],
-            ApprovalMode::Auto,
-        );
-        let diagnostics = BTreeMap::from([
-            (
-                AgentAdapterKind::Codex,
-                diagnostic(AgentAdapterKind::Codex, AdapterDiagnosticStatus::Missing),
-            ),
-            (
-                AgentAdapterKind::ClaudeCode,
-                diagnostic(AgentAdapterKind::ClaudeCode, AdapterDiagnosticStatus::Ready),
-            ),
-        ]);
-
-        let AgentLaunchResolution::Ready {
-            request,
-            selected_binding_index,
-            attempts,
-        } = resolve_agent_launch_request(
+        add_actor(&space, binding(AgentAdapterKind::ClaudeCode, &[]), None);
+        let AgentLaunchResolution::Ready { request, .. } = resolve_agent_launch_request(
             space.path(),
             None,
             Some(&actor_reference()),
-            &diagnostics,
-        )
-        else {
-            panic!("fallback binding should be ready");
+            &ready(AgentAdapterKind::ClaudeCode),
+        ) else {
+            panic!("a Claude Code actor is ready");
         };
-
-        assert_eq!(selected_binding_index, 1);
-        assert_eq!(request.binding.adapter, AgentAdapterKind::ClaudeCode);
-        assert_eq!(attempts.len(), 2);
-        assert_eq!(attempts[0].reason_code.as_deref(), Some("adapter_missing"));
-        assert!(attempts[0].diagnostic.is_some());
-        assert!(attempts[1].eligible);
+        assert_eq!(request.approval_mode, ApprovalMode::Ask);
     }
 
     #[test]
-    fn all_unavailable_or_unchecked_bindings_block_launch_with_full_attempts() {
-        let space = tempdir().unwrap();
+    fn values_the_v1_launch_shape_cannot_carry_refuse_the_launch() {
+        let setting = tempdir().unwrap();
         add_actor(
-            &space,
-            vec![
-                binding(AgentAdapterKind::Codex, None, None),
-                binding(AgentAdapterKind::ClaudeCode, None, None),
-            ],
-            ApprovalMode::Ask,
+            &setting,
+            binding(AgentAdapterKind::Codex, &[("collaboration_mode", "plan")]),
+            None,
         );
-        let diagnostics = BTreeMap::from([(
+        assert_eq!(
+            attempt_reason(resolve_agent_launch_request(
+                setting.path(),
+                None,
+                Some(&actor_reference()),
+                &ready(AgentAdapterKind::Codex),
+            ))
+            .as_deref(),
+            Some("binding_setting_unsupported")
+        );
+
+        let mode = tempdir().unwrap();
+        add_actor(
+            &mode,
+            binding(AgentAdapterKind::Codex, &[]),
+            Some("read-only"),
+        );
+        assert_eq!(
+            attempt_reason(resolve_agent_launch_request(
+                mode.path(),
+                None,
+                Some(&actor_reference()),
+                &ready(AgentAdapterKind::Codex),
+            ))
+            .as_deref(),
+            Some("mode_unsupported")
+        );
+    }
+
+    #[test]
+    fn the_participant_and_an_unknown_agent_are_not_launched() {
+        let participant = tempdir().unwrap();
+        add_actor(&participant, ActorBinding::Participant, None);
+        assert!(matches!(
+            resolve_agent_launch_request(
+                participant.path(),
+                None,
+                Some(&actor_reference()),
+                &ready(AgentAdapterKind::Codex),
+            ),
+            AgentLaunchResolution::UnavailableExecutor { .. }
+        ));
+
+        let unknown = tempdir().unwrap();
+        std::fs::create_dir_all(unknown.path().join(".svode")).unwrap();
+        std::fs::write(
+            svode_core::agent_actors::catalog_path(unknown.path()),
+            format!(
+                r#"{{"schemaVersion":2,"actors":[{{"id":"{ACTOR_ID}","name":"F","binding":{{"agent":"future-agent","settings":[]}}}}]}}"#
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            attempt_reason(resolve_agent_launch_request(
+                unknown.path(),
+                None,
+                Some(&actor_reference()),
+                &BTreeMap::new(),
+            ))
+            .as_deref(),
+            Some("unknown_adapter")
+        );
+    }
+
+    #[test]
+    fn an_unchecked_or_missing_agent_blocks_launch_with_its_attempt() {
+        let space = tempdir().unwrap();
+        add_actor(&space, binding(AgentAdapterKind::Codex, &[]), None);
+        let missing = BTreeMap::from([(
             AgentAdapterKind::Codex,
             diagnostic(AgentAdapterKind::Codex, AdapterDiagnosticStatus::Missing),
         )]);
@@ -499,101 +579,55 @@ mod tests {
             actor_owner_path,
             launch_space_path,
             ..
-        } = resolve_agent_launch_request(
-            space.path(),
-            None,
-            Some(&actor_reference()),
-            &diagnostics,
-        )
+        } = resolve_agent_launch_request(space.path(), None, Some(&actor_reference()), &missing)
         else {
-            panic!("no binding should be eligible");
+            panic!("the binding should not be eligible");
         };
 
         assert_eq!(code, AgentLaunchValidationCode::UnavailableExecutor);
         assert_eq!(actor_owner_path, space.path().to_string_lossy());
         assert_eq!(launch_space_path, space.path().to_string_lossy());
-        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts.len(), 1);
         assert_eq!(attempts[0].reason_code.as_deref(), Some("adapter_missing"));
         assert_eq!(
-            attempts[1].reason_code.as_deref(),
-            Some("adapter_unchecked")
-        );
-        assert!(attempts[1].diagnostic.is_none());
-    }
-
-    #[test]
-    fn invalid_selector_is_unavailable_even_when_adapter_diagnostic_is_ready() {
-        let space = tempdir().unwrap();
-        add_actor(
-            &space,
-            vec![binding(AgentAdapterKind::Codex, Some("future-model"), None)],
-            ApprovalMode::Ask,
-        );
-        let diagnostics = BTreeMap::from([(
-            AgentAdapterKind::Codex,
-            diagnostic(AgentAdapterKind::Codex, AdapterDiagnosticStatus::Ready),
-        )]);
-
-        let AgentLaunchResolution::UnavailableExecutor { attempts, .. } =
-            resolve_agent_launch_request(
+            attempt_reason(resolve_agent_launch_request(
                 space.path(),
                 None,
                 Some(&actor_reference()),
-                &diagnostics,
-            )
-        else {
-            panic!("invalid binding selector must block launch");
-        };
-
-        assert_eq!(attempts.len(), 1);
-        assert_eq!(
-            attempts[0].reason_code.as_deref(),
-            Some("unknown_model_selector")
-        );
-        assert_eq!(
-            attempts[0].diagnostic.as_ref().map(|value| value.status),
-            Some(AdapterDiagnosticStatus::Ready)
+                &BTreeMap::new(),
+            ))
+            .as_deref(),
+            Some("adapter_unchecked")
         );
     }
 
     #[test]
-    fn unsupported_owner_local_approval_blocks_every_otherwise_ready_binding() {
+    fn an_unreadable_device_mode_blocks_launch() {
         let space = tempdir().unwrap();
-        add_actor(
-            &space,
-            vec![binding(AgentAdapterKind::Codex, Some("gpt-5.6"), None)],
-            ApprovalMode::Ask,
-        );
+        std::fs::create_dir_all(space.path().join(".svode")).unwrap();
+        std::fs::write(
+            svode_core::agent_actors::catalog_path(space.path()),
+            format!(
+                r#"{{"schemaVersion":1,"actors":[{{"id":"{ACTOR_ID}","name":"A","adapters":[{{"adapter":"codex"}}]}}]}}"#
+            ),
+        )
+        .unwrap();
         std::fs::write(
             local_path(space.path()),
             format!(r#"{{"agentActors":{{"{ACTOR_ID}":{{"approvalMode":"future-mode"}}}}}}"#),
         )
         .unwrap();
-        let diagnostics = BTreeMap::from([(
-            AgentAdapterKind::Codex,
-            diagnostic(AgentAdapterKind::Codex, AdapterDiagnosticStatus::Ready),
-        )]);
 
-        let AgentLaunchResolution::UnavailableExecutor {
-            approval_mode,
-            attempts,
-            ..
-        } = resolve_agent_launch_request(
-            space.path(),
-            None,
-            Some(&actor_reference()),
-            &diagnostics,
-        )
+        let AgentLaunchResolution::UnavailableExecutor { approval_mode, .. } =
+            resolve_agent_launch_request(
+                space.path(),
+                None,
+                Some(&actor_reference()),
+                &ready(AgentAdapterKind::Codex),
+            )
         else {
-            panic!("unsupported approval mode must block launch");
+            panic!("an unreadable mode must block launch");
         };
-
         assert_eq!(approval_mode, None);
-        assert_eq!(attempts.len(), 1);
-        assert!(!attempts[0].eligible);
-        assert_eq!(
-            attempts[0].reason_code.as_deref(),
-            Some("approval_mode_unavailable")
-        );
     }
 }
