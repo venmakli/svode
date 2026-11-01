@@ -2867,6 +2867,7 @@
   "sessions_chat_settings_last_session": "From the last session",
   "sessions_chat_setting_variants_after_model": "Options appear after a session with this model",
   "sessions_chat_setting_agent_default": "Agent default",
+  "sessions_chat_setting_value_stale": "The agent no longer offers this value",
   "sessions_chat_setting_before_first_prompt": "the agent takes it with the first message",
   "voice_input_title": "Voice input",
   "voice_input_on_device": "Speech is recognized on this computer; the audio is not sent anywhere.",

@@ -29,7 +29,8 @@ function save(next: DefaultAgent | null) {
  * in the agent settings popover and stored at once. While the popover is
  * open the agent's draft session runs in the root of the window's project
  * and is released once it closes; without a project the agent's last
- * declarations show its settings.
+ * declarations show its settings. Opening writes nothing: a stored value
+ * the agent no longer offers shows with a note until another is chosen.
  */
 export function useDefaultAgentSetting() {
   const [open, setOpen] = useState(false);
@@ -55,6 +56,8 @@ export function useDefaultAgentSetting() {
         ?.offer ?? null,
     values: defaultAgent?.settings ?? NO_VALUES,
     updateValues,
+    // A stored value the agent no longer offers stays until a new choice.
+    keepUndeclared: true,
   });
   // The entry keeps naming the values while the opened agent starts.
   const [named, setNamed] = useState<{

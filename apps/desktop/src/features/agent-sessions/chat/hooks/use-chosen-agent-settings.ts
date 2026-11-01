@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { AgentCheckDto } from "../api/chat";
 import type { ChatAgent } from "../model/agents";
 import { declaredSettings, withKeptValue } from "../model/declared-settings";
-import type { SettingValue } from "../model/session-controls";
+import type { SessionSetting, SettingValue } from "../model/session-controls";
 import { useLastAgentDeclarations } from "./use-agent-declarations";
 import { useDraftAgent, type DraftAgentState } from "./use-draft-agent";
 import { useDraftSettings, type UpdateKeptValues } from "./use-draft-settings";
@@ -22,6 +22,38 @@ const UNCHECKED_READY: AgentCheckDto = {
     },
   },
 };
+
+const NO_STALE: SettingValue[] = [];
+
+/**
+ * The kept values the shown settings do not offer, apart from settings
+ * whose options for the chosen model are not known yet; the settings show
+ * them as kept.
+ */
+function keptStaleValues(
+  settings: SessionSetting[] | null,
+  values: SettingValue[],
+  withoutVariants: string[],
+): { settings: SessionSetting[] | null; staleValues: SettingValue[] } {
+  if (!settings) return { settings, staleValues: NO_STALE };
+  const stale = values.filter(
+    (value) =>
+      !withoutVariants.includes(value.setting) &&
+      !settings.some(
+        (setting) =>
+          setting.id === value.setting &&
+          setting.options.some((option) => option.value === value.value),
+      ),
+  );
+  if (stale.length === 0) return { settings, staleValues: NO_STALE };
+  return {
+    settings: settings.map((setting) => {
+      const kept = stale.find((value) => value.setting === setting.id);
+      return kept ? { ...setting, currentValue: kept.value } : setting;
+    }),
+    staleValues: stale,
+  };
+}
 
 function offerReadiness(offer: ChatAgent["offer"] | null): DraftAgentState {
   switch (offer?.state) {
@@ -46,6 +78,9 @@ function offerReadiness(offer: ChatAgent["offer"] | null): DraftAgentState {
  * keeps the value the agent confirmed. A draft session that takes values
  * only with the first send, no draft session, or no `cwd` at all show the
  * agent's last declarations, and the host keeps a chosen value at once.
+ * A host that stores its values (`keepUndeclared`) keeps a value the agent
+ * no longer offers until the user chooses another: it shows as kept, and
+ * nothing is written for it on opening.
  */
 export function useChosenAgentSettings({
   agent,
@@ -53,6 +88,7 @@ export function useChosenAgentSettings({
   offer,
   values,
   updateValues,
+  keepUndeclared = false,
 }: {
   agent: string | null;
   /** Where the draft session opens; null opens none and starts no agent. */
@@ -65,6 +101,8 @@ export function useChosenAgentSettings({
   /** The values the host keeps for `agent`. */
   values: SettingValue[];
   updateValues: UpdateKeptValues;
+  /** Keep values the agent no longer offers instead of dropping them. */
+  keepUndeclared?: boolean;
 }) {
   const connected = cwd !== null;
   const {
@@ -83,6 +121,7 @@ export function useChosenAgentSettings({
     snapshot,
     values,
     updateValues,
+    keepUndeclared,
   );
   // The agent's ACP connection starts without sign-in; its own sign-in
   // check tells that the first send would be refused.
@@ -122,6 +161,13 @@ export function useChosenAgentSettings({
     : liveSession && snapshot
       ? snapshot.settings
       : null;
+  const kept = useMemo(
+    () =>
+      keepUndeclared
+        ? keptStaleValues(shownSettings, values, declared?.withoutVariants ?? [])
+        : { settings: shownSettings, staleValues: NO_STALE },
+    [declared, keepUndeclared, shownSettings, values],
+  );
   const keepValue = useCallback(
     (value: SettingValue) =>
       updateValues((latest) =>
@@ -140,7 +186,12 @@ export function useChosenAgentSettings({
     /** The draft session's settings, commands and usage once it exists. */
     snapshot: draftSession ? snapshot : null,
     /** The settings shown, with the kept values. */
-    settings: shownSettings,
+    settings: kept.settings,
+    /**
+     * With `keepUndeclared`: the kept values the agent does not offer now,
+     * shown as kept with a note.
+     */
+    staleValues: kept.staleValues,
     /** The host keeps a chosen value without the agent. */
     keepsValues,
     /** The settings come from the agent's last session on this device. */

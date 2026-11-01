@@ -58,6 +58,7 @@ export function DefaultAgentRow({
             settingsAfterSend: chosen.settingsAfterSend,
             recorded: chosen.recorded,
             withoutVariants: chosen.withoutVariants,
+            staleValues: chosen.staleValues,
           }}
           settings={chosen.settings}
           modeRow

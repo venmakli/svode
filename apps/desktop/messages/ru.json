@@ -2867,6 +2867,7 @@
   "sessions_chat_settings_last_session": "По последней сессии",
   "sessions_chat_setting_variants_after_model": "Варианты появятся после сессии с этой моделью",
   "sessions_chat_setting_agent_default": "По умолчанию агента",
+  "sessions_chat_setting_value_stale": "Агент больше не предлагает это значение",
   "sessions_chat_setting_before_first_prompt": "агент примет значение с первой отправкой",
   "voice_input_title": "Голосовой ввод",
   "voice_input_on_device": "Речь распознаётся на этом компьютере, звук никуда не отправляется.",

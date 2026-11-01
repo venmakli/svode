@@ -17,7 +17,8 @@ export type UpdateKeptValues = (
  * to the draft's session and the host keeps the value once the agent
  * confirmed it. A draft session created anew, as after a reload, gets the
  * kept values again; one it does not offer is dropped with its reason and
- * never replaced silently.
+ * never replaced silently, unless the host keeps it (`keepUndeclared`), as
+ * a stored setting does until the user chooses another value.
  */
 export function useDraftSettings(
   agent: string | null,
@@ -25,6 +26,7 @@ export function useDraftSettings(
   snapshot: AgentSessionSnapshotDto | null,
   values: AgentSettingValueDto[],
   updateValues: UpdateKeptValues,
+  keepUndeclared = false,
 ) {
   const settings = useSessionSettings(draftSession);
   const { change, refuse } = settings;
@@ -41,7 +43,8 @@ export function useDraftSettings(
     }
     restored.current = draftSession;
     const { apply, undeclared } = draftValuesToApply(values, snapshot.settings);
-    const drop = (dropped: AgentSettingValueDto[]) =>
+    const drop = (dropped: AgentSettingValueDto[]) => {
+      if (keepUndeclared) return;
       updateValues((latest) =>
         latest.filter(
           (value) =>
@@ -51,7 +54,8 @@ export function useDraftSettings(
             ),
         ),
       );
-    if (undeclared.length > 0) {
+    };
+    if (undeclared.length > 0 && !keepUndeclared) {
       drop(undeclared);
       refuse({ ...undeclared[0], reason: { kind: "not_declared" } });
     }
@@ -60,7 +64,16 @@ export function useDraftSettings(
         if (!(await change(value))) drop([value]);
       }
     })();
-  }, [agent, change, draftSession, refuse, snapshot, updateValues, values]);
+  }, [
+    agent,
+    change,
+    draftSession,
+    keepUndeclared,
+    refuse,
+    snapshot,
+    updateValues,
+    values,
+  ]);
 
   const changeSetting = useCallback(
     async (value: AgentSettingValueDto) => {

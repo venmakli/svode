@@ -1,5 +1,6 @@
 import { Loader2, Settings2 } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useMemo,
   useRef,
@@ -62,6 +63,12 @@ export interface AgentSettingsChoice {
   recorded?: boolean;
   /** Settings whose options show after a session with the chosen model. */
   withoutVariants?: string[];
+  /**
+   * Values the host keeps that the agent does not offer now (DF-171 R2):
+   * each shows in its row with a note under it, and one of a setting the
+   * agent no longer declares in a row of its own.
+   */
+  staleValues?: SettingValue[];
 }
 
 /**
@@ -461,6 +468,15 @@ function SettingRows({
       </div>
     );
   }
+  const staleNote = (setting: string) =>
+    choice?.staleValues?.some((value) => value.setting === setting) ? (
+      <p className="px-2 pb-1.5 text-xs text-muted-foreground">
+        {m.sessions_chat_setting_value_stale()}
+      </p>
+    ) : null;
+  const undeclared = (choice?.staleValues ?? []).filter(
+    (value) => !entries.some(({ setting }) => setting.id === value.setting),
+  );
   const row = ({ label, setting }: SettingEntry) =>
     choice?.withoutVariants?.includes(setting.id) ? (
       <div key={setting.id}>
@@ -473,15 +489,17 @@ function SettingRows({
         </p>
       </div>
     ) : (
-      <SettingRow
-        key={setting.id}
-        label={label}
-        setting={setting}
-        canChange={canChange}
-        waiting={changing === setting.id}
-        autoFocus={returnTo === setting.id}
-        onOpen={() => onOpen(setting)}
-      />
+      <Fragment key={setting.id}>
+        <SettingRow
+          label={label}
+          setting={setting}
+          canChange={canChange}
+          waiting={changing === setting.id}
+          autoFocus={returnTo === setting.id}
+          onOpen={() => onOpen(setting)}
+        />
+        {staleNote(setting.id)}
+      </Fragment>
     );
   const model = entries[0]?.setting.category === "model" ? entries[0] : null;
   const rest = model ? entries.slice(1) : entries;
@@ -502,6 +520,12 @@ function SettingRows({
         </p>
       )}
       {rest.map(row)}
+      {undeclared.map((value) => (
+        <div key={value.setting}>
+          <SettingsStaticRow label={value.setting} meta={value.value} />
+          {staleNote(value.setting)}
+        </div>
+      ))}
       {choice?.recorded && (
         <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
           {m.sessions_chat_settings_last_session()}

@@ -240,6 +240,53 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
   );
 
   rowTest(
+    "a stored value the agent no longer offers shows in its row with a note and stays stored until a new choice writes",
+    async () => {
+      stored = {
+        agent: "codex",
+        settings: [
+          { setting: "model", value: "gpt-4-old" },
+          { setting: "mode", value: "agent" },
+          { setting: "legacy_toggle", value: "on" },
+        ],
+      };
+      await mount(<DefaultAgentRow onSignIn={() => undefined} />);
+      await click(trigger());
+      // Only the values the agent offers apply; nothing is written.
+      expect(
+        calls
+          .filter((call) => call.command === "agent_runtime_set_setting")
+          .map((call) => call.payload.value),
+      ).toEqual([{ setting: "mode", value: "agent" }]);
+      expect(calls.some((call) => call.command === "agent_default_set")).toBe(
+        false,
+      );
+      expect(rowValue(m.sessions_chat_model())).toBe("gpt-4-old");
+      expect(rowValue("legacy_toggle")).toBe("on");
+      expect(staleNotes()).toBe(2);
+      expect(trigger().textContent?.includes("gpt-4-old")).toBe(true);
+
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Sol");
+      expect(lastCall("agent_default_set")).toEqual({
+        defaultAgent: {
+          agent: "codex",
+          settings: [
+            { setting: "mode", value: "agent" },
+            { setting: "legacy_toggle", value: "on" },
+            { setting: "model", value: "gpt-6-sol" },
+          ],
+        },
+      });
+      await deliver("d1", {
+        change: "settings",
+        value: settings({ model: "gpt-6-sol" }),
+      });
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-6 Sol");
+      expect(staleNotes()).toBe(1);
+    },
+  );
+
+  rowTest(
     "without a project the last declarations show the settings with their mark, a value is stored at once and no agent starts",
     async () => {
       spaceState.activeRootPath = null;
@@ -287,6 +334,13 @@ if (process.env.SVODE_DEFAULT_AGENT_ROW_DOM !== "1") {
       ).toBe(false);
     },
   );
+
+  function staleNotes() {
+    return Array.from(popover()?.querySelectorAll("p") ?? []).filter(
+      (element) =>
+        element.textContent === m.sessions_chat_setting_value_stale(),
+    ).length;
+  }
 
   function lastCall(command: string) {
     return calls.filter((call) => call.command === command).at(-1)?.payload;
