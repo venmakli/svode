@@ -1,9 +1,14 @@
 import { create } from "zustand";
-import { getGlobalIdentity, saveGlobalIdentity } from "../api";
+import {
+  getGlobalIdentity,
+  identityLoadErrorKind,
+  saveGlobalIdentity,
+} from "../api";
 import type {
   GitIdentity,
   GlobalIdentityMutationResult,
   GlobalIdentityResult,
+  IdentityLoadError,
 } from "./types";
 
 interface IdentityState {
@@ -12,7 +17,7 @@ interface IdentityState {
   fingerprint: string;
   loaded: boolean;
   loading: boolean;
-  loadError: string | null;
+  loadError: IdentityLoadError | null;
   requestGeneration: number;
   refreshVersion: number;
   load: () => Promise<GlobalIdentityResult>;
@@ -22,6 +27,10 @@ interface IdentityState {
     expectedFingerprint?: string,
   ) => Promise<GlobalIdentityMutationResult>;
   bumpRefreshVersion: () => void;
+}
+
+function toLoadError(error: unknown): IdentityLoadError {
+  return { kind: identityLoadErrorKind(error), message: errorMessage(error) };
 }
 
 function errorMessage(error: unknown): string {
@@ -66,7 +75,7 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
       if (get().requestGeneration === generation) {
         set({
           loading: false,
-          loadError: get().loaded ? null : errorMessage(error),
+          loadError: get().loaded ? null : toLoadError(error),
         });
       }
       throw error;

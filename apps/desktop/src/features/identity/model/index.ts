@@ -7,6 +7,8 @@ export type {
   GlobalIdentityMutationStatus,
   GlobalIdentityResult,
   IdentityFieldSources,
+  IdentityLoadError,
+  IdentityLoadErrorKind,
   RepoIdentityResult,
   RepoIdentitySource,
 } from "./types";

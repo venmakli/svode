@@ -2,6 +2,7 @@ export {
   getGlobalIdentity,
   getProjectFanoutPreview,
   getRepoIdentity,
+  identityLoadErrorKind,
   listenGlobalIdentityChanged,
   saveGlobalIdentity,
   saveProjectIdentity,

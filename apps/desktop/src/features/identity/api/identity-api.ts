@@ -7,11 +7,13 @@ import {
   saveProjectIdentity as savePlatformProjectIdentity,
   saveRepoIdentity as savePlatformRepoIdentity,
 } from "@/platform/identity/identity-api";
+import { isGitUnavailableError } from "@/platform/git/availability-errors";
 
 import type {
   FanoutPreviewEntry,
   GlobalIdentityMutationResult,
   GlobalIdentityResult,
+  IdentityLoadErrorKind,
   RepoIdentityResult,
 } from "../model";
 
@@ -26,6 +28,10 @@ export interface SaveProjectIdentityInput {
   name: string | null;
   email: string | null;
   targetSpaces: string[];
+}
+
+export function identityLoadErrorKind(error: unknown): IdentityLoadErrorKind {
+  return isGitUnavailableError(error) ? "git_unavailable" : "unreadable";
 }
 
 export function getGlobalIdentity(): Promise<GlobalIdentityResult> {

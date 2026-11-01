@@ -11,6 +11,17 @@ export interface IdentityFieldSources {
   email: GitIdentityFieldSource;
 }
 
+/**
+ * Why the global identity could not be read: Git itself is missing or too old
+ * (answered by the Git dialog), or its config could not be read.
+ */
+export type IdentityLoadErrorKind = "git_unavailable" | "unreadable";
+
+export interface IdentityLoadError {
+  kind: IdentityLoadErrorKind;
+  message: string;
+}
+
 export interface GlobalIdentityResult {
   global: GitIdentity | null;
   source: "global" | "missing";

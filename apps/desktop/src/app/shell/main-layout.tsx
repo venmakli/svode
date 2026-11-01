@@ -43,10 +43,8 @@ import {
   SpaceSidebar,
 } from "@/features/space/app-shell";
 import {
-  GitMissingDialog,
   SpaceGitWatcher,
   useAppGitFocus,
-  useGitAvailability,
 } from "@/features/git/app-shell";
 import { useGlobalIdentity } from "@/features/identity";
 import {
@@ -163,7 +161,6 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
     [activeRootIcon, activeRootName, spaces],
   );
   useNavigationStateLifecycle(activeRootPath, navigationSpacesKey);
-  const { available, availability, recheck } = useGitAvailability();
   const identity = useGlobalIdentity();
   const identityName = identity?.name ?? null;
   const identityEmail = identity?.email ?? null;
@@ -258,11 +255,6 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
       <ConflictFileChanges />
       <AgentRequestsHost />
       {activeRootPath && <SpaceGitWatcher spacePath={activeRootPath} />}
-      <GitMissingDialog
-        open={available === false}
-        availability={availability}
-        onRecheck={recheck}
-      />
       {view === "space" ? (
         <SpaceCommandPalette
           onBeforeNavigation={passNavigationGuards}

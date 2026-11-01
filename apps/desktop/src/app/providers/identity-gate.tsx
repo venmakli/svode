@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Outlet } from "@tanstack/react-router";
 import * as m from "@/paraglide/messages.js";
 import { Button } from "@/components/ui/button";
@@ -8,12 +9,26 @@ import { useIdentityGateState } from "@/features/identity";
 import { PageFilenameWarningDialog } from "@/features/page";
 import { SettingsDialogs } from "./settings-dialogs";
 
-export function IdentityGate() {
+/**
+ * Mounted under the Git check. A Git that went missing or too old since then
+ * is handed back to that check instead of showing as an unreadable identity.
+ */
+export function IdentityGate({
+  onGitUnavailable,
+}: {
+  onGitUnavailable: () => Promise<void>;
+}) {
   useIdentityCheck();
   const { loaded, loading, loadError, source, retryLoad } =
     useIdentityGateState();
+  const gitUnavailable = loadError?.kind === "git_unavailable";
 
-  if (loadError) {
+  // Every new refusal (`loadError` changes per failed read) checks Git again.
+  useEffect(() => {
+    if (gitUnavailable) void onGitUnavailable();
+  }, [gitUnavailable, loadError, onGitUnavailable]);
+
+  if (loadError && !gitUnavailable) {
     return (
       <IdentityLoadError
         loading={loading}
@@ -26,7 +41,7 @@ export function IdentityGate() {
     );
   }
 
-  if (!loaded) {
+  if (!loaded || gitUnavailable) {
     return <AppBootstrapScreen />;
   }
 

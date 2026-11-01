@@ -4,9 +4,8 @@ export {
   closeAllVersionGroups,
   closeLeftVersionGroup,
 } from "./api/git-auto-version-actions";
-export { useGitAvailability } from "./hooks/use-git-availability";
 export { GitSyncStatusWidget } from "./ui/git-sync-status-widget";
-export { GitMissingDialog } from "./ui/git-missing-dialog";
+export { GitGate } from "./ui/git-gate";
 export { SpaceGitWatcher } from "./ui/space-git-watcher";
 export {
   commitSaveScopeAndMaybeSync,

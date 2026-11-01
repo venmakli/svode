@@ -1,5 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { useDictatedDrafts } from "@/features/agent-sessions";
+import { GitGate } from "@/features/git/app-shell";
 import { RootProjectMenuBridge } from "@/features/home";
 import {
   AppPreferencesProvider,
@@ -27,7 +28,9 @@ function LocalizedAppProviders() {
   return (
     <DogfoodUpdatesProvider version={version} buildCommit={buildCommit}>
       <RootProjectMenuBridge />
-      <IdentityGate />
+      <GitGate fallback={<AppBootstrapScreen />}>
+        {(recheckGit) => <IdentityGate onGitUnavailable={recheckGit} />}
+      </GitGate>
       <Toaster />
     </DogfoodUpdatesProvider>
   );
