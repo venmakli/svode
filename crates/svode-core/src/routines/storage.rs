@@ -156,14 +156,16 @@ async fn schema_status(pool: &SqlitePool) -> Result<SchemaStatus, RoutineStoreEr
     })
 }
 
-/// Columns of how a run's agent was launched, added to stores created
-/// without them. The schema version stays, so earlier Svode versions keep
-/// opening the store and ignore the columns; their rows read as terminal
-/// launches without a reason.
-const RUN_LAUNCH_COLUMNS: [&str; 3] = [
+/// Columns of how a run's agent was launched, or why its launch was
+/// refused before the first prompt (JSON), added to stores created without
+/// them. The schema version stays, so earlier Svode versions keep opening
+/// the store and ignore the columns; their rows read as terminal launches
+/// without a reason.
+const RUN_LAUNCH_COLUMNS: [&str; 4] = [
     "launch_transport",
     "terminal_choice",
     "terminal_choice_detail",
+    "launch_refusal",
 ];
 
 async fn add_run_launch_columns(pool: &SqlitePool) -> Result<(), RoutineStoreError> {
@@ -235,7 +237,8 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<(), RoutineStoreErro
             updated_at TEXT NOT NULL,
             launch_transport TEXT,
             terminal_choice TEXT,
-            terminal_choice_detail TEXT
+            terminal_choice_detail TEXT,
+            launch_refusal TEXT
         )
         "#,
         "CREATE INDEX idx_routine_runs_owner_routine ON routine_runs(owner_path, routine_id, created_at DESC)",

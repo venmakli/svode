@@ -22,7 +22,9 @@ use svode_agents::registry::{
     AdapterRuntimeRegistry, AdapterTarget, AgentVerdict, CatalogSource, SystemRuntimeCommandRunner,
 };
 use svode_agents::{AcpLaunch, AgentCheck, AgentInfo};
-use svode_core::agent_adapters::{AgentAdapterKind, CustomAgentId, resolve_executable_path};
+use svode_core::agent_adapters::{
+    AgentAdapterKind, AgentId, CustomAgentId, resolve_executable_path,
+};
 use svode_core::default_agent::{self, DefaultAgent};
 
 use crate::agent_runtime::connections::{KeepFuture, LaunchPlanner, PlanFuture};
@@ -140,39 +142,67 @@ impl AgentSetupState {
         svode_agents::adapters::chat_offer(deferred, &plan, authenticated)
     }
 
-    /// The ACP launch plan of a Routine or Agent Actor launch of `agent` in
-    /// `space`, whose Space-local executable override applies, with the
-    /// launch provenance `env`, and the chat offer of `chat_offer` for it;
-    /// `authenticated` is the sign-in check the launch already ran. Starts
-    /// no ACP process.
+    /// The ACP launch plan of a Routine launch of `agent` in `space` with
+    /// the launch provenance `env`, and how a new session would offer it
+    /// (`chat_offer`), its bounded sign-in check run in `space`. A built-in
+    /// agent takes the Space-local executable override; a custom agent is
+    /// one of this device, as the default agent may be. Starts no ACP
+    /// process.
     pub(crate) async fn launch_offer(
         &self,
-        agent: AgentAdapterKind,
+        agent: &AgentId,
         space: &Path,
         env: BTreeMap<String, String>,
-        authenticated: Option<bool>,
     ) -> (
         Result<svode_agents::AcpLaunch, LaunchUnavailable>,
         Option<ChatOffer>,
     ) {
+        let Some(kind) = agent.builtin() else {
+            let plan = match CustomAgentId::parse(agent.as_str())
+                .ok()
+                .and_then(|id| self.custom_agent(&id).ok())
+            {
+                Some(custom) => match self.custom_context(&custom.definition.command).await {
+                    Ok(context) => custom_launch_plan(
+                        &custom,
+                        self.choice(agent.as_str()),
+                        &LaunchContext { env, ..context },
+                    ),
+                    Err(reason) => Err(reason),
+                },
+                None => Err(LaunchUnavailable::NotSupported),
+            };
+            let offer = svode_agents::adapters::chat_offer(false, &plan, None);
+            return (plan, offer);
+        };
+        let target = AdapterTarget {
+            cwd: space.to_path_buf(),
+            search_path: ProcessPath::session().get().await.map(ToOwned::to_owned),
+        };
         let context = LaunchContext {
-            target: AdapterTarget {
-                cwd: space.to_path_buf(),
-                search_path: ProcessPath::session().get().await.map(ToOwned::to_owned),
-            },
+            target: target.clone(),
             environment: LoginEnvironment::session().get().await,
             env,
         };
         let plan = self
             .store
             .launch_plan(
-                agent,
-                self.choice(agent.as_str()),
+                kind,
+                self.choice(kind.as_str()),
                 &context,
                 &SystemRuntimeCommandRunner,
             )
             .await;
-        let offer = svode_agents::adapters::chat_offer(deferred(agent), &plan, authenticated);
+        let authenticated = match &plan {
+            Ok(_) if !deferred(kind) => {
+                AdapterRuntimeRegistry
+                    .diagnose(kind, &target, &SystemRuntimeCommandRunner)
+                    .await
+                    .authenticated
+            }
+            _ => None,
+        };
+        let offer = svode_agents::adapters::chat_offer(deferred(kind), &plan, authenticated);
         (plan, offer)
     }
 

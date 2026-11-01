@@ -17,7 +17,9 @@ use svode_agents::identity::SessionKey;
 use svode_agents::prompt::PromptPart;
 use svode_agents::status::{SessionState, StopReason};
 use svode_agents::writer::Writer;
-use svode_agents::{AcpLaunch, AgentRuntime, ConnectionId, ConnectionLease, SettingValue};
+use svode_agents::{
+    AcpLaunch, AgentRuntime, ConnectionId, ConnectionLease, LaunchRefused, LaunchValues,
+};
 use svode_core::agent_adapters::AgentId;
 use svode_core::routines::model::{RoutineDispatchResult, RoutineRunLaunch};
 use svode_core::routines::operational::{self, NewRoutineRun};
@@ -53,7 +55,7 @@ pub(super) struct AcpRun<'a> {
     pub source: AgentId,
     pub launch: AcpLaunch,
     pub cwd: &'a Path,
-    pub settings: Vec<SettingValue>,
+    pub values: LaunchValues,
     pub prompt: String,
     /// The opaque Routine caller token, added to the agent's environment.
     pub token: String,
@@ -63,9 +65,10 @@ pub(super) struct AcpRun<'a> {
 
 /// How an ACP start ended short of a started run.
 pub(super) enum AcpStartFailure {
-    /// The connection, the session or a setting failed before the first
-    /// prompt: no run was recorded and the writer is free again.
-    BeforePrompt(String),
+    /// The connection, the session or a value failed before the first
+    /// prompt: no run was recorded, the writer is free again and no prompt
+    /// went out.
+    Refused(LaunchRefused),
     Failed(AppError),
 }
 
@@ -116,7 +119,7 @@ impl RoutineAcpLaunches {
     }
 
     /// Starts the run's session: claims the ACP writer by launch id before
-    /// the agent starts, creates the session with the settings applied
+    /// the agent starts, creates the session with the launch values applied
     /// before the first prompt, records the run with the canonical id and
     /// sends the instruction as the first prompt. A failure before the
     /// prompt leaves no run and no writer behind.
@@ -124,14 +127,13 @@ impl RoutineAcpLaunches {
         &self,
         run: AcpRun<'_>,
     ) -> Result<RoutineDispatchResult, AcpStartFailure> {
-        let before_prompt =
-            |error: &dyn std::fmt::Display| AcpStartFailure::BeforePrompt(error.to_string());
+        let before_prompt = |error| AcpStartFailure::Refused(LaunchRefused { error, left: None });
         let claim = self
             .runtime
             .writers()
             .claim_launch(run.new_run.launch_id, Writer::Acp)
             .map_err(|refusal| {
-                before_prompt(&svode_agents::AgentRuntimeError::WriterRefused { refusal })
+                before_prompt(svode_agents::AgentRuntimeError::WriterRefused { refusal })
             })?;
         // The token is the launch's own provenance: no connection of
         // another origin shares the process that carries it.
@@ -141,16 +143,12 @@ impl RoutineAcpLaunches {
             run.token.clone(),
         );
         // Held while the launch's turn runs.
-        let lease = self
-            .runtime
-            .acquire(launch)
-            .await
-            .map_err(|error| before_prompt(&error))?;
+        let lease = self.runtime.acquire(launch).await.map_err(before_prompt)?;
         let session = self
             .runtime
-            .new_launch_session(lease.connection(), run.cwd, &run.settings, claim)
+            .new_launch_session(lease.connection(), run.cwd, &run.values, claim)
             .await
-            .map_err(|error| before_prompt(&error))?;
+            .map_err(AcpStartFailure::Refused)?;
         let source_session_id = session.session_id.clone();
         let agent_session_id = catalog_session_id(&run.source, &session);
         let recorded = operational::create_run(
@@ -171,6 +169,7 @@ impl RoutineAcpLaunches {
             source_session_id: Some(source_session_id.clone()),
             pty_id: None,
             message,
+            refusal: None,
         };
         if let Err(error) = recorded {
             let _ = self.runtime.release_session(&session).await;

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 
+import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
@@ -7,7 +8,13 @@ import {
   dispatchManualRoutine,
   type RoutineOwnerInput,
 } from "../api/routines-api";
-import type { RoutineRow, RoutineSessionTarget } from "../model/types";
+import { routineLaunchRefusalText } from "../lib/routine-launch-refusal";
+import { RoutineLaunchRefusedError } from "../model/launch-refusal";
+import type {
+  RoutineLaunchRefusal,
+  RoutineRow,
+  RoutineSessionTarget,
+} from "../model/types";
 
 export function useRoutineDispatch({
   onOpenSession,
@@ -17,9 +24,11 @@ export function useRoutineDispatch({
   owner: RoutineOwnerInput;
 }) {
   const [pendingRoutineId, setPendingRoutineId] = useState<string | null>(null);
+  const agents = useAgentAdapterDictionary();
   const [lastError, setLastError] = useState<{
     routineId: string;
     message: string;
+    refusal: RoutineLaunchRefusal | null;
   } | null>(null);
 
   const getRunState = useCallback(
@@ -35,6 +44,13 @@ export function useRoutineDispatch({
     [lastError, pendingRoutineId],
   );
 
+  /** Why the last manual run of the Routine was refused before its prompt. */
+  const getRunRefusal = useCallback(
+    (row: RoutineRow) =>
+      lastError?.routineId === row.id ? lastError.refusal : null,
+    [lastError],
+  );
+
   const run = useCallback(
     async (row: RoutineRow) => {
       const disabledReason = routineRunDisabledReason(row);
@@ -46,8 +62,14 @@ export function useRoutineDispatch({
       try {
         const result = await dispatchManualRoutine(owner, row);
         if (result.status === "blocked" || result.status === "failed") {
-          setLastError({ message: result.message, routineId: row.id });
-          throw new Error(result.message);
+          const refusal = result.refusal;
+          const message = refusal
+            ? routineLaunchRefusalText(refusal, agents.label)
+            : result.message;
+          setLastError({ message, refusal, routineId: row.id });
+          throw refusal
+            ? new RoutineLaunchRefusedError(message, refusal)
+            : new Error(message);
         }
         onOpenSession({
           launchId: result.launchId,
@@ -57,7 +79,7 @@ export function useRoutineDispatch({
         setPendingRoutineId((current) => (current === row.id ? null : current));
       }
     },
-    [onOpenSession, owner],
+    [agents, onOpenSession, owner],
   );
 
   const openLastSession = useCallback(
@@ -71,7 +93,7 @@ export function useRoutineDispatch({
     [onOpenSession],
   );
 
-  return { getRunState, openLastSession, run };
+  return { getRunRefusal, getRunState, openLastSession, run };
 }
 
 function routineRunDisabledReason(row: RoutineRow) {

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent_actors::executor::{ExecutorResolution, ExecutorSource};
 use crate::index::IndexKey;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,10 +54,14 @@ pub struct RoutineRunRow {
     pub terminal_observed_at: Option<String>,
     pub session_status: Option<String>,
     pub launch: RoutineRunLaunch,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_refusal: Option<RoutineLaunchRefusal>,
 }
 
 /// Why a run's agent was launched in a managed terminal instead of ACP: a
-/// closed set (Stage 10 `02` "Routine launch through ACP").
+/// closed set (Stage 10 `02` "Routine launch through ACP"). Runs of earlier
+/// versions keep it; a Routine of an Agent Actor runs only over ACP now
+/// (Stage 11 `03`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutineTerminalChoice {
@@ -126,6 +131,168 @@ impl RoutineRunLaunch {
                 reason: reason.and_then(RoutineTerminalChoice::parse),
                 detail,
             },
+        }
+    }
+}
+
+/// Why a Routine launch of an Agent Actor was refused before its first
+/// prompt (Stage 11 `03`, «Запуск Рутины»): no prompt went out, and no other
+/// agent and no terminal started instead.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineLaunchRefusalReason {
+    /// The Actor runs the participant's agent and this device chose no
+    /// default agent.
+    DefaultAgentNotSet,
+    /// The binding names an agent this version does not know, or a custom
+    /// agent a V1 catalog kept.
+    UnknownAgent,
+    /// The device mode of the Actor cannot be read.
+    ModeUnavailable,
+    /// The agent is not ready on this device: disabled, not installed, not
+    /// signed in or not startable.
+    AgentNotReady,
+    /// The connection or the session failed before the first prompt.
+    ConnectionFailed,
+    /// The agent did not declare the value at launch.
+    SettingNotDeclared,
+    /// A catalog value of a setting the agent declares as its mode, which
+    /// only this device chooses.
+    SettingIsMode,
+    /// The agent refused the value or did not confirm it.
+    SettingRefused,
+}
+
+/// Where the user fixes a refused launch: the Actor's binding or the agent
+/// settings of the device, which hold the default agent and the agents'
+/// readiness.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineLaunchRecovery {
+    ActorEditor,
+    AgentSettings,
+}
+
+/// A refused launch with its reason: the setting and value when the reason
+/// is in them, the agent, and the bounded text behind it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutineLaunchRefusal {
+    pub reason: RoutineLaunchRefusalReason,
+    pub recovery: RoutineLaunchRecovery,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setting: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Bound of the agent, connection or device text a refusal keeps.
+const REFUSAL_DETAIL_BYTES: usize = 512;
+
+impl RoutineLaunchRefusal {
+    /// A refusal of a launch whose values come from `source`: a value of
+    /// the Actor's binding is fixed in the Actor editor, one of the default
+    /// agent in the agent settings.
+    pub fn new(
+        reason: RoutineLaunchRefusalReason,
+        source: Option<ExecutorSource>,
+        agent: Option<String>,
+    ) -> Self {
+        use RoutineLaunchRefusalReason as Reason;
+        let recovery = match reason {
+            Reason::DefaultAgentNotSet | Reason::AgentNotReady | Reason::ConnectionFailed => {
+                RoutineLaunchRecovery::AgentSettings
+            }
+            Reason::UnknownAgent | Reason::ModeUnavailable => RoutineLaunchRecovery::ActorEditor,
+            Reason::SettingNotDeclared | Reason::SettingIsMode | Reason::SettingRefused => {
+                match source {
+                    Some(ExecutorSource::DefaultAgent) => RoutineLaunchRecovery::AgentSettings,
+                    Some(ExecutorSource::Binding) | None => RoutineLaunchRecovery::ActorEditor,
+                }
+            }
+        };
+        Self {
+            reason,
+            recovery,
+            agent,
+            setting: None,
+            value: None,
+            detail: None,
+        }
+    }
+
+    pub fn with_value(mut self, setting: &str, value: &str) -> Self {
+        self.setting = Some(setting.into());
+        self.value = Some(value.into());
+        self
+    }
+
+    pub fn with_detail(mut self, detail: &str) -> Self {
+        let detail = detail.trim();
+        let mut end = detail.len().min(REFUSAL_DETAIL_BYTES);
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.detail = Some(detail[..end].to_string()).filter(|detail| !detail.is_empty());
+        self
+    }
+
+    /// The refusal of an executor the resolver could not resolve to an
+    /// agent: `None` for a resolved one, and for a missing executor, Actor or
+    /// an ambiguous reference, which the Routine's own diagnostics name.
+    pub fn from_resolution(resolution: &ExecutorResolution) -> Option<Self> {
+        use RoutineLaunchRefusalReason as Reason;
+        Some(match resolution {
+            ExecutorResolution::DefaultAgentNotSet { .. } => Self::new(
+                Reason::DefaultAgentNotSet,
+                Some(ExecutorSource::DefaultAgent),
+                None,
+            ),
+            ExecutorResolution::UnknownAgent { agent, .. } => Self::new(
+                Reason::UnknownAgent,
+                Some(ExecutorSource::Binding),
+                Some(agent.as_str().into()),
+            ),
+            ExecutorResolution::ModeUnavailable { message, .. } => {
+                Self::new(Reason::ModeUnavailable, Some(ExecutorSource::Binding), None)
+                    .with_detail(message)
+            }
+            ExecutorResolution::MissingExecutor
+            | ExecutorResolution::MissingActor { .. }
+            | ExecutorResolution::AmbiguousActor { .. }
+            | ExecutorResolution::Resolved(_) => return None,
+        })
+    }
+
+    /// The reason in words for the run's outcome, MCP and logs.
+    pub fn message(&self) -> String {
+        use RoutineLaunchRefusalReason as Reason;
+        let agent = self.agent.as_deref().unwrap_or("the agent");
+        let value = match (&self.setting, &self.value) {
+            (Some(setting), Some(value)) => format!("{setting}={value}"),
+            _ => "a value".into(),
+        };
+        let reason = match self.reason {
+            Reason::DefaultAgentNotSet => {
+                "the Actor runs the participant's agent and no default agent is chosen on this device".into()
+            }
+            Reason::UnknownAgent => format!("{agent} cannot run an Agent Actor in this version"),
+            Reason::ModeUnavailable => "the mode of the Actor on this device cannot be read".into(),
+            Reason::AgentNotReady => format!("{agent} is not ready on this device"),
+            Reason::ConnectionFailed => format!("{agent} failed before the first prompt"),
+            Reason::SettingNotDeclared => format!("{agent} does not declare {value}"),
+            Reason::SettingIsMode => format!(
+                "{agent} declares {value} as its mode, which only the device chooses, not the catalog"
+            ),
+            Reason::SettingRefused => format!("{agent} did not confirm {value}"),
+        };
+        match &self.detail {
+            Some(detail) => format!("Routine launch refused: {reason}: {detail}"),
+            None => format!("Routine launch refused: {reason}"),
         }
     }
 }
@@ -448,6 +615,7 @@ pub struct RoutineRunRecord {
     pub terminal_observed_at: Option<String>,
     pub session_status: Option<String>,
     pub launch: RoutineRunLaunch,
+    pub launch_refusal: Option<RoutineLaunchRefusal>,
 }
 
 /// The host's evidence of live launches: managed PTYs by id, and runs whose
@@ -502,6 +670,7 @@ impl RoutineRunRecord {
             source_session_id: self.source_session_id.clone(),
             pty_id: self.pty_id.clone(),
             active: self.blocks_relaunch(live),
+            refusal: self.launch_refusal.clone(),
         }
     }
 }
@@ -539,6 +708,9 @@ pub struct RoutineRunRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pty_id: Option<String>,
     pub active: bool,
+    /// The run's launch was refused before its first prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<RoutineLaunchRefusal>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -600,6 +772,8 @@ pub enum RoutineDispatchResult {
         code: RoutineDispatchBlockedCode,
         message: String,
         current_fingerprint: Option<String>,
+        /// The executor is not ready to launch (Stage 11 `03`).
+        refusal: Option<RoutineLaunchRefusal>,
     },
     Failed {
         routine_id: String,
@@ -609,6 +783,8 @@ pub enum RoutineDispatchResult {
         source_session_id: Option<String>,
         pty_id: Option<String>,
         message: String,
+        /// The launch was refused before its first prompt (Stage 11 `03`).
+        refusal: Option<RoutineLaunchRefusal>,
     },
 }
 
@@ -640,6 +816,8 @@ pub enum RoutineManualDispatchResult {
         routine_id: String,
         code: RoutineDispatchBlockedCode,
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refusal: Option<RoutineLaunchRefusal>,
     },
     Failed {
         routine_id: String,
@@ -647,6 +825,8 @@ pub enum RoutineManualDispatchResult {
         launch_id: String,
         agent_session_id: String,
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refusal: Option<RoutineLaunchRefusal>,
     },
 }
 
@@ -687,11 +867,13 @@ impl RoutineManualDispatchResult {
                 routine_id,
                 code,
                 message,
+                refusal,
                 ..
             } => Self::Blocked {
                 routine_id,
                 code,
                 message,
+                refusal,
             },
             RoutineDispatchResult::Failed {
                 routine_id,
@@ -699,6 +881,7 @@ impl RoutineManualDispatchResult {
                 launch_id,
                 agent_session_id,
                 message,
+                refusal,
                 ..
             } => Self::Failed {
                 routine_id,
@@ -706,6 +889,7 @@ impl RoutineManualDispatchResult {
                 launch_id,
                 agent_session_id,
                 message,
+                refusal,
             },
             RoutineDispatchResult::Completed => {
                 unreachable!("manual Routine dispatch cannot complete without an Agent Session")
@@ -856,6 +1040,94 @@ pub struct RoutineAutomaticConsent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_adapters::AgentId;
+
+    #[test]
+    fn a_refused_value_leads_to_where_it_was_chosen_and_readiness_to_the_agent_settings() {
+        use RoutineLaunchRecovery::{ActorEditor, AgentSettings};
+        use RoutineLaunchRefusalReason as Reason;
+        let binding = Some(ExecutorSource::Binding);
+        let default = Some(ExecutorSource::DefaultAgent);
+        for (reason, source, recovery) in [
+            (Reason::SettingNotDeclared, binding, ActorEditor),
+            (Reason::SettingIsMode, binding, ActorEditor),
+            (Reason::SettingRefused, binding, ActorEditor),
+            (Reason::SettingNotDeclared, default, AgentSettings),
+            (Reason::SettingRefused, default, AgentSettings),
+            (Reason::AgentNotReady, binding, AgentSettings),
+            (Reason::ConnectionFailed, binding, AgentSettings),
+            (Reason::ConnectionFailed, default, AgentSettings),
+        ] {
+            assert_eq!(
+                RoutineLaunchRefusal::new(reason, source, None).recovery,
+                recovery,
+                "{reason:?} {source:?}"
+            );
+        }
+
+        let stale =
+            RoutineLaunchRefusal::new(Reason::SettingNotDeclared, binding, Some("codex".into()))
+                .with_value("model", "gpt-5.6");
+        assert_eq!(
+            stale.message(),
+            "Routine launch refused: codex does not declare model=gpt-5.6"
+        );
+        let json = serde_json::to_value(&stale).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "reason": "setting_not_declared",
+                "recovery": "actor_editor",
+                "agent": "codex",
+                "setting": "model",
+                "value": "gpt-5.6"
+            })
+        );
+        let long = RoutineLaunchRefusal::new(Reason::ConnectionFailed, binding, None)
+            .with_detail(&"é".repeat(600));
+        assert!(long.detail.unwrap().len() <= REFUSAL_DETAIL_BYTES);
+    }
+
+    #[test]
+    fn an_unresolved_executor_is_a_refusal_only_where_an_agent_would_have_run() {
+        let reference = "agent:01arz3ndektsv4rrffq69g5fav".to_string();
+        let owner = "/project".to_string();
+        let refusal = |resolution| RoutineLaunchRefusal::from_resolution(&resolution);
+        let participant = refusal(ExecutorResolution::DefaultAgentNotSet {
+            reference: reference.clone(),
+            actor_owner_path: owner.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            participant.reason,
+            RoutineLaunchRefusalReason::DefaultAgentNotSet
+        );
+        assert_eq!(participant.recovery, RoutineLaunchRecovery::AgentSettings);
+        let unknown = refusal(ExecutorResolution::UnknownAgent {
+            reference: reference.clone(),
+            actor_owner_path: owner.clone(),
+            agent: AgentId::parse("custom-hermes").unwrap(),
+        })
+        .unwrap();
+        assert_eq!(unknown.reason, RoutineLaunchRefusalReason::UnknownAgent);
+        assert_eq!(unknown.recovery, RoutineLaunchRecovery::ActorEditor);
+        assert_eq!(unknown.agent.as_deref(), Some("custom-hermes"));
+        assert_eq!(
+            refusal(ExecutorResolution::ModeUnavailable {
+                reference: reference.clone(),
+                actor_owner_path: owner,
+                message: "unreadable".into(),
+            })
+            .unwrap()
+            .recovery,
+            RoutineLaunchRecovery::ActorEditor
+        );
+        assert_eq!(refusal(ExecutorResolution::MissingExecutor), None);
+        assert_eq!(
+            refusal(ExecutorResolution::AmbiguousActor { reference }),
+            None
+        );
+    }
 
     #[test]
     fn root_owner_identity_is_portable_between_clones() {

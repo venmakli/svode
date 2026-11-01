@@ -15,6 +15,7 @@ import {
   type RoutineDiagnosticDto,
   type RoutineMutationResultDto,
   type RoutineInvalidatedEventDto,
+  type RoutineLaunchRefusalDto,
 } from "@/platform/routines/routines-api";
 
 import type {
@@ -25,6 +26,7 @@ import type {
   RoutineMutationResult,
   RoutineManualDispatchResult,
   RoutineLaunchLink,
+  RoutineLaunchRefusal,
   RoutineOwnerKind,
   RoutineRow,
 } from "../model/types";
@@ -121,7 +123,9 @@ export async function dispatchManualRoutine(
     ...owner,
     routineId: requireRoutineId(row),
   });
-  if (result.status === "blocked" || result.status === "failed") return result;
+  if (result.status === "blocked" || result.status === "failed") {
+    return { ...result, refusal: normalizeRefusal(result.refusal) };
+  }
   return {
     ...result,
     ptyId: result.ptyId ?? null,
@@ -204,6 +208,7 @@ function normalizeRow(
       ? Object.freeze({
           ...row.lastRun,
           ptyId: row.lastRun.ptyId ?? null,
+          refusal: normalizeRefusal(row.lastRun.refusal),
           sourceSessionId: row.lastRun.sourceSessionId ?? null,
         })
       : null,
@@ -221,6 +226,20 @@ function normalizeRow(
       row.routineId !== null &&
       row.definition !== null &&
       row.diagnostics.length === 0,
+  });
+}
+
+function normalizeRefusal(
+  refusal: RoutineLaunchRefusalDto | null | undefined,
+): RoutineLaunchRefusal | null {
+  if (!refusal) return null;
+  return Object.freeze({
+    agent: refusal.agent ?? null,
+    detail: refusal.detail ?? null,
+    reason: refusal.reason,
+    recovery: refusal.recovery,
+    setting: refusal.setting ?? null,
+    value: refusal.value ?? null,
   });
 }
 

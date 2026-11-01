@@ -135,7 +135,7 @@ pub fn translate_binding(binding: &AgentAdapter) -> ActorBinding {
 
 /// The value of the agent's `mode` setting the V1 strategy ran as, `None`
 /// where the agent had no equivalent.
-pub fn mode_equivalent(agent: AgentAdapterKind, mode: ApprovalMode) -> Option<&'static str> {
+fn mode_equivalent(agent: AgentAdapterKind, mode: ApprovalMode) -> Option<&'static str> {
     use AgentAdapterKind as Agent;
     use ApprovalMode as Mode;
     Some(match (agent, mode) {

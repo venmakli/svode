@@ -46,6 +46,7 @@ import { createScopeContentRenderers } from "./scope-content-renderers";
 import { CompactScopePeek } from "./compact-scope-peek";
 import { ScopeOwnerActions } from "./scope-owner-actions";
 import { scopeOwnerNavigationItem } from "./scope-owner-navigation";
+import { useOpenAgentActor } from "./open-agent-actor";
 import { useOpenSessionRoutine } from "./open-session-routine";
 
 export interface ScopeOwnerIdentity {
@@ -125,6 +126,7 @@ export function ScopeSurfacePage({
     [openSpaceSettings],
   );
   const openSessionRoutine = useOpenSessionRoutine();
+  const openAgentActor = useOpenAgentActor();
   // A session opened from the routine detail is its child peek.
   const openRoutineSession = useCallback(
     ({ sessionId, launchId }: { sessionId: string; launchId: string }) =>
@@ -158,6 +160,8 @@ export function ScopeSurfacePage({
           <RoutinesSurface
             {...context}
             readOnly={readOnly}
+            onOpenAgentActor={openAgentActor}
+            onOpenAgentSettings={openProvidersSettings}
             onOpenSession={openRoutineSession}
           />
         ),
@@ -188,6 +192,7 @@ export function ScopeSurfacePage({
     [
       collectionRouteState,
       fallbackTitle,
+      openAgentActor,
       openProvidersSettings,
       openRepositorySettings,
       openRoutineSession,

@@ -6,25 +6,49 @@ import { Button } from "@/components/ui/button";
 import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
-import type { RoutineRow } from "../model/types";
+import {
+  RoutineLaunchRefusedError,
+  routineAgentActorId,
+} from "../model/launch-refusal";
+import type {
+  RoutineLaunchRecoveryActions,
+  RoutineLaunchRefusal,
+  RoutineRow,
+} from "../model/types";
+import { RoutineLaunchRefusalNotice } from "./routine-launch-refusal";
 
 export function RoutineDetailActions({
+  recovery = {},
   row,
+  runRefusal = null,
   runState,
   onOpenSession,
   onRun,
 }: {
+  recovery?: RoutineLaunchRecoveryActions;
   row: RoutineRow;
+  /** Why the last manual run was refused before its first prompt. */
+  runRefusal?: RoutineLaunchRefusal | null;
   runState: CollectionActionState;
   onOpenSession(row: RoutineRow): void;
   onRun(row: RoutineRow): Promise<void>;
 }) {
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(
-    runState.status === "error" ? runState.message : null,
+  const [error, setError] = useState<{
+    message: string;
+    refusal: RoutineLaunchRefusal | null;
+  } | null>(
+    runState.status === "error"
+      ? { message: runState.message, refusal: runRefusal }
+      : null,
   );
   const manuallyRunnable = row.definition?.trigger.type !== "event";
   const active = row.lastRun?.active === true;
+  // A launch refused before its session leaves no session to open.
+  const lastSession =
+    row.lastRun && !(row.lastRun.refusal && !row.lastRun.sourceSessionId)
+      ? row.lastRun
+      : null;
   const disabled = pending || runState.status === "disabled";
   const disabledReason =
     runState.status === "disabled" ? runState.reason : undefined;
@@ -38,11 +62,14 @@ export function RoutineDetailActions({
     try {
       await onRun(row);
     } catch (cause) {
-      setError(
-        cause instanceof Error && cause.message
-          ? cause.message
-          : m.routines_dispatch_failed(),
-      );
+      setError({
+        message:
+          cause instanceof Error && cause.message
+            ? cause.message
+            : m.routines_dispatch_failed(),
+        refusal:
+          cause instanceof RoutineLaunchRefusedError ? cause.refusal : null,
+      });
     } finally {
       setPending(false);
     }
@@ -53,11 +80,21 @@ export function RoutineDetailActions({
       {error ? (
         <Alert variant="destructive">
           <AlertTriangle />
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>
+            {error.refusal ? (
+              <RoutineLaunchRefusalNotice
+                actorId={routineAgentActorId(row)}
+                recovery={recovery}
+                refusal={error.refusal}
+              />
+            ) : (
+              error.message
+            )}
+          </AlertDescription>
         </Alert>
       ) : null}
       <div className="flex w-full justify-end gap-2">
-        {!active && row.lastRun ? (
+        {!active && lastSession ? (
           <Button
             type="button"
             variant="outline"

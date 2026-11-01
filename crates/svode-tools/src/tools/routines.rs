@@ -378,6 +378,7 @@ pub(crate) async fn run_routine(
             code: RoutineDispatchBlockedCode::RecursionGuard,
             message: "a routine-launched MCP caller cannot run a Routine".to_string(),
             current_fingerprint: None,
+            refusal: None,
         }));
     }
     let runner = host
@@ -459,6 +460,7 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
             code,
             message,
             current_fingerprint,
+            ..
         } => (
             message.clone(),
             json!({
@@ -477,6 +479,7 @@ fn dispatch_result(result: RoutineDispatchResult) -> ToolCallResult {
             source_session_id,
             pty_id,
             message,
+            ..
         } => (
             message.clone(),
             json!({
@@ -1048,6 +1051,7 @@ mod tests {
             code: RoutineDispatchBlockedCode::FingerprintConflict,
             message: "changed".into(),
             current_fingerprint: Some("current".into()),
+            refusal: None,
         });
         let structured = conflict.structured_content.unwrap();
         assert_eq!(structured["status"], "blocked");
@@ -1059,6 +1063,7 @@ mod tests {
             code: RoutineDispatchBlockedCode::RecursionGuard,
             message: "recursive".into(),
             current_fingerprint: None,
+            refusal: None,
         });
         assert_eq!(
             recursive.structured_content.unwrap()["code"],

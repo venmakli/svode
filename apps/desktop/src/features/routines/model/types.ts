@@ -100,6 +100,31 @@ export interface RoutineRunRef {
   sourceSessionId: string | null;
   ptyId: string | null;
   active: boolean;
+  /** The run's launch was refused before its first prompt. */
+  refusal: RoutineLaunchRefusal | null;
+}
+
+export type RoutineLaunchRefusalReason =
+  | "default_agent_not_set"
+  | "unknown_agent"
+  | "mode_unavailable"
+  | "agent_not_ready"
+  | "connection_failed"
+  | "setting_not_declared"
+  | "setting_is_mode"
+  | "setting_refused";
+
+/**
+ * Why a launch of an Agent Actor was refused before its first prompt, with
+ * where it is fixed: the Actor's binding or the agent settings.
+ */
+export interface RoutineLaunchRefusal {
+  reason: RoutineLaunchRefusalReason;
+  recovery: "actor_editor" | "agent_settings";
+  agent: string | null;
+  setting: string | null;
+  value: string | null;
+  detail: string | null;
 }
 
 export interface RoutineSessionTarget {
@@ -132,6 +157,7 @@ export type RoutineManualDispatchResult =
       routineId: string;
       code: RoutineDispatchBlockedCode;
       message: string;
+      refusal: RoutineLaunchRefusal | null;
     }
   | {
       status: "failed";
@@ -140,7 +166,21 @@ export type RoutineManualDispatchResult =
       launchId: string;
       agentSessionId: string;
       message: string;
+      refusal: RoutineLaunchRefusal | null;
     };
+
+/** An Agent Actor of the Space a Routine launches in. */
+export interface RoutineAgentActorTarget {
+  spaceId: string;
+  actorId: string;
+}
+
+/** Where a refused launch is fixed, offered by the host of the Routines. */
+export interface RoutineLaunchRecoveryActions {
+  /** Opens the Agent Actor of the Routine in its editor. */
+  onOpenAgentActor?(actorId: string): void;
+  onOpenAgentSettings?(): void;
+}
 
 export interface RoutineCatalogSnapshot {
   catalogFingerprint: string;

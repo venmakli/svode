@@ -8,7 +8,7 @@
 
 pub mod executor;
 pub mod local;
-pub mod v1;
+mod v1;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -18,10 +18,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::agent_adapters::AgentId;
-
-/// The registry launch path still takes the V1 binding shape and approval
-/// mode until Routine dispatch moves to the executor resolver.
-pub use v1::{AgentAdapter, ApprovalMode};
 
 const CATALOG_RELATIVE_PATH: &str = ".svode/agent-actors.json";
 const LOCAL_RELATIVE_PATH: &str = ".svode/local.json";

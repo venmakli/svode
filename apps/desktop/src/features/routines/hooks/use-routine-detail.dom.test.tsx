@@ -87,6 +87,7 @@ function Harness({
     detailController,
     editSession,
     executors,
+    getRunRefusal: () => null,
     getRunState: () => runState,
     instanceKey: selection.instanceKey,
     mutationError: null,
@@ -103,6 +104,7 @@ function Harness({
     },
     pending: false,
     readOnly: false,
+    recovery: {},
     rows,
     setEditSession,
   });

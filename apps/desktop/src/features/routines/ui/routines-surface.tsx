@@ -6,7 +6,10 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useRoutinesController } from "../hooks/use-routines-controller";
-import type { RoutineSessionTarget } from "../model/types";
+import type {
+  RoutineAgentActorTarget,
+  RoutineSessionTarget,
+} from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 import { RoutineAutomaticConsentNotice } from "./routine-automatic-consent-notice";
 
@@ -14,9 +17,14 @@ export function RoutinesSurface({
   owner,
   openItem,
   readOnly,
+  onOpenAgentActor,
+  onOpenAgentSettings,
   onOpenSession,
 }: ScopeSurfaceRenderContext & {
   readOnly: boolean;
+  /** Opens an Agent Actor in its editor, where a refused launch is fixed. */
+  onOpenAgentActor?(target: RoutineAgentActorTarget): void;
+  onOpenAgentSettings?(): void;
   onOpenSession(target: RoutineSessionTarget): void;
 }) {
   const controller = useRoutinesController(
@@ -24,6 +32,7 @@ export function RoutinesSurface({
     onOpenSession,
     readOnly,
     openItem,
+    { onOpenAgentActor, onOpenAgentSettings },
   );
   const body =
     controller.collectionState.phase === "ready" ? (

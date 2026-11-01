@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use svode_agents::RuntimeConfig;
+use svode_agents::{AgentRuntimeError, RuntimeConfig, SettingRefusal, SettingValue};
 use svode_core::agent_adapters::AgentAdapterKind;
 use svode_core::routines::model::{
     RoutineLiveEvidence, RoutineRunRecord, RoutineRunTerminalStatus,
@@ -119,10 +119,13 @@ impl Fixture {
                 source: AgentAdapterKind::Codex.id(),
                 launch,
                 cwd: self.temp.path(),
-                settings: vec![SettingValue {
-                    setting: "mode".into(),
-                    value: "workspace-write".into(),
-                }],
+                values: LaunchValues {
+                    portable: Vec::new(),
+                    device: vec![SettingValue {
+                        setting: "mode".into(),
+                        value: "workspace-write".into(),
+                    }],
+                },
                 prompt: "Review the backlog".into(),
                 token: token.into(),
                 project_path: self.temp.path(),
@@ -153,9 +156,9 @@ impl Fixture {
     }
 }
 
-fn before_prompt(result: Result<RoutineDispatchResult, AcpStartFailure>) -> String {
+fn before_prompt(result: Result<RoutineDispatchResult, AcpStartFailure>) -> LaunchRefused {
     match result {
-        Err(AcpStartFailure::BeforePrompt(detail)) => detail,
+        Err(AcpStartFailure::Refused(refused)) => refused,
         Err(AcpStartFailure::Failed(error)) => panic!("failed: {error}"),
         Ok(result) => panic!("started: {result:?}"),
     }
@@ -263,16 +266,27 @@ async fn a_finished_turn_is_the_runs_outcome() {
 #[tokio::test]
 async fn a_refused_mode_fails_before_the_prompt_and_frees_the_launch() {
     let fixture = Fixture::new().await;
-    let detail = before_prompt(fixture.start(scripted("refuse", "end"), "token-one").await);
-    assert!(detail.contains("mode refused"), "{detail}");
+    let refused = before_prompt(fixture.start(scripted("refuse", "end"), "token-one").await);
+    assert!(
+        matches!(
+            &refused.error,
+            AgentRuntimeError::SettingRefused {
+                setting,
+                reason: SettingRefusal::Agent { message },
+                ..
+            } if setting == "mode" && message.contains("mode refused")
+        ),
+        "{:?}",
+        refused.error
+    );
     assert!(fixture.run().await.is_none());
     let writers = fixture.runtime.writers();
     assert_eq!(
         writers.writer(&SessionKey::from_acp("codex", "s1", true)),
         None
     );
-    // The terminal of the same binding takes the same launch.
-    assert!(writers.claim_launch("launch-one", Writer::Pty).is_ok());
+    // The launch is free again; no prompt reached the agent.
+    assert!(writers.claim_launch("launch-one", Writer::Acp).is_ok());
     assert_eq!(
         fixture
             .launches

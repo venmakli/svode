@@ -93,4 +93,9 @@ pub enum SettingRefusal {
     /// The agent refused the change or did not confirm the value.
     #[error("the agent refused it: {message}")]
     Agent { message: String },
+    /// A launch value from the Actor's catalog of a setting the agent
+    /// declares as its mode: the mode comes only from this device (Stage 11
+    /// `03`).
+    #[error("the agent declares it as its mode, which only this device chooses")]
+    ModeFromCatalog,
 }

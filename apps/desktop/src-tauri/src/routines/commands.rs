@@ -538,7 +538,15 @@ mod tests {
         };
 
         let Some(EventDispatchPreflight::UpdateProperties { mutation_paths }) =
-            event_dispatch_preflight(&owner, &event).await
+            event_dispatch_preflight(
+                &crate::agent_setup::AgentSetupState::new(
+                    &temp.path().join("data"),
+                    temp.path().join("config"),
+                ),
+                &owner,
+                &event,
+            )
+            .await
         else {
             panic!("expected update_properties preflight");
         };

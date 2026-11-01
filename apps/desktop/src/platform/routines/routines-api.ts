@@ -110,6 +110,25 @@ export interface RoutineRunRefDto {
   sourceSessionId?: string | null;
   ptyId?: string | null;
   active: boolean;
+  refusal?: RoutineLaunchRefusalDto | null;
+}
+
+/** Why a launch of an Agent Actor was refused before its first prompt. */
+export interface RoutineLaunchRefusalDto {
+  reason:
+    | "default_agent_not_set"
+    | "unknown_agent"
+    | "mode_unavailable"
+    | "agent_not_ready"
+    | "connection_failed"
+    | "setting_not_declared"
+    | "setting_is_mode"
+    | "setting_refused";
+  recovery: "actor_editor" | "agent_settings";
+  agent?: string | null;
+  setting?: string | null;
+  value?: string | null;
+  detail?: string | null;
 }
 
 export interface RoutineCatalogSnapshotDto {
@@ -173,6 +192,7 @@ export type RoutineManualDispatchResultDto =
       routineId: string;
       code: RoutineDispatchBlockedCodeDto;
       message: string;
+      refusal?: RoutineLaunchRefusalDto | null;
     }
   | {
       status: "failed";
@@ -181,6 +201,7 @@ export type RoutineManualDispatchResultDto =
       launchId: string;
       agentSessionId: string;
       message: string;
+      refusal?: RoutineLaunchRefusalDto | null;
     };
 
 interface RoutineOwnerCommandInput {

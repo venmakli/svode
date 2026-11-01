@@ -140,6 +140,78 @@ test("Actors refreshes both catalogs from owner events without access probes", a
   }
 });
 
+test("an Agent Actor the open request addresses opens in the agents presentation once", async () => {
+  const dom = createDom();
+  const restoreGlobals = installDomGlobals(dom);
+  const actorId = "01arz3ndektsv4rrffq69g5fav";
+  mockNativeIpc(
+    (command) => {
+      if (command === "agent_actors_get") {
+        return {
+          bindableAgents: [{ displayName: "Codex", id: "codex" }],
+          ownerFingerprints: { "/repo": "agent-catalog-fingerprint" },
+          resolution: {
+            actors: [
+              {
+                actor: {
+                  binding: { agent: "codex", settings: [] },
+                  description: null,
+                  id: actorId,
+                  name: "Reviewer",
+                },
+                mode: null,
+                ownerPath: "/repo",
+              },
+            ],
+            diagnostics: [],
+          },
+        };
+      }
+      if (command === "actors_get_catalog") return catalogSnapshot(1);
+      if (command === "agent_adapters_list_identities") return [];
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const owner = createRegisteredSpaceOwner({
+    hasSchema: false,
+    projectPath: "/project",
+    spaceId: "root",
+    spacePath: "/repo",
+    status: "ready",
+  });
+  let consumed = 0;
+  const openItem = { consume: () => (consumed += 1), id: actorId };
+
+  try {
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ActorsSurface
+            owner={owner}
+            openItem={openItem}
+            presentation="full"
+          />
+        </TooltipProvider>,
+      );
+      await nextTurn();
+      await nextTurn();
+    });
+    expect(consumed).toBe(1);
+    expect(
+      dom.window.document.querySelector(
+        '[data-collection-presentation="agents"]',
+      ) === null,
+    ).toBe(false);
+  } finally {
+    await act(async () => root.unmount());
+    clearNativeMocks();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function catalogSnapshot(generation: number) {
   return {
     diagnostics: [],

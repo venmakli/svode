@@ -2592,6 +2592,13 @@ async fn an_unconfirmed_mode_is_refused() {
     agent.silent().await;
 }
 
+fn device(values: &[SettingValue]) -> LaunchValues {
+    LaunchValues {
+        portable: Vec::new(),
+        device: values.to_vec(),
+    }
+}
+
 #[tokio::test]
 async fn a_launch_session_moves_the_launch_claim_to_its_canonical_key() {
     let runtime = AgentRuntime::default();
@@ -2604,7 +2611,7 @@ async fn a_launch_session_moves_the_launch_claim_to_its_canonical_key() {
                 .new_launch_session(
                     id,
                     Path::new("/project"),
-                    &[approval("workspace-write")],
+                    &device(&[approval("workspace-write")]),
                     claim,
                 )
                 .await
@@ -2645,17 +2652,18 @@ async fn a_launch_session_moves_the_launch_claim_to_its_canonical_key() {
 }
 
 #[tokio::test]
-async fn a_refused_launch_setting_frees_the_launch_for_its_terminal() {
+async fn a_refused_launch_value_frees_the_launch_and_leaves_the_session_of_an_agent_without_deletion()
+ {
     let runtime = AgentRuntime::default();
     let (id, mut agent) = attached(&runtime);
     let writers = runtime.writers();
     let claim = writers.claim_launch("launch-one", Writer::Acp).unwrap();
-    let settings = [approval("agent-full-access")];
+    let values = device(&[approval("agent-full-access")]);
     let (created, ()) = tokio::join!(
-        runtime.new_launch_session(id, Path::new("/project"), &settings, claim),
+        runtime.new_launch_session(id, Path::new("/project"), &values, claim),
         async {
             agent
-                .initialize(json!({ "sessionCapabilities": { "close": {} } }))
+                .initialize(json!({ "sessionCapabilities": { "close": {}, "delete": {} } }))
                 .await;
             let new_session = agent.expect("session/new").await;
             agent.reply(&new_session, mode_settings("agent")).await;
@@ -2663,17 +2671,225 @@ async fn a_refused_launch_setting_frees_the_launch_for_its_terminal() {
             agent.reply(&close, json!({})).await;
         }
     );
+    let refused = created.unwrap_err();
     assert!(matches!(
-        created,
-        Err(AgentRuntimeError::SettingRefused {
+        refused.error,
+        AgentRuntimeError::SettingRefused {
             reason: SettingRefusal::NotDeclared,
             ..
-        })
+        }
     ));
     let key = SessionKey::from_acp("scripted", "s1", false);
+    // Without evidence of a trace-free draft the session stays in the
+    // agent's list; Svode deletes it by no other means.
+    assert_eq!(refused.left, Some(key.clone()));
     assert_eq!(writers.writer(&key), None);
-    // The terminal of the same binding claims the same launch.
+    assert!(runtime.subscribe(&key).is_err());
     assert!(writers.claim_launch("launch-one", Writer::Pty).is_ok());
+    agent.silent().await;
+}
+
+/// Codex-like declarations: mode first, reasoning, then the model, whose
+/// change declares the reasoning anew.
+fn launch_declaration(model: &str, efforts: &[&str]) -> Value {
+    let efforts: Vec<Value> = efforts
+        .iter()
+        .map(|effort| json!({ "value": effort, "name": effort }))
+        .collect();
+    json!({
+        "sessionId": "s1",
+        "configOptions": [
+            {
+                "id": "mode", "name": "Approval Preset", "category": "mode", "type": "select",
+                "currentValue": "agent",
+                "options": [
+                    { "value": "workspace-write", "name": "Default" },
+                    { "value": "agent", "name": "Auto review" }
+                ]
+            },
+            {
+                "id": "reasoning_effort", "name": "Reasoning", "category": "thought_level",
+                "type": "select", "currentValue": "low", "options": efforts
+            },
+            {
+                "id": "model", "name": "Model", "category": "model", "type": "select",
+                "currentValue": model,
+                "options": [{ "value": "gpt-a", "name": "A" }, { "value": "gpt-b", "name": "B" }]
+            }
+        ]
+    })
+}
+
+fn confirm(mut declaration: Value, setting: &str, value: &str) -> Value {
+    let object = declaration.as_object_mut().unwrap();
+    object.remove("sessionId");
+    for option in object["configOptions"].as_array_mut().unwrap() {
+        if option["id"] == setting {
+            option["currentValue"] = json!(value);
+        }
+    }
+    declaration
+}
+
+#[tokio::test]
+async fn launch_values_apply_the_model_first_then_in_the_order_declared_after_it() {
+    let runtime = AgentRuntime::default();
+    let (id, mut agent) = attached(&runtime);
+    let claim = runtime
+        .writers()
+        .claim_launch("launch-one", Writer::Acp)
+        .unwrap();
+    let values = LaunchValues {
+        portable: vec![
+            SettingValue {
+                setting: "reasoning_effort".into(),
+                value: "ultra".into(),
+            },
+            SettingValue {
+                setting: "model".into(),
+                value: "gpt-b".into(),
+            },
+        ],
+        device: vec![approval("workspace-write")],
+    };
+    let (created, ()) = tokio::join!(
+        runtime.new_launch_session(id, Path::new("/project"), &values, claim),
+        async {
+            agent.initialize(json!({})).await;
+            let new_session = agent.expect("session/new").await;
+            // `ultra` is declared only after the model changes.
+            agent
+                .reply(&new_session, launch_declaration("gpt-a", &["low", "high"]))
+                .await;
+            let model = agent.expect("session/set_config_option").await;
+            assert_eq!(model["params"]["configId"], "model");
+            assert_eq!(model["params"]["value"], "gpt-b");
+            let declared = launch_declaration("gpt-b", &["low", "ultra"]);
+            agent
+                .reply(&model, confirm(declared.clone(), "model", "gpt-b"))
+                .await;
+            let mode = agent.expect("session/set_config_option").await;
+            assert_eq!(mode["params"]["configId"], "mode");
+            let declared = confirm(declared, "model", "gpt-b");
+            agent
+                .reply(&mode, confirm(declared.clone(), "mode", "workspace-write"))
+                .await;
+            let effort = agent.expect("session/set_config_option").await;
+            assert_eq!(effort["params"]["configId"], "reasoning_effort");
+            assert_eq!(effort["params"]["value"], "ultra");
+            let declared = confirm(declared, "mode", "workspace-write");
+            agent
+                .reply(&effort, confirm(declared, "reasoning_effort", "ultra"))
+                .await;
+        }
+    );
+    let key = created.unwrap();
+    let settings = runtime.subscribe(&key).unwrap().snapshot.settings;
+    let current: Vec<_> = settings
+        .iter()
+        .map(|setting| (setting.id.as_str(), setting.current_value.as_str()))
+        .collect();
+    assert_eq!(
+        current,
+        [
+            ("mode", "workspace-write"),
+            ("reasoning_effort", "ultra"),
+            ("model", "gpt-b")
+        ]
+    );
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_portable_value_of_a_setting_declared_as_the_mode_refuses_the_launch() {
+    let runtime = AgentRuntime::default();
+    let launch = AcpLaunch {
+        draft_session: DraftSession::Traceless,
+        ..launch()
+    };
+    let (id, mut agent) = attached_with(&runtime, &launch);
+    let claim = runtime
+        .writers()
+        .claim_launch("launch-one", Writer::Acp)
+        .unwrap();
+    // A catalog edited by hand carries the mode; the device chose none.
+    let values = LaunchValues {
+        portable: vec![approval("workspace-write")],
+        device: Vec::new(),
+    };
+    let (created, ()) = tokio::join!(
+        runtime.new_launch_session(id, Path::new("/project"), &values, claim),
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "close": {} } }))
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent
+                .reply(&new_session, launch_declaration("gpt-a", &["low"]))
+                .await;
+            // No value is sent: the session closes without a prompt.
+            let close = agent.expect("session/close").await;
+            agent.reply(&close, json!({})).await;
+        }
+    );
+    let refused = created.unwrap_err();
+    assert_eq!(
+        refused.error,
+        AgentRuntimeError::SettingRefused {
+            setting: "mode".into(),
+            value: "workspace-write".into(),
+            reason: SettingRefusal::ModeFromCatalog,
+        }
+    );
+    assert_eq!(refused.left, None);
+    agent.silent().await;
+}
+
+#[tokio::test]
+async fn a_refused_launch_of_an_agent_with_draft_deletion_deletes_its_session() {
+    let runtime = AgentRuntime::default();
+    let launch = AcpLaunch {
+        draft_session: DraftSession::Deleted,
+        ..launch()
+    };
+    let (id, mut agent) = attached_with(&runtime, &launch);
+    let claim = runtime
+        .writers()
+        .claim_launch("launch-one", Writer::Acp)
+        .unwrap();
+    let values = LaunchValues {
+        portable: vec![SettingValue {
+            setting: "model".into(),
+            value: "gpt-stale".into(),
+        }],
+        device: Vec::new(),
+    };
+    let (created, ()) = tokio::join!(
+        runtime.new_launch_session(id, Path::new("/project"), &values, claim),
+        async {
+            agent
+                .initialize(json!({ "sessionCapabilities": { "close": {}, "delete": {} } }))
+                .await;
+            let new_session = agent.expect("session/new").await;
+            agent
+                .reply(&new_session, launch_declaration("gpt-a", &["low"]))
+                .await;
+            let close = agent.expect("session/close").await;
+            agent.reply(&close, json!({})).await;
+            let delete = agent.expect("session/delete").await;
+            assert_eq!(delete["params"]["sessionId"], "s1");
+            agent.reply(&delete, json!({})).await;
+        }
+    );
+    let refused = created.unwrap_err();
+    assert!(matches!(
+        refused.error,
+        AgentRuntimeError::SettingRefused {
+            reason: SettingRefusal::NotDeclared,
+            ..
+        }
+    ));
+    assert_eq!(refused.left, None);
     agent.silent().await;
 }
 

@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager};
 use super::dispatch::{self, EventDispatchPreflight};
 use super::host;
 use crate::AppError;
+use crate::agent_setup::AgentSetupState;
 use crate::git::access::{
     RepositoryAccessSnapshot, RepositoryAccessState, RepositoryAccessStatus, RoutineClaimResult,
     access_store_path, require_repository_mutation_paths,
@@ -260,7 +261,8 @@ impl SchedulerHost for AppSchedulerHost {
         owner: &ResolvedRoutineOwner,
         definition: &RoutineDefinition,
     ) -> bool {
-        dispatch::scheduled_dispatch_ready(owner, definition).await
+        dispatch::scheduled_dispatch_ready(&self.app.state::<AgentSetupState>(), owner, definition)
+            .await
     }
 
     async fn event_preflight(
@@ -268,7 +270,7 @@ impl SchedulerHost for AppSchedulerHost {
         owner: &ResolvedRoutineOwner,
         event: &QueuedRoutineEvent,
     ) -> Option<EventDispatchPreflight> {
-        dispatch::event_dispatch_preflight(owner, event).await
+        dispatch::event_dispatch_preflight(&self.app.state::<AgentSetupState>(), owner, event).await
     }
 
     async fn mutation_paths_ready(&self, paths: Vec<PathBuf>) -> bool {

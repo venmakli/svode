@@ -6,8 +6,6 @@
 //! mode overlay belong to `svode_core::agent_actors`.
 
 pub mod commands;
-#[allow(dead_code)]
-pub mod launch;
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};

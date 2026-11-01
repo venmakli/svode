@@ -218,6 +218,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
         agentSessionId: "codex:launch:launch-one",
         launchId: "launch-one",
         ptyId: "pty-one",
+        refusal: null,
         routineRunId: "run-one",
         sourceSessionId: null,
       },

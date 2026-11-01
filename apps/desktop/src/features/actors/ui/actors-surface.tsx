@@ -38,11 +38,15 @@ import {
   actorCatalogBlockingError,
   createActorsPresentation,
 } from "./actors-presentation";
-import { createAgentActorsPresentation } from "./agent-actors-presentation";
+import {
+  agentActorRowId,
+  createAgentActorsPresentation,
+} from "./agent-actors-presentation";
 import { CatalogRetryButton } from "./catalog-retry-button";
 
 export function ActorsSurface({
   owner,
+  openItem,
   readOnly = false,
   repositoryOwnerName,
   onOpenRepositorySettings,
@@ -226,6 +230,40 @@ export function ActorsSurface({
     stateScope: "session",
   };
   const collectionState = useCollectionState(instance);
+  // An Agent Actor addressed by the open request, such as the one of a
+  // refused Routine launch, opens once its catalog is read.
+  const agentActorRows =
+    agentActors.presentationState.phase === "ready"
+      ? agentActors.presentationState.rows
+      : null;
+  const openAgentActorDetail = agentActors.detail.open;
+  const setActivePresentationId =
+    collectionState.phase === "ready"
+      ? collectionState.setActivePresentationId
+      : null;
+  const appliedOpenItem = useRef<typeof openItem>(undefined);
+  useEffect(() => {
+    if (!openItem || !agentActorRows || !setActivePresentationId) return;
+    if (appliedOpenItem.current === openItem) return;
+    appliedOpenItem.current = openItem;
+    openItem.consume();
+    const row = agentActorRows.find(
+      (candidate) => candidate.id === openItem.id,
+    );
+    if (!row) return;
+    setActivePresentationId("agents");
+    void openAgentActorDetail(row, {
+      instanceKey,
+      presentationId: "agents",
+      rowId: agentActorRowId(row),
+    });
+  }, [
+    agentActorRows,
+    instanceKey,
+    openAgentActorDetail,
+    openItem,
+    setActivePresentationId,
+  ]);
 
   const body =
     collectionState.phase === "blocking_error" ? (

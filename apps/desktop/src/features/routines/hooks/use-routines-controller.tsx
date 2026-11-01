@@ -10,7 +10,12 @@ import type { ScopeOpenItem, ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
-import type { RoutineRow, RoutineSessionTarget } from "../model/types";
+import type {
+  RoutineAgentActorTarget,
+  RoutineLaunchRecoveryActions,
+  RoutineRow,
+  RoutineSessionTarget,
+} from "../model/types";
 import { RoutineCreateDialog } from "../ui/routine-create-dialog";
 import { RoutineDeleteDialog } from "../ui/routine-delete-dialog";
 import {
@@ -32,6 +37,10 @@ export function useRoutinesController(
   onOpenSession: (target: RoutineSessionTarget) => void,
   readOnly: boolean,
   openItem?: ScopeOpenItem,
+  host: {
+    onOpenAgentActor?(target: RoutineAgentActorTarget): void;
+    onOpenAgentSettings?(): void;
+  } = {},
 ) {
   const routineOwner = useMemo<RoutineOwnerInput>(
     () => ({
@@ -66,6 +75,16 @@ export function useRoutinesController(
     rows: state.phase === "ready" ? state.snapshot.rows : [],
   });
   const dispatch = useRoutineDispatch({ onOpenSession, owner: routineOwner });
+  const { onOpenAgentActor, onOpenAgentSettings } = host;
+  const recovery = useMemo<RoutineLaunchRecoveryActions>(
+    () => ({
+      onOpenAgentActor: onOpenAgentActor
+        ? (actorId) => onOpenAgentActor({ actorId, spaceId: owner.spaceId })
+        : undefined,
+      onOpenAgentSettings,
+    }),
+    [onOpenAgentActor, onOpenAgentSettings, owner.spaceId],
+  );
   const detail = useRoutineDetail({
     applyUpdate: mutations.applyUpdate,
     detailController,
@@ -74,12 +93,14 @@ export function useRoutinesController(
     instanceKey,
     mutationError: mutations.error,
     nameError: mutations.nameError,
+    getRunRefusal: dispatch.getRunRefusal,
     getRunState: dispatch.getRunState,
     onOpenSession: dispatch.openLastSession,
     onRun: dispatch.run,
     owner: routineOwner,
     pending: mutations.pending,
     readOnly,
+    recovery,
     rows: state.phase === "ready" ? state.snapshot.rows : null,
     onEditChange: mutations.changeEditDraft,
     setEditSession: mutations.setEditSession,

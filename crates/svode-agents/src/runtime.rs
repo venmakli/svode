@@ -24,7 +24,7 @@ use crate::acp::{self};
 use crate::activity::{
     Change, ConnectionState, DetailOutcome, HistorySource, HistoryState, InteractionOption,
     InteractionState, MediaOutcome, PendingInteraction, QuestionField, SessionDelta,
-    SessionSnapshot, TurnPhase, WriterState,
+    SessionSnapshot, SettingCategory, TurnPhase, WriterState,
 };
 use crate::adapters::LaunchUnavailable;
 use crate::catalog::{
@@ -247,13 +247,31 @@ pub enum AgentCheck {
     FailedToStart { message: String },
 }
 
-/// A value for one declared session setting, such as the agent mode an
-/// Actor approval maps to.
+/// A value for one declared session setting, in the agent's terms.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingValue {
     pub setting: String,
     pub value: String,
+}
+
+/// The values a Routine launch applies to its session before the first
+/// prompt (Stage 11 `03`, «Запуск Рутины»): the portable values of the
+/// Actor's catalog, and those of this device — the Actor mode, or every
+/// value of the device's default agent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LaunchValues {
+    pub portable: Vec<SettingValue>,
+    pub device: Vec<SettingValue>,
+}
+
+/// A launch session refused before its first prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchRefused {
+    pub error: AgentRuntimeError,
+    /// The empty session the agent keeps in its list without an ACP
+    /// deletion (Stage 11 `03`, E6): it stays the session of the launch.
+    pub left: Option<SessionKey>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -807,18 +825,137 @@ impl AgentRuntime {
         self.create_session(id, cwd, settings, None).await
     }
 
-    /// Creates the session of a launch whose ACP writer was claimed by its
-    /// launch id before the agent started (C7): the claim moves to the
-    /// canonical key once the agent returns the id, and is released with
-    /// the session if a setting is refused.
+    /// Creates the session of a Routine launch whose ACP writer was claimed
+    /// by its launch id before the agent started (C7) and applies its values
+    /// before the session is handed out (Stage 11 `03`, «Запуск Рутины»):
+    /// the model first, then the others in the order the agent declares them
+    /// after the model. Each value must be declared at that moment and
+    /// confirmed; a portable value of a setting the agent declares in
+    /// category `mode` is refused, the mode coming only from this device. A
+    /// refusal closes the session without a prompt, deletes it where the
+    /// agent's draft evidence needs it, and releases the claim; the claim
+    /// otherwise moves to the canonical key once the agent returns the id.
     pub async fn new_launch_session(
         &self,
         id: ConnectionId,
         cwd: &Path,
-        settings: &[SettingValue],
+        values: &LaunchValues,
         claim: WriterClaim,
-    ) -> Result<SessionKey, AgentRuntimeError> {
-        self.create_session(id, cwd, settings, Some(claim)).await
+    ) -> Result<SessionKey, LaunchRefused> {
+        let refused = |error| LaunchRefused { error, left: None };
+        let session = self
+            .start_session(id, cwd, Some(claim))
+            .await
+            .map_err(refused)?;
+        let mut applied = 0;
+        if let Err(error) = self
+            .apply_launch_values(&session, values, &mut applied)
+            .await
+        {
+            let reached_agent = applied > 0
+                || matches!(
+                    error,
+                    AgentRuntimeError::SettingRefused {
+                        reason: SettingRefusal::Agent { .. },
+                        ..
+                    }
+                );
+            self.close_session(&session).await;
+            self.delete_unprompted(&session).await;
+            let left = match session.connection.draft_session {
+                DraftSession::Unsupported => true,
+                DraftSession::FixedValues => reached_agent,
+                DraftSession::Traceless | DraftSession::Deleted => false,
+            };
+            return Err(LaunchRefused {
+                error,
+                left: left.then(|| {
+                    SessionKey::from_acp(
+                        &session.connection.agent,
+                        &session.acp_id,
+                        session.connection.acp_id_is_native,
+                    )
+                }),
+            });
+        }
+        Ok(self.register_created(session))
+    }
+
+    /// Applies the values of a launch in its order and counts those the
+    /// agent confirmed.
+    async fn apply_launch_values(
+        &self,
+        session: &Session,
+        values: &LaunchValues,
+        applied: &mut usize,
+    ) -> Result<(), AgentRuntimeError> {
+        let declared = |setting: &str| {
+            let projection = session.projection.lock().unwrap();
+            projection
+                .settings()
+                .iter()
+                .enumerate()
+                .find(|(_, declared)| declared.id == setting)
+                .map(|(position, declared)| (position, declared.category))
+        };
+        let mut pending: Vec<(&SettingValue, bool)> = values
+            .portable
+            .iter()
+            .map(|value| (value, true))
+            .chain(values.device.iter().map(|value| (value, false)))
+            .collect();
+        if let Some(model) = pending.iter().position(|(value, _)| {
+            declared(&value.setting).is_some_and(|(_, category)| category == SettingCategory::Model)
+        }) {
+            let (value, portable) = pending.remove(model);
+            self.apply_launch_value(session, value, portable).await?;
+            *applied += 1;
+        }
+        // The order the agent declares after the model; a value it does not
+        // declare at all is refused before any other is sent.
+        let mut ordered = Vec::with_capacity(pending.len());
+        for (value, portable) in pending {
+            let Some((position, _)) = declared(&value.setting) else {
+                return Err(AgentRuntimeError::SettingRefused {
+                    setting: value.setting.clone(),
+                    value: value.value.clone(),
+                    reason: SettingRefusal::NotDeclared,
+                });
+            };
+            ordered.push((position, value, portable));
+        }
+        ordered.sort_by_key(|(position, _, _)| *position);
+        for (_, value, portable) in ordered {
+            self.apply_launch_value(session, value, portable).await?;
+            *applied += 1;
+        }
+        Ok(())
+    }
+
+    async fn apply_launch_value(
+        &self,
+        session: &Session,
+        value: &SettingValue,
+        portable: bool,
+    ) -> Result<(), AgentRuntimeError> {
+        let mode = portable
+            && session
+                .projection
+                .lock()
+                .unwrap()
+                .settings()
+                .iter()
+                .any(|declared| {
+                    declared.id == value.setting && declared.category == SettingCategory::Mode
+                });
+        if mode {
+            return Err(AgentRuntimeError::SettingRefused {
+                setting: value.setting.clone(),
+                value: value.value.clone(),
+                reason: SettingRefusal::ModeFromCatalog,
+            });
+        }
+        self.apply_setting(session, value).await
     }
 
     async fn create_session(
@@ -828,6 +965,25 @@ impl AgentRuntime {
         settings: &[SettingValue],
         launch_claim: Option<WriterClaim>,
     ) -> Result<SessionKey, AgentRuntimeError> {
+        let session = self.start_session(id, cwd, launch_claim).await?;
+        for value in settings {
+            if let Err(error) = self.apply_setting(&session, value).await {
+                self.close_session(&session).await;
+                self.delete_unprompted(&session).await;
+                return Err(error);
+            }
+        }
+        Ok(self.register_created(session))
+    }
+
+    /// Creates a session on the agent and holds its writer, before any
+    /// value applies and before it is handed out.
+    async fn start_session(
+        &self,
+        id: ConnectionId,
+        cwd: &Path,
+        launch_claim: Option<WriterClaim>,
+    ) -> Result<Arc<Session>, AgentRuntimeError> {
         let connection = self.connection(id)?;
         connection.require_open()?;
         if connection.info.lock().unwrap().is_none() {
@@ -861,7 +1017,7 @@ impl AgentRuntime {
         let session = self.session_entry(
             &connection,
             &acp_id,
-            key.clone(),
+            key,
             cwd,
             Projection::live_history(),
             false,
@@ -870,16 +1026,19 @@ impl AgentRuntime {
         session.unprompted.store(true, Ordering::Relaxed);
         session.projection.lock().unwrap().set_settings(declared);
         self.inner.note_declared(&session);
-        for value in settings {
-            if let Err(error) = self.apply_setting(&session, value).await {
-                self.close_session(&session).await;
-                self.delete_unprompted(&session).await;
-                return Err(error);
-            }
-        }
+        Ok(session)
+    }
+
+    fn register_created(&self, session: Arc<Session>) -> SessionKey {
+        let key = SessionKey::from_acp(
+            &session.connection.agent,
+            &session.acp_id,
+            session.connection.acp_id_is_native,
+        );
+        let agent = session.connection.agent.clone();
         self.inner.register(key.clone(), session);
-        self.inner.catalog.changed(&connection.agent);
-        Ok(key)
+        self.inner.catalog.changed(&agent);
+        key
     }
 
     /// Creates a session in `cwd` without a prompt, to show and check the

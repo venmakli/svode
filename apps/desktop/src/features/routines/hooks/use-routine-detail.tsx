@@ -14,7 +14,12 @@ import type { CollectionActionState } from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
-import type { RoutineDefinition, RoutineRow } from "../model/types";
+import type {
+  RoutineDefinition,
+  RoutineLaunchRecoveryActions,
+  RoutineLaunchRefusal,
+  RoutineRow,
+} from "../model/types";
 import { RoutineDefinitionForm } from "../ui/routine-definition-form";
 import { RoutineDetailView } from "../ui/routine-detail-view";
 import { RoutineDetailActions } from "../ui/routine-detail-actions";
@@ -29,12 +34,14 @@ export function useRoutineDetail({
   instanceKey,
   mutationError,
   nameError,
+  getRunRefusal,
   getRunState,
   onOpenSession,
   onRun,
   owner,
   pending,
   readOnly,
+  recovery,
   rows,
   onEditChange,
   setEditSession,
@@ -49,12 +56,14 @@ export function useRoutineDetail({
   instanceKey: string;
   mutationError: string | null;
   nameError: string | null;
+  getRunRefusal(row: RoutineRow): RoutineLaunchRefusal | null;
   getRunState(row: RoutineRow): CollectionActionState;
   onOpenSession(row: RoutineRow): void;
   onRun(row: RoutineRow): Promise<void>;
   owner: RoutineOwnerInput;
   pending: boolean;
   readOnly: boolean;
+  recovery: RoutineLaunchRecoveryActions;
   /** The Routines of the ready catalog; null until it is read. */
   rows: readonly RoutineRow[] | null;
   onEditChange(definition: RoutineDefinition): void;
@@ -67,13 +76,21 @@ export function useRoutineDetail({
 }): CollectionDetailRowBinding<RoutineRow> {
   const createReadOnlyDetail = useCallback(
     (row: RoutineRow): CollectionDetailContent => ({
-      content: <RoutineDetailView executors={executors} row={row} />,
+      content: (
+        <RoutineDetailView
+          executors={executors}
+          recovery={recovery}
+          row={row}
+        />
+      ),
       description: (
         <span className="sr-only">{m.routines_detail_description()}</span>
       ),
       footerActions: (
         <RoutineDetailActions
+          recovery={recovery}
           row={row}
+          runRefusal={getRunRefusal(row)}
           runState={getRunState(row)}
           onOpenSession={onOpenSession}
           onRun={onRun}
@@ -81,7 +98,7 @@ export function useRoutineDetail({
       ),
       title: routineDetailTitle(row),
     }),
-    [executors, getRunState, onOpenSession, onRun],
+    [executors, getRunRefusal, getRunState, onOpenSession, onRun, recovery],
   );
   // A Routine without a readable id is listed as `invalid:<path>`, so its
   // detail closes as a Routine that is gone.

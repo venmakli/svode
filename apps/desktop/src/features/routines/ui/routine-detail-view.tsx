@@ -18,8 +18,10 @@ import {
   routineDefinitionDiagnostics,
   routineTriggerSummary,
 } from "../model/routine-values";
-import type { RoutineRow } from "../model/types";
+import { routineAgentActorId } from "../model/launch-refusal";
+import type { RoutineLaunchRecoveryActions, RoutineRow } from "../model/types";
 import { RoutineDiagnostics } from "./routine-diagnostics";
+import { RoutineLaunchRefusalNotice } from "./routine-launch-refusal";
 import {
   routineNextRunCopy,
   routineScheduleSummary,
@@ -27,9 +29,11 @@ import {
 
 export function RoutineDetailView({
   executors,
+  recovery = {},
   row,
 }: {
   executors: AgentActorOptionsState;
+  recovery?: RoutineLaunchRecoveryActions;
   row: RoutineRow;
 }) {
   if (
@@ -91,6 +95,15 @@ export function RoutineDetailView({
                 <Badge variant="outline">{m.routines_last_run_remote()}</Badge>
               ) : null}
             </span>
+            {row.lastRun?.refusal ? (
+              <span className="mt-1 flex text-destructive">
+                <RoutineLaunchRefusalNotice
+                  actorId={routineAgentActorId(row)}
+                  recovery={recovery}
+                  refusal={row.lastRun.refusal}
+                />
+              </span>
+            ) : null}
           </DetailValue>
         ) : null}
         {nextRunCopy ? (

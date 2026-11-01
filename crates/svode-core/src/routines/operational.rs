@@ -2,8 +2,8 @@ use sqlx::{Row, SqlitePool};
 
 use super::RoutineStoreError;
 use super::model::{
-    RoutineCatalogSnapshot, RoutineDefinition, RoutineOwnerKind, RoutineRunLaunch,
-    RoutineRunRecord, RoutineRunRow, RoutineRunTerminalStatus,
+    RoutineCatalogSnapshot, RoutineDefinition, RoutineLaunchRefusal, RoutineOwnerKind,
+    RoutineRunLaunch, RoutineRunRecord, RoutineRunRow, RoutineRunTerminalStatus,
 };
 
 pub struct DefinitionRow {
@@ -397,6 +397,34 @@ pub async fn record_terminal_outcome(
     Ok(())
 }
 
+/// Records a run whose launch was refused before its first prompt: it
+/// failed with the refusal's reason.
+pub async fn record_launch_refusal(
+    pool: &SqlitePool,
+    routine_run_id: &str,
+    refusal: &RoutineLaunchRefusal,
+    observed_at: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE routine_runs
+        SET terminal_status = ?, terminal_exit_code = NULL, terminal_reason = ?,
+            terminal_observed_at = ?, session_status = NULL, updated_at = ?,
+            launch_refusal = ?
+        WHERE routine_run_id = ?
+        "#,
+    )
+    .bind(RoutineRunTerminalStatus::Failed.as_str())
+    .bind(refusal.message())
+    .bind(observed_at)
+    .bind(observed_at)
+    .bind(serde_json::to_string(refusal).unwrap_or_default())
+    .bind(routine_run_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn reconcile_agent_session(
     pool: &SqlitePool,
     routine_run_id: &str,
@@ -432,7 +460,7 @@ pub async fn latest_run(
         SELECT routine_run_id, routine_id, owner_path, launch_id, pty_id, source,
                source_session_id, agent_session_id, created_at, terminal_status,
                terminal_exit_code, terminal_reason, terminal_observed_at, session_status,
-               launch_transport, terminal_choice, terminal_choice_detail
+               launch_transport, terminal_choice, terminal_choice_detail, launch_refusal
         FROM routine_runs
         WHERE owner_path = ? AND routine_id = ?
         ORDER BY created_at DESC, routine_run_id DESC
@@ -470,6 +498,7 @@ pub async fn latest_run_record(
             terminal_observed_at: row.terminal_observed_at,
             session_status: row.session_status,
             launch: row.launch,
+            launch_refusal: row.launch_refusal,
         }))
 }
 
@@ -575,6 +604,10 @@ fn routine_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RoutineRunRow, s
         terminal_observed_at: row.try_get("terminal_observed_at")?,
         session_status: row.try_get("session_status")?,
         launch: launch_from_row(&row)?,
+        // A refusal this version cannot read is no refusal.
+        launch_refusal: row
+            .try_get::<Option<String>, _>("launch_refusal")?
+            .and_then(|json| serde_json::from_str(&json).ok()),
     })
 }
 
@@ -837,6 +870,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refused_launch_is_a_failed_run_whose_reference_carries_the_refusal() {
+        use crate::agent_actors::executor::ExecutorSource;
+        use crate::routines::model::RoutineLaunchRefusalReason;
+        let temp = tempdir().unwrap();
+        let pool = routines_pool(&temp.path().join("routines.db")).await;
+        let id = "2026-11-01T10:00:00Z";
+        create_run(&pool, new_run(id, &RoutineRunLaunch::Acp))
+            .await
+            .unwrap();
+        let refusal = RoutineLaunchRefusal::new(
+            RoutineLaunchRefusalReason::SettingNotDeclared,
+            Some(ExecutorSource::Binding),
+            Some("codex".into()),
+        )
+        .with_value("model", "gpt-5.6");
+        record_launch_refusal(&pool, id, &refusal, id)
+            .await
+            .unwrap();
+
+        let run = latest_run_record(&pool, ".", "routine-one")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.terminal_status, Some(RoutineRunTerminalStatus::Failed));
+        assert_eq!(run.terminal_reason, Some(refusal.message()));
+        assert_eq!(run.launch_refusal.as_ref(), Some(&refusal));
+        let reference = run.to_ref(&RoutineLiveEvidence::default());
+        assert!(!reference.active);
+        assert_eq!(reference.refusal, Some(refusal));
+    }
+
+    #[tokio::test]
     async fn a_store_without_launch_columns_opens_and_reads_terminal_runs() {
         let temp = tempdir().unwrap();
         let db_path = temp.path().join("routines.db");
@@ -845,6 +910,7 @@ mod tests {
             "launch_transport",
             "terminal_choice",
             "terminal_choice_detail",
+            "launch_refusal",
         ] {
             sqlx::query(&format!("ALTER TABLE routine_runs DROP COLUMN {column}"))
                 .execute(&pool)
