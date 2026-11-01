@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test as bunTest } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { act, useEffect } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import { NodeApi, type Descendant, type TElement } from "platejs";
@@ -33,6 +35,29 @@ import {
   type CommitFailurePresentation,
 } from "./use-editor-document-writer";
 import * as m from "@/paraglide/messages.js";
+
+// Other test files replace `sonner` for the whole process, and these tests read
+// the real toasts, so they run in a process of their own.
+const ISOLATED = process.env.SVODE_EDITOR_WRITER_DOM === "1";
+if (!ISOLATED) {
+  (bunTest as (name: string, run: () => void, timeout: number) => void)(
+    "editor document writer",
+    () => {
+      const child = spawnSync(
+        process.execPath,
+        ["test", "--timeout", "60000", fileURLToPath(import.meta.url)],
+        {
+          env: { ...process.env, SVODE_EDITOR_WRITER_DOM: "1" },
+          encoding: "utf8",
+        },
+      );
+      if (child.status !== 0) throw new Error(child.stdout + child.stderr);
+      expect(child.status).toBe(0);
+    },
+    300000,
+  );
+}
+const test = (ISOLATED ? bunTest : () => {}) as typeof bunTest;
 
 const SPACE = "/space";
 
