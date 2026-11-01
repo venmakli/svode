@@ -209,6 +209,34 @@ test("the confirmation of each operation names what is lost and what stays", asy
     expect(gitOperationAbortCopy("sequencer", null).action).toBe(
       m.git_operation_abort_sequence_action(),
     );
+    // Only a sequence lists the commits it drops; none when it dropped none.
+    for (const operation of ["rebase", "cherry_pick", "revert"] as const)
+      expect(gitOperationAbortCopy(operation, null).dropped).toBe(undefined);
+    expect(
+      gitOperationAbortCopy(
+        "cherry_pick",
+        { kind: "remaining", count: 1 },
+        { head: "c0ffee", count: 0, titles: [] },
+      ).dropped,
+    ).toBe(undefined);
+    expect(
+      gitOperationAbortCopy("revert", null, {
+        head: "c0ffee",
+        count: 2,
+        titles: ["Resolve conflict", "Add intro"],
+      }),
+    ).toEqual({
+      action: m.git_operation_abort_action({ operation: "revert" }),
+      title: m.git_operation_abort_title({
+        action: m.git_operation_abort_action({ operation: "revert" }),
+      }),
+      description: m.git_operation_abort_sequence_description(),
+      dropped: {
+        summary: m.git_operation_abort_sequence_commits({ count: "2" }),
+        titles: ["Resolve conflict", "Add intro"],
+        more: null,
+      },
+    });
   }
   await setLocale("en", { reload: false });
 });

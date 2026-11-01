@@ -421,11 +421,20 @@ export function GitSyncStatusWidget({
                 <GitSyncAbortButton
                   aborting={abort.aborting}
                   disabled={busy}
-                  onConfirm={() => void abort.abort()}
+                  onConfirm={(expectedHead) => void abort.abort(expectedHead)}
                   copy={
                     stop.kind === "operation"
-                      ? gitOperationAbortCopy(stop.operation, stop.step)
+                      ? gitOperationAbortCopy(
+                          stop.operation,
+                          stop.step,
+                          stop.sequence,
+                        )
                       : undefined
+                  }
+                  expectedHead={
+                    stop.kind === "operation"
+                      ? (stop.sequence?.head ?? null)
+                      : null
                   }
                 />
               )}

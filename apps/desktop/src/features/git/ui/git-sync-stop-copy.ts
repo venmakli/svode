@@ -3,6 +3,7 @@ import type {
   GitConflictKind,
   GitOperation,
   GitOperationStep,
+  GitSequenceCommits,
   GitServiceFile,
   GitSyncStop,
 } from "../model";
@@ -36,24 +37,41 @@ export function gitOperationName(operation: GitOperation): string {
   }[operation];
 }
 
+/** The confirmation of a cancellation: what is lost and what stays. */
+export interface GitAbortCopy {
+  action: string;
+  title: string;
+  description: string;
+  /**
+   * The commits the abort of a cherry-pick or revert sequence drops, listed
+   * under the description: their count, the newest titles first, and how
+   * many more are only counted.
+   */
+  dropped?: { summary: string; titles: string[]; more: string | null };
+}
+
 /**
  * «Отменить <операцию>» and its confirmation (Stage 11 1.F), which names what
  * is lost: the resolutions and edits after the stop, and for a sequence the
- * commits it already applied; commits made before it stay.
+ * commits it drops from its start, as the stop lists them (DF-282 R3);
+ * commits made before it stay.
  */
 export function gitOperationAbortCopy(
   operation: GitOperation,
   step: GitOperationStep | null,
-): { action: string; title: string; description: string } {
+  commits?: GitSequenceCommits,
+): GitAbortCopy {
   // A pick or revert with a todo is a sequence: Git returns the branch to
   // the state before all of it.
-  const sequence = operation === "sequencer" || step?.kind === "remaining";
+  const sequence =
+    operation === "sequencer" || step?.kind === "remaining" || !!commits;
   const action =
     operation === "sequencer"
       ? m.git_operation_abort_sequence_action()
       : m.git_operation_abort_action({
           operation: gitOperationName(operation),
         });
+  const more = commits ? commits.count - commits.titles.length : 0;
   return {
     action,
     title: m.git_operation_abort_title({ action }),
@@ -62,6 +80,20 @@ export function gitOperationAbortCopy(
       : m.git_operation_abort_description({
           operation: gitOperationName(operation),
         }),
+    ...(commits && commits.count > 0
+      ? {
+          dropped: {
+            summary: m.git_operation_abort_sequence_commits({
+              count: String(commits.count),
+            }),
+            titles: commits.titles,
+            more:
+              more > 0
+                ? m.git_operation_abort_sequence_more({ count: String(more) })
+                : null,
+          },
+        }
+      : {}),
   };
 }
 

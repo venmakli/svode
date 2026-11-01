@@ -7,7 +7,9 @@ export type GitFailureCauseDto =
   | "file_system_denied"
   | "network"
   | "local_changes"
-  | "head_moved";
+  | "branch_left_sequence"
+  | "commits_published"
+  | "state_changed";
 
 export type GitFailureStageDto =
   | "prepare"
@@ -34,7 +36,9 @@ const CAUSES: readonly string[] = [
   "file_system_denied",
   "network",
   "local_changes",
-  "head_moved",
+  "branch_left_sequence",
+  "commits_published",
+  "state_changed",
 ] satisfies GitFailureCauseDto[];
 
 const STAGES: readonly string[] = [

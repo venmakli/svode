@@ -33,8 +33,19 @@ export function gitFailureCauseMessage(cause: GitFailureCauseDto): string {
     file_system_denied: m.git_failure_cause_file_system_denied,
     network: m.git_failure_cause_network,
     local_changes: m.git_failure_cause_local_changes,
-    head_moved: m.git_failure_cause_head_moved,
+    branch_left_sequence: m.git_failure_cause_branch_left_sequence,
+    commits_published: m.git_failure_cause_commits_published,
+    state_changed: m.git_failure_cause_state_changed,
   }[cause]();
+}
+
+/**
+ * The abort was refused because the stop changed after its confirmation
+ * listed what is lost (DF-282 R2 (c)): the stop is read again for a retry.
+ */
+export function isGitAbortStateChanged(error: unknown): boolean {
+  const failure = toGitSyncFailureDto(error);
+  return failure?.stage === "abort" && failure.cause === "state_changed";
 }
 
 function gitSyncStageMessage(stage: GitFailureStageDto): string {
