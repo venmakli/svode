@@ -792,6 +792,71 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
     }
   });
 
+  test("keeping my edits against a deletion sends my side at once and holds the actions only while it runs", async () => {
+    const { useGitStore } = await import("@/features/git");
+    const answers: {
+      settle: (value: unknown) => void;
+      fail: (error: Error) => void;
+    }[] = [];
+    const t = await setup(
+      wholeFile(
+        "modify_delete",
+        { ours: side("modified"), theirs: side("deleted") },
+        { theirs: false },
+      ),
+      () => new Promise((settle, fail) => answers.push({ settle, fail })),
+    );
+    const held = () =>
+      ["keep_edited", "delete"].map(
+        (name) => (action(t, name) as HTMLButtonElement).disabled,
+      );
+    try {
+      await t.render("modify_delete", "mdel.md");
+      await t.settle();
+      expect(held()).toEqual([false, false]);
+      // «Оставить с правками» does not ask: my version stays.
+      await t.click(action(t, "keep_edited"));
+      expect(t.dom.document.querySelector("[role=alertdialog]")).toBe(null);
+      expect(t.resolutions).toEqual([
+        {
+          spacePath,
+          path: "mdel.md",
+          resolution: { type: "side", side: "ours" },
+        },
+      ]);
+      // While it runs, its actions and the sync of the Space are taken.
+      expect(held()).toEqual([true, true]);
+      expect(useGitStore.getState().syncing[spacePath]).toBe(true);
+      await act(async () => {
+        answers[0].settle({ type: "resolved" });
+        await new Promise((done) => setTimeout(done, 30));
+      });
+      expect(held()).toEqual([false, false]);
+      expect(!!useGitStore.getState().syncing[spacePath]).toBe(false);
+      expect(t.dom.document.querySelector("[data-conflict-problem]")).toBe(
+        null,
+      );
+      // A refusal gives them back as well and names its reason.
+      await t.click(action(t, "keep_edited"));
+      expect(held()).toEqual([true, true]);
+      await act(async () => {
+        answers[1].fail(new Error("Too many open files"));
+        await new Promise((done) => setTimeout(done, 30));
+      });
+      expect(held()).toEqual([false, false]);
+      expect(!!useGitStore.getState().syncing[spacePath]).toBe(false);
+      const alert = t.dom.document.querySelector(
+        "[data-conflict-problem=failed]",
+      )!;
+      expect(alert.textContent?.includes(t.m.changes_conflict_failed())).toBe(
+        true,
+      );
+      expect(alert.textContent?.includes("Too many open files")).toBe(true);
+    } finally {
+      await t.dispose();
+    }
+  });
+
   test("taking the incoming name asks first and names both names", async () => {
     const t = await setup(
       wholeFile(

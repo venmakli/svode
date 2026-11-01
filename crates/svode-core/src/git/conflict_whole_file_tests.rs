@@ -287,6 +287,64 @@ async fn modify_delete_keeps_the_edited_file_or_deletes_it() {
 }
 
 #[tokio::test]
+async fn keep_with_edits_resolves_modify_delete_with_the_edited_side() {
+    let (merge, result) = Merge::new(
+        "",
+        |repo| {
+            write(repo, "mine.txt", b"one\n");
+            write(repo, "incoming.txt", b"two\n");
+        },
+        |repo| {
+            std::fs::remove_file(repo.join("mine.txt")).unwrap();
+            write(repo, "incoming.txt", b"two, theirs\n");
+        },
+        |repo| {
+            write(repo, "mine.txt", b"one, ours\n");
+            std::fs::remove_file(repo.join("incoming.txt")).unwrap();
+        },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(
+        git(&merge.local, &["status", "--porcelain"]),
+        "DU incoming.txt\nUD mine.txt"
+    );
+    // `DU`: «Оставить с правками» keeps the incoming edited version.
+    let result = resolve_as(
+        &merge,
+        "incoming.txt",
+        FileResolution::Side { side: Side::Theirs },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Conflict { .. }), "{result:?}");
+    assert_eq!(text_of(&merge.local, "incoming.txt"), "two, theirs\n");
+    assert_eq!(git(&merge.local, &["show", ":incoming.txt"]), "two, theirs");
+    assert_eq!(unmerged(&merge).lines().count(), 2, "{}", unmerged(&merge));
+    assert!(!unmerged(&merge).contains("incoming.txt"));
+    assert!(merge.merging());
+    // `UD`: «Оставить с правками» keeps my edited version; the last resolved
+    // path finishes the merge.
+    let result = resolve_as(
+        &merge,
+        "mine.txt",
+        FileResolution::Side { side: Side::Ours },
+    )
+    .await;
+    assert!(matches!(result, SyncResult::Success { .. }), "{result:?}");
+    assert!(!merge.merging());
+    assert_eq!(unmerged(&merge), "");
+    assert_eq!(text_of(&merge.local, "mine.txt"), "one, ours\n");
+    assert_eq!(git(&merge.local, &["show", ":mine.txt"]), "one, ours");
+    assert_eq!(git(&merge.local, &["show", "HEAD:mine.txt"]), "one, ours");
+    assert_eq!(
+        git(&merge.local, &["show", "HEAD:incoming.txt"]),
+        "two, theirs"
+    );
+    assert_eq!(git(&merge.local, &["rev-list", "--count", "HEAD^@"]), "3");
+    assert_eq!(git(&merge.local, &["status", "--porcelain"]), "");
+}
+
+#[tokio::test]
 async fn add_add_keeps_both_versions_of_a_text_file() {
     let (merge, _) = Merge::new(
         "",
