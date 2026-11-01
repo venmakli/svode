@@ -38,6 +38,7 @@ pub(crate) struct SessionCapabilities {
     pub list: Option<Value>,
     pub resume: Option<Value>,
     pub close: Option<Value>,
+    pub delete: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +62,25 @@ pub(crate) struct NewSessionResponse {
 pub(crate) struct DeclaredSettings {
     pub config_options: Option<Vec<Value>>,
     pub modes: Option<SessionModeState>,
+    /// The unstable session model state some agents still send (Hermes,
+    /// Stage 11 `03` E6); it left the protocol artifacts unstabilized.
+    pub models: Option<SessionModelState>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionModelState {
+    pub current_model_id: String,
+    #[serde(default)]
+    pub available_models: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelInfo {
+    pub model_id: String,
+    pub name: String,
+    pub description: Option<String>,
 }
 
 #[derive(Deserialize)]

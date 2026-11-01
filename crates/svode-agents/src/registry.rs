@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::adapters::{AdapterPin, InstalledAdapter, adapter_pin};
+use crate::drafts::{DraftSession, DraftSessionEvidence};
 use crate::process;
 use crate::runtime::{AcpLaunch, SettingValue};
 use svode_core::agent_actors::{AgentAdapter, ApprovalMode};
@@ -849,6 +850,55 @@ impl AdapterRuntimeRegistry {
         adapter == AgentAdapterKind::Hermes
     }
 
+    /// What the recorded evidence allows for a session the agent creates
+    /// without a prompt, with the evidence and the agent version it was
+    /// observed on (Stage 11 `03`, E6 2026-10-31, live in the real HOME). An
+    /// agent without evidence gets no draft session.
+    pub fn draft_session(&self, adapter: AgentAdapterKind) -> DraftSessionEvidence {
+        let (session, evidence) = match adapter {
+            AgentAdapterKind::Codex => (
+                DraftSession::Traceless,
+                "E6: not in the list or store; codex-acp 2.1.1, codex-cli 0.163.0",
+            ),
+            AgentAdapterKind::ClaudeCode => (
+                DraftSession::Traceless,
+                "E6: not in the list or store, an empty project memory directory; \
+                 claude-agent-acp 0.85.0, Claude Code 2.1.316",
+            ),
+            AgentAdapterKind::Hermes => (
+                DraftSession::Traceless,
+                "E6: ephemeral, value changes not kept either; Hermes 2026.9.24",
+            ),
+            AgentAdapterKind::QwenCode => (
+                DraftSession::FixedValues,
+                "E6: not in the list until set_config_option or set_mode, which \
+                 lists it, and no ACP deletion; Qwen Code 0.24.7",
+            ),
+            AgentAdapterKind::Pi => (
+                DraftSession::Deleted,
+                "E6: a session-map.json record, removed by session/delete; \
+                 pi-acp 0.0.34, pi 1.0.0",
+            ),
+            AgentAdapterKind::KimiCode => (
+                DraftSession::Deleted,
+                "E6: listed at once, removed by session/delete; Kimi Code 2.2.0",
+            ),
+            AgentAdapterKind::Opencode => (
+                DraftSession::Deleted,
+                "E6: listed at once, removed by session/delete; opencode 2.0.22",
+            ),
+            AgentAdapterKind::GrokBuild => (
+                DraftSession::Unsupported,
+                "E6: in `grok sessions list`, deleted only by its CLI; Grok Build 1.0.70",
+            ),
+            AgentAdapterKind::Cursor => (
+                DraftSession::Unsupported,
+                "E6: listed at once with a detached worker, no deletion; Cursor 2026.10.01",
+            ),
+        };
+        DraftSessionEvidence { session, evidence }
+    }
+
     /// Launch plan of the agent's ACP entrypoint for the user's executable:
     /// its own command, or the installed adapter run by the user's Node.js
     /// (`adapter_run`). `None` for an agent without an entrypoint, or for an
@@ -903,13 +953,7 @@ impl AdapterRuntimeRegistry {
             // last session's directory once a session ran.
             session_per_connection: adapter == AgentAdapterKind::Pi,
             keeps_loaded_sessions: self.keeps_loaded_sessions(adapter),
-            // E01: `session/new` without a prompt leaves no session in the
-            // native store or list of Claude Code and Codex; Claude creates
-            // only an empty project directory.
-            draft_session: matches!(
-                adapter,
-                AgentAdapterKind::Codex | AgentAdapterKind::ClaudeCode
-            ),
+            draft_session: self.draft_session(adapter).session,
         })
     }
 
@@ -3007,7 +3051,7 @@ mod tests {
         assert!(launch.read_only_open);
         assert!(launch.reads_during_external_turn);
         assert_eq!(launch.writer_refusal, None);
-        assert!(launch.draft_session);
+        assert_eq!(launch.draft_session, DraftSession::Traceless);
 
         let codex = AdapterRuntimeRegistry
             .acp_launch(
@@ -3021,7 +3065,7 @@ mod tests {
         assert!(codex.lists_catalog);
         assert!(codex.read_only_open);
         assert!(codex.reads_during_external_turn);
-        assert!(codex.draft_session);
+        assert_eq!(codex.draft_session, DraftSession::Traceless);
         assert_eq!(
             codex.writer_refusal.as_deref(),
             Some("thread_active_writer")
@@ -3044,8 +3088,8 @@ mod tests {
         assert!(pi.acp_id_is_native);
         assert!(pi.lists_catalog);
         assert!(pi.session_per_connection);
-        // Without E01 evidence the draft shows settings after the first send.
-        assert!(!pi.draft_session);
+        // E6: pi's draft session is deleted on release.
+        assert_eq!(pi.draft_session, DraftSession::Deleted);
         // An adapter entrypoint does not start without its Node.js.
         assert_eq!(
             AdapterRuntimeRegistry.acp_launch(
@@ -3085,7 +3129,11 @@ mod tests {
             assert!(launch.read_only_open);
             assert_eq!(launch.writer_refusal, None);
             assert!(!launch.session_per_connection);
-            assert!(!launch.draft_session);
+            assert_eq!(
+                launch.draft_session,
+                AdapterRuntimeRegistry.draft_session(agent).session,
+                "{agent:?}"
+            );
         }
         // A native id of Cursor is a terminal chat; its ACP sessions have
         // none (slice 8.4).
@@ -3253,6 +3301,32 @@ mod tests {
     }
 
     #[test]
+    fn draft_sessions_follow_the_recorded_evidence_of_each_agent() {
+        use AgentAdapterKind::*;
+        for (agent, expected) in [
+            (Codex, DraftSession::Traceless),
+            (ClaudeCode, DraftSession::Traceless),
+            (Hermes, DraftSession::Traceless),
+            (QwenCode, DraftSession::FixedValues),
+            (Pi, DraftSession::Deleted),
+            (KimiCode, DraftSession::Deleted),
+            (Opencode, DraftSession::Deleted),
+            (GrokBuild, DraftSession::Unsupported),
+            (Cursor, DraftSession::Unsupported),
+        ] {
+            let evidence = AdapterRuntimeRegistry.draft_session(agent);
+            assert_eq!(evidence.session, expected, "{agent:?}");
+            // Each record names the evidence and the version it was seen on.
+            assert!(evidence.evidence.starts_with("E6:"), "{agent:?}");
+        }
+        assert!(DraftSession::Traceless.changes_values());
+        assert!(DraftSession::Deleted.changes_values() && DraftSession::Deleted.deletes());
+        assert!(!DraftSession::FixedValues.changes_values());
+        assert!(DraftSession::FixedValues.opens());
+        assert!(!DraftSession::Unsupported.opens());
+    }
+
+    #[test]
     fn qwen_code_runs_its_acp_flag_with_native_ids_listed_by_folder() {
         let agent = AgentAdapterKind::QwenCode;
         let launch = AdapterRuntimeRegistry
@@ -3268,7 +3342,7 @@ mod tests {
         assert!(launch.read_only_open);
         assert_eq!(launch.writer_refusal, None);
         assert!(!launch.session_per_connection);
-        assert!(!launch.draft_session);
+        assert_eq!(launch.draft_session, DraftSession::FixedValues);
         assert_eq!(
             AdapterRuntimeRegistry.terminal_resume_args(agent, "s1"),
             Some(vec!["--resume".to_string(), "s1".to_string()])
@@ -3327,7 +3401,7 @@ mod tests {
         assert!(!launch.reads_during_external_turn);
         assert_eq!(launch.writer_refusal, None);
         assert!(!launch.session_per_connection);
-        assert!(!launch.draft_session);
+        assert_eq!(launch.draft_session, DraftSession::Deleted);
         assert_eq!(AdapterRuntimeRegistry.native_status_store(agent), None);
         assert_eq!(
             AdapterRuntimeRegistry.terminal_resume_args(agent, "s1"),

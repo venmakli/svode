@@ -153,6 +153,12 @@ pub fn run() {
             );
             speech.refresh_measurements(speech::commands::events(app.handle()));
             app.manage(speech);
+            // Last declarations and draft deletions of the device (Stage 11 `03`).
+            let (drafts, kept) =
+                agent_runtime::drafts::DraftStore::load(&app.path().app_data_dir()?);
+            app.state::<agent_runtime::AgentRuntimeState>()
+                .runtime()
+                .host_drafts(Arc::new(drafts), kept.declarations, kept.pending_deletions);
             app.manage(Arc::new(agent_runtime::connections::AgentConnections::new(
                 app.state::<agent_runtime::AgentRuntimeState>()
                     .runtime()
@@ -383,6 +389,7 @@ pub fn run() {
             agent_runtime::commands::agent_runtime_answer,
             agent_runtime::commands::agent_runtime_check,
             agent_runtime::commands::agent_runtime_hold_draft,
+            agent_runtime::commands::agent_runtime_last_declarations,
             agent_runtime::commands::agent_runtime_release_draft,
             agent_runtime::commands::agent_runtime_start_session,
             agent_runtime::commands::agent_runtime_open_session,

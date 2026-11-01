@@ -66,6 +66,11 @@ pub enum AgentRuntimeError {
         value: String,
         reason: SettingRefusal,
     },
+    /// The agent has no recorded evidence that a session created without
+    /// a prompt leaves nothing in its list, or it no longer declares the
+    /// deletion its draft sessions need (Stage 11 `03`).
+    #[error("the agent opens no draft session")]
+    DraftUnsupported,
     #[error("agent call timed out")]
     Timeout,
     #[error("agent call failed: {message}")]
@@ -81,6 +86,10 @@ pub enum SettingRefusal {
     /// The session does not declare this setting or this value.
     #[error("the agent does not declare it in this session")]
     NotDeclared,
+    /// The draft session keeps its values until its first prompt: a change
+    /// would leave it in the agent's list (Stage 11 `03`, Qwen Code).
+    #[error("the draft session takes values only with its first prompt")]
+    BeforeFirstPrompt,
     /// The agent refused the change or did not confirm the value.
     #[error("the agent refused it: {message}")]
     Agent { message: String },

@@ -144,7 +144,7 @@ async fn main() {
         writer_refusal,
         session_per_connection: false,
         keeps_loaded_sessions: false,
-        draft_session: false,
+        draft_session: Default::default(),
     };
     let connection = connect(&runtime, &launch).await;
 

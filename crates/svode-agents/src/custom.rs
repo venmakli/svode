@@ -248,7 +248,8 @@ fn launch_plan(
         writer_refusal: None,
         session_per_connection: false,
         keeps_loaded_sessions: false,
-        draft_session: false,
+        // Custom agents have no draft-session evidence (Stage 11 `03`).
+        draft_session: crate::drafts::DraftSession::Unsupported,
     })
 }
 
@@ -328,6 +329,7 @@ mod tests {
             list_sessions: true,
             resume_session: true,
             close_session: false,
+            delete_session: false,
             image_prompt: false,
         };
         assert_eq!(restriction(&all), None);

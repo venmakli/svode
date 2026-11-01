@@ -9,6 +9,7 @@ pub mod adapters;
 pub mod catalog;
 mod changes;
 pub mod custom;
+pub mod drafts;
 mod error;
 pub mod identity;
 pub mod interaction;

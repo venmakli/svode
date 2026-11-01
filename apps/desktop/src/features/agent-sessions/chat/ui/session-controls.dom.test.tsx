@@ -78,6 +78,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   let details: Record<string, unknown> = {};
   /** The agents a draft offers. */
   let chatAgents = [{ id: "codex", name: "Codex" }];
+  /** What the agent declared last on this device (Stage 11 `03`). */
+  let declarationsAnswer: () => unknown = () => [];
   /** How holding a draft's agent ends. */
   let holdAnswer: () => unknown = () => ({
     hold: 5,
@@ -113,6 +115,9 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       return details[payload.itemId as string] ?? { outcome: "unavailable", reason: "not_provided" };
     }
     if (command === "agent_runtime_hold_draft") return holdAnswer();
+    if (command === "agent_runtime_last_declarations") {
+      return declarationsAnswer();
+    }
     if (command === "agent_runtime_start_session") {
       return {
         outcome: "started",
@@ -182,6 +187,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       draftSession = draftKey;
       details = {};
       chatAgents = [{ id: "codex", name: "Codex" }];
+      declarationsAnswer = () => [];
       holdAnswer = () => ({
         hold: 5,
         check: {
@@ -436,6 +442,204 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       expect(
         calls.some((call) => call.command === "agent_runtime_subscribe"),
       ).toBe(false);
+    },
+  );
+
+  controlsTest(
+    "without a draft session a draft shows the agent's last declarations with their mark and sends the kept values",
+    async () => {
+      draftSession = null;
+      declarationsAnswer = () => [
+        {
+          agent: "codex",
+          model: "gpt-5.6-luna",
+          settings: settings(),
+          declaredAt: 1,
+          agentVersion: "0.163.0",
+        },
+      ];
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      expect(lastCall("agent_runtime_last_declarations")).toEqual({
+        agent: "codex",
+      });
+      await click(agentButton());
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-5.6 Luna");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("Low");
+      expect(
+        popover()?.textContent?.includes(m.sessions_chat_settings_last_session()),
+      ).toBe(true);
+      expect(
+        popover()?.textContent?.includes(m.sessions_chat_model_after_send()),
+      ).toBe(false);
+
+      // The draft keeps the value; nothing goes to an agent before the send.
+      await chooseValue(m.sessions_chat_reasoning_level(), "High");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("High");
+      expect(
+        calls.some((call) => call.command === "agent_runtime_set_setting"),
+      ).toBe(false);
+
+      // No session declared the options of another model yet.
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Sol");
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-6 Sol");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe(
+        m.sessions_chat_setting_agent_default(),
+      );
+      expect(
+        popover()?.textContent?.includes(
+          m.sessions_chat_setting_variants_after_model(),
+        ),
+      ).toBe(true);
+      // The row without options opens no screen.
+      expect(settingRow(m.sessions_chat_reasoning_level())?.tagName).toBe("DIV");
+      // Svode does not know which settings follow the model: all but the
+      // model and the mode wait for its options.
+      expect(rowValue("Collaboration mode")).toBe(
+        m.sessions_chat_setting_agent_default(),
+      );
+      await pressKey(document.activeElement, "Escape");
+
+      writeComposerDraft(newSessionDraftKey("/project"), {
+        ...readComposerDraft(newSessionDraftKey("/project"))!,
+        parts: [{ type: "text", text: "Fix it" }],
+      });
+      await unmountAll();
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(lastCall("agent_runtime_start_session")).toEqual({
+        agent: "codex",
+        cwd: "/project",
+        // The reasoning chosen for the earlier model is dropped with it.
+        settings: [{ setting: "model", value: "gpt-6-sol" }],
+        prompt: [{ type: "text", text: "Fix it" }],
+        hold: 5,
+      });
+    },
+  );
+
+  controlsTest(
+    "the last declarations of the chosen model give its options",
+    async () => {
+      draftSession = null;
+      const sol = settings({ model: "gpt-6-sol" }).map((setting) =>
+        setting.id === "reasoning_effort"
+          ? {
+              ...setting,
+              currentValue: "medium",
+              options: [{ value: "medium", name: "Medium", description: null }],
+            }
+          : setting,
+      );
+      declarationsAnswer = () => [
+        {
+          agent: "codex",
+          model: "gpt-6-sol",
+          settings: sol,
+          declaredAt: 2,
+          agentVersion: "0.163.0",
+        },
+        {
+          agent: "codex",
+          model: "gpt-5.6-luna",
+          settings: settings(),
+          declaredAt: 1,
+          agentVersion: "0.163.0",
+        },
+      ];
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      await click(agentButton());
+      // The latest declaration shows first.
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-6 Sol");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("Medium");
+      await chooseValue(m.sessions_chat_model(), "GPT-5.6 Luna");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("Low");
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Sol");
+      expect(rowValue(m.sessions_chat_reasoning_level())).toBe("Medium");
+    },
+  );
+
+  controlsTest(
+    "a draft session that keeps its values until the first send shows them and sends them with it",
+    async () => {
+      holdAnswer = () => ({
+        hold: 5,
+        check: {
+          state: "ready",
+          agent: { name: "qwen-code", version: "0.24.7" },
+        },
+        session: draftKey,
+        keepsValuesUntilSend: true,
+      });
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      await click(agentButton());
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-5.6 Luna");
+      // The draft session's own declaration has no mark.
+      expect(
+        popover()?.textContent?.includes(m.sessions_chat_settings_last_session()),
+      ).toBe(false);
+      await chooseValue(m.sessions_chat_model(), "GPT-6 Luna");
+      expect(rowValue(m.sessions_chat_model())).toBe("GPT-6 Luna");
+      expect(
+        calls.some((call) => call.command === "agent_runtime_set_setting"),
+      ).toBe(false);
+      // The permission mode under the field is kept by the draft as well.
+      await openMenu(
+        buttonByLabel(m.sessions_chat_mode_choose({ mode: "Read Only" })),
+      );
+      await click(
+        Array.from(document.querySelectorAll('[role="menuitemradio"]')).find(
+          (item) => item.textContent?.includes("Auto review"),
+        ),
+      );
+      expect(
+        calls.some((call) => call.command === "agent_runtime_set_setting"),
+      ).toBe(false);
+
+      writeComposerDraft(newSessionDraftKey("/project"), {
+        ...readComposerDraft(newSessionDraftKey("/project"))!,
+        parts: [{ type: "text", text: "Fix it" }],
+      });
+      await unmountAll();
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      // The kept values are not applied to the draft session before it.
+      expect(
+        calls.some((call) => call.command === "agent_runtime_set_setting"),
+      ).toBe(false);
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(lastCall("agent_runtime_start_session")?.settings).toEqual([
+        { setting: "model", value: "gpt-6-luna" },
+        { setting: "mode", value: "agent" },
+      ]);
     },
   );
 

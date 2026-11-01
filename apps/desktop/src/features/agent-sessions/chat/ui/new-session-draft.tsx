@@ -101,8 +101,11 @@ export function NewSessionDraft({
   };
   const noAgents = draft.agents !== null && draft.agents.agents.length === 0;
   const snapshot = draft.snapshot;
-  const mode = snapshot ? sessionControls(snapshot.settings).mode : null;
-  const canChange = snapshot?.writer === "acp" && !draft.sending;
+  const mode = draft.settings ? sessionControls(draft.settings).mode : null;
+  // A draft that keeps its values changes them without the agent.
+  const canChange = draft.keepsValues
+    ? !draft.sending
+    : snapshot?.writer === "acp" && !draft.sending;
   const changeSetting = (value: Parameters<typeof draft.changeSetting>[0]) =>
     void draft.changeSetting(value);
 
@@ -129,7 +132,7 @@ export function NewSessionDraft({
             {draft.settingRefusal && (
               <SettingRefusalLine
                 refusal={draft.settingRefusal}
-                settings={snapshot?.settings ?? []}
+                settings={draft.settings ?? []}
               />
             )}
             {draft.refusal && (
@@ -173,8 +176,10 @@ export function NewSessionDraft({
                       readiness,
                       recovery,
                       settingsAfterSend: draft.settingsAfterSend,
+                      recorded: draft.recordedSettings,
+                      withoutVariants: draft.settingsWithoutVariants,
                     }}
-                    settings={snapshot?.settings ?? null}
+                    settings={draft.settings}
                     canChange={canChange}
                     changing={draft.changingSetting}
                     onChange={changeSetting}

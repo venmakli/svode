@@ -109,7 +109,7 @@ fn launch() -> AcpLaunch {
         writer_refusal: None,
         session_per_connection: false,
         keeps_loaded_sessions: false,
-        draft_session: false,
+        draft_session: Default::default(),
     }
 }
 
@@ -1212,7 +1212,7 @@ async fn a_refused_opening_leaves_the_connection_to_the_next_session() {
         &runtime,
         &AcpLaunch {
             session_per_connection: true,
-            draft_session: false,
+            draft_session: Default::default(),
             ..launch()
         },
     );
@@ -2324,7 +2324,7 @@ async fn a_connection_of_an_agent_with_one_session_per_connection_serves_one_ses
     let runtime = AgentRuntime::default();
     let launch = AcpLaunch {
         session_per_connection: true,
-        draft_session: false,
+        draft_session: Default::default(),
         ..listing("pi")
     };
     let (id, mut agent) = attached_with(&runtime, &launch);
@@ -3190,7 +3190,7 @@ fn reading(writer_refusal: Option<&str>) -> AcpLaunch {
         reads_during_external_turn: true,
         writer_refusal: writer_refusal.map(str::to_string),
         session_per_connection: false,
-        draft_session: false,
+        draft_session: Default::default(),
         ..launch()
     }
 }
@@ -3793,7 +3793,7 @@ async fn a_launch_plan_with_one_session_per_connection_starts_another_after_a_se
         agent: "pi".into(),
         lists_catalog: true,
         session_per_connection: true,
-        draft_session: false,
+        draft_session: Default::default(),
         ..sh_agent(&[])
     };
     let catalog = runtime.acquire(plan.clone()).await.unwrap();
@@ -5455,3 +5455,6 @@ async fn a_cancel_while_the_host_prepares_ends_the_turn_without_the_prompt() {
     turns.until(2).await;
     agent.silent().await;
 }
+
+#[path = "runtime_drafts_tests.rs"]
+mod drafts;

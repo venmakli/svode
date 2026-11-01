@@ -26,6 +26,22 @@ export {
 export { isInsideAgentSessionContent } from "./lib";
 export type { StartedSession as NewSessionStarted } from "./chat/hooks/use-new-session-draft";
 export { useDictatedDrafts } from "./chat/hooks/use-dictated-drafts";
+// Announcements without a started session (Stage 11 `03`): the one seam of a
+// draft session and the agents' last declarations for a new session draft,
+// an Actor binding and the device's default agent.
+export {
+  useDraftAgent,
+  type DraftAgentState,
+} from "./chat/hooks/use-draft-agent";
+export { useLastAgentDeclarations } from "./chat/hooks/use-agent-declarations";
+export { useSessionActivity as useAgentSessionActivity } from "./chat/hooks/use-session-activity";
+export { useSessionSettings as useAgentSessionSettings } from "./chat/hooks/use-session-settings";
+export {
+  declaredSettings,
+  withKeptValue,
+  type AgentDeclaration,
+  type DeclaredSettings,
+} from "./chat/model/declared-settings";
 export {
   canOpenChatSession,
   putNewSessionRequest,

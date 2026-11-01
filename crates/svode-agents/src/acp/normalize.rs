@@ -33,6 +33,8 @@ const COMMAND_DESCRIPTION_LIMIT: usize = 1024;
 const CURRENCY_LIMIT: usize = 16;
 /// Id of the one setting legacy session modes become.
 pub(crate) const LEGACY_MODE_SETTING: &str = "mode";
+/// The id the unstable session models show under; normative (Stage 11 `03`).
+pub(crate) const UNSTABLE_MODEL_SETTING: &str = "model";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageRole {
@@ -258,41 +260,78 @@ fn location_paths(locations: Vec<Value>) -> Vec<String> {
 
 /// Settings a session declared, and whether they are legacy session modes,
 /// which are changed by `session/set_mode` instead of a config option.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Default)]
 pub(crate) struct DeclaredSettings {
     pub settings: Vec<SessionSetting>,
     pub legacy_modes: bool,
+    /// The setting `model` stands for the unstable session models and
+    /// changes through `session/set_model`.
+    pub unstable_models: bool,
 }
 
-/// Config options win over legacy modes when an agent declares both.
+/// Config options win over legacy modes when an agent declares both. The
+/// unstable session models of an agent whose config options declare no
+/// model show as the setting `model` of category `model` (Stage 11 `03`).
 pub(crate) fn declared_settings(declared: wire::DeclaredSettings) -> DeclaredSettings {
-    if let Some(options) = declared.config_options {
-        return DeclaredSettings {
+    let mut settings = if let Some(options) = declared.config_options {
+        DeclaredSettings {
             settings: config_settings(options),
-            legacy_modes: false,
-        };
-    }
-    let Some(modes) = declared.modes else {
-        return DeclaredSettings::default();
+            ..DeclaredSettings::default()
+        }
+    } else if let Some(modes) = declared.modes {
+        let options = modes
+            .available_modes
+            .into_iter()
+            .filter_map(|mode| serde_json::from_value::<wire::SessionMode>(mode).ok())
+            .take(MAX_CHOICES)
+            .map(|mode| setting_option(mode.id, mode.name, mode.description))
+            .collect();
+        DeclaredSettings {
+            settings: vec![SessionSetting {
+                id: LEGACY_MODE_SETTING.into(),
+                name: "Mode".into(),
+                description: None,
+                category: SettingCategory::Mode,
+                current_value: modes.current_mode_id,
+                options,
+            }],
+            legacy_modes: true,
+            unstable_models: false,
+        }
+    } else {
+        DeclaredSettings::default()
     };
-    let options = modes
-        .available_modes
-        .into_iter()
-        .filter_map(|mode| serde_json::from_value::<wire::SessionMode>(mode).ok())
-        .take(MAX_CHOICES)
-        .map(|mode| setting_option(mode.id, mode.name, mode.description))
-        .collect();
-    DeclaredSettings {
-        settings: vec![SessionSetting {
-            id: LEGACY_MODE_SETTING.into(),
-            name: "Mode".into(),
-            description: None,
-            category: SettingCategory::Mode,
-            current_value: modes.current_mode_id,
-            options,
-        }],
-        legacy_modes: true,
+    if let Some(model) = declared.models.and_then(models_setting)
+        && !settings.settings.iter().any(|setting| {
+            setting.category == SettingCategory::Model || setting.id == UNSTABLE_MODEL_SETTING
+        })
+    {
+        settings.settings.insert(0, model);
+        settings.unstable_models = true;
     }
+    settings
+}
+
+/// The unstable session models as the setting `model`; none without models.
+fn models_setting(models: wire::SessionModelState) -> Option<SessionSetting> {
+    let options: Vec<SettingOption> = models
+        .available_models
+        .into_iter()
+        .filter_map(|model| serde_json::from_value::<wire::ModelInfo>(model).ok())
+        .take(MAX_CHOICES)
+        .map(|model| setting_option(model.model_id, model.name, model.description))
+        .collect();
+    if options.is_empty() {
+        return None;
+    }
+    Some(SessionSetting {
+        id: UNSTABLE_MODEL_SETTING.into(),
+        name: "Model".into(),
+        description: None,
+        category: SettingCategory::Model,
+        current_value: models.current_model_id,
+        options,
+    })
 }
 
 /// Select options with a string value, in the agent's order; groups are

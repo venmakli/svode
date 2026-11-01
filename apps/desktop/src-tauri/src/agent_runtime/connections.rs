@@ -7,7 +7,9 @@
 //! agent has evidence for it), the creation of a session and opening one in
 //! the chat; a Routine launch acquires a connection of its own provenance
 //! in `routines::acp_launch`. Sharing by launch plan, the provenance split
-//! and closing for idleness belong to the runtime.
+//! and closing for idleness belong to the runtime. The draft hold is the one
+//! draft-session seam: a new session draft, an Actor binding and the
+//! device's default agent hold an agent in a Space this way (Stage 11 `03`).
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -84,17 +86,21 @@ struct DraftSession {
     cwd: PathBuf,
 }
 
-/// What a new session draft shows for its agent.
+/// What a draft shows for its agent: a new session draft, an Actor binding
+/// or the device's default agent (Stage 11 `03`).
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftAgent {
     /// Present while a ready agent's connection is held for the draft.
     pub hold: Option<u64>,
     pub check: AgentCheck,
-    /// The session the draft created without a prompt, for an agent with
-    /// evidence that this leaves nothing in its native store: its settings
-    /// and commands show in the draft, and the first send goes to it.
+    /// The session the draft created without a prompt, for an agent whose
+    /// recorded evidence allows it: its settings and commands show in the
+    /// draft, and the first send of a new session goes to it.
     pub session: Option<SessionKey>,
+    /// The draft session keeps its values until the first prompt: values
+    /// chosen before it apply with the first send (Qwen Code, E6).
+    pub keeps_values_until_send: bool,
 }
 
 /// What creating a session from a draft did.
@@ -266,6 +272,7 @@ impl AgentConnections {
             hold: None,
             check,
             session: None,
+            keeps_values_until_send: false,
         };
         let (lease, launch) = match self.acquire_launch(agent).await {
             Ok(acquired) => acquired,
@@ -291,8 +298,12 @@ impl AgentConnections {
             });
         };
         let mut session = None;
-        if launch.draft_session {
-            match self.runtime.new_session(lease.connection(), cwd, &[]).await {
+        if launch.draft_session.opens() {
+            match self
+                .runtime
+                .new_draft_session(lease.connection(), cwd)
+                .await
+            {
                 Ok(key) => {
                     session = Some(DraftSession {
                         key,
@@ -302,7 +313,10 @@ impl AgentConnections {
                 Err(AgentRuntimeError::AuthRequired { message }) => {
                     return refused(AgentCheck::AuthRequired { message });
                 }
-                // The settings then show after the first send.
+                // The agent no longer declares the deletion its draft needs.
+                Err(AgentRuntimeError::DraftUnsupported) => {}
+                // The settings then show from the last declarations or
+                // after the first send.
                 Err(error) => {
                     tracing::warn!("the draft session of {agent} was not created: {error}")
                 }
@@ -320,6 +334,7 @@ impl AgentConnections {
             },
         );
         DraftAgent {
+            keeps_values_until_send: key.is_some() && !launch.draft_session.changes_values(),
             hold: Some(hold),
             check: AgentCheck::Ready { agent: info },
             session: key,
@@ -334,8 +349,9 @@ impl AgentConnections {
         }
     }
 
-    /// A draft session that never got its prompt is closed; one that became
-    /// the user's session is not the draft's any more.
+    /// A draft session that never got its prompt is closed, and deleted
+    /// where the agent's evidence needs it; one that became the user's
+    /// session is not the draft's any more.
     fn close_draft(&self, draft: DraftHold) {
         let Some(session) = draft.session else {
             return;
@@ -365,8 +381,10 @@ impl AgentConnections {
     /// Creates a session of `agent` in `cwd` with the draft's setting values
     /// and sends its first prompt: the first send of a new session draft.
     /// A session the draft `hold` created for this agent and `cwd` takes the
-    /// prompt instead, with the values the agent confirmed in the draft; if
-    /// it is gone, a new one is created. The session enters the catalogue
+    /// prompt instead, once the draft's values it does not have yet apply —
+    /// all of them for an agent whose draft keeps its values until the first
+    /// prompt; a refused value keeps it without a prompt. If it is gone, a
+    /// new one is created. The session enters the catalogue
     /// once the prompt is accepted; a prompt linking a missing file creates
     /// no session. The first turn carries `mark`, the request of the draft
     /// such as «Зафиксировать с агентом» (Stage 11 1.E).
@@ -383,7 +401,15 @@ impl AgentConnections {
         if let Some(hold) = hold
             && let Some(session) = self.draft_session_for(hold, agent, cwd)
         {
-            match self.runtime.prompt_with(&session, prompt, mark) {
+            let started = match self
+                .runtime
+                .apply_before_first_prompt(&session, settings)
+                .await
+            {
+                Ok(()) => self.runtime.prompt_with(&session, prompt, mark),
+                Err(error) => Err(error),
+            };
+            match started {
                 Ok(turn_id) => {
                     if let Some(draft) = self.drafts.lock().unwrap().get_mut(&hold) {
                         draft.session = None;

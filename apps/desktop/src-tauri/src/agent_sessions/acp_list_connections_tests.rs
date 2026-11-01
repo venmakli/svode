@@ -49,7 +49,7 @@ done"#;
         writer_refusal: None,
         session_per_connection: false,
         keeps_loaded_sessions: false,
-        draft_session: false,
+        draft_session: Default::default(),
     }
 }
 
@@ -775,7 +775,7 @@ done"#;
         writer_refusal: None,
         session_per_connection: false,
         keeps_loaded_sessions: false,
-        draft_session: false,
+        draft_session: Default::default(),
     }
 }
 
@@ -903,7 +903,7 @@ async fn the_first_send_creates_the_session_and_lists_it_once_the_prompt_is_acce
 async fn a_draft_creates_its_session_where_the_agent_has_evidence_and_the_first_send_uses_it() {
     let runtime = runtime();
     let draft_agent = |agent: &str| AcpLaunch {
-        draft_session: true,
+        draft_session: svode_agents::drafts::DraftSession::Traceless,
         ..session_agent(agent, false)
     };
     let (connections, _) = owner(
@@ -914,10 +914,18 @@ async fn a_draft_creates_its_session_where_the_agent_has_evidence_and_the_first_
             (
                 "opencode",
                 Ok(AcpLaunch {
-                    draft_session: true,
+                    draft_session: svode_agents::drafts::DraftSession::Traceless,
                     ..session_agent("opencode", true)
                 }),
             ),
+            (
+                "qwen-code",
+                Ok(AcpLaunch {
+                    draft_session: svode_agents::drafts::DraftSession::FixedValues,
+                    ..session_agent("qwen-code", false)
+                }),
+            ),
+            ("grok-build", Ok(session_agent("grok-build", false))),
         ],
     );
     let project = tempfile::tempdir().unwrap();
@@ -927,6 +935,7 @@ async fn a_draft_creates_its_session_where_the_agent_has_evidence_and_the_first_
         .await;
     let hold = draft.hold.expect("a ready agent is held");
     let session = draft.session.expect("the draft created its session");
+    assert!(!draft.keeps_values_until_send);
     assert!(runtime.subscribe(&session).is_ok());
     assert!(
         runtime.sessions().is_empty(),
@@ -981,6 +990,19 @@ async fn a_draft_creates_its_session_where_the_agent_has_evidence_and_the_first_
     assert_eq!(runtime.writers().writer(&unsent), None);
     assert_eq!(runtime.sessions().len(), 1);
 
+    // Qwen Code's draft keeps its values until the first send (E6).
+    let fixed = connections
+        .hold_draft("main", "qwen-code", project.path())
+        .await;
+    assert!(fixed.session.is_some() && fixed.keeps_values_until_send);
+    // An agent without draft-session evidence gets none.
+    let without = connections
+        .hold_draft("main", "grok-build", project.path())
+        .await;
+    assert!(without.hold.is_some());
+    assert_eq!(without.session, None);
+    assert!(!without.keeps_values_until_send);
+
     // An agent that refuses the session until sign-in shows sign-in.
     let refused = connections
         .hold_draft("main", "opencode", project.path())
@@ -1019,7 +1041,7 @@ done"#;
         writer_refusal: None,
         session_per_connection: false,
         keeps_loaded_sessions: false,
-        draft_session: false,
+        draft_session: Default::default(),
     }
 }
 

@@ -17,16 +17,24 @@ interface DraftHold {
   hold: number | null;
   /** The session the draft created without a prompt, if the agent allows it. */
   session: AgentSessionKeyDto | null;
+  /** The draft session takes the draft's values only with the first send. */
+  keepsValuesUntilSend: boolean;
 }
 
-const NO_HOLD: DraftHold = { hold: null, session: null };
+const NO_HOLD: DraftHold = {
+  hold: null,
+  session: null,
+  keepsValuesUntilSend: false,
+};
 
 /**
- * Choosing an agent in a new session draft is a lifecycle boundary: its
- * connection starts and stays while the draft keeps the agent and Space,
- * so the draft shows the agent's readiness before the first prompt. Where
- * the agent has evidence for it, the draft also gets its session, whose
- * settings and commands show before the first send.
+ * Choosing an agent in a draft is a lifecycle boundary: its connection
+ * starts and stays while the draft keeps the agent and Space, so the draft
+ * shows the agent's readiness before the first prompt. Where the agent's
+ * recorded evidence allows it, the draft also gets its session, whose
+ * settings and commands show before the first send (Stage 11 `03`): the one
+ * draft-session seam of a new session draft, an Actor binding and the
+ * device's default agent.
  */
 export function useDraftAgent(agent: string | null, cwd: string) {
   const [attempt, setAttempt] = useState(0);
@@ -50,7 +58,11 @@ export function useDraftAgent(agent: string | null, cwd: string) {
         setResult({
           key,
           value: { state: "checked", check: outcome.check },
-          hold: { hold: outcome.hold, session: outcome.session },
+          hold: {
+            hold: outcome.hold,
+            session: outcome.session,
+            keepsValuesUntilSend: outcome.keepsValuesUntilSend,
+          },
         });
       })
       .catch((error: unknown) => {
@@ -76,6 +88,6 @@ export function useDraftAgent(agent: string | null, cwd: string) {
     () => (!agent ? { state: "idle" } : (value ?? { state: "connecting" })),
     [agent, value],
   );
-  const { hold, session } = current?.hold ?? NO_HOLD;
-  return { readiness, retry, hold, session };
+  const { hold, session, keepsValuesUntilSend } = current?.hold ?? NO_HOLD;
+  return { readiness, retry, hold, session, keepsValuesUntilSend };
 }

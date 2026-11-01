@@ -11,6 +11,7 @@ export {
   answerAgentInteraction,
   cancelAgentTurn,
   holdDraftAgent,
+  lastAgentDeclarations,
   promptAgentSession,
   readAgentActivityDetail,
   releaseAgentSession,
@@ -21,6 +22,7 @@ export {
 export type {
   AgentActivityItemDto,
   AgentCheckDto,
+  AgentDeclarationDto,
   AgentDetailBlockDto,
   AgentDetailOutcomeDto,
   AgentExternalLivenessDto,

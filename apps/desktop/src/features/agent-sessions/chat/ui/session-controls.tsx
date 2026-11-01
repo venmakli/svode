@@ -221,7 +221,9 @@ export function SettingRefusalLine({
   const reason =
     refusal.reason.kind === "not_declared"
       ? m.sessions_chat_setting_not_declared()
-      : refusal.reason.message;
+      : refusal.reason.kind === "before_first_prompt"
+        ? m.sessions_chat_setting_before_first_prompt()
+        : refusal.reason.message;
   return (
     <p className="text-xs break-words text-destructive">
       {m.sessions_chat_setting_refused({

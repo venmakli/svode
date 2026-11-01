@@ -31,6 +31,7 @@ use crate::catalog::{
     self, CatalogChanged, CatalogConnection, CatalogNotices, ListBounds, RuntimeSession,
     SessionList,
 };
+use crate::drafts::{AgentDeclaration, DraftHost, DraftSession, LastDeclarations, PendingDeletion};
 use crate::error::{AgentRuntimeError, SettingRefusal};
 use crate::identity::SessionKey;
 use crate::interaction::{self, AnswerOutcome, InteractionAnswer};
@@ -154,11 +155,11 @@ pub struct AcpLaunch {
     /// serves only that one session, so once Svode no longer drives the
     /// session it is loaded again only by another process.
     pub keeps_loaded_sessions: bool,
-    /// Recorded evidence that `session/new` without a prompt leaves no
-    /// session in the agent's native store or list, so a new session draft
-    /// may create its session before the first prompt and show the settings
+    /// What the agent's recorded evidence allows for a session created
+    /// without a prompt (Stage 11 `03`, E6): a draft of a new session, an
+    /// Actor binding or the device's default agent then shows the settings
     /// and commands the agent declares for it.
-    pub draft_session: bool,
+    pub draft_session: DraftSession,
 }
 
 /// The user's login shell environment a host captured for agent processes
@@ -262,6 +263,9 @@ pub struct AgentCapabilities {
     pub list_sessions: bool,
     pub resume_session: bool,
     pub close_session: bool,
+    /// The agent declares ACP `session/delete`.
+    #[serde(default)]
+    pub delete_session: bool,
     /// The agent takes image blocks in a prompt.
     pub image_prompt: bool,
 }
@@ -314,6 +318,12 @@ struct Inner {
     declared: Mutex<HashMap<String, AgentInfo>>,
     /// The host that hears turn boundaries.
     turns: Mutex<Option<Arc<dyn TurnObserver>>>,
+    /// What the agents declared last on this device, per agent and model.
+    declarations: Mutex<LastDeclarations>,
+    /// Draft sessions to delete once their agent connects again.
+    pending_deletions: Mutex<Vec<PendingDeletion>>,
+    /// The host that keeps declarations and pending deletions.
+    draft_host: Mutex<Option<Arc<dyn DraftHost>>>,
 }
 
 type Slot = Arc<tokio::sync::Mutex<Option<ConnectionId>>>;
@@ -327,6 +337,7 @@ struct Connection {
     reads_during_external_turn: bool,
     writer_refusal: Option<String>,
     session_per_connection: bool,
+    draft_session: DraftSession,
     /// A connection of an agent with one session per connection that has
     /// served its session.
     taken: AtomicBool,
@@ -357,6 +368,8 @@ struct Session {
     /// A session this runtime created enters the catalogue with its first
     /// accepted prompt, an opened one from its opening.
     listed: AtomicBool,
+    /// This runtime created the session and no prompt went to it yet.
+    unprompted: AtomicBool,
     projection: Mutex<Projection>,
     /// Locked before `projection` wherever both are held.
     interactions: Mutex<Interactions>,
@@ -472,6 +485,7 @@ impl AgentRuntime {
             // A process that keeps its loaded sessions never loads one of
             // them again (DF-177 R3).
             session_per_connection: launch.session_per_connection || launch.keeps_loaded_sessions,
+            draft_session: launch.draft_session,
             taken: AtomicBool::new(false),
             rpc,
             state: Mutex::new(ConnectionState::Starting),
@@ -853,16 +867,202 @@ impl AgentRuntime {
             false,
             Some(claim),
         );
+        session.unprompted.store(true, Ordering::Relaxed);
         session.projection.lock().unwrap().set_settings(declared);
+        self.inner.note_declared(&session);
         for value in settings {
             if let Err(error) = self.apply_setting(&session, value).await {
                 self.close_session(&session).await;
+                self.delete_unprompted(&session).await;
                 return Err(error);
             }
         }
         self.inner.register(key.clone(), session);
         self.inner.catalog.changed(&connection.agent);
         Ok(key)
+    }
+
+    /// Creates a session in `cwd` without a prompt, to show and check the
+    /// values the agent declares before a session starts (Stage 11 `03`):
+    /// for a new session draft, an Actor binding or the device's default
+    /// agent. Only an agent whose recorded evidence allows a draft session
+    /// gets one, and one whose draft must be deleted only while it declares
+    /// `session/delete`; such a draft is kept as a pending deletion of the
+    /// device until a prompt makes it the user's session or its release
+    /// deletes it. Values of an agent whose draft keeps them until the first
+    /// prompt do not change before it ([`Self::apply_before_first_prompt`]).
+    pub async fn new_draft_session(
+        &self,
+        id: ConnectionId,
+        cwd: &Path,
+    ) -> Result<SessionKey, AgentRuntimeError> {
+        let connection = self.connection(id)?;
+        connection.require_open()?;
+        if connection.info.lock().unwrap().is_none() {
+            self.initialize(&connection).await?;
+        }
+        let draft = connection.draft_session;
+        if !draft.opens() || (draft.deletes() && !connection.declares_delete()) {
+            return Err(AgentRuntimeError::DraftUnsupported);
+        }
+        let key = self.create_session(id, cwd, &[], None).await?;
+        if draft.deletes()
+            && let Ok(session) = self.session(&key)
+        {
+            self.inner
+                .add_pending_deletion(&connection.agent, &session.acp_id);
+        }
+        Ok(key)
+    }
+
+    /// Applies the values a new session draft chose to its draft session
+    /// right before its first prompt: for an agent whose draft keeps its
+    /// values until the first prompt they apply only now. A value the
+    /// session already has is not sent again; a refused one keeps the
+    /// session without a prompt.
+    pub async fn apply_before_first_prompt(
+        &self,
+        key: &SessionKey,
+        settings: &[SettingValue],
+    ) -> Result<(), AgentRuntimeError> {
+        let session = self.session(key)?;
+        session.connection.require_open()?;
+        if session.writer.lock().unwrap().is_none() {
+            return Err(AgentRuntimeError::WriterRequired);
+        }
+        for value in settings {
+            let current = session
+                .projection
+                .lock()
+                .unwrap()
+                .settings()
+                .iter()
+                .any(|setting| setting.id == value.setting && setting.current_value == value.value);
+            if !current {
+                self.apply_setting(&session, value).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// What the agent declared last on this device, per model, the latest
+    /// first: values of an agent without a draft session or a connection.
+    pub fn last_declarations(&self, agent: &str) -> Vec<AgentDeclaration> {
+        self.inner.declarations.lock().unwrap().of(agent)
+    }
+
+    /// The host that keeps the agents' last declarations and the draft
+    /// sessions to delete on the device, with what it kept of them before.
+    pub fn host_drafts(
+        &self,
+        host: Arc<dyn DraftHost>,
+        declarations: Vec<AgentDeclaration>,
+        pending: Vec<PendingDeletion>,
+    ) {
+        self.inner
+            .declarations
+            .lock()
+            .unwrap()
+            .restore(declarations);
+        *self.inner.pending_deletions.lock().unwrap() = pending;
+        *self.inner.draft_host.lock().unwrap() = Some(host);
+    }
+
+    /// Deletes a session this runtime created that never got a prompt, for
+    /// an agent whose draft sessions stay in its list until deleted: kept as
+    /// a pending deletion until the agent confirms it.
+    async fn delete_unprompted(&self, session: &Session) {
+        let connection = &session.connection;
+        if !connection.draft_session.deletes() || !session.unprompted.swap(false, Ordering::Relaxed)
+        {
+            return;
+        }
+        self.inner
+            .add_pending_deletion(&connection.agent, &session.acp_id);
+        if !connection.declares_delete() {
+            return;
+        }
+        if connection
+            .call(
+                acp::SESSION_DELETE,
+                acp::delete_request(&session.acp_id),
+                self.timeout(),
+            )
+            .await
+            .is_ok()
+        {
+            self.inner
+                .remove_pending_deletion(&connection.agent, &session.acp_id);
+        }
+    }
+
+    /// Deletes the pending draft sessions of the agent of a connection that
+    /// just initialized, but for those a connection of this runtime still
+    /// serves. A deletion the agent answers, deleted or refused, leaves the
+    /// list; a lost or timed-out call leaves it for the next connection.
+    fn delete_pending(&self, connection: &Connection) {
+        if !connection.draft_session.deletes() || !connection.declares_delete() {
+            return;
+        }
+        let Some(connection) = self
+            .inner
+            .connections
+            .lock()
+            .unwrap()
+            .values()
+            .find(|known| std::ptr::eq(known.as_ref(), connection))
+            .cloned()
+        else {
+            return;
+        };
+        let served: HashSet<String> = self
+            .inner
+            .connections
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|known| known.agent == connection.agent)
+            .flat_map(|known| {
+                known
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let pending: Vec<PendingDeletion> = self
+            .inner
+            .pending_deletions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry.agent == connection.agent && !served.contains(&entry.session_id))
+            .cloned()
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+        let timeout = self.timeout();
+        let inner = self.inner.clone();
+        tokio::spawn(async move {
+            for entry in pending {
+                match connection
+                    .call(
+                        acp::SESSION_DELETE,
+                        acp::delete_request(&entry.session_id),
+                        timeout,
+                    )
+                    .await
+                {
+                    Ok(_) | Err(AgentRuntimeError::Agent { .. }) => {
+                        inner.remove_pending_deletion(&entry.agent, &entry.session_id)
+                    }
+                    Err(_) => {}
+                }
+            }
+        });
     }
 
     /// Changes one declared setting of a session the runtime drives (C6)
@@ -880,6 +1080,15 @@ impl AgentRuntime {
         if session.writer.lock().unwrap().is_none() {
             return Err(AgentRuntimeError::WriterRequired);
         }
+        if session.connection.draft_session == DraftSession::FixedValues
+            && session.unprompted.load(Ordering::Relaxed)
+        {
+            return Err(AgentRuntimeError::SettingRefused {
+                setting: value.setting.clone(),
+                value: value.value.clone(),
+                reason: SettingRefusal::BeforeFirstPrompt,
+            });
+        }
         self.apply_setting(&session, value).await
     }
 
@@ -894,7 +1103,7 @@ impl AgentRuntime {
             value: value.value.clone(),
             reason,
         };
-        let legacy = {
+        let (legacy, unstable_model) = {
             let projection = session.projection.lock().unwrap();
             let declared = projection.settings().iter().any(|setting| {
                 setting.id == value.setting
@@ -906,7 +1115,10 @@ impl AgentRuntime {
             if !declared {
                 return Err(refused(SettingRefusal::NotDeclared));
             }
-            projection.legacy_modes()
+            (
+                projection.legacy_modes() && value.setting == normalize::LEGACY_MODE_SETTING,
+                projection.unstable_models() && value.setting == normalize::UNSTABLE_MODEL_SETTING,
+            )
         };
         let agent_refused = |error: AgentRuntimeError| match error {
             AgentRuntimeError::Agent { message } | AgentRuntimeError::Protocol { message } => {
@@ -914,7 +1126,22 @@ impl AgentRuntime {
             }
             other => other,
         };
-        if legacy {
+        if unstable_model {
+            session
+                .connection
+                .call(
+                    acp::SESSION_SET_MODEL,
+                    acp::set_model_request(&session.acp_id, &value.value),
+                    self.timeout(),
+                )
+                .await
+                .map_err(agent_refused)?;
+            session
+                .projection
+                .lock()
+                .unwrap()
+                .set_unstable_model(&value.value);
+        } else if legacy {
             session
                 .connection
                 .call(
@@ -945,11 +1172,9 @@ impl AgentRuntime {
                 .projection
                 .lock()
                 .unwrap()
-                .set_settings(normalize::DeclaredSettings {
-                    settings,
-                    legacy_modes: false,
-                });
+                .set_config_settings(settings);
         }
+        self.inner.note_declared(session);
         let confirmed = session
             .projection
             .lock()
@@ -1094,6 +1319,7 @@ impl AgentRuntime {
                         projection.set_settings(declared);
                     }
                 }
+                self.inner.note_declared(&session);
                 for value in settings {
                     if let Err(error) = self.apply_setting(&session, value).await {
                         self.close_session(&session).await;
@@ -1200,6 +1426,7 @@ impl AgentRuntime {
                 projection.set_settings(declared);
             }
         }
+        self.inner.note_declared(&session);
         if connection.declares_close() {
             // A failed close leaves the session attached and idle, as an
             // agent without `close` does; the history is read either way.
@@ -1240,6 +1467,7 @@ impl AgentRuntime {
             started_at: SystemTime::now(),
             first_prompt: Mutex::new(None),
             listed: AtomicBool::new(false),
+            unprompted: AtomicBool::new(false),
             projection: Mutex::new(Projection::new(
                 key,
                 cwd.to_path_buf(),
@@ -1285,6 +1513,7 @@ impl AgentRuntime {
             return Err(AgentRuntimeError::TurnActive);
         }
         self.close_session(&session).await;
+        self.delete_unprompted(&session).await;
         self.inner.catalog.changed(&session.connection.agent);
         Ok(())
     }
@@ -1338,6 +1567,12 @@ impl AgentRuntime {
             .begin_turn(&turn_id, &text, segments)
             .ok_or(AgentRuntimeError::TurnActive)?;
         session.first_prompt.lock().unwrap().get_or_insert(text);
+        if session.unprompted.swap(false, Ordering::Relaxed)
+            && session.connection.draft_session.deletes()
+        {
+            self.inner
+                .remove_pending_deletion(&session.connection.agent, &session.acp_id);
+        }
         if !session.listed.swap(true, Ordering::Relaxed) {
             self.inner.catalog.changed(&session.connection.agent);
         }
@@ -1607,6 +1842,7 @@ impl AgentRuntime {
             .insert(connection.agent.clone(), info.clone());
         *connection.info.lock().unwrap() = Some(info);
         connection.set_state(ConnectionState::Ready);
+        self.delete_pending(connection);
         Ok(())
     }
 
@@ -1636,6 +1872,71 @@ impl AgentRuntime {
 }
 
 impl Inner {
+    /// Records what the session's agent declares now as its last
+    /// declarations for the current model, and hands every change to the
+    /// host.
+    fn note_declared(&self, session: &Session) {
+        let settings = session.projection.lock().unwrap().settings().to_vec();
+        let version = session
+            .connection
+            .info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|info| info.version.clone());
+        let changed = {
+            let mut declarations = self.declarations.lock().unwrap();
+            declarations
+                .record(
+                    &session.connection.agent,
+                    &settings,
+                    version.as_deref(),
+                    SystemTime::now(),
+                )
+                .then(|| declarations.all())
+        };
+        let host = self.draft_host.lock().unwrap().clone();
+        if let (Some(all), Some(host)) = (changed, host) {
+            host.declarations_changed(&all);
+        }
+    }
+
+    fn add_pending_deletion(&self, agent: &str, session_id: &str) {
+        let entry = PendingDeletion {
+            agent: agent.to_string(),
+            session_id: session_id.to_string(),
+        };
+        let pending = {
+            let mut pending = self.pending_deletions.lock().unwrap();
+            if pending.contains(&entry) {
+                return;
+            }
+            pending.push(entry);
+            pending.clone()
+        };
+        self.pending_deletions_changed(&pending);
+    }
+
+    fn remove_pending_deletion(&self, agent: &str, session_id: &str) {
+        let pending = {
+            let mut pending = self.pending_deletions.lock().unwrap();
+            let before = pending.len();
+            pending.retain(|entry| !(entry.agent == agent && entry.session_id == session_id));
+            if pending.len() == before {
+                return;
+            }
+            pending.clone()
+        };
+        self.pending_deletions_changed(&pending);
+    }
+
+    fn pending_deletions_changed(&self, pending: &[PendingDeletion]) {
+        let host = self.draft_host.lock().unwrap().clone();
+        if let Some(host) = host {
+            host.pending_deletions_changed(pending);
+        }
+    }
+
     /// Makes `session` the one the runtime serves under `key`; a replaced
     /// session of a closed connection stops holding its data.
     fn register(&self, key: SessionKey, session: Arc<Session>) {
@@ -1896,6 +2197,14 @@ impl Connection {
         now - *idle_since.get_or_insert(now)
     }
 
+    fn declares_delete(&self) -> bool {
+        self.info
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|info| info.capabilities.delete_session)
+    }
+
     fn declares_close(&self) -> bool {
         self.info
             .lock()
@@ -1998,8 +2307,15 @@ async fn dispatch(connection: Weak<Connection>, mut incoming: mpsc::UnboundedRec
                     continue;
                 };
                 if let Some(session) = connection.session(&acp_id) {
+                    let declares = matches!(
+                        normalized,
+                        Normalized::ConfigChange(_) | Normalized::ModeChange(_)
+                    );
                     apply(&session, normalized);
                     if let Some(runtime) = connection.runtime.upgrade() {
+                        if declares {
+                            runtime.note_declared(&session);
+                        }
                         runtime.enforce_detail_bound();
                     }
                 }

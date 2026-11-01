@@ -55,7 +55,7 @@ done"#;
         writer_refusal: None,
         session_per_connection: false,
         keeps_loaded_sessions: false,
-        draft_session: false,
+        draft_session: Default::default(),
     }
 }
 

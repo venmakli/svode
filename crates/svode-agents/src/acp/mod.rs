@@ -29,6 +29,10 @@ pub(crate) const SESSION_CLOSE: &str = "session/close";
 pub(crate) const SESSION_LIST: &str = "session/list";
 pub(crate) const SESSION_SET_CONFIG_OPTION: &str = "session/set_config_option";
 pub(crate) const SESSION_SET_MODE: &str = "session/set_mode";
+/// Unstable: changes the model of an agent that declares unstable session
+/// models (Stage 11 `03`); it answers without the new state.
+pub(crate) const SESSION_SET_MODEL: &str = "session/set_model";
+pub(crate) const SESSION_DELETE: &str = "session/delete";
 pub(crate) const SESSION_UPDATE: &str = "session/update";
 pub(crate) const SESSION_REQUEST_PERMISSION: &str = "session/request_permission";
 pub(crate) const ELICITATION_CREATE: &str = "elicitation/create";
@@ -70,6 +74,7 @@ pub(crate) fn agent_info(response: Value) -> Result<AgentInfo, String> {
             list_sessions: capabilities.session_capabilities.list.is_some(),
             resume_session: capabilities.session_capabilities.resume.is_some(),
             close_session: capabilities.session_capabilities.close.is_some(),
+            delete_session: capabilities.session_capabilities.delete.is_some(),
             image_prompt: capabilities.prompt_capabilities.image,
         },
     })
@@ -100,7 +105,11 @@ pub(crate) fn new_session(response: Value) -> Result<(String, DeclaredSettings),
 pub(crate) fn opened_session_settings(response: Value) -> Option<DeclaredSettings> {
     serde_json::from_value::<wire::DeclaredSettings>(response)
         .ok()
-        .filter(|declared| declared.config_options.is_some() || declared.modes.is_some())
+        .filter(|declared| {
+            declared.config_options.is_some()
+                || declared.modes.is_some()
+                || declared.models.is_some()
+        })
         .map(normalize::declared_settings)
 }
 
@@ -117,6 +126,14 @@ pub(crate) fn set_config_option_settings(response: Value) -> Result<Vec<SessionS
 
 pub(crate) fn set_mode_request(session_id: &str, mode: &str) -> Value {
     json!({ "sessionId": session_id, "modeId": mode })
+}
+
+pub(crate) fn set_model_request(session_id: &str, model: &str) -> Value {
+    json!({ "sessionId": session_id, "modelId": model })
+}
+
+pub(crate) fn delete_request(session_id: &str) -> Value {
+    json!({ "sessionId": session_id })
 }
 
 /// Params of one `session/list` page. The `cwd` filter only for an agent

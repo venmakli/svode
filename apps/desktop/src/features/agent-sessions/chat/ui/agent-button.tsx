@@ -88,10 +88,14 @@ export interface DraftAgentChoice {
   readiness: DraftAgentState;
   recovery: AgentRecoveryActions;
   /**
-   * The agent's settings show only after the first send: there is no
-   * evidence that it creates a session without leaving it in its store.
+   * The agent's settings show only after the first send: it has no draft
+   * session and nothing it declared is kept on this device.
    */
   settingsAfterSend: boolean;
+  /** The settings come from the agent's last session (Stage 11 `03`). */
+  recorded?: boolean;
+  /** Settings whose options show after a session with the chosen model. */
+  withoutVariants?: string[];
 }
 
 /** The main screen of the popover, or the screen of one setting's values. */
@@ -202,7 +206,11 @@ export function AgentModelButton({
   };
   // A screen whose setting is gone, as after another agent was chosen,
   // gives way to the main screen.
-  const screens = canChange ? entries : [];
+  const screens = canChange
+    ? entries.filter(
+        ({ setting }) => !draft?.withoutVariants?.includes(setting.id),
+      )
+    : [];
   const shownPane = screens.some(
     ({ setting }) => pane === `setting:${setting.id}`,
   )
@@ -454,17 +462,28 @@ function SettingRows({
       </div>
     );
   }
-  const row = ({ label, setting }: SettingEntry) => (
-    <SettingRow
-      key={setting.id}
-      label={label}
-      setting={setting}
-      canChange={canChange}
-      waiting={changing === setting.id}
-      autoFocus={returnTo === setting.id}
-      onOpen={() => onOpen(setting)}
-    />
-  );
+  const row = ({ label, setting }: SettingEntry) =>
+    draft?.withoutVariants?.includes(setting.id) ? (
+      <div key={setting.id}>
+        <SettingsStaticRow
+          label={label}
+          meta={m.sessions_chat_setting_agent_default()}
+        />
+        <p className="px-2 pb-1.5 text-xs text-muted-foreground">
+          {m.sessions_chat_setting_variants_after_model()}
+        </p>
+      </div>
+    ) : (
+      <SettingRow
+        key={setting.id}
+        label={label}
+        setting={setting}
+        canChange={canChange}
+        waiting={changing === setting.id}
+        autoFocus={returnTo === setting.id}
+        onOpen={() => onOpen(setting)}
+      />
+    );
   const model = entries[0]?.setting.category === "model" ? entries[0] : null;
   const rest = model ? entries.slice(1) : entries;
   return (
@@ -484,6 +503,11 @@ function SettingRows({
         </p>
       )}
       {rest.map(row)}
+      {draft?.recorded && (
+        <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
+          {m.sessions_chat_settings_last_session()}
+        </p>
+      )}
     </>
   );
 }

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use svode_agents::activity::{DetailOutcome, MediaOutcome};
 use svode_agents::adapters::LaunchUnavailable;
+use svode_agents::drafts::AgentDeclaration;
 use svode_agents::identity::SessionKey;
 use svode_agents::interaction::{AnswerOutcome, InteractionAnswer};
 use svode_agents::prompt::PromptPart;
@@ -120,9 +121,10 @@ pub async fn agent_runtime_check(
     Ok(connections.check(&agent).await)
 }
 
-/// A new session draft chose `agent` in the Space `cwd`: its connection
-/// starts (a C1 boundary) so its readiness shows before the first prompt,
-/// with the draft's session where the agent has evidence for it.
+/// A draft chose `agent` in the Space `cwd` — a new session draft, an Actor
+/// binding or the device's default agent: its connection starts (a C1
+/// boundary) so its readiness shows before the first prompt, with the
+/// draft's session where the agent has evidence for it (Stage 11 `03`).
 #[tauri::command]
 pub async fn agent_runtime_hold_draft(
     webview: Webview,
@@ -132,6 +134,16 @@ pub async fn agent_runtime_hold_draft(
 ) -> Result<DraftAgent, AppError> {
     session_dir(&cwd)?;
     Ok(connections.hold_draft(webview.label(), &agent, &cwd).await)
+}
+
+/// What `agent` declared last on this device, per model, the latest first:
+/// the values a draft shows without a draft session (Stage 11 `03`).
+#[tauri::command]
+pub async fn agent_runtime_last_declarations(
+    state: State<'_, AgentRuntimeState>,
+    agent: String,
+) -> Result<Vec<AgentDeclaration>, AppError> {
+    Ok(state.runtime().last_declarations(&agent))
 }
 
 #[tauri::command]

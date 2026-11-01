@@ -389,6 +389,7 @@ export type AgentRuntimeErrorCode =
   | "auth_required"
   | "writer_refused"
   | "setting_refused"
+  | "draft_unsupported"
   | "timeout"
   | "agent"
   | "protocol";
@@ -413,7 +414,11 @@ export function agentRuntimeErrorCode(
 export interface AgentSettingRefusalDto {
   setting: string;
   value: string;
-  reason: { kind: "not_declared" } | { kind: "agent"; message: string };
+  reason:
+    | { kind: "not_declared" }
+    /** The draft session takes values only with its first prompt. */
+    | { kind: "before_first_prompt" }
+    | { kind: "agent"; message: string };
 }
 
 export function agentSettingRefusal(
@@ -637,11 +642,16 @@ export interface DraftAgentDto {
   hold: number | null;
   check: AgentCheckDto;
   /**
-   * The session the draft created without a prompt, where the agent leaves
-   * nothing in its store for it: its settings and commands show in the
-   * draft, and the first send goes to it.
+   * The session the draft created without a prompt, where the agent's
+   * recorded evidence allows it: its settings and commands show in the
+   * draft, and the first send of a new session goes to it.
    */
   session: AgentSessionKeyDto | null;
+  /**
+   * The draft session keeps its values until the first prompt: values
+   * chosen before it apply with the first send.
+   */
+  keepsValuesUntilSend: boolean;
 }
 
 /**
@@ -657,6 +667,29 @@ export function holdDraftAgent(
 
 export function releaseDraftAgent(hold: number): Promise<void> {
   return invoke<void>("agent_runtime_release_draft", { hold });
+}
+
+/**
+ * The settings an agent declared in one of its sessions on this device for
+ * one model, with when and by which version of the agent (Stage 11 `03`).
+ */
+export interface AgentDeclarationDto {
+  agent: string;
+  /** The model value they were declared with; null without a model. */
+  model: string | null;
+  settings: AgentSessionSettingDto[];
+  /** Milliseconds since the Unix epoch. */
+  declaredAt: number;
+  agentVersion: string | null;
+}
+
+/** What `agent` declared last on this device, per model, the latest first. */
+export function lastAgentDeclarations(
+  agent: string,
+): Promise<AgentDeclarationDto[]> {
+  return invoke<AgentDeclarationDto[]>("agent_runtime_last_declarations", {
+    agent,
+  });
 }
 
 export type StartedAgentSessionDto =

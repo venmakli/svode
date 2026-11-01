@@ -17,8 +17,8 @@ use crate::acp::normalize::{self, DeclaredSettings, MessageRole, Normalized, Too
 use crate::activity::{
     ActivityItem, Change, ConnectionState, DetailBlock, DetailOutcome, HistorySource, HistoryState,
     InteractionState, ItemKind, ItemStatus, MediaKind, MediaOutcome, MediaSegment, MessageSegment,
-    PendingInteraction, PlanEntry, SessionDelta, SessionSetting, SessionSnapshot, ToolKind,
-    Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
+    PendingInteraction, PlanEntry, SessionDelta, SessionSetting, SessionSnapshot, SettingCategory,
+    ToolKind, Truncation, TurnPhase, TurnState, UnavailableReason, WriterState,
 };
 use crate::changes::ToolPaths;
 use crate::identity::SessionKey;
@@ -133,6 +133,9 @@ pub(crate) struct Projection {
     replay: Option<Replay>,
     /// The settings are legacy session modes, changed by `session/set_mode`.
     legacy_modes: bool,
+    /// The setting `model` stands for the unstable session models, changed
+    /// by `session/set_model` (Stage 11 `03`).
+    unstable_models: bool,
     /// When the runtime accepted the prompt of the live turn.
     turn_started: Option<Instant>,
     /// When a live turn last changed the session: its accepted prompt, the
@@ -192,6 +195,7 @@ impl Projection {
             compact_bytes: 0,
             replay: replay.then(Replay::default),
             legacy_modes: false,
+            unstable_models: false,
             turn_started: None,
             turn_at: None,
         }
@@ -410,11 +414,61 @@ impl Projection {
         self.legacy_modes
     }
 
+    pub(crate) fn unstable_models(&self) -> bool {
+        self.unstable_models
+    }
+
     /// The settings the agent declared or confirmed.
     pub(crate) fn set_settings(&mut self, declared: DeclaredSettings) {
         self.legacy_modes = declared.legacy_modes;
+        self.unstable_models = declared.unstable_models;
         if self.snapshot.settings != declared.settings {
             self.emit(Change::Settings(declared.settings));
+        }
+    }
+
+    /// The config options the agent declared anew, which carry no unstable
+    /// session models: the model setting standing for them stays unless the
+    /// options now declare a model, which takes precedence.
+    pub(crate) fn set_config_settings(&mut self, mut settings: Vec<SessionSetting>) {
+        let unstable = self.unstable_models.then(|| {
+            self.snapshot
+                .settings
+                .iter()
+                .find(|setting| setting.id == normalize::UNSTABLE_MODEL_SETTING)
+                .cloned()
+        });
+        let mut unstable_models = false;
+        if let Some(Some(model)) = unstable
+            && !settings
+                .iter()
+                .any(|setting| setting.category == SettingCategory::Model || setting.id == model.id)
+        {
+            settings.insert(0, model);
+            unstable_models = true;
+        }
+        self.set_settings(DeclaredSettings {
+            settings,
+            legacy_modes: false,
+            unstable_models,
+        });
+    }
+
+    /// The agent confirmed `model` through `session/set_model`.
+    pub(crate) fn set_unstable_model(&mut self, model: &str) {
+        if !self.unstable_models {
+            return;
+        }
+        let mut settings = self.snapshot.settings.clone();
+        let Some(setting) = settings
+            .iter_mut()
+            .find(|setting| setting.id == normalize::UNSTABLE_MODEL_SETTING)
+        else {
+            return;
+        };
+        if setting.current_value != model {
+            setting.current_value = model.to_string();
+            self.emit(Change::Settings(settings));
         }
     }
 
@@ -459,10 +513,7 @@ impl Projection {
                 self.put_text_item(id, ItemKind::ModeChange, mode);
             }
             Normalized::ConfigChange(settings) => {
-                self.set_settings(DeclaredSettings {
-                    settings,
-                    legacy_modes: false,
-                });
+                self.set_config_settings(settings);
                 let id = self.local_id("session", "config");
                 self.put_text_item(id, ItemKind::ConfigChange, String::new());
             }
