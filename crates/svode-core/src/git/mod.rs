@@ -4,6 +4,7 @@ pub mod auth;
 pub mod autocommit;
 pub mod branch;
 pub mod cli;
+pub mod conflict_base;
 pub mod conflict_file;
 pub mod conflict_kind;
 pub mod conflict_properties;

@@ -437,6 +437,7 @@ pub fn run() {
             git::commands::git_page_merge,
             git::commands::git_compose_page_merge,
             git::commands::git_page_properties_conflict,
+            git::commands::git_page_conflict_bases,
             git::commands::git_resolve_page_properties,
             git::commands::git_merge_abort,
             git::commands::git_operation_abort,

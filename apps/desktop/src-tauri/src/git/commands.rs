@@ -20,7 +20,8 @@ use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_fro
 use svode_core::git::save::save;
 use svode_core::git::versions::{self, MessageLanguage};
 use svode_core::git::{
-    conflict_file, conflict_kind, conflict_properties, flow, markers, ops, page_merge, sync,
+    conflict_base, conflict_file, conflict_kind, conflict_properties, flow, markers, ops,
+    page_merge, sync,
 };
 use svode_core::system_path;
 
@@ -845,6 +846,27 @@ pub async fn git_page_properties_conflict(
     marker_size: usize,
 ) -> Option<conflict_properties::PropertiesConflict> {
     conflict_properties::properties(content.as_bytes(), marker_size)
+}
+
+/// The base of each conflict block of the Page `content` the editor read at
+/// `path` (relative to `space_path`) with conflict markers of `marker_size`,
+/// in the order of the blocks; `None` for a block without one.
+#[tauri::command]
+pub async fn git_page_conflict_bases(
+    state: State<'_, GitState>,
+    space_path: String,
+    path: String,
+    content: String,
+    marker_size: usize,
+) -> Result<Vec<Option<String>>, AppError> {
+    let target = svode_core::page::resolve_page_target(Path::new(&space_path), &path)?;
+    Ok(conflict_base::place_bases(
+        state.detected(),
+        &target.absolute,
+        content.as_bytes(),
+        marker_size,
+    )
+    .await?)
 }
 
 /// The frontmatter of the Page `content` with the chosen side in every

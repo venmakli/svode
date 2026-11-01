@@ -32,6 +32,9 @@ pub enum ConflictStyle {
     Merge,
     /// Mine, the base after a `|` line, then the incoming side.
     Diff3,
+    /// As [`Self::Diff3`], with the lines both sides share at the start and
+    /// the end of a conflict outside it; from Git 2.35.
+    Zdiff3,
 }
 
 impl ConflictStyle {
@@ -39,6 +42,7 @@ impl ConflictStyle {
         match self {
             Self::Merge => "merge.conflictStyle=merge",
             Self::Diff3 => "merge.conflictStyle=diff3",
+            Self::Zdiff3 => "merge.conflictStyle=zdiff3",
         }
     }
 }
