@@ -12,13 +12,11 @@ import {
 
 const surfaces = [
   { id: "readme" },
-  { id: "collection" },
+  { id: "pages" },
 ] as ScopeSurfaceContribution[];
 
 test("uses the requested available scope surface", () => {
-  expect(resolveActiveScopeSurface(surfaces, "collection")?.id).toBe(
-    "collection",
-  );
+  expect(resolveActiveScopeSurface(surfaces, "pages")?.id).toBe("pages");
 });
 
 test("falls back to the first available scope surface", () => {
@@ -27,12 +25,12 @@ test("falls back to the first available scope surface", () => {
 });
 
 test("prefers a capability-safe default over registry order", () => {
-  expect(resolveActiveScopeSurface(surfaces, "context", "collection")?.id).toBe(
-    "collection",
+  expect(resolveActiveScopeSurface(surfaces, "context", "pages")?.id).toBe(
+    "pages",
   );
 });
 
-test("uses readme for a registered space and collection for a collection owner", () => {
+test("uses readme for a registered space and pages for a collection owner", () => {
   expect(
     resolveDefaultScopeSurface(
       createRegisteredSpaceOwner({
@@ -55,7 +53,7 @@ test("uses readme for a registered space and collection for a collection owner",
         hasSchema: true,
       }),
     ),
-  ).toBe("collection");
+  ).toBe("pages");
   expect(
     resolveDefaultScopeSurface(
       createAppDirectoryOwner({

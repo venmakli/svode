@@ -7,15 +7,12 @@ import {
   createPageOwner,
 } from "../model/owners";
 import { useScopeSurfaceStore } from "../model/surface-store";
-import type {
-  ScopeOpenItem,
-  ScopeSurfaceContribution,
-} from "../model/types";
+import type { ScopeOpenItem, ScopeSurfaceContribution } from "../model/types";
 import { ScopeSurfaceHost } from "./scope-surface-host";
 
 const contribution: ScopeSurfaceContribution = {
-  id: "collection",
-  label: "Collection",
+  id: "pages",
+  label: "Pages",
   order: 0,
   presentations: ["full"],
   appliesTo: () => true,
@@ -36,7 +33,7 @@ test("owner retarget preserves the mounted scope surface and focus", async () =>
   const nextOwner = owner("Задачи");
   useScopeSurfaceStore.setState({
     surfaceByOwnerKey: {
-      [previousOwner.ownerKey]: "collection" as const,
+      [previousOwner.ownerKey]: "pages" as const,
     },
     openRequestKeyByOwnerKey: { [previousOwner.ownerKey]: 7 },
   });
@@ -103,8 +100,8 @@ test("owner surface round trip preserves the mounted Readme session", async () =
     },
     {
       ...contribution,
-      id: "collection",
-      label: "Collection",
+      id: "pages",
+      label: "Pages",
       render: () => <div data-testid="collection-session">Collection</div>,
     },
   ];
@@ -132,7 +129,7 @@ test("owner surface round trip preserves the mounted Readme session", async () =
     readme.focus();
 
     await act(async () => {
-      activateTab(dom, "Collection");
+      activateTab(dom, "Pages");
       await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
     });
     expect(
@@ -455,7 +452,7 @@ test("an open request addresses an item of its surface once, across remount", as
         presentation="full"
         contributions={[itemContribution]}
         header={null}
-        openIntent={{ kind: "target", surfaceId: "collection", itemId }}
+        openIntent={{ kind: "target", surfaceId: "pages", itemId }}
         openRequestKey={request}
         sessionKey={request}
       />,

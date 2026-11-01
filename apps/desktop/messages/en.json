@@ -1,7 +1,7 @@
 {
   "scope_surface_readme": "Readme",
   "scope_surface_app": "App",
-  "scope_surface_collection": "Collection",
+  "scope_surface_pages": "Pages",
   "scope_surface_routines": "Routines",
   "scope_surface_context": "Context",
   "scope_surface_actors": "Actors",
@@ -2103,7 +2103,7 @@
   "attachments_property_modified": "Modified",
   "attachments_property_size": "Size",
   "attachments_type_collection": "Collection",
-  "attachments_type_directory": "Directory",
+  "attachments_type_folder": "Folder",
   "attachments_branch_empty": "No available items",
   "collection_expand_row": "Expand {name}",
   "collection_collapse_row": "Collapse {name}",

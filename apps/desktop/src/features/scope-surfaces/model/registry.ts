@@ -9,7 +9,7 @@ export const SCOPE_SURFACE_ORDER: Record<ScopeSurfaceId, number> = {
   context: 100,
   readme: 200,
   app: 225,
-  collection: 250,
+  pages: 250,
   attachments: 275,
   actors: 300,
   routines: 400,

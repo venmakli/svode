@@ -176,7 +176,7 @@ export function ScopeSurfacePage({
           />
         ),
         readme: () => <ReadmeSurface />,
-        collection: () => (
+        pages: () => (
           <CollectionViewsSurface
             readOnly={readOnly}
             spacePath={owner.spacePath}

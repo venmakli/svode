@@ -1,7 +1,7 @@
 {
   "scope_surface_readme": "Описание",
   "scope_surface_app": "Приложение",
-  "scope_surface_collection": "Коллекция",
+  "scope_surface_pages": "Страницы",
   "scope_surface_routines": "Рутины",
   "scope_surface_context": "Контекст",
   "scope_surface_actors": "Акторы",
@@ -2103,7 +2103,7 @@
   "attachments_property_modified": "Изменено",
   "attachments_property_size": "Размер",
   "attachments_type_collection": "Коллекция",
-  "attachments_type_directory": "Директория",
+  "attachments_type_folder": "Папка",
   "attachments_branch_empty": "Нет доступных элементов",
   "collection_expand_row": "Раскрыть {name}",
   "collection_collapse_row": "Свернуть {name}",

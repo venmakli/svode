@@ -58,7 +58,7 @@ export function createAttachmentsPresentationDescriptor({
           { color: "blue", name: m.attachments_type_page() },
           { color: "purple", name: m.attachments_type_collection() },
           { color: "green", name: m.attachments_type_app() },
-          { color: "gray", name: m.attachments_type_directory() },
+          { color: "gray", name: m.attachments_type_folder() },
           { color: "purple", name: m.attachments_type_document() },
           { color: "orange", name: m.attachments_type_media() },
         ],
@@ -155,7 +155,7 @@ export function attachmentPresentationKind(row: AttachmentRow) {
 
 export function attachmentKindLabel(row: AttachmentRow) {
   const kind = attachmentPresentationKind(row);
-  if (kind === "directory") return m.attachments_type_directory();
+  if (kind === "directory") return m.attachments_type_folder();
   if (kind === "page") return m.attachments_type_page();
   if (kind === "document") return m.attachments_type_document();
   if (kind === "media") return m.attachments_type_media();

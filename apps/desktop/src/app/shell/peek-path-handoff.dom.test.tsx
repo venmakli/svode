@@ -224,9 +224,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
     const root = createRoot(dom.window.document.getElementById("app")!);
     root.render(
       <ThemeProvider theme="light" setTheme={() => {}}>
-        <TooltipProvider>
-          {children}
-        </TooltipProvider>
+        <TooltipProvider>{children}</TooltipProvider>
       </ThemeProvider>,
     );
     return root;
@@ -278,7 +276,7 @@ if (process.env.SVODE_PEEK_PATH_HANDOFF_TEST !== "1") {
           <ScopeSurfacePage
             owner={owner}
             presentation="full"
-            openIntent={{ kind: "target", surfaceId: "collection" }}
+            openIntent={{ kind: "target", surfaceId: "pages" }}
             openRequestKey={1}
           />,
         );

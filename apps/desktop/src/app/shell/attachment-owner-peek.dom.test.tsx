@@ -10,6 +10,7 @@ import type {
   AttachmentOwnerRef,
 } from "@/features/attachments";
 import type { ScopeSurfacePage } from "./scope-surface-page";
+import * as m from "@/paraglide/messages.js";
 
 if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
   test("Collection/App attachments stay in guarded Peek until Expand", () => {
@@ -63,7 +64,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
         >
           <button
             onClick={() => {
-              props.compactSurfaceState?.onSurfaceIdChange("collection");
+              props.compactSurfaceState?.onSurfaceIdChange("pages");
               props.routeState?.onViewNameChange("Board");
             }}
           >
@@ -198,6 +199,15 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
         const before = getActiveContentSelection().selection;
         snapshotTarget = target;
         await act(async () => root.render(<Harness key={kind} />));
+        if (kind === "directory") {
+          // A directory attachment is typed as a Folder in the Type column.
+          const directoryRow = dom.window.document.querySelector(
+            '[data-collection-row="directory:child"]',
+          );
+          expect(
+            directoryRow?.textContent?.includes(m.attachments_type_folder()),
+          ).toBe(true);
+        }
         await act(async () => {
           (
             dom.window.document.querySelector(
@@ -305,7 +315,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
           dom.window.document.querySelector('[role="dialog"] [data-owner]'),
         ).toBe(beforeHeader);
         expect(beforeHeader?.getAttribute("data-surface")).toBe(
-          kind === "app" ? "app" : "collection",
+          kind === "app" ? "app" : "pages",
         );
         const bar = dialog.querySelector("[data-peek-top-bar]")!;
         expect(
@@ -352,7 +362,7 @@ if (process.env.SVODE_ATTACHMENT_OWNER_PEEK_TEST !== "1") {
           });
           expect(selection.request.intent).toEqual({
             kind: "target",
-            surfaceId: kind === "collection" ? "collection" : "app",
+            surfaceId: kind === "collection" ? "pages" : "app",
           });
         }
         if (kind === "collection") expect(observedView).toEqual("Board");

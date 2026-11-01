@@ -53,7 +53,7 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
   ).toEqual([
     "context",
     "readme",
-    "collection",
+    "pages",
     "attachments",
     "actors",
     "routines",
@@ -75,12 +75,12 @@ test("app registry exposes canonical Stage 7 surfaces for each owner", () => {
     resolveScopeSurfaceContributions(contributions, collection, "compact").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "collection", "routines"]);
+  ).toEqual(["readme", "pages", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, collection, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "collection", "routines"]);
+  ).toEqual(["readme", "pages", "routines"]);
   expect(
     resolveScopeSurfaceContributions(contributions, app, "full").map(
       ({ id }) => id,
@@ -114,7 +114,7 @@ test("canonical definitions cover the owner eligibility matrix without row or ma
           "context",
           "readme",
           ...app,
-          ...(hasSchema ? ["collection"] : []),
+          ...(hasSchema ? ["pages"] : []),
           "attachments",
           "actors",
           "routines",
@@ -143,7 +143,7 @@ test("canonical definitions cover the owner eligibility matrix without row or ma
           collection,
           presentation,
         ).map(({ id }) => id),
-      ).toEqual(["readme", ...app, "collection", "routines"]);
+      ).toEqual(["readme", ...app, "pages", "routines"]);
     }
     expectAttachmentRejected(collection);
     for (const spacePath of ["/repo", "/repo/child"]) {
@@ -205,6 +205,9 @@ test("canonical definitions cover the owner eligibility matrix without row or ma
   );
   expect(contributions.find(({ id }) => id === "attachments")?.label).toBe(
     m.scope_surface_attachments(),
+  );
+  expect(contributions.find(({ id }) => id === "pages")?.label).toBe(
+    m.scope_surface_pages(),
   );
   expect(contributions.find(({ id }) => id === "app")?.fillAvailableSpace).toBe(
     true,
@@ -277,9 +280,9 @@ test("DF-122 full/compact parity includes eligible Page Attachments and preserve
     ["readme"],
     ["readme"],
     ["readme", "attachments"],
-    ["readme", "collection", "routines"],
+    ["readme", "pages", "routines"],
     ["readme", "app", "attachments"],
-    ["readme", "app", "collection", "routines"],
+    ["readme", "app", "pages", "routines"],
     ["readme", "app"],
   ];
   owners.forEach((owner, index) => {

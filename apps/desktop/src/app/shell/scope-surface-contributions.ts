@@ -68,13 +68,13 @@ export function createScopeSurfaceContributions(
       render: renderers.actors ?? unavailable,
     },
     {
-      id: "collection",
-      order: SCOPE_SURFACE_ORDER.collection,
+      id: "pages",
+      order: SCOPE_SURFACE_ORDER.pages,
       presentations: ["full", "compact"],
       appliesTo: (owner) => hasScopeCapability(owner, "collection"),
-      label: m.scope_surface_collection(),
+      label: m.scope_surface_pages(),
       icon: TableProperties,
-      render: renderers.collection ?? (() => null),
+      render: renderers.pages ?? (() => null),
     },
     {
       id: "routines",

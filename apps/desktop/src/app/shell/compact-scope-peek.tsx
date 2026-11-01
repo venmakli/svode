@@ -89,7 +89,7 @@ export function CompactScopePeek(props: ScopePeekContext) {
       owner.identityKind === "collection-directory" ||
       owner.identityKind === "app-directory"
     ) {
-      if (selectedSurfaceId === "collection") {
+      if (selectedSurfaceId === "pages") {
         fullRoute.onViewNameChange(viewName);
         if (calendarScope) fullRoute.onCalendarScopeChange(calendarScope);
       }

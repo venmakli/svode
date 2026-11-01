@@ -8,18 +8,16 @@ test("surface selection is session-only and keyed by stable owner identity", () 
   });
 
   useScopeSurfaceStore.getState().setSurface("space:root", "readme");
-  useScopeSurfaceStore
-    .getState()
-    .setSurface("collection:root:tasks", "collection");
+  useScopeSurfaceStore.getState().setSurface("collection:root:tasks", "pages");
 
   expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
     "space:root": "readme",
-    "collection:root:tasks": "collection",
+    "collection:root:tasks": "pages",
   });
 
   useScopeSurfaceStore.getState().clearSurface("space:root");
   expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
-    "collection:root:tasks": "collection",
+    "collection:root:tasks": "pages",
   });
 });
 
@@ -34,17 +32,17 @@ test("keeps each owner selection until an explicit open intent replaces it", () 
   ).toBe("routines");
   useScopeSurfaceStore
     .getState()
-    .applyOpenRequest("collection:root:tasks", 1, "collection");
+    .applyOpenRequest("collection:root:tasks", 1, "pages");
   expect(
     useScopeSurfaceStore.getState().surfaceByOwnerKey["collection:root:tasks"],
-  ).toBe("collection");
+  ).toBe("pages");
 
   useScopeSurfaceStore
     .getState()
     .applyOpenRequest("collection:root:tasks", 1, "readme");
   expect(
     useScopeSurfaceStore.getState().surfaceByOwnerKey["collection:root:tasks"],
-  ).toBe("collection");
+  ).toBe("pages");
 });
 
 test("keeps separate selections through owner switching", () => {
@@ -55,12 +53,12 @@ test("keeps separate selections through owner switching", () => {
   const store = useScopeSurfaceStore.getState();
 
   store.setSurface("space:root", "routines");
-  store.setSurface("collection:root:tasks", "collection");
+  store.setSurface("collection:root:tasks", "pages");
   store.setSurface("space:root", "context");
 
   expect(useScopeSurfaceStore.getState().surfaceByOwnerKey).toEqual({
     "space:root": "context",
-    "collection:root:tasks": "collection",
+    "collection:root:tasks": "pages",
   });
 });
 

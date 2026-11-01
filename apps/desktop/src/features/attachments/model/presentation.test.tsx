@@ -59,7 +59,7 @@ test("App presentation unifies query values and sidebar facts without changing i
     ["collection", false, "collection", m.attachments_type_collection()],
     ["collection", true, "collection", m.attachments_type_collection()],
     ["app", true, "app", m.attachments_type_app()],
-    ["directory", false, "directory", m.attachments_type_directory()],
+    ["directory", false, "directory", m.attachments_type_folder()],
   ] as const;
   const rows = matrix.map(
     ([kind, hasApp], i): AttachmentRow => ({

@@ -9,7 +9,7 @@ export type ScopeSurfaceId =
   | "actors"
   | "attachments"
   | "app"
-  | "collection"
+  | "pages"
   | "routines"
   | "sessions"
   | "context";

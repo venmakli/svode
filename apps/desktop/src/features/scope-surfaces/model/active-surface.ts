@@ -7,7 +7,7 @@ import type {
 export function resolveDefaultScopeSurface(
   owner: ScopeOwnerRef,
 ): ScopeSurfaceId {
-  if (owner.identityKind === "collection-directory") return "collection";
+  if (owner.identityKind === "collection-directory") return "pages";
   if (owner.identityKind === "app-directory") return "app";
   return "readme";
 }

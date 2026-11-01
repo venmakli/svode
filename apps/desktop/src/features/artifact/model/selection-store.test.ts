@@ -152,13 +152,13 @@ test("repeated selection is a no-op unless it carries an explicit request", () =
   expect(useArtifactSelectionStore.getState().selection).toBe(first);
 
   openScopeOwner(owner, {
-    scopeOpenIntent: { kind: "target", surfaceId: "collection" },
+    scopeOpenIntent: { kind: "target", surfaceId: "pages" },
   });
   const targeted = useArtifactSelectionStore.getState().selection;
   expect(targeted === first).toBe(false);
   expect(
     targeted?.kind === "scope-owner" ? targeted.request.intent : null,
-  ).toEqual({ kind: "target", surfaceId: "collection" });
+  ).toEqual({ kind: "target", surfaceId: "pages" });
 });
 
 test("a new explicit Page open allocates a fresh session default", () => {
@@ -239,10 +239,7 @@ test("records whether each open came from the sidebar", () => {
   openScopeOwner({ kind: "collection", spaceId: "root", path: "tasks" });
   expect(useArtifactSelectionStore.getState().openedFromSidebar).toBe(false);
 
-  openScopeOwner(
-    { kind: "space", spaceId: "root" },
-    { fromSidebar: true },
-  );
+  openScopeOwner({ kind: "space", spaceId: "root" }, { fromSidebar: true });
   expect(useArtifactSelectionStore.getState().openedFromSidebar).toBe(true);
 
   close();

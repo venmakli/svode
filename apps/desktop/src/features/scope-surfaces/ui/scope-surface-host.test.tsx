@@ -68,18 +68,18 @@ test("compact host filters unavailable surfaces and honors its local selection",
       presentation="compact"
       contributions={[
         contribution("readme", "Readme"),
-        contribution("collection", "Collection"),
+        contribution("pages", "Pages"),
         {
           ...contribution("context", "Context"),
           presentations: ["full"],
         },
       ]}
-      compactSurfaceId="collection"
+      compactSurfaceId="pages"
       header={<header>Owner</header>}
     />,
   );
 
-  expect(markup.includes("Collection content")).toBe(true);
+  expect(markup.includes("Pages content")).toBe(true);
   expect(markup.includes("Readme content")).toBe(false);
   expect(markup.includes("Context content")).toBe(false);
 });

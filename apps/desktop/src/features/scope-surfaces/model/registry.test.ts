@@ -38,7 +38,7 @@ test("registry filters capability and presentation without changing canonical or
   });
   const contributions = [
     contribution("context", { presentations: ["full"] }),
-    contribution("collection", {
+    contribution("pages", {
       appliesTo: (candidate) => candidate.capabilities.includes("collection"),
     }),
     contribution("attachments", {
@@ -60,7 +60,7 @@ test("registry filters capability and presentation without changing canonical or
   ).toEqual([
     "context",
     "readme",
-    "collection",
+    "pages",
     "attachments",
     "actors",
     "routines",
@@ -69,7 +69,7 @@ test("registry filters capability and presentation without changing canonical or
     resolveScopeSurfaceContributions(contributions, owner, "compact").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "collection", "routines"]);
+  ).toEqual(["readme", "pages", "routines"]);
 });
 
 test("registry keeps root, child, and hybrid owner capabilities independent", () => {
@@ -79,7 +79,7 @@ test("registry keeps root, child, and hybrid owner capabilities independent", ()
       presentations: ["full"],
       appliesTo: (owner) => owner.capabilities.includes("space"),
     }),
-    contribution("collection", {
+    contribution("pages", {
       appliesTo: (owner) => owner.capabilities.includes("collection"),
     }),
     contribution("attachments", {
@@ -139,7 +139,7 @@ test("registry keeps root, child, and hybrid owner capabilities independent", ()
   ).toEqual([
     "context",
     "readme",
-    "collection",
+    "pages",
     "attachments",
     "actors",
     "routines",
@@ -148,7 +148,7 @@ test("registry keeps root, child, and hybrid owner capabilities independent", ()
     resolveScopeSurfaceContributions(contributions, collection, "full").map(
       ({ id }) => id,
     ),
-  ).toEqual(["readme", "collection", "routines"]);
+  ).toEqual(["readme", "pages", "routines"]);
 });
 
 test("registry rejects duplicate stable ids", () => {
