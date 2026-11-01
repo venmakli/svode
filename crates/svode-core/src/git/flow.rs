@@ -358,14 +358,18 @@ pub async fn abort_merge(
 }
 
 /// «Отменить <операцию>» of the stop «Идёт операция Git» (1.F): the stopped
-/// rebase, cherry-pick, revert or sequencer is aborted by Git, and the branch
-/// and the files return to the state before it.
+/// rebase, cherry-pick, revert or sequencer is aborted, and the branch and
+/// the files return to the state before it. `expected_head` is the HEAD of
+/// the [`super::operation_stop::SequenceCommits`] the confirmation listed for
+/// a sequence of cherry-picks or reverts; see [`super::operation_stop::abort`].
 pub async fn abort_operation(
     runtime: &Arc<GitRuntime>,
     host: &Arc<dyn GitHost>,
     path: &Path,
+    expected_head: Option<String>,
 ) -> Result<ops::GitStatus, SharedError> {
-    let Output::Status(status) = request(runtime, host, path, Intent::AbortOperation).await? else {
+    let intent = Intent::AbortOperation { expected_head };
+    let Output::Status(status) = request(runtime, host, path, intent).await? else {
         unreachable!("abort result")
     };
     caller_status(runtime, path, status).await
@@ -488,9 +492,11 @@ async fn execute(runtime: &GitRuntime, host: &dyn GitHost, request: Request) -> 
             Intent::AbortMerge => abort_merge_locked(host, &cli, repo)
                 .await
                 .map(Output::Status),
-            Intent::AbortOperation => abort_operation_locked(host, &cli, repo)
-                .await
-                .map(Output::Status),
+            Intent::AbortOperation { expected_head } => {
+                abort_operation_locked(host, &cli, repo, expected_head.as_deref())
+                    .await
+                    .map(Output::Status)
+            }
             Intent::RetryParent {
                 head,
                 parent,
@@ -623,11 +629,12 @@ async fn abort_operation_locked(
     host: &dyn GitHost,
     cli: &GitCli,
     repo: &Path,
+    expected_head: Option<&str>,
 ) -> Result<ops::GitStatus, GitError> {
     host.authorize_repository(repo).await?;
     let repository = access::local_repository_root(repo)?;
     let _writes = super::write_guard::acquire(&BTreeSet::from([repository]), &[]).await?;
-    super::operation_stop::abort(cli, repo).await?;
+    super::operation_stop::abort(cli, repo, expected_head).await?;
     ops::status(cli, repo).await
 }
 

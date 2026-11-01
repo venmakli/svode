@@ -282,10 +282,18 @@ export function abortGitMerge(spacePath: string): Promise<GitStatusDto> {
 
 /**
  * Abort the stopped rebase, cherry-pick, revert or sequencer; returns the
- * status after it.
+ * status after it. `expectedHead` is the `head` of the sequence commits the
+ * confirmation listed; the abort of a sequence without it, or after HEAD
+ * changed, is refused with the cause `state_changed`.
  */
-export function abortGitOperation(spacePath: string): Promise<GitStatusDto> {
-  return invokeCommand<GitStatusDto>("git_operation_abort", { spacePath });
+export function abortGitOperation(
+  spacePath: string,
+  expectedHead: string | null,
+): Promise<GitStatusDto> {
+  return invokeCommand<GitStatusDto>("git_operation_abort", {
+    spacePath,
+    expectedHead,
+  });
 }
 
 export function publishGit(spacePath: string): Promise<GitStatusDto> {

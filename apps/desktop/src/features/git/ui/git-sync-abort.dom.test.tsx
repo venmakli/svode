@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createTestDom } from "@/shared/testing/dom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
-import type { GitOperation, GitOperationStep } from "../model";
+import type {
+  GitOperation,
+  GitOperationStep,
+  GitSequenceCommits,
+} from "../model";
 
 if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
   test("Git sync Dialog cancels a sync stopped by a merge conflict", () => {
@@ -250,14 +254,24 @@ if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
 
   test("an operation stop cancels the operation after a confirmation that names what is lost", async () => {
     const { gitOperationAbortCopy } = await import("./git-sync-stop-copy");
+    const sequence: GitSequenceCommits = {
+      head: "c0ffee",
+      count: 2,
+      titles: ["Resolve conflict", "Add intro"],
+    };
     const stops: {
       operation: GitOperation;
       step: GitOperationStep | null;
+      sequence?: GitSequenceCommits;
     }[] = [
       { operation: "rebase", step: { kind: "position", current: 1, total: 2 } },
       { operation: "cherry_pick", step: null },
-      { operation: "revert", step: { kind: "remaining", count: 2 } },
-      { operation: "sequencer", step: { kind: "remaining", count: 1 } },
+      { operation: "revert", step: { kind: "remaining", count: 2 }, sequence },
+      {
+        operation: "sequencer",
+        step: { kind: "remaining", count: 1 },
+        sequence,
+      },
     ];
     for (const stop of stops) {
       preflight = { type: "operationInProgress", ...stop };
@@ -310,7 +324,16 @@ if (process.env.SVODE_SYNC_ABORT_DOM !== "1") {
         );
         await settle();
         expect(calls.filter((call) => call.command.endsWith("_abort"))).toEqual(
-          [{ command: "git_operation_abort", args: { spacePath: path } }],
+          [
+            {
+              command: "git_operation_abort",
+              // The abort of a sequence names the HEAD its stop listed.
+              args: {
+                spacePath: path,
+                expectedHead: stop.sequence?.head ?? null,
+              },
+            },
+          ],
         );
         expect(toasts).toEqual([
           { kind: "success", message: m.git_operation_abort_success() },

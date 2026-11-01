@@ -79,11 +79,15 @@ export async function abortGitSyncMerge(path: string): Promise<void> {
 }
 
 /**
- * Abort the rebase, cherry-pick, revert or sequencer that stops sync: Git
- * returns the branch and the files to the state before it.
+ * Abort the rebase, cherry-pick, revert or sequencer that stops sync: the
+ * branch and the files return to the state before it. `expectedHead` is the
+ * HEAD of the sequence commits the stop listed.
  */
-export async function abortGitOperationStop(path: string): Promise<void> {
-  applyAborted(path, toGitStatus(await abortGitOperation(path)));
+export async function abortGitOperationStop(
+  path: string,
+  expectedHead: string | null,
+): Promise<void> {
+  applyAborted(path, toGitStatus(await abortGitOperation(path, expectedHead)));
   await refreshGitRemoteStatus(path).catch(() => {});
 }
 

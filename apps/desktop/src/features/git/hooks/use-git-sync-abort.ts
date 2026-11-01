@@ -35,6 +35,8 @@ export function useGitSyncAbort(
   stop: GitSyncStop | null | undefined,
 ): GitSyncAbort {
   const kind = abortable(stop);
+  const expectedHead =
+    (stop?.kind === "operation" && stop.sequence?.head) || null;
   const active = useRef<object | null>(null);
   const [aborting, setAborting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +58,8 @@ export function useGitSyncAbort(
     setAborting(true);
     setError(null);
     try {
-      if (kind === "operation") await abortGitOperationStop(spacePath);
+      if (kind === "operation")
+        await abortGitOperationStop(spacePath, expectedHead);
       else await abortGitSyncMerge(spacePath);
       if (active.current !== identity) return;
       toast.success(
@@ -75,7 +78,7 @@ export function useGitSyncAbort(
     } finally {
       if (active.current === identity) setAborting(false);
     }
-  }, [kind, spacePath]);
+  }, [expectedHead, kind, spacePath]);
 
   return { aborting, error, abort };
 }

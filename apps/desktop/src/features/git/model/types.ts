@@ -85,12 +85,14 @@ export type SyncResult =
   | { type: "AuthRequired"; challenge: GitAuthChallenge | null }
   /**
    * A rebase, cherry-pick, revert or sequencer stopped: its step when Git
-   * reports one and its paths in conflict with their kinds.
+   * reports one, the commits the abort of a cherry-pick or revert sequence
+   * drops, and its paths in conflict with their kinds.
    */
   | {
       type: "OperationInProgress";
       operation: GitOperation;
       step: GitOperationStep | null;
+      sequence?: GitSequenceCommits;
       files: string[];
       kinds: GitPathConflict[];
     }
@@ -228,6 +230,17 @@ export type GitOperation = "rebase" | "cherry_pick" | "revert" | "sequencer";
 export type GitOperationStep =
   | { kind: "position"; current: number; total: number }
   | { kind: "remaining"; count: number };
+
+/**
+ * What the abort of a stopped cherry-pick or revert sequence drops: `count`
+ * commits from its start to `head`, the titles of the newest few, newest
+ * first; `count` beyond `titles.length` is only counted.
+ */
+export interface GitSequenceCommits {
+  head: string;
+  count: number;
+  titles: string[];
+}
 
 export interface ParentPublication {
   repository: string;

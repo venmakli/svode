@@ -194,6 +194,7 @@ fn operation_result_serializes_with_the_operation_name() {
         serde_json::to_value(SyncResult::OperationInProgress {
             operation: GitOperation::CherryPick,
             step: None,
+            sequence: None,
             files: Vec::new(),
             kinds: Vec::new(),
         })
@@ -207,6 +208,7 @@ fn operation_result_serializes_with_the_operation_name() {
                 current: 2,
                 total: 3,
             }),
+            sequence: None,
             files: vec!["Page.md".into()],
             kinds: vec![PathConflict {
                 path: "Page.md".into(),

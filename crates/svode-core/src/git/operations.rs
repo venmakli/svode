@@ -57,8 +57,12 @@ pub enum Intent {
     Publish,
     /// Abandon the merge a sync stopped in (`git merge --abort`).
     AbortMerge,
-    /// Abort the stopped rebase, cherry-pick, revert or sequencer (1.F).
-    AbortOperation,
+    /// Abort the stopped rebase, cherry-pick, revert or sequencer (1.F);
+    /// `expected_head` is the HEAD of the commits the confirmation listed
+    /// for a sequence (DF-282).
+    AbortOperation {
+        expected_head: Option<String>,
+    },
     /// Resolved paths relative to the requested path; distinct sets never coalesce.
     Resolve {
         paths: Vec<String>,

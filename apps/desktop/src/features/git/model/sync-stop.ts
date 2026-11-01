@@ -4,6 +4,7 @@ import type {
   GitOperation,
   GitOperationStep,
   GitPathConflict,
+  GitSequenceCommits,
   GitServiceFile,
   SyncResult,
 } from "./types";
@@ -22,12 +23,14 @@ export type GitSyncStop =
     }
   /**
    * A rebase, cherry-pick, revert or sequencer Svode does not continue:
-   * `step` is where Git reports it stopped, `files` its paths in conflict.
+   * `step` is where Git reports it stopped, `sequence` the commits the abort
+   * of a cherry-pick or revert sequence drops, `files` its paths in conflict.
    */
   | {
       kind: "operation";
       operation: GitOperation;
       step: GitOperationStep | null;
+      sequence?: GitSequenceCommits;
       files: string[];
       kinds: GitPathConflict[];
     }
@@ -107,6 +110,7 @@ export function syncStopFromResult(
         kind: "operation",
         operation: result.operation,
         step: result.step,
+        ...(result.sequence ? { sequence: result.sequence } : {}),
         files: result.files,
         kinds: result.kinds,
       };

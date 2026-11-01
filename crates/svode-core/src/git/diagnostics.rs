@@ -67,9 +67,16 @@ pub enum GitFailureCause {
     /// Git refused to overwrite changes of the working tree: files edited
     /// after an operation stopped, or untracked files in its way.
     LocalChanges,
-    /// HEAD moved after a sequence of cherry-picks or reverts stopped, so
-    /// Git would not rewind the branch; found by Svode before Git runs.
-    HeadMoved,
+    /// The branch no longer continues the start of the stopped sequence of
+    /// cherry-picks or reverts: it was switched or reset, so its abort would
+    /// not return to the start; found by Svode before the abort.
+    BranchLeftSequence,
+    /// A commit the abort of a sequence would drop is reachable from a
+    /// remote-tracking ref; found by Svode before the abort.
+    CommitsPublished,
+    /// HEAD is not the one the confirmation of the abort listed the dropped
+    /// commits for; found by Svode before the abort.
+    StateChanged,
 }
 
 impl GitFailureCause {
@@ -82,7 +89,9 @@ impl GitFailureCause {
             Self::FileSystemDenied => "file_system_denied",
             Self::Network => "network",
             Self::LocalChanges => "local_changes",
-            Self::HeadMoved => "head_moved",
+            Self::BranchLeftSequence => "branch_left_sequence",
+            Self::CommitsPublished => "commits_published",
+            Self::StateChanged => "state_changed",
         }
     }
 

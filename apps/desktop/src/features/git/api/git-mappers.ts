@@ -80,6 +80,15 @@ export function toSyncResult(dto: SyncResultDto): SyncResult {
         type: "OperationInProgress",
         operation: dto.operation,
         step: dto.step ? { ...dto.step } : null,
+        ...(dto.sequence
+          ? {
+              sequence: {
+                head: dto.sequence.head,
+                count: dto.sequence.count,
+                titles: [...dto.sequence.titles],
+              },
+            }
+          : {}),
         files: [...(dto.files ?? [])],
         kinds: (dto.kinds ?? []).map((file) => ({ ...file })),
       };

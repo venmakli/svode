@@ -2,7 +2,8 @@
 //! «Отменить <операцию>» and the stop «Идёт операция Git» (1.F) with both
 //! ref stores: the abort through the operations owner returns HEAD and the
 //! branch to the state before the operation, a refusal names its cause, and
-//! the stop lasts only while Git reports the operation.
+//! the stop lasts only while Git reports the operation. A sequence whose
+//! HEAD moved at its stop is rewound by Svode (DF-282).
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -14,7 +15,7 @@ use crate::git::cli::GitCli;
 use crate::git::diagnostics::{GitFailureCause, GitStage};
 use crate::git::flow;
 use crate::git::host::GitHost;
-use crate::git::operation_stop::OperationStep;
+use crate::git::operation_stop::{OperationStep, SEQUENCE_TITLES, SequenceCommits};
 use crate::git::operations::SharedError;
 use crate::git::staging_tests::TestHost;
 use crate::git::state::GitRuntime;
@@ -145,12 +146,31 @@ impl Repo {
         preflight(&self.cli, &self.path).await.unwrap()
     }
 
+    /// Abort as the Dialog does, with the HEAD of the sequence commits its
+    /// stop listed.
     async fn abort(&self, host: Arc<TestHost>) -> Result<(), SharedError> {
+        let head = self.sequence().await.map(|sequence| sequence.head);
+        self.abort_at(host, head).await
+    }
+
+    async fn abort_at(
+        &self,
+        host: Arc<TestHost>,
+        expected_head: Option<String>,
+    ) -> Result<(), SharedError> {
         let runtime = Arc::new(GitRuntime::with_cli(self.cli.clone()));
         let host: Arc<dyn GitHost> = host;
-        let status = flow::abort_operation(&runtime, &host, &self.path).await?;
+        let status = flow::abort_operation(&runtime, &host, &self.path, expected_head).await?;
         assert!(!status.has_conflicts, "{}", self.format);
         Ok(())
+    }
+
+    /// The commits the stop says the abort of its sequence drops.
+    async fn sequence(&self) -> Option<SequenceCommits> {
+        match self.stop().await {
+            Some(SyncResult::OperationInProgress { sequence, .. }) => sequence,
+            _ => None,
+        }
     }
 
     /// Abort through the operations owner, which publishes the start and the
@@ -187,6 +207,7 @@ fn stopped(result: Option<SyncResult>) -> (GitOperation, Option<OperationStep>, 
             step,
             files,
             kinds,
+            sequence: _,
         }) => {
             assert_eq!(
                 kinds
@@ -403,35 +424,315 @@ async fn refused_abort_names_its_cause_and_keeps_the_operation_for_a_retry() {
     }
 }
 
+impl Repo {
+    /// `side` from `base` adds `side.md` cleanly, then the sequence picks
+    /// `side`, stops at `t1` in `note.md` and leaves `t2`.
+    fn stops_in_a_pick_sequence(&self) {
+        self.ok(&["checkout", "-q", "-b", "side", "main~2"]);
+        self.commit("side.md", "side\n", "side");
+        self.ok(&["checkout", "-q", "main"]);
+        self.stops(&["cherry-pick", "side", "topic~1", "topic"]);
+    }
+
+    /// Commit the resolution of the stopped step by hand, as an agent does
+    /// with `git commit` instead of `--continue`: HEAD moves past the stop.
+    fn commits_the_stop_by_hand(&self) {
+        self.write("note.md", "resolved\n");
+        self.ok(&["add", "note.md"]);
+        self.ok(&["commit", "-q", "--no-edit"]);
+    }
+
+    fn has_pseudo_refs(&self) -> bool {
+        ["CHERRY_PICK_HEAD", "REVERT_HEAD"].iter().any(|name| {
+            self.run(&["rev-parse", "-q", "--verify", name])
+                .status
+                .success()
+        })
+    }
+
+    /// Nothing of the sequence is left, and the index matches HEAD.
+    fn no_sequence_left(&self) {
+        assert!(
+            !self.path.join(".git/sequencer").exists(),
+            "{}",
+            self.format
+        );
+        assert!(!self.has_pseudo_refs(), "{}", self.format);
+        assert_eq!(
+            self.ok(&["diff", "--cached", "--name-only"]),
+            "",
+            "{}",
+            self.format
+        );
+    }
+
+    fn head(&self) -> String {
+        self.ok(&["rev-parse", "HEAD"])
+    }
+}
+
+fn refused_with(error: &SharedError, cause: GitFailureCause, format: &str) {
+    assert!(
+        matches!(
+            &**error,
+            GitError::SyncFailed(failure)
+                if failure.stage == GitStage::Abort
+                    && failure.cause == Some(cause)
+                    && failure.repository == "repo"
+        ),
+        "{format}: expected {cause:?}, got {error:?}"
+    );
+}
+
 #[tokio::test]
-async fn sequence_whose_head_moved_at_the_stop_is_refused_before_git_runs() {
+async fn sequence_stop_lists_the_commits_its_abort_drops_newest_first() {
     for format in ["files", "reftable"] {
         let Some(repo) = Repo::new(format).await else {
             continue;
         };
-        repo.stops(&["cherry-pick", "topic~1", "topic"]);
-        // The person committed the stopped pick by hand: Git would end the
-        // sequence without rewinding the branch.
-        repo.write("note.md", "resolved\n");
-        repo.ok(&["add", "note.md"]);
-        repo.ok(&["commit", "-q", "--no-edit"]);
-        assert_eq!(repo.operation().await, Some(GitOperation::Sequencer));
-        let moved = repo.position();
-
-        let error = repo.abort(Arc::new(TestHost::default())).await.unwrap_err();
-
-        assert!(
-            matches!(
-                &*error,
-                GitError::SyncFailed(failure)
-                    if failure.stage == GitStage::Abort
-                        && failure.cause == Some(GitFailureCause::HeadMoved)
-            ),
-            "{format}: {error:?}"
+        let start = repo.head();
+        repo.stops_in_a_pick_sequence();
+        assert_eq!(
+            repo.sequence().await,
+            Some(SequenceCommits {
+                head: repo.head(),
+                count: 1,
+                titles: vec!["side".into()],
+            }),
+            "{format}"
         );
+        repo.commits_the_stop_by_hand();
+        for index in 1..=6 {
+            repo.commit(
+                "manual.md",
+                &format!("{index}\n"),
+                &format!("manual {index}"),
+            );
+        }
+        let sequence = repo.sequence().await.unwrap();
+        assert_eq!(sequence.head, repo.head(), "{format}");
+        assert_eq!(sequence.count, 8, "{format}");
+        assert_eq!(sequence.titles.len(), SEQUENCE_TITLES, "{format}");
+        assert_eq!(
+            sequence.titles,
+            ["manual 6", "manual 5", "manual 4", "manual 3", "manual 2"],
+            "{format}"
+        );
+
+        // A rebase and a single cherry-pick list nothing.
+        repo.ok(&["cherry-pick", "--quit"]);
+        repo.ok(&["reset", "-q", "--hard", &start]);
+        repo.stops(&["cherry-pick", "topic~1"]);
+        assert_eq!(repo.operation().await, Some(GitOperation::CherryPick));
+        assert_eq!(repo.sequence().await, None, "{format}");
+        repo.ok(&["cherry-pick", "--abort"]);
+        repo.ok(&["checkout", "-q", "topic"]);
+        repo.stops(&["rebase", "main"]);
+        assert_eq!(repo.sequence().await, None, "{format}");
+    }
+}
+
+#[tokio::test]
+async fn abort_of_a_sequence_committed_by_hand_at_the_stop_rewinds_to_its_start() {
+    for format in ["files", "reftable"] {
+        let Some(repo) = Repo::new(format).await else {
+            continue;
+        };
+        // A pick sequence: `side` applied, `t1` committed by hand, then one
+        // more commit by hand.
+        let before = repo.position();
+        repo.stops_in_a_pick_sequence();
+        repo.commits_the_stop_by_hand();
+        repo.commit("manual.md", "manual\n", "manual");
         assert_eq!(repo.operation().await, Some(GitOperation::Sequencer));
-        assert_eq!(repo.position(), moved, "{format}");
-        assert!(repo.path.join(".git/sequencer").is_dir(), "{format}");
+        assert_ne!(
+            repo.read(".git/sequencer/abort-safety").trim(),
+            repo.head(),
+            "{format}"
+        );
+        assert_eq!(repo.sequence().await.unwrap().count, 3, "{format}");
+        // Edits without a commit the rewind does not touch are kept.
+        repo.write("kept.md", "kept edited\n");
+        repo.write("scratch.md", "scratch\n");
+
+        repo.aborts().await;
+
+        assert_eq!(repo.position(), before, "{format}");
+        assert_eq!(repo.read("note.md"), "main\n", "{format}");
+        assert!(!repo.path.join("side.md").exists(), "{format}");
+        assert!(!repo.path.join("manual.md").exists(), "{format}");
+        assert_eq!(repo.read("kept.md"), "kept edited\n", "{format}");
+        assert_eq!(repo.read("scratch.md"), "scratch\n", "{format}");
+        repo.no_sequence_left();
+        repo.keeps_earlier_commits();
+        repo.ok(&["checkout", "--", "kept.md"]);
+        std::fs::remove_file(repo.path.join("scratch.md")).unwrap();
+
+        // A revert sequence: the revert of `kept` applies, the revert of
+        // `base` stops and is committed by hand.
+        repo.commit("note.md", "edit\n", "edit");
+        let before = repo.position();
+        repo.stops(&["revert", "--no-edit", "HEAD~1", "HEAD~3", "HEAD"]);
+        repo.commits_the_stop_by_hand();
+        assert_eq!(repo.operation().await, Some(GitOperation::Sequencer));
+        assert_eq!(
+            repo.sequence().await.unwrap().titles,
+            ["Revert \"base\"", "Revert \"kept\""],
+            "{format}"
+        );
+        repo.aborts().await;
+        assert_eq!(repo.position(), before, "{format}");
+        assert_eq!(repo.read("note.md"), "edit\n", "{format}");
+        assert_eq!(repo.read("kept.md"), "kept\n", "{format}");
+        repo.no_sequence_left();
+        repo.keeps_earlier_commits();
+
+        // A sequencer without its pseudo-ref: the person set the stopped
+        // revert aside, then committed something else by hand.
+        let before = repo.position();
+        repo.stops(&["revert", "--no-edit", "HEAD~1", "HEAD~3", "HEAD"]);
+        repo.ok(&["reset", "-q", "--merge"]);
+        assert_eq!(repo.operation().await, Some(GitOperation::Sequencer));
+        repo.commit("manual.md", "manual\n", "manual");
+        repo.aborts().await;
+        assert_eq!(repo.position(), before, "{format}");
+        assert_eq!(repo.read("kept.md"), "kept\n", "{format}");
+        assert!(!repo.path.join("manual.md").exists(), "{format}");
+        repo.no_sequence_left();
+        repo.keeps_earlier_commits();
+    }
+}
+
+#[tokio::test]
+async fn abort_of_a_new_stop_after_a_step_committed_by_hand_is_git_s_own() {
+    for format in ["files", "reftable"] {
+        let Some(repo) = Repo::new(format).await else {
+            continue;
+        };
+        // `third` from `base` changes `note.md` again.
+        repo.ok(&["checkout", "-q", "-b", "third", "main~2"]);
+        repo.commit("note.md", "third\n", "third");
+        repo.ok(&["checkout", "-q", "main"]);
+        let before = repo.position();
+        repo.stops(&["cherry-pick", "topic~1", "third"]);
+        repo.commits_the_stop_by_hand();
+        // Git moves past the step committed by hand and stops at `third`,
+        // where HEAD is again where the sequence stopped.
+        repo.stops(&["cherry-pick", "--continue"]);
+        assert_eq!(repo.operation().await, Some(GitOperation::CherryPick));
+        assert_eq!(
+            repo.read(".git/sequencer/abort-safety").trim(),
+            repo.head(),
+            "{format}"
+        );
+        assert_eq!(repo.sequence().await.unwrap().titles, ["t1"], "{format}");
+
+        repo.aborts().await;
+
+        assert_eq!(repo.position(), before, "{format}");
+        assert_eq!(repo.read("note.md"), "main\n", "{format}");
+        repo.no_sequence_left();
+        repo.keeps_earlier_commits();
+    }
+}
+
+#[tokio::test]
+async fn refused_rewind_of_a_sequence_names_its_cause_and_changes_nothing() {
+    for format in ["files", "reftable"] {
+        let Some(repo) = Repo::new(format).await else {
+            continue;
+        };
+        let before = repo.position();
+        let start = before.0.clone();
+        repo.stops_in_a_pick_sequence();
+        repo.commits_the_stop_by_hand();
+        let moved = repo.position();
+        let listed = repo.sequence().await.unwrap().head;
+        let unchanged = |repo: &Repo, position: &(String, String)| {
+            assert_eq!(&repo.position(), position, "{}", repo.format);
+            assert!(repo.path.join(".git/sequencer").is_dir(), "{}", repo.format);
+        };
+
+        // (a) The branch was switched: it no longer continues the start.
+        repo.ok(&["checkout", "-q", "topic"]);
+        assert_eq!(repo.sequence().await, None, "{format}");
+        let switched = repo.position();
+        let error = repo
+            .abort_at(Arc::new(TestHost::default()), Some(listed.clone()))
+            .await
+            .unwrap_err();
+        refused_with(&error, GitFailureCause::BranchLeftSequence, format);
+        unchanged(&repo, &switched);
+        assert_eq!(repo.operation().await, Some(GitOperation::Sequencer));
+        repo.ok(&["checkout", "-q", "main"]);
+
+        // (b) The applied step is reachable from a remote-tracking ref.
+        repo.ok(&["update-ref", "refs/remotes/origin/main", "HEAD~1"]);
+        let error = repo
+            .abort_at(Arc::new(TestHost::default()), Some(listed.clone()))
+            .await
+            .unwrap_err();
+        refused_with(&error, GitFailureCause::CommitsPublished, format);
+        unchanged(&repo, &moved);
+        // Commits before the sequence may be published.
+        repo.ok(&["update-ref", "refs/remotes/origin/main", &start]);
+
+        // (c) HEAD is not the one the confirmation listed, or none was named.
+        for expected in [Some(start.clone()), None] {
+            let error = repo
+                .abort_at(Arc::new(TestHost::default()), expected)
+                .await
+                .unwrap_err();
+            refused_with(&error, GitFailureCause::StateChanged, format);
+            unchanged(&repo, &moved);
+        }
+
+        // (d) An edit without a commit of a file the rewind changes.
+        repo.write("note.md", "edited after the commit\n");
+        let error = repo
+            .abort_at(Arc::new(TestHost::default()), Some(listed.clone()))
+            .await
+            .unwrap_err();
+        refused_with(&error, GitFailureCause::LocalChanges, format);
+        unchanged(&repo, &moved);
+        assert_eq!(repo.read("note.md"), "edited after the commit\n");
+        assert!(repo.path.join("side.md").exists(), "{format}");
+
+        // The retry rewinds once the edit is set aside.
+        repo.ok(&["checkout", "--", "note.md"]);
+        repo.aborts().await;
+        assert_eq!(repo.position(), before, "{format}");
+        repo.no_sequence_left();
+        repo.keeps_earlier_commits();
+    }
+}
+
+#[tokio::test]
+async fn abort_of_a_sequence_without_a_moved_head_checks_publication_and_state() {
+    for format in ["files", "reftable"] {
+        let Some(repo) = Repo::new(format).await else {
+            continue;
+        };
+        repo.stops_in_a_pick_sequence();
+        let stopped_at = repo.position();
+        let listed = repo.sequence().await.unwrap().head;
+
+        repo.ok(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        let error = repo
+            .abort_at(Arc::new(TestHost::default()), Some(listed.clone()))
+            .await
+            .unwrap_err();
+        refused_with(&error, GitFailureCause::CommitsPublished, format);
+        assert_eq!(repo.position(), stopped_at, "{format}");
+        assert_eq!(repo.operation().await, Some(GitOperation::CherryPick));
+        repo.ok(&["update-ref", "-d", "refs/remotes/origin/main"]);
+
+        let error = repo
+            .abort_at(Arc::new(TestHost::default()), None)
+            .await
+            .unwrap_err();
+        refused_with(&error, GitFailureCause::StateChanged, format);
+        assert_eq!(repo.operation().await, Some(GitOperation::CherryPick));
     }
 }
 
@@ -465,5 +766,18 @@ fn step_serializes_by_its_kind() {
     assert_eq!(
         serde_json::to_value(OperationStep::Remaining { count: 3 }).unwrap(),
         serde_json::json!({ "kind": "remaining", "count": 3 })
+    );
+}
+
+#[test]
+fn sequence_commits_serialize_with_their_head() {
+    assert_eq!(
+        serde_json::to_value(SequenceCommits {
+            head: "abc".into(),
+            count: 7,
+            titles: vec!["Fix typo".into()],
+        })
+        .unwrap(),
+        serde_json::json!({ "head": "abc", "count": 7, "titles": ["Fix typo"] })
     );
 }

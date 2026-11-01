@@ -158,6 +158,22 @@ test("toSyncResult keeps the step and the files in conflict of a stopped operati
     files: ["Page.md"],
     kinds: [{ path: "Page.md", kind: "page_text" }],
   });
+  // A sequence carries the commits its abort drops.
+  expect(
+    toSyncResult({
+      type: "operationInProgress",
+      operation: "sequencer",
+      step: { kind: "remaining", count: 1 },
+      sequence: { head: "abc", count: 7, titles: ["Fix typo", "Add intro"] },
+    }),
+  ).toEqual({
+    type: "OperationInProgress",
+    operation: "sequencer",
+    step: { kind: "remaining", count: 1 },
+    sequence: { head: "abc", count: 7, titles: ["Fix typo", "Add intro"] },
+    files: [],
+    kinds: [],
+  });
   // A single pick reports no step; a stop with no file in conflict has none.
   expect(
     toSyncResult({ type: "operationInProgress", operation: "cherry_pick" }),

@@ -70,11 +70,14 @@ pub enum SyncResult {
     Resolved,
     /// Sync stopped before integration and push: the operation is finished
     /// or aborted in Git (1.F). `step` is where Git reports it stopped,
-    /// `files` its paths in conflict with their `kinds`.
+    /// `files` its paths in conflict with their `kinds`; `sequence` the
+    /// commits the abort of a sequence of cherry-picks or reverts drops.
     OperationInProgress {
         operation: GitOperation,
         #[serde(skip_serializing_if = "Option::is_none")]
         step: Option<super::operation_stop::OperationStep>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sequence: Option<super::operation_stop::SequenceCommits>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         files: Vec<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -551,7 +554,8 @@ pub(crate) async fn merge_conflict(
 }
 
 /// The stop of a rebase, cherry-pick, revert or sequencer: the operation,
-/// the step Git reports and its paths in conflict with their kinds.
+/// the step Git reports, the commits the abort of a sequence drops and its
+/// paths in conflict with their kinds.
 pub(crate) async fn operation_stopped(
     cli: &GitCli,
     repo: &Path,
@@ -563,6 +567,19 @@ pub(crate) async fn operation_stopped(
             tracing::warn!("step of the Git operation unavailable: {error}");
             None
         });
+    // Without the list the abort of a sequence is refused as a changed
+    // state, so the stop still shows.
+    let sequence = match operation {
+        GitOperation::Merge | GitOperation::Rebase => None,
+        GitOperation::CherryPick | GitOperation::Revert | GitOperation::Sequencer => {
+            super::operation_stop::sequence_commits(cli, repo)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!("commits of the Git sequence unavailable: {error}");
+                    None
+                })
+        }
+    };
     let files = conflict_files(cli, repo).await?;
     let kinds = if files.is_empty() {
         Vec::new()
@@ -572,6 +589,7 @@ pub(crate) async fn operation_stopped(
     Ok(SyncResult::OperationInProgress {
         operation,
         step,
+        sequence,
         files,
         kinds,
     })

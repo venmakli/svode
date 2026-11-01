@@ -945,16 +945,19 @@ pub async fn git_merge_abort(app: AppHandle, space_path: String) -> Result<GitSt
     .await
 }
 
-/// «Отменить <операцию>» of the stop «Идёт операция Git».
+/// «Отменить <операцию>» of the stop «Идёт операция Git»; `expected_head` is
+/// the HEAD of the sequence commits its confirmation listed.
 #[tauri::command]
 pub async fn git_operation_abort(
     app: AppHandle,
     space_path: String,
+    expected_head: Option<String>,
 ) -> Result<GitStatus, SharedError> {
     flow::abort_operation(
         app.state::<GitState>().runtime(),
         &host(&app),
         Path::new(&space_path),
+        expected_head,
     )
     .await
 }
