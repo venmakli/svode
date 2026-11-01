@@ -24,6 +24,12 @@ export interface PropertiesConflict {
   body: string;
   /** A place takes the closing `---` and the start of the text. */
   reachesText: boolean;
+  /**
+   * The opening `---` lies in a side of a place from the first line, as when
+   * both sides added the Page: its places are shown as places of the text
+   * (DF-293 R6), not as a block of properties.
+   */
+  opensInPlace: boolean;
 }
 
 /** What the choices made so far give. */

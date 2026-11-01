@@ -200,6 +200,63 @@ async fn sides_that_both_added_the_page_have_no_base() {
 }
 
 #[tokio::test]
+async fn sides_that_both_added_the_page_have_no_base_in_the_diff3_or_zdiff3_style() {
+    for style in ["diff3", "zdiff3"] {
+        let stand = Stand::merge(
+            "",
+            &[],
+            &[("План.md", "# План\n\nВходящий план.\n")],
+            &[("План.md", "# План\n\nМой план.\n")],
+        )
+        .await;
+        rewrite_conflict(&stand, "План.md", style);
+        let page = stand.read("План.md");
+        assert!(page.contains("||||||| "), "{style}: {page}");
+        assert_eq!(
+            bases(&stand, "План.md", &page, 7).await,
+            vec![None],
+            "{style}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_empty_base_of_a_path_with_a_base_stage_is_a_base() {
+    let stand = Stand::merge(
+        "",
+        &[("План.md", "# План\n")],
+        &[("План.md", "# План\nВходящий шаг.\n")],
+        &[("План.md", "# План\nМой шаг.\n")],
+    )
+    .await;
+    rewrite_conflict(&stand, "План.md", "diff3");
+    let page = stand.read("План.md");
+    assert!(page.contains("||||||| "), "{page}");
+    assert_eq!(
+        bases(&stand, "План.md", &page, 7).await,
+        vec![Some(String::new())]
+    );
+}
+
+#[tokio::test]
+async fn a_place_of_the_diff3_style_without_stages_holds_its_base() {
+    let stand = Stand::merge(
+        "",
+        &[],
+        &[("План.md", "# План\n\nВходящий план.\n")],
+        &[("План.md", "# План\n\nМой план.\n")],
+    )
+    .await;
+    // Marker lines from history: the path is out of conflict.
+    let text = "# План\n\n<<<<<<< ours\nМой план.\n||||||| base\nПлан.\n=======\nВходящий план.\n>>>>>>> theirs\n";
+    stand.write("Другой.md", text);
+    assert_eq!(
+        bases(&stand, "Другой.md", text, 7).await,
+        vec![Some("План.".to_owned())]
+    );
+}
+
+#[tokio::test]
 async fn a_place_edited_after_the_merge_has_no_base() {
     let stand = Stand::merge(
         "",

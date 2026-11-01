@@ -228,6 +228,11 @@ export interface PagePropertiesConflictDto {
   body: string;
   /** A place takes the closing `---` and the start of the text. */
   reachesText: boolean;
+  /**
+   * The opening `---` lies in a side of a place from the first line, as when
+   * both sides added the Page: the place is in the text of the Page.
+   */
+  opensInPlace: boolean;
 }
 
 /** The frontmatter after a side in every place, or why it does not resolve. */

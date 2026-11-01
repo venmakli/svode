@@ -7,9 +7,11 @@
 //! The places are the blocks of the marker lines of the text (DF-238), one
 //! per block in order, as the Page editor reads the same text. A place has
 //! no base when its marker lines allow another split, when the path has no
-//! base stage (add/add) or no stages at all, or when no run of places of the
-//! merge after the place matched before it has its sides — the file was
-//! edited after the merge or Git merged it otherwise.
+//! base stage (add/add) in any style — the empty base line Git writes for
+//! it in the `diff3` style is no base (D3) — or, in the `merge` style, no
+//! stages at all, or when no run of places of the merge after the place
+//! matched before it has its sides — the file was edited after the merge or
+//! Git merged it otherwise.
 
 use std::path::Path;
 
@@ -25,8 +27,9 @@ const ZDIFF3: GitVersion = GitVersion::new(2, 35, 0);
 
 /// The base of each conflict place of `content`, the text of the Page
 /// `file` with conflict markers of `size`, in the order of its blocks;
-/// `None` for a place without one. Git runs only for places of the `merge`
-/// style; without Git only a base in the place itself is found.
+/// `None` for a place without one. In the `diff3` and `zdiff3` styles Git
+/// only tells whether the path has a base stage; without Git, or for a path
+/// without stages, only a base in the place itself is found.
 pub async fn place_bases(
     cli: Option<&GitCli>,
     file: &Path,
@@ -39,6 +42,13 @@ pub async fn place_bases(
         .map(|index| !ambiguous(&lines, &splits, index))
         .collect();
     if diff3 {
+        if let Some(cli) = cli.filter(|_| clear.contains(&true))
+            && index_conflict(cli, file)
+                .await?
+                .is_some_and(|(_, conflict)| conflict.base.is_none())
+        {
+            return Ok(vec![None; splits.len()]);
+        }
         return Ok(splits
             .iter()
             .zip(&clear)
@@ -86,10 +96,12 @@ struct StageMerge {
     size: usize,
 }
 
-/// The stages of `file` merged in the `diff3` style, `zdiff3` where Git has
-/// it, `None` when the file is outside a repository, not in conflict,
-/// without a base stage or without versions to merge.
-async fn merge_of(cli: &GitCli, file: &Path, size: usize) -> Result<Option<StageMerge>, GitError> {
+/// The repository of `file` and the index stages of its path, `None` when
+/// the file is outside a repository or not in conflict.
+async fn index_conflict(
+    cli: &GitCli,
+    file: &Path,
+) -> Result<Option<(std::path::PathBuf, service_merge::ConflictedPath)>, GitError> {
     let (Some(dir), Some(name)) = (
         file.parent(),
         file.file_name().and_then(|name| name.to_str()),
@@ -108,11 +120,18 @@ async fn merge_of(cli: &GitCli, file: &Path, size: usize) -> Result<Option<Stage
     } else {
         format!("{prefix}/{name}")
     };
-    let Some(conflict) = service_merge::index_conflicts(cli, &repo)
+    Ok(service_merge::index_conflicts(cli, &repo)
         .await?
         .into_iter()
         .find(|conflict| conflict.path == path)
-    else {
+        .map(|conflict| (repo, conflict)))
+}
+
+/// The stages of `file` merged in the `diff3` style, `zdiff3` where Git has
+/// it, `None` when the file is outside a repository, not in conflict,
+/// without a base stage or without versions to merge.
+async fn merge_of(cli: &GitCli, file: &Path, size: usize) -> Result<Option<StageMerge>, GitError> {
+    let Some((repo, conflict)) = index_conflict(cli, file).await? else {
         return Ok(None);
     };
     let Some(texts) = stage_merge::read_stages(cli, &repo, &conflict).await? else {

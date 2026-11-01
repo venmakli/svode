@@ -1,0 +1,37 @@
+/*
+ * The conflict colours of «Изменения» for the editor: the tokens of
+ * @pierre/diffs 1.1.7 (--diffs-bg-conflict-current, --diffs-bg-conflict-
+ * incoming, their -number columns and the addition, modified and deletion
+ * bases), which it defines only inside its own shadow root.
+ */
+[data-conflict-lanes] {
+  --conflict-ours: #e5f8ea;
+  --conflict-ours-label: #d7f1de;
+  --conflict-ours-label-fg: color-mix(in oklab, #0dbe4e, black 50%);
+  --conflict-ours-insert: color-mix(in lab, #e5f8ea 78%, #0dbe4e);
+  --conflict-theirs: #e6f1ff;
+  --conflict-theirs-label: #d8e8ff;
+  --conflict-theirs-label-fg: color-mix(in oklab, #009fff, black 50%);
+  --conflict-theirs-insert: color-mix(in lab, #e6f1ff 78%, #009fff);
+  --conflict-delete: color-mix(in oklab, #ff2e3f, black 30%);
+}
+
+.dark [data-conflict-lanes] {
+  --conflict-ours: #274432;
+  --conflict-ours-label: #30533d;
+  --conflict-ours-label-fg: #5ecc71;
+  --conflict-ours-insert: color-mix(in lab, #274432 72%, #5ecc71);
+  --conflict-theirs: #253b5a;
+  --conflict-theirs-label: #2f4b73;
+  --conflict-theirs-label-fg: #69b1ff;
+  --conflict-theirs-insert: color-mix(in lab, #253b5a 72%, #69b1ff);
+  --conflict-delete: #ff6762;
+}
+
+[data-conflict-lane="ours"] {
+  --conflict-lane-insert: var(--conflict-ours-insert);
+}
+
+[data-conflict-lane="theirs"] {
+  --conflict-lane-insert: var(--conflict-theirs-insert);
+}

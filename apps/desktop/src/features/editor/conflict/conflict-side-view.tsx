@@ -33,12 +33,15 @@ import { INLINE_IMAGE_KEY } from "../model/markdown-inline-image";
 
 const DIFF_TAG = { insert: "ins", delete: "del", update: "span" } as const;
 
+/**
+ * Marks in the tones of the lane (DF-293 R5): an insertion in the stronger
+ * tone of its side, a deletion in red struck through, a change of format
+ * underlined with dots.
+ */
 const DIFF_CLASS: Record<DiffOperation["type"], string> = {
-  insert:
-    "bg-emerald-100 text-emerald-950 no-underline dark:bg-emerald-950/60 dark:text-emerald-100",
-  delete:
-    "bg-red-100 text-red-900/70 line-through dark:bg-red-950/50 dark:text-red-200/70",
-  update: "bg-sky-100 dark:bg-sky-950/60",
+  insert: "rounded-[2px] bg-(--conflict-lane-insert) no-underline",
+  delete: "text-(--conflict-delete) line-through decoration-[1.5px]",
+  update: "underline decoration-dotted underline-offset-3",
 };
 
 function DiffLeafStatic(props: SlateLeafProps) {

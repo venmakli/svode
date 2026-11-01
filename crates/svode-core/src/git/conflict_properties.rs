@@ -12,6 +12,8 @@
 //! whole. A place that is not told apart leaves the version of a side for
 //! the whole file.
 
+use std::path::Path;
+
 use serde::Serialize;
 
 use super::conflict_file::{
@@ -30,6 +32,10 @@ pub struct PropertiesConflict {
     pub body: String,
     /// A place takes the closing `---` and the start of the text.
     pub reaches_text: bool,
+    /// The opening `---` lies in a side of a place from the first line, as
+    /// when both sides added the Page: the place is in the text of the Page
+    /// as the editor shows it (DF-293 R6).
+    pub opens_in_place: bool,
 }
 
 /// The frontmatter after a choice in every place, or why it does not
@@ -56,6 +62,7 @@ struct Frontmatter {
     /// Index of the first line after the frontmatter.
     end_line: usize,
     reaches_text: bool,
+    opens_in_place: bool,
 }
 
 impl Frontmatter {
@@ -67,6 +74,7 @@ impl Frontmatter {
             blocks,
             end_line,
             reaches_text,
+            opens_in_place,
         } = conflict_file::frontmatter_places(content, &lines, &splits)?;
         Some(Self {
             lines,
@@ -74,6 +82,7 @@ impl Frontmatter {
             blocks,
             end_line,
             reaches_text,
+            opens_in_place,
         })
     }
 
@@ -121,7 +130,21 @@ pub fn properties(content: &[u8], size: usize) -> Option<PropertiesConflict> {
         places: frontmatter.places(content),
         body: String::from_utf8_lossy(&content[frontmatter.end(content)..]).into_owned(),
         reaches_text: frontmatter.reaches_text,
+        opens_in_place: frontmatter.opens_in_place,
     })
+}
+
+/// The properties conflict of the Page `file` whose text, as the editor
+/// reads it, is `content`: only when that text is the whole file — the
+/// frontmatter of the Page does not read, so the editor got all of it.
+/// Otherwise the text follows a frontmatter that reads and no place of it
+/// is in the frontmatter.
+pub fn page_properties(file: &Path, content: &[u8], size: usize) -> Option<PropertiesConflict> {
+    let whole = std::fs::read(file).ok()?;
+    if whole != content {
+        return None;
+    }
+    properties(content, size)
 }
 
 /// The frontmatter of the Page `content` with every place of its properties

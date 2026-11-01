@@ -360,6 +360,8 @@ pub(super) struct FrontmatterPlaces {
     pub(super) end_line: usize,
     /// A place takes the closing `---` and the start of the text.
     pub(super) reaches_text: bool,
+    /// The opening `---` lies in a side of a place from the first line.
+    pub(super) opens_in_place: bool,
 }
 
 /// The places among `splits` of the Page `content` read as `lines` that
@@ -379,6 +381,7 @@ pub(super) fn frontmatter_places(
             .is_some_and(|line| &content[line.start..line.content_end] == FRONTMATTER_DELIMITER)
     };
     let mut opened = delimiter(0);
+    let opens_in_place = !opened;
     if !opened {
         // A conflict from the first line holds the opening `---` in a side.
         let first = splits.first().filter(|split| split.lt == 0)?;
@@ -418,6 +421,7 @@ pub(super) fn frontmatter_places(
         blocks,
         end_line: index,
         reaches_text,
+        opens_in_place,
     })
 }
 

@@ -313,6 +313,7 @@ fn a_place_through_the_closing_delimiter_belongs_to_the_frontmatter() {
     let conflicted = merge_file(fixture, &[]);
     let conflict = properties(&conflicted, 7).unwrap();
     assert!(conflict.reaches_text);
+    assert!(!conflict.opens_in_place);
     assert_eq!(conflict.body, "\nText.\n");
     let Places::Places { places } = &conflict.places else {
         panic!("{:?}", conflict.places)
@@ -336,12 +337,45 @@ fn a_conflict_from_the_first_line_holds_the_opening_delimiter() {
     let content = b"<<<<<<< ours\n---\ntitle: A\n---\nMine\n=======\n---\ntitle: B\n---\nTheirs\n>>>>>>> theirs\nShared\n";
     let conflict = properties(content, 7).unwrap();
     assert!(conflict.reaches_text);
+    assert!(conflict.opens_in_place);
     assert_eq!(conflict.body, "Shared\n");
     assert_eq!(
         resolve_properties(content, 7, &[Side::Ours]),
         PropertiesResolution::Resolved {
             frontmatter: "---\ntitle: A\n---\nMine\n".into()
         }
+    );
+}
+
+#[test]
+fn the_text_of_a_page_has_properties_only_when_it_is_the_whole_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("Добавлено.md");
+    // Both sides added the Page: the editor reads the whole file.
+    let added = "<<<<<<< ours\n---\ntitle: Добавлено\n---\nМоя версия.\n=======\n---\ntitle: Добавлено\n---\nВерсия коллеги.\n>>>>>>> theirs\n";
+    std::fs::write(&file, added).unwrap();
+    let conflict = page_properties(&file, added.as_bytes(), 7).unwrap();
+    assert!(conflict.opens_in_place);
+    assert!(conflict.reaches_text);
+    assert_eq!(conflict.body, "");
+    assert_eq!(
+        resolve_properties(added.as_bytes(), 7, &[Side::Theirs]),
+        PropertiesResolution::Resolved {
+            frontmatter: "---\ntitle: Добавлено\n---\nВерсия коллеги.\n".into()
+        }
+    );
+    // A text after a frontmatter that reads opens with a thematic break in
+    // a side: no place of it is in the frontmatter.
+    let text = "<<<<<<< ours\n---\nМой раздел.\n=======\nРаздел коллеги.\n>>>>>>> theirs\n";
+    std::fs::write(&file, format!("---\ntitle: План\n---\n{text}")).unwrap();
+    assert_eq!(page_properties(&file, text.as_bytes(), 7), None);
+    assert!(properties(text.as_bytes(), 7).is_some());
+    // A file that changed since the editor read it, or none at all.
+    std::fs::write(&file, "Другой текст.\n").unwrap();
+    assert_eq!(page_properties(&file, added.as_bytes(), 7), None);
+    assert_eq!(
+        page_properties(&dir.path().join("Нет.md"), added.as_bytes(), 7),
+        None
     );
 }
 

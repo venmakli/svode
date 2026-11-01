@@ -237,11 +237,14 @@ export function resolveGitConflictFile(input: {
 }
 
 /**
- * The properties conflict of the Page `content` with conflict markers of
+ * The properties conflict of the Page at `path` (relative to `spacePath`)
+ * whose text the editor read is `content`, with conflict markers of
  * `markerSize`: the places of its frontmatter and the text after it, `null`
- * when no marker opens in the frontmatter.
+ * when the text is not the whole file or no marker opens in the frontmatter.
  */
 export function getPagePropertiesConflict(input: {
+  spacePath: string;
+  path: string;
   content: string;
   markerSize: number;
 }): Promise<PagePropertiesConflictDto | null> {

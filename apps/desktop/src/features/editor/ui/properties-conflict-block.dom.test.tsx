@@ -125,6 +125,30 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
     "",
   ].join("\n");
 
+  /**
+   * Both sides added the Page, Git 2.55 `diff3` style: the frontmatter opens
+   * in the place from the first line.
+   */
+  const ADDED = [
+    "<<<<<<< ours",
+    "---",
+    "title: Добавлено",
+    "---",
+    "",
+    "Моя версия.",
+    "||||||| empty tree",
+    "=======",
+    "---",
+    "title: Добавлено",
+    "---",
+    "",
+    "Версия коллеги.",
+    ">>>>>>> theirs",
+    "",
+  ].join("\n");
+  const ADDED_OURS = "---\ntitle: Добавлено\n---\n\nМоя версия.";
+  const ADDED_THEIRS = "---\ntitle: Добавлено\n---\n\nВерсия коллеги.";
+
   const frontmatterEnd = (file: string) =>
     /^---\n[\s\S]*?\n---\n/.exec(file)?.[0] ?? "";
 
@@ -177,6 +201,18 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
         },
         body: "\nText.\n",
         reachesText: true,
+      };
+    if (content === ADDED)
+      return {
+        places: {
+          type: "places",
+          places: [
+            { startLine: 0, endLine: 13, ours: ADDED_OURS, theirs: ADDED_THEIRS },
+          ],
+        },
+        body: "",
+        reachesText: true,
+        opensInPlace: true,
       };
     return null;
   }
@@ -424,6 +460,8 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
       return choices[0] === "theirs"
         ? "---\ntitle: Notes\nreviewed: 2026-10-25\n---\n# Notes theirs\n"
         : "---\ntitle: Notes\nreviewed: 2026-10-20\n---\n# Notes mine\n";
+    if (content === ADDED)
+      return (choices[0] === "theirs" ? ADDED_THEIRS : ADDED_OURS) + "\n";
     throw new Error("unexpected content");
   }
 
@@ -622,6 +660,128 @@ if (process.env.SVODE_PROPERTIES_CONFLICT_DOM !== "1") {
       ).toBe(true);
     } finally {
       await view.cleanup();
+    }
+  });
+
+  test("a frontmatter that opens in a place of the text shows its lines in lanes and writes the chosen side word for word", async () => {
+    const view = await harness("pages/added.md", ADDED);
+    try {
+      await view.settle();
+      // Not the properties block: a place of the text before the editor's text.
+      expect(view.block()).toBe(null);
+      const place = view.dom.document.querySelector(
+        "[data-properties-conflict-in-text] [data-conflict-lanes]",
+      )!;
+      expect(place === null).toBe(false);
+      const line = place.querySelector('[role="group"]')!;
+      expect(line.getAttribute("aria-label")).toBe(m.changes_conflict_label());
+      expect(
+        [...line.querySelectorAll("button")].map((action) => action.textContent),
+      ).toEqual([
+        m.changes_conflict_accept_ours(),
+        m.changes_conflict_accept_theirs(),
+      ]);
+      // The lines of the sides as the file holds them, without marks.
+      const lanes = [...place.querySelectorAll("[data-conflict-lane]")];
+      expect(
+        lanes.map((lane) => [
+          lane.getAttribute("data-conflict-lane"),
+          lane.querySelector("pre")?.textContent,
+        ]),
+      ).toEqual([
+        ["ours", ADDED_OURS],
+        ["theirs", ADDED_THEIRS],
+      ]);
+      expect(place.querySelectorAll("ins, del, h1, h2, hr").length).toBe(0);
+      // Markdown IO gets none of its lines.
+      expect(view.text().includes("title")).toBe(false);
+      expect(
+        view.editor.children.some(
+          (node) => (node as TElement).type === "conflict",
+        ),
+      ).toBe(false);
+
+      await view.click(view.button(m.changes_conflict_accept_theirs(), line));
+      expect(view.resolutions).toEqual([
+        { choices: ["theirs"], markerSize: 7 },
+      ]);
+      expect(
+        view
+          .button(m.changes_conflict_accept_theirs(), line)!
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(lanes[0].className.includes("opacity-60")).toBe(true);
+
+      const reads = view.reads();
+      await view.save();
+      expect(view.writes.length).toBe(1);
+      expect(view.writes[0].startsWith(ADDED_THEIRS + "\n")).toBe(true);
+      expect(view.writes[0].trimEnd()).toBe(ADDED_THEIRS);
+      // The frontmatter reads now: the editor reads the file again.
+      expect(view.reads()).toBe(reads + 1);
+      expect(view.state()).toBe(null);
+      expect(view.text()).toBe("Версия коллеги.");
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  test("a frontmatter in a place of the text that does not read keeps the choice and the save blocked", async () => {
+    const view = await harness("pages/added.md", ADDED, {
+      resolve: () => ({
+        type: "unresolved",
+        finding: { type: "unreadable", message: "duplicate key" },
+      }),
+    });
+    try {
+      await view.settle();
+      const line = view.dom.document.querySelector(
+        "[data-properties-conflict-in-text] [role=group]",
+      )!;
+      await view.click(view.button(m.changes_conflict_accept_ours(), line));
+      expect(view.resolvedCalls()).toBe(0);
+      expect(
+        view.dom.document
+          .querySelector(
+            "[data-properties-conflict-in-text] [data-conflict-problem=unreadable]",
+          )
+          ?.textContent?.includes(
+            m.changes_conflict_unreadable({ message: "duplicate key" }),
+          ),
+      ).toBe(true);
+      expect(
+        view
+          .button(m.changes_conflict_accept_ours(), line)!
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      await view.save();
+      expect(view.writes).toEqual([]);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  test("the place of the text speaks Russian", async () => {
+    const { setLocale } = await import("@/paraglide/runtime");
+    setLocale("ru", { reload: false });
+    const view = await harness("pages/added.md", ADDED);
+    try {
+      await view.settle();
+      const line = view.dom.document.querySelector(
+        "[data-properties-conflict-in-text] [role=group]",
+      )!;
+      expect(line.getAttribute("aria-label")).toBe("Конфликт");
+      expect(line.textContent).toBe("КонфликтПринять моё|Принять входящее");
+      expect(
+        [
+          ...view.dom.document.querySelectorAll(
+            "[data-properties-conflict-in-text] [data-conflict-lane]",
+          ),
+        ].map((lane) => lane.getAttribute("aria-label")),
+      ).toEqual(["Моё", "Входящее"]);
+    } finally {
+      await view.cleanup();
+      setLocale("en", { reload: false });
     }
   });
 }

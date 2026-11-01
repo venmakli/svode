@@ -16,20 +16,21 @@ import type {
 } from "../model/properties-conflict";
 
 /**
- * The properties conflict of a loaded Page: Svode reads the places of its
- * frontmatter by the marker lines of `markerSize`. Only a Page whose
- * frontmatter does not read, and so came as the whole file, can have one.
+ * The properties conflict of the Page loaded from `path`: Svode reads the
+ * places of its frontmatter by the marker lines of `markerSize`. Only a Page
+ * whose frontmatter does not read, and so came as the whole file, can have
+ * one; Svode tells that by the file.
  */
 export async function readPropertiesConflict(
-  page: Pick<Page, "body" | "warnings">,
+  spacePath: string,
+  path: string,
+  page: Pick<Page, "body">,
   markerSize: number,
 ): Promise<PropertiesConflict | null> {
-  if (
-    !page.warnings?.some((warning) => warning.kind === "malformed_frontmatter")
-  )
-    return null;
   if (!hasConflictMarkerCandidate(page.body)) return null;
   const dto = await getPagePropertiesConflict({
+    spacePath,
+    path,
     content: page.body,
     markerSize,
   });
@@ -44,6 +45,7 @@ export async function readPropertiesConflict(
     unclear: dto.places.type === "unclear" ? dto.places.reason : null,
     body: dto.body,
     reachesText: dto.reachesText,
+    opensInPlace: dto.opensInPlace,
   };
 }
 
@@ -70,14 +72,19 @@ export async function resolvePropertiesConflict(
 export async function readPageConflicts(
   spacePath: string,
   path: string,
-  page: Pick<Page, "body" | "warnings">,
+  page: Pick<Page, "body">,
 ): Promise<{
   markerSize: number;
   properties: PropertiesConflict | null;
   bases: (string | null)[];
 }> {
   const markerSize = await readConflictMarkerSize(spacePath, path, page.body);
-  const properties = await readPropertiesConflict(page, markerSize);
+  const properties = await readPropertiesConflict(
+    spacePath,
+    path,
+    page,
+    markerSize,
+  );
   const bases = await readConflictBases(
     spacePath,
     path,

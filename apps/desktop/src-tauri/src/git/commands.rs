@@ -837,15 +837,24 @@ pub async fn git_compose_page_merge(
     Ok(page_merge::compose(state.cli()?, &space, &path, &decisions, &body).await?)
 }
 
-/// The properties conflict of the Page `content` the editor read, with
-/// conflict markers of `marker_size`: the places of its frontmatter and the
-/// text after it, `None` when no marker opens in the frontmatter.
+/// The properties conflict of the Page at `path` (relative to `space_path`)
+/// whose text the editor read is `content`, with conflict markers of
+/// `marker_size`: the places of its frontmatter and the text after it,
+/// `None` when the text is not the whole file or no marker opens in the
+/// frontmatter.
 #[tauri::command]
 pub async fn git_page_properties_conflict(
+    space_path: String,
+    path: String,
     content: String,
     marker_size: usize,
-) -> Option<conflict_properties::PropertiesConflict> {
-    conflict_properties::properties(content.as_bytes(), marker_size)
+) -> Result<Option<conflict_properties::PropertiesConflict>, AppError> {
+    let target = svode_core::page::resolve_page_target(Path::new(&space_path), &path)?;
+    Ok(conflict_properties::page_properties(
+        &target.absolute,
+        content.as_bytes(),
+        marker_size,
+    ))
 }
 
 /// The base of each conflict block of the Page `content` the editor read at

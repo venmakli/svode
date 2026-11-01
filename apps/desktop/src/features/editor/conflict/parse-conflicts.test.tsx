@@ -480,9 +480,11 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
 
   // The rendered side views of the conflict blocks, ours then theirs.
   const sideViews = (root: ParentNode) =>
-    [...root.querySelectorAll("section")].map(
-      (section) => section.querySelector("[data-slate-editor]")!,
-    );
+    [
+      ...root.querySelectorAll(
+        '[data-conflict-lane="ours"], [data-conflict-lane="theirs"]',
+      ),
+    ].map((lane) => lane.querySelector("[data-slate-editor]")!);
   // The text of a side view without its deletions or without its insertions.
   const textWithout = (view: Element, tag: "del" | "ins") => {
     const copy = view.cloneNode(true) as Element;
@@ -535,20 +537,23 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
             </Plate>
           </TooltipProvider>,
         );
-        const block = dom.document.querySelector('[role="group"]');
+        // The container of a plain block: the action line with the mark, the
+        // title and Edit, then one lane without a side.
+        const block = dom.document.querySelector("[data-conflict-lanes]");
         expect(block === null).toBe(false);
-        const title = dom.document.getElementById(
-          block!.getAttribute("aria-labelledby")!,
+        const line = block!.querySelector('[role="group"]')!;
+        expect(line.getAttribute("aria-label")).toBe(m.changes_conflict_label());
+        expect(line.textContent).toBe(
+          `${m.changes_conflict_label()}${m.git_conflict_ambiguous_title()}|${m.git_conflict_edit()}`,
         );
-        expect(title?.textContent).toBe(
-          `⚠ ${m.git_conflict_ambiguous_title()}`,
-        );
-        const shown = block!.textContent ?? "";
-        expect(shown.includes(m.git_conflict_ambiguous_description())).toBe(
-          true,
-        );
-        expect(shown.includes(m.git_conflict_ours())).toBe(false);
-        expect(shown.includes(m.git_conflict_theirs())).toBe(false);
+        expect(
+          block!.querySelector("[data-conflict-note]")?.textContent,
+        ).toBe(m.git_conflict_ambiguous_description());
+        expect(
+          [...block!.querySelectorAll("[data-conflict-lane]")].map((lane) =>
+            lane.getAttribute("data-conflict-lane"),
+          ),
+        ).toEqual(["neutral"]);
         const panels = [...block!.querySelectorAll("pre")];
         expect(panels.length).toBe(1);
         expect(panels[0].textContent).toBe(expected.lines.join("\n"));
@@ -598,7 +603,9 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
           </Plate>
         </TooltipProvider>,
       );
-      expect(dom.document.querySelectorAll('[role="group"]').length).toBe(2);
+      expect(dom.document.querySelectorAll("[data-conflict-lanes]").length).toBe(
+        2,
+      );
       expect(buttons(m.changes_conflict_accept_ours()).length).toBe(1);
       expect(buttons(m.changes_conflict_accept_theirs()).length).toBe(1);
       expect(buttons(m.changes_conflict_accept_both()).length).toBe(1);
@@ -608,7 +615,7 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
       );
       // The ambiguous block still blocks the save.
       expect(hasUnresolvedConflicts(editor.children)).toBe(true);
-      const left = dom.document.querySelectorAll('[role="group"]');
+      const left = dom.document.querySelectorAll("[data-conflict-lanes]");
       expect(left.length).toBe(1);
       expect(
         left[0].textContent?.includes(m.git_conflict_ambiguous_title()),
@@ -759,17 +766,60 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
     try {
       // With a base: each side is rendered text marked against it.
       let editor = await open(section, [base]);
-      const block = dom.document.querySelector('[role="group"]')!;
-      const title = dom.document.getElementById(
-        block.getAttribute("aria-labelledby")!,
+      const block = dom.document.querySelector("[data-conflict-lanes]")!;
+      // No frame or title: the action line, then the lanes of the sides.
+      expect(block.className.includes("border")).toBe(false);
+      expect(block.textContent?.includes("⚠")).toBe(false);
+      expect([...block.children].map((child) => child.tagName)).toEqual([
+        "DIV",
+        "DIV",
+      ]);
+      const line = block.querySelector('[role="group"]')!;
+      expect(line.getAttribute("aria-label")).toBe(m.changes_conflict_label());
+      expect(line.textContent).toBe(
+        [
+          m.changes_conflict_label(),
+          m.changes_conflict_accept_ours(),
+          "|",
+          m.changes_conflict_accept_theirs(),
+          "|",
+          m.changes_conflict_accept_both(),
+        ].join(""),
       );
-      expect(title?.textContent).toBe(`⚠ ${m.git_conflict_title()}`);
-      expect(block.textContent?.includes(m.git_conflict_no_base())).toBe(false);
       expect(
-        [...block.querySelectorAll("section")].map((side) =>
-          side.getAttribute("aria-label"),
-        ),
-      ).toEqual([m.git_conflict_ours(), m.git_conflict_theirs()]);
+        [...line.querySelectorAll("button")].map((action) => [
+          action.textContent,
+          action.getAttribute("data-variant"),
+        ]),
+      ).toEqual(
+        [
+          m.changes_conflict_accept_ours(),
+          m.changes_conflict_accept_theirs(),
+          m.changes_conflict_accept_both(),
+        ].map((label) => [label, "link"]),
+      );
+      expect(block.textContent?.includes(m.git_conflict_no_base())).toBe(false);
+      const lanes = [...block.querySelectorAll("[data-conflict-lane]")];
+      expect(
+        lanes.map((lane) => [
+          lane.getAttribute("data-conflict-lane"),
+          lane.getAttribute("aria-label"),
+          lane.firstElementChild?.textContent,
+        ]),
+      ).toEqual([
+        ["ours", m.changes_conflict_ours(), m.changes_conflict_ours()],
+        ["theirs", m.changes_conflict_theirs(), m.changes_conflict_theirs()],
+      ]);
+      expect(lanes[0].className.includes("bg-(--conflict-ours)")).toBe(true);
+      expect(lanes[1].className.includes("bg-(--conflict-theirs)")).toBe(true);
+      // Marks in the tones of the lane.
+      for (const lane of lanes) {
+        expect(lane.querySelectorAll("ins").length > 0).toBe(true);
+        for (const mark of lane.querySelectorAll("ins"))
+          expect(mark.className.includes("bg-(--conflict-lane-insert)")).toBe(
+            true,
+          );
+      }
       expect(block.querySelectorAll("pre").length).toBe(0);
       const baseText = "Первый деньПолучить доступы.Настроить рабочее место.";
       const [ours, theirs] = sideViews(block);
@@ -821,10 +871,20 @@ if (process.env.SVODE_PARSE_CONFLICTS_DOM !== "1") {
       // Without a base, or when the bases do not read: theirs against ours.
       for (const bases of [[null], []]) {
         editor = await open(section, bases);
-        const plain = dom.document.querySelector('[role="group"]')!;
-        expect(plain.textContent?.includes(m.git_conflict_no_base())).toBe(
-          true,
-        );
+        const plain = dom.document.querySelector("[data-conflict-lanes]")!;
+        // The line about the base stands between the actions and the lanes.
+        expect(
+          [...plain.children].map(
+            (child) =>
+              (child.hasAttribute("data-conflict-actions") && "actions") ||
+              (child.hasAttribute("data-conflict-note") && child.textContent) ||
+              "lanes",
+          ),
+        ).toEqual(["actions", m.git_conflict_no_base(), "lanes"]);
+        for (const mark of plain.querySelectorAll("del"))
+          expect(mark.className.includes("text-(--conflict-delete)")).toBe(
+            true,
+          );
         const [mine, incoming] = sideViews(plain);
         expect(mine.querySelectorAll("ins, del").length).toBe(0);
         expect(textWithout(incoming, "ins")).toBe(textWithout(mine, "del"));

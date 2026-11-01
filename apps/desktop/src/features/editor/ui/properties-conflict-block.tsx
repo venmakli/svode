@@ -13,6 +13,11 @@ import type { GitConflictUnclearReason } from "@/features/git";
 import { cn } from "@/shared/lib/utils";
 import * as m from "@/paraglide/messages.js";
 
+import {
+  ConflictLane,
+  ConflictLanes,
+  ConflictLines,
+} from "../conflict/conflict-lanes";
 import { usePropertiesConflict } from "../hooks/use-properties-conflict";
 import type {
   PropertiesResolution,
@@ -24,6 +29,10 @@ import type {
  * sides of every place in its frontmatter as they are, with «Моё» or
  * «Входящее»; a place Svode cannot tell apart leaves the version of a side
  * for the whole file. The Page is not saved until the block is resolved.
+ * When the frontmatter opens in a place from the first line, as when both
+ * sides added the Page, its places open the text as conflict places of the
+ * text (DF-293 R6): the lines of the sides as they are, «Принять моё» or
+ * «Принять входящее», never both.
  */
 export function PropertiesConflictBlock({
   documentKey,
@@ -44,6 +53,39 @@ export function PropertiesConflictBlock({
   const { state, choose } = usePropertiesConflict(documentKey, onResolved);
   if (!state) return null;
   const { conflict, choices, resolution } = state;
+  if (conflict.opensInPlace && !conflict.unclear)
+    return (
+      <div data-properties-conflict-in-text className={cn("pt-1", className)}>
+        {conflict.places.map((place, index) => (
+          <div key={place.startLine} data-properties-place={index}>
+            <ConflictLanes
+              disabled={readOnly}
+              actions={(["ours", "theirs"] as const).map((side) => ({
+                key: side,
+                side,
+                label:
+                  side === "ours"
+                    ? m.changes_conflict_accept_ours()
+                    : m.changes_conflict_accept_theirs(),
+                pressed: choices[index] === side,
+                onSelect: () => void choose(index, side),
+              }))}
+            >
+              {(["ours", "theirs"] as const).map((side) => (
+                <ConflictLane
+                  key={side}
+                  side={side}
+                  dimmed={choices[index] !== null && choices[index] !== side}
+                >
+                  <ConflictLines>{place[side]}</ConflictLines>
+                </ConflictLane>
+              ))}
+            </ConflictLanes>
+          </div>
+        ))}
+        <ResolutionProblem resolution={resolution} />
+      </div>
+    );
   return (
     <section
       role="group"
@@ -153,6 +195,30 @@ function PlaceSide({
       </pre>
     </div>
   );
+}
+
+/**
+ * Why the choices in the places of the frontmatter shown in the text do not
+ * give a frontmatter that reads; the choices stay.
+ */
+function ResolutionProblem({
+  resolution,
+}: {
+  resolution: PropertiesResolution;
+}) {
+  if (resolution.status === "unresolved")
+    return (
+      <ConflictProblemAlert
+        problem={{ kind: "finding", finding: resolution.finding }}
+      />
+    );
+  if (resolution.status === "failed")
+    return (
+      <ConflictProblemAlert
+        problem={{ kind: "failed", message: resolution.message }}
+      />
+    );
+  return null;
 }
 
 function ResolutionStatus({
