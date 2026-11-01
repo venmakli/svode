@@ -225,13 +225,18 @@ fn start(app: &AppHandle, repo: PathBuf, wake: Option<Wake>) {
         tokio::time::sleep_until(at.into()).await;
         let left = plan(&app, |planner| planner.take(&repo, generation));
         if let Some(left) = left.flatten() {
-            let closing = Closing {
-                left,
-                ..Closing::paused(PAUSE)
-            };
-            run(&app, repo, closing).await;
+            run(&app, repo, timer_closing(left)).await;
         }
     });
+}
+
+/// What a fired timer closes: the groups idle for the pause, those the user
+/// left and those that close right after their operation.
+fn timer_closing(left: Vec<String>) -> Closing {
+    Closing {
+        left,
+        ..Closing::paused(PAUSE)
+    }
 }
 
 async fn run(app: &AppHandle, repo: PathBuf, closing: Closing) {
@@ -287,6 +292,19 @@ pub(crate) fn settle(
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+    use std::sync::Arc;
+
+    use svode_core::git::GitError;
+    use svode_core::git::autocommit::AutocommitService;
+    use svode_core::git::cli::GitCli;
+    use svode_core::git::flow::{ParentPublication, SyncReport};
+    use svode_core::git::host::{GitHost, HostFuture};
+    use svode_core::git::operations::SharedError;
+    use svode_core::git::policy::{GitUserPolicy, write_user_policy};
+    use svode_core::git::state::GitRuntime;
+    use svode_core::git::versions::MessageLanguage;
+
     use super::*;
 
     fn repo() -> PathBuf {
@@ -340,5 +358,136 @@ mod tests {
         assert_eq!(planner.touched(&repo(), now), None);
         planner.take(&repo(), generation).unwrap();
         assert!(planner.set_stopped(&repo(), false));
+    }
+
+    /// A host that allows every mutation and delivers nothing.
+    struct QuietHost;
+
+    impl GitHost for QuietHost {
+        fn authorize_repository<'a>(&'a self, _: &'a Path) -> HostFuture<'a, Result<(), GitError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn authorize_paths<'a>(&'a self, _: Vec<PathBuf>) -> HostFuture<'a, Result<(), GitError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn invalidate_repository_access<'a>(
+            &'a self,
+            _: &'a GitCli,
+            _: &'a Path,
+        ) -> HostFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn record_write_evidence<'a>(&'a self, _: &'a GitCli, _: &'a Path) -> HostFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn refresh_synced_repository<'a>(
+            &'a self,
+            _: &'a GitCli,
+            _: &'a Path,
+        ) -> HostFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn invalidate_actor_space<'a>(&'a self, _: &'a Path) -> HostFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn publish_commit(&self, _: &Path, _: &Path) {}
+
+        fn schedule_auto_sync(&self, _: &Path) {}
+
+        fn publish_sync_state(
+            &self,
+            _: &Path,
+            _: bool,
+            _: bool,
+            _: Option<&SyncReport>,
+            _: Option<&SharedError>,
+        ) {
+        }
+
+        fn publish_publication(&self, _: &Path, _: &str, _: Option<&ParentPublication>) {}
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_check_after_creating_a_page_leaves_its_group_open_until_a_closing() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "test@example.test"]);
+        git(root, &["config", "user.name", "Test"]);
+        git(root, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(root.join(".gitignore"), ".svode/local.json\n").unwrap();
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-q", "-m", "Base"]);
+        write_user_policy(
+            root,
+            &GitUserPolicy {
+                auto_commit_content: true,
+                ..GitUserPolicy::default()
+            },
+        )
+        .unwrap();
+        let runtime = Arc::new(GitRuntime::new());
+        let host = Arc::new(QuietHost);
+        let close = async |closing: Closing| match auto::close(
+            &runtime,
+            host.as_ref(),
+            root,
+            &closing,
+            MessageLanguage::En,
+        )
+        .await
+        {
+            Ok(AutoVersions::Done { commits, next }) => (commits, next),
+            other => panic!("versions expected, got {other:?}"),
+        };
+
+        // The page and its order entry as the create command writes them,
+        // registered the way it registers them.
+        std::fs::write(root.join("Untitled.md"), "---\ntitle: Untitled\n---\n").unwrap();
+        std::fs::create_dir_all(root.join(".svode")).unwrap();
+        std::fs::write(root.join(".svode/order.json"), r#"{".":["Untitled"]}"#).unwrap();
+        let space = root.to_str().unwrap();
+        let service = AutocommitService::new(runtime.clone(), host.clone());
+        crate::commands::files::schedule_created_entry(&service, Some(space), space, "Untitled.md");
+
+        // The operation plans the check a second later; it commits nothing
+        // and plans the next one at the pause.
+        let mut planner = Planner::default();
+        let now = Instant::now();
+        let (at, generation) = planner.operation(root, now).expect("timer");
+        assert_eq!(at, now + OPERATION_DELAY);
+        let left = planner.take(root, generation).expect("current timer");
+        let (commits, next) = close(timer_closing(left)).await;
+        assert_eq!(commits, 0);
+        let next = next.expect("open group");
+        assert!(next > PAUSE - Duration::from_secs(10), "{next:?}");
+        let (at, _) = planner.finished(root, Some(next), now).expect("next check");
+        assert!(at - now > Duration::from_secs(50));
+
+        // Leaving the Page closes it as one version.
+        let (commits, _) = close(timer_closing(vec!["Untitled.md".into()])).await;
+        assert_eq!(commits, 1);
+        let mut committed = git(root, &["show", "--name-only", "--format=", "HEAD"])
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        committed.sort();
+        assert_eq!(committed, [".svode/order.json", "Untitled.md"]);
     }
 }

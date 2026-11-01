@@ -29,7 +29,7 @@ use crate::page::write::{SourceSnapshot, mapped_path};
 use super::commit::{StructuralCommitSink, schedule_structural_paths};
 use super::naming::{
     abs_entry_path, basename, collection_schema_path, collection_schema_path_rel,
-    entry_commit_name, entry_history_commit_name, entry_history_name,
+    entry_commit_name, entry_entity, entry_history_commit_name, entry_history_name,
     entry_in_sensitive_collection, entry_paths_with_order, entry_relocation, entry_rename_op,
     grouped_abs_paths_by_space, normalize_rel_lossy, order_path, rel_changed_path,
     root_path_for_head, same_parent,
@@ -480,7 +480,8 @@ pub fn create_folder(
         commits,
         project_path,
         space,
-        StructuralChange::new(StructuralOp::Create(entry_commit_name(space, &folder_path))),
+        StructuralChange::new(StructuralOp::Create(entry_commit_name(space, &folder_path)))
+            .creating(entry_entity(space, &folder_path)),
         entry_paths_with_order(space, [abs_entry_path(space, &folder_path)]),
     );
     Ok(folder_path)
@@ -799,7 +800,8 @@ where
         StructuralChange::new(StructuralOp::Create(entry_history_commit_name(
             &request.space,
             &conversion.readme_path,
-        ))),
+        )))
+        .creating(entry_entity(&request.space, &conversion.readme_path)),
         changed_paths.clone(),
     );
     // Name allocation warnings of the written Page describe the Collection
@@ -1799,7 +1801,8 @@ pub async fn duplicate<E: GitDateExecutor>(
                 StructuralChange::new(StructuralOp::Duplicate {
                     old: old_name,
                     new: entry_history_commit_name(space, &duplicated.path),
-                }),
+                })
+                .creating(entry_entity(space, root_path)),
                 paths,
             );
         } else {

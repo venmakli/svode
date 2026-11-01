@@ -250,6 +250,7 @@ async fn a_registered_reorder_names_its_folder_and_an_untitled_page_its_file() {
         id: Some(OperationId::next()),
         op: Some(StructuralOp::Reorder),
         relocation: None,
+        created: None,
         paths: vec![path.to_string()],
     };
 

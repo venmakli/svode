@@ -1,12 +1,14 @@
 //! Version groups (Stage 11 1.G): one reason, one commit. Svode groups the
 //! changes it commits by what it knows about the data, not by the file list:
-//! a managed operation with the paths it touched, the creation of a Page
-//! with its renames before the first commit, then the remaining changes by
-//! their owner. Kinds of changes and repositories never share a group.
+//! a managed operation with the paths it touched, the creation of a content
+//! object with its renames and moves before the first commit, then the
+//! remaining changes by their owner. Kinds of changes and repositories never
+//! share a group.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::git::pending::{OperationId, StructuralOp};
+use crate::git::path::{RootMode, repo_relative_from_base};
+use crate::git::pending::{OperationId, StructuralChange, StructuralOp};
 
 use super::changes::{ChangeStatus, PathChange, Sources};
 
@@ -23,8 +25,9 @@ pub enum GroupKind {
     /// A managed operation on a committed object, with the links, order and
     /// relations it touched.
     Operation,
-    /// A Page created since the last commit, with its renames, moves and
-    /// edits.
+    /// A content object (Page, record, folder, Collection) created since the
+    /// last commit, with its renames, moves and edits; an imported
+    /// attachment is a creation without one.
     Creation,
     /// Edits of one Page or record.
     Page,
@@ -58,14 +61,49 @@ pub struct PendingOperation {
     pub op: Option<StructuralOp>,
     /// Where the operation moved its entity: source and target.
     pub relocation: Option<(String, String)>,
+    /// The content object the operation created.
+    pub created: Option<String>,
     pub paths: Vec<String>,
+}
+
+impl PendingOperation {
+    /// A pending registration with its paths relative to `repo`.
+    pub(crate) fn registered(
+        repo: &Path,
+        change: Option<&StructuralChange>,
+        paths: &[PathBuf],
+    ) -> Self {
+        let relative = |path: &Path| repo_relative_from_base(repo, path, RootMode::Reject).ok();
+        Self {
+            id: change.map(StructuralChange::id),
+            op: change.map(|change| change.op.clone()),
+            relocation: change
+                .and_then(|change| change.relocation())
+                .and_then(|relocation| {
+                    Some((relative(&relocation.source)?, relative(&relocation.target)?))
+                }),
+            created: change
+                .and_then(|change| change.created())
+                .and_then(relative),
+            paths: paths.iter().filter_map(|path| relative(path)).collect(),
+        }
+    }
+
+    /// The entity paths that link operations of one entity: the relocation
+    /// endpoints and the created object.
+    fn endpoints(&self) -> impl Iterator<Item = &String> {
+        self.relocation
+            .iter()
+            .flat_map(|(source, target)| [source, target])
+            .chain(self.created.iter())
+    }
 }
 
 /// The entity of an operation group.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct OperationShape {
-    /// The committed path the chain of relocations started at and the path
-    /// it ended at.
+    /// The path the chain of relocations started at and the path the entity
+    /// ended at: the end of the chain, or the created object it never left.
     pub origin: Option<String>,
     pub target: Option<String>,
     pub deletes: bool,
@@ -300,9 +338,9 @@ fn svode_dir(path: &str) -> Option<(&str, &str)> {
     Some((dir, name))
 }
 
-/// Groups of operations linked by identity or a shared relocation
-/// endpoint, in order of their first registration. Touched sets without an
-/// operation never link.
+/// Groups of operations linked by identity or a shared entity endpoint (a
+/// relocation endpoint or a created object), in order of their first
+/// registration. Touched sets without an operation never link.
 fn components(operations: &[PendingOperation]) -> Vec<Vec<usize>> {
     let mut component = (0..operations.len()).collect::<Vec<_>>();
     fn find(component: &mut [usize], index: usize) -> usize {
@@ -320,10 +358,9 @@ fn components(operations: &[PendingOperation]) -> Vec<Vec<usize>> {
                 continue;
             }
             let same_id = left.id.is_some() && left.id == right.id;
-            let chained = match (&left.relocation, &right.relocation) {
-                (Some((ls, lt)), Some((rs, rt))) => ls == rs || ls == rt || lt == rs || lt == rt,
-                _ => false,
-            };
+            let chained = left
+                .endpoints()
+                .any(|endpoint| right.endpoints().any(|other| other == endpoint));
             if same_id || chained {
                 let (ra, rb) = (find(&mut component, a), find(&mut component, b));
                 component[rb.max(ra)] = ra.min(rb);
@@ -345,7 +382,8 @@ fn components(operations: &[PendingOperation]) -> Vec<Vec<usize>> {
 }
 
 /// The entity of a component: the chain of relocations from the source no
-/// other relocation leads to, to the target no other leaves from.
+/// other relocation leads to, to the target no other leaves from; without a
+/// relocation, the object the component created.
 fn shape<'a>(ops: impl Iterator<Item = &'a PendingOperation> + Clone) -> OperationShape {
     let relocations = ops
         .clone()
@@ -359,7 +397,8 @@ fn shape<'a>(ops: impl Iterator<Item = &'a PendingOperation> + Clone) -> Operati
         .iter()
         .rev()
         .find(|(_, target)| !relocations.iter().any(|(source, _)| source == target))
-        .map(|(_, target)| target.clone());
+        .map(|(_, target)| target.clone())
+        .or_else(|| ops.clone().find_map(|op| op.created.clone()));
     let deletes = ops
         .clone()
         .any(|op| matches!(op.op, Some(StructuralOp::Delete(_))));

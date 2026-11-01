@@ -18,8 +18,8 @@ use svode_core::git::cli::GitCli;
 pub use svode_core::structure::delete_mutation_paths;
 pub use svode_core::structure::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, DeleteOutcome,
-    abs_entry_path, basename, entry_commit_name, entry_history_name, entry_in_sensitive_collection,
-    entry_paths_with_order, order_path, root_path_for_head,
+    abs_entry_path, basename, entry_commit_name, entry_entity, entry_history_name,
+    entry_in_sensitive_collection, entry_paths_with_order, order_path, root_path_for_head,
 };
 use svode_core::structure::{
     backlink_mutation_paths as core_backlink_mutation_paths,

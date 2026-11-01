@@ -13,10 +13,10 @@ use super::super::GitError;
 use super::super::ops;
 use super::super::path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use super::super::state::GitRuntime;
-use super::auto::{nested_repository, operation, repository_of};
+use super::auto::{nested_repository, repository_of};
 use super::changes::{ChangeStatus, PathChange, Sources};
 use super::facts::{facts_of, sensitive_collection_of};
-use super::group::{GroupKind, at_or_under, group_changes};
+use super::group::{GroupKind, PendingOperation, at_or_under, group_changes};
 use super::{MessageLanguage, compose};
 
 /// The uncommitted groups of an area in one repository.
@@ -112,7 +112,7 @@ pub async fn uncommitted(
         .into_iter()
         .filter(|registration| repository_of(&registration.space).as_deref() == Some(&*repo))
         .map(|registration| {
-            operation(
+            PendingOperation::registered(
                 &repo,
                 registration.change.as_ref(),
                 registration.paths.as_slice(),

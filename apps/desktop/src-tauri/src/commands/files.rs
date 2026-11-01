@@ -46,8 +46,9 @@ pub use structure::*;
 pub use tree_links::*;
 
 pub(crate) use crate::structure::{
-    abs_entry_path, basename, entry_commit_name, entry_history_name, entry_in_sensitive_collection,
-    entry_paths_with_order, maybe_autocommit_structural_paths, order_path, root_path_for_head,
+    abs_entry_path, basename, entry_commit_name, entry_entity, entry_history_name,
+    entry_in_sensitive_collection, entry_paths_with_order, maybe_autocommit_structural_paths,
+    order_path, root_path_for_head,
 };
 
 fn path_name(path: &str) -> String {

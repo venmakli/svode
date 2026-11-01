@@ -11,7 +11,7 @@ use crate::collections::schema_changes::{SchemaChange, schema_changes};
 use crate::page::changes::{PageVersion, field_changes, section_changes};
 
 use super::changes::{ChangeStatus, PathChange, Sources};
-use super::group::{GroupKind, VersionGroup, is_page, parent, readme_of};
+use super::group::{GroupKind, VersionGroup, at_or_under, is_page, parent, readme_of};
 
 /// One recognized change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,9 +269,16 @@ fn operation_facts(names: &Names, group: &VersionGroup, facts: &mut GroupFacts) 
     };
     let mut entity_files = Vec::<String>::new();
     let fact = if group.kind == GroupKind::Creation {
+        // A created object that no longer exists names nothing.
         let created = shape
             .target
             .as_deref()
+            .filter(|target| {
+                group
+                    .changes
+                    .iter()
+                    .any(|change| at_or_under(&change.path, target))
+            })
             .map(page_file)
             .or_else(|| shallowest(group, ChangeStatus::Added));
         created.map(|path| {

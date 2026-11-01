@@ -51,12 +51,13 @@ impl Relocation {
 
 /// One registration of a managed structural operation for the next manual
 /// save: its identity, history label and, for the registration owning a
-/// relocated entity, the relocation.
+/// relocated or created entity, the relocation or the created entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuralChange {
     id: OperationId,
     pub op: StructuralOp,
     relocation: Option<Relocation>,
+    created: Option<PathBuf>,
 }
 
 impl StructuralChange {
@@ -71,11 +72,20 @@ impl StructuralChange {
             id,
             op,
             relocation: None,
+            created: None,
         }
     }
 
     pub fn relocating(mut self, relocation: Relocation) -> Self {
         self.relocation = Some(relocation);
+        self
+    }
+
+    /// The content object the operation created: a Page file, or the
+    /// directory of a folder or Collection. Later relocations from it
+    /// continue its creation (Stage 11 1.G).
+    pub fn creating(mut self, entity: PathBuf) -> Self {
+        self.created = Some(entity);
         self
     }
 
@@ -93,6 +103,21 @@ impl StructuralChange {
     pub fn relocation(&self) -> Option<&Relocation> {
         self.relocation.as_ref()
     }
+
+    /// The content object the operation created, for the registration
+    /// owning it.
+    pub fn created(&self) -> Option<&Path> {
+        self.created.as_deref()
+    }
+
+    /// The entity paths that link registrations of one entity: the
+    /// relocation endpoints and the created object.
+    fn endpoints(&self) -> impl Iterator<Item = &PathBuf> {
+        self.relocation
+            .iter()
+            .flat_map(Relocation::endpoints)
+            .chain(self.created.iter())
+    }
 }
 
 #[derive(Clone)]
@@ -106,21 +131,19 @@ impl PendingItem {
         self.change.as_ref().map(StructuralChange::id)
     }
 
-    fn relocation(&self) -> Option<&Relocation> {
-        self.change.as_ref()?.relocation.as_ref()
+    fn endpoints(&self) -> impl Iterator<Item = &PathBuf> {
+        self.change.iter().flat_map(StructuralChange::endpoints)
     }
 
-    /// A path equal to an anchor, or a relocation endpoint at or above it: a
-    /// file saved inside a relocated folder belongs to that relocation.
+    /// A path equal to an anchor, or an entity endpoint at or above it: a
+    /// file saved inside a relocated or created folder belongs to that
+    /// operation.
     fn touches(&self, anchors: &[PathBuf]) -> bool {
         anchors.iter().any(|anchor| {
             self.paths.iter().any(|path| path == anchor)
-                || self.relocation().is_some_and(|relocation| {
-                    relocation
-                        .endpoints()
-                        .into_iter()
-                        .any(|endpoint| anchor.starts_with(endpoint))
-                })
+                || self
+                    .endpoints()
+                    .any(|endpoint| anchor.starts_with(endpoint))
         })
     }
 }
@@ -270,8 +293,8 @@ fn canonical(path: &Path) -> PathBuf {
 }
 
 /// Grow the anchored selection to a fixed point over operation identity and
-/// relocation endpoints. Companion paths such as order files or backlinks
-/// never link operations.
+/// entity endpoints (relocations and created objects). Companion paths such
+/// as order files or backlinks never link operations.
 fn lineage(items: &[PendingItem], anchors: &[PathBuf]) -> Vec<bool> {
     let mut chosen = items
         .iter()
@@ -282,19 +305,14 @@ fn lineage(items: &[PendingItem], anchors: &[PathBuf]) -> Vec<bool> {
         let mut endpoints = HashSet::new();
         for (item, _) in items.iter().zip(&chosen).filter(|(_, chosen)| **chosen) {
             ids.extend(item.id());
-            if let Some(relocation) = item.relocation() {
-                endpoints.extend(relocation.endpoints().map(PathBuf::clone));
-            }
+            endpoints.extend(item.endpoints().cloned());
         }
         let mut grew = false;
         for (item, chosen) in items.iter().zip(chosen.iter_mut()) {
             let related = item.id().is_some_and(|id| ids.contains(&id))
-                || item.relocation().is_some_and(|relocation| {
-                    relocation
-                        .endpoints()
-                        .into_iter()
-                        .any(|endpoint| endpoints.contains(endpoint))
-                });
+                || item
+                    .endpoints()
+                    .any(|endpoint| endpoints.contains(endpoint));
             if !*chosen && related {
                 *chosen = true;
                 grew = true;
@@ -501,6 +519,40 @@ mod tests {
                 vec![space.join("unrelated.md")]
             );
         }
+    }
+
+    #[test]
+    fn a_save_of_the_final_path_takes_the_creation_the_relocations_continue() {
+        let state = PendingPaths::default();
+        let space = PathBuf::from("/space");
+        state.record(
+            &space,
+            Some(
+                StructuralChange::new(StructuralOp::Create("Untitled".into()))
+                    .creating(space.join("Untitled.md")),
+            ),
+            vec![space.join(".svode/order.json"), space.join("Untitled.md")],
+        );
+        relocate(
+            &state,
+            &space,
+            rename("Untitled", "Notes"),
+            "Untitled.md",
+            "Notes.md",
+            &[],
+        );
+        state.record(&space, None, vec![space.join("unrelated.md")]);
+
+        let mut save = state.begin_save(&space, Some(&[space.join("Notes.md")]));
+        assert_eq!(
+            sorted(save.paths()),
+            joined(&space, &[".svode/order.json", "Notes.md", "Untitled.md"])
+        );
+        save.complete();
+        assert_eq!(
+            state.begin_save(&space, None).paths(),
+            vec![space.join("unrelated.md")]
+        );
     }
 
     #[test]

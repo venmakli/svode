@@ -143,7 +143,8 @@ pub async fn instantiate_template(
             } else {
                 parent_dir
             },
-        }),
+        })
+        .creating(entry_entity(&space, root)),
         entry_paths_with_order(&space, [abs_entry_path(&space, root)]),
     );
     Ok(instantiated.entry)

@@ -141,18 +141,27 @@ pub async fn create_page(
         };
         maybe_autocommit_schema(&autocommit, project_path.as_deref(), &space, paths, message).await;
     } else {
-        maybe_autocommit_structural_paths(
-            &autocommit,
-            project_path.as_deref(),
-            &space,
-            StructuralChange::new(StructuralOp::Create(entry_commit_name(
-                &space,
-                &created.path,
-            ))),
-            entry_paths_with_order(&space, [abs_entry_path(&space, &created.path)]),
-        );
+        schedule_created_entry(&autocommit, project_path.as_deref(), &space, &created.path);
     }
     Ok(created)
+}
+
+/// Register a created entry for its group of creation (Stage 11 1.G): the
+/// entry is the created object, the order file its tail.
+pub(crate) fn schedule_created_entry(
+    autocommit: &AutocommitService,
+    project_path: Option<&str>,
+    space: &str,
+    path: &str,
+) {
+    maybe_autocommit_structural_paths(
+        autocommit,
+        project_path,
+        space,
+        StructuralChange::new(StructuralOp::Create(entry_commit_name(space, path)))
+            .creating(entry_entity(space, path)),
+        entry_paths_with_order(space, [abs_entry_path(space, path)]),
+    );
 }
 
 #[tauri::command]

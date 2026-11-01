@@ -19,7 +19,7 @@ use super::super::pending::PendingSave;
 use super::super::state::GitRuntime;
 use super::super::{branch, ops, policy, staging};
 use super::changes::{ChangeStatus, PathChange, Sources};
-use super::group::{self, GroupKind, PendingOperation, VersionGroup, at_or_under, is_page};
+use super::group::{self, GroupKind, PendingOperation, VersionGroup, at_or_under};
 use super::{MessageLanguage, commit_grouped, commit_single};
 
 /// Which open content groups of a repository close now.
@@ -159,7 +159,7 @@ pub(super) async fn version(
     let operations = peeked
         .iter()
         .map(|registration| {
-            operation(
+            PendingOperation::registered(
                 repo,
                 registration.change.as_ref(),
                 registration.paths.as_slice(),
@@ -227,7 +227,7 @@ pub(super) async fn version(
     for (index, save) in taken.iter().enumerate() {
         for (local, (change, paths)) in save.registrations().enumerate() {
             owners.push((index, local));
-            taken_operations.push(operation(repo, change, paths));
+            taken_operations.push(PendingOperation::registered(repo, change, paths));
         }
     }
 
@@ -313,10 +313,16 @@ fn turn_paths(groups: &[VersionGroup], changed: &(dyn Fn(&str) -> bool + Sync)) 
 }
 
 /// Groups that close right after their operation (1.G): an operation on a
-/// committed object, and an imported attachment.
+/// committed object, and an imported attachment, a creation without a
+/// content object. A created Page, record, folder or Collection closes like
+/// an edit in the editor (DF-284).
 fn closes_at_once(group: &VersionGroup) -> bool {
     group.kind == GroupKind::Operation
-        || (group.kind == GroupKind::Creation && !is_page(&group.owner))
+        || (group.kind == GroupKind::Creation
+            && group
+                .operation
+                .as_ref()
+                .is_none_or(|shape| shape.target.is_none()))
 }
 
 /// How long ago the last change of the paths was made, by their files on
@@ -335,24 +341,6 @@ fn idle_for(repo: &Path, paths: &[String], now: SystemTime) -> Duration {
 /// structural commits own.
 pub(super) fn nested_repository(repo: &Path, path: &str) -> bool {
     repo.join(path).join(".git").symlink_metadata().is_ok()
-}
-
-pub(super) fn operation(
-    repo: &Path,
-    change: Option<&super::super::pending::StructuralChange>,
-    paths: &[PathBuf],
-) -> PendingOperation {
-    let relative = |path: &Path| repo_relative_from_base(repo, path, RootMode::Reject).ok();
-    PendingOperation {
-        id: change.map(|change| change.id()),
-        op: change.map(|change| change.op.clone()),
-        relocation: change
-            .and_then(|change| change.relocation())
-            .and_then(|relocation| {
-                Some((relative(&relocation.source)?, relative(&relocation.target)?))
-            }),
-        paths: paths.iter().filter_map(|path| relative(path)).collect(),
-    }
 }
 
 /// Consume the registrations a failed commit settled; the others return to

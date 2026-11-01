@@ -37,7 +37,7 @@ mod resolve_tests;
 pub mod rhythm;
 pub mod save;
 #[cfg(test)]
-mod save_chain_tests;
+pub(crate) mod save_chain_tests;
 #[cfg(test)]
 mod save_tests;
 pub mod service_merge;

@@ -46,9 +46,9 @@ impl StructuralCommitSink for PendingSink {
     }
 }
 
-struct Fixture {
+pub(crate) struct Fixture {
     tmp: TempDir,
-    git: Arc<GitRuntime>,
+    pub(crate) git: Arc<GitRuntime>,
     sink: PendingSink,
     index: IndexRuntimeState,
     nonces: WriteNonceRegistry,
@@ -56,7 +56,7 @@ struct Fixture {
 
 impl Fixture {
     /// Inline project Space with `files` committed as its baseline.
-    async fn new(files: &[(&str, &str)]) -> Self {
+    pub(crate) async fn new(files: &[(&str, &str)]) -> Self {
         let cli = cli();
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -84,15 +84,15 @@ impl Fixture {
         fixture
     }
 
-    fn root(&self) -> &Path {
+    pub(crate) fn root(&self) -> &Path {
         self.tmp.path()
     }
 
-    fn space(&self) -> &str {
+    pub(crate) fn space(&self) -> &str {
         self.root().to_str().unwrap()
     }
 
-    async fn reindex(&self) {
+    pub(crate) async fn reindex(&self) {
         let pool = self
             .index
             .get_or_create(&IndexKey::Root(self.root().to_path_buf()))
@@ -108,7 +108,7 @@ impl Fixture {
         .unwrap();
     }
 
-    fn structure(&self) -> StructureRuntime<'_, SystemGitDateExecutor> {
+    pub(crate) fn structure(&self) -> StructureRuntime<'_, SystemGitDateExecutor> {
         StructureRuntime {
             index: &self.index,
             updates: update_state(),
@@ -119,7 +119,7 @@ impl Fixture {
 
     /// Page write with an optional title change; a rename is scheduled the
     /// way the Desktop Page adapter does it.
-    async fn write(
+    pub(crate) async fn write(
         &self,
         path: &str,
         body: Option<&str>,
@@ -163,11 +163,11 @@ impl Fixture {
         Ok(new_path)
     }
 
-    async fn rename(&self, path: &str, title: &str) -> String {
+    pub(crate) async fn rename(&self, path: &str, title: &str) -> String {
         self.write(path, None, Some(title)).await.unwrap()
     }
 
-    async fn save(&self, requested: Option<&[&str]>) -> Result<(), GitError> {
+    pub(crate) async fn save(&self, requested: Option<&[&str]>) -> Result<(), GitError> {
         save(
             &self.git,
             &TestHost::default(),
@@ -180,7 +180,7 @@ impl Fixture {
         .map(|_| ())
     }
 
-    async fn head(&self) -> String {
+    pub(crate) async fn head(&self) -> String {
         git(&cli(), self.root(), &["rev-parse", "HEAD"]).await
     }
 
@@ -199,7 +199,7 @@ impl Fixture {
 
     /// The sorted records of every commit after `before`, newest first,
     /// without order files: a save lands one commit per version group.
-    async fn commits_since(&self, before: &str) -> Vec<Vec<String>> {
+    pub(crate) async fn commits_since(&self, before: &str) -> Vec<Vec<String>> {
         let revs = git(
             &cli(),
             self.root(),
@@ -225,7 +225,7 @@ impl Fixture {
         git(&cli(), self.root(), &["show", &format!("HEAD:{path}")]).await
     }
 
-    fn pending(&self) -> Vec<PathBuf> {
+    pub(crate) fn pending(&self) -> Vec<PathBuf> {
         let save = self.git.pending().begin_save(self.root(), None);
         let paths = save.paths();
         drop(save);
@@ -237,11 +237,11 @@ impl Fixture {
     }
 }
 
-fn page(title: &str, body: &str) -> String {
+pub(crate) fn page(title: &str, body: &str) -> String {
     format!("---\ntitle: {title}\n---\n{body}\n")
 }
 
-fn records(expected: &[&str]) -> Vec<String> {
+pub(crate) fn records(expected: &[&str]) -> Vec<String> {
     let mut records = expected
         .iter()
         .map(|record| record.to_string())
@@ -251,7 +251,7 @@ fn records(expected: &[&str]) -> Vec<String> {
 }
 
 /// Committed records without the sidebar order file some operations rewrite.
-fn without_order(records: Vec<String>) -> Vec<String> {
+pub(crate) fn without_order(records: Vec<String>) -> Vec<String> {
     records
         .into_iter()
         .filter(|record| !record.ends_with(".svode/order.json"))

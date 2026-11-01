@@ -583,12 +583,14 @@ async fn a_failed_group_keeps_the_landed_ones_and_returns_the_rest_to_pending() 
             id: None,
             op: None,
             relocation: None,
+            created: None,
             paths: vec!["A.md".into()],
         },
         PendingOperation {
             id: None,
             op: None,
             relocation: None,
+            created: None,
             paths: vec!["B.md".into()],
         },
     ];

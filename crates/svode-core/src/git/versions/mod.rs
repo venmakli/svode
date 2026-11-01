@@ -10,6 +10,8 @@ pub mod auto;
 #[cfg(test)]
 mod auto_tests;
 mod changes;
+#[cfg(test)]
+mod creation_tests;
 mod facts;
 mod group;
 mod message;

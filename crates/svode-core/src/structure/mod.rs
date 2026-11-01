@@ -13,9 +13,9 @@ mod tests;
 
 pub use commit::{StructuralCommitSink, schedule_rename};
 pub use naming::{
-    abs_entry_path, basename, entry_commit_name, entry_history_commit_name, entry_history_name,
-    entry_in_sensitive_collection, entry_paths_with_order, entry_relocation, entry_rename_op,
-    grouped_abs_paths_by_space, order_path, root_path_for_head,
+    abs_entry_path, basename, entry_commit_name, entry_entity, entry_history_commit_name,
+    entry_history_name, entry_in_sensitive_collection, entry_paths_with_order, entry_relocation,
+    entry_rename_op, grouped_abs_paths_by_space, order_path, root_path_for_head,
 };
 pub use ops::{
     CollectionCreate, CollectionCreateOutcome, ConvertToCollectionOutcome, ConvertToLeafOutcome,

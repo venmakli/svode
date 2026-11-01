@@ -131,9 +131,16 @@ pub fn entry_history_commit_name(space: &str, path: &str) -> String {
 /// represented by its directory.
 pub fn entry_relocation(space: &str, from: &str, to: &str) -> Relocation {
     Relocation {
-        source: abs_entry_path(space, root_path_for_head(from)),
-        target: abs_entry_path(space, root_path_for_head(to)),
+        source: entry_entity(space, from),
+        target: entry_entity(space, to),
     }
+}
+
+/// The entity of the entry at `path` as a relocation names it: the Page
+/// file, or the directory of a folder entry. A creation registers it so that
+/// later relocations continue the creation.
+pub fn entry_entity(space: &str, path: &str) -> PathBuf {
+    abs_entry_path(space, root_path_for_head(path))
 }
 
 pub fn entry_rename_op(space: &str, from: &str, to: &str) -> StructuralOp {

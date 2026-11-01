@@ -80,24 +80,7 @@ pub async fn save(
     host.authorize_paths(affected).await?;
     let operations = pending
         .registrations()
-        .map(|(change, paths)| PendingOperation {
-            id: change.map(|change| change.id()),
-            op: change.map(|change| change.op.clone()),
-            relocation: change
-                .and_then(|change| change.relocation())
-                .and_then(|relocation| {
-                    Some((
-                        repo_relative_from_base(&repo, &relocation.source, RootMode::Reject)
-                            .ok()?,
-                        repo_relative_from_base(&repo, &relocation.target, RootMode::Reject)
-                            .ok()?,
-                    ))
-                }),
-            paths: paths
-                .iter()
-                .filter_map(|path| repo_relative_from_base(&repo, path, RootMode::Reject).ok())
-                .collect(),
-        })
+        .map(|(change, paths)| PendingOperation::registered(&repo, change, paths))
         .collect::<Vec<_>>();
     match versions::commit_grouped(&cli, &repo, &paths, &operations, language).await {
         Ok(report) => {
