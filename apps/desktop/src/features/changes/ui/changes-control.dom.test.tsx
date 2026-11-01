@@ -2134,15 +2134,26 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
             ? [{ path: "data.yaml", kind: "text" }]
             : [];
         }
+        if (command === "git_resolve_conflict_file")
+          return {
+            type: "unresolved",
+            path: "data.yaml",
+            finding: { type: "unreadable", message: "duplicate key" },
+          };
         if (command === "git_conflict_file")
           return {
             path: "data.yaml",
             kind: "text",
             version: "v1",
-            content: "a\n",
-            places: { type: "unclear", reason: "no_markers" },
+            content: "a\n<<<<<<< ours\nb\n=======\nc\n>>>>>>> theirs\n",
+            places: {
+              type: "places",
+              places: [{ startLine: 1, endLine: 5, ours: "b", theirs: "c" }],
+            },
             ours: true,
             theirs: true,
+            binary: false,
+            changes: null,
           };
         if (command === "repository_access_get")
           return {
@@ -2162,35 +2173,38 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
     );
     const { ChangesControl } = await import("./changes-control");
     const { TooltipProvider } = await import("@/components/ui/tooltip");
+    const { ThemeProvider } = await import("@/components/ui/theme-provider");
     const m = await import("@/paraglide/messages.js");
     const doc = dom.window.document;
     const root = createRoot(doc.getElementById("app")!);
     try {
       await act(async () => {
         root.render(
-          <TooltipProvider>
-            <ChangesControl
-              target={{
-                kind: "session",
-                sourceShape: "directory",
-                spacePath: "/p",
-                projectPath: "/p",
-                path: "",
-                name: "Project",
-                work: {
-                  files: [
-                    { spaceId: "root", spacePath: "/p", path: "notes/a.md" },
-                    {
-                      spaceId: "docs",
-                      spacePath: "/p/docs",
-                      path: "data.yaml",
-                    },
-                  ],
-                  spaceKind: "project",
-                },
-              }}
-            />
-          </TooltipProvider>,
+          <ThemeProvider theme="light" setTheme={() => {}}>
+            <TooltipProvider>
+              <ChangesControl
+                target={{
+                  kind: "session",
+                  sourceShape: "directory",
+                  spacePath: "/p",
+                  projectPath: "/p",
+                  path: "",
+                  name: "Project",
+                  work: {
+                    files: [
+                      { spaceId: "root", spacePath: "/p", path: "notes/a.md" },
+                      {
+                        spaceId: "docs",
+                        spacePath: "/p/docs",
+                        path: "data.yaml",
+                      },
+                    ],
+                    spaceKind: "project",
+                  },
+                }}
+              />
+            </TooltipProvider>
+          </ThemeProvider>,
         );
         await nextFrame(dom);
       });
@@ -2237,18 +2251,51 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       });
       for (
         let frame = 0;
-        frame < 20 && !doc.querySelector("[data-conflict-unclear]");
+        frame < 200 && !doc.querySelector("[data-conflict-place]");
         frame++
       ) {
         await act(async () => {
           await nextFrame(dom);
         });
       }
+      // The same view of places: text actions in the slot of the place, and
+      // a choice shows the text of its side with its mark.
+      const place = doc.querySelector<HTMLElement>("[data-conflict-place]")!;
       expect(
-        doc
-          .querySelector("[data-conflict-unclear]")
-          ?.getAttribute("data-conflict-unclear"),
-      ).toBe("no_markers");
+        Array.from(place.querySelectorAll("button")).map(
+          (button) => button.textContent,
+        ),
+      ).toEqual([
+        m.changes_conflict_accept_ours(),
+        m.changes_conflict_accept_theirs(),
+        m.changes_conflict_accept_both(),
+      ]);
+      expect(doc.querySelector("[data-slot=toggle-group]")).toBe(null);
+      // The only place applies at once; a result that does not read keeps
+      // the choice shown with its mark and «Изменить».
+      await act(async () => {
+        place
+          .querySelector<HTMLElement>("[data-conflict-choice=ours]")!
+          .click();
+        await nextFrame(dom);
+      });
+      for (
+        let frame = 0;
+        frame < 200 && !doc.querySelector("[data-conflict-accepted]");
+        frame++
+      ) {
+        await act(async () => {
+          await nextFrame(dom);
+        });
+      }
+      assert.ok(doc.querySelector("[data-conflict-problem=unreadable]"));
+      const mark = doc.querySelector<HTMLElement>("[data-conflict-accepted]")!;
+      expect(mark.getAttribute("data-conflict-accepted")).toBe("ours");
+      expect(mark.textContent).toBe(
+        m.changes_conflict_accepted_ours() +
+          "|" +
+          m.changes_conflict_change_choice(),
+      );
     } finally {
       await act(async () => {
         root.unmount();
@@ -2258,7 +2305,7 @@ if (process.env.SVODE_CHANGES_DOM !== "1") {
       restore();
       dom.window.close();
     }
-  });
+  }, 30000);
 
   test("«Commit with agent» puts the window's request into the session's composer or a new chat, and says why it is unavailable", async () => {
     const dom = createDom();

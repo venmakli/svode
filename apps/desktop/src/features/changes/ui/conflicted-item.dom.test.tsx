@@ -18,14 +18,32 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
     if (child.status !== 0) throw new Error(child.stdout + child.stderr);
   }, 20000);
 } else {
-  // The component shows the file it is given and one action slot per block
-  // of markers of 7 characters, as `UnresolvedFile` reads them.
+  // The component shows the file it is given, one action slot per block of
+  // markers of 7 characters, as `UnresolvedFile` reads them, and the line
+  // annotations it is given; a plain file shows its text and annotations.
+  type Annotation = { lineNumber: number; metadata: unknown };
+  const annotationsOf = (
+    lineAnnotations: Annotation[] | undefined,
+    renderAnnotation: ((annotation: Annotation) => ReactNode) | undefined,
+  ) =>
+    (lineAnnotations ?? []).map((annotation) => (
+      <div
+        key={annotation.lineNumber}
+        data-annotation-line={annotation.lineNumber}
+      >
+        {renderAnnotation?.(annotation)}
+      </div>
+    ));
   mock.module("@pierre/diffs/react", () => ({
     UnresolvedFile: ({
       file,
+      lineAnnotations,
+      renderAnnotation,
       renderMergeConflictUtility,
     }: {
       file: { contents: string };
+      lineAnnotations?: (Annotation & { side: string })[];
+      renderAnnotation?: (annotation: Annotation) => ReactNode;
       renderMergeConflictUtility: (
         action: { conflictIndex: number },
         getInstance: () => undefined,
@@ -45,9 +63,24 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
               )}
             </div>
           ))}
+          {annotationsOf(lineAnnotations, renderAnnotation)}
         </div>
       );
     },
+    File: ({
+      file,
+      lineAnnotations,
+      renderAnnotation,
+    }: {
+      file: { contents: string };
+      lineAnnotations?: Annotation[];
+      renderAnnotation?: (annotation: Annotation) => ReactNode;
+    }) => (
+      <div>
+        <pre data-plain-file>{file.contents}</pre>
+        {annotationsOf(lineAnnotations, renderAnnotation)}
+      </div>
+    ),
   }));
 
   const spacePath = "/project";
@@ -133,6 +166,12 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
       Array.from(root.querySelectorAll("button")).find(
         (candidate) => candidate.textContent === text,
       ) ?? null;
+    /** The actions of an open place of Svode, by its index. */
+    const place = (index: number) =>
+      dom.document.querySelector(`[data-conflict-place="${index}"]`);
+    /** The mark of a place with a choice, by its index. */
+    const accepted = (index: number) =>
+      dom.document.querySelector(`[data-conflict-place-accepted="${index}"]`);
     return {
       dom,
       m,
@@ -140,6 +179,8 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
       settle,
       click,
       button,
+      place,
+      accepted,
       render: (kind = "text", path = "data.yaml") =>
         dom.render(
           <ThemeProvider theme="light" setTheme={() => {}}>
@@ -170,15 +211,80 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
       await t.settle();
       // The component gets Svode's places: the 7-character line inside the
       // first place is text, not a marker of its own.
-      const shown = t.dom.document.querySelector("[data-unresolved-file]")!;
-      expect(shown.textContent?.includes("​=======")).toBe(true);
+      const shown = () =>
+        t.dom.document.querySelector("[data-unresolved-file]")?.textContent;
+      expect(shown()?.includes("​=======")).toBe(true);
       const slots = t.dom.document.querySelectorAll("[data-conflict-place]");
       expect(slots.length).toBe(2);
+      expect(slots[0].getAttribute("role")).toBe("group");
       expect(slots[0].getAttribute("aria-label")).toBe(
         t.m.changes_conflict_place({ index: "1" }),
       );
-      await t.click(t.button(t.m.changes_conflict_both(), slots[0]));
+      // One line of text actions in the slot of the place, no toggle.
+      expect(
+        Array.from(slots[0].querySelectorAll("button")).map(
+          (button) => button.textContent,
+        ),
+      ).toEqual([
+        t.m.changes_conflict_accept_ours(),
+        t.m.changes_conflict_accept_theirs(),
+        t.m.changes_conflict_accept_both(),
+      ]);
+      expect(
+        t.dom.document.querySelector(
+          "[data-slot=toggle-group], [role=radio], [aria-pressed]",
+        ),
+      ).toBe(null);
+      await t.click(t.button(t.m.changes_conflict_accept_both(), slots[0]));
       expect(t.resolutions.length).toBe(0);
+      // The place shows my side, then the incoming one, without markers,
+      // marked with the side and «Изменить»; the second place stays open.
+      expect(shown()).toBe(
+        [
+          "head",
+          "one",
+          "​=======",
+          "uno",
+          "middle",
+          "<<<<<<< " + t.m.changes_conflict_ours(),
+          "two",
+          "=======",
+          "dos",
+          ">>>>>>> " + t.m.changes_conflict_theirs(),
+          "",
+        ].join("\n"),
+      );
+      expect(t.place(0)).toBe(null);
+      expect(t.place(1) === null).toBe(false);
+      const mark = t.accepted(0)!;
+      expect(mark.getAttribute("data-conflict-accepted")).toBe("both");
+      expect(
+        mark.textContent?.includes(t.m.changes_conflict_accepted_both()),
+      ).toBe(true);
+      // The mark stands after the last line of the place: «uno», fourth.
+      expect(
+        mark
+          .closest("[data-annotation-line]")
+          ?.getAttribute("data-annotation-line"),
+      ).toBe("4");
+      // The view is rebuilt, and the keyboard stays at the place.
+      const change = t.button(t.m.changes_conflict_change_choice(), mark);
+      expect(t.dom.document.activeElement === change).toBe(true);
+      // «Изменить» brings both sides and the actions back, nothing applied.
+      await t.click(change);
+      expect(t.accepted(0)).toBe(null);
+      expect(
+        t.dom.document.activeElement ===
+          t.button(t.m.changes_conflict_accept_ours(), t.place(0)!),
+      ).toBe(true);
+      expect(
+        t.dom.document.querySelectorAll("[data-conflict-place]").length,
+      ).toBe(2);
+      expect(
+        shown()?.includes("<<<<<<< " + t.m.changes_conflict_ours() + "\none"),
+      ).toBe(true);
+      expect(t.resolutions.length).toBe(0);
+      await t.click(t.button(t.m.changes_conflict_accept_both(), t.place(0)!));
       // «Взять входящее» fills the place left and applies both choices.
       await t.click(
         t.dom.document.querySelector("[data-conflict-remaining=theirs]"),
@@ -199,7 +305,88 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
     }
   });
 
-  test("a result that does not read shows the error at the file and a changed choice applies again", async () => {
+  test("the actions and marks of a place speak the language of the interface", async () => {
+    const { getLocale, setLocale } = await import("@/paraglide/runtime.js");
+    const locale = getLocale();
+    const t = await setup(conflictFile(), () => ({ type: "resolved" }));
+    try {
+      await setLocale("ru", { reload: false });
+      await t.render();
+      await t.settle();
+      expect(
+        Array.from(t.place(0)!.querySelectorAll("button")).map(
+          (button) => button.textContent,
+        ),
+      ).toEqual(["Принять моё", "Принять входящее", "Принять оба"]);
+      await t.click(t.button("Принять моё", t.place(0)!));
+      expect(t.accepted(0)?.textContent).toBe("Принято: моё|Изменить");
+      await t.click(t.button("Изменить", t.accepted(0)!));
+      await t.click(t.button("Принять входящее", t.place(0)!));
+      expect(t.accepted(0)?.textContent).toBe("Принято: входящее|Изменить");
+      await setLocale("en", { reload: false });
+      await t.render();
+      await t.settle();
+      expect(t.accepted(0)?.textContent).toBe("Accepted: incoming|Change");
+      expect(
+        Array.from(t.place(1)!.querySelectorAll("button")).map(
+          (button) => button.textContent,
+        ),
+      ).toEqual(["Accept mine", "Accept incoming", "Accept both"]);
+      await t.click(t.button("Accept both", t.place(1)!));
+      expect(t.resolutions.at(-1)?.resolution).toEqual({
+        type: "places",
+        version: "v1",
+        choices: ["theirs", "both"],
+      });
+    } finally {
+      await setLocale(locale, { reload: false });
+      await t.dispose();
+    }
+  });
+
+  test("«Принять оба» is offered only at the places that allow it", async () => {
+    const dom = await createTestDom();
+    const { ConflictPlaces } = await import("./conflict-places");
+    const { ThemeProvider } = await import("@/components/ui/theme-provider");
+    const m = await import("@/paraglide/messages.js");
+    try {
+      await dom.render(
+        <ThemeProvider theme="light" setTheme={() => {}}>
+          <ConflictPlaces
+            path="data.yaml"
+            version="v1"
+            content={content}
+            places={places}
+            choices={[null, null]}
+            disabled={false}
+            allowsBoth={(place) => place !== 0}
+            onChoose={() => {}}
+            onReopen={() => {}}
+          />
+        </ThemeProvider>,
+      );
+      const labels = (index: number) =>
+        Array.from(
+          dom.document
+            .querySelector(`[data-conflict-place="${index}"]`)!
+            .querySelectorAll("button"),
+        ).map((button) => button.textContent);
+      expect(labels(0)).toEqual([
+        m.changes_conflict_accept_ours(),
+        m.changes_conflict_accept_theirs(),
+      ]);
+      expect(labels(1)).toEqual([
+        m.changes_conflict_accept_ours(),
+        m.changes_conflict_accept_theirs(),
+        m.changes_conflict_accept_both(),
+      ]);
+    } finally {
+      await dom.render(null);
+      await dom.dispose();
+    }
+  });
+
+  test("a result that does not read shows the error at the file, keeps the choices shown and a changed choice applies again", async () => {
     let refuse = true;
     const t = await setup(conflictFile(), () =>
       refuse
@@ -227,9 +414,27 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
           t.m.changes_conflict_unreadable({ message: "duplicate key" }),
         ),
       ).toBe(true);
+      // Every place shows its choice: the file as it was applied.
+      expect(t.dom.document.querySelector("[data-unresolved-file]")).toBe(null);
+      expect(
+        t.dom.document.querySelector("[data-plain-file]")?.textContent,
+      ).toBe("head\none\n\u200b=======\nmiddle\ntwo\n");
+      expect(t.accepted(0)?.getAttribute("data-conflict-accepted")).toBe(
+        "ours",
+      );
+      expect(t.accepted(1)?.getAttribute("data-conflict-accepted")).toBe(
+        "ours",
+      );
+      expect(t.dom.document.querySelector("[data-conflict-place]")).toBe(null);
       refuse = false;
-      const slots = t.dom.document.querySelectorAll("[data-conflict-place]");
-      await t.click(t.button(t.m.changes_conflict_theirs(), slots[1]));
+      await t.click(
+        t.button(t.m.changes_conflict_change_choice(), t.accepted(1)!),
+      );
+      expect(t.resolutions.length).toBe(1);
+      expect(t.accepted(0) === null).toBe(false);
+      await t.click(
+        t.button(t.m.changes_conflict_accept_theirs(), t.place(1)!),
+      );
       expect(t.resolutions.at(-1)?.resolution).toEqual({
         type: "places",
         version: "v1",
@@ -335,10 +540,15 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
             t.m.changes_conflict_in_git(),
           ),
         ).toBe(false);
-        const slots = t.dom.document.querySelectorAll("[data-conflict-place]");
-        expect(slots.length).toBe(2);
-        await t.click(t.button(t.m.changes_conflict_both(), slots[0]));
-        await t.click(t.button(t.m.changes_conflict_ours(), slots[1]));
+        expect(
+          t.dom.document.querySelectorAll("[data-conflict-place]").length,
+        ).toBe(2);
+        await t.click(
+          t.button(t.m.changes_conflict_accept_both(), t.place(0)!),
+        );
+        await t.click(
+          t.button(t.m.changes_conflict_accept_ours(), t.place(1)!),
+        );
         expect(t.resolutions).toEqual([
           {
             spacePath,
@@ -360,7 +570,12 @@ if (process.env.SVODE_CONFLICTED_ITEM_DOM !== "1") {
             ),
         ).toBe(true);
         refuse = false;
-        await t.click(t.button(t.m.changes_conflict_theirs(), slots[0]));
+        await t.click(
+          t.button(t.m.changes_conflict_change_choice(), t.accepted(0)!),
+        );
+        await t.click(
+          t.button(t.m.changes_conflict_accept_theirs(), t.place(0)!),
+        );
         expect(t.resolutions.at(-1)?.resolution).toEqual({
           type: "places",
           version: "v1",

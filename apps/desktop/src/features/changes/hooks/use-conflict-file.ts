@@ -15,8 +15,9 @@ export type ConflictFileProblem =
 
 /**
  * A file in conflict as "Changes" resolve it (1.F): the places of a text
- * file, the choices made in them so far — kept here and applied to the file
- * at once when every place has one — and the actions on the whole file:
+ * file, the choices made in them so far — kept here, each open to change,
+ * and applied to the file at once when every place has one — and the
+ * actions on the whole file:
  * the version of a side, the deletion of the path and both versions.
  */
 export function useConflictFile(spacePath: string, path: string) {
@@ -108,6 +109,14 @@ export function useConflictFile(spacePath: string, path: string) {
     /** The choice in one place; the last one applies them all. */
     choose: (index: number, choice: GitPlaceChoice) =>
       applyChoices(chosen.map((value, at) => (at === index ? choice : value))),
+    /** «Изменить»: the place is open again; nothing is applied. */
+    reopen: (index: number) => {
+      if (!file) return;
+      setChoices({
+        version: file.version,
+        choices: chosen.map((value, at) => (at === index ? null : value)),
+      });
+    },
     /** «Оставить моё» or «Взять входящее» for every place without a choice. */
     chooseRemaining: (choice: GitPlaceChoice) =>
       applyChoices(chosen.map((value) => value ?? choice)),

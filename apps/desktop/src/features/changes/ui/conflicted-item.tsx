@@ -204,6 +204,7 @@ function ConflictFileBody({
           choices={conflict.choices}
           disabled={conflict.pending}
           onChoose={conflict.choose}
+          onReopen={conflict.reopen}
         />
       </Suspense>
     </div>
