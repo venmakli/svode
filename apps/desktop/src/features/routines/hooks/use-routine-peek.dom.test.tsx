@@ -181,6 +181,7 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
       });
       const idle = { status: "idle" } as const;
       const presentation = createRoutinesPresentation({
+        ownership: { collection: null, space: "Project" },
         actions: {
           createState: idle,
           getDeleteState: () => idle,

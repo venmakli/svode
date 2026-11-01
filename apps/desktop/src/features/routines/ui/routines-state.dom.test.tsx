@@ -86,6 +86,7 @@ if (process.env.SVODE_ROUTINES_STATE_DOM !== "1") {
       instanceKey: "routines:state",
       presentations: [
         createRoutinesPresentation({
+          ownership: { collection: null, space: "Project" },
           actions: {
             createState: idle,
             getDeleteState: () => idle,

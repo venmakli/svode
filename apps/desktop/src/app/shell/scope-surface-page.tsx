@@ -142,7 +142,7 @@ export function ScopeSurfacePage({
     [openPage, owner.spaceId],
   );
   const createContributions = useCallback(
-    (readOnly: boolean) =>
+    (readOnly: boolean, ownerName: string) =>
       createScopeSurfaceContributions({
         ...createScopeContentRenderers({ readOnly, name: fallbackTitle }),
         actors: (context) => (
@@ -170,6 +170,7 @@ export function ScopeSurfacePage({
           <FixedCollectionEditScope mainItem={context.mainItem}>
             <RoutinesSurface
               {...context}
+              ownerName={ownerName}
               readOnly={readOnly}
               onExpandItem={expandItem}
               onOpenAgentActor={openAgentActor}
@@ -280,6 +281,7 @@ function ScopePageSurfaceHost({
 }: Omit<ComponentProps<typeof ScopeSurfaceHost>, "contributions" | "header"> & {
   createContributions: (
     readOnly: boolean,
+    ownerName: string,
   ) => ComponentProps<typeof ScopeSurfaceHost>["contributions"];
   headerActions?: ReactNode;
   renderHeaderActions?: (page: Page, readOnly: boolean) => ReactNode;
@@ -347,8 +349,8 @@ function ScopePageSurfaceHost({
       : null,
   );
   const contributions = useMemo(
-    () => createContributions(pageSurface.readOnly),
-    [createContributions, pageSurface.readOnly],
+    () => createContributions(pageSurface.readOnly, identityTitle),
+    [createContributions, identityTitle, pageSurface.readOnly],
   );
   if (mainItem) {
     return (

@@ -7,6 +7,7 @@ import type {
 import type { CollectionItemPeekController } from "@/features/collection/app-shell";
 import { RepositoryAccessPreflightDialog } from "@/features/git";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
+import { useSpaceNames } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 import type { ActorPeekTarget } from "../model/actor-peek";
@@ -47,6 +48,7 @@ export function useAgentActorsController({
   onOpenRepositorySettings?: (repositoryPath: string) => void;
 }) {
   const catalog = useAgentActorCatalog(owner.projectPath, owner.spacePath);
+  const spaceName = useSpaceNames();
   const snapshot =
     catalog.state.phase === "ready" ? catalog.state.snapshot : null;
   const ownerPaths = useMemo(
@@ -340,5 +342,6 @@ export function useAgentActorsController({
     overlays,
     peek: agentPeek,
     presentationState,
+    spaceName,
   };
 }

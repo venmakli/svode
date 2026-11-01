@@ -28,6 +28,7 @@ export {
   type SpaceTreeSyncState,
 } from "./model/public-space";
 export { useSpaceActions } from "./hooks/use-space-actions";
+export { useSpaceNames, type SpaceNameResolver } from "./hooks/use-space-names";
 export {
   useContentDeleteConfirmation,
   type ContentDeleteSubject,

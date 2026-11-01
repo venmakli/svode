@@ -16,6 +16,7 @@ import type {
   ScopeOpenItem,
   ScopeOwnerRef,
 } from "@/features/scope-surfaces";
+import { useSpaceNames } from "@/features/space";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
@@ -23,6 +24,7 @@ import type {
   RoutineAgentActorTarget,
   RoutineLaunchRecoveryActions,
   RoutineItem,
+  RoutineOwnership,
   RoutineSessionTarget,
 } from "../model/types";
 import { RoutineCreateDialog } from "../ui/routine-create-dialog";
@@ -47,6 +49,8 @@ export function useRoutinesController(
   readOnly: boolean,
   openItem?: ScopeOpenItem,
   host: {
+    /** The name of the owner the surface shows, such as its Collection's. */
+    ownerName?: string;
     onOpenAgentActor?(target: RoutineAgentActorTarget): void;
     onOpenAgentSettings?(): void;
     /** The Routine expanded as the main area object, by its Routine id. */
@@ -68,6 +72,17 @@ export function useRoutinesController(
     [owner],
   );
   const { refresh, replaceSnapshot, state } = useRoutineCatalog(routineOwner);
+  const spaceName = useSpaceNames();
+  const ownership = useMemo<RoutineOwnership>(
+    () => ({
+      collection:
+        owner.identityKind === "collection-directory"
+          ? host.ownerName || folderName(owner.ownerPath)
+          : null,
+      space: spaceName(owner.spacePath),
+    }),
+    [host.ownerName, owner, spaceName],
+  );
   const automaticConsent = useRoutineAutomaticConsent(routineOwner);
   const storageRecovery = useRoutineStorageRecovery({
     owner: routineOwner,
@@ -255,6 +270,7 @@ export function useRoutinesController(
     actions,
     executors: executors.state,
     onActivate: peek.activation((_item, context) => context.itemId),
+    ownership,
     state: toRoutinePresentationState(state, () => void refresh()),
   });
   const instance: CollectionInstance = {
@@ -354,6 +370,10 @@ function sameRoutineOwner(left: RoutineOwnerInput, right: RoutineOwnerInput) {
     left.spaceId === right.spaceId &&
     left.spacePath === right.spacePath
   );
+}
+
+function folderName(path: string) {
+  return path.split("/").at(-1) || path;
 }
 
 function routineOwnerLabel(owner: ScopeOwnerRef) {

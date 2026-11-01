@@ -131,6 +131,18 @@ export interface RoutineSessionTarget {
   launchId: string;
 }
 
+/**
+ * Where the Routines of one owner belong, by name, not by folder or path:
+ * the place of their definition files, so nothing is written when a name
+ * changes.
+ */
+export interface RoutineOwnership {
+  /** The project root, the Space itself or the Space of the Collection. */
+  space: string | null;
+  /** The owning Collection; null for Routines of the project or a Space. */
+  collection: string | null;
+}
+
 export type RoutineDispatchBlockedCode =
   | "invalid_routine"
   | "non_manual_trigger"

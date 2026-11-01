@@ -90,6 +90,7 @@ test("routine enabled Switch is single-flight and does not open the item", async
     onRun: async () => undefined,
   };
   const presentation = createRoutinesPresentation({
+    ownership: { collection: null, space: "Project" },
     executors,
     actions,
     onActivate: (item) => {

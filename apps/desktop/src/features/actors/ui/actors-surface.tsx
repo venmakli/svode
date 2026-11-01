@@ -255,6 +255,7 @@ export function ActorsSurface({
       presentationId: "agents",
       itemId: context.itemId,
     })),
+    spaceName: agentActors.spaceName,
     state: agentActors.presentationState,
   });
   const instance: CollectionInstance = {

@@ -15,7 +15,7 @@ import {
 import { resolveStandardPropertyColumn } from "@/features/properties";
 import { PropertyValue } from "@/features/properties/display";
 
-import type { RoutineItem } from "../model/types";
+import type { RoutineItem, RoutineOwnership } from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 import { RoutineCreateReview } from "./routine-create-review";
 import { RoutineDetailView } from "./routine-detail-view";
@@ -30,6 +30,7 @@ import {
   type RoutinePresentationActions,
 } from "./routines-presentation";
 
+const PROJECT_OWNERSHIP: RoutineOwnership = { collection: null, space: "Acme" };
 const executors: AgentActorOptionsState = {
   ambiguous: [],
   error: null,
@@ -173,6 +174,7 @@ function actions(calls: string[]): RoutinePresentationActions {
 
 test("routines expose one fixed All list with the complete fixed schema", () => {
   const descriptor = createRoutinesPresentationDescriptor({
+    ownership: PROJECT_OWNERSHIP,
     executors,
     actions: actions([]),
     onActivate: () => undefined,
@@ -183,6 +185,8 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   expect(descriptor.layout.kind).toBe("list");
   expect(descriptor.properties.map((property) => property.key)).toEqual([
     "title",
+    "space",
+    "collection",
     "trigger",
     "action",
     "executor",
@@ -197,7 +201,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   ).toBe("Executor");
   expect(
     descriptor.properties.flatMap((property) => property.common ?? []),
-  ).toEqual(["title", "state"]);
+  ).toEqual(["title", "space", "state"]);
   expect(descriptor.layout.visibleProperties).toEqual([
     "trigger",
     "action",
@@ -262,6 +266,92 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
       },
     }),
   ).toBe("Open session");
+});
+
+test("Space and Collection name the owner of the Routines of the project, a Space and a Collection", () => {
+  const ownershipOf = (ownership: RoutineOwnership) => {
+    const descriptor = createRoutinesPresentationDescriptor({
+      ownership,
+      executors,
+      actions: actions([]),
+      items: [review],
+    });
+    const property = (key: string) =>
+      descriptor.properties.find((candidate) => candidate.key === key)!;
+    return {
+      collection: property("collection").getValue(review),
+      collectionShown: property("collection").getApplicability?.(review),
+      space: property("space").getValue(review),
+      visible:
+        descriptor.layout.kind === "list"
+          ? descriptor.layout.visibleProperties
+          : [],
+    };
+  };
+  const hidden = { status: "hidden" };
+  const owned = (ownership: RoutineOwnership) => {
+    const { visible, ...values } = ownershipOf(ownership);
+    return {
+      ...values,
+      columns: visible.filter((key) => key === "space" || key === "collection"),
+    };
+  };
+  // A Routine of the project belongs to the root, one of a Space to the
+  // Space itself, one of a Collection to the Space the Collection is in.
+  // One owner holds every Routine of a tab: both columns stay hidden.
+  expect(owned({ collection: null, space: "Acme" })).toEqual({
+    collection: null,
+    collectionShown: hidden,
+    columns: [],
+    space: "Acme",
+  });
+  expect(owned({ collection: null, space: "Documentation" })).toEqual({
+    collection: null,
+    collectionShown: hidden,
+    columns: [],
+    space: "Documentation",
+  });
+  expect(owned({ collection: "Tasks", space: "Documentation" })).toEqual({
+    collection: "Tasks",
+    collectionShown: { status: "applicable" },
+    columns: [],
+    space: "Documentation",
+  });
+});
+
+test("the hidden Space and Collection of Routines are read-only and still filter and sort", () => {
+  const descriptor = createRoutinesPresentationDescriptor({
+    ownership: { collection: "Tasks", space: "Documentation" },
+    executors,
+    actions: actions([]),
+    items: [review, scheduled],
+  });
+  for (const key of ["space", "collection"]) {
+    const property = descriptor.properties.find(
+      (candidate) => candidate.key === key,
+    )!;
+    expect(property.capabilities?.edit).toBe(undefined);
+    expect(resolveStandardPropertyColumn(property)?.type).toBe("select");
+  }
+  const query = (propertyKey: string, value: string, operator = "eq") =>
+    applyCollectionQuery({
+      descriptor,
+      query: {
+        filters: [{ operator, propertyKey, value }],
+        search: "",
+        sort: [{ direction: "asc", propertyKey }],
+      },
+      items: [review, scheduled],
+    }).items.map((item) => item.id);
+  expect(query("space", "Documentation")).toEqual([
+    "routine:review",
+    "routine:summary",
+  ]);
+  expect(query("collection", "Tasks")).toEqual([
+    "routine:review",
+    "routine:summary",
+  ]);
+  expect(query("space", "Documentation", "neq")).toEqual([]);
 });
 
 test("routine detail hides technical paths when valid and preserves exact recovery paths when invalid", () => {
@@ -345,6 +435,7 @@ test("duplicate-name items conditionally expose their current path and remain us
     },
   };
   const descriptor = createRoutinesPresentationDescriptor({
+    ownership: PROJECT_OWNERSHIP,
     executors,
     actions: actions([]),
     onActivate: () => undefined,
@@ -373,6 +464,7 @@ test("duplicate-name items conditionally expose their current path and remain us
 
 test("routines query searches definitions and defaults to name ordering", () => {
   const descriptor = createRoutinesPresentationDescriptor({
+    ownership: PROJECT_OWNERSHIP,
     executors,
     actions: actions([]),
     onActivate: () => undefined,
@@ -419,6 +511,7 @@ test("routines query searches definitions and defaults to name ordering", () => 
 test("routines delegate create, item actions, and inline enabled edits", async () => {
   const calls: string[] = [];
   const descriptor = createRoutinesPresentationDescriptor({
+    ownership: PROJECT_OWNERSHIP,
     executors,
     actions: actions(calls),
     onActivate: () => undefined,
@@ -445,6 +538,7 @@ test("routines delegate create, item actions, and inline enabled edits", async (
 
 test("routines render the common toolbar and a single fixed All list", () => {
   const presentation = createRoutinesPresentation({
+    ownership: PROJECT_OWNERSHIP,
     executors,
     actions: actions([]),
     onActivate: () => undefined,
@@ -517,6 +611,7 @@ test("manual routines omit enabled; a routine with problems keeps its saved swit
   routineActions.getEnabledState = (item) =>
     item.valid ? { status: "idle" } : { reason: "invalid", status: "disabled" };
   const presentation = createRoutinesPresentation({
+    ownership: PROJECT_OWNERSHIP,
     executors,
     actions: routineActions,
     onActivate: () => undefined,
@@ -639,6 +734,7 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   const ref = "agent:01arz3ndektsv4rrffq69g5fav";
   const descriptor = (state: AgentActorOptionsState) =>
     createRoutinesPresentationDescriptor({
+      ownership: PROJECT_OWNERSHIP,
       actions: actions([]),
       executors: state,
       items: [review],
@@ -821,6 +917,7 @@ test("executor column is an agent actor filtered by reference and sorted by name
   });
   const descriptor = (state: AgentActorOptionsState) =>
     createRoutinesPresentationDescriptor({
+      ownership: PROJECT_OWNERSHIP,
       actions: actions([]),
       executors: state,
       items,
@@ -879,6 +976,7 @@ test("executor column is an agent actor filtered by reference and sorted by name
 
 test("a text query saved for the executor column resets instead of filtering wrongly", () => {
   const descriptor = createRoutinesPresentationDescriptor({
+    ownership: PROJECT_OWNERSHIP,
     actions: actions([]),
     executors,
     items: [review],

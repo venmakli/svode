@@ -235,6 +235,7 @@ if (process.env.SVODE_ACTOR_PEEK_DOM !== "1") {
           readiness: "ready",
         }),
         inheritedVisible: true,
+        spaceName: () => null,
         state: { items: agentItems, phase: "ready" },
       });
       useEffect(() => {

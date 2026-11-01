@@ -43,6 +43,11 @@ const inherited: AgentActorItem = {
   ownerLabel: "repo",
   ownerPath: "/repo",
 };
+const spaceNames: Record<string, string> = {
+  "/repo": "Acme",
+  "/repo/docs": "Documentation",
+};
+const spaceName = (path: string) => spaceNames[path] ?? null;
 const participant: AgentActorItem = {
   ...own,
   actorRef: "agent:01arz3ndektsv4rrffq69g5fax",
@@ -66,16 +71,17 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
     agents,
     facts,
     inheritedVisible: true,
+    spaceName,
     items: [own, inherited],
   });
 
   expect(descriptor.id).toBe("agents");
   expect(descriptor.properties.map((property) => property.key)).toEqual([
     "title",
+    "space",
     "agent",
     "approval",
     "status",
-    "space",
   ]);
   expect(
     descriptor.properties.map((property) => [
@@ -84,10 +90,10 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
     ]),
   ).toEqual([
     ["title", "Name"],
+    ["space", "Space"],
     ["agent", "Agent"],
     [null, "Approval mode"],
     [null, "Readiness"],
-    ["space", "Space"],
   ]);
   expect(
     descriptor.layout.kind === "list" && descriptor.layout.visibleProperties,
@@ -108,6 +114,7 @@ test("Agent Actors show the agent with its model, the device mode in the agent's
     agents,
     facts,
     inheritedVisible: false,
+    spaceName,
     items: [own, participant],
   });
   const value = (key: string, item: AgentActorItem) =>
@@ -123,6 +130,62 @@ test("Agent Actors show the agent with its model, the device mode in the agent's
   expect(value("status", participant)).toBe("No default agent");
 });
 
+test("Space of an Agent is the name of its owner Space: its own or the project root it is inherited from", () => {
+  const descriptor = createAgentActorsPresentationDescriptor({
+    actions: disabledActions(),
+    agents,
+    facts,
+    inheritedVisible: true,
+    spaceName,
+    items: [own, inherited],
+  });
+  const space = descriptor.properties.find(
+    (property) => property.key === "space",
+  )!;
+  expect(space.getValue(own)).toBe("Documentation");
+  expect(space.getValue(inherited)).toBe("Acme");
+  expect(
+    space.semantics.kind === "standard" &&
+      space.semantics.standard.options?.map((option) => option.name),
+  ).toEqual(["Documentation", "Acme"]);
+  expect(space.capabilities?.edit).toBe(undefined);
+});
+
+test("the Space column is shown only in a set with inherited Agents", () => {
+  const visible = (inheritedVisible: boolean) => {
+    const descriptor = createAgentActorsPresentationDescriptor({
+      actions: disabledActions(),
+      agents,
+      facts,
+      inheritedVisible,
+      spaceName,
+      items: inheritedVisible ? [own, inherited] : [own],
+    });
+    return descriptor.layout.kind === "list"
+      ? descriptor.layout.visibleProperties
+      : [];
+  };
+  expect(visible(true).includes("space")).toBe(true);
+  expect(visible(false).includes("space")).toBe(false);
+});
+
+test("an Agent is described only by its own description", () => {
+  const descriptor = createAgentActorsPresentationDescriptor({
+    actions: disabledActions(),
+    agents,
+    facts,
+    inheritedVisible: true,
+    spaceName,
+    items: [own, inherited],
+  });
+  const describe = (item: AgentActorItem) =>
+    descriptor.layout.kind === "list"
+      ? descriptor.layout.getDescription?.(item)
+      : undefined;
+  expect(describe(inherited)).toBe("Writes documentation");
+  expect(describe({ ...inherited, description: null })).toBeNull();
+});
+
 test("Agent Actors rows lead with the shared rounded agent avatar", () => {
   const descriptor = createAgentActorsPresentationDescriptor({
     actions: {
@@ -136,6 +199,7 @@ test("Agent Actors rows lead with the shared rounded agent avatar", () => {
     agents,
     facts,
     inheritedVisible: false,
+    spaceName,
     items: [own],
   });
   const leading =
@@ -153,6 +217,7 @@ test("Agent Actors rows never describe an agent by its raw reference", () => {
     agents,
     facts,
     inheritedVisible: false,
+    spaceName,
     items: [undescribed],
   });
   const description =
@@ -171,6 +236,7 @@ test("Agent Actors default order and search preserve owner provenance", () => {
     agents,
     facts,
     inheritedVisible: true,
+    spaceName,
     state: { phase: "ready", items: [inherited, own] },
   });
   const descriptor = createAgentActorsPresentationDescriptor({
@@ -178,6 +244,7 @@ test("Agent Actors default order and search preserve owner provenance", () => {
     agents,
     facts,
     inheritedVisible: true,
+    spaceName,
     items: [inherited, own],
   });
   const ordered = applyCollectionQuery({
@@ -187,7 +254,7 @@ test("Agent Actors default order and search preserve owner provenance", () => {
   });
   const searched = applyCollectionQuery({
     descriptor,
-    query: { filters: [], search: "repo", sort: [] },
+    query: { filters: [], search: "acme", sort: [] },
     items: [own, inherited],
   });
   expect(ordered.items.map((item) => item.ownerPath)).toEqual([

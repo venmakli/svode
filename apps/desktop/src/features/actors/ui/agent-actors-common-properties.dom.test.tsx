@@ -53,7 +53,18 @@ if (process.env.SVODE_AGENT_ACTORS_COMMON_PROPERTIES_DOM !== "1") {
     readiness: "ready",
   });
 
-  async function renderAgents(items: readonly AgentActorItem[]) {
+  async function renderAgents(
+    items: readonly AgentActorItem[],
+    {
+      inheritedVisible = false,
+      spaceNames = {},
+      writes = [],
+    }: {
+      inheritedVisible?: boolean;
+      spaceNames?: Record<string, string>;
+      writes?: string[];
+    } = {},
+  ) {
     const dom = await createTestDom();
     const { setLocale } = await import("@/paraglide/runtime");
     await setLocale("en", { reload: false });
@@ -69,29 +80,32 @@ if (process.env.SVODE_AGENT_ACTORS_COMMON_PROPERTIES_DOM !== "1") {
       { id: "claude-code", displayName: "Claude Code" },
     ]);
     const idle = { status: "idle" } as const;
-    const instance: CollectionInstance = {
-      defaultPresentationId: "agents",
-      instanceKey: "agents:common-properties",
-      presentations: [
-        createAgentActorsPresentation({
-          actions: {
-            createState: idle,
-            getDeleteState: () => idle,
-            getEditState: () => idle,
-            onAdd: () => undefined,
-            onDelete: () => undefined,
-            onEdit: () => undefined,
-          },
-          agents,
-          facts,
-          inheritedVisible: false,
-          onActivate: () => undefined,
-          state: { phase: "ready", items },
-        }),
-      ],
-      stateScope: "lifecycle",
-    };
-    function Host() {
+    // Like the surface, the presentation is built on every render from the
+    // Space names the Space store holds at that moment.
+    function Host({ names }: { names: Record<string, string> }) {
+      const instance: CollectionInstance = {
+        defaultPresentationId: "agents",
+        instanceKey: "agents:common-properties",
+        presentations: [
+          createAgentActorsPresentation({
+            actions: {
+              createState: idle,
+              getDeleteState: () => idle,
+              getEditState: () => idle,
+              onAdd: () => writes.push("add"),
+              onDelete: (item) => writes.push(`delete:${item.id}`),
+              onEdit: (item) => writes.push(`edit:${item.id}`),
+            },
+            agents,
+            facts,
+            inheritedVisible,
+            spaceName: (path) => names[path] ?? null,
+            onActivate: () => undefined,
+            state: { phase: "ready", items },
+          }),
+        ],
+        stateScope: "lifecycle",
+      };
       const state = useCollectionState(instance);
       return state.phase === "ready" ? (
         <TooltipProvider>
@@ -99,7 +113,9 @@ if (process.env.SVODE_AGENT_ACTORS_COMMON_PROPERTIES_DOM !== "1") {
         </TooltipProvider>
       ) : null;
     }
-    await dom.render(<Host />);
+    await dom.render(<Host names={spaceNames} />);
+    const rename = (names: Record<string, string>) =>
+      dom.render(<Host names={names} />);
     const names: Record<string, string> = Object.fromEntries(
       items.map((item) => [agentActorItemId(item), item.name]),
     );
@@ -109,7 +125,13 @@ if (process.env.SVODE_AGENT_ACTORS_COMMON_PROPERTIES_DOM !== "1") {
         `[data-collection-row='${agentActorItemId(item)}'] [data-agent-property]`,
       );
     };
-    return { cell, dom, names };
+    const rowText = (name: string) => {
+      const item = items.find((candidate) => candidate.name === name)!;
+      return dom.document.querySelector(
+        `[data-collection-row='${agentActorItemId(item)}']`,
+      )?.textContent;
+    };
+    return { cell, dom, names, rename, rowText };
   }
 
   /**
@@ -206,6 +228,72 @@ if (process.env.SVODE_AGENT_ACTORS_COMMON_PROPERTIES_DOM !== "1") {
         filterOptions: ["Codex", "Claude Code", "Participant's agent"],
         filtered: ["Mine"],
         sorted: ["Beta", "Gamma", "Alpha", "Mine"],
+      });
+    } finally {
+      await dom.dispose();
+    }
+  });
+
+  const spaceNames = { "/repo": "Acme", "/repo/docs": "Documentation" };
+  const inherited: AgentActorItem = {
+    ...agentActor("01arz3ndektsv4rrffq69g5fae", "Delta", "codex"),
+    description: "Reviews changes",
+    inherited: true,
+    ownerLabel: "repo",
+    ownerPath: "/repo",
+  };
+
+  test("Space names the owner Space, its own or the project root, and follows a rename without a write", async () => {
+    const writes: string[] = [];
+    const { dom, rename, rowText } = await renderAgents(
+      [agentActors[0], inherited],
+      { inheritedVisible: true, spaceNames, writes },
+    );
+    try {
+      // The column is shown where own and inherited Agents mix; the
+      // description is only the Agent's own.
+      const has = (name: string, text: string) =>
+        rowText(name)?.includes(text) ?? false;
+      expect([
+        has("Alpha", "Documentation"),
+        has("Delta", "Acme"),
+        has("Delta", "Reviews changes"),
+      ]).toEqual([true, true, true]);
+      expect(
+        ["Alpha", "Delta"].flatMap((name) =>
+          ["docs", "repo", "Inherited"].filter((text) => has(name, text)),
+        ),
+      ).toEqual([]);
+      await rename({ "/repo": "Acme Inc", "/repo/docs": "Guides" });
+      expect([has("Alpha", "Guides"), has("Delta", "Acme Inc")]).toEqual([
+        true,
+        true,
+      ]);
+      expect(writes).toEqual([]);
+    } finally {
+      await dom.dispose();
+    }
+  });
+
+  test("Space is hidden in a set without inherited Agents and still filters and sorts", async () => {
+    const { dom, names, rowText } = await renderAgents(agentActors, {
+      spaceNames,
+    });
+    const { clickElement } = await import("@/shared/testing/dom-query");
+    try {
+      expect(rowText("Alpha")?.includes("Documentation")).toBe(false);
+      expect(
+        await queryByProperty(dom.document, names, "Space", (pane) =>
+          clickElement(
+            [...pane.querySelectorAll("label")]
+              .find((option) => option.textContent === "Documentation")!
+              .querySelector<HTMLElement>('[role="checkbox"]')!,
+          ),
+        ),
+      ).toEqual({
+        filterOptions: ["Documentation"],
+        filtered: ["Alpha", "Beta", "Gamma"],
+        sorted: ["Alpha", "Beta", "Gamma"],
       });
     } finally {
       await dom.dispose();

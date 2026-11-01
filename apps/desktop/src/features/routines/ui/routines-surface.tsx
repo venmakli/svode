@@ -18,11 +18,14 @@ export function RoutinesSurface({
   openItem,
   mainItem,
   onExpandItem,
+  ownerName,
   readOnly,
   onOpenAgentActor,
   onOpenAgentSettings,
   onOpenSession,
 }: ScopeSurfaceRenderContext & {
+  /** The name of the owner, as its header says it. */
+  ownerName?: string;
   readOnly: boolean;
   /** Opens an Agent Actor in its editor, where a refused launch is fixed. */
   onOpenAgentActor?(target: RoutineAgentActorTarget): void;
@@ -34,7 +37,13 @@ export function RoutinesSurface({
     onOpenSession,
     readOnly,
     openItem,
-    { mainItem, onExpandItem, onOpenAgentActor, onOpenAgentSettings },
+    {
+      mainItem,
+      onExpandItem,
+      onOpenAgentActor,
+      onOpenAgentSettings,
+      ownerName,
+    },
   );
   const unavailable = (
     <div className="px-6 py-3">

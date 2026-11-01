@@ -16,6 +16,7 @@ import {
 import {
   defineComputedCollectionProperty,
   defineOwnerDefinedCollectionProperty,
+  defineSpaceCollectionProperty,
   defineStateCollectionProperty,
   defineTitleCollectionProperty,
   type CollectionPropertyDefinition,
@@ -26,7 +27,11 @@ import {
   compareRoutinesByName,
   routineSearchText,
 } from "../model/routine-values";
-import type { RoutineCatalogState, RoutineItem } from "../model/types";
+import type {
+  RoutineCatalogState,
+  RoutineItem,
+  RoutineOwnership,
+} from "../model/types";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
@@ -46,11 +51,13 @@ export function createRoutinesPresentation({
   actions,
   executors,
   onActivate,
+  ownership,
   state,
 }: {
   actions: RoutinePresentationActions;
   executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
+  ownership: RoutineOwnership;
   state: CollectionPresentationState<RoutineItem>;
 }) {
   return defineCollectionPresentation({
@@ -59,6 +66,7 @@ export function createRoutinesPresentation({
       executors,
       onActivate,
       items: state.phase === "ready" ? state.items : [],
+      ownership,
     }),
     state,
   });
@@ -69,11 +77,14 @@ export function createRoutinesPresentationDescriptor({
   executors,
   onActivate,
   items,
+  ownership,
 }: {
   actions: RoutinePresentationActions;
   executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
   items: readonly RoutineItem[];
+  /** The one owner of the set's Routines. */
+  ownership: RoutineOwnership;
 }): CollectionPresentationDescriptor<RoutineItem> {
   const getExecutor = (item: RoutineItem) =>
     item.definition?.action.type === "run_agent"
@@ -87,8 +98,27 @@ export function createRoutinesPresentationDescriptor({
         )
       : null;
   };
+  const { collection, space } = ownership;
   const properties: readonly CollectionPropertyDefinition<RoutineItem>[] = [
     defineTitleCollectionProperty({ getValue: (item) => item.name }),
+    defineSpaceCollectionProperty({ getValue: () => space, items }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      featureId: "routines",
+      getApplicability: () =>
+        collection === null ? { status: "hidden" } : { status: "applicable" },
+      getValue: () => collection,
+      key: "collection",
+      label: m.routines_field_collection(),
+      standard: {
+        options:
+          collection === null ? [] : [{ color: "neutral", name: collection }],
+        type: "select",
+      },
+    }),
     defineOwnerDefinedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
@@ -228,6 +258,9 @@ export function createRoutinesPresentationDescriptor({
           }
         />
       ),
+      // One owner holds every Routine of the set, so "Space" and
+      // "Collection" say the same of each and stay out of the columns; the
+      // filter and the sort still offer them.
       visibleProperties: [
         "trigger",
         "action",

@@ -11,6 +11,7 @@ import {
   type CollectionPresentationState,
 } from "@/features/collection";
 import { AgentAvatar } from "@/features/identity";
+import type { SpaceNameResolver } from "@/features/space";
 import {
   defineComputedCollectionProperty,
   defineSpaceCollectionProperty,
@@ -44,6 +45,7 @@ export function createAgentActorsPresentation({
   facts,
   inheritedVisible,
   onActivate,
+  spaceName,
   state,
 }: {
   actions: AgentActorsPresentationActions;
@@ -51,6 +53,7 @@ export function createAgentActorsPresentation({
   facts(item: AgentActorItem): AgentActorFacts;
   inheritedVisible: boolean;
   onActivate?: CollectionPresentationDescriptor<AgentActorItem>["onActivate"];
+  spaceName: SpaceNameResolver;
   state: CollectionPresentationState<AgentActorItem>;
 }) {
   const items = state.phase === "ready" ? state.items : [];
@@ -62,6 +65,7 @@ export function createAgentActorsPresentation({
       inheritedVisible,
       onActivate,
       items,
+      spaceName,
     }),
     state,
   });
@@ -74,20 +78,27 @@ export function createAgentActorsPresentationDescriptor({
   inheritedVisible,
   onActivate,
   items,
+  spaceName,
 }: {
   actions: AgentActorsPresentationActions;
   agents: AgentAdapterDictionary;
   /** What the collection shows of an Agent on this device. */
   facts(item: AgentActorItem): AgentActorFacts;
+  /** Whether the set holds Agents inherited from the project root. */
   inheritedVisible: boolean;
   onActivate?: CollectionPresentationDescriptor<AgentActorItem>["onActivate"];
   items: readonly AgentActorItem[];
+  spaceName: SpaceNameResolver;
 }): CollectionPresentationDescriptor<AgentActorItem> {
   const agentValue = (item: AgentActorItem): AgentPropertyValue =>
     agentActorAgentValue(item.binding, facts(item));
   const agentLabel = (item: AgentActorItem) =>
     agentPropertyLabel(agents, agentValue(item));
   const modeLabel = (item: AgentActorItem) => agentActorModeLabel(facts(item));
+  // The Space that owns the Agent: its own, or the project root it is
+  // inherited from; named by the Space store, so a rename needs no write.
+  const ownerSpaceName = (item: AgentActorItem) =>
+    spaceName(item.ownerPath) ?? item.ownerLabel;
   const readinessLabel = (item: AgentActorItem) => {
     const readiness = facts(item).readiness;
     return readiness ? agentActorReadinessLabel(readiness) : null;
@@ -98,6 +109,7 @@ export function createAgentActorsPresentationDescriptor({
     );
   const properties: readonly CollectionPropertyDefinition<AgentActorItem>[] = [
     defineTitleCollectionProperty({ getValue: (item) => item.name }),
+    defineSpaceCollectionProperty({ getValue: ownerSpaceName, items }),
     defineAgentCollectionProperty({ agents, getAgent: agentValue, items }),
     defineComputedCollectionProperty({
       capabilities: {
@@ -130,10 +142,6 @@ export function createAgentActorsPresentationDescriptor({
         type: "select",
       },
     }),
-    defineSpaceCollectionProperty({
-      getValue: (item) => item.ownerLabel,
-      items,
-    }),
   ];
 
   return {
@@ -155,11 +163,7 @@ export function createAgentActorsPresentationDescriptor({
     label: m.agent_actors_presentation(),
     layout: {
       density: "compact",
-      getDescription: (item) =>
-        item.description ||
-        (item.inherited
-          ? m.agent_actors_inherited({ owner: item.ownerLabel })
-          : null),
+      getDescription: (item) => item.description,
       getTitle: (item) => item.name,
       kind: "list",
       renderLeading: () => <AgentAvatar shape="square" size="sm" />,
@@ -170,7 +174,7 @@ export function createAgentActorsPresentationDescriptor({
     query: {
       defaultCompare: compareAgentActorsByDefault,
       getSearchText: (item) =>
-        `${item.name} ${item.description ?? ""} ${item.ownerLabel} ${agentLabel(item)}`,
+        `${item.name} ${item.description ?? ""} ${ownerSpaceName(item)} ${agentLabel(item)}`,
     },
     itemActions: [
       {
