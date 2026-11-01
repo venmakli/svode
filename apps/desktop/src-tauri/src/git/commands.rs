@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use svode_core::git::path::{RootMode, normalize_repo_relative, repo_relative_fro
 use svode_core::git::save::save;
 use svode_core::git::versions::{self, MessageLanguage};
 use svode_core::git::{
-    conflict_file, conflict_kind, conflict_properties, flow, markers, ops, sync,
+    conflict_file, conflict_kind, conflict_properties, flow, markers, ops, page_merge, sync,
 };
 use svode_core::system_path;
 
@@ -799,6 +800,40 @@ pub async fn git_conflict_file(
     let lock = state.get_lock(&repository).await;
     let _guard = lock.lock().await;
     Ok(conflict_file::read(state.cli()?, &space, &path).await?)
+}
+
+/// The conflicted Page at `path` (relative to `space_path`) by its
+/// properties: the frontmatter of its index stages merged key by key and the
+/// text below them merged as text, or why it has no choice by properties.
+#[tauri::command]
+pub async fn git_page_merge(
+    state: State<'_, GitState>,
+    space_path: String,
+    path: String,
+) -> Result<page_merge::PageMerge, AppError> {
+    let space = PathBuf::from(&space_path);
+    let repository = super::access::resolve_repository(state.cli()?, &space).await?;
+    let lock = state.get_lock(&repository).await;
+    let _guard = lock.lock().await;
+    Ok(page_merge::read(state.cli()?, &space, &path).await?)
+}
+
+/// The conflicted Page at `path` (relative to `space_path`) composed from
+/// the decisions of its disputed properties and the text `body` below them,
+/// or why it does not resolve the path; nothing is written.
+#[tauri::command]
+pub async fn git_compose_page_merge(
+    state: State<'_, GitState>,
+    space_path: String,
+    path: String,
+    decisions: BTreeMap<String, page_merge::PropertyDecision>,
+    body: String,
+) -> Result<page_merge::PageMergeResult, AppError> {
+    let space = PathBuf::from(&space_path);
+    let repository = super::access::resolve_repository(state.cli()?, &space).await?;
+    let lock = state.get_lock(&repository).await;
+    let _guard = lock.lock().await;
+    Ok(page_merge::compose(state.cli()?, &space, &path, &decisions, &body).await?)
 }
 
 /// The properties conflict of the Page `content` the editor read, with

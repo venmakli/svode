@@ -23,6 +23,7 @@ mod operation_recognition_tests;
 pub mod operation_stop;
 pub mod operations;
 pub mod ops;
+pub mod page_merge;
 pub mod path;
 #[cfg(test)]
 mod path_set_tests;

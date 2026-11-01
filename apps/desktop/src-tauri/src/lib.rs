@@ -434,6 +434,8 @@ pub fn run() {
             git::commands::git_agent_rules,
             git::commands::git_conflict_file,
             git::commands::git_resolve_conflict_file,
+            git::commands::git_page_merge,
+            git::commands::git_compose_page_merge,
             git::commands::git_page_properties_conflict,
             git::commands::git_resolve_page_properties,
             git::commands::git_merge_abort,
