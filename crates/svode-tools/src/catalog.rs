@@ -568,6 +568,30 @@ pub fn definitions() -> Vec<ToolDefinition> {
             None,
         ),
         def(
+            "get_app_status",
+            "Read the process state of one App, served only through the running Svode desktop app for a project open in its window: state (not_running, setup, starting, waiting_for_url, ready, external, failed, exited, stopped; no_process for static and url Apps), failure reason, declared URL and whether it answers, manifest diagnostics, the bounded stdout/stderr tail of the last setup/start and the Variable names app.yaml references. Read-only: it never launches the App, resolves Variables or reads Secrets.",
+            schema(&[space_id(), app_owner_path_req()], &["ownerPath"]),
+            read_only_ann(),
+            None,
+        ),
+        def(
+            "control_app",
+            "Start, restart, stop or rerun setup of one process App, served only through the running Svode desktop app for a project open in its window. It acts on the same process as the App surface with the same launch steps: Variables, setup reuse, waiting for the declared URL. start returns a starting or ready process without restarting it; restart starts anew reusing setup; rerun_setup starts anew repeating setup; stop stops only the process Svode manages and leaves an external service running. Waits a bounded time for the launch to settle and returns the get_app_status result; a failed launch returns APP_LAUNCH_FAILED with that status and its logs, blocking Variables return APP_VARIABLES_BLOCKED with names only.",
+            schema(
+                &[
+                    space_id(),
+                    app_owner_path_req(),
+                    (
+                        "action",
+                        json!({ "type": "string", "enum": ["start", "restart", "stop", "rerun_setup"] }),
+                    ),
+                ],
+                &["ownerPath", "action"],
+            ),
+            app_control_ann(),
+            None,
+        ),
+        def(
             "list_collections",
             "List collections in a space.",
             schema(&[space_id()], &[]),
@@ -1228,6 +1252,22 @@ fn routine_run_ann() -> ToolAnnotations {
         idempotent_hint: Some(false),
         open_world_hint: Some(true),
     }
+}
+
+/// Control of an App process runs a project command: high-risk for client
+/// confirmation, like an explicit Routine launch.
+fn app_control_ann() -> ToolAnnotations {
+    routine_run_ann()
+}
+
+fn app_owner_path_req() -> (&'static str, Value) {
+    (
+        "ownerPath",
+        json!({
+            "type": "string",
+            "description": "App owner directory relative to the selected Space: the directory with app.yaml; \".\" or \"\" is the Space root."
+        }),
+    )
 }
 
 fn schema(props: &[(&'static str, Value)], required: &[&str]) -> Value {
@@ -1986,8 +2026,14 @@ mod tests {
 
     #[test]
     fn every_mutation_names_what_it_changes_by_its_own_arguments() {
-        // Order and Routine launches change no Page, Collection or file.
-        let without_objects = ["run_routine", "reorder_content", "reorder_spaces"];
+        // Order, Routine launches and App process control change no Page,
+        // Collection or file.
+        let without_objects = [
+            "run_routine",
+            "control_app",
+            "reorder_content",
+            "reorder_spaces",
+        ];
         for definition in definitions() {
             let mutating = annotations_are_mutating(definition.annotations.as_ref());
             let names_objects = mutating && !without_objects.contains(&definition.name);
@@ -2485,6 +2531,38 @@ mod tests {
     }
 
     #[test]
+    fn app_process_tools_read_without_effects_and_mark_control_high_risk() {
+        let definitions = definitions();
+        let find = |name: &str| {
+            definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap()
+        };
+        let status = find("get_app_status");
+        assert_eq!(is_mutating_tool(status.name), Some(false));
+        assert_eq!(status.input_schema["required"], json!(["ownerPath"]));
+        assert_eq!(status.input_schema["additionalProperties"], false);
+        assert!(status.description.contains("never launches the App"));
+
+        let control = find("control_app");
+        let annotations = control.annotations.as_ref().unwrap();
+        assert_eq!(annotations.read_only_hint, Some(false));
+        assert_eq!(annotations.destructive_hint, Some(true));
+        assert_eq!(annotations.idempotent_hint, Some(false));
+        assert_eq!(annotations.open_world_hint, Some(true));
+        assert_eq!(
+            control.input_schema["required"],
+            json!(["ownerPath", "action"])
+        );
+        assert_eq!(
+            control.input_schema["properties"]["action"]["enum"],
+            json!(["start", "restart", "stop", "rerun_setup"])
+        );
+        assert_eq!(project_changes("control_app"), Some(&[][..]));
+    }
+
+    #[test]
     fn every_public_tool_has_an_access_classification() {
         let classified_writes = definitions()
             .into_iter()
@@ -2509,6 +2587,7 @@ mod tests {
                 "update_routine",
                 "delete_routine",
                 "run_routine",
+                "control_app",
                 "update_collection_item_fields",
                 "update_collection_item_body",
                 "update_collection_item_metadata",

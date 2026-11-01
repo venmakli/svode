@@ -34,8 +34,8 @@ use crate::host::{
 };
 
 /// Catalog tools a standalone process serves: every data and guidance
-/// capability. An explicit Routine launch needs the Desktop execution owner
-/// and is never served.
+/// capability. An explicit Routine launch and App process state and control
+/// need the Desktop execution owner and are never served.
 const SERVED_TOOLS: [&str; 56] = [
     "get_svode_guide",
     "validate_app_manifest",
@@ -255,11 +255,16 @@ mod tests {
             .map(|definition| definition.name)
             .collect::<Vec<_>>();
         assert_eq!(served.len(), SERVED_TOOLS.len());
-        assert_eq!(served.len() + 1, catalog::definitions().len());
+        assert_eq!(served.len() + 3, catalog::definitions().len());
         for name in served {
             assert!(check_tool(&host, name).is_ok());
         }
-        for name in ["run_routine", "no_such_tool"] {
+        for name in [
+            "run_routine",
+            "get_app_status",
+            "control_app",
+            "no_such_tool",
+        ] {
             assert_eq!(check_tool(&host, name).unwrap_err().code, "UNKNOWN_TOOL");
         }
     }

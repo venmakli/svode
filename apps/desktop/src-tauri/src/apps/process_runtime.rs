@@ -285,6 +285,30 @@ impl AppProcessState {
         Some(snapshot(entry))
     }
 
+    /// Stops the managed process of an owner. An external service is no
+    /// process of Svode: its snapshot is returned unchanged.
+    pub(crate) fn stop_managed(
+        &self,
+        project_path: &Path,
+        owner_path: &Path,
+    ) -> Option<AppProcessSnapshot> {
+        let key = AppProcessKey::new(project_path, owner_path);
+        {
+            let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+            let entry = inner.entries.get(&key)?;
+            if matches!(entry.phase, ProcessPhase::Ready { managed: false }) {
+                return Some(snapshot(entry));
+            }
+        }
+        self.stop(project_path, owner_path)
+    }
+
+    /// Whether the declared URL of an App answers now, by the readiness
+    /// probe of launches.
+    pub(crate) async fn url_reachable(&self, url: &str) -> bool {
+        self.readiness_probe.is_reachable(url).await
+    }
+
     pub(crate) fn remove_owner(&self, project_path: &Path, owner_path: &Path) {
         let key = AppProcessKey::new(project_path, owner_path);
         let entry = self
@@ -396,6 +420,39 @@ impl AppProcessState {
 
         let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         snapshot(inner.entries.get(&key).expect("process entry inserted"))
+    }
+}
+
+/// Probe that answers the same for every URL.
+#[cfg(test)]
+struct FixedProbe(bool);
+
+#[cfg(test)]
+impl UrlReadinessProbe for FixedProbe {
+    fn is_reachable<'a>(
+        &'a self,
+        _url: &'a str,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        let reachable = self.0;
+        Box::pin(async move { reachable })
+    }
+}
+
+#[cfg(test)]
+impl AppProcessState {
+    /// Runtime with short timeouts whose declared URLs answer as `reachable`
+    /// says, for tests of its hosts.
+    pub(crate) fn for_tests(reachable: bool) -> Self {
+        Self::with_probe(
+            ProcessRuntimeConfig {
+                setup_timeout: Duration::from_secs(2),
+                readiness_timeout: Duration::from_secs(2),
+                probe_timeout: Duration::from_millis(200),
+                poll_interval: Duration::from_millis(20),
+            },
+            Arc::new(FixedProbe(reachable)),
+            Arc::new(ProcessPath::fixed(None)),
+        )
     }
 }
 

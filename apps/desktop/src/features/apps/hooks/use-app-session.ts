@@ -3,6 +3,7 @@ import {
   controlAppProcess,
   inspectAppManifest,
   listenAppManifestChanges,
+  listenAppProcessChanges,
   listenAppVariablesChanged,
   revokeAppSource,
 } from "../api/app-api";
@@ -85,6 +86,29 @@ export function useAppSession(owner: AppOwner, variablesOpen = false) {
     () => (result.key === sessionKey ? result.session : { status: "loading" }),
     [result, sessionKey],
   );
+
+  // An agent may start, restart or stop the process in any state of the
+  // surface, including stopped, failed and blocked by Variables: check the
+  // App again without loading. Without an inspection yet the change may be
+  // this App's.
+  const ownerDirectory =
+    "ownerDirectory" in session ? session.ownerDirectory : null;
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenAppProcessChanges((changed) => {
+      if (ownerDirectory === null || changed === ownerDirectory) {
+        refresh(false);
+      }
+    }).then((next) => {
+      if (disposed) next();
+      else unlisten = next;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [ownerDirectory, refresh]);
 
   const blockedByVariables = isBlockedByVariables(session);
   // A fix may come without an event: on return to the window or after the

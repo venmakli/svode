@@ -12,8 +12,9 @@ use svode_tools::catalog;
 use svode_tools::host::ToolHost;
 use svode_tools::standalone::StandaloneHost;
 
-/// Capability waiting for G04; it has no command and no help entry.
-const RUN_ROUTINE: &str = "run_routine";
+/// Capabilities of the Desktop execution owner, served only by the bridge:
+/// they have no command and no help entry.
+const BRIDGE_ONLY: [&str; 3] = ["run_routine", "get_app_status", "control_app"];
 
 fn catalog_tools() -> BTreeSet<String> {
     catalog::definitions()
@@ -43,7 +44,7 @@ fn command_table_covers_every_leaf_command_of_the_grammar() {
 
 /// Each invocation runs through the public frame on a host that records
 /// what it is asked to serve and denies repository access, so no mutation
-/// writes anything. Every capability except `run_routine` is asked for by
+/// writes anything. Every capability except the bridge-only ones is asked for by
 /// exactly one command, and every command asks for its own tools only.
 #[tokio::test]
 async fn every_catalog_capability_has_exactly_one_command() {
@@ -73,7 +74,9 @@ async fn every_catalog_capability_has_exactly_one_command() {
         }
     }
     let mut expected = catalog_tools();
-    expected.remove(RUN_ROUTINE);
+    for tool in BRIDGE_ONLY {
+        expected.remove(tool);
+    }
     assert_eq!(owner.keys().cloned().collect::<BTreeSet<_>>(), expected);
     assert_eq!(expected.len(), 56);
 }
@@ -134,6 +137,6 @@ fn command_reference_matches_the_catalog_the_grammar_and_the_standalone_host() {
     assert_eq!(reference, table_map());
 
     let mut documented = reference.into_values().flatten().collect::<BTreeSet<_>>();
-    documented.insert(RUN_ROUTINE.into());
+    documented.extend(BRIDGE_ONLY.map(String::from));
     assert_eq!(documented, catalog_tools());
 }

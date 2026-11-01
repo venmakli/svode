@@ -9,8 +9,10 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use svode_core::actors::resolver::ActorCatalogState;
+use svode_core::apps::manifest::AppProcessRuntime;
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::git::access::RepositoryAccessSnapshot;
 use svode_core::git::state::GitRuntime;
@@ -85,6 +87,118 @@ pub trait RoutineRunner: Sync {
         routine_id: String,
         expected_fingerprint: String,
     ) -> Pin<Box<dyn Future<Output = Result<RoutineDispatchResult, ToolError>> + Send + '_>>;
+}
+
+/// Process App a request addresses: its Project, the registered Space id
+/// its Variables resolve in (`None` for the root), its canonical owner
+/// directory and the process runtime its current manifest declares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppProcessTarget {
+    pub project_path: PathBuf,
+    pub space_id: Option<String>,
+    pub owner_path: PathBuf,
+    pub runtime: AppProcessRuntime,
+}
+
+/// Control action on the process of an App.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppProcessAction {
+    /// Launch as opening the App does, unless the process is starting or
+    /// ready.
+    Start,
+    /// New launch that reuses setup.
+    Restart,
+    /// Stop the managed process; an external service is left untouched.
+    Stop,
+    /// New launch that repeats setup.
+    RerunSetup,
+}
+
+/// State of the process of an App as the host execution owner holds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppProcessPhase {
+    NotRunning,
+    Setup,
+    Starting,
+    WaitingForUrl,
+    Ready,
+    /// The start command exited while the declared URL answers: a service
+    /// Svode does not manage.
+    External,
+    Failed,
+    /// The managed process exited after it was ready.
+    Exited,
+    Stopped,
+}
+
+impl AppProcessPhase {
+    pub fn is_launching(self) -> bool {
+        matches!(self, Self::Setup | Self::Starting | Self::WaitingForUrl)
+    }
+}
+
+/// Process state of an App with the bounded setup/start output the App
+/// surface shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppProcessReport {
+    pub phase: AppProcessPhase,
+    /// Failure reason code of a failed launch.
+    pub reason: Option<String>,
+    pub managed: bool,
+    /// Whether the declared URL answered when the report was taken.
+    pub url_reachable: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Variable an App references without a value: the name in app.yaml and
+/// the Settings entry it resolves to. Never a value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppMissingVariable {
+    pub reference_name: String,
+    pub entry_name: String,
+}
+
+/// Result of a control action: the process state after it, or the
+/// Variables that keep the process from launching.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppControlOutcome {
+    Process(AppProcessReport),
+    /// Referenced Variables without a value, by name only.
+    VariablesMissing(Vec<AppMissingVariable>),
+    /// Variables that cannot be read: the cause and the affected scope,
+    /// without names or values.
+    VariablesUnreadable(serde_json::Value),
+}
+
+/// Process App runtime of the host execution owner: the same process the
+/// App surface shows. A host without it serves neither `get_app_status`
+/// nor `control_app`.
+pub trait AppProcessHost: Sync {
+    /// Whether a window of the host has `project` open; processes exist
+    /// only for such Projects.
+    fn project_open<'a>(
+        &'a self,
+        project: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
+    /// Current process state, read without launching, resolving Variables
+    /// or reading Secrets.
+    fn status(
+        &self,
+        target: AppProcessTarget,
+    ) -> Pin<Box<dyn Future<Output = Result<AppProcessReport, ToolError>> + Send + '_>>;
+
+    /// Applies `action` with the launch steps of opening the App and
+    /// returns once the launch settles or a bounded wait ends.
+    fn control(
+        &self,
+        target: AppProcessTarget,
+        action: AppProcessAction,
+    ) -> Pin<Box<dyn Future<Output = Result<AppControlOutcome, ToolError>> + Send + '_>>;
 }
 
 /// Project, default Space and caller provenance frozen by the host for one
@@ -197,6 +311,13 @@ pub trait ToolHost: Sync {
     /// Explicit Routine launch of the host. `None` means the host cannot run
     /// Routines, so `run_routine` is neither published nor dispatched.
     fn routine_runner(&self) -> Option<&dyn RoutineRunner>;
+
+    /// Process App runtime of the host. `None` means the host does not own
+    /// App processes, so `get_app_status` and `control_app` are neither
+    /// published nor dispatched.
+    fn app_process(&self) -> Option<&dyn AppProcessHost> {
+        None
+    }
 }
 
 /// Freshness of the pools `index` already holds open for a read in `scope`,

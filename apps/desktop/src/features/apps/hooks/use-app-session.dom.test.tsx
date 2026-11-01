@@ -14,6 +14,7 @@ const inspections: PendingInspection[] = [];
 const revoked: string[] = [];
 const controls: string[] = [];
 const variablesListeners = new Set<() => void>();
+const processListeners = new Set<(ownerDirectory: string) => void>();
 const mock = (
   bunTest as unknown as {
     mock: { module(specifier: string, factory: () => unknown): void };
@@ -40,6 +41,10 @@ mock.module("../api/app-api", () => ({
       inspections.push({ owner, resolve });
     }),
   listenAppManifestChanges: () => Promise.resolve(() => undefined),
+  listenAppProcessChanges: (onChange: (ownerDirectory: string) => void) => {
+    processListeners.add(onChange);
+    return Promise.resolve(() => processListeners.delete(onChange));
+  },
   listenAppVariablesChanged: (onChange: () => void) => {
     variablesListeners.add(onChange);
     return Promise.resolve(() => variablesListeners.delete(onChange));
@@ -251,6 +256,62 @@ test("an App blocked by Variables is checked again without loading after a possi
   }
 });
 
+test("an agent's process change moves the open App from stopped, failed and blocked states without loading", async () => {
+  inspections.length = 0;
+  controls.length = 0;
+  processListeners.clear();
+  const dom = new JSDOM(
+    "<!doctype html><html><body><div id=app></div></body></html>",
+    { pretendToBeVisual: true, url: "http://localhost/" },
+  );
+  const restoreGlobals = installDomGlobals(dom);
+  const root = createRoot(dom.window.document.getElementById("app")!);
+  const text = () => dom.window.document.body.textContent;
+  const resolveLast = (inspection: AppManifestInspection) =>
+    act(async () => {
+      inspections.at(-1)!.resolve(inspection);
+      await Promise.resolve();
+    });
+  const agentChanged = (ownerDirectory: string) =>
+    act(async () => {
+      for (const listener of processListeners) listener(ownerDirectory);
+    });
+
+  try {
+    await act(async () => root.render(<Harness owner={owner("process")} />));
+    for (const state of [
+      processUnavailable("process_stopped"),
+      processUnavailable("start_exit_non_zero"),
+      variablesBlocked("missing_app_variables"),
+    ]) {
+      await resolveLast(state);
+      expect(text()).toBe("unavailable");
+
+      // Another App changed: this one is not checked again.
+      const requested = inspections.length;
+      await agentChanged("/repo/space/other");
+      expect(inspections.length).toBe(requested);
+
+      await agentChanged("/repo/space/process");
+      expect(inspections.length).toBe(requested + 1);
+      expect(text()).toBe("unavailable");
+      await resolveLast(processLaunching());
+      expect(text()).toBe("launching");
+
+      await agentChanged("/repo/space/process");
+      expect(inspections.length).toBe(requested + 2);
+    }
+    await resolveLast(processReady());
+    expect(text()).toBe("ready:http://127.0.0.1:43000");
+    expect(controls).toEqual([]);
+  } finally {
+    await act(async () => root.unmount());
+    expect(processListeners.size).toBe(0);
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function Harness({
   owner,
   variablesOpen,
@@ -313,6 +374,36 @@ function variablesBlocked(
           },
         }
       : { missingVariables: [{ referenceName: "API_URL", entryName: "API_URL" }] }),
+  };
+}
+
+function processUnavailable(reason: string): AppManifestInspection {
+  return {
+    status: "unavailable",
+    ownerDirectory: "/repo/space/process",
+    runtimeType: "process",
+    reason,
+    browserUrl: "http://127.0.0.1:43000",
+    process: {
+      managed: false,
+      hasSetup: true,
+      logs: { stdout: "", stderr: "start command exited with exit status: 3" },
+    },
+  };
+}
+
+function processLaunching(): AppManifestInspection {
+  return {
+    status: "launching",
+    ownerDirectory: "/repo/space/process",
+    runtimeType: "process",
+    phase: "starting",
+    browserUrl: "http://127.0.0.1:43000",
+    process: {
+      managed: true,
+      hasSetup: true,
+      logs: { stdout: "", stderr: "" },
+    },
   };
 }
 

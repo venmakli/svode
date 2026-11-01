@@ -1,4 +1,5 @@
 pub(crate) mod agent_actors;
+pub(crate) mod app_process;
 pub(crate) mod apps;
 pub(crate) mod collections;
 pub(crate) mod content;

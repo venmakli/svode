@@ -175,3 +175,16 @@ export function listenAppVariablesChanged(
 ): Promise<() => void> {
   return listen<void>("app-settings:variables-changed", () => onChange());
 }
+
+interface AppProcessChangedDto {
+  ownerDirectory: string;
+}
+
+// A process change made outside this surface, such as by an agent through MCP.
+export function listenAppProcessChanges(
+  onChange: (ownerDirectory: string) => void,
+): Promise<() => void> {
+  return listen<AppProcessChangedDto>("app-process:changed", (event) =>
+    onChange(event.payload.ownerDirectory),
+  );
+}

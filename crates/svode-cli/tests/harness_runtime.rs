@@ -341,10 +341,16 @@ async fn every_read_capability_has_exactly_one_command() {
         "list_routines",
         "get_routine",
     ];
+    // The App process state is served only by the Desktop bridge.
+    let bridge_only = ["get_app_status"];
     let expected = catalog::definitions()
         .into_iter()
         .map(|definition| definition.name)
-        .filter(|name| catalog::is_mutating_tool(name) == Some(false) && !later.contains(name))
+        .filter(|name| {
+            catalog::is_mutating_tool(name) == Some(false)
+                && !later.contains(name)
+                && !bridge_only.contains(name)
+        })
         .collect::<BTreeSet<_>>();
     assert_eq!(published, expected);
 }

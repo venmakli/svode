@@ -8,13 +8,19 @@ use crate::error::ToolError;
 use crate::host::{RequestTarget, ToolHost};
 use crate::result::ToolCallResult;
 use crate::tools::{
-    agent_actors, apps, collections, content, import, pages, project, routines, search, structure,
+    agent_actors, app_process, apps, collections, content, import, pages, project, routines,
+    search, structure,
 };
 
 /// Whether the host serves a catalog tool: it declares the tool and has the
 /// capability the tool needs.
 fn serves(host: &impl ToolHost, name: &str) -> bool {
-    host.serves_tool(name) && (name != "run_routine" || host.routine_runner().is_some())
+    host.serves_tool(name)
+        && match name {
+            "run_routine" => host.routine_runner().is_some(),
+            "get_app_status" | "control_app" => host.app_process().is_some(),
+            _ => true,
+        }
 }
 
 /// Catalog limited to the tools the host declares.
@@ -274,6 +280,14 @@ async fn call(
         "run_routine" => {
             let args = decode(args)?;
             routines::run_routine(host, require(target)?, args).await
+        }
+        "get_app_status" => {
+            let args = decode(args)?;
+            app_process::get_app_status(host, require(target)?, args).await
+        }
+        "control_app" => {
+            let args = decode(args)?;
+            app_process::control_app(host, require(target)?, args).await
         }
         _ => Err(ToolError::new(
             "UNKNOWN_TOOL",

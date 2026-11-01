@@ -406,7 +406,7 @@ fn error_code(result: &ToolCallResult) -> String {
 fn served_catalog_is_filtered_by_host_declaration_and_capabilities() {
     let host = FixtureHost::new(None);
     assert_eq!(served_definitions(&host).len(), 57);
-    assert_eq!(catalog::definitions().len(), 57);
+    assert_eq!(catalog::definitions().len(), 59);
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     let names = served_names(&limited);
@@ -3051,15 +3051,16 @@ async fn run_routine_goes_through_the_host_runner_and_is_blocked_for_routine_cal
     }
 }
 
-/// Proof of the seam over the whole catalog: every published tool is
-/// dispatched by the library on a host without Tauri; none falls through
-/// to a host-owned handler.
+/// Proof of the seam over the whole catalog: every tool the host publishes
+/// is dispatched by the library on a host without Tauri; none falls through
+/// to a host-owned handler. App process tools need an App process runtime
+/// this host does not have; `app_process_dispatch` covers them.
 #[tokio::test]
 async fn every_catalog_tool_is_dispatched_by_the_library() {
     let fixture = fixture();
     let host = FixtureHost::new(None);
     let target = root_target(&fixture);
-    let names = catalog::definitions()
+    let names = served_definitions(&host)
         .into_iter()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();

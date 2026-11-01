@@ -3,9 +3,14 @@ use super::*;
 use std::future::Future;
 use std::pin::Pin;
 
+use tauri::Emitter;
+
 use svode_core::attachments::import::{LfsReadiness, ManagedImportDelivery};
 use svode_core::routines::model::{ResolvedRoutineOwner, RoutineDispatchResult};
-use svode_tools::host::{RoutineCaller, RoutineRunner, RoutineRuntime};
+use svode_tools::host::{
+    AppControlOutcome, AppProcessAction, AppProcessHost, AppProcessReport, AppProcessTarget,
+    RoutineCaller, RoutineRunner, RoutineRuntime,
+};
 
 use crate::project_sessions::{ProjectSessions, RequestSession};
 
@@ -173,6 +178,79 @@ impl svode_tools::host::ToolHost for DesktopMcpHost {
 
     fn routine_runner(&self) -> Option<&dyn RoutineRunner> {
         Some(self)
+    }
+
+    fn app_process(&self) -> Option<&dyn AppProcessHost> {
+        Some(self)
+    }
+}
+
+/// Process Apps go through the `AppProcessState` of the App surface.
+impl AppProcessHost for DesktopMcpHost {
+    fn project_open<'a>(
+        &'a self,
+        project: &'a Path,
+    ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
+        Box::pin(self.desktop_index().is_project_open(project))
+    }
+
+    fn status(
+        &self,
+        target: AppProcessTarget,
+    ) -> Pin<Box<dyn Future<Output = Result<AppProcessReport, ToolError>> + Send + '_>> {
+        Box::pin(async move {
+            Ok(crate::apps::bridge::status(
+                &self.app.state::<crate::apps::AppProcessState>(),
+                &target,
+            )
+            .await)
+        })
+    }
+
+    fn control(
+        &self,
+        target: AppProcessTarget,
+        action: AppProcessAction,
+    ) -> Pin<Box<dyn Future<Output = Result<AppControlOutcome, ToolError>> + Send + '_>> {
+        Box::pin(async move {
+            let changed = crate::apps::bridge::AppProcessChanged {
+                owner_directory: svode_core::system_path::user_facing_path(&target.owner_path),
+            };
+            let (project_path, space_id, owner_path) = (
+                target.project_path.clone(),
+                target.space_id.clone(),
+                target.owner_path.clone(),
+            );
+            crate::apps::bridge::control(
+                &self.app.state::<crate::apps::AppProcessState>(),
+                target,
+                action,
+                |runtime| {
+                    let runtime = runtime.clone();
+                    async move {
+                        crate::apps::launch::resolve_runtime_environment(
+                            &self.app,
+                            &project_path,
+                            space_id.as_deref(),
+                            &owner_path,
+                            &runtime,
+                        )
+                        .await
+                    }
+                },
+                crate::apps::bridge::CONTROL_SETTLE_TIMEOUT,
+                || {
+                    if let Err(error) = self
+                        .app
+                        .emit(crate::apps::bridge::APP_PROCESS_CHANGED_EVENT, changed)
+                    {
+                        tracing::warn!("failed to emit App process change: {error}");
+                    }
+                },
+            )
+            .await
+            .map_err(Into::into)
+        })
     }
 }
 
