@@ -10,3 +10,11 @@ export {
   type AgentOption,
 } from "./model/dictionary";
 export { AgentIcon } from "./ui/agent-icon";
+export {
+  agentPropertyLabel,
+  defineAgentCollectionProperty,
+  defineAgentsCollectionProperty,
+  type AgentPropertyValue,
+  type AgentsPropertyNotes,
+  type IdleAgentNote,
+} from "./ui/agent-properties";

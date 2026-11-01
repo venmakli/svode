@@ -2,18 +2,21 @@ import { FileText, Puzzle, Server, Sparkles } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
 
-import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  AgentIcon,
+  defineAgentsCollectionProperty,
   type AgentAdapterDictionary,
+  type AgentsPropertyNotes,
 } from "@/features/agent-adapters";
 import {
   defineComputedCollectionProperty,
+  defineStateCollectionProperty,
+  defineTitleCollectionProperty,
+  defineUpdatedCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
@@ -28,7 +31,7 @@ import type {
   AgentContextItemKind,
   AgentContextLocation,
 } from "../model/types";
-import { agentContextHealthProperty } from "./health-property";
+import { agentContextHealthWarnings } from "./health-warnings";
 import {
   agentContextMissingFieldsText,
   agentContextRejectionTexts,
@@ -103,7 +106,7 @@ export function agentContextLocationLabel(location: AgentContextLocation) {
   return location.path;
 }
 
-/** Why "Providers" is empty, in one line. */
+/** Why "Agents" is empty, in one line. */
 export function agentContextUnappliedText(
   agents: AgentAdapterDictionary,
   item: AgentContextItem,
@@ -125,7 +128,7 @@ export function agentContextUnappliedText(
 }
 
 /**
- * The properties of "Context" in their column order: Name, Type, Providers,
+ * The properties of "Context" in their column order: Name, Type, Agents,
  * Status, Location, Modified.
  */
 export function createAgentContextItemProperties({
@@ -136,17 +139,7 @@ export function createAgentContextItemProperties({
   onOpenProviders?: () => void;
 }): readonly CollectionPropertyDefinition<AgentContextItem>[] {
   return [
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "agent-context",
-      getValue: (item) => item.name,
-      key: "name",
-      label: m.agent_context_property_name(),
-      standard: { type: "text" },
-    }),
+    defineTitleCollectionProperty({ getValue: (item) => item.name }),
     defineComputedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
@@ -166,28 +159,14 @@ export function createAgentContextItemProperties({
         type: "select",
       },
     }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      display: {
-        render: (_value, item) => <ProvidersCell agents={agents} item={item} />,
-        renderDetail: (_value, item) => (
-          <ProvidersDetail
-            agents={agents}
-            item={item}
-            onOpenProviders={onOpenProviders}
-          />
-        ),
-      },
-      featureId: "agent-context",
-      getValue: (item) => item.providers.map((agent) => agents.label(agent)),
-      key: "providers",
-      label: m.agent_context_property_providers(),
-      standard: { options: agents.options(), type: "multi_select" },
+    defineAgentsCollectionProperty({
+      agents,
+      getAgents: (item) => item.providers,
+      getNotes: (item) => agentsNotes(agents, item, onOpenProviders),
     }),
-    agentContextHealthProperty<AgentContextItem>({ agents }),
+    defineStateCollectionProperty({
+      getProblems: (item) => agentContextHealthWarnings(agents, item),
+    }),
     defineComputedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
@@ -210,18 +189,44 @@ export function createAgentContextItemProperties({
       label: m.agent_context_location(),
       standard: { type: "text" },
     }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "agent-context",
-      getValue: (item) => item.modifiedAt,
-      key: "modified",
-      label: m.agent_context_property_modified(),
-      standard: { display: "medium", type: "date" },
-    }),
+    defineUpdatedCollectionProperty({ getValue: (item) => item.modifiedAt }),
   ];
+}
+
+/**
+ * What "Agents" says around the applying agents: the agents that find the
+ * item and do not apply it, why none applies it, the agents whose switch of
+ * a plugin is kept outside files, and the way to Providers when enabling an
+ * agent off in Svode would apply the item.
+ */
+function agentsNotes(
+  agents: AgentAdapterDictionary,
+  item: AgentContextItem,
+  onOpenProviders: (() => void) | undefined,
+): AgentsPropertyNotes {
+  const idle = agentContextIdleAgents(item);
+  const unverified = agentNames(agents, unverifiedProviders(item));
+  return {
+    detailAction:
+      onOpenProviders &&
+      idle.some((entry) => entry.reason.kind === "off_in_svode")
+        ? {
+            label: m.agent_context_open_providers(),
+            onSelect: onOpenProviders,
+          }
+        : null,
+    detailNote: unverified
+      ? m.agent_context_unverified_note({ agents: unverified })
+      : null,
+    emptyReason:
+      item.providers.length === 0 && idle.length === 0
+        ? agentContextUnappliedText(agents, item)
+        : null,
+    idle: idle.map((entry) => ({
+      agent: entry.agent,
+      reason: idleAgentText(agents, entry),
+    })),
+  };
 }
 
 function LocationCell({ location }: { location: string }) {
@@ -232,159 +237,6 @@ function LocationCell({ location }: { location: string }) {
       </TooltipTrigger>
       <TooltipContent className="max-w-sm break-all">{location}</TooltipContent>
     </Tooltip>
-  );
-}
-
-/**
- * The applying agents' icons, then the muted icons of the agents that find
- * the item but do not apply it; names and reasons on hover. Without any
- * agent the cell is empty and says why on hover.
- */
-function ProvidersCell({
-  agents,
-  item,
-}: {
-  agents: AgentAdapterDictionary;
-  item: AgentContextItem;
-}) {
-  const idle = agentContextIdleAgents(item);
-  if (item.providers.length === 0 && idle.length === 0) {
-    const reason = agentContextUnappliedText(agents, item);
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className="block h-5 w-full min-w-6"
-            data-agent-context-providers-empty
-          >
-            <span className="sr-only">{reason}</span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-sm break-words">
-          {reason}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-  const lines = [
-    ...(item.providers.length > 0 ? [agentNames(agents, item.providers)] : []),
-    ...idle.map((entry) => idleAgentText(agents, entry)),
-  ];
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className="inline-flex items-center gap-1"
-          role="img"
-          aria-label={lines.join("; ")}
-          data-agent-context-providers
-        >
-          {item.providers.map((agent) => (
-            <AgentIcon key={agent} agent={agent} />
-          ))}
-          {idle.map(({ agent }) => (
-            <AgentIcon key={agent} agent={agent} muted />
-          ))}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent className="flex max-w-sm flex-col gap-0.5 break-words">
-        {lines.map((line) => (
-          <span key={line}>{line}</span>
-        ))}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-/**
- * The applying agents with their names, then the agents that find the item
- * but do not apply it, muted, with the reason on hover; the button to
- * Providers when enabling an agent off in Svode would apply the item.
- */
-function ProvidersDetail({
-  agents,
-  item,
-  onOpenProviders,
-}: {
-  agents: AgentAdapterDictionary;
-  item: AgentContextItem;
-  onOpenProviders?: () => void;
-}) {
-  const idle = agentContextIdleAgents(item);
-  const unverified = agentNames(agents, unverifiedProviders(item));
-  const openProviders =
-    onOpenProviders &&
-    idle.some((entry) => entry.reason.kind === "off_in_svode") ? (
-      <Button
-        size="xs"
-        type="button"
-        variant="outline"
-        onClick={onOpenProviders}
-      >
-        {m.agent_context_open_providers()}
-      </Button>
-    ) : null;
-  if (item.providers.length === 0 && idle.length === 0) {
-    const reason = agentContextUnappliedText(agents, item);
-    return (
-      <div
-        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
-        data-agent-context-providers-reason
-      >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="text-muted-foreground">
-              -<span className="sr-only">{reason}</span>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-sm break-words">
-            {reason}
-          </TooltipContent>
-        </Tooltip>
-        {openProviders}
-      </div>
-    );
-  }
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <div
-        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
-        data-agent-context-providers-detail
-      >
-        {item.providers.map((agent) => (
-          <span key={agent} className="inline-flex items-center gap-1.5">
-            <AgentIcon agent={agent} />
-            {agents.label(agent)}
-          </span>
-        ))}
-        {idle.map((entry) => (
-          <Tooltip key={entry.agent}>
-            <TooltipTrigger asChild>
-              <span
-                className="inline-flex items-center gap-1.5 text-muted-foreground"
-                data-agent-context-idle-agent={entry.agent}
-              >
-                <AgentIcon agent={entry.agent} muted />
-                {agents.label(entry.agent)}
-                <span className="sr-only">{idleAgentText(agents, entry)}</span>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm break-words">
-              {idleAgentText(agents, entry)}
-            </TooltipContent>
-          </Tooltip>
-        ))}
-        {openProviders}
-      </div>
-      {unverified ? (
-        <span
-          className="text-xs text-muted-foreground"
-          data-agent-context-providers-unverified
-        >
-          {m.agent_context_unverified_note({ agents: unverified })}
-        </span>
-      ) : null}
-    </div>
   );
 }
 

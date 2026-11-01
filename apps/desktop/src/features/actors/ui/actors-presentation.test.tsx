@@ -69,15 +69,32 @@ test("actors descriptor exposes the fixed query fields and exact action placemen
 
   expect(descriptor.id).toBe("humans");
   expect(descriptor.properties.map((property) => property.key)).toEqual([
+    "title",
     "contribution",
     "commits",
     "activity",
   ]);
   expect(descriptor.properties.map((property) => property.origin)).toEqual([
+    "computed",
     "owner_defined",
     "computed",
     "computed",
   ]);
+  // "Name" is the catalog's; "Activity" stays a person's last action.
+  expect(
+    descriptor.properties.map((property) => [
+      property.common ?? null,
+      property.label,
+    ]),
+  ).toEqual([
+    ["title", "Name"],
+    [null, "Contribution"],
+    [null, "Commits"],
+    [null, "Activity"],
+  ]);
+  expect(descriptor.properties[0]?.getValue(actors[0]!)).toBe(
+    actors[0]!.displayName,
+  );
   expect(descriptor.create?.intents[0]?.id).toBe("add-actor");
   expect(descriptor.create?.intents[0]?.getState().status).toBe("disabled");
   expect(descriptor.itemActions?.map((action) => action.id)).toEqual([

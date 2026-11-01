@@ -14,7 +14,10 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import type { AgentAdapterDictionary } from "@/features/agent-adapters";
+import {
+  defineAgentCollectionProperty,
+  type AgentAdapterDictionary,
+} from "@/features/agent-adapters";
 import {
   defineCollectionPresentation,
   type CollectionActionState,
@@ -24,6 +27,8 @@ import {
 import {
   defineComputedCollectionProperty,
   defineOwnerDefinedCollectionProperty,
+  defineTitleCollectionProperty,
+  defineUpdatedCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
 import type { RoutineLaunchLink } from "@/features/routines/catalog";
@@ -99,19 +104,11 @@ export function createAgentSessionsPresentationDescriptor({
     ...new Set(items.flatMap((item) => routineName(item) ?? [])),
   ].map((name) => ({ color: "neutral" as const, name }));
   const properties: readonly CollectionPropertyDefinition<AgentSession>[] = [
-    defineOwnerDefinedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "agent-sessions",
-      getValue: (item) => agents.label(item.source),
-      key: "agent",
-      label: m.sessions_field_agent(),
-      standard: {
-        options: agents.options(items.map((item) => item.source)),
-        type: "select",
-      },
+    defineTitleCollectionProperty({ getValue: (item) => item.title }),
+    defineAgentCollectionProperty({
+      agents,
+      getAgent: (item) => ({ agent: item.source, kind: "agent" }),
+      items,
     }),
     defineComputedCollectionProperty({
       capabilities: {
@@ -141,16 +138,8 @@ export function createAgentSessionsPresentationDescriptor({
       label: m.sessions_field_routine(),
       standard: { options: routineOptions, type: "select" },
     }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "agent-sessions",
+    defineUpdatedCollectionProperty({
       getValue: (session) => session.lastActivityAt,
-      key: "last-activity",
-      label: m.sessions_field_last_activity(),
-      standard: { display: "medium", type: "date" },
     }),
   ];
 
@@ -178,7 +167,7 @@ export function createAgentSessionsPresentationDescriptor({
       renderLeading: () => (
         <BotMessageSquare className="size-4 text-muted-foreground" />
       ),
-      visibleProperties: ["status", "agent", "routine", "last-activity"],
+      visibleProperties: ["status", "agent", "routine", "updated"],
     },
     query: {
       defaultCompare: compareAgentSessionsByDefault,

@@ -27,7 +27,10 @@ import type {
   UseViewQueryResult,
   ViewType,
 } from "@/features/collection/query/model";
-import type { CollectionSchema } from "@/features/properties";
+import {
+  commonCollectionPropertyLabel,
+  type CollectionSchema,
+} from "@/features/properties";
 import { TypeSettingsPane } from "@/features/properties/column-settings";
 import { propertyTypeLabel } from "@/features/properties/column-menu";
 import { NEWER_PROPERTY_ICON } from "@/features/properties/display";
@@ -66,7 +69,9 @@ export function ViewSettingsPropertiesPane({
   const systemFields = [
     {
       name: "title",
-      label: schema.systemFields?.title?.label || m.collection_field_title(),
+      label:
+        schema.systemFields?.title?.label ||
+        commonCollectionPropertyLabel("title"),
       icon: FileText,
       locked: type !== "gallery",
     },
@@ -77,7 +82,11 @@ export function ViewSettingsPropertiesPane({
       icon: FileText,
     },
     { name: "created", label: m.collection_field_created(), icon: Calendar },
-    { name: "updated", label: m.collection_field_updated(), icon: Calendar },
+    {
+      name: "updated",
+      label: commonCollectionPropertyLabel("updated"),
+      icon: Calendar,
+    },
   ];
 
   return (

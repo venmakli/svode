@@ -132,17 +132,32 @@ test("rows show the session sign, title, status, agent, routine and last activit
   const presentation = descriptor();
 
   expect(presentation.properties.map((property) => property.key)).toEqual([
+    "title",
     "agent",
     "status",
     "routine",
-    "last-activity",
+    "updated",
+  ]);
+  expect(
+    presentation.properties.map((property) => [
+      property.key,
+      property.common ?? null,
+      property.label,
+    ]),
+  ).toEqual([
+    ["title", "title", "Name"],
+    ["agent", "agent", "Agent"],
+    ["status", null, "Status"],
+    ["routine", null, "Routine"],
+    // The time of the last activity is when a session changed.
+    ["updated", "updated", "Modified"],
   ]);
   expect(presentation.layout.kind).toBe("list");
   expect(
     presentation.layout.kind === "list"
       ? presentation.layout.visibleProperties
       : null,
-  ).toEqual(["status", "agent", "routine", "last-activity"]);
+  ).toEqual(["status", "agent", "routine", "updated"]);
   const status = presentation.properties.find(
     (property) => property.key === "status",
   );
@@ -256,7 +271,7 @@ test("filters, sorts and search use status, agent and last activity", () => {
     descriptor: presentation,
     query: query({
       filters: [{ propertyKey: "agent", operator: "eq", value: "Codex" }],
-      sort: [{ propertyKey: "last-activity", direction: "asc" }],
+      sort: [{ propertyKey: "updated", direction: "asc" }],
     }),
     items,
   });
@@ -281,7 +296,7 @@ test("filters, sorts and search use status, agent and last activity", () => {
     "codex:done",
   ]);
   const lastActivity = presentation.properties.find(
-    (property) => property.key === "last-activity",
+    (property) => property.key === "updated",
   );
   expect(lastActivity?.getValue(withTerminal)).toBe(
     withTerminal.lastActivityAt,

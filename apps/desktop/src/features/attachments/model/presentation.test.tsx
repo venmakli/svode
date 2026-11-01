@@ -132,10 +132,21 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
   expect(descriptor.layout).toEqual({
     density: "compact",
     kind: "table",
-    primaryProperty: "name",
-    visibleProperties: ["name", "type", "modified", "size"],
+    primaryProperty: "title",
+    visibleProperties: ["title", "type", "updated", "size"],
   });
   expect(descriptor.create).toBe(create);
+  expect(
+    descriptor.properties.map((property) => [
+      property.common ?? null,
+      property.label,
+    ]),
+  ).toEqual([
+    ["title", "Name"],
+    [null, "Type"],
+    ["updated", "Modified"],
+    [null, "Size"],
+  ]);
   expect(descriptor.itemActions).toBe(undefined);
   expect(descriptor.properties.map((property) => property.origin)).toEqual([
     "computed",
@@ -162,12 +173,12 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
   const columns = descriptor.properties.map((property) =>
     resolveStandardPropertyColumn(property),
   );
-  expect(columns[0]).toEqual({ name: "name", type: "text" });
+  expect(columns[0]).toEqual({ name: "title", type: "text" });
   expect(columns[1]?.name).toBe("type");
   expect(columns[1]?.type).toBe("select");
   expect(columns[2]).toEqual({
     display: "medium",
-    name: "modified",
+    name: "updated",
     type: "date",
   });
   expect(columns[3]).toEqual({
@@ -176,7 +187,7 @@ test("fixed Attachments Table is Property-driven and query-capable", () => {
     type: "number",
   });
   expect(descriptor.query.defaultSort).toEqual([
-    { direction: "asc", propertyKey: "name" },
+    { direction: "asc", propertyKey: "title" },
   ]);
   expect(descriptor.query.getSearchText?.(page)?.includes("Roadmap")).toBe(
     true,

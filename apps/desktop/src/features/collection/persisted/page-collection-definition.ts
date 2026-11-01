@@ -1,8 +1,9 @@
 import type { Page } from "@/features/page";
 import {
   defineComputedCollectionProperty,
-  defineOwnerDefinedCollectionProperty,
   defineSchemaBackedCollectionProperty,
+  defineTitleCollectionProperty,
+  defineUpdatedCollectionProperty,
   type CollectionPropertyDefinition,
   type CollectionSchema,
 } from "@/features/properties";
@@ -77,16 +78,9 @@ export function definePageCollectionProperties(
   schema: CollectionSchema,
 ): readonly CollectionPropertyDefinition<Page>[] {
   return [
-    defineOwnerDefinedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "collection",
-      getValue: (page) => page.meta.title,
-      key: "title",
-      label: schema.systemFields?.title?.label ?? m.collection_field_title(),
-      standard: { type: "text" },
+    defineTitleCollectionProperty({
+      getValue: (page: Page) => page.meta.title,
+      label: schema.systemFields?.title?.label,
     }),
     defineComputedCollectionProperty({
       capabilities: {
@@ -99,16 +93,8 @@ export function definePageCollectionProperties(
       label: m.collection_field_created(),
       standard: { display: "medium", type: "date" },
     }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "collection",
-      getValue: (page) => page.meta.updated,
-      key: "updated",
-      label: m.collection_field_updated(),
-      standard: { display: "medium", type: "date" },
+    defineUpdatedCollectionProperty({
+      getValue: (page: Page) => page.meta.updated,
     }),
     ...schema.columns.map((column) =>
       defineSchemaBackedCollectionProperty({

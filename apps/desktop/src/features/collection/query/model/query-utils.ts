@@ -1,5 +1,10 @@
 import type { CollectionSchema, PropertyType } from "@/features/properties";
-import { hasNewerStatusGroup, normalizeSchema } from "@/features/properties";
+import {
+  commonCollectionPropertyLabel,
+  hasNewerStatusGroup,
+  normalizeSchema,
+} from "@/features/properties";
+import * as m from "@/paraglide/messages.js";
 import type {
   CollectionView,
   FilterOp,
@@ -14,18 +19,45 @@ import type {
   ViewType,
 } from "./types";
 
-const SYSTEM_FILTER_FIELDS: QueryField[] = [
-  { name: "title", label: "Title", type: "text", kind: "system" },
-  { name: "description", label: "Description", type: "text", kind: "system" },
-  { name: "created", label: "Created", type: "date", kind: "system" },
-  { name: "updated", label: "Updated", type: "date", kind: "system" },
-];
-
-const SYSTEM_SORT_FIELDS: QueryField[] = [
-  { name: "title", label: "Title", type: "text", kind: "system" },
-  { name: "created", label: "Created", type: "date", kind: "system" },
-  { name: "updated", label: "Updated", type: "date", kind: "system" },
-];
+/** The system fields of Pages under the labels their properties have. */
+function systemQueryFields(
+  schema: CollectionSchema,
+  context: "filter" | "sort",
+): QueryField[] {
+  const title: QueryField = {
+    name: "title",
+    label:
+      schema.systemFields?.title?.label ||
+      commonCollectionPropertyLabel("title"),
+    type: "text",
+    kind: "system",
+  };
+  const dates: QueryField[] = [
+    {
+      name: "created",
+      label: m.collection_field_created(),
+      type: "date",
+      kind: "system",
+    },
+    {
+      name: "updated",
+      label: commonCollectionPropertyLabel("updated"),
+      type: "date",
+      kind: "system",
+    },
+  ];
+  if (context === "sort") return [title, ...dates];
+  return [
+    title,
+    {
+      name: "description",
+      label: m.collection_field_description(),
+      type: "text",
+      kind: "system",
+    },
+    ...dates,
+  ];
+}
 
 export const FILTER_OP_LABELS: Record<FilterOp, string> = {
   eq: "equals",
@@ -124,11 +156,11 @@ export function queryFields(
     }));
 
   if (context === "filter") {
-    return [...SYSTEM_FILTER_FIELDS, ...customFields];
+    return [...systemQueryFields(normalized, "filter"), ...customFields];
   }
   if (context === "sort") {
     return [
-      ...SYSTEM_SORT_FIELDS,
+      ...systemQueryFields(normalized, "sort"),
       ...customFields.filter((field) => field.type !== "multi_select"),
     ];
   }

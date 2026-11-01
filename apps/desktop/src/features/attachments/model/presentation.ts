@@ -7,6 +7,8 @@ import type {
 } from "@/features/collection";
 import {
   defineComputedCollectionProperty,
+  defineTitleCollectionProperty,
+  defineUpdatedCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
@@ -33,17 +35,7 @@ export function createAttachmentsPresentationDescriptor({
   ): void | Promise<void>;
 }): CollectionPresentationDescriptor<AttachmentItem> {
   const properties: readonly CollectionPropertyDefinition<AttachmentItem>[] = [
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "attachments",
-      getValue: (item) => item.displayName,
-      key: "name",
-      label: m.attachments_property_name(),
-      standard: { type: "text" },
-    }),
+    defineTitleCollectionProperty({ getValue: (item) => item.displayName }),
     defineComputedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
@@ -65,17 +57,7 @@ export function createAttachmentsPresentationDescriptor({
         type: "select",
       },
     }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "attachments",
-      getValue: (item) => item.modified,
-      key: "modified",
-      label: m.attachments_property_modified(),
-      standard: { display: "medium", type: "date" },
-    }),
+    defineUpdatedCollectionProperty({ getValue: (item) => item.modified }),
     {
       ...defineComputedCollectionProperty({
         capabilities: {
@@ -103,16 +85,16 @@ export function createAttachmentsPresentationDescriptor({
     layout: {
       density: "compact",
       kind: "table",
-      primaryProperty: "name",
+      primaryProperty: "title",
       hierarchy,
       ...(renderLeading ? { renderLeading } : {}),
-      visibleProperties: ["name", "type", "modified", "size"],
+      visibleProperties: ["title", "type", "updated", "size"],
     },
     onActivate,
     properties,
     query: {
       getSortTieBreakId: (item) => item.path,
-      defaultSort: [{ direction: "asc", propertyKey: "name" }],
+      defaultSort: [{ direction: "asc", propertyKey: "title" }],
       getSearchText: (item) =>
         `${item.displayName} ${attachmentKindLabel(item)}`,
     },

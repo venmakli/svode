@@ -22,7 +22,8 @@ import { PROPERTY_TYPE_ICONS } from "./property-type-meta";
 /**
  * Read-only properties of one item of a fixed Collection, built from the same
  * property definitions as its Table and List columns, followed by the item's
- * facts under their group labels. Empty facts and groups are not shown.
+ * facts under their group labels. Empty facts and groups are not shown, nor
+ * "Name", which the item's header already says.
  */
 export function CollectionPropertyPanel<Item>({
   factGroups = [],
@@ -35,6 +36,7 @@ export function CollectionPropertyPanel<Item>({
 }) {
   const visibleProperties = properties.filter(
     (property) =>
+      property.common !== "title" &&
       readCollectionPropertyApplicability(
         property as CollectionPropertyDefinition<unknown>,
         item,

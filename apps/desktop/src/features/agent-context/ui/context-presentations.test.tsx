@@ -174,22 +174,32 @@ function value(key: string, item: AgentContextItem, context?: "detail") {
 
 test("one set of properties in the column order of the contract", () => {
   expect(properties.map((property) => property.key)).toEqual([
-    "name",
+    "title",
     "type",
-    "providers",
-    "health",
+    "agents",
+    "state",
     "location",
-    "modified",
+    "updated",
   ]);
   const all = presentation("all");
   expect(all.layout.kind).toBe("table");
   expect(all.layout.visibleProperties).toEqual([
-    "name",
+    "title",
     "type",
-    "providers",
-    "health",
+    "agents",
+    "state",
     "location",
-    "modified",
+    "updated",
+  ]);
+  expect(
+    properties.map((property) => [property.common ?? null, property.label]),
+  ).toEqual([
+    ["title", "Name"],
+    [null, "Type"],
+    ["agents", "Agents"],
+    ["state", "Status"],
+    [null, "Location"],
+    ["updated", "Modified"],
   ]);
   // Every property filters and sorts with the standard operators.
   for (const property of properties) {
@@ -227,10 +237,10 @@ test("presets are layouts over the one set: All, Instructions, Skills, Plugins a
   expect(presentation("instructions").layout.kind).toBe("gallery");
   const skills = presentation("skills").layout;
   expect(skills.kind).toBe("gallery");
-  expect(skills.visibleProperties).toEqual(["location", "providers"]);
+  expect(skills.visibleProperties).toEqual(["location", "agents"]);
 });
 
-test("filter, sort and search work on Providers, Location and Status", () => {
+test("filter, sort and search work on Agents, Location and Status", () => {
   const all = presentation("all");
   const filtered = (
     filters: { propertyKey: string; operator: string; value?: unknown }[],
@@ -242,17 +252,15 @@ test("filter, sort and search work on Providers, Location and Status", () => {
     }).items.map((item) => item.id);
 
   expect(
-    filtered([
-      { operator: "contains", propertyKey: "providers", value: "Codex" },
-    ]),
+    filtered([{ operator: "contains", propertyKey: "agents", value: "Codex" }]),
   ).toEqual([codexAgents.id, spaceAgents.id, plugin.id]);
+  expect(filtered([{ operator: "is_empty", propertyKey: "agents" }])).toEqual([
+    shadowed.id,
+    disabledPlugin.id,
+    projectSkill.id,
+  ]);
   expect(
-    filtered([{ operator: "is_empty", propertyKey: "providers" }]),
-  ).toEqual([shadowed.id, disabledPlugin.id, projectSkill.id]);
-  expect(
-    filtered([
-      { operator: "eq", propertyKey: "health", value: "Has problems" },
-    ]),
+    filtered([{ operator: "eq", propertyKey: "state", value: "Has problems" }]),
   ).toEqual([shadowed.id]);
   expect(
     applyCollectionQuery({
@@ -308,31 +316,31 @@ test("Location is a short path: the Space root by name, home from ~", () => {
   );
 });
 
-test("Providers show agent icons, an empty value names its reason", () => {
-  expect(value("providers", spaceAgents).includes('aria-label="Codex"')).toBe(
+test("Agents show agent icons, an empty value names its reason", () => {
+  expect(value("agents", spaceAgents).includes('aria-label="Codex"')).toBe(
     true,
   );
   expect(
-    value("providers", shadowed).includes(
+    value("agents", shadowed).includes(
       "Shadowed by /workspace/docs/AGENTS.override.md",
     ),
   ).toBe(true);
   // Agents that find it without applying it are muted icons after the
   // providers, the reason on hover.
   expect(
-    value("providers", projectSkill).includes("Claude Code · off in Svode"),
+    value("agents", projectSkill).includes("Claude Code · off in Svode"),
   ).toBe(true);
-  expect(
-    value("providers", projectSkill).includes("data-agent-icon-muted"),
-  ).toBe(true);
+  expect(value("agents", projectSkill).includes("data-agent-icon-muted")).toBe(
+    true,
+  );
   expect(
     value(
-      "providers",
+      "agents",
       item({ providers: [], unapplied: { kind: "not_found" } }),
     ).includes("No enabled agent finds it"),
   ).toBe(true);
 
-  const detail = value("providers", projectSkill, "detail");
+  const detail = value("agents", projectSkill, "detail");
   expect(detail.includes("Claude Code · off in Svode")).toBe(true);
   expect(detail.includes("No enabled agent finds it")).toBe(false);
   // Without an opener there is no link to follow.
@@ -340,7 +348,7 @@ test("Providers show agent icons, an empty value names its reason", () => {
   const linked = createAgentContextItemProperties({
     agents,
     onOpenProviders: () => undefined,
-  }).find((property) => property.key === "providers")!;
+  }).find((property) => property.key === "agents")!;
   const linkedDetail = render(
     <CollectionPropertyValue
       context="detail"
@@ -351,18 +359,18 @@ test("Providers show agent icons, an empty value names its reason", () => {
   expect(linkedDetail.includes("Open Providers")).toBe(true);
 
   expect(
-    value("providers", disabledPlugin).includes(
+    value("agents", disabledPlugin).includes(
       "Turned off in the config of the enabled agents that find it",
     ),
   ).toBe(true);
   expect(
-    value("providers", plugin, "detail").includes(
+    value("agents", plugin, "detail").includes(
       "Codex keeps whether the plugin is on outside",
     ),
   ).toBe(true);
 
-  expect(value("health", spaceAgents)).toBe("");
-  expect(value("health", shadowed).includes("Has problems")).toBe(true);
+  expect(value("state", spaceAgents)).toBe("");
+  expect(value("state", shadowed).includes("Has problems")).toBe(true);
 });
 
 test("a skill some agents do not load names them and the missing field; without a description its card has no description line", () => {
@@ -400,14 +408,14 @@ test("a skill some agents do not load names them and the missing field; without 
     ],
   });
 
-  const providers = text(value("providers", nodesc));
+  const providers = text(value("agents", nodesc));
   expect(providers.includes("data-agent-icon-muted")).toBe(true);
   expect(providers.includes("Codex · doesn't load it: no description")).toBe(
     true,
   );
-  expect(text(value("health", nodesc)).includes("Has problems")).toBe(true);
+  expect(text(value("state", nodesc)).includes("Has problems")).toBe(true);
   expect(
-    text(value("health", nodesc, "detail")).includes(
+    text(value("state", nodesc, "detail")).includes(
       "Codex doesn't load it: no description",
     ),
   ).toBe(true);
@@ -443,7 +451,7 @@ test("a skill some agents do not load names them and the missing field; without 
   const linked = createAgentContextItemProperties({
     agents,
     onOpenProviders: () => undefined,
-  }).find((property) => property.key === "providers")!;
+  }).find((property) => property.key === "agents")!;
   const detail = text(
     render(
       <CollectionPropertyValue
@@ -525,7 +533,7 @@ test("MCP servers are a List of top-level declarations described by their transp
   const descriptor = runtime.instance.descriptor;
   const layout = descriptor.layout;
   if (layout.kind !== "list") throw new Error("list");
-  expect(layout.visibleProperties).toEqual(["location", "providers", "health"]);
+  expect(layout.visibleProperties).toEqual(["location", "agents", "state"]);
   // A server of a plugin is its component, not an item of the preset.
   expect(
     applyCollectionQuery({

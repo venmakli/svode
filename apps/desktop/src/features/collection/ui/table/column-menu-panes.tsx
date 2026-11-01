@@ -2,6 +2,7 @@ import { ArrowUpDown, EyeOff, Filter } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { FILTER_OP_LABELS } from "@/features/collection/query/model";
 import type { QueryFilter, QuerySort } from "@/features/collection/query/model";
+import { commonCollectionPropertyLabel } from "@/features/properties";
 import {
   SchemaMenuRow,
   SchemaMenuSection,
@@ -37,7 +38,9 @@ export function TitleColumnMainPane({
           onBlur={(event) => {
             const next = event.currentTarget.value.trim();
             if (!next) return;
-            onRename(next === m.collection_field_title() ? null : next);
+            onRename(
+              next === commonCollectionPropertyLabel("title") ? null : next,
+            );
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();

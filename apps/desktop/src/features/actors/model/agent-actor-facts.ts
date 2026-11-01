@@ -30,11 +30,6 @@ export type AgentActorModeFact =
   | { kind: "agent_default" };
 
 export interface AgentActorFacts {
-  /**
-   * This version can bind the agent; an agent it cannot, as a custom agent
-   * of a V1 catalog, is named by its id as it is.
-   */
-  bindable: boolean;
   /** The name of the model value of the binding; null without one. */
   model: string | null;
   /** Null for the participant's agent and an agent without modes. */
@@ -69,7 +64,6 @@ export function agentActorFacts(
   if (binding.kind === "participant") {
     const defaultAgent = sources.defaultAgent;
     return {
-      bindable: true,
       model: null,
       mode: null,
       readiness:
@@ -111,12 +105,10 @@ export function agentActorFacts(
       )) ||
     (modeSetting !== undefined &&
       binding.settings.some((value) => value.setting === modeSetting.id));
-  const bindable = sources.known.has(agent);
-  const readiness = bindable
+  const readiness = sources.known.has(agent)
     ? offerReadiness(agent, sources.offers)
     : "unavailable";
   return {
-    bindable,
     model: modelValue ? optionName(modelSetting, modelValue.value) : null,
     mode: mode
       ? { kind: "value", name: optionName(modeSetting, mode.value) }

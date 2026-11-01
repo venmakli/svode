@@ -32,7 +32,7 @@ import * as m from "@/paraglide/messages.js";
 
 import { agentContextMcpCommandText } from "../model/mcp-server";
 import type { AgentContextItem, AgentContextItemKind } from "../model/types";
-import { agentContextHealthWarnings } from "./health-property";
+import { agentContextHealthWarnings } from "./health-warnings";
 import {
   AgentContextItemIcon,
   agentContextItemDescription,
@@ -133,15 +133,15 @@ function presetLayout(
         ? { hierarchy: agentContextPluginHierarchy(expansion) }
         : {}),
       kind: "table",
-      primaryProperty: "name",
+      primaryProperty: "title",
       renderLeading,
       visibleProperties: [
-        "name",
+        "title",
         "type",
-        "providers",
-        "health",
+        "agents",
+        "state",
         "location",
-        "modified",
+        "updated",
       ],
     };
   }
@@ -156,7 +156,7 @@ function presetLayout(
       getTitle: (item) => item.name,
       kind: "list",
       renderLeading,
-      visibleProperties: ["location", "providers", "health"],
+      visibleProperties: ["location", "agents", "state"],
     };
   }
   return {
@@ -177,7 +177,7 @@ function presetLayout(
     kind: "gallery",
     renderLeading,
     renderOverlays: (item) => <ItemProblemsMarker item={item} />,
-    visibleProperties: ["location", "providers"],
+    visibleProperties: ["location", "agents"],
   };
 }
 

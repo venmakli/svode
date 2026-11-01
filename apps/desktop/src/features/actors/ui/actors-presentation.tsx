@@ -15,6 +15,7 @@ import {
 import {
   defineComputedCollectionProperty,
   defineOwnerDefinedCollectionProperty,
+  defineTitleCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
@@ -62,6 +63,7 @@ export function createActorsPresentationDescriptor({
   const contributionWithoutCommits = m.actors_contribution_no_commits();
   const properties: readonly CollectionPropertyDefinition<ActorCatalogItem>[] =
     [
+      defineTitleCollectionProperty({ getValue: (item) => item.displayName }),
       defineOwnerDefinedCollectionProperty({
         capabilities: {
           filter: { kind: "standard" },

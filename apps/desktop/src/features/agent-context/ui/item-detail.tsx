@@ -69,8 +69,8 @@ export interface AgentContextItemScreenOptions {
 /**
  * The screen of an item: identity, ⓘ and "Open with" in the top bar; a
  * skill, a plugin and an MCP server have a page-like header, an instruction
- * has none, since it would only repeat the identity. The panel shows every
- * property but the name, which the identity already says.
+ * has none, since it would only repeat the identity. The panel leaves out
+ * the name, which the identity already says.
  */
 export function createAgentContextItemScreen(
   item: AgentContextItem,
@@ -84,9 +84,8 @@ export function createAgentContextItemScreen(
         item={item}
         onOpenProviders={options.onOpenProviders}
         peek={options.peek}
-        properties={properties.filter((property) => property.key !== "name")}
+        properties={properties}
         selection={options.selection}
-        tableProperties={properties}
       />
     ),
     header:
@@ -119,14 +118,12 @@ function AgentContextItemDetail({
   peek,
   properties,
   selection,
-  tableProperties,
 }: {
   item: AgentContextItem;
   onOpenProviders?: () => void;
   peek: CollectionItemPeekController<AgentContextPeekTarget>;
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
   selection: AgentContextItemSelection;
-  tableProperties: readonly CollectionPropertyDefinition<AgentContextItem>[];
 }) {
   const factGroups: CollectionPropertyFactGroup[] = [];
   if (item.skill) factGroups.push(skillFrontmatterFacts(item.skill));
@@ -161,7 +158,7 @@ function AgentContextItemDetail({
               label: m.agent_context_tab_description(),
             },
             {
-              content: pluginComponentsContent(item, tableProperties, peek),
+              content: pluginComponentsContent(item, properties, peek),
               id: "components",
               label: m.agent_context_tab_components(),
             },

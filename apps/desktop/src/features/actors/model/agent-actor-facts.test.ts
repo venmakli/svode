@@ -81,7 +81,6 @@ function sources(
 
 test("an Agent names its model and device mode in the agent's own words", () => {
   expect(agentActorFacts(codex, sources())).toEqual({
-    bindable: true,
     model: "GPT-6 Sol",
     mode: { kind: "value", name: "Auto review" },
     readiness: "ready",
@@ -115,7 +114,6 @@ test("an agent without modes has no approval mode, and the participant's agent n
 
 test("without declarations the kept values show as they are", () => {
   expect(agentActorFacts(codex, sources({ declarations: new Map() }))).toEqual({
-    bindable: true,
     model: "gpt-6-sol",
     mode: { kind: "value", name: "agent" },
     readiness: "ready",
@@ -151,7 +149,6 @@ test("readiness follows the chat's offer of the agent", () => {
     sources(),
   );
   expect(custom.readiness).toBe("unavailable");
-  expect(custom.bindable).toBe(false);
 });
 
 test("a kept value the agent no longer declares, or one of its mode's setting in the catalog, is marked", () => {
@@ -168,7 +165,6 @@ test("a kept value the agent no longer declares, or one of its mode's setting in
       sources(),
     ),
   ).toEqual({
-    bindable: true,
     model: "gpt-4-old",
     mode: { kind: "value", name: "Auto review" },
     readiness: "value_not_declared",

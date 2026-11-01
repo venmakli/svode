@@ -26,7 +26,10 @@ import {
   normalizeSchema,
   resolveStandardPropertyColumn,
 } from "@/features/properties";
-import { PROPERTY_TYPE_ICONS } from "@/features/properties";
+import {
+  commonCollectionPropertyLabel,
+  PROPERTY_TYPE_ICONS,
+} from "@/features/properties";
 import { NEWER_PROPERTY_ICON } from "@/features/properties/display";
 import { ColumnMenuPopover } from "./column-menu";
 import { PropertyCell, TitleCell } from "./cells";
@@ -39,7 +42,6 @@ import {
   isNestedCollection,
   minColumnWidth,
 } from "./utils";
-import * as m from "@/paraglide/messages.js";
 
 interface TableColumnHeaderMeta extends Omit<
   ComponentProps<typeof ColumnHeader>,
@@ -145,7 +147,7 @@ export function useTableColumns({
         if (field === "title") {
           const label =
             properties.find((property) => property.key === "title")?.label ??
-            m.collection_field_title();
+            commonCollectionPropertyLabel("title");
           return {
             id: "title",
             size: columnSizing.title ?? 260,

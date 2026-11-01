@@ -16,6 +16,8 @@ import {
 import {
   defineComputedCollectionProperty,
   defineOwnerDefinedCollectionProperty,
+  defineStateCollectionProperty,
+  defineTitleCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
@@ -86,6 +88,7 @@ export function createRoutinesPresentationDescriptor({
       : null;
   };
   const properties: readonly CollectionPropertyDefinition<RoutineItem>[] = [
+    defineTitleCollectionProperty({ getValue: (item) => item.name }),
     defineOwnerDefinedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
@@ -183,19 +186,14 @@ export function createRoutinesPresentationDescriptor({
       }),
       getAccessibilityLabel: (item) =>
         m.routines_enabled_accessibility({ name: item.name }),
-      getApplicability: (item) => {
-        if (!item.valid || !item.definition) {
-          return {
-            label: m.routines_unavailable(),
-            status: "unavailable",
-          };
-        }
-        if (item.definition.trigger.type === "manual") {
-          return { status: "hidden" };
-        }
-        return { status: "applicable" };
-      },
+      // A Routine with problems keeps its saved value, and the switch is
+      // off-limits: "Status" says why.
+      getApplicability: (item) =>
+        item.definition && item.definition.trigger.type !== "manual"
+          ? { status: "applicable" }
+          : { status: "hidden" },
     },
+    defineStateCollectionProperty({ getProblems: routineProblems }),
   ];
 
   return {
@@ -237,6 +235,7 @@ export function createRoutinesPresentationDescriptor({
         "last-run",
         "next-run",
         "enabled",
+        "state",
       ],
     },
     query: {
@@ -271,6 +270,14 @@ export function createRoutinesPresentationDescriptor({
       },
     ],
   };
+}
+
+/**
+ * The problems of a Routine's definition: every invalid definition comes
+ * with the diagnostics that make it so.
+ */
+function routineProblems(item: RoutineItem): readonly string[] {
+  return [...new Set(item.diagnostics.map((diagnostic) => diagnostic.message))];
 }
 
 function routineTriggerTypeLabel(item: RoutineItem) {

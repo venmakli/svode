@@ -97,9 +97,23 @@ export interface CollectionPropertyCapabilities<Item> {
   sort?: CollectionPropertySortSemantics<Item>;
 }
 
+/**
+ * A common property of the catalog (Stage 11 `04`, 4.A): one meaning in
+ * several Collections, declared once.
+ */
+export type CommonCollectionPropertyId =
+  | "title"
+  | "updated"
+  | "agent"
+  | "agents"
+  | "state"
+  | "space";
+
 export interface CollectionPropertyDefinition<Item> {
   key: string;
   label: string;
+  /** Set by the catalog builders only: the common property this one is. */
+  common?: CommonCollectionPropertyId;
   origin: CollectionPropertyOrigin;
   owner: CollectionPropertyOwner;
   semantics: CollectionPropertyValueSemantics<Item>;

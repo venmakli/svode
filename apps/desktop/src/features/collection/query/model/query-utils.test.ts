@@ -18,6 +18,32 @@ test("queryFields exposes only groupable custom fields for board groups", () => 
   expect(fields).toEqual(["Status", "Stage", "Owner"]);
 });
 
+test("the system fields of Pages keep their keys under the labels of their properties", () => {
+  const fields = (context: "filter" | "sort", input = schema()) =>
+    queryFields(input, context)
+      .filter((field) => field.kind === "system")
+      .map((field) => [field.name, field.label]);
+
+  expect(fields("filter")).toEqual([
+    ["title", "Name"],
+    ["description", "Description"],
+    ["created", "Created"],
+    // The key stays `updated`; the label is the one "Modified".
+    ["updated", "Modified"],
+  ]);
+  expect(fields("sort")).toEqual([
+    ["title", "Name"],
+    ["created", "Created"],
+    ["updated", "Modified"],
+  ]);
+  expect(
+    fields("sort", {
+      ...schema(),
+      systemFields: { title: { label: "Task" } },
+    })[0],
+  ).toEqual(["title", "Task"]);
+});
+
 test("validateQuery separates invalid filters, sorts, and non-board grouping", () => {
   const result = validateQuery(schema(), "table", {
     name: "Main",

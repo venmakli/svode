@@ -459,7 +459,7 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         [...doc.querySelectorAll("[data-collection-panel-property]")].map(
           (row) => row.getAttribute("data-collection-panel-property"),
         ),
-      ).toEqual(["type", "providers", "health", "location", "modified"]);
+      ).toEqual(["type", "agents", "location", "updated"]);
 
       // Skill: identity in the top bar, a page-like header below it.
       await open(skill);
@@ -860,11 +860,11 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
       await env.open(unread);
 
       const providers = doc.querySelector<HTMLElement>(
-        "[data-agent-context-providers-detail]",
+        "[data-agent-property-detail]",
       )!;
       // The agent off in Svode that reads it is muted, the reason on hover.
       expect(
-        providers.querySelector('[data-agent-context-idle-agent="claude-code"]')
+        providers.querySelector('[data-agent-property-idle="claude-code"]')
           ?.textContent,
       ).toBe("Claude CodeClaude Code · off in Svode");
       expect(Boolean(providers.querySelector("[data-agent-icon-muted]"))).toBe(
@@ -940,23 +940,23 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         doc.querySelector("[data-object-content-header]")?.textContent,
       ).toBe("nodesc");
       const providers = doc.querySelector<HTMLElement>(
-        "[data-agent-context-providers-detail]",
+        "[data-agent-property-detail]",
       )!;
       expect(
-        providers.querySelector('[data-agent-context-idle-agent="codex"]')
+        providers.querySelector('[data-agent-property-idle="codex"]')
           ?.textContent,
       ).toBe("CodexCodex · doesn't load it: no description");
       // The rejection replaces "off in Svode": enabling the agent would not
       // apply the skill, so it leads nowhere.
       expect(
-        providers.querySelector('[data-agent-context-idle-agent="claude-code"]')
+        providers.querySelector('[data-agent-property-idle="claude-code"]')
           ?.textContent,
       ).toBe(
         "Claude CodeClaude Code · doesn't load it: no name and description",
       );
       expect(providers.querySelector("button")).toBe(null);
       expect(
-        doc.querySelector("[data-agent-context-health]")?.textContent,
+        doc.querySelector("[data-collection-state-problems]")?.textContent,
       ).toBe(
         "Has problemsCodex doesn't load it: no descriptionClaude Code doesn't load it: no name and description",
       );
@@ -1338,18 +1338,18 @@ if (process.env.SVODE_AGENT_CONTEXT_PEEK_DOM !== "1") {
         topBar().querySelector("[data-collection-item-info-trigger]");
       await activate(unread);
       expect(
-        Boolean(doc.querySelector("[data-agent-context-providers-reason]")),
+        Boolean(doc.querySelector("[data-agent-property-empty-reason]")),
       ).toBe(true);
       expect(info()).toBe(null);
       await refresh(
         snapshotOf([{ ...skill, description: "Review every change." }, plugin]),
       );
-      expect(doc.querySelector("[data-agent-context-providers-reason]")).toBe(
+      expect(doc.querySelector("[data-agent-property-empty-reason]")).toBe(
         null,
       );
       expect(
         doc
-          .querySelector("[data-agent-context-providers-detail]")
+          .querySelector("[data-agent-property-detail]")
           ?.textContent?.includes("Codex"),
       ).toBe(true);
       expect(Boolean(info())).toBe(true);

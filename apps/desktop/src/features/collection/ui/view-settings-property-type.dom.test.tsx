@@ -71,6 +71,8 @@ if (!isolatedProcess) {
 
   const { ViewSettingsPopover } = await import("./view-settings-popover");
   const m = await import("@/paraglide/messages.js");
+  const { commonCollectionPropertyLabel } =
+    await import("@/features/properties");
 
   const schema: CollectionSchema = {
     columns: [
@@ -274,11 +276,14 @@ if (!isolatedProcess) {
     const ui = await renderSettings();
     try {
       const fixedTypes: Array<[string, string]> = [
-        [m.collection_field_title(), m.table_property_type_text()],
+        [commonCollectionPropertyLabel("title"), m.table_property_type_text()],
         [m.collection_field_icon(), m.collection_field_type_icon()],
         [m.collection_field_description(), m.table_property_type_text()],
         [m.collection_field_created(), m.table_property_type_date()],
-        [m.collection_field_updated(), m.table_property_type_date()],
+        [
+          commonCollectionPropertyLabel("updated"),
+          m.table_property_type_date(),
+        ],
       ];
       for (const [field, type] of fixedTypes) {
         await ui.reopen();

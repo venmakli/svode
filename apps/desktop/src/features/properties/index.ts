@@ -50,7 +50,17 @@ export type {
   CollectionPropertySortSemantics,
   CollectionPropertyValueSemantics,
   CollectionStandardPropertySemantics,
+  CommonCollectionPropertyId,
 } from "./model/collection-property";
+export type { CommonCollectionPropertyValue } from "./model/common-property";
+export {
+  commonCollectionPropertyLabel,
+  defineCommonCollectionProperty,
+  defineSpaceCollectionProperty,
+  defineTitleCollectionProperty,
+  defineUpdatedCollectionProperty,
+} from "./model/common-property";
+export { defineStateCollectionProperty } from "./ui/state-property";
 export {
   defineComputedCollectionProperty,
   defineDomainSpecificCollectionProperty,

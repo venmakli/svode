@@ -1,3 +1,4 @@
+import type { AgentPropertyValue } from "@/features/agent-adapters";
 import * as m from "@/paraglide/messages.js";
 
 import type {
@@ -7,19 +8,15 @@ import type {
 import type { AgentActorBinding } from "../model/agent-actor-types";
 
 /**
- * The "Agent" of an Agent: the binding's agent with its model, an agent id
- * this version does not know as it is, or the participant's agent.
+ * The "Agent" of an Agent: the binding's agent with its model, or the
+ * participant's agent.
  */
-export function agentActorAgentLabel(
+export function agentActorAgentValue(
   binding: AgentActorBinding,
   facts: AgentActorFacts,
-  agentName: (agent: string) => string,
-) {
-  if (binding.kind === "participant") return m.agent_actors_participant_agent();
-  const agent = facts.bindable ? agentName(binding.agent) : binding.agent;
-  return facts.model
-    ? m.agent_actors_agent_with_model({ agent, model: facts.model })
-    : agent;
+): AgentPropertyValue {
+  if (binding.kind === "participant") return { kind: "participant" };
+  return { agent: binding.agent, detail: facts.model, kind: "agent" };
 }
 
 /** The "Approval mode" of an Agent: empty without the agent's modes. */

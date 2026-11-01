@@ -72,16 +72,22 @@ test("Page Collection shares Properties and descriptor activation across all fiv
       () => "Projects/tasks.collection/one.md:Projects/tasks.collection/one.md",
     ),
   );
-  expect(definition.properties.map(({ key, origin }) => [key, origin])).toEqual(
-    [
-      ["title", "owner_defined"],
-      ["created", "computed"],
-      ["updated", "computed"],
-      ["Status", "schema_backed"],
-      ["Due", "schema_backed"],
-      ["Size", "schema_backed"],
-    ],
-  );
+  expect(
+    definition.properties.map(({ common, key, label, origin }) => [
+      key,
+      origin,
+      common ?? null,
+      label,
+    ]),
+  ).toEqual([
+    ["title", "computed", "title", "Name"],
+    ["created", "computed", null, "Created"],
+    // The storage key stays `updated`; only the label is the catalog's.
+    ["updated", "computed", "updated", "Modified"],
+    ["Status", "schema_backed", null, "Status"],
+    ["Due", "schema_backed", null, "Due"],
+    ["Size", "schema_backed", null, "Size"],
+  ]);
   expect(definition.presentations[0]?.layout).toEqual({
     density: "comfortable",
     kind: "table",
@@ -99,6 +105,19 @@ test("Page Collection shares Properties and descriptor activation across all fiv
         ).diagnostics,
     ),
   ).toEqual([[], [], [], [], []]);
+});
+
+test("a title the user renamed in the schema keeps its name", () => {
+  const definition = definePageCollection({
+    collectionPath: "Projects/tasks.collection",
+    onActivate: () => undefined,
+    schema: { columns: [], systemFields: { title: { label: "Task" } } },
+    views: [],
+  });
+  const title = definition.properties.find(
+    (property) => property.key === "title",
+  );
+  expect([title?.common, title?.label]).toEqual(["title", "Task"]);
 });
 
 test("Page Collection activation failure stays inside the interaction boundary", async () => {

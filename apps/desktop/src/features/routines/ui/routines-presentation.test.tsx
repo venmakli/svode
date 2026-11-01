@@ -129,6 +129,29 @@ const eventRoutine: RoutineItem = {
   name: "Triage new items",
 };
 
+const withProblems: RoutineItem = {
+  ...eventRoutine,
+  definition: {
+    ...eventRoutine.definition!,
+    action: { executor: "agent:missing", type: "run_agent" },
+    name: "Broken executor",
+  },
+  definitionPath: ".routines/broken-executor.md",
+  diagnostics: [
+    {
+      code: "routine_executor_unknown",
+      field: "action.executor",
+      message: "executor agent:missing is not in the catalog",
+      path: ".routines/broken-executor.md",
+    },
+  ],
+  filename: "broken-executor.md",
+  fingerprint: "fingerprint:problems",
+  id: "routine:problems",
+  name: "Broken executor",
+  valid: false,
+};
+
 function actions(calls: string[]): RoutinePresentationActions {
   return {
     createState: { status: "idle" },
@@ -159,13 +182,22 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   expect(descriptor.id).toBe("all");
   expect(descriptor.layout.kind).toBe("list");
   expect(descriptor.properties.map((property) => property.key)).toEqual([
+    "title",
     "trigger",
     "action",
     "executor",
     "last-run",
     "next-run",
     "enabled",
+    "state",
   ]);
+  expect(
+    descriptor.properties.find((property) => property.key === "executor")
+      ?.label,
+  ).toBe("Executor");
+  expect(
+    descriptor.properties.flatMap((property) => property.common ?? []),
+  ).toEqual(["title", "state"]);
   expect(descriptor.layout.visibleProperties).toEqual([
     "trigger",
     "action",
@@ -173,6 +205,7 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     "last-run",
     "next-run",
     "enabled",
+    "state",
   ]);
   for (const key of ["trigger", "next-run"]) {
     const semantics = descriptor.properties.find(
@@ -181,7 +214,9 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     expect(semantics?.kind).toBe("standard");
     expect(semantics && "render" in semantics).toBe(false);
   }
-  const enabledField = descriptor.properties.at(-1)!;
+  const enabledField = descriptor.properties.find(
+    (property) => property.key === "enabled",
+  )!;
   expect(enabledField.semantics).toEqual({
     kind: "standard",
     standard: { display: "switch", type: "boolean" },
@@ -192,9 +227,13 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   expect(enabledField.getApplicability?.(review)).toEqual({
     status: "hidden",
   });
+  // Without a readable definition there is no saved value to show.
   expect(enabledField.getApplicability?.(invalid)).toEqual({
-    label: "Unavailable",
-    status: "unavailable",
+    status: "hidden",
+  });
+  // A definition with problems keeps its saved value.
+  expect(enabledField.getApplicability?.(withProblems)).toEqual({
+    status: "applicable",
   });
   expect(enabledField.getAccessibilityLabel?.(scheduled)).toBe(
     "Enabled: Daily summary",
@@ -473,21 +512,17 @@ test("routines render the common toolbar and a single fixed All list", () => {
   expect(markup.includes('role="checkbox"')).toBe(false);
 });
 
-test("manual routines omit enabled while invalid routines render a passive marker", () => {
+test("manual routines omit enabled; a routine with problems keeps its saved switch, off-limits, and says Has problems", () => {
   const routineActions = actions([]);
-  routineActions.getEnabledState = (item) => {
-    if (item.id !== scheduled.id) {
-      throw new Error("passive items must not read control state");
-    }
-    return { status: "idle" };
-  };
+  routineActions.getEnabledState = (item) =>
+    item.valid ? { status: "idle" } : { reason: "invalid", status: "disabled" };
   const presentation = createRoutinesPresentation({
     executors,
     actions: routineActions,
     onActivate: () => undefined,
     state: {
       phase: "ready",
-      items: [scheduled, eventRoutine, review, invalid],
+      items: [scheduled, eventRoutine, review, invalid, withProblems],
     },
   });
   const instance: CollectionInstance = {
@@ -512,13 +547,23 @@ test("manual routines omit enabled while invalid routines render a passive marke
     </TooltipProvider>,
   );
 
-  expect(markup.match(/role="switch"/g)?.length).toBe(2);
+  expect(markup.match(/role="switch"/g)?.length).toBe(3);
   expect(markup.includes('role="checkbox"')).toBe(false);
   expect(markup.includes("Not applicable")).toBe(false);
+  expect(markup.includes("data-collection-property-applicability")).toBe(false);
+  expect(markup.includes("Unavailable")).toBe(false);
+  const problemsRow = markup.slice(
+    markup.indexOf('data-collection-row="routine:problems"'),
+  );
   expect(
-    markup.includes('data-collection-property-applicability="unavailable"'),
+    /role="switch"[^>]*aria-checked="true"[^>]*disabled=""/.test(problemsRow) ||
+      /disabled=""[^>]*role="switch"[^>]*aria-checked="true"/.test(problemsRow),
   ).toBe(true);
-  expect(markup.includes("Unavailable")).toBe(true);
+  expect(markup.match(/data-collection-state-problems/g)?.length).toBe(2);
+  expect(markup.includes("Has problems")).toBe(true);
+  expect(markup.includes("executor agent:missing is not in the catalog")).toBe(
+    true,
+  );
   expect(markup.includes("flex-wrap")).toBe(true);
 });
 

@@ -1,4 +1,9 @@
-import type { AgentAdapterDictionary } from "@/features/agent-adapters";
+import {
+  agentPropertyLabel,
+  defineAgentCollectionProperty,
+  type AgentAdapterDictionary,
+  type AgentPropertyValue,
+} from "@/features/agent-adapters";
 import {
   defineCollectionPresentation,
   type CollectionActionState,
@@ -8,7 +13,8 @@ import {
 import { AgentAvatar } from "@/features/identity";
 import {
   defineComputedCollectionProperty,
-  defineOwnerDefinedCollectionProperty,
+  defineSpaceCollectionProperty,
+  defineTitleCollectionProperty,
   type CollectionPropertyDefinition,
 } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
@@ -18,7 +24,7 @@ import type { AgentActorFacts } from "../model/agent-actor-facts";
 import type { AgentActorItem } from "../model/agent-actor-types";
 import {
   AGENT_ACTOR_READINESS,
-  agentActorAgentLabel,
+  agentActorAgentValue,
   agentActorModeLabel,
   agentActorReadinessLabel,
 } from "./agent-actor-copy";
@@ -77,10 +83,10 @@ export function createAgentActorsPresentationDescriptor({
   onActivate?: CollectionPresentationDescriptor<AgentActorItem>["onActivate"];
   items: readonly AgentActorItem[];
 }): CollectionPresentationDescriptor<AgentActorItem> {
+  const agentValue = (item: AgentActorItem): AgentPropertyValue =>
+    agentActorAgentValue(item.binding, facts(item));
   const agentLabel = (item: AgentActorItem) =>
-    agentActorAgentLabel(item.binding, facts(item), (agent) =>
-      agents.label(agent),
-    );
+    agentPropertyLabel(agents, agentValue(item));
   const modeLabel = (item: AgentActorItem) => agentActorModeLabel(facts(item));
   const readinessLabel = (item: AgentActorItem) => {
     const readiness = facts(item).readiness;
@@ -91,20 +97,8 @@ export function createAgentActorsPresentationDescriptor({
       (name) => ({ color: "neutral" as const, name }),
     );
   const properties: readonly CollectionPropertyDefinition<AgentActorItem>[] = [
-    defineOwnerDefinedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "actors",
-      getValue: agentLabel,
-      key: "agent",
-      label: m.agent_actors_agent_label(),
-      standard: {
-        options: options(items.map(agentLabel)),
-        type: "select",
-      },
-    }),
+    defineTitleCollectionProperty({ getValue: (item) => item.name }),
+    defineAgentCollectionProperty({ agents, getAgent: agentValue, items }),
     defineComputedCollectionProperty({
       capabilities: {
         filter: { kind: "standard" },
@@ -136,19 +130,9 @@ export function createAgentActorsPresentationDescriptor({
         type: "select",
       },
     }),
-    defineOwnerDefinedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "actors",
+    defineSpaceCollectionProperty({
       getValue: (item) => item.ownerLabel,
-      key: "space",
-      label: m.agent_actors_field_space(),
-      standard: {
-        options: options(items.map((item) => item.ownerLabel)),
-        type: "select",
-      },
+      items,
     }),
   ];
 

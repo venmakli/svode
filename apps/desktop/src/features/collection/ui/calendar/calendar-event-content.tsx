@@ -13,7 +13,11 @@ import {
 } from "@/components/ui/tooltip";
 import type { Page } from "@/features/page";
 import { pageNameConflictDisplayPath } from "@/features/page/page-api";
-import { validatePropertyValue, type Column } from "@/features/properties";
+import {
+  commonCollectionPropertyLabel,
+  validatePropertyValue,
+  type Column,
+} from "@/features/properties";
 import { PropertyControl } from "@/features/properties/control";
 import { PropertyValue } from "@/features/properties/display";
 import { cn } from "@/shared/lib/utils";
@@ -284,7 +288,9 @@ function calendarColumnValue(item: Page, column: Column) {
 
 function calendarColumnLabel(column: Column) {
   if (column.name === "created") return m.collection_field_created();
-  if (column.name === "updated") return m.collection_field_updated();
+  if (column.name === "updated") {
+    return commonCollectionPropertyLabel("updated");
+  }
   return column.name;
 }
 

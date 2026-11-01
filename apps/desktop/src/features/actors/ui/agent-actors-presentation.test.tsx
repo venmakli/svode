@@ -71,16 +71,23 @@ test("Agent Actors uses the fixed schema and one shared edit/delete descriptor s
 
   expect(descriptor.id).toBe("agents");
   expect(descriptor.properties.map((property) => property.key)).toEqual([
+    "title",
     "agent",
     "approval",
     "status",
     "space",
   ]);
-  expect(descriptor.properties.map((property) => property.label)).toEqual([
-    "Agent",
-    "Approval mode",
-    "Readiness",
-    "Space",
+  expect(
+    descriptor.properties.map((property) => [
+      property.common ?? null,
+      property.label,
+    ]),
+  ).toEqual([
+    ["title", "Name"],
+    ["agent", "Agent"],
+    [null, "Approval mode"],
+    [null, "Readiness"],
+    ["space", "Space"],
   ]);
   expect(
     descriptor.layout.kind === "list" && descriptor.layout.visibleProperties,
@@ -107,7 +114,8 @@ test("Agent Actors show the agent with its model, the device mode in the agent's
     descriptor.properties
       .find((property) => property.key === key)
       ?.getValue(item);
-  expect(value("agent", own)).toBe("Codex · GPT-5.4");
+  // The model is said next to the agent; filter and sort go by the agent.
+  expect(value("agent", own)).toBe("Codex");
   expect(value("approval", own)).toBe("Auto review");
   expect(value("status", own)).toBe("Ready");
   expect(value("agent", participant)).toBe("Participant's agent");
@@ -204,13 +212,11 @@ test("Agent Actors default order and search preserve owner provenance", () => {
 function facts(item: AgentActorItem): AgentActorFacts {
   return item.binding.kind === "participant"
     ? {
-        bindable: true,
         model: null,
         mode: null,
         readiness: "default_agent_missing",
       }
     : {
-        bindable: true,
         model: "GPT-5.4",
         mode: { kind: "value", name: "Auto review" },
         readiness: "ready",
