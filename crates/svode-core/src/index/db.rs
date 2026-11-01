@@ -78,7 +78,12 @@ use super::IndexError;
 /// Bumped to 22 in Stage 11 `04` (4.1): renames the Page table `entries`
 /// to `pages`, its FTS table to `pages_fts` and the column `is_entry_head`
 /// to `is_item_head` after the vocabulary of Pages and Collection items.
-pub const SCHEMA_VERSION: i64 = 22;
+///
+/// Bumped to 23 in Stage 11 `04` (4.4): adds the Page column `folded_text`,
+/// the title, description and fields lowercased by Unicode, which free text
+/// filters and text sorts of Collection queries compare instead of the
+/// ASCII-only SQLite `LOWER`, `LIKE` and `NOCASE`.
+pub const SCHEMA_VERSION: i64 = 23;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaStatus {
@@ -326,6 +331,7 @@ pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), IndexError> {
             in_collection        INTEGER NOT NULL,
             is_item_head        INTEGER NOT NULL,
             fields               TEXT NOT NULL,
+            folded_text          TEXT NOT NULL DEFAULT '{}',
             body_preview         TEXT,
             is_discoverable      INTEGER NOT NULL
         )
@@ -796,6 +802,33 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(stale_rows, 0);
+    }
+
+    #[tokio::test]
+    async fn index_of_version_22_is_rebuilt_with_the_folded_text_column() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let db_path = temp.path().join("index.db");
+        let legacy = create_pool(&db_path).await.unwrap();
+        sqlx::raw_sql(include_str!("fixtures/index-v22.sql"))
+            .execute(&legacy)
+            .await
+            .unwrap();
+        close_pool(&legacy).await;
+
+        let replacement = crate::index::open_prepared_pool(&db_path).await.unwrap();
+
+        assert_eq!(
+            schema_status(&replacement).await.unwrap(),
+            SchemaStatus::Current
+        );
+        let folded: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'folded_text'",
+        )
+        .fetch_one(&replacement)
+        .await
+        .unwrap();
+        assert_eq!(folded, 1);
+        close_pool(&replacement).await;
     }
 
     #[tokio::test]

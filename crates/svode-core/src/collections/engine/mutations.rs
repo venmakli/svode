@@ -118,6 +118,9 @@ pub fn prepare_initial_collection_schema(
     }
     normalize_schema(&mut schema);
     validate_schema(&schema)?;
+    for view in &schema.views {
+        crate::collections::schema_validation::reject_multi_value_contains_in_view(&schema, view)?;
+    }
     validate_schema_relations_in_space(space, project_path, collection_path, &schema)?;
     let mut paths = schema_mutation_paths(space, collection_path, false)?;
     for column in &schema.columns {

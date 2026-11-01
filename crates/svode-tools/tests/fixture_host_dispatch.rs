@@ -1524,6 +1524,89 @@ async fn collection_schema_and_query_read_the_host_index() {
 }
 
 #[tokio::test]
+async fn query_filters_follow_the_unified_semantics() {
+    let fixture = index_fixture();
+    let host = indexed_host(&fixture, FixtureHost::new(None)).await;
+    let target = root_target(&fixture);
+    let query = |filter: Value| {
+        call_tool(
+            &host,
+            Some(&target),
+            "query_collection_items",
+            json!({ "collectionPath": "tasks", "filter": filter }),
+        )
+    };
+
+    // Free text ignores case.
+    let filtered = query(json!([{ "field": "Status", "op": "eq", "value": "dONE" }])).await;
+    assert_eq!(titles(&structured(&filtered)["items"]), vec!["Beta"]);
+
+    // `contains` takes one value; several values belong to `contains_any`.
+    let added = call_tool(
+        &host,
+        Some(&target),
+        "add_collection_column",
+        json!({
+            "collectionPath": "tasks",
+            "column": { "name": "Tags", "type": "multi_select", "options": [{ "name": "Red" }, { "name": "Blue" }] }
+        }),
+    )
+    .await;
+    structured(&added);
+    let refused = |result: &ToolCallResult, replacement: &str| {
+        assert_eq!(error_code(result), "SVODE_ERROR");
+        let message = result.structured_content.as_ref().unwrap()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            message.contains("takes one value") && message.contains(replacement),
+            "{message}"
+        );
+    };
+    refused(
+        &query(json!([{ "field": "Tags", "op": "contains", "values": ["Red", "Blue"] }])).await,
+        "contains_any",
+    );
+    let schema_before = read(&fixture, "tasks/schema.yaml");
+    refused(
+        &call_tool(
+            &host,
+            Some(&target),
+            "update_collection_view",
+            json!({
+                "collectionPath": "tasks",
+                "viewName": "Table",
+                "patch": { "filter": [{ "field": "Tags", "op": "not_contains", "value": ["Red", "Blue"] }] }
+            }),
+        )
+        .await,
+        "not_contains_any",
+    );
+    refused(
+        &call_tool(
+            &host,
+            Some(&target),
+            "add_collection_view",
+            json!({
+                "collectionPath": "tasks",
+                "view": {
+                    "type": "table",
+                    "name": "Tagged",
+                    "filter": [{ "field": "Tags", "op": "contains", "values": ["Red", "Blue"] }]
+                }
+            }),
+        )
+        .await,
+        "contains_any",
+    );
+    assert_eq!(read(&fixture, "tasks/schema.yaml"), schema_before);
+    let any =
+        query(json!([{ "field": "Tags", "op": "contains_any", "values": ["Red", "Blue"] }])).await;
+    assert!(titles(&structured(&any)["items"]).is_empty());
+}
+
+#[tokio::test]
 async fn search_and_knowledge_stay_inside_the_frozen_scope() {
     let fixture = index_fixture();
     let host = indexed_host(&fixture, FixtureHost::new(None)).await;

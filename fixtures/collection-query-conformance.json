@@ -1,0 +1,1098 @@
+{
+  "description": "Conformance fixtures of the Collection query semantics (Stage 11 04, 4.C). The svode-core collections query engine (crates/svode-core/tests/collection_query_conformance.rs) and the standard semantics of features/properties (apps/desktop/src/features/properties/model/standard-query.conformance.test.ts) run every case. A filter case lists the matching item ids in any order or is invalid for both engines; a sort case lists the ids in order.",
+  "suites": [
+    {
+      "name": "free text",
+      "columns": [
+        { "name": "Name", "type": "text" },
+        { "name": "Site", "type": "url" },
+        { "name": "Mail", "type": "email" },
+        { "name": "Phone", "type": "phone" }
+      ],
+      "items": [
+        {
+          "id": "a",
+          "title": "Привет мир",
+          "description": "Первая заметка",
+          "fields": {
+            "Name": "Ёлка",
+            "Site": "https://Example.com/Path",
+            "Mail": "Anna@Example.com",
+            "Phone": "+7 (900) 123-45-67"
+          }
+        },
+        {
+          "id": "b",
+          "title": "ПРИВЕТ",
+          "description": "ВТОРАЯ запись",
+          "fields": {
+            "Name": "елка",
+            "Site": "https://other.org",
+            "Mail": "boris@mail.ru",
+            "Phone": "8 900 000"
+          }
+        },
+        {
+          "id": "c",
+          "title": "apple",
+          "description": "",
+          "fields": { "Name": "Straße", "Site": "", "Mail": "", "Phone": "" }
+        },
+        { "id": "d", "title": "Zebra", "fields": {} },
+        {
+          "id": "e",
+          "title": "Émile",
+          "description": "Другая",
+          "fields": {
+            "Name": "  пробел",
+            "Site": "HTTPS://EXAMPLE.COM",
+            "Mail": "ANNA@EXAMPLE.COM",
+            "Phone": "123"
+          }
+        }
+      ],
+      "filters": [
+        {
+          "name": "title eq ignores case",
+          "filter": [{ "field": "title", "op": "eq", "value": "привет" }],
+          "expect": ["b"]
+        },
+        {
+          "name": "title neq ignores case and skips empty",
+          "filter": [{ "field": "title", "op": "neq", "value": "привет" }],
+          "expect": ["a", "c", "d", "e"]
+        },
+        {
+          "name": "title contains ignores case",
+          "filter": [{ "field": "title", "op": "contains", "value": "ПРИВ" }],
+          "expect": ["a", "b"]
+        },
+        {
+          "name": "title not_contains skips empty",
+          "filter": [
+            { "field": "title", "op": "not_contains", "value": "привет" }
+          ],
+          "expect": ["c", "d", "e"]
+        },
+        {
+          "name": "title is_empty",
+          "filter": [{ "field": "title", "op": "is_empty" }],
+          "expect": []
+        },
+        {
+          "name": "title is_not_empty",
+          "filter": [{ "field": "title", "op": "is_not_empty" }],
+          "expect": ["a", "b", "c", "d", "e"]
+        },
+        {
+          "name": "title eq outside ASCII Latin",
+          "filter": [{ "field": "title", "op": "eq", "value": "émile" }],
+          "expect": ["e"]
+        },
+        {
+          "name": "description eq ignores case",
+          "filter": [
+            { "field": "description", "op": "eq", "value": "вторая запись" }
+          ],
+          "expect": ["b"]
+        },
+        {
+          "name": "description neq ignores case and skips empty",
+          "filter": [
+            { "field": "description", "op": "neq", "value": "первая заметка" }
+          ],
+          "expect": ["b", "e"]
+        },
+        {
+          "name": "description contains ignores case",
+          "filter": [
+            { "field": "description", "op": "contains", "value": "ЗАП" }
+          ],
+          "expect": ["b"]
+        },
+        {
+          "name": "description not_contains skips empty",
+          "filter": [
+            { "field": "description", "op": "not_contains", "value": "запись" }
+          ],
+          "expect": ["a", "e"]
+        },
+        {
+          "name": "description is_empty",
+          "filter": [{ "field": "description", "op": "is_empty" }],
+          "expect": ["c", "d"]
+        },
+        {
+          "name": "description is_not_empty",
+          "filter": [{ "field": "description", "op": "is_not_empty" }],
+          "expect": ["a", "b", "e"]
+        },
+        {
+          "name": "Name eq ignores case",
+          "filter": [{ "field": "Name", "op": "eq", "value": "ЁЛКА" }],
+          "expect": ["a"]
+        },
+        {
+          "name": "Name neq ignores case and skips empty",
+          "filter": [{ "field": "Name", "op": "neq", "value": "ёлка" }],
+          "expect": ["b", "c", "e"]
+        },
+        {
+          "name": "Name contains ignores case",
+          "filter": [{ "field": "Name", "op": "contains", "value": "ЛК" }],
+          "expect": ["a", "b"]
+        },
+        {
+          "name": "Name not_contains skips empty",
+          "filter": [{ "field": "Name", "op": "not_contains", "value": "ёл" }],
+          "expect": ["b", "c", "e"]
+        },
+        {
+          "name": "Name is_empty",
+          "filter": [{ "field": "Name", "op": "is_empty" }],
+          "expect": ["d"]
+        },
+        {
+          "name": "Name is_not_empty",
+          "filter": [{ "field": "Name", "op": "is_not_empty" }],
+          "expect": ["a", "b", "c", "e"]
+        },
+        {
+          "name": "Name eq keeps ё apart from е",
+          "filter": [{ "field": "Name", "op": "eq", "value": "елка" }],
+          "expect": ["b"]
+        },
+        {
+          "name": "Name eq keeps spaces",
+          "filter": [{ "field": "Name", "op": "eq", "value": "пробел" }],
+          "expect": []
+        },
+        {
+          "name": "Name contains keeps spaces",
+          "filter": [{ "field": "Name", "op": "contains", "value": " п" }],
+          "expect": ["e"]
+        },
+        {
+          "name": "Name eq folds only by lowercase",
+          "filter": [{ "field": "Name", "op": "eq", "value": "STRASSE" }],
+          "expect": []
+        },
+        {
+          "name": "Name eq of ß",
+          "filter": [{ "field": "Name", "op": "eq", "value": "straße" }],
+          "expect": ["c"]
+        },
+        {
+          "name": "Site eq ignores case",
+          "filter": [
+            { "field": "Site", "op": "eq", "value": "https://example.com" }
+          ],
+          "expect": ["e"]
+        },
+        {
+          "name": "Site neq ignores case and skips empty",
+          "filter": [
+            { "field": "Site", "op": "neq", "value": "https://other.org" }
+          ],
+          "expect": ["a", "e"]
+        },
+        {
+          "name": "Site contains ignores case",
+          "filter": [
+            { "field": "Site", "op": "contains", "value": "EXAMPLE.COM" }
+          ],
+          "expect": ["a", "e"]
+        },
+        {
+          "name": "Site not_contains skips empty",
+          "filter": [
+            { "field": "Site", "op": "not_contains", "value": "example" }
+          ],
+          "expect": ["b"]
+        },
+        {
+          "name": "Site is_empty",
+          "filter": [{ "field": "Site", "op": "is_empty" }],
+          "expect": ["c", "d"]
+        },
+        {
+          "name": "Site is_not_empty",
+          "filter": [{ "field": "Site", "op": "is_not_empty" }],
+          "expect": ["a", "b", "e"]
+        },
+        {
+          "name": "Mail eq ignores case",
+          "filter": [
+            { "field": "Mail", "op": "eq", "value": "anna@example.com" }
+          ],
+          "expect": ["a", "e"]
+        },
+        {
+          "name": "Mail neq ignores case and skips empty",
+          "filter": [
+            { "field": "Mail", "op": "neq", "value": "anna@example.com" }
+          ],
+          "expect": ["b"]
+        },
+        {
+          "name": "Mail contains ignores case",
+          "filter": [{ "field": "Mail", "op": "contains", "value": "@MAIL" }],
+          "expect": ["b"]
+        },
+        {
+          "name": "Mail not_contains skips empty",
+          "filter": [
+            { "field": "Mail", "op": "not_contains", "value": "anna" }
+          ],
+          "expect": ["b"]
+        },
+        {
+          "name": "Mail is_empty",
+          "filter": [{ "field": "Mail", "op": "is_empty" }],
+          "expect": ["c", "d"]
+        },
+        {
+          "name": "Mail is_not_empty",
+          "filter": [{ "field": "Mail", "op": "is_not_empty" }],
+          "expect": ["a", "b", "e"]
+        },
+        {
+          "name": "Phone eq ignores case",
+          "filter": [{ "field": "Phone", "op": "eq", "value": "123" }],
+          "expect": ["e"]
+        },
+        {
+          "name": "Phone neq ignores case and skips empty",
+          "filter": [{ "field": "Phone", "op": "neq", "value": "123" }],
+          "expect": ["a", "b"]
+        },
+        {
+          "name": "Phone contains ignores case",
+          "filter": [{ "field": "Phone", "op": "contains", "value": "900" }],
+          "expect": ["a", "b"]
+        },
+        {
+          "name": "Phone not_contains skips empty",
+          "filter": [
+            { "field": "Phone", "op": "not_contains", "value": "900" }
+          ],
+          "expect": ["e"]
+        },
+        {
+          "name": "Phone is_empty",
+          "filter": [{ "field": "Phone", "op": "is_empty" }],
+          "expect": ["c", "d"]
+        },
+        {
+          "name": "Phone is_not_empty",
+          "filter": [{ "field": "Phone", "op": "is_not_empty" }],
+          "expect": ["a", "b", "e"]
+        }
+      ],
+      "sorts": [
+        {
+          "name": "title ascending by Unicode lowercase code points",
+          "sort": [{ "field": "title" }],
+          "expect": ["c", "d", "e", "b", "a"]
+        },
+        {
+          "name": "title descending",
+          "sort": [{ "field": "title", "desc": true }],
+          "expect": ["a", "b", "e", "d", "c"]
+        },
+        {
+          "name": "text ascending keeps empty last",
+          "sort": [{ "field": "Name" }, { "field": "title" }],
+          "expect": ["e", "c", "b", "a", "d"]
+        },
+        {
+          "name": "text descending keeps empty last",
+          "sort": [{ "field": "Name", "desc": true }, { "field": "title" }],
+          "expect": ["a", "b", "c", "e", "d"]
+        }
+      ]
+    },
+    {
+      "name": "text code points",
+      "columns": [{ "name": "Label", "type": "text" }],
+      "items": [
+        { "id": "p1", "title": "P1", "fields": { "Label": "ﬀ" } },
+        { "id": "p2", "title": "P2", "fields": { "Label": "𝒜" } },
+        { "id": "p3", "title": "P3", "fields": { "Label": "Ω" } },
+        { "id": "p4", "title": "P4", "fields": { "Label": "z" } },
+        { "id": "p5", "title": "P5", "fields": { "Label": "" } },
+        { "id": "p6", "title": "P6", "fields": {} }
+      ],
+      "filters": [
+        {
+          "name": "eq lowercases Greek",
+          "filter": [{ "field": "Label", "op": "eq", "value": "ω" }],
+          "expect": ["p3"]
+        },
+        {
+          "name": "contains lowercases Greek",
+          "filter": [{ "field": "Label", "op": "contains", "value": "Ω" }],
+          "expect": ["p3"]
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending by code point, not UTF-16 code unit",
+          "sort": [{ "field": "Label" }, { "field": "title" }],
+          "expect": ["p4", "p3", "p1", "p2", "p5", "p6"]
+        },
+        {
+          "name": "descending keeps empty last",
+          "sort": [{ "field": "Label", "desc": true }, { "field": "title" }],
+          "expect": ["p2", "p1", "p3", "p4", "p5", "p6"]
+        }
+      ]
+    },
+    {
+      "name": "number",
+      "columns": [{ "name": "Score", "type": "number" }],
+      "items": [
+        { "id": "n1", "title": "N1", "fields": { "Score": 10 } },
+        { "id": "n2", "title": "N2", "fields": { "Score": 0 } },
+        { "id": "n3", "title": "N3", "fields": { "Score": -2.5 } },
+        { "id": "n4", "title": "N4", "fields": { "Score": "" } },
+        { "id": "n5", "title": "N5", "fields": {} },
+        { "id": "n6", "title": "N6", "fields": { "Score": null } },
+        { "id": "n7", "title": "N7", "fields": { "Score": 3 } }
+      ],
+      "filters": [
+        {
+          "name": "eq 0 does not find the empty string",
+          "filter": [{ "field": "Score", "op": "eq", "value": 0 }],
+          "expect": ["n2"]
+        },
+        {
+          "name": "neq skips empty",
+          "filter": [{ "field": "Score", "op": "neq", "value": 0 }],
+          "expect": ["n1", "n3", "n7"]
+        },
+        {
+          "name": "gt skips empty",
+          "filter": [{ "field": "Score", "op": "gt", "value": 0 }],
+          "expect": ["n1", "n7"]
+        },
+        {
+          "name": "lt skips empty",
+          "filter": [{ "field": "Score", "op": "lt", "value": 1 }],
+          "expect": ["n2", "n3"]
+        },
+        {
+          "name": "gte skips empty",
+          "filter": [{ "field": "Score", "op": "gte", "value": 3 }],
+          "expect": ["n1", "n7"]
+        },
+        {
+          "name": "lte skips empty",
+          "filter": [{ "field": "Score", "op": "lte", "value": 0 }],
+          "expect": ["n2", "n3"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Score", "op": "is_empty" }],
+          "expect": ["n4", "n5", "n6"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Score", "op": "is_not_empty" }],
+          "expect": ["n1", "n2", "n3", "n7"]
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending keeps empty last",
+          "sort": [{ "field": "Score" }, { "field": "title" }],
+          "expect": ["n3", "n2", "n7", "n1", "n4", "n5", "n6"]
+        },
+        {
+          "name": "descending keeps empty last",
+          "sort": [{ "field": "Score", "desc": true }, { "field": "title" }],
+          "expect": ["n1", "n7", "n2", "n3", "n4", "n5", "n6"]
+        }
+      ]
+    },
+    {
+      "name": "date",
+      "columns": [{ "name": "Due", "type": "date" }],
+      "items": [
+        { "id": "d1", "title": "D1", "fields": { "Due": "2026-03-10" } },
+        {
+          "id": "d2",
+          "title": "D2",
+          "fields": { "Due": { "start": "2026-03-01", "end": "2026-03-15" } }
+        },
+        { "id": "d3", "title": "D3", "fields": { "Due": "2026-04-01" } },
+        { "id": "d4", "title": "D4", "fields": { "Due": "" } },
+        { "id": "d5", "title": "D5", "fields": {} },
+        { "id": "d6", "title": "D6", "fields": { "Due": "2026-02-28" } }
+      ],
+      "filters": [
+        {
+          "name": "eq finds the date and a range around it",
+          "filter": [{ "field": "Due", "op": "eq", "value": "2026-03-10" }],
+          "expect": ["d1", "d2"]
+        },
+        {
+          "name": "neq skips empty",
+          "filter": [{ "field": "Due", "op": "neq", "value": "2026-03-10" }],
+          "expect": ["d3", "d6"]
+        },
+        {
+          "name": "before looks at the end and skips empty",
+          "filter": [{ "field": "Due", "op": "before", "value": "2026-03-10" }],
+          "expect": ["d6"]
+        },
+        {
+          "name": "after looks at the start and skips empty",
+          "filter": [{ "field": "Due", "op": "after", "value": "2026-03-05" }],
+          "expect": ["d1", "d3"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Due", "op": "is_empty" }],
+          "expect": ["d4", "d5"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Due", "op": "is_not_empty" }],
+          "expect": ["d1", "d2", "d3", "d6"]
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending by start keeps empty last",
+          "sort": [{ "field": "Due" }, { "field": "title" }],
+          "expect": ["d6", "d2", "d1", "d3", "d4", "d5"]
+        },
+        {
+          "name": "descending keeps empty last",
+          "sort": [{ "field": "Due", "desc": true }, { "field": "title" }],
+          "expect": ["d3", "d1", "d2", "d6", "d4", "d5"]
+        }
+      ]
+    },
+    {
+      "name": "boolean",
+      "columns": [{ "name": "Done", "type": "boolean" }],
+      "items": [
+        { "id": "b1", "title": "B1", "fields": { "Done": true } },
+        { "id": "b2", "title": "B2", "fields": { "Done": false } },
+        { "id": "b3", "title": "B3", "fields": {} },
+        { "id": "b4", "title": "B4", "fields": { "Done": null } },
+        { "id": "b5", "title": "B5", "fields": { "Done": "yes" } }
+      ],
+      "filters": [
+        {
+          "name": "eq true",
+          "filter": [{ "field": "Done", "op": "eq", "value": true }],
+          "expect": ["b1"]
+        },
+        {
+          "name": "eq false includes missing and null",
+          "filter": [{ "field": "Done", "op": "eq", "value": false }],
+          "expect": ["b2", "b3", "b4"]
+        },
+        {
+          "name": "neq true includes missing and null",
+          "filter": [{ "field": "Done", "op": "neq", "value": true }],
+          "expect": ["b2", "b3", "b4"]
+        },
+        {
+          "name": "neq false",
+          "filter": [{ "field": "Done", "op": "neq", "value": false }],
+          "expect": ["b1"]
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending puts false before true",
+          "sort": [{ "field": "Done" }, { "field": "title" }],
+          "expect": ["b2", "b3", "b4", "b1", "b5"]
+        },
+        {
+          "name": "descending puts true first",
+          "sort": [{ "field": "Done", "desc": true }, { "field": "title" }],
+          "expect": ["b1", "b2", "b3", "b4", "b5"]
+        }
+      ]
+    },
+    {
+      "name": "select",
+      "columns": [
+        {
+          "name": "Priority",
+          "type": "select",
+          "options": [
+            { "name": "High" },
+            { "name": "Medium" },
+            { "name": "Low" },
+            { "name": "high" }
+          ]
+        }
+      ],
+      "items": [
+        { "id": "s1", "title": "S1", "fields": { "Priority": "High" } },
+        { "id": "s2", "title": "S2", "fields": { "Priority": "high" } },
+        { "id": "s3", "title": "S3", "fields": { "Priority": "Low" } },
+        { "id": "s4", "title": "S4", "fields": { "Priority": "" } },
+        { "id": "s5", "title": "S5", "fields": {} },
+        { "id": "s6", "title": "S6", "fields": { "Priority": "Medium" } },
+        { "id": "s7", "title": "S7", "fields": { "Priority": "HIGH" } }
+      ],
+      "filters": [
+        {
+          "name": "eq is exact",
+          "filter": [{ "field": "Priority", "op": "eq", "value": "High" }],
+          "expect": ["s1"]
+        },
+        {
+          "name": "eq of a variant in other case",
+          "filter": [{ "field": "Priority", "op": "eq", "value": "high" }],
+          "expect": ["s2"]
+        },
+        {
+          "name": "neq is exact and skips empty",
+          "filter": [{ "field": "Priority", "op": "neq", "value": "High" }],
+          "expect": ["s2", "s3", "s6", "s7"]
+        },
+        {
+          "name": "in is exact",
+          "filter": [
+            { "field": "Priority", "op": "in", "values": ["high", "Low"] }
+          ],
+          "expect": ["s2", "s3"]
+        },
+        {
+          "name": "not_in is exact and skips empty",
+          "filter": [
+            { "field": "Priority", "op": "not_in", "values": ["High"] }
+          ],
+          "expect": ["s2", "s3", "s6", "s7"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Priority", "op": "is_empty" }],
+          "expect": ["s4", "s5"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Priority", "op": "is_not_empty" }],
+          "expect": ["s1", "s2", "s3", "s6", "s7"]
+        },
+        {
+          "name": "undeclared variant is invalid",
+          "filter": [{ "field": "Priority", "op": "eq", "value": "HIGH" }],
+          "invalid": true
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending by schema order, unknown after known, empty last",
+          "sort": [{ "field": "Priority" }, { "field": "title" }],
+          "expect": ["s1", "s6", "s3", "s2", "s7", "s4", "s5"]
+        },
+        {
+          "name": "descending keeps unknown and empty last",
+          "sort": [{ "field": "Priority", "desc": true }, { "field": "title" }],
+          "expect": ["s2", "s3", "s6", "s1", "s7", "s4", "s5"]
+        }
+      ]
+    },
+    {
+      "name": "status",
+      "columns": [
+        {
+          "name": "State",
+          "type": "status",
+          "options": [
+            { "name": "To do", "group": "todo" },
+            { "name": "Doing", "group": "in_progress" },
+            { "name": "Done", "group": "done" }
+          ]
+        }
+      ],
+      "items": [
+        { "id": "t1", "title": "T1", "fields": { "State": "To do" } },
+        { "id": "t2", "title": "T2", "fields": { "State": "Doing" } },
+        { "id": "t3", "title": "T3", "fields": { "State": "Done" } },
+        { "id": "t4", "title": "T4", "fields": { "State": "done" } },
+        { "id": "t5", "title": "T5", "fields": {} }
+      ],
+      "filters": [
+        {
+          "name": "eq is exact",
+          "filter": [{ "field": "State", "op": "eq", "value": "Done" }],
+          "expect": ["t3"]
+        },
+        {
+          "name": "neq is exact and skips empty",
+          "filter": [{ "field": "State", "op": "neq", "value": "Done" }],
+          "expect": ["t1", "t2", "t4"]
+        },
+        {
+          "name": "in",
+          "filter": [
+            { "field": "State", "op": "in", "values": ["To do", "Doing"] }
+          ],
+          "expect": ["t1", "t2"]
+        },
+        {
+          "name": "not_in skips empty",
+          "filter": [{ "field": "State", "op": "not_in", "values": ["Done"] }],
+          "expect": ["t1", "t2", "t4"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "State", "op": "is_empty" }],
+          "expect": ["t5"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "State", "op": "is_not_empty" }],
+          "expect": ["t1", "t2", "t3", "t4"]
+        },
+        {
+          "name": "group_eq",
+          "filter": [{ "field": "State", "op": "group_eq", "value": "done" }],
+          "expect": ["t3"]
+        },
+        {
+          "name": "group_neq skips empty",
+          "filter": [{ "field": "State", "op": "group_neq", "value": "done" }],
+          "expect": ["t1", "t2", "t4"]
+        },
+        {
+          "name": "group_in",
+          "filter": [
+            {
+              "field": "State",
+              "op": "group_in",
+              "values": ["todo", "in_progress"]
+            }
+          ],
+          "expect": ["t1", "t2"]
+        },
+        {
+          "name": "group_not_in skips empty",
+          "filter": [
+            { "field": "State", "op": "group_not_in", "values": ["todo"] }
+          ],
+          "expect": ["t2", "t3", "t4"]
+        },
+        {
+          "name": "undeclared variant is invalid",
+          "filter": [{ "field": "State", "op": "eq", "value": "done" }],
+          "invalid": true
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending by schema order",
+          "sort": [{ "field": "State" }, { "field": "title" }],
+          "expect": ["t1", "t2", "t3", "t4", "t5"]
+        },
+        {
+          "name": "descending keeps unknown and empty last",
+          "sort": [{ "field": "State", "desc": true }, { "field": "title" }],
+          "expect": ["t3", "t2", "t1", "t4", "t5"]
+        }
+      ]
+    },
+    {
+      "name": "multi_select",
+      "columns": [
+        {
+          "name": "Tags",
+          "type": "multi_select",
+          "options": [
+            { "name": "Red" },
+            { "name": "Green" },
+            { "name": "Blue" },
+            { "name": "red" }
+          ]
+        }
+      ],
+      "items": [
+        { "id": "m1", "title": "M1", "fields": { "Tags": ["Red", "Green"] } },
+        { "id": "m2", "title": "M2", "fields": { "Tags": ["red"] } },
+        { "id": "m3", "title": "M3", "fields": { "Tags": ["Blue"] } },
+        { "id": "m4", "title": "M4", "fields": { "Tags": [] } },
+        { "id": "m5", "title": "M5", "fields": {} },
+        { "id": "m6", "title": "M6", "fields": { "Tags": ["Green", "Blue"] } },
+        { "id": "m7", "title": "M7", "fields": { "Tags": ["RED"] } }
+      ],
+      "filters": [
+        {
+          "name": "contains is exact",
+          "filter": [{ "field": "Tags", "op": "contains", "value": "Red" }],
+          "expect": ["m1"]
+        },
+        {
+          "name": "contains of a variant in other case",
+          "filter": [{ "field": "Tags", "op": "contains", "value": "red" }],
+          "expect": ["m2"]
+        },
+        {
+          "name": "contains with one value in values",
+          "filter": [{ "field": "Tags", "op": "contains", "values": ["Red"] }],
+          "expect": ["m1"]
+        },
+        {
+          "name": "not_contains skips empty",
+          "filter": [{ "field": "Tags", "op": "not_contains", "value": "Red" }],
+          "expect": ["m2", "m3", "m6", "m7"]
+        },
+        {
+          "name": "contains_any",
+          "filter": [
+            { "field": "Tags", "op": "contains_any", "values": ["Red", "Blue"] }
+          ],
+          "expect": ["m1", "m3", "m6"]
+        },
+        {
+          "name": "not_contains_any skips empty",
+          "filter": [
+            {
+              "field": "Tags",
+              "op": "not_contains_any",
+              "values": ["Red", "Blue"]
+            }
+          ],
+          "expect": ["m2", "m7"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Tags", "op": "is_empty" }],
+          "expect": ["m4", "m5"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Tags", "op": "is_not_empty" }],
+          "expect": ["m1", "m2", "m3", "m6", "m7"]
+        },
+        {
+          "name": "contains takes one value",
+          "filter": [
+            { "field": "Tags", "op": "contains", "values": ["Red", "Blue"] }
+          ],
+          "invalid": true
+        },
+        {
+          "name": "not_contains takes one value",
+          "filter": [
+            { "field": "Tags", "op": "not_contains", "values": ["Red", "Blue"] }
+          ],
+          "invalid": true
+        },
+        {
+          "name": "undeclared variant is invalid",
+          "filter": [{ "field": "Tags", "op": "contains", "value": "RED" }],
+          "invalid": true
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending by selected variants in schema order",
+          "sort": [{ "field": "Tags" }, { "field": "title" }],
+          "expect": ["m1", "m6", "m3", "m2", "m7", "m4", "m5"]
+        },
+        {
+          "name": "descending keeps unknown and empty last",
+          "sort": [{ "field": "Tags", "desc": true }, { "field": "title" }],
+          "expect": ["m2", "m3", "m6", "m1", "m7", "m4", "m5"]
+        }
+      ]
+    },
+    {
+      "name": "relation",
+      "columns": [
+        { "name": "Links", "type": "relation", "relation": "people" }
+      ],
+      "items": [
+        {
+          "id": "r1",
+          "title": "R1",
+          "fields": { "Links": ["people/a.md", "people/b.md"] }
+        },
+        { "id": "r2", "title": "R2", "fields": { "Links": ["People/A.md"] } },
+        { "id": "r3", "title": "R3", "fields": { "Links": [] } },
+        { "id": "r4", "title": "R4", "fields": {} }
+      ],
+      "filters": [
+        {
+          "name": "contains is exact",
+          "filter": [
+            { "field": "Links", "op": "contains", "value": "people/a.md" }
+          ],
+          "expect": ["r1"]
+        },
+        {
+          "name": "not_contains skips empty",
+          "filter": [
+            { "field": "Links", "op": "not_contains", "value": "people/a.md" }
+          ],
+          "expect": ["r2"]
+        },
+        {
+          "name": "contains_any is exact",
+          "filter": [
+            {
+              "field": "Links",
+              "op": "contains_any",
+              "values": ["people/b.md", "People/A.md"]
+            }
+          ],
+          "expect": ["r1", "r2"]
+        },
+        {
+          "name": "not_contains_any skips empty",
+          "filter": [
+            {
+              "field": "Links",
+              "op": "not_contains_any",
+              "values": ["people/b.md"]
+            }
+          ],
+          "expect": ["r2"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Links", "op": "is_empty" }],
+          "expect": ["r3", "r4"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Links", "op": "is_not_empty" }],
+          "expect": ["r1", "r2"]
+        },
+        {
+          "name": "contains takes one value",
+          "filter": [
+            {
+              "field": "Links",
+              "op": "contains",
+              "values": ["people/a.md", "people/b.md"]
+            }
+          ],
+          "invalid": true
+        }
+      ],
+      "sorts": []
+    },
+    {
+      "name": "single actor",
+      "columns": [{ "name": "Owner", "type": "actor", "multiple": false }],
+      "items": [
+        {
+          "id": "a1",
+          "title": "A1",
+          "fields": { "Owner": "alice@example.com" }
+        },
+        { "id": "a2", "title": "A2", "fields": { "Owner": "bob@example.com" } },
+        {
+          "id": "a3",
+          "title": "A3",
+          "fields": { "Owner": "agent:01jbx3h6k2m4n5p6q7r8s9t0vw" }
+        },
+        { "id": "a4", "title": "A4", "fields": { "Owner": "" } },
+        { "id": "a5", "title": "A5", "fields": {} }
+      ],
+      "filters": [
+        {
+          "name": "eq by canonical email",
+          "filter": [
+            { "field": "Owner", "op": "eq", "value": "Alice@Example.com" }
+          ],
+          "expect": ["a1"]
+        },
+        {
+          "name": "neq skips empty",
+          "filter": [
+            { "field": "Owner", "op": "neq", "value": "alice@example.com" }
+          ],
+          "expect": ["a2", "a3"]
+        },
+        {
+          "name": "in of a person and an agent",
+          "filter": [
+            {
+              "field": "Owner",
+              "op": "in",
+              "values": ["bob@example.com", "agent:01jbx3h6k2m4n5p6q7r8s9t0vw"]
+            }
+          ],
+          "expect": ["a2", "a3"]
+        },
+        {
+          "name": "not_in skips empty",
+          "filter": [
+            { "field": "Owner", "op": "not_in", "values": ["bob@example.com"] }
+          ],
+          "expect": ["a1", "a3"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Owner", "op": "is_empty" }],
+          "expect": ["a4", "a5"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Owner", "op": "is_not_empty" }],
+          "expect": ["a1", "a2", "a3"]
+        }
+      ],
+      "sorts": []
+    },
+    {
+      "name": "multiple actor",
+      "columns": [{ "name": "Reviewers", "type": "actor", "multiple": true }],
+      "items": [
+        {
+          "id": "v1",
+          "title": "V1",
+          "fields": { "Reviewers": ["alice@example.com", "bob@example.com"] }
+        },
+        {
+          "id": "v2",
+          "title": "V2",
+          "fields": { "Reviewers": ["bob@example.com"] }
+        },
+        { "id": "v3", "title": "V3", "fields": { "Reviewers": [] } },
+        { "id": "v4", "title": "V4", "fields": {} }
+      ],
+      "filters": [
+        {
+          "name": "contains",
+          "filter": [
+            {
+              "field": "Reviewers",
+              "op": "contains",
+              "value": "alice@example.com"
+            }
+          ],
+          "expect": ["v1"]
+        },
+        {
+          "name": "not_contains skips empty",
+          "filter": [
+            {
+              "field": "Reviewers",
+              "op": "not_contains",
+              "value": "alice@example.com"
+            }
+          ],
+          "expect": ["v2"]
+        },
+        {
+          "name": "contains_any",
+          "filter": [
+            {
+              "field": "Reviewers",
+              "op": "contains_any",
+              "values": ["alice@example.com", "bob@example.com"]
+            }
+          ],
+          "expect": ["v1", "v2"]
+        },
+        {
+          "name": "not_contains_any skips empty",
+          "filter": [
+            {
+              "field": "Reviewers",
+              "op": "not_contains_any",
+              "values": ["alice@example.com"]
+            }
+          ],
+          "expect": ["v2"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Reviewers", "op": "is_empty" }],
+          "expect": ["v3", "v4"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Reviewers", "op": "is_not_empty" }],
+          "expect": ["v1", "v2"]
+        },
+        {
+          "name": "contains takes one value",
+          "filter": [
+            {
+              "field": "Reviewers",
+              "op": "contains",
+              "values": ["alice@example.com", "bob@example.com"]
+            }
+          ],
+          "invalid": true
+        }
+      ],
+      "sorts": []
+    },
+    {
+      "name": "unique_id",
+      "columns": [
+        { "name": "Key", "type": "unique_id", "prefix": "TASK", "next": 11 }
+      ],
+      "items": [
+        { "id": "u1", "title": "U1", "fields": { "Key": 1 } },
+        { "id": "u2", "title": "U2", "fields": { "Key": 2 } },
+        { "id": "u3", "title": "U3", "fields": { "Key": 10 } },
+        { "id": "u4", "title": "U4", "fields": {} }
+      ],
+      "filters": [
+        {
+          "name": "eq of the display id",
+          "filter": [{ "field": "Key", "op": "eq", "value": "TASK-2" }],
+          "expect": ["u2"]
+        },
+        {
+          "name": "eq of the number",
+          "filter": [{ "field": "Key", "op": "eq", "value": 10 }],
+          "expect": ["u3"]
+        },
+        {
+          "name": "neq skips empty",
+          "filter": [{ "field": "Key", "op": "neq", "value": 2 }],
+          "expect": ["u1", "u3"]
+        },
+        {
+          "name": "in of display ids and numbers",
+          "filter": [{ "field": "Key", "op": "in", "values": ["TASK-1", 10] }],
+          "expect": ["u1", "u3"]
+        },
+        {
+          "name": "not_in skips empty",
+          "filter": [{ "field": "Key", "op": "not_in", "values": [1] }],
+          "expect": ["u2", "u3"]
+        },
+        {
+          "name": "is_empty",
+          "filter": [{ "field": "Key", "op": "is_empty" }],
+          "expect": ["u4"]
+        },
+        {
+          "name": "is_not_empty",
+          "filter": [{ "field": "Key", "op": "is_not_empty" }],
+          "expect": ["u1", "u2", "u3"]
+        }
+      ],
+      "sorts": [
+        {
+          "name": "ascending as numbers",
+          "sort": [{ "field": "Key" }],
+          "expect": ["u1", "u2", "u3", "u4"]
+        },
+        {
+          "name": "descending keeps empty last",
+          "sort": [{ "field": "Key", "desc": true }],
+          "expect": ["u3", "u2", "u1", "u4"]
+        }
+      ]
+    }
+  ]
+}

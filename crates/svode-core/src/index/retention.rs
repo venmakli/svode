@@ -187,7 +187,8 @@ impl Snapshot {
 
 // Fingerprints of complete sqlite_master definitions from the shipped schemas:
 // 14: 68edf6b; 15: d7653f1; 16: 5d7c1f4; 17: 65c0607; 18 to 21 keep the DDL of 17;
-// 22 renames the Page table, its FTS table and the item head column.
+// 22 renames the Page table, its FTS table and the item head column;
+// 23 adds the folded text column of the Page table.
 // Include tables, columns, constraints, FTS shadows, indexes, views and triggers.
 fn known_schema(version: i64) -> Option<&'static str> {
     match version {
@@ -195,6 +196,7 @@ fn known_schema(version: i64) -> Option<&'static str> {
         15 | 16 => Some("f4d6d0171937d6834a6dd827294e53ac15f9f321a9fc9d9edbabf60d0731f723"),
         17..=21 => Some("ff16232afdc78ca4e0728fdee24e1b312e08550d694344d45d5403db8f974a34"),
         22 => Some("a5d9e9b76ddb412a89bd89a1f513f450fe2e3b171654cbfa41e74d48b27e8a75"),
+        23 => Some("1c0c5c09284450a2b2faa3edcf817ef860b94704eeec4ab552cad8b9bd8f38f8"),
         _ => None,
     }
 }
@@ -353,7 +355,8 @@ mod tests {
         let sql = match version {
             14 => include_str!("fixtures/index-v14.sql"),
             15 | 16 => include_str!("fixtures/index-v15.sql"),
-            _ => include_str!("fixtures/index-v17.sql"),
+            17..=21 => include_str!("fixtures/index-v17.sql"),
+            _ => include_str!("fixtures/index-v22.sql"),
         };
         let mut connection = SqliteConnection::connect_with(
             &SqliteConnectOptions::new()
@@ -377,7 +380,7 @@ mod tests {
     async fn all_known_schemas_and_current_ddl_match_frozen_provenance() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path().canonicalize().unwrap();
-        for version in 14..=21 {
+        for version in 14..=22 {
             fixture(&directory, &version.to_string(), version, "").await;
             let snapshot = Snapshot::capture(&directory, &version.to_string()).unwrap();
             assert!(derived(&snapshot).await.unwrap(), "version {version}");
@@ -411,7 +414,7 @@ mod tests {
             "CREATE TABLE routine_runs (id TEXT); INSERT INTO routine_runs VALUES ('keep');",
         )
         .await;
-        fixture(&directory, "2", 23, "").await;
+        fixture(&directory, "2", 24, "").await;
         fixture(
             &directory,
             "3",

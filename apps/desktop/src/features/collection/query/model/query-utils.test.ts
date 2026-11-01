@@ -2,10 +2,12 @@ import { expect, test } from "bun:test";
 import type { CollectionSchema } from "@/features/properties";
 import {
   filterOpsForField,
+  normalizeCollectionView,
   queryField,
   queryFields,
   resolveViewQuery,
   validateQuery,
+  viewQueryHash,
   viewUpdatePatch,
 } from "./query-utils";
 import type { CollectionView, StoredViewQueryState } from "./types";
@@ -83,6 +85,53 @@ test("resolveViewQuery merges local overrides and reports stale shared state", (
     sort: [{ field: "created", desc: true }],
     group_by: null,
   });
+});
+
+test("a saved multi-value contains reads as the any operator without rewriting the view", () => {
+  const view: CollectionView = {
+    name: "Main",
+    type: "table",
+    filter: [
+      { field: "Tags", op: "contains", values: ["Red", "Blue"] },
+      {
+        field: "Reviewers",
+        op: "not_contains",
+        value: ["a@x.test", "b@x.test"],
+      },
+      { field: "Tags", op: "contains", values: ["Red"] },
+    ],
+  };
+  const saved = structuredClone(view);
+  const ephemeral: StoredViewQueryState = {
+    baseViewHash: viewQueryHash(schema(), normalizeCollectionView(view)),
+    updatedAt: "2026-11-02T00:00:00.000Z",
+    sort: [{ field: "created" }],
+  };
+
+  const resolved = resolveViewQuery(schema(), view, ephemeral);
+
+  const read = [
+    { field: "Tags", op: "contains_any", values: ["Red", "Blue"] },
+    {
+      field: "Reviewers",
+      op: "not_contains_any",
+      values: ["a@x.test", "b@x.test"],
+    },
+    { field: "Tags", op: "contains", values: ["Red"] },
+  ];
+  expect(resolved.persistent.filter).toEqual(read);
+  expect(resolved.merged.filter).toEqual(read);
+  expect(resolved.issues).toEqual([]);
+  expect(resolved.sharedChanged).toBe(false);
+  expect(view).toEqual(saved);
+
+  const local = resolveViewQuery(schema(), view, {
+    ...ephemeral,
+    filter: [{ field: "Tags", op: "not_contains", value: ["Red", "Blue"] }],
+  });
+  expect(local.merged.filter).toEqual([
+    { field: "Tags", op: "not_contains_any", values: ["Red", "Blue"] },
+  ]);
 });
 
 test("properties of a newer Svode version are not offered to filter, sort or group", () => {

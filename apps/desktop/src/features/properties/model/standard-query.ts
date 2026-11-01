@@ -171,7 +171,7 @@ export function matchesStandardPropertyFilter<Item>(
     case "is_not_empty":
       return !empty;
     case "eq":
-      if (value === null || value === undefined) return false;
+      if (empty) return false;
       return column.type === "date"
         ? dateContains(value, resolveDateFilterValue(wanted))
         : comparePropertyScalar(column, value, wanted) === 0;
@@ -183,18 +183,13 @@ export function matchesStandardPropertyFilter<Item>(
     case "contains":
       return isMultiValueColumn(column)
         ? propertyArray(value).some((element) => element === wanted)
-        : !empty &&
-            String(value)
-              .toLowerCase()
-              .includes(String(wanted ?? "").toLowerCase());
+        : !empty && foldText(value).includes(foldText(wanted));
     case "not_contains":
       return (
         !empty &&
         (isMultiValueColumn(column)
           ? !propertyArray(value).some((element) => element === wanted)
-          : !String(value)
-              .toLowerCase()
-              .includes(String(wanted ?? "").toLowerCase()))
+          : !foldText(value).includes(foldText(wanted)))
       );
     case "in":
       return (
@@ -295,10 +290,12 @@ export function compareStandardPropertyValues<Item>(
     if (leftKey === null || rightKey === null) {
       if (leftKey !== rightKey) return leftKey === null ? 1 : -1;
     } else {
-      const compared = compareCodeUnits(leftKey, rightKey);
+      const compared = compareCodePoints(leftKey, rightKey);
       if (compared !== 0) return multiplier * compared;
     }
-    return multiplier * compareCodeUnits(arrayLexKey(left), arrayLexKey(right));
+    return (
+      multiplier * compareCodePoints(arrayLexKey(left), arrayLexKey(right))
+    );
   }
   if (column.type === "actor") {
     const name = (value: unknown) => {
@@ -425,10 +422,14 @@ function comparePropertyScalar(
     return propertyNumber(column, left) - propertyNumber(column, right);
   }
   if (column.type === "date") {
-    return compareCodeUnits(
+    return compareCodePoints(
       dateBounds(left)?.start ?? "",
       dateBounds(right)?.start ?? "",
     );
+  }
+  // A variant is a named value of the schema, not text: matched exactly.
+  if (column.type === "select" || column.type === "status") {
+    return left === right ? 0 : compareCodePoints(String(left), String(right));
   }
   return compareText(left, right);
 }
@@ -475,21 +476,36 @@ function orderedOptionKey(column: Column, value: unknown): string | null {
 }
 
 function arrayLexKey(value: unknown): string {
-  return propertyArray(value)
-    .map((item) => String(item).toLowerCase())
-    .sort(compareCodeUnits)
-    .join(",");
+  return propertyArray(value).map(foldText).sort(compareCodePoints).join(",");
+}
+
+/**
+ * Free text as the query compares it (Stage 11 `04`, 4.C): lowercased by
+ * Unicode with no other normalization, as the Page Collection engine does.
+ */
+function foldText(value: unknown): string {
+  return String(value ?? "").toLowerCase();
 }
 
 function compareText(left: unknown, right: unknown): number {
-  return compareCodeUnits(
-    String(left ?? "").toLowerCase(),
-    String(right ?? "").toLowerCase(),
-  );
+  return compareCodePoints(foldText(left), foldText(right));
 }
 
-function compareCodeUnits(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
+/** Code point order, as the engine compares UTF-8; not UTF-16 code units. */
+function compareCodePoints(left: string, right: string): number {
+  const leftPoints = left[Symbol.iterator]();
+  const rightPoints = right[Symbol.iterator]();
+  for (;;) {
+    const leftNext = leftPoints.next();
+    const rightNext = rightPoints.next();
+    if (leftNext.done || rightNext.done) {
+      return leftNext.done === rightNext.done ? 0 : leftNext.done ? -1 : 1;
+    }
+    const difference =
+      (leftNext.value.codePointAt(0) ?? 0) -
+      (rightNext.value.codePointAt(0) ?? 0);
+    if (difference !== 0) return difference < 0 ? -1 : 1;
+  }
 }
 
 function dateContains(value: unknown, target: string | null): boolean {

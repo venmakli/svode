@@ -595,6 +595,12 @@ fn validate_filter_payload(
             }
             Ok(())
         }
+        FilterArity::One if is_saved_multi_value_contains(filter, ty) => {
+            for value in &filter_values(filter)? {
+                validate_filter_value(schema, filter, ty, value)?;
+            }
+            Ok(())
+        }
         FilterArity::One => {
             let value = single_filter_value(filter)?;
             validate_filter_value(schema, filter, ty, value)
@@ -606,6 +612,73 @@ fn validate_filter_payload(
             }
             Ok(())
         }
+    }
+}
+
+/// `contains` / `not_contains` of a multi-valued field with several values,
+/// which earlier versions saved in `schema.yaml` and local overlays. Such a
+/// saved condition reads as `contains_any` / `not_contains_any` without being
+/// rewritten (Stage 11 `04`, 4.C, compatibility 3); a new one is refused by
+/// [`reject_multi_value_contains`].
+fn is_saved_multi_value_contains(filter: &Filter, ty: FieldType) -> bool {
+    matches!(filter.op, FilterOp::Contains | FilterOp::NotContains)
+        && matches!(ty, FieldType::Multi | FieldType::ActorMulti)
+        && has_several_values(filter)
+}
+
+fn has_several_values(filter: &Filter) -> bool {
+    match (&filter.values, &filter.value) {
+        (Some(values), _) => values.len() > 1,
+        (None, Some(Value::Sequence(values))) => values.len() > 1,
+        _ => false,
+    }
+}
+
+/// Refuse a new `contains` / `not_contains` with several values: these
+/// operators take one value, several values belong to `contains_any` /
+/// `not_contains_any`. Desktop and MCP writes of view filters and ad-hoc
+/// queries call it; reading a saved schema does not.
+pub fn reject_multi_value_contains(
+    schema: &CollectionSchema,
+    filter: &Filter,
+) -> Result<(), CollectionError> {
+    let replacement = match filter.op {
+        FilterOp::Contains => "contains_any",
+        FilterOp::NotContains => "not_contains_any",
+        _ => return Ok(()),
+    };
+    let multi_valued = schema.column(&filter.field).is_some_and(|column| {
+        !column.is_newer()
+            && matches!(
+                field_type(schema, &filter.field, FieldContext::Filter),
+                Ok(FieldType::Multi | FieldType::ActorMulti)
+            )
+    });
+    if multi_valued && has_several_values(filter) {
+        return Err(schema_error(format!(
+            "filter '{}' operator {} takes one value; use {replacement} for several values",
+            filter.field,
+            filter_op_name(filter.op)
+        )));
+    }
+    Ok(())
+}
+
+/// [`reject_multi_value_contains`] for every filter of a view written anew.
+pub fn reject_multi_value_contains_in_view(
+    schema: &CollectionSchema,
+    view: &View,
+) -> Result<(), CollectionError> {
+    view.filters()
+        .iter()
+        .try_for_each(|filter| reject_multi_value_contains(schema, filter))
+}
+
+fn filter_op_name(op: FilterOp) -> &'static str {
+    match op {
+        FilterOp::Contains => "contains",
+        FilterOp::NotContains => "not_contains",
+        _ => "",
     }
 }
 
@@ -715,7 +788,13 @@ fn validate_filter_value(
             let raw = value.as_str().ok_or_else(|| {
                 schema_error(format!("filter '{}' requires option value", filter.field))
             })?;
-            validate_declared_option(schema, &filter.field, raw)?;
+            // A relation compares stored paths; only a multi-select declares options.
+            if schema
+                .column(&filter.field)
+                .is_some_and(|column| column.type_ == PropertyType::MultiSelect)
+            {
+                validate_declared_option(schema, &filter.field, raw)?;
+            }
         }
         FieldType::Actor | FieldType::ActorMulti => {
             value.as_str().ok_or_else(|| {

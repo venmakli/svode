@@ -20,6 +20,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run --cwd apps/desktop typecheck
+      # The fixtures of the Collection query semantics (Stage 11 `04`, 4.C)
+      # against the standard semantics of the frontend Properties; the rust
+      # job runs them against the Page Collection engine with svode-core.
+      - name: Collection query conformance of the frontend Properties
+        working-directory: apps/desktop
+        run: bun test src/features/properties/model/standard-query.conformance.test.ts
 
   rust:
     runs-on: ubuntu-22.04

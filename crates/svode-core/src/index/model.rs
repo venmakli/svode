@@ -48,6 +48,10 @@ pub struct IndexedPage {
     pub in_collection: bool,
     pub is_item_head: bool,
     pub fields_json: String,
+    /// Free text of the title, description and fields folded for
+    /// case-insensitive Collection queries; see
+    /// [`crate::collections::query::folded_query_text_json`].
+    pub folded_text_json: String,
     pub body_preview: String,
     pub is_discoverable: bool,
     pub knowledge: Option<KnowledgeArtifact>,

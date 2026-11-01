@@ -5,6 +5,7 @@ import {
 } from "../../api";
 import {
   nextStoredQueryState,
+  readSavedViewQueryState,
   resolveViewQuery,
   viewStateStorageKey,
   viewUpdatePatch,
@@ -46,7 +47,13 @@ export function useViewQuery({
       : typeof window === "undefined"
         ? null
         : readStoredViewQuery(storageKey);
-  const ephemeral = view ? storedEphemeral : null;
+  const ephemeral = useMemo(
+    () =>
+      view && storedEphemeral
+        ? readSavedViewQueryState(schema, storedEphemeral)
+        : null,
+    [schema, storedEphemeral, view],
+  );
 
   const reloadLocalQuery = useCallback(() => {
     setEphemeralSnapshot({

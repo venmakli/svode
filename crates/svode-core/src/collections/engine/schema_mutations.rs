@@ -1,5 +1,7 @@
 use super::*;
-use crate::collections::schema_validation::prune_system_fields;
+use crate::collections::schema_validation::{
+    prune_system_fields, reject_multi_value_contains_in_view,
+};
 
 #[allow(dead_code)]
 pub fn add_schema_column(
@@ -989,6 +991,7 @@ pub fn add_view(
         if schema.view_depends_on_newer(&view) {
             return Err(newer_view_error(view.name()));
         }
+        reject_multi_value_contains_in_view(&schema, &view)?;
         let index = position
             .unwrap_or(schema.views.len())
             .min(schema.views.len());
@@ -1037,12 +1040,19 @@ pub fn update_view(
         }
         let mut raw = serde_norway::to_value(&schema.views[pos])
             .map_err(|e| schema_error(format!("could not encode view: {e}")))?;
+        // A saved multi-value `contains` the patch leaves alone stays as it is.
+        let writes_filters = patch
+            .as_mapping()
+            .is_some_and(|patch| patch.contains_key("filter"));
         merge_mapping_patch(&mut raw, patch)?;
         let mut view: View = serde_norway::from_value(raw)
             .map_err(|e| schema_error(format!("invalid view patch: {e}")))?;
         normalize_view_for_schema(&schema, &mut view);
         if schema.view_depends_on_newer(&view) {
             return Err(newer_view_error(view.name()));
+        }
+        if writes_filters {
+            reject_multi_value_contains_in_view(&schema, &view)?;
         }
         view.keep_unknown_keys_of(&schema.views[pos]);
         schema.views[pos] = view;

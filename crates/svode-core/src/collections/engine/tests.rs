@@ -531,7 +531,8 @@ views: []
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
                 is_item_head INTEGER NOT NULL,
-                fields TEXT NOT NULL
+                fields TEXT NOT NULL,
+                folded_text TEXT NOT NULL
             )
             "#,
     )
@@ -565,13 +566,18 @@ views: []
             r#"
                 INSERT INTO pages (
                     file_path, title, description, created, updated, collection_root_path,
-                    in_collection, is_item_head, fields
-                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
+                    in_collection, is_item_head, fields, folded_text
+                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?, ?)
                 "#,
         )
         .bind(path)
         .bind(title)
         .bind(fields.to_string())
+        .bind(crate::collections::query::folded_query_text_json(
+            title,
+            None,
+            &fields.to_string(),
+        ))
         .execute(&pool)
         .await
         .unwrap();
@@ -684,7 +690,8 @@ views: []
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
                 is_item_head INTEGER NOT NULL,
-                fields TEXT NOT NULL
+                fields TEXT NOT NULL,
+                folded_text TEXT NOT NULL
             )
             "#,
     )
@@ -723,13 +730,18 @@ views: []
             r#"
                 INSERT INTO pages (
                     file_path, title, description, created, updated, collection_root_path,
-                    in_collection, is_item_head, fields
-                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
+                    in_collection, is_item_head, fields, folded_text
+                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?, ?)
                 "#,
         )
         .bind(path)
         .bind(title)
         .bind(fields.to_string())
+        .bind(crate::collections::query::folded_query_text_json(
+            title,
+            None,
+            &fields.to_string(),
+        ))
         .execute(&pool)
         .await
         .unwrap();
@@ -833,7 +845,8 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
                 collection_root_path TEXT,
                 in_collection INTEGER NOT NULL,
                 is_item_head INTEGER NOT NULL,
-                fields TEXT NOT NULL
+                fields TEXT NOT NULL,
+                folded_text TEXT NOT NULL
             )
             "#,
     )
@@ -860,13 +873,18 @@ async fn boolean_query_uses_effective_false_for_missing_and_null() {
             r#"
                 INSERT INTO pages (
                     file_path, title, description, created, updated, collection_root_path,
-                    in_collection, is_item_head, fields
-                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?)
+                    in_collection, is_item_head, fields, folded_text
+                ) VALUES (?, ?, NULL, '2026-01-01', '2026-01-01', 'tasks', 1, 1, ?, ?)
                 "#,
         )
         .bind(path)
         .bind(title)
         .bind(fields.to_string())
+        .bind(crate::collections::query::folded_query_text_json(
+            title,
+            None,
+            &fields.to_string(),
+        ))
         .execute(&pool)
         .await
         .unwrap();

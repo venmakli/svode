@@ -208,6 +208,45 @@ export function isMultiValueOp(op: FilterOp) {
   );
 }
 
+/**
+ * A `contains` / `not_contains` of a multi-valued field saved with several
+ * values in `schema.yaml` or the local overlay reads as `contains_any` /
+ * `not_contains_any` without rewriting what is saved (Stage 11 `04`, 4.C).
+ * Writing such a condition anew is refused by the backend.
+ */
+export function readSavedQueryFilters(
+  schema: CollectionSchema,
+  filters: QueryFilter[],
+): QueryFilter[] {
+  return filters.map((filter) => {
+    if (filter.op !== "contains" && filter.op !== "not_contains") return filter;
+    const field = queryField(schema, filter.field, "filter");
+    const multiValued =
+      field?.type === "multi_select" ||
+      field?.type === "relation" ||
+      (field?.type === "actor" && Boolean(field.column?.multiple));
+    const values = filter.values ?? filter.value;
+    if (!multiValued || !Array.isArray(values) || values.length < 2) {
+      return filter;
+    }
+    return {
+      field: filter.field,
+      op: filter.op === "contains" ? "contains_any" : "not_contains_any",
+      values,
+    };
+  });
+}
+
+/** {@link readSavedQueryFilters} for the filters of a saved local overlay. */
+export function readSavedViewQueryState(
+  schema: CollectionSchema,
+  state: StoredViewQueryState,
+): StoredViewQueryState {
+  return state.filter
+    ? { ...state, filter: readSavedQueryFilters(schema, state.filter) }
+    : state;
+}
+
 export function validateQuery(
   schema: CollectionSchema,
   viewType: ViewType,
@@ -328,15 +367,20 @@ export function resolveViewQuery(
   view: CollectionView | null | undefined,
   ephemeral: StoredViewQueryState | null,
 ) {
-  const persistent = normalizeCollectionView(view);
-  const baseViewHash = viewQueryHash(schema, persistent);
-  const localConfig = ephemeral
+  const saved = normalizeCollectionView(view);
+  const baseViewHash = viewQueryHash(schema, saved);
+  const persistent = {
+    ...saved,
+    filter: readSavedQueryFilters(schema, saved.filter),
+  };
+  const local = ephemeral ? readSavedViewQueryState(schema, ephemeral) : null;
+  const localConfig = local
     ? {
         ...persistent,
-        filter: ephemeral.filter ?? persistent.filter,
-        sort: ephemeral.sort ?? persistent.sort,
-        groupBy: Object.prototype.hasOwnProperty.call(ephemeral, "groupBy")
-          ? (ephemeral.groupBy ?? null)
+        filter: local.filter ?? persistent.filter,
+        sort: local.sort ?? persistent.sort,
+        groupBy: Object.prototype.hasOwnProperty.call(local, "groupBy")
+          ? (local.groupBy ?? null)
           : persistent.groupBy,
       }
     : persistent;

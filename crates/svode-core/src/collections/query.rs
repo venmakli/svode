@@ -9,8 +9,8 @@ use super::model::*;
 use super::schema::normalize_rel_path;
 use super::schema_support::schema_error;
 use super::schema_validation::{
-    FieldContext, FieldType, field_type, single_filter_value, validate_field_ref,
-    validate_filter_op,
+    FieldContext, FieldType, field_type, reject_multi_value_contains, single_filter_value,
+    validate_field_ref, validate_filter_op,
 };
 use crate::content_tree::read_order;
 
@@ -19,6 +19,47 @@ fn status_group_name(group: StatusGroup) -> &'static str {
         StatusGroup::Todo => "todo",
         StatusGroup::InProgress => "in_progress",
         StatusGroup::Done => "done",
+    }
+}
+
+/// Free text as the query compares it (Stage 11 `04`, 4.C): lowercased by
+/// Unicode, with no other normalization, so spaces, NFC and «ё»/«е» stay
+/// significant. SQLite `LOWER`, `LIKE` and `NOCASE` fold only ASCII.
+pub fn fold_query_text(value: &str) -> String {
+    value.to_lowercase()
+}
+
+/// The `folded_text` index column of a Page: its title, description and
+/// fields with every string folded by [`fold_query_text`], keyed by the field
+/// name. Free text filters and text sorts read it instead of the raw values;
+/// `title` and `description` are reserved, so no column shadows them.
+pub fn folded_query_text_json(title: &str, description: Option<&str>, fields_json: &str) -> String {
+    let mut folded = match serde_json::from_str::<serde_json::Value>(fields_json) {
+        Ok(serde_json::Value::Object(fields)) => fields,
+        _ => serde_json::Map::new(),
+    };
+    for value in folded.values_mut() {
+        fold_json_strings(value);
+    }
+    folded.insert(
+        "title".to_string(),
+        serde_json::Value::String(fold_query_text(title)),
+    );
+    if let Some(description) = description {
+        folded.insert(
+            "description".to_string(),
+            serde_json::Value::String(fold_query_text(description)),
+        );
+    }
+    serde_json::Value::Object(folded).to_string()
+}
+
+fn fold_json_strings(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) => *text = fold_query_text(text),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(fold_json_strings),
+        serde_json::Value::Object(map) => map.values_mut().for_each(fold_json_strings),
+        _ => {}
     }
 }
 
@@ -105,12 +146,12 @@ fn push_filter_sql(
         FilterOp::NotContains if matches!(ty, FieldType::Multi | FieldType::ActorMulti) => {
             push_array_contains_filter(query, schema, filter, true)?
         }
-        FilterOp::Contains => push_like_filter(query, schema, filter, false)?,
-        FilterOp::NotContains => push_like_filter(query, schema, filter, true)?,
+        FilterOp::Contains => push_text_contains_filter(query, schema, filter, false)?,
+        FilterOp::NotContains => push_text_contains_filter(query, schema, filter, true)?,
         FilterOp::In => push_in_filter(query, schema, filter, false)?,
         FilterOp::NotIn => push_in_filter(query, schema, filter, true)?,
-        FilterOp::After => push_date_cmp_filter(query, filter, false, ">")?,
-        FilterOp::Before => push_date_cmp_filter(query, filter, true, "<")?,
+        FilterOp::After => push_date_cmp_filter(query, schema, filter, false, ">")?,
+        FilterOp::Before => push_date_cmp_filter(query, schema, filter, true, "<")?,
         FilterOp::Gt => push_cmp_filter(query, schema, filter, ty, ">")?,
         FilterOp::Lt => push_cmp_filter(query, schema, filter, ty, "<")?,
         FilterOp::Gte => push_cmp_filter(query, schema, filter, ty, ">=")?,
@@ -196,10 +237,18 @@ fn push_boolean_field_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
     );
 }
 
-fn push_text_sort_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
-    query.push("LOWER(CAST(");
-    push_field_expr(query, field);
-    query.push(" AS TEXT)) COLLATE NOCASE");
+/// Folded free text of `field` from the `folded_text` column; compared with
+/// SQLite's binary collation, which orders UTF-8 by code point.
+fn push_folded_text_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    query.push("CAST(json_extract(folded_text, ");
+    query.push_bind(json_path(field));
+    query.push(") AS TEXT)");
+}
+
+fn push_folded_text_sort_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
+    query.push("NULLIF(");
+    push_folded_text_expr(query, field);
+    query.push(", '')");
 }
 
 fn push_empty_expr(
@@ -269,15 +318,29 @@ fn push_binary_filter(
     ty: FieldType,
     op: &str,
 ) -> Result<(), CollectionError> {
-    if op == "!=" && ty != FieldType::Boolean {
+    if ty != FieldType::Boolean {
         push_not_empty_expr(query, schema, &filter.field)?;
         query.push(" AND ");
+    }
+    if ty == FieldType::TextLike {
+        push_folded_text_expr(query, &filter.field);
+        query.push(" ");
+        query.push(op);
+        query.push(" ");
+        query.push_bind(fold_query_text(text_filter_value(filter)?));
+        return Ok(());
     }
     push_filter_field_expr(query, &filter.field, ty);
     query.push(" ");
     query.push(op);
     query.push(" ");
     push_filter_value(query, filter)
+}
+
+fn text_filter_value(filter: &Filter) -> Result<&str, CollectionError> {
+    single_filter_value(filter)?
+        .as_str()
+        .ok_or_else(|| schema_error(format!("filter '{}' requires string value", filter.field)))
 }
 
 fn push_date_range_eq_filter(
@@ -302,28 +365,19 @@ fn push_date_range_eq_filter(
     Ok(())
 }
 
-fn push_like_filter(
+fn push_text_contains_filter(
     query: &mut QueryBuilder<'_, Sqlite>,
     schema: &CollectionSchema,
     filter: &Filter,
     negated: bool,
 ) -> Result<(), CollectionError> {
-    let value = single_filter_value(filter)?
-        .as_str()
-        .ok_or_else(|| schema_error(format!("filter '{}' requires string value", filter.field)))?;
-    if negated {
-        push_not_empty_expr(query, schema, &filter.field)?;
-        query.push(" AND ");
-    }
-    query.push("CAST(");
-    push_field_expr(query, &filter.field);
-    query.push(" AS TEXT)");
-    if negated {
-        query.push(" NOT");
-    }
-    query.push(" LIKE ");
-    query.push_bind(format!("%{}%", escape_like(value)));
-    query.push(" ESCAPE '\\'");
+    let value = fold_query_text(text_filter_value(filter)?);
+    push_not_empty_expr(query, schema, &filter.field)?;
+    query.push(" AND instr(");
+    push_folded_text_expr(query, &filter.field);
+    query.push(", ");
+    query.push_bind(value);
+    query.push(if negated { ") = 0" } else { ") > 0" });
     Ok(())
 }
 
@@ -356,11 +410,13 @@ fn push_in_filter(
 
 fn push_cmp_filter(
     query: &mut QueryBuilder<'_, Sqlite>,
-    _schema: &CollectionSchema,
+    schema: &CollectionSchema,
     filter: &Filter,
     ty: FieldType,
     op: &str,
 ) -> Result<(), CollectionError> {
+    push_not_empty_expr(query, schema, &filter.field)?;
+    query.push(" AND ");
     push_filter_field_expr(query, &filter.field, ty);
     query.push(" ");
     query.push(op);
@@ -370,10 +426,13 @@ fn push_cmp_filter(
 
 fn push_date_cmp_filter(
     query: &mut QueryBuilder<'_, Sqlite>,
+    schema: &CollectionSchema,
     filter: &Filter,
     use_end: bool,
     op: &str,
 ) -> Result<(), CollectionError> {
+    push_not_empty_expr(query, schema, &filter.field)?;
+    query.push(" AND ");
     if use_end {
         push_date_end_field_expr(query, &filter.field);
     } else {
@@ -472,19 +531,25 @@ fn push_sort_sql(
         query.push(sort_direction(desc));
         return Ok(());
     }
+    // Empty values come last and tie with each other, so a missing value and
+    // an empty string leave their order to the next sort key.
     push_empty_expr(query, schema, field)?;
     query.push(" ASC, ");
     match ty {
         FieldType::TextLike | FieldType::Actor => {
-            push_text_sort_expr(query, field);
+            push_folded_text_sort_expr(query, field);
             query.push(sort_direction(desc));
         }
         FieldType::Number | FieldType::UniqueId => {
-            push_number_field_expr(query, field);
+            query.push("CAST(NULLIF(");
+            push_field_expr(query, field);
+            query.push(", '') AS REAL)");
             query.push(sort_direction(desc));
         }
         FieldType::Date => {
+            query.push("NULLIF(");
             push_date_field_expr(query, field);
+            query.push(", '')");
             query.push(sort_direction(desc));
         }
         FieldType::Boolean => unreachable!("boolean sort returns before generic empty ordering"),
@@ -528,7 +593,7 @@ fn push_option_sort_sql(
     push_option_index_expr(query, field, column);
     query.push(sort_direction(desc));
     query.push(", ");
-    push_text_sort_expr(query, field);
+    push_folded_text_sort_expr(query, field);
     query.push(sort_direction(desc));
     Ok(())
 }
@@ -597,16 +662,16 @@ fn push_json_each_option_index_case(query: &mut QueryBuilder<'_, Sqlite>, column
 
 fn push_multi_lex_key_expr(query: &mut QueryBuilder<'_, Sqlite>, field: &str) {
     query.push(
-        "(SELECT group_concat(value, ',') FROM (SELECT LOWER(CAST(json_each.value AS TEXT)) AS value FROM json_each(",
+        "(SELECT group_concat(value, ',') FROM (SELECT CAST(json_each.value AS TEXT) AS value FROM json_each(json_extract(folded_text, ",
     );
-    push_field_expr(query, field);
-    query.push(") ORDER BY value))");
+    query.push_bind(json_path(field));
+    query.push(")) ORDER BY value))");
 }
 
 fn push_actor_multi_sort_sql(query: &mut QueryBuilder<'_, Sqlite>, field: &str, desc: bool) {
-    query.push("(SELECT LOWER(CAST(json_each.value AS TEXT)) FROM json_each(");
-    push_field_expr(query, field);
-    query.push(") ORDER BY json_each.key LIMIT 1)");
+    query.push("(SELECT CAST(json_each.value AS TEXT) FROM json_each(json_extract(folded_text, ");
+    query.push_bind(json_path(field));
+    query.push(")) ORDER BY json_each.key LIMIT 1)");
     query.push(sort_direction(desc));
 }
 
@@ -639,6 +704,7 @@ pub fn validate_ad_hoc_query(
     let column_names: HashSet<String> = schema.columns.iter().map(|c| c.name.clone()).collect();
     for filter in filters {
         validate_field_ref(schema, &column_names, &filter.field, FieldContext::Filter)?;
+        reject_multi_value_contains(schema, filter)?;
         validate_filter_op(schema, filter)?;
     }
     for sort in sort {
@@ -659,20 +725,6 @@ pub(super) fn json_path(field: &str) -> String {
 
 fn json_nested_path(field: &str, nested: &str) -> String {
     format!("{}.\"{}\"", json_path(field), nested.replace('"', "\\\""))
-}
-
-fn escape_like(query: &str) -> String {
-    let mut out = String::with_capacity(query.len());
-    for c in query.chars() {
-        match c {
-            '\\' | '%' | '_' => {
-                out.push('\\');
-                out.push(c);
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 pub fn order_rows(

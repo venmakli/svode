@@ -141,6 +141,12 @@ pub fn build_page_with_dates(
         None
     };
 
+    let folded_text_json = crate::collections::query::folded_query_text_json(
+        &title,
+        description.as_deref(),
+        &fields_json,
+    );
+
     Ok(IndexedPage {
         parent_path: parent_path_for(&rel_path)?,
         rel_path,
@@ -154,6 +160,7 @@ pub fn build_page_with_dates(
         in_collection,
         is_item_head: true,
         fields_json,
+        folded_text_json,
         body_preview: if projection.is_discoverable() {
             body_preview
         } else {
