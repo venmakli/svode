@@ -2201,6 +2201,7 @@ async function renderSection(
       if (command === "agent_adapters_list_identities") return IDENTITIES;
       if (command === "agent_setup_list") return setups;
       if (command === "agent_custom_list") return [];
+      if (command === "agent_default_get") return null;
       if (command === "mcp_get_status") return getCanonical();
       if (command === "mcp_run_doctor") return getCanonical().doctor;
       if (command === "mcp_install_client" || command === "mcp_remove_client") {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { signalSessionMessage } from "@/features/navigation";
 import {
   agentRuntimeErrorCode,
@@ -7,8 +7,7 @@ import {
   type AgentLaunchUnavailableDto,
   type AgentSessionKeyDto,
 } from "../api/chat";
-import { draftAgent } from "../model/agents";
-import { declaredSettings, withKeptValue } from "../model/declared-settings";
+import { defaultAgentValues, draftAgent } from "../model/agents";
 import type { SettingValue } from "../model/session-controls";
 import {
   isDraftBlank,
@@ -16,18 +15,17 @@ import {
   type DraftPart,
 } from "../model/attachments";
 import {
-  draftValues,
   newSessionDraftKey,
   sessionDraftKey,
+  type ComposerDraft,
 } from "../model/composer";
-import { useLastAgentDeclarations } from "./use-agent-declarations";
 import { recheckAttachments } from "./use-attachment-preview";
 import { useChatAgents } from "./use-chat-agents";
+import { useChosenAgentSettings } from "./use-chosen-agent-settings";
 import { useComposerDraft } from "./use-composer-draft";
 import { passComposerFocus } from "./use-composer-focus";
-import { useDraftAgent, type DraftAgentState } from "./use-draft-agent";
-import { useDraftSettings } from "./use-draft-settings";
-import { useSessionActivity } from "./use-session-activity";
+import { useDefaultAgent } from "./use-default-agent";
+import type { UpdateKeptValues } from "./use-draft-settings";
 import { errorMessage, type SendRefusal } from "./use-session-composer";
 
 export interface StartedSession {
@@ -41,14 +39,16 @@ export type DraftRefusal =
 
 /**
  * A new session draft (Stage 10 `04`, new session): the chosen agent and
- * Space, the setting values and the text, kept for the window. The draft
+ * Space, the setting values and the text, kept for the window. It starts
+ * with the device's default agent and its values, the mode included, and
+ * a change in the draft stays in the draft (Stage 11 `03`). The draft
  * shows no session; where the agent has evidence for it, the draft's
  * session exists without a prompt, so its settings and commands show and
  * change before the first send. A draft session that takes values only
  * with the first send, or the agent's last declarations without a draft
- * session, show the settings while the draft keeps the chosen values
- * (Stage 11 `03`). The first send creates the session, or sends the prompt
- * to the draft's one, which then enters the catalogue.
+ * session, show the settings while the draft keeps the chosen values. The
+ * first send creates the session, or sends the prompt to the draft's one,
+ * which then enters the catalogue.
  */
 export function useNewSessionDraft(
   initialSpacePath: string,
@@ -57,79 +57,48 @@ export function useNewSessionDraft(
   const draftKey = newSessionDraftKey(initialSpacePath);
   const [draft, updateDraft] = useComposerDraft(draftKey);
   const { agents, failed: agentsFailed, reload } = useChatAgents();
-  const agent = agents ? draftAgent(agents, draft.agent) : null;
-  const spacePath = draft.spacePath ?? initialSpacePath;
-  const {
-    readiness: started,
-    retry,
-    hold,
-    session: draftSession,
-    keepsValuesUntilSend,
-  } = useDraftAgent(agent, spacePath);
-  const { snapshot } = useSessionActivity(draftSession);
-  // Values change in the draft session itself only where it takes them.
-  const liveSession = keepsValuesUntilSend ? null : draftSession;
-  const settings = useDraftSettings(
-    agent,
-    liveSession,
-    snapshot,
-    draft,
-    updateDraft,
-  );
-  // The agent's ACP connection starts without sign-in; its own sign-in
-  // check tells that the first send would be refused.
-  const signInRequired =
-    agents?.agents.find((candidate) => candidate.agent === agent)?.offer
-      .state === "sign_in_required";
-  const readiness = useMemo<DraftAgentState>(
-    () =>
-      signInRequired &&
-      started.state === "checked" &&
-      started.check.state === "ready"
-        ? { state: "checked", check: { state: "auth_required", message: "" } }
-        : started,
-    [signInRequired, started],
-  );
-  const [refusal, setRefusal] = useState<DraftRefusal | null>(null);
-  const ready =
-    readiness.state === "checked" && readiness.check.state === "ready";
-  // Without a live draft session the draft keeps the chosen values itself.
-  const keepsValues = ready && !liveSession;
-  const declarations = useLastAgentDeclarations(agent, keepsValues);
-  const declared = useMemo(() => {
-    if (!keepsValues) return null;
-    // A draft session's own declaration comes first once it arrives.
-    if (draftSession && !snapshot) {
-      return { settings: null, recorded: false, withoutVariants: [] };
-    }
-    return declaredSettings({
-      session: snapshot?.settings ?? null,
-      declarations: declarations ?? [],
-      values: draftValues(draft, agent),
-    });
-  }, [agent, declarations, draft, draftSession, keepsValues, snapshot]);
-  const shownSettings = declared
-    ? declared.settings
-    : liveSession && snapshot
-      ? snapshot.settings
+  const defaultAgent = useDefaultAgent();
+  // No agent starts before the draft knows which one it begins with.
+  const agent =
+    agents && defaultAgent.loaded
+      ? draftAgent(agents, draft.agent, defaultAgent.value?.agent ?? null)
       : null;
-  const keepValue = useCallback(
-    (value: SettingValue) => {
+  const spacePath = draft.spacePath ?? initialSpacePath;
+  // Until the draft keeps values of its own it has the default agent's.
+  const valuesOf = useCallback(
+    (latest: ComposerDraft): SettingValue[] =>
+      latest.settings?.agent === agent
+        ? latest.settings.values
+        : defaultAgentValues(
+            latest.settings ? null : defaultAgent.value,
+            agent,
+          ),
+    [agent, defaultAgent.value],
+  );
+  const values = valuesOf(draft);
+  const updateValues = useCallback<UpdateKeptValues>(
+    (change) => {
       if (!agent) return;
       updateDraft((latest) => ({
         ...latest,
-        settings: {
-          agent,
-          values: withKeptValue(
-            draftValues(latest, agent),
-            value,
-            shownSettings ?? [],
-          ),
-        },
+        settings: { agent, values: change(valuesOf(latest)) },
       }));
     },
-    [agent, shownSettings, updateDraft],
+    [agent, updateDraft, valuesOf],
   );
+  const chosen = useChosenAgentSettings({
+    agent,
+    cwd: spacePath,
+    offer:
+      agents?.agents.find((candidate) => candidate.agent === agent)?.offer ??
+      null,
+    values,
+    updateValues,
+  });
+  const { readiness, hold, snapshot } = chosen;
+  const [refusal, setRefusal] = useState<DraftRefusal | null>(null);
+  const ready =
+    readiness.state === "checked" && readiness.check.state === "ready";
 
   // Nothing tells whether a send cut by a reload reached the agent: the
   // text comes back marked, and the user decides.
@@ -142,19 +111,19 @@ export function useNewSessionDraft(
   }, [interrupted, sending, updateDraft]);
 
   const send = useCallback(async () => {
-    if (isDraftBlank(draft.parts) || !agent || sending || settings.changing) {
+    if (isDraftBlank(draft.parts) || !agent || sending || chosen.changing) {
       return;
     }
     if (!ready) return;
     setRefusal(null);
-    settings.dismissRefusal();
+    chosen.dismissRefusal();
     setSending(true);
     updateDraft({ sending: { previousTurnId: null }, notSent: false });
     try {
       const started = await startAgentSession({
         agent,
         cwd: spacePath,
-        settings: draftValues(draft, agent),
+        settings: values,
         prompt: promptParts(draft.parts),
         hold,
         // A request a Svode action put in carries its mark (Stage 11 1.E).
@@ -178,7 +147,7 @@ export function useNewSessionDraft(
       // reason; nothing was sent.
       const setting = agentSettingRefusal(error);
       if (setting) {
-        settings.refuse(setting);
+        chosen.refuse(setting);
       } else {
         setRefusal({ kind: "runtime", code, message: errorMessage(error) });
         if (code === "file_unavailable") recheckAttachments();
@@ -188,6 +157,7 @@ export function useNewSessionDraft(
     }
   }, [
     agent,
+    chosen,
     draft,
     draftKey,
     hold,
@@ -195,9 +165,9 @@ export function useNewSessionDraft(
     ready,
     reload,
     sending,
-    settings,
     spacePath,
     updateDraft,
+    values,
   ]);
 
   return {
@@ -210,39 +180,33 @@ export function useNewSessionDraft(
     agent,
     chooseAgent: (next: string) => {
       setRefusal(null);
-      settings.dismissRefusal();
+      chosen.dismissRefusal();
       updateDraft({ agent: next });
     },
     readiness,
-    retryAgent: retry,
+    retryAgent: chosen.retry,
     /** After sign-in: read the agents' sign-in again and start the agent anew. */
     recheckAgent: () => {
       reload();
-      retry();
+      chosen.retry();
     },
     spacePath,
     chooseSpace: (path: string) => updateDraft({ spacePath: path }),
     /** The draft session's settings, commands and usage once it exists. */
-    snapshot: draftSession ? snapshot : null,
+    snapshot,
     /** The settings the draft shows, with the values it keeps. */
-    settings: shownSettings,
+    settings: chosen.settings,
     /** The draft keeps the chosen values until the first send. */
-    keepsValues,
+    keepsValues: chosen.keepsValues,
     /** The settings come from the agent's last session on this device. */
-    recordedSettings: declared?.recorded ?? false,
+    recordedSettings: chosen.recorded,
     /** Settings whose options show after a session with the chosen model. */
-    settingsWithoutVariants: declared?.withoutVariants ?? [],
+    settingsWithoutVariants: chosen.withoutVariants,
     /** Nothing declared yet: the agent's settings show after the first send. */
-    settingsAfterSend:
-      keepsValues &&
-      !draftSession &&
-      declarations !== null &&
-      shownSettings === null,
-    changeSetting: keepsValues
-      ? async (value: SettingValue) => keepValue(value)
-      : settings.changeSetting,
-    changingSetting: settings.changing,
-    settingRefusal: settings.refusal,
+    settingsAfterSend: chosen.settingsAfterSend,
+    changeSetting: chosen.changeSetting,
+    changingSetting: chosen.changing,
+    settingRefusal: chosen.refusal,
     sending,
     refusal,
     send,

@@ -21,7 +21,6 @@ use super::{ActivityMessage, AgentRuntimeState};
 use crate::agent_sessions::AgentSessionsState;
 use crate::agent_sessions::chat::{chat_target, native_session_settings};
 use crate::agent_sessions::types::catalog_session_id;
-use crate::agent_setup::AgentSetupState;
 use crate::error::AppError;
 use crate::terminal::TerminalManager;
 use svode_core::agent_adapters::AgentId;
@@ -176,11 +175,10 @@ pub enum StartedSession {
 
 /// The first send of a new session draft: the session the draft `hold`
 /// created, or a new one in `cwd` with the draft's setting values, takes the
-/// prompt. The agent becomes the device's last chat agent.
+/// prompt.
 #[tauri::command]
 pub async fn agent_runtime_start_session(
     connections: State<'_, Arc<AgentConnections>>,
-    setup: State<'_, AgentSetupState>,
     agent: String,
     cwd: PathBuf,
     settings: Vec<SettingValue>,
@@ -195,16 +193,11 @@ pub async fn agent_runtime_start_session(
         .start_session_with(&agent, &cwd, &settings, &prompt, hold, mark)
         .await?
     {
-        SessionStart::Started { session, turn_id } => {
-            if let Err(error) = setup.set_last_chat_agent(&agent) {
-                tracing::warn!("the last chat agent was not saved: {error}");
-            }
-            Ok(StartedSession::Started {
-                session_id: catalog_session_id(&source, &session),
-                session,
-                turn_id,
-            })
-        }
+        SessionStart::Started { session, turn_id } => Ok(StartedSession::Started {
+            session_id: catalog_session_id(&source, &session),
+            session,
+            turn_id,
+        }),
         SessionStart::Unavailable { reason } => Ok(StartedSession::Unavailable { reason }),
     }
 }

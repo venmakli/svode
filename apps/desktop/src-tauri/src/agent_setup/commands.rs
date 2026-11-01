@@ -92,8 +92,6 @@ pub struct ChatAgents {
     /// In the order of the agent settings: registry agents, then custom
     /// agents in the order the user added them.
     pub agents: Vec<ChatAgent>,
-    /// The agent of the last session created in the chat on this device.
-    pub last: Option<String>,
 }
 
 /// The agents a new session draft offers (Stage 10 `04`, `03` A1/A5/A8).
@@ -128,7 +126,6 @@ pub async fn agent_setup_chat_agents(
     offered.sort_by_key(|(order, _)| *order);
     Ok(ChatAgents {
         agents: offered.into_iter().filter_map(|(_, agent)| agent).collect(),
-        last: state.last_chat_agent(),
     })
 }
 

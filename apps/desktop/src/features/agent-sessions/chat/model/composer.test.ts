@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { activitySnapshot } from "../../model/testing/activity";
 import { composerKeyAction, reconcileUnknownSend } from "./composer";
-import { canOpenChatDraft, defaultChatAgent, draftAgent } from "./agents";
+import {
+  canOpenChatDraft,
+  defaultAgentValues,
+  defaultChatAgent,
+  draftAgent,
+} from "./agents";
 
 const key = (
   init: Partial<Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing" | "keyCode">>,
@@ -36,48 +41,63 @@ const outdated = {
   reason: { code: "adapter_needs_update", installedVersion: "0.1.0" },
 } as const;
 
-test("a draft starts with the last chat agent while available, else the first available", () => {
+test("a draft starts with the default agent while the chat offers it, else the first available", () => {
   const agents = {
     agents: [
       { agent: "codex", name: "Codex", offer: available },
       { agent: "claude-code", name: "Claude Code", offer: available },
       { agent: "pi", name: "pi", offer: outdated },
     ],
-    last: "claude-code",
   };
-  expect(defaultChatAgent(agents)).toBe("claude-code");
-  expect(defaultChatAgent({ ...agents, last: "pi" })).toBe("codex");
-  expect(draftAgent(agents, "pi")).toBe("pi");
-  expect(draftAgent(agents, "gone")).toBe("claude-code");
+  expect(defaultChatAgent(agents, "claude-code")).toBe("claude-code");
+  expect(defaultChatAgent(agents, "pi")).toBe("codex");
+  expect(defaultChatAgent(agents, "gone")).toBe("codex");
+  expect(defaultChatAgent(agents, null)).toBe("codex");
+  expect(draftAgent(agents, "pi", "claude-code")).toBe("pi");
+  expect(draftAgent(agents, "gone", "claude-code")).toBe("claude-code");
+  expect(draftAgent(agents, null, null)).toBe("codex");
   expect(canOpenChatDraft(agents)).toBe(true);
   expect(
     canOpenChatDraft({
       agents: [{ agent: "pi", name: "pi", offer: outdated }],
-      last: null,
     }),
   ).toBe(false);
 });
 
-test("an agent that needs sign-in opens a draft and is chosen only without an available one", () => {
+test("an agent that needs sign-in opens a draft, is chosen without an available one and as the default agent", () => {
   const signIn = { state: "sign_in_required" } as const;
   const onlySignIn = {
     agents: [
       { agent: "pi", name: "pi", offer: outdated },
       { agent: "claude-code", name: "Claude Code", offer: signIn },
     ],
-    last: null,
   };
   expect(canOpenChatDraft(onlySignIn)).toBe(true);
-  expect(defaultChatAgent(onlySignIn)).toBe("claude-code");
-  expect(
-    defaultChatAgent({
-      agents: [
-        { agent: "claude-code", name: "Claude Code", offer: signIn },
-        { agent: "codex", name: "Codex", offer: available },
-      ],
-      last: "claude-code",
-    }),
-  ).toBe("codex");
+  expect(defaultChatAgent(onlySignIn, null)).toBe("claude-code");
+  const both = {
+    agents: [
+      { agent: "claude-code", name: "Claude Code", offer: signIn },
+      { agent: "codex", name: "Codex", offer: available },
+    ],
+  };
+  expect(defaultChatAgent(both, null)).toBe("codex");
+  expect(defaultChatAgent(both, "claude-code")).toBe("claude-code");
+});
+
+test("a new draft takes the values of the default agent only for that agent", () => {
+  const defaultAgent = {
+    agent: "codex",
+    settings: [
+      { setting: "model", value: "gpt-6.1-sol" },
+      { setting: "mode", value: "agent" },
+    ],
+  };
+  expect(defaultAgentValues(defaultAgent, "codex")).toEqual(
+    defaultAgent.settings,
+  );
+  expect(defaultAgentValues(defaultAgent, "claude-code")).toEqual([]);
+  expect(defaultAgentValues(null, "codex")).toEqual([]);
+  expect(defaultAgentValues(defaultAgent, null)).toEqual([]);
 });
 
 test("a turn duration reads in seconds, minutes and hours", async () => {

@@ -4,15 +4,17 @@ import type {
   AgentSessionSnapshotDto,
   AgentSettingValueDto,
 } from "../api/chat";
-import { draftValues, type ComposerDraft } from "../model/composer";
 import { draftValuesToApply, withDraftValue } from "../model/session-controls";
 import { useSessionSettings } from "./use-session-settings";
 
-type UpdateDraft = (change: (draft: ComposerDraft) => ComposerDraft) => void;
+/** Changes the kept values; `change` gets the latest ones. */
+export type UpdateKeptValues = (
+  change: (values: AgentSettingValueDto[]) => AgentSettingValueDto[],
+) => void;
 
 /**
- * The settings of a new session draft (Stage 10 `04`, selectors): a change
- * goes to the draft's session and the draft keeps the value once the agent
+ * The settings of a draft session (Stage 10 `04`, selectors): a change goes
+ * to the draft's session and the host keeps the value once the agent
  * confirmed it. A draft session created anew, as after a reload, gets the
  * kept values again; one it does not offer is dropped with its reason and
  * never replaced silently.
@@ -21,8 +23,8 @@ export function useDraftSettings(
   agent: string | null,
   draftSession: AgentSessionKeyDto | null,
   snapshot: AgentSessionSnapshotDto | null,
-  draft: ComposerDraft,
-  updateDraft: UpdateDraft,
+  values: AgentSettingValueDto[],
+  updateValues: UpdateKeptValues,
 ) {
   const settings = useSessionSettings(draftSession);
   const { change, refuse } = settings;
@@ -38,24 +40,17 @@ export function useDraftSettings(
       return;
     }
     restored.current = draftSession;
-    const { apply, undeclared } = draftValuesToApply(
-      draftValues(draft, agent),
-      snapshot.settings,
-    );
+    const { apply, undeclared } = draftValuesToApply(values, snapshot.settings);
     const drop = (dropped: AgentSettingValueDto[]) =>
-      updateDraft((latest) => ({
-        ...latest,
-        settings: {
-          agent,
-          values: draftValues(latest, agent).filter(
-            (value) =>
-              !dropped.some(
-                (gone) =>
-                  gone.setting === value.setting && gone.value === value.value,
-              ),
-          ),
-        },
-      }));
+      updateValues((latest) =>
+        latest.filter(
+          (value) =>
+            !dropped.some(
+              (gone) =>
+                gone.setting === value.setting && gone.value === value.value,
+            ),
+        ),
+      );
     if (undeclared.length > 0) {
       drop(undeclared);
       refuse({ ...undeclared[0], reason: { kind: "not_declared" } });
@@ -65,20 +60,14 @@ export function useDraftSettings(
         if (!(await change(value))) drop([value]);
       }
     })();
-  }, [agent, change, draft, draftSession, refuse, snapshot, updateDraft]);
+  }, [agent, change, draftSession, refuse, snapshot, updateValues, values]);
 
   const changeSetting = useCallback(
     async (value: AgentSettingValueDto) => {
       if (!agent || !(await change(value))) return;
-      updateDraft((latest) => ({
-        ...latest,
-        settings: {
-          agent,
-          values: withDraftValue(draftValues(latest, agent), value),
-        },
-      }));
+      updateValues((latest) => withDraftValue(latest, value));
     },
-    [agent, change, updateDraft],
+    [agent, change, updateValues],
   );
 
   return { ...settings, changeSetting };

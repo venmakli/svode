@@ -31,6 +31,7 @@ import { AgentSignInDialog } from "./agent-sign-in-dialog";
 import { CustomAgentDialog } from "./custom-agent-dialog";
 import { CustomAgentRemoveDialog } from "./custom-agent-remove-dialog";
 import { CustomAgentRow } from "./custom-agent-row";
+import { DefaultAgentRow } from "./default-agent-row";
 import {
   SettingsDisclosureTrigger,
   SettingsGroup,
@@ -40,11 +41,12 @@ import {
 } from "./settings-layout";
 
 /**
- * The one list of agents: found agents with their state and switch, the
- * custom ACP agents the user added, the agents that are not found with the
- * vendor's install hint, and the entry to add a custom agent. Turning an
- * agent on can add its Svode tools; turning it off can remove its own part.
- * Svode installs no tools for a custom agent.
+ * The one list of agents: the device's default agent first, then found
+ * agents with their state and switch, the custom ACP agents the user added,
+ * the agents that are not found with the vendor's install hint, and the
+ * entry to add a custom agent. Turning an agent on can add its Svode tools;
+ * turning it off can remove its own part. Svode installs no tools for a
+ * custom agent.
  */
 export function AgentsGroup({
   agents,
@@ -220,6 +222,10 @@ export function AgentsGroup({
           ) : null
         }
       >
+        <DefaultAgentRow
+          key="default-agent"
+          onSignIn={(agent) => void openSignIn(agent)}
+        />
         {setups
           ? [
               ...found.map((setup) => (

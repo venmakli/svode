@@ -44,7 +44,12 @@ export type {
   AgentToolKindDto,
   StartedAgentSessionDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
-export { listChatAgents } from "@/platform/agent-setup/agent-setup-api";
+export {
+  getDefaultAgent,
+  listChatAgents,
+  setDefaultAgent,
+} from "@/platform/agent-setup/agent-setup-api";
+export type { DefaultAgentDto } from "@/platform/agent-setup/agent-setup-api";
 export { signInAgent } from "@/platform/agent-setup/agent-setup-api";
 
 const openings = new Map<string, Promise<AgentSessionOpeningDto>>();

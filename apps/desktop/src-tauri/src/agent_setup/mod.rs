@@ -81,8 +81,9 @@ impl AgentSetupState {
         write_choice(&self.config_dir, agent, enabled)
     }
 
-    /// The agent of the last session created in the chat on this device.
-    pub(crate) fn last_chat_agent(&self) -> Option<String> {
+    /// The agent the chat remembered as last used before the device had a
+    /// default agent: only the initial value of the default agent.
+    fn last_chat_agent(&self) -> Option<String> {
         read_file(&self.config_dir)
             .ok()
             .flatten()?
@@ -91,7 +92,8 @@ impl AgentSetupState {
             .map(str::to_string)
     }
 
-    pub(crate) fn set_last_chat_agent(&self, agent: &str) -> Result<(), AppError> {
+    #[cfg(test)]
+    fn set_last_chat_agent(&self, agent: &str) -> Result<(), AppError> {
         let _guard = self.choices.lock().unwrap();
         update_file(&self.config_dir, |root| {
             root.insert(LAST_CHAT_AGENT.into(), agent.into());

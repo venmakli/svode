@@ -80,6 +80,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
   let chatAgents = [{ id: "codex", name: "Codex" }];
   /** What the agent declared last on this device (Stage 11 `03`). */
   let declarationsAnswer: () => unknown = () => [];
+  /** The device's default agent (Stage 11 `03`). */
+  let defaultAgentAnswer: () => unknown = () => null;
   /** How holding a draft's agent ends. */
   let holdAnswer: () => unknown = () => ({
     hold: 5,
@@ -115,6 +117,8 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       return details[payload.itemId as string] ?? { outcome: "unavailable", reason: "not_provided" };
     }
     if (command === "agent_runtime_hold_draft") return holdAnswer();
+    if (command === "agent_default_get") return defaultAgentAnswer();
+    if (command === "agent_default_set") return null;
     if (command === "agent_runtime_last_declarations") {
       return declarationsAnswer();
     }
@@ -188,6 +192,7 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       details = {};
       chatAgents = [{ id: "codex", name: "Codex" }];
       declarationsAnswer = () => [];
+      defaultAgentAnswer = () => null;
       holdAnswer = () => ({
         hold: 5,
         check: {
@@ -441,6 +446,167 @@ if (process.env.SVODE_SESSION_CONTROLS_DOM !== "1") {
       ).toBe(true);
       expect(
         calls.some((call) => call.command === "agent_runtime_subscribe"),
+      ).toBe(false);
+    },
+  );
+
+  controlsTest(
+    "a new draft starts with the default agent and its values, the mode under the field, and a change in the draft leaves the default agent",
+    async () => {
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude-code", name: "Claude Code" },
+      ];
+      defaultAgentAnswer = () => ({
+        agent: "claude-code",
+        settings: [
+          { setting: "model", value: "gpt-6-sol" },
+          { setting: "mode", value: "agent" },
+        ],
+      });
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      // The default agent starts, not the first one the chat offers.
+      expect(
+        calls
+          .filter((call) => call.command === "agent_runtime_hold_draft")
+          .map((call) => call.payload),
+      ).toEqual([{ agent: "claude-code", cwd: "/project" }]);
+      // Its values apply to the draft session, the mode included.
+      expect(
+        calls
+          .filter((call) => call.command === "agent_runtime_set_setting")
+          .map((call) => call.payload.value),
+      ).toEqual([
+        { setting: "model", value: "gpt-6-sol" },
+        { setting: "mode", value: "agent" },
+      ]);
+      await deliver("d1", {
+        change: "settings",
+        value: settings({ model: "gpt-6-sol" }).map((setting) =>
+          setting.id === "mode" ? { ...setting, currentValue: "agent" } : setting,
+        ),
+      });
+      expect(
+        Boolean(
+          buttonByLabel(m.sessions_chat_mode_choose({ mode: "Auto review" })),
+        ),
+      ).toBe(true);
+      expect(agentButton().textContent?.includes("GPT-6 Sol")).toBe(true);
+
+      // A change in the draft stays in the draft.
+      await click(agentButton());
+      await chooseValue(m.sessions_chat_reasoning_level(), "High");
+      expect(lastCall("agent_runtime_set_setting")?.value).toEqual({
+        setting: "reasoning_effort",
+        value: "high",
+      });
+      await click(agentButton());
+      await click(agentTabs()[0]);
+      expect(lastCall("agent_runtime_hold_draft")).toEqual({
+        agent: "codex",
+        cwd: "/project",
+      });
+      expect(calls.some((call) => call.command === "agent_default_set")).toBe(
+        false,
+      );
+    },
+  );
+
+  controlsTest(
+    "a request a Svode action puts into a new draft starts with the default agent and sends its values",
+    async () => {
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude-code", name: "Claude Code" },
+      ];
+      draftSession = null;
+      declarationsAnswer = () => [
+        {
+          agent: "claude-code",
+          model: "gpt-6-sol",
+          settings: settings({ model: "gpt-6-sol" }),
+          declaredAt: 1,
+          agentVersion: "2.1.316",
+        },
+      ];
+      defaultAgentAnswer = () => ({
+        agent: "claude-code",
+        settings: [
+          { setting: "model", value: "gpt-6-sol" },
+          { setting: "mode", value: "agent" },
+        ],
+      });
+      const { putNewSessionRequest } = await import(
+        "../hooks/composer-request"
+      );
+      putNewSessionRequest("/project", "Commit the changes", "agent_commits");
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      expect(lastCall("agent_runtime_hold_draft")).toEqual({
+        agent: "claude-code",
+        cwd: "/project",
+      });
+      // Without a draft session the draft shows the default agent's values.
+      expect(agentButton().textContent?.includes("GPT-6 Sol")).toBe(true);
+      expect(
+        Boolean(
+          buttonByLabel(m.sessions_chat_mode_choose({ mode: "Auto review" })),
+        ),
+      ).toBe(true);
+      await click(buttonByLabel(m.sessions_chat_send()));
+      expect(lastCall("agent_runtime_start_session")).toEqual({
+        agent: "claude-code",
+        cwd: "/project",
+        settings: [
+          { setting: "model", value: "gpt-6-sol" },
+          { setting: "mode", value: "agent" },
+        ],
+        prompt: [{ type: "text", text: "Commit the changes" }],
+        hold: 5,
+        mark: "agent_commits",
+      });
+      expect(calls.some((call) => call.command === "agent_default_set")).toBe(
+        false,
+      );
+    },
+  );
+
+  controlsTest(
+    "a default agent the chat does not offer gives way to the first offered agent without its values",
+    async () => {
+      chatAgents = [
+        { id: "codex", name: "Codex" },
+        { id: "claude-code", name: "Claude Code" },
+      ];
+      defaultAgentAnswer = () => ({
+        agent: "pi",
+        settings: [{ setting: "model", value: "gpt-6-sol" }],
+      });
+      await mount(
+        <NewSessionDraft
+          spacePath="/project"
+          onStarted={() => undefined}
+          onOpenAgentSettings={() => undefined}
+        />,
+      );
+      expect(
+        calls
+          .filter((call) => call.command === "agent_runtime_hold_draft")
+          .map((call) => call.payload),
+      ).toEqual([{ agent: "codex", cwd: "/project" }]);
+      expect(
+        calls.some((call) => call.command === "agent_runtime_set_setting"),
       ).toBe(false);
     },
   );

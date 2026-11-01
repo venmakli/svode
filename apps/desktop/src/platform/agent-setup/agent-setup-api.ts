@@ -2,6 +2,7 @@ import type {
   AgentCheckDto,
   AgentInfoDto,
   AgentLaunchUnavailableDto,
+  AgentSettingValueDto,
 } from "@/platform/agent-runtime/agent-runtime-api";
 import { listen, type UnlistenFn } from "@/platform/native/events";
 import { invokeCommand } from "@/platform/native/invoke";
@@ -244,11 +245,32 @@ export interface ChatAgentDto {
 export interface ChatAgentsDto {
   /** In the order of the agent settings. */
   agents: ChatAgentDto[];
-  /** The agent of the last session created in the chat on this device. */
-  last: string | null;
 }
 
 /** The agents a new session draft offers; starts no agent process. */
 export function listChatAgents(): Promise<ChatAgentsDto> {
   return invokeCommand<ChatAgentsDto>("agent_setup_chat_agents");
+}
+
+/**
+ * The default agent of this device for every project (Stage 11 `03`): an
+ * agent the chat offers, a custom one included, with the values of its
+ * settings in the agent's terms, the mode included; a missing setting is
+ * the agent's native default.
+ */
+export interface DefaultAgentDto {
+  agent: string;
+  settings: AgentSettingValueDto[];
+}
+
+/** The default agent of this device; null while none is chosen. */
+export function getDefaultAgent(): Promise<DefaultAgentDto | null> {
+  return invokeCommand<DefaultAgentDto | null>("agent_default_get");
+}
+
+/** Chooses the default agent of this device, or clears it with null. */
+export function setDefaultAgent(
+  defaultAgent: DefaultAgentDto | null,
+): Promise<void> {
+  return invokeCommand<void>("agent_default_set", { defaultAgent });
 }
