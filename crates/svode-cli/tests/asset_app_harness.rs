@@ -122,7 +122,16 @@ async fn every_asset_and_app_capability_has_exactly_one_command() {
             vec!["app", "validate", "--file", &manifest],
             "validate_app_manifest",
         ),
+        (vec!["app", "list"], "list_apps"),
+        (vec!["app", "show", "."], "get_app"),
     ] {
+        if tool == "get_app" {
+            // The root of the fixture is no App.
+            let (exit, value) = svode(&host, &fixture.project, &args).await;
+            assert_eq!(error(exit, &value), "NOT_AN_APP");
+            assert_eq!(host.take_asked(), BTreeSet::from([tool.to_string()]));
+            continue;
+        }
         let (exit, value) = svode(&host, &fixture.project, &args).await;
         ok(exit, &value);
         assert_eq!(

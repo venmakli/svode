@@ -157,8 +157,10 @@ pub enum Noun {
         #[command(subcommand)]
         verb: AssetVerb,
     },
-    /// Svode Apps.
-    #[command(after_help = "Example:\n  svode app validate --file apps/board/app.yaml --json")]
+    /// Svode Apps: list, description with README and manifest validation.
+    #[command(
+        after_help = "Examples:\n  svode --project ~/Notes app list --json\n  svode --project ~/Notes app show apps/board --json\n  svode app validate --file apps/board/app.yaml --json"
+    )]
     App {
         #[command(subcommand)]
         verb: AppVerb,
@@ -999,11 +1001,29 @@ pub struct AssetImportArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AppVerb {
+    /// Apps of the selected Space: runtime, manifest validity and README.
+    #[command(
+        after_help = "Lists every directory owner with a direct app.yaml that the Space tree shows, the Space root included as `.`: runtime type, whether the manifest is valid, the number of its diagnostics and whether the owner has a README. Apps of child Spaces are listed with --space. Read-only: launches no App, opens no URL, reads no Variable or Secret value and writes nothing.\n\nExample:\n  svode --project ~/Notes app list --space root --json"
+    )]
+    List,
+    /// One App: runtime, declared URL, manifest diagnostics and its README.
+    #[command(
+        after_help = "The README is the one the App's Description tab shows, in any name case, read as Markdown: its path relative to the Space, frontmatter as metadata and the body as written. The author describes there how agents work with the App. A body over 16384 bytes is cut and marked `truncated`; read the full text from its path with your own tools or the reader of that source (`page read`, `item read`, `collection readme read`, `space readme read`). An App without README has `readme: null`; an unreadable README is reported in `readme.diagnostic`. A directory without app.yaml fails with NOT_AN_APP. Read-only: launches no App, opens no URL, reads no Variable or Secret value and writes nothing.\n\nExamples:\n  svode --project ~/Notes app show apps/board --json\n  svode --project ~/Notes app show . --space research"
+    )]
+    Show(AppShowArgs),
     /// Validate a complete app.yaml candidate without a Project.
     #[command(
         after_help = "Read-only: uses the same safe parser as the Svode App host, writes nothing, launches no App and reads no Variable or Secret value. An invalid manifest is a result, not a failure: `valid` is false, `diagnostics` name each problem, and the exit status is 0. Validate the complete candidate before writing app.yaml and again after edits.\n\nExamples:\n  svode app validate --file apps/board/app.yaml --json\n  cat app.yaml | svode app validate --file -"
     )]
     Validate(AppValidateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AppShowArgs {
+    /// App owner directory relative to the selected Space, as `app list`
+    /// prints it; `.` for the Space root.
+    #[arg(value_name = "OWNER")]
+    pub owner: String,
 }
 
 #[derive(Debug, Args)]

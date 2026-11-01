@@ -1,5 +1,7 @@
-//! Managed asset import and App manifest validation through the real
-//! `svode` binary with the desktop app closed. Validation needs no Project.
+//! Managed asset import, App list and description, and App manifest
+//! validation through the real `svode` binary with the desktop app closed.
+//! Validation needs no Project; list and description answer with the
+//! structured result of the shared capability.
 //! The import copies the file by the routing of its Space without a commit;
 //! a Git LFS route answers with the live readiness probe of the process and
 //! refuses before any write while it is not ready.
@@ -101,6 +103,127 @@ fn app_validate_needs_no_project_and_reports_diagnostics_as_a_result() {
         3,
         "no files next to the candidate"
     );
+}
+
+/// Structured result of `tool` from the shared dispatch on the standalone
+/// host, the same one `svode-mcp --project` serves as `structuredContent`.
+fn shared_result(project: &Path, tool: &str, args: Value) -> Value {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let host = svode_tools::standalone::StandaloneHost::new("test");
+        let target = svode_tools::host::RequestTarget {
+            project_path: project.to_string_lossy().to_string(),
+            default_space_id: None,
+            default_space_path: project.to_string_lossy().to_string(),
+            routine_caller: None,
+        };
+        let result = svode_tools::dispatch::call_tool(&host, Some(&target), tool, args).await;
+        host.close().await;
+        result.structured_content.unwrap()
+    })
+}
+
+/// The command result without the envelope the CLI adds.
+fn payload(mut value: Value) -> Value {
+    let object = value.as_object_mut().unwrap();
+    for key in ["ok", "schemaVersion", "target"] {
+        object.remove(key);
+    }
+    value
+}
+
+#[test]
+fn app_list_and_show_answer_with_the_shared_result_and_change_nothing() {
+    let (_temp, root, _elsewhere) = fixture();
+    write(&root.join("apps/README.md"), "---\ntitle: Apps\n---\n");
+    write(
+        &root.join("apps/board/app.yaml"),
+        "runtime:\n  type: url\n  url: https://example.com/board\n",
+    );
+    write(
+        &root.join("apps/board/Readme.md"),
+        "---\ntitle: Board\n---\n## For agents\n\nRead `board.json`.\n",
+    );
+    write(&root.join("apps/api/app.yaml"), PROCESS_APP);
+    let before = snapshot(&root);
+
+    let (exit, listed) = json(&root, &["app", "list"], None);
+    assert_eq!(exit, 0, "{listed}");
+    assert_eq!(listed["ok"], true);
+    assert_eq!(listed["target"]["spaceId"], "root");
+    assert_eq!(
+        listed["apps"],
+        json!([
+            { "ownerPath": "apps/api", "runtimeType": "process", "valid": true, "diagnosticCount": 0, "hasReadme": false },
+            { "ownerPath": "apps/board", "runtimeType": "url", "valid": true, "diagnosticCount": 0, "hasReadme": true },
+        ])
+    );
+    assert_eq!(
+        payload(listed),
+        shared_result(&root, "list_apps", json!({}))
+    );
+
+    let (exit, shown) = json(&root, &["app", "show", "apps/board"], None);
+    assert_eq!(exit, 0, "{shown}");
+    assert_eq!(shown["target"]["owner"], "apps/board");
+    assert_eq!(shown["readme"]["path"], "apps/board/Readme.md");
+    assert_eq!(
+        shown["readme"]["body"],
+        "## For agents\n\nRead `board.json`.\n"
+    );
+    assert_eq!(
+        payload(shown),
+        shared_result(&root, "get_app", json!({ "ownerPath": "apps/board" }))
+    );
+
+    let (exit, api) = json(&root, &["app", "show", "apps/api"], None);
+    assert_eq!(exit, 0, "{api}");
+    assert_eq!(api["url"], "http://127.0.0.1:3210");
+    assert_eq!(api["readme"], Value::Null);
+    assert!(!api.to_string().contains("API_TOKEN"));
+
+    let (exit, refused) = json(&root, &["app", "show", "notes.md"], None);
+    assert_eq!(exit, 1, "{refused}");
+    assert_eq!(code(&refused), "PATH_NOT_ACCESSIBLE");
+    let (exit, refused) = json(&root, &["app", "show", "apps"], None);
+    assert_eq!(exit, 1, "{refused}");
+    assert_eq!(code(&refused), "NOT_AN_APP");
+    let (exit, missing) = json(&root, &["app", "show"], None);
+    assert_eq!(exit, 2, "{missing}");
+
+    let human = svode(&root, &["app", "list"]);
+    assert_eq!(human.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        "apps/api\tprocess\tno readme\napps/board\turl\treadme\n"
+    );
+    let human = svode(&root, &["app", "show", "apps/board"]);
+    let stdout = String::from_utf8(human.stdout).unwrap();
+    assert!(
+        stdout.starts_with("apps/board\nruntime: url\nurl: https://example.com/board\nreadme: apps/board/Readme.md\n\n## For agents"),
+        "{stdout}"
+    );
+    for verb in ["list", "show"] {
+        let help = svode(&root, &["app", verb, "--help"]);
+        assert_eq!(help.status.code(), Some(0));
+        let help = String::from_utf8(help.stdout).unwrap();
+        assert!(help.contains("Example"), "{help}");
+        assert!(
+            help.contains(&format!("svode --project ~/Notes app {verb}")),
+            "{help}"
+        );
+    }
+
+    // Reads only: no index or store is opened and nothing is written.
+    let mut after = snapshot(&root);
+    after.retain(|path, _| {
+        let path = path.to_string_lossy();
+        !path.starts_with(".svode/index.db") && path != ".svode/write.lock"
+    });
+    assert_eq!(after, before);
 }
 
 #[test]

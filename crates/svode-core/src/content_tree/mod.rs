@@ -1,3 +1,4 @@
+pub mod app_owners;
 pub mod children;
 pub(crate) mod order_merge;
 pub mod owner;

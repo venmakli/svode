@@ -61,6 +61,14 @@ async fn call(
     match name {
         "get_svode_guide" => project::get_svode_guide(),
         "validate_app_manifest" => apps::validate_app_manifest(decode(args)?),
+        "list_apps" => {
+            let args = decode(args)?;
+            apps::list_apps(require(target)?, args)
+        }
+        "get_app" => {
+            let args = decode(args)?;
+            apps::get_app(require(target)?, args)
+        }
         "get_project_info" => project::get_project_info(host, require(target)?).await,
         "list_spaces" => project::list_spaces(host, require(target)?).await,
         "list_pages" => {

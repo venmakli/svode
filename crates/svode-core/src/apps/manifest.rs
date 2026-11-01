@@ -133,11 +133,19 @@ pub fn resolve_app_owner(
     owner_path: &str,
 ) -> Result<ResolvedAppOwner, AppManifestError> {
     let registered = resolve_space_target(project_path, space_id)?;
+    let owner_path = resolve_owner_in_space(&registered.space_path, owner_path)?;
+    Ok(ResolvedAppOwner {
+        project_path: registered.project_path,
+        owner_path,
+    })
+}
+
+/// Directory an App owner path addresses inside a canonical Space
+/// directory: the Space itself for an empty path or `.`, otherwise a real
+/// directory inside it that crosses no child Space and no symbolic link.
+pub fn resolve_owner_in_space(space: &Path, owner_path: &str) -> Result<PathBuf, AppManifestError> {
     if owner_path.trim().is_empty() || owner_path == "." {
-        return Ok(ResolvedAppOwner {
-            project_path: registered.project_path,
-            owner_path: registered.space_path,
-        });
+        return Ok(space.to_path_buf());
     }
 
     let normalized = normalize_repo_relative(owner_path, RootMode::Reject)?;
@@ -147,14 +155,14 @@ pub fn resolve_app_owner(
         .map(|component| component.as_os_str().to_string_lossy().to_string());
     if first_component
         .as_ref()
-        .is_some_and(|component| child_folder_names(&registered.space_path).contains(component))
+        .is_some_and(|component| child_folder_names(space).contains(component))
     {
         return Err(AppManifestError::PathNotAccessible(format!(
             "App owner crosses a registered Space boundary: {normalized}"
         )));
     }
 
-    let mut candidate = registered.space_path.clone();
+    let mut candidate = space.to_path_buf();
     for component in Path::new(&normalized).components() {
         candidate.push(component.as_os_str());
         let metadata = fs::symlink_metadata(&candidate)?;
@@ -173,16 +181,12 @@ pub fn resolve_app_owner(
         )));
     }
     let canonical = fs::canonicalize(candidate)?;
-    if !canonical.starts_with(&registered.space_path) {
+    if !canonical.starts_with(space) {
         return Err(AppManifestError::PathNotAccessible(format!(
             "App owner escapes Space boundary: {normalized}"
         )));
     }
-
-    Ok(ResolvedAppOwner {
-        project_path: registered.project_path,
-        owner_path: canonical,
-    })
+    Ok(canonical)
 }
 
 pub fn read_and_validate_manifest(

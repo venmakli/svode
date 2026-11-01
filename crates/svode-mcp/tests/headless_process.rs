@@ -4,7 +4,8 @@
 //! project unchanged, index-backed reads that reconcile the index with the
 //! files first and again after the recheck window, writes of every family,
 //! Routine definitions from the owner store without execution, every served
-//! tool in one session, and shutdown on EOF and SIGTERM.
+//! tool in one session, App list and description with the result of the
+//! shared dispatch, and shutdown on EOF and SIGTERM.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,7 +22,7 @@ const COMMIT_DATE: &str = "2020-01-02T03:04:05Z";
 const ROUTINE_CALLER_TOKEN: &str = "SVODE_MCP_ROUTINE_CALLER_TOKEN";
 
 /// Tools a standalone process serves in this build.
-const SERVED: [&str; 54] = [
+const SERVED: [&str; 56] = [
     "add_collection_column",
     "add_collection_view",
     "convert_page_to_leaf",
@@ -35,6 +36,7 @@ const SERVED: [&str; 54] = [
     "delete_collection_view",
     "delete_page",
     "delete_routine",
+    "get_app",
     "get_collection_schema",
     "get_git_status",
     "get_knowledge_neighbors",
@@ -47,6 +49,7 @@ const SERVED: [&str; 54] = [
     "import_asset",
     "list_actors",
     "list_agent_actors",
+    "list_apps",
     "list_collections",
     "list_pages",
     "list_routines",
@@ -442,6 +445,88 @@ fn assert_closed(space: &Path) {
     for name in ["index.db-wal", "routines.db-wal"] {
         assert!(!space.join(".svode").join(name).exists(), "{name}");
     }
+}
+
+/// Structured result of `tool` from the shared dispatch on an in-process
+/// standalone host, the same one the `svode` CLI prints under its envelope.
+fn shared_result(project: &Path, tool: &str, args: Value) -> Value {
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let host = svode_tools::standalone::StandaloneHost::new("test");
+        let target = svode_tools::host::RequestTarget {
+            project_path: project.to_string_lossy().to_string(),
+            default_space_id: None,
+            default_space_path: project.to_string_lossy().to_string(),
+            routine_caller: None,
+        };
+        let result = svode_tools::dispatch::call_tool(&host, Some(&target), tool, args).await;
+        host.close().await;
+        result.structured_content.unwrap()
+    })
+}
+
+#[test]
+fn app_list_and_description_are_served_headless_with_the_shared_result() {
+    let fixture = fixture();
+    let project = &fixture.project;
+    write(
+        &project.join("apps/board/app.yaml"),
+        "runtime:\n  type: url\n  url: https://example.com/board\n",
+    );
+    write(&project.join("apps/README.md"), "---\ntitle: Apps\n---\n");
+    write(
+        &project.join("apps/board/README.md"),
+        &format!("---\ntitle: Board\n---\n{}", "Guide. ".repeat(4_000)),
+    );
+    write(
+        &project.join("tasks/app.yaml"),
+        "runtime:\n  type: process\n  start:\n    argv: [tool]\n  url: http://127.0.0.1:3210\nenvironment:\n  TOKEN: ${API_TOKEN}\n",
+    );
+    write(
+        &project.join("child/app.yaml"),
+        "runtime:\n  type: static\n  publicRoot: public\n  entry: index.html\n",
+    );
+    let before = snapshot(fixture.temp.path());
+    let responses = session(
+        fixture.temp.path(),
+        &["--project", project.to_str().unwrap()],
+        &[
+            call(1, "list_apps", json!({})),
+            call(2, "get_app", json!({ "ownerPath": "apps/board" })),
+            call(3, "get_app", json!({ "ownerPath": "tasks" })),
+            call(4, "list_apps", json!({ "spaceId": "child" })),
+            call(5, "get_app", json!({ "ownerPath": "notes.md" })),
+            call(6, "get_app", json!({ "ownerPath": "apps" })),
+        ],
+    );
+    let listed = structured(&responses[&1]);
+    assert_eq!(
+        listed["apps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|app| app["ownerPath"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["apps/board", "tasks"]
+    );
+    assert_eq!(listed, &shared_result(project, "list_apps", json!({})));
+    let board = structured(&responses[&2]);
+    assert_eq!(board["readme"]["truncated"], true);
+    assert_eq!(
+        board,
+        &shared_result(project, "get_app", json!({ "ownerPath": "apps/board" }))
+    );
+    let tasks = structured(&responses[&3]);
+    assert_eq!(tasks["runtimeType"], "process");
+    assert_eq!(tasks["readme"]["path"], "tasks/README.md");
+    assert!(!tasks.to_string().contains("API_TOKEN"));
+    assert_eq!(
+        structured(&responses[&4])["apps"][0]["runtimeType"],
+        "static"
+    );
+    assert_eq!(business_code(&responses[&5]), "PATH_NOT_ACCESSIBLE");
+    assert_eq!(business_code(&responses[&6]), "NOT_AN_APP");
+    // Reads only: nothing is written, no store or index is opened.
+    assert_eq!(snapshot(fixture.temp.path()), before);
 }
 
 #[test]
@@ -1534,6 +1619,10 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
     let photo = fixture.temp.path().join("photo.png");
     fs::write(&photo, "image").unwrap();
     write(&project.join("drafts/plan.md"), "---\ntitle: Plan\n---\n");
+    write(
+        &project.join("board/app.yaml"),
+        "runtime:\n  type: url\n  url: https://example.com/board\n",
+    );
     let mut live = Live::start(
         fixture.temp.path(),
         &["--project", project.to_str().unwrap()],
@@ -1628,6 +1717,10 @@ fn every_served_tool_answers_with_a_result_in_one_session() {
         json!({ "yaml": "runtime:\n  type: url\n  url: https://example.com\n" }),
     );
     assert_eq!(manifest["valid"], true, "{manifest}");
+    let apps = ok(&mut live, "list_apps", json!({}));
+    assert_eq!(apps["apps"][0]["ownerPath"], "board", "{apps}");
+    let app = ok(&mut live, "get_app", json!({ "ownerPath": "board" }));
+    assert_eq!(app["url"], "https://example.com/board", "{app}");
 
     // Body writes from the versions of the reads.
     ok(

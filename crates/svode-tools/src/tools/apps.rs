@@ -1,8 +1,14 @@
+use std::path::Path;
+
 use serde::Deserialize;
 use serde_json::json;
+use svode_core::apps::catalog::{describe_app, list_apps as list_space_apps};
 
+use crate::args::SpaceArgs;
 use crate::error::ToolError;
+use crate::host::RequestTarget;
 use crate::result::ToolCallResult;
+use crate::target::resolve_space;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +46,38 @@ pub(crate) fn validate_app_manifest(
         },
         structured,
     ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GetAppArgs {
+    #[serde(default)]
+    space_id: Option<String>,
+    owner_path: String,
+}
+
+/// App owners of the selected Space as its tree shows them.
+pub(crate) fn list_apps(
+    target: &RequestTarget,
+    args: SpaceArgs,
+) -> Result<ToolCallResult, ToolError> {
+    let space = resolve_space(target, args.space_id.as_deref())?;
+    let apps = list_space_apps(Path::new(&space))?;
+    Ok(ToolCallResult::ok(
+        format!("Found {} Apps.", apps.len()),
+        json!({ "apps": apps }),
+    ))
+}
+
+/// Description of one App with the README of its owner.
+pub(crate) fn get_app(
+    target: &RequestTarget,
+    args: GetAppArgs,
+) -> Result<ToolCallResult, ToolError> {
+    let space = resolve_space(target, args.space_id.as_deref())?;
+    let app = describe_app(Path::new(&space), &args.owner_path)?;
+    let summary = format!("Described App {}.", app.owner_path);
+    Ok(ToolCallResult::ok(summary, json!(app)))
 }
 
 #[cfg(test)]

@@ -439,7 +439,7 @@ fn doctor_reports_project_spaces_git_and_runtime_without_opening_stores() {
     assert!(served.contains(&Value::from("create_routine")));
     assert!(served.contains(&Value::from("list_agent_actors")));
     assert!(!served.contains(&Value::from("run_routine")));
-    assert_eq!(served.len(), 54);
+    assert_eq!(served.len(), 56);
     let human = svode(&root.join("child/deep"), &["doctor"]);
     let human = String::from_utf8(human.stdout).unwrap();
     assert!(human.contains("space child: ready"), "{human}");

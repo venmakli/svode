@@ -7,6 +7,8 @@
 use svode_core::actors::ActorError;
 use svode_core::agent_adapters::SourceRegistryError;
 use svode_core::agent_context::AgentContextError;
+use svode_core::apps::catalog::AppCatalogError;
+use svode_core::apps::manifest::AppManifestError;
 use svode_core::collections::CollectionError;
 use svode_core::content_tree::ContentTreeError;
 use svode_core::git::GitError;
@@ -192,6 +194,22 @@ impl From<ContentTreeError> for ToolError {
             ContentTreeError::Source(error) => error.into(),
             ContentTreeError::Invalid(message) => general(message),
             error @ ContentTreeError::UnreadableOrder(_) => general(error.to_string()),
+        }
+    }
+}
+
+impl From<AppCatalogError> for ToolError {
+    fn from(error: AppCatalogError) -> Self {
+        match error {
+            error @ AppCatalogError::NotAnApp(_) => ToolError::new("NOT_AN_APP", error.to_string()),
+            AppCatalogError::OwnerNotFound(path) => file_not_found(path),
+            AppCatalogError::Manifest(AppManifestError::Io(error)) => io(error),
+            AppCatalogError::Manifest(AppManifestError::PageSource(error)) => error.into(),
+            AppCatalogError::Manifest(AppManifestError::Git(error)) => error.into(),
+            AppCatalogError::Manifest(AppManifestError::PathNotAccessible(path)) => {
+                path_not_accessible(path)
+            }
+            AppCatalogError::Tree(error) => error.into(),
         }
     }
 }
@@ -392,6 +410,19 @@ mod tests {
             (
                 ContentTreeError::FileNotFound("missing".into()).into(),
                 "FILE_NOT_FOUND",
+            ),
+            (
+                AppCatalogError::NotAnApp("notes".into()).into(),
+                "NOT_AN_APP",
+            ),
+            (
+                AppCatalogError::OwnerNotFound("missing".into()).into(),
+                "FILE_NOT_FOUND",
+            ),
+            (
+                AppCatalogError::Manifest(AppManifestError::PathNotAccessible("child".into()))
+                    .into(),
+                "PATH_NOT_ACCESSIBLE",
             ),
             (CollectionError::Index("stale".into()).into(), "INDEX_ERROR"),
             (CollectionError::Schema("bad".into()).into(), SVODE_ERROR),

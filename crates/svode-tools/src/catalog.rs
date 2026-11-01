@@ -923,6 +923,32 @@ pub fn definitions() -> Vec<ToolDefinition> {
             Some(validate_app_manifest_output_schema()),
         ),
         def(
+            "list_apps",
+            "List the Apps of a Space: every directory owner with a direct app.yaml that the Space tree shows, the Space root included as ownerPath \".\", with runtimeType, manifest validity, diagnosticCount and hasReadme. App owners inside child Spaces, markers hidden by Git ignore or Space settings and directories inside an App's ordinary source folders are not listed. Read-only: does not launch setup/start, open a URL, read Variable/Secret values or write files.",
+            schema(&[space_id()], &[]),
+            read_only_ann(),
+            Some(list_apps_output_schema()),
+        ),
+        def(
+            "get_app",
+            "Describe one App by its owner directory: runtimeType, the declared url of a process or url App, manifest diagnostics, and the README of the owner (the App's Description tab, any name case) read as Markdown: path relative to the Space, frontmatter as meta, body without interpretation. The README is how the App's author tells agents how to work with it. A body over 16384 bytes is cut with truncated=true; read the full text from readme.path with your file tools or the reader of that source (read_page, read_collection_item, read_collection_readme, read_space_readme). readme is null when the owner has none; an unreadable README gives readme.diagnostic and the rest of the description. NOT_AN_APP means the directory has no app.yaml. Read-only: does not launch setup/start, open a URL, read Variable/Secret values or write files.",
+            schema(
+                &[
+                    space_id(),
+                    (
+                        "ownerPath",
+                        json!({
+                            "type": "string",
+                            "description": "App owner directory relative to the selected Space, as list_apps returns it; \".\" or \"\" for the Space root."
+                        }),
+                    ),
+                ],
+                &["ownerPath"],
+            ),
+            read_only_ann(),
+            Some(get_app_output_schema()),
+        ),
+        def(
             "get_svode_guide",
             "Return agent-facing guidance for working with Svode Pages, Apps, owner README content, managed file assets, Collections, Collection items, metadata, and schema tools.",
             obj(vec![]),
@@ -1073,6 +1099,83 @@ fn validate_app_manifest_output_schema() -> Value {
             }
         },
         "required": ["valid", "runtimeType", "settingsReferences", "diagnostics"]
+    })
+}
+
+fn app_runtime_type_schema() -> Value {
+    json!({ "type": ["string", "null"], "enum": ["static", "process", "url", null], "description": "Null for an invalid manifest." })
+}
+
+fn list_apps_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "apps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "ownerPath": { "type": "string", "description": "Owner directory relative to the Space; \".\" for the Space root." },
+                        "runtimeType": app_runtime_type_schema(),
+                        "valid": { "type": "boolean" },
+                        "diagnosticCount": { "type": "integer", "minimum": 0 },
+                        "hasReadme": { "type": "boolean" }
+                    },
+                    "required": ["ownerPath", "runtimeType", "valid", "diagnosticCount", "hasReadme"]
+                }
+            }
+        },
+        "required": ["apps"]
+    })
+}
+
+fn get_app_output_schema() -> Value {
+    let manifest_diagnostics =
+        validate_app_manifest_output_schema()["properties"]["diagnostics"].clone();
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "ownerPath": { "type": "string" },
+            "runtimeType": app_runtime_type_schema(),
+            "valid": { "type": "boolean" },
+            "url": { "type": ["string", "null"], "description": "Declared URL of a process or url App." },
+            "diagnostics": manifest_diagnostics,
+            "readme": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "path": { "type": "string", "description": "README path relative to the Space." },
+                            "meta": { "type": ["object", "null"], "description": "Frontmatter of a readable README." },
+                            "body": { "type": ["string", "null"], "description": "Body of a readable README, at most 16384 bytes." },
+                            "truncated": { "type": "boolean" },
+                            "warnings": { "type": "array", "items": { "type": "object" } },
+                            "diagnostic": {
+                                "anyOf": [
+                                    {
+                                        "type": "object",
+                                        "additionalProperties": false,
+                                        "properties": {
+                                            "code": { "type": "string", "enum": ["invalid_encoding", "unreadable"] },
+                                            "message": { "type": "string" }
+                                        },
+                                        "required": ["code", "message"]
+                                    },
+                                    { "type": "null" }
+                                ]
+                            }
+                        },
+                        "required": ["path", "meta", "body", "truncated", "warnings", "diagnostic"]
+                    },
+                    { "type": "null" }
+                ]
+            }
+        },
+        "required": ["ownerPath", "runtimeType", "valid", "url", "diagnostics", "readme"]
     })
 }
 
@@ -2338,6 +2441,47 @@ mod tests {
         assert!(guide_text().contains("Apps authoring:"));
         assert!(guide_text().contains("$${NAME}"));
         assert!(guide_text().contains("OS Keychain"));
+    }
+
+    #[test]
+    fn app_list_and_description_are_read_only_and_name_the_readme_limit() {
+        let find = |name: &str| {
+            definitions()
+                .into_iter()
+                .find(|definition| definition.name == name)
+                .unwrap_or_else(|| panic!("{name} definition"))
+        };
+        let list = find("list_apps");
+        let get = find("get_app");
+        for definition in [&list, &get] {
+            assert_eq!(is_mutating_tool(definition.name), Some(false));
+            assert!(
+                definition
+                    .description
+                    .contains("does not launch setup/start")
+            );
+            assert!(definition.description.contains("Variable/Secret values"));
+        }
+        assert_eq!(
+            list.output_schema.as_ref().unwrap()["properties"]["apps"]["items"]["required"],
+            json!([
+                "ownerPath",
+                "runtimeType",
+                "valid",
+                "diagnosticCount",
+                "hasReadme"
+            ])
+        );
+        assert_eq!(get.input_schema["required"], json!(["ownerPath"]));
+        let limit = svode_core::apps::catalog::APP_README_TEXT_LIMIT_BYTES.to_string();
+        assert!(get.description.contains(&limit));
+        let readme = &get.output_schema.as_ref().unwrap()["properties"]["readme"]["anyOf"][0];
+        assert!(
+            readme["properties"]["body"]["description"]
+                .as_str()
+                .unwrap()
+                .contains(&limit)
+        );
     }
 
     #[test]

@@ -75,7 +75,7 @@ async fn every_catalog_capability_has_exactly_one_command() {
     let mut expected = catalog_tools();
     expected.remove(RUN_ROUTINE);
     assert_eq!(owner.keys().cloned().collect::<BTreeSet<_>>(), expected);
-    assert_eq!(expected.len(), 54);
+    assert_eq!(expected.len(), 56);
 }
 
 /// Rows of the command table in COMMANDS.md: command, capabilities and

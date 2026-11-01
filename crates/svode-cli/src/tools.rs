@@ -497,11 +497,15 @@ pub fn command(noun: Noun, cwd: &Path) -> Result<Option<ToolCommand>, CliError> 
                 cwd.join(&args.file).to_string_lossy().to_string(),
             )
             .optional("fileName", args.name),
-        Noun::App {
-            verb: AppVerb::Validate(args),
-        } => ToolCommand::new("validate_app_manifest", render::manifest)
-            .arg("yaml", input::text(cwd, "file", &args.file)?)
-            .project_free(),
+        Noun::App { verb } => match verb {
+            AppVerb::List => ToolCommand::new("list_apps", render::apps),
+            AppVerb::Show(args) => {
+                ToolCommand::new("get_app", render::app).selector("ownerPath", "owner", args.owner)
+            }
+            AppVerb::Validate(args) => ToolCommand::new("validate_app_manifest", render::manifest)
+                .arg("yaml", input::text(cwd, "file", &args.file)?)
+                .project_free(),
+        },
         Noun::Routine { verb } => match verb {
             RoutineVerb::List(args) => ToolCommand::new("list_routines", render::routines)
                 .routine_owner(args.owner)

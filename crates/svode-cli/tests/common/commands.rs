@@ -450,6 +450,8 @@ pub const CASES: &[Case] = &[
         ],
         &["import_asset"],
     ),
+    case("app list", &["app", "list"], &["list_apps"]),
+    case("app show", &["app", "show", "board"], &["get_app"]),
     case(
         "app validate",
         &["app", "validate", "--file", "app.yaml"],
@@ -502,7 +504,7 @@ pub const CASES: &[Case] = &[
 pub const ROUTINE_ID: &str = "routine:01arz3ndektsv4rrffq69g5fav";
 
 /// Project with a root Space, a registered child Space, a Page, a
-/// directory-backed Page, a Collection with one item and a Routine, plus an input
+/// directory-backed Page, a Collection with one item, an App and a Routine, plus an input
 /// directory outside the Project with every file the cases read.
 pub struct Fixture {
     pub temp: tempfile::TempDir,
@@ -549,6 +551,10 @@ pub fn fixture() -> Fixture {
         "---\ntitle: Folder\n---\nFolder body\n",
     );
     write(&project.join("drafts/plan.md"), "---\ntitle: Plan\n---\n");
+    write(
+        &project.join("board/app.yaml"),
+        "runtime:\n  type: url\n  url: https://example.com/board\n",
+    );
     write(&project.join("list/README.md"), "---\ntitle: List\n---\n");
     write(&project.join("list/a.md"), "---\ntitle: A\n---\n");
     write(&project.join("list/b.md"), "---\ntitle: B\n---\n");

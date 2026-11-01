@@ -46,7 +46,7 @@ pub fn source(value: &Value, key: &str) -> String {
 /// another Page) for stderr; the JSON result keeps them in the source.
 pub fn source_warnings(value: &Value) -> Vec<String> {
     let mut out = Vec::new();
-    for key in ["page", "item", "spaceReadme", "collectionReadme"] {
+    for key in ["page", "item", "spaceReadme", "collectionReadme", "readme"] {
         let entry = &value[key];
         for warning in entry["warnings"].as_array().into_iter().flatten() {
             out.push(format!(
@@ -230,6 +230,78 @@ pub fn manifest(value: &Value) -> String {
             )
         });
     lines(std::iter::once("invalid".to_string()).chain(diagnostics))
+}
+
+/// One line per App: owner path, runtime type or `invalid`, README presence.
+pub fn apps(value: &Value) -> String {
+    if value["apps"].as_array().is_none_or(Vec::is_empty) {
+        return "no Apps\n".to_string();
+    }
+    lines(value["apps"].as_array().into_iter().flatten().map(|app| {
+        let runtime = if app["valid"] == true {
+            text(&app["runtimeType"]).to_string()
+        } else {
+            format!("invalid ({} diagnostics)", app["diagnosticCount"])
+        };
+        let readme = if app["hasReadme"] == true {
+            "readme"
+        } else {
+            "no readme"
+        };
+        format!("{}\t{runtime}\t{readme}", text(&app["ownerPath"]))
+    }))
+}
+
+/// App header, manifest diagnostics, then the README path and body.
+pub fn app(value: &Value) -> String {
+    let mut out = vec![text(&value["ownerPath"]).to_string()];
+    if value["valid"] == true {
+        out.push(format!("runtime: {}", text(&value["runtimeType"])));
+    } else {
+        out.push("runtime: invalid manifest".to_string());
+    }
+    if let Some(url) = value["url"].as_str() {
+        out.push(format!("url: {url}"));
+    }
+    out.extend(
+        value["diagnostics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|diagnostic| {
+                format!(
+                    "{} {}: {}",
+                    text(&diagnostic["code"]),
+                    text(&diagnostic["path"]),
+                    text(&diagnostic["message"])
+                )
+            }),
+    );
+    let readme = &value["readme"];
+    if readme.is_null() {
+        out.push("readme: none".to_string());
+        return lines(out);
+    }
+    out.push(format!("readme: {}", text(&readme["path"])));
+    if let Some(diagnostic) = readme["diagnostic"].as_object() {
+        out.push(format!(
+            "readme unreadable ({}): {}",
+            diagnostic["code"].as_str().unwrap_or_default(),
+            diagnostic["message"].as_str().unwrap_or_default()
+        ));
+        return lines(out);
+    }
+    let mut rendered = lines(out);
+    rendered.push('\n');
+    let body = text(&readme["body"]);
+    rendered.push_str(body);
+    if !body.is_empty() && !body.ends_with('\n') {
+        rendered.push('\n');
+    }
+    if readme["truncated"] == true {
+        rendered.push_str("[truncated: read the full README from its path]\n");
+    }
+    rendered
 }
 
 /// Canonical paths of an imported asset, then the changed paths.

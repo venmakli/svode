@@ -405,8 +405,8 @@ fn error_code(result: &ToolCallResult) -> String {
 #[test]
 fn served_catalog_is_filtered_by_host_declaration_and_capabilities() {
     let host = FixtureHost::new(None);
-    assert_eq!(served_definitions(&host).len(), 55);
-    assert_eq!(catalog::definitions().len(), 55);
+    assert_eq!(served_definitions(&host).len(), 57);
+    assert_eq!(catalog::definitions().len(), 57);
 
     let limited = FixtureHost::serving(&FIRST_SLICE_TOOLS);
     let names = served_names(&limited);
@@ -3037,7 +3037,7 @@ async fn run_routine_goes_through_the_host_runner_and_is_blocked_for_routine_cal
 
     let without_runner = FixtureHost::without_runner();
     let names = served_names(&without_runner);
-    assert_eq!(names.len(), 54);
+    assert_eq!(names.len(), 56);
     assert!(!names.contains(&"run_routine".to_string()));
     assert_eq!(
         error_code(&call_tool(&without_runner, Some(&target), "run_routine", run_args).await),
@@ -3063,7 +3063,7 @@ async fn every_catalog_tool_is_dispatched_by_the_library() {
         .into_iter()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    assert_eq!(names.len(), 55);
+    assert_eq!(names.len(), 57);
     for name in names {
         let result = call_tool(&host, Some(&target), name, json!({})).await;
         if result.is_error {
