@@ -1096,7 +1096,17 @@ Apps authoring:
 - Static shape: `runtime: { type: static, publicRoot: public, entry: index.html }`. Process shape: `runtime: { type: process, start: { argv: [bun, run, dev] }, url: http://127.0.0.1:3210 }`; optional setup accepts argv, cwd, and relative inputs. URL shape: `runtime: { type: url, url: https://example.com }`. Use expanded YAML when readability matters.
 - Process `environment` is a top-level string-to-string mapping. Literal text and one or more `${NAME}` substitutions are supported; `$${NAME}` emits literal `${NAME}`. Names match `[A-Za-z_][A-Za-z0-9_]*`. No recursive expansion, defaults, functions, or expressions exist. Static and url Apps cannot declare environment.
 - Never write credentials into app.yaml. Convert credentials supplied in a prompt into `${NAME}` references and tell the user to provide values in Settings → Variables. Variable values stay on this device; Secret values stay in the OS Keychain, so a clone may require local setup.
-- Before writing app.yaml, call validate_app_manifest with the complete candidate; repair all diagnostics, write the exact validated YAML into the target owner directory, then read it back and validate again after edits. The validator is read-only and never launches setup/start or reads secret values. After a valid process App is opened, missing names block launch until the user creates each name or binds it to an existing entry. Changed values apply on the next setup/start or explicit restart."#
+- Before writing app.yaml, call validate_app_manifest with the complete candidate; repair all diagnostics, write the exact validated YAML into the target owner directory, then read it back and validate again after edits. The validator is read-only and never launches setup/start or reads secret values. After a valid process App is opened, missing names block launch until the user creates each name or binds it to an existing entry. Changed values apply on the next setup/start or explicit restart.
+
+Apps for agents:
+- Find Apps with list_apps (`svode app list`): the App owners of a Space as its tree shows them, the root as ownerPath ".", with runtimeType, valid, diagnosticCount and hasReadme. Describe one with get_app (`svode app show <owner>`): runtimeType, the declared url of a process or url App, manifest diagnostics and readme, the README of its Description tab with path relative to the Space, meta and body. Both are read-only and work in the CLI and in Svode MCP with or without the desktop app.
+- An App's README is where its author tells agents how to work with it; there is no other place for agent instructions, and app.yaml has no field for them. When a task touches an App's data or code, read get_app first and follow its README. Svode does not interpret the README, install anything it names or add it to your session. A body over 16384 bytes comes with readme.truncated=true: read the full text from readme.path with your file tools or the reader of that source (read_page, read_collection_item, read_collection_readme, read_space_readme). readme null means the App has no README; readme.diagnostic means it could not be read.
+- When you create an App, describe in its README how an agent works with it, best in a section for agents: what the App shows, which files hold its data, which commands update it.
+- A tool with its own agent integration (skill, MCP server, plugin or CLI) is set up its own way: the App is a window over its output, and its README says how to install that integration when an agent needs it. Svode does not install, register or proxy another tool's integration and never writes App servers or skills into agent configs.
+- get_app_status and control_app are served only through the running Svode desktop app for a project open in its window; `svode-mcp --project` and the `svode` CLI have neither. get_app_status is read-only: it never launches the App and never reads Variable values or Secrets; it returns the state, the declared url and whether it answers, diagnostics, the bounded stdout/stderr tail of the last setup/start and the Variable names app.yaml references. control_app acts on the same process as the App surface: start returns a starting or ready process as is and otherwise launches it like opening the App; restart starts anew reusing setup; rerun_setup starts anew repeating setup; stop stops only the process Svode manages and leaves an external service running. The open App surface shows what you changed.
+- Codes: NOT_AN_APP (the directory has no app.yaml), APP_MANIFEST_INVALID (fix app.yaml, validate it, retry), APP_RUNTIME_WITHOUT_PROCESS (a static or url App has no process to control), APP_PROJECT_NOT_OPEN (ask the user to open the project in Svode), APP_VARIABLES_BLOCKED (names the missing or unreadable Variables without values: the user sets them in Settings → Variables; you cannot), APP_LAUNCH_FAILED (carries the status with its logs).
+- Author loop of a process App: validate_app_manifest, write app.yaml, control_app start, get_app_status for the state and logs, fix the recipe or the code, control_app restart, repeat until ready. restart reruns setup by itself when its declaration, environment or declared inputs changed; use rerun_setup when setup must run again for another reason.
+- An open static App window reloads by itself once its files under publicRoot change; a process or url App updates its own frontend."#
     )
 }
 
@@ -2487,6 +2497,73 @@ mod tests {
         assert!(guide_text().contains("Apps authoring:"));
         assert!(guide_text().contains("$${NAME}"));
         assert!(guide_text().contains("OS Keychain"));
+    }
+
+    #[test]
+    fn guide_and_skill_describe_apps_for_agents() {
+        let guide = guide_text();
+        let apps = &guide[guide
+            .find("Apps for agents:")
+            .expect("Apps for agents section")..];
+        for name in [
+            "list_apps",
+            "get_app",
+            "`svode app list`",
+            "`svode app show <owner>`",
+            "get_app_status",
+            "control_app",
+            "rerun_setup",
+        ] {
+            assert!(apps.contains(name), "the Apps section misses {name}");
+        }
+        assert!(apps.contains(&format!(
+            "A body over {} bytes",
+            svode_core::apps::catalog::APP_README_TEXT_LIMIT_BYTES
+        )));
+        assert!(apps.contains("with or without the desktop app"));
+        assert!(apps.contains("served only through the running Svode desktop app"));
+        assert!(apps.contains("`svode-mcp --project` and the `svode` CLI have neither"));
+        assert!(apps.contains("An App's README is where its author tells agents"));
+        assert!(apps.contains("When you create an App, describe in its README"));
+        assert!(apps.contains("Author loop of a process App"));
+        assert!(apps.contains("Svode does not install, register or proxy"));
+        for code in [
+            "NOT_AN_APP",
+            "APP_MANIFEST_INVALID",
+            "APP_RUNTIME_WITHOUT_PROCESS",
+            "APP_PROJECT_NOT_OPEN",
+            "APP_VARIABLES_BLOCKED",
+            "APP_LAUNCH_FAILED",
+        ] {
+            assert!(apps.contains(code), "the Apps section misses {code}");
+        }
+
+        let skill = include_str!("../../../plugins/svode/skills/svode/SKILL.md");
+        let section = &skill[skill.find("## Apps\n").expect("Apps section of the skill")..];
+        let section = &section[..section[1..]
+            .find("\n## ")
+            .map_or(section.len(), |end| end + 1)];
+        for pointer in [
+            "`svode app list`",
+            "`svode app show <owner>`",
+            "`list_apps`",
+            "`get_app`",
+            "`get_app_status`",
+            "`control_app`",
+            "When you create an App, describe in its README how an agent works with it.",
+            "Svode does not install or register it",
+            "in the guide",
+        ] {
+            assert!(section.contains(pointer), "the skill misses {pointer}");
+        }
+        // The skill points to the guide instead of repeating its contract.
+        for detail in ["16384", "rerun_setup", "APP_", "publicRoot", "truncated"] {
+            assert!(!skill.contains(detail), "the skill repeats {detail}");
+        }
+
+        let plugin: Value =
+            serde_json::from_str(include_str!("../../../plugins/svode/plugin.json")).unwrap();
+        assert!(plugin["description"].as_str().unwrap().contains("Apps"));
     }
 
     #[test]

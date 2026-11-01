@@ -1,6 +1,6 @@
 ---
 name: svode
-description: Read and change Svode projects, which keep Pages, Collections of items with fields and relations, Spaces and Routine definitions as Markdown and YAML files in Git. Use when the task touches a directory tree with .svode/config.json, a Svode Page, Collection, item, field, relation, schema, view, attachment or Routine, or when the user mentions Svode.
+description: Read and change Svode projects, which keep Pages, Collections of items with fields and relations, Spaces, Routine definitions and Apps as Markdown and YAML files in Git. Use when the task touches a directory tree with .svode/config.json, a Svode Page, Collection, item, field, relation, schema, view, attachment, Routine or App, or when the user mentions Svode.
 ---
 
 # Svode
@@ -10,7 +10,7 @@ A Svode project is a Git repository of Markdown and YAML files: its root holds `
 ## Pick the interface
 
 1. **The `svode` CLI first.** With a shell, run `svode`: it finds the project and Space from the current directory, prints one JSON object with `--json` and costs nothing until you call it. If `svode` is not on PATH, run it by its full path `~/.svode/bin/svode`.
-2. **The Svode MCP server `svode`** when you have no shell, when the task is about what is open in the Svode desktop window, or to start a Routine: `run_routine` works only while the Svode desktop app runs.
+2. **The Svode MCP server `svode`** when you have no shell, when the task is about what is open in the Svode desktop window, to start a Routine or to run a process App: `run_routine`, `get_app_status` and `control_app` work only while the Svode desktop app runs.
 
 Both run the same operations with the same results and codes; finish one change through one of them.
 
@@ -24,6 +24,13 @@ Run `svode guide` once before the first change in a session (in MCP: `get_svode_
 - Change the text below the frontmatter of an existing Page, Collection item or README with your own editing tools. Keep the frontmatter byte for byte, the line endings and the file location. A new plain Page in an existing folder without `schema.yaml` can be created as a file.
 - Everything else goes through Svode, because Svode applies effects a raw edit misses: frontmatter (title, icon, description, cover, fields, relations), new Collection items and Pages under a leaf Page, rename (by title for a Page, item or Collection), move, delete, convert and order, `schema.yaml` and views, attachments, Routine definitions and the `.svode/`, `.routines/` and `.templates/` folders.
 - With file access do not rewrite a body through Svode: the body-write commands and tools serve clients without file access.
+
+## Apps
+
+- An App is a directory with `app.yaml` that the Svode desktop app opens as a window. When a task touches an App's data or code, find it with `svode app list` and read its description with `svode app show <owner>` (MCP: `list_apps`, `get_app`): it carries the App's README, where its author says how an agent works with it.
+- The state, logs, start, restart and stop of a process App are the MCP tools `get_app_status` and `control_app`, served only while the Svode desktop app has the project open.
+- When you create an App, describe in its README how an agent works with it.
+- A tool with its own agent integration is set up its own way; Svode does not install or register it. The details are in the guide.
 
 ## After a change
 
