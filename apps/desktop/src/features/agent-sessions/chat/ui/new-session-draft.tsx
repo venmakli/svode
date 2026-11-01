@@ -26,11 +26,8 @@ import {
 } from "../hooks/use-new-session-draft";
 import type { DraftAgentState } from "../hooks/use-draft-agent";
 import { sessionControls } from "../model/session-controls";
-import {
-  AgentModelButton,
-  AgentRecovery,
-  unavailableText,
-} from "./agent-button";
+import { AgentModelButton } from "./agent-button";
+import { AgentRecovery, unavailableText } from "./agent-recovery";
 import { ChatDropSurface } from "./chat-drop-surface";
 import { Composer } from "./composer";
 import { ScopeIcon, ScopeMarkContent } from "./scope-mark";

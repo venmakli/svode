@@ -1,120 +1,30 @@
-import { ChevronDown, Loader2, RotateCw, Settings2 } from "lucide-react";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type Ref,
-} from "react";
+import { ChevronDown } from "lucide-react";
+import { useState } from "react";
 import {
   AgentIcon,
   useAgentAdapterDictionary,
 } from "@/features/agent-adapters";
-import { Button } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { InputGroupButton } from "@/components/ui/input-group";
-import { MultiPanePopover } from "@/shared/ui/multi-pane-popover";
-import {
-  OverflowTabStrip,
-  type OverflowTabStripFocus,
-} from "@/shared/ui/overflow-tab-strip";
-import { SettingsRow, SettingsStaticRow } from "@/shared/ui/settings-row";
-import type { AgentLaunchUnavailableDto } from "../api/chat";
-import type { ChatAgent } from "../model/agents";
-import type { DraftAgentState } from "../hooks/use-draft-agent";
 import { useComposerField } from "../hooks/use-composer-focus";
 import {
   currentOptionName,
-  filterOptions,
-  MODEL_SEARCH_FROM,
   sessionControls,
   type SessionSetting,
   type SettingValue,
 } from "../model/session-controls";
+import {
+  AgentSettingsPopover,
+  type AgentSettingsChoice,
+} from "./agent-settings-popover";
 import * as m from "@/paraglide/messages.js";
-
-/** The A1 outcome of an agent that cannot start, in the words of the agent settings. */
-export function unavailableText(reason: AgentLaunchUnavailableDto): string {
-  switch (reason.code) {
-    case "node_missing":
-      return m.settings_agents_state_node_missing({
-        required: String(reason.required),
-      });
-    case "node_unsupported":
-      return m.settings_agents_state_node_unsupported({
-        version: reason.version,
-        required: String(reason.required),
-      });
-    case "node_unknown":
-      return m.settings_agents_state_node_unknown();
-    case "cli_unsupported":
-      return m.settings_agents_state_cli_unsupported({
-        minimum: reason.minimum,
-      });
-    case "adapter_not_installed":
-      return m.settings_agents_state_adapter_missing();
-    case "adapter_needs_update":
-      return m.sessions_chat_agent_adapter_outdated();
-    case "executable_missing":
-      return m.settings_agents_state_command_missing({
-        command: reason.executable,
-      });
-    case "disabled":
-      return m.settings_agents_state_disabled();
-    case "not_supported":
-      return m.settings_agents_state_deferred();
-  }
-}
-
-export interface AgentRecoveryActions {
-  onSignIn: (() => void) | null;
-  onOpenSettings: () => void;
-  onRetry: () => void;
-}
-
-/** The agent tabs of a new session draft and the agent's readiness. */
-export interface DraftAgentChoice {
-  agents: ChatAgent[];
-  onChoose: (agent: string) => void;
-  readiness: DraftAgentState;
-  recovery: AgentRecoveryActions;
-  /**
-   * The agent's settings show only after the first send: it has no draft
-   * session and nothing it declared is kept on this device.
-   */
-  settingsAfterSend: boolean;
-  /** The settings come from the agent's last session (Stage 11 `03`). */
-  recorded?: boolean;
-  /** Settings whose options show after a session with the chosen model. */
-  withoutVariants?: string[];
-}
-
-/** The main screen of the popover, or the screen of one setting's values. */
-type AgentPane = "main" | `setting:${string}`;
-
-/** A setting of the main screen under the label it shows with. */
-interface SettingEntry {
-  label: string;
-  setting: SessionSetting;
-}
 
 /**
  * The agent and model button in the composer field (Stage 10 `04`,
  * composer): the agent's icon, the model and, in gray, the reasoning level.
- * Its popover holds the agent tabs in a draft or the session's agent after
- * the first send, then a row of the model, reasoning and each other setting
- * of the agent with its value; a row opens the screen of the setting's
- * values in the same popover (DF-229). Values show as the agent confirmed
- * them.
+ * It opens the agent settings popover over the field: the agent tabs in a
+ * draft, closing once an agent is chosen, and "Configure agents…"; the
+ * session's agent after the first send; the permission mode stays under
+ * the field.
  */
 export function AgentModelButton({
   agent,
@@ -127,7 +37,7 @@ export function AgentModelButton({
 }: {
   agent: string | null;
   /** Present in a new session draft only. */
-  draft: DraftAgentChoice | null;
+  draft: AgentSettingsChoice | null;
   /** The session's declared settings; null while they are not known yet. */
   settings: SessionSetting[] | null;
   /**
@@ -144,114 +54,36 @@ export function AgentModelButton({
   const dictionary = useAgentAdapterDictionary();
   const field = useComposerField();
   const [open, setOpen] = useState(false);
-  // A draft's opened popover starts on the agent tabs (DF-261).
-  const agentTabsFocus = useRef<OverflowTabStripFocus | null>(null);
   // The popover closes for a chosen agent or a click in the composer field
   // and gives focus to the field rather than the button (DF-217).
   const [focusField, setFocusField] = useState(false);
-  const close = (toField: boolean) => {
-    setFocusField(toField);
-    setOpen(false);
-  };
-  // Settings and the sign-in lead away from the popover: it closes first.
-  const signIn = draft?.recovery.onSignIn ?? null;
-  const choice: DraftAgentChoice | null = draft && {
-    ...draft,
-    recovery: {
-      onSignIn:
-        signIn &&
-        (() => {
-          close(false);
-          signIn();
-        }),
-      onOpenSettings: () => {
-        close(false);
-        draft.recovery.onOpenSettings();
-      },
-      onRetry: draft.recovery.onRetry,
-    },
-  };
-  const [pane, setPane] = useState<AgentPane>("main");
-  // The row whose screen was open takes focus back on the main screen.
-  const [returnTo, setReturnTo] = useState<string | null>(null);
   const controls = sessionControls(settings ?? []);
   const name = agent ? dictionary.label(agent) : m.sessions_chat_agent_choose();
   const label = controls.model ? currentOptionName(controls.model) : name;
   const reasoning = controls.reasoning
     ? currentOptionName(controls.reasoning)
     : null;
-  const entries: SettingEntry[] = [
-    ...(controls.model
-      ? [{ label: m.sessions_chat_model(), setting: controls.model }]
-      : []),
-    ...(controls.reasoning
-      ? [
-          {
-            label: m.sessions_chat_reasoning_level(),
-            setting: controls.reasoning,
-          },
-        ]
-      : []),
-    ...controls.others.map((setting) => ({ label: setting.name, setting })),
-  ];
-  const openSetting = (setting: SessionSetting) => {
-    setReturnTo(setting.id);
-    setPane(`setting:${setting.id}`);
-  };
-  const choose = (setting: SessionSetting, value: string) => {
-    if (value !== setting.currentValue) {
-      onChange({ setting: setting.id, value });
-    }
-    setPane("main");
-  };
-  // A screen whose setting is gone, as after another agent was chosen,
-  // gives way to the main screen.
-  const screens = canChange
-    ? entries.filter(
-        ({ setting }) => !draft?.withoutVariants?.includes(setting.id),
-      )
-    : [];
-  const shownPane = screens.some(
-    ({ setting }) => pane === `setting:${setting.id}`,
-  )
-    ? pane
-    : "main";
-  const rows = (
-    <SettingRows
-      draft={choice}
+  return (
+    <AgentSettingsPopover
+      side="top"
+      align="start"
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setFocusField(false);
+        setOpen(next);
+      }}
+      agent={agent}
+      choice={draft}
+      onAgentChosen={() => {
+        setFocusField(true);
+        setOpen(false);
+      }}
       settings={settings}
-      entries={entries}
       unavailableModel={unavailableModel}
       canChange={canChange}
       changing={changing}
-      returnTo={returnTo}
-      onOpen={openSetting}
-    />
-  );
-  return (
-    <MultiPanePopover<AgentPane>
-      // Modal: its own scroll lock lets the wheel scroll a list in the
-      // session peek, whose sheet locks scroll outside itself.
-      modal
-      side="top"
-      align="start"
-      // One height for every screen: a long list of values scrolls inside
-      // instead of stretching the popover to the window.
-      className="max-h-[min(420px,var(--radix-popover-content-available-height))]"
-      open={open}
-      onOpenChange={(next) => {
-        if (next) {
-          setPane("main");
-          setReturnTo(null);
-          setFocusField(false);
-        }
-        setOpen(next);
-      }}
-      onOpenAutoFocus={(event) => {
-        // Once the popover's focus trap holds: a sheet's trap would take
-        // focus back from a tab focused earlier.
-        if (agentTabsFocus.current?.focus()) event.preventDefault();
-      }}
+      onChange={onChange}
+      onConfigureAgents={draft?.recovery.onOpenSettings}
       onPointerDownOutside={(event) => {
         // The modal layer hides the field from the press, so its point
         // tells whether it is in the field.
@@ -267,9 +99,6 @@ export function AgentModelButton({
         event.preventDefault();
         field.focus();
       }}
-      mainPane="main"
-      pane={shownPane}
-      onPaneChange={setPane}
       trigger={
         <InputGroupButton
           size="sm"
@@ -290,397 +119,6 @@ export function AgentModelButton({
           <ChevronDown className="text-muted-foreground" />
         </InputGroupButton>
       }
-      panes={[
-        {
-          id: "main",
-          title: name,
-          content: (
-            <div className="flex flex-col p-1">
-              {choice ? (
-                <AgentTabs
-                  agent={agent}
-                  draft={choice}
-                  focusRef={agentTabsFocus}
-                  onChosen={() => close(true)}
-                >
-                  {rows}
-                </AgentTabs>
-              ) : (
-                <>
-                  {agent && (
-                    <div className="flex h-8 min-w-0 items-center gap-2 px-2 text-sm font-medium">
-                      <AgentIcon agent={agent} />
-                      <span className="truncate">{name}</span>
-                    </div>
-                  )}
-                  {rows}
-                </>
-              )}
-            </div>
-          ),
-          footer: choice && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start"
-              onClick={choice.recovery.onOpenSettings}
-            >
-              <Settings2 data-icon="inline-start" />
-              {m.sessions_chat_agent_settings()}
-            </Button>
-          ),
-        },
-        ...screens.map(({ label, setting }) => ({
-          id: `setting:${setting.id}` as const,
-          title: label,
-          scrollsItself: true,
-          content: (
-            <SettingValues
-              label={label}
-              setting={setting}
-              search={
-                setting === controls.model &&
-                setting.options.length >= MODEL_SEARCH_FROM
-              }
-              onChoose={(value) => choose(setting, value)}
-            />
-          ),
-        })),
-      ]}
     />
-  );
-}
-
-/**
- * The agents of a draft as tabs: arrows move between them, a click, Enter
- * or Space chooses one, which starts it (`04`, C1), the chosen one again
- * included, and closes the popover. Another agent shows its icon, the
- * chosen one its icon and name; agents that do not fit wait under "more",
- * as the views of a Collection do.
- */
-function AgentTabs({
-  agent,
-  draft,
-  focusRef,
-  onChosen,
-  children,
-}: {
-  agent: string | null;
-  draft: DraftAgentChoice;
-  /** Gives focus to the chosen agent, as the opened popover does. */
-  focusRef: Ref<OverflowTabStripFocus>;
-  onChosen: () => void;
-  /** The rows of the chosen agent. */
-  children: ReactNode;
-}) {
-  const tabs = useMemo(
-    () =>
-      draft.agents.map((candidate) => ({
-        value: candidate.agent,
-        label: candidate.name,
-        icon: <AgentIcon agent={candidate.agent} />,
-      })),
-    [draft.agents],
-  );
-  return (
-    <Tabs
-      value={agent ?? ""}
-      onValueChange={draft.onChoose}
-      activationMode="manual"
-      className="gap-1"
-    >
-      <div className="flex px-1 pt-1">
-        <OverflowTabStrip
-          tabs={tabs}
-          value={agent ?? ""}
-          onValueChange={draft.onChoose}
-          onTabChoose={onChosen}
-          moreLabel={m.sessions_chat_agent_more()}
-          labelActiveOnly
-          overflowActivationMode="manual"
-          focusRef={focusRef}
-          listLabel={m.sessions_chat_agent_tabs()}
-          className="flex-1 justify-start"
-        />
-      </div>
-      {agent && (
-        // The rows follow the tabs in the tab order without a stop of
-        // their own.
-        <TabsContent value={agent} tabIndex={-1} className="flex flex-col">
-          {children}
-        </TabsContent>
-      )}
-    </Tabs>
-  );
-}
-
-/**
- * The main screen's rows of the agent's settings with their values: while
- * the agent starts a skeleton, in their place the agent's recovery, and in
- * place of "Model" why there is no choice.
- */
-function SettingRows({
-  draft,
-  settings,
-  entries,
-  unavailableModel,
-  canChange,
-  changing,
-  returnTo,
-  onOpen,
-}: {
-  draft: DraftAgentChoice | null;
-  settings: SessionSetting[] | null;
-  entries: SettingEntry[];
-  unavailableModel: string | null;
-  canChange: boolean;
-  changing: string | null;
-  returnTo: string | null;
-  onOpen: (setting: SessionSetting) => void;
-}) {
-  const readiness = draft?.readiness;
-  if (readiness?.state === "idle") return null;
-  if (
-    readiness &&
-    readiness.state !== "connecting" &&
-    !(readiness.state === "checked" && readiness.check.state === "ready")
-  ) {
-    return (
-      <div className="p-2">
-        <AgentRecovery readiness={readiness} recovery={draft.recovery} />
-      </div>
-    );
-  }
-  if (
-    readiness?.state === "connecting" ||
-    (settings === null && !draft?.settingsAfterSend)
-  ) {
-    return (
-      <div className="flex flex-col gap-1 p-1" aria-busy="true">
-        <Skeleton className="h-7 w-full" />
-        <Skeleton className="h-7 w-3/4" />
-      </div>
-    );
-  }
-  const row = ({ label, setting }: SettingEntry) =>
-    draft?.withoutVariants?.includes(setting.id) ? (
-      <div key={setting.id}>
-        <SettingsStaticRow
-          label={label}
-          meta={m.sessions_chat_setting_agent_default()}
-        />
-        <p className="px-2 pb-1.5 text-xs text-muted-foreground">
-          {m.sessions_chat_setting_variants_after_model()}
-        </p>
-      </div>
-    ) : (
-      <SettingRow
-        key={setting.id}
-        label={label}
-        setting={setting}
-        canChange={canChange}
-        waiting={changing === setting.id}
-        autoFocus={returnTo === setting.id}
-        onOpen={() => onOpen(setting)}
-      />
-    );
-  const model = entries[0]?.setting.category === "model" ? entries[0] : null;
-  const rest = model ? entries.slice(1) : entries;
-  return (
-    <>
-      {draft?.settingsAfterSend ? (
-        <Note>{m.sessions_chat_model_after_send()}</Note>
-      ) : model ? (
-        row(model)
-      ) : (
-        <Note>{m.sessions_chat_model_not_declared()}</Note>
-      )}
-      {unavailableModel && (
-        <p className="px-2 pb-1.5 text-xs text-muted-foreground">
-          {m.sessions_chat_model_session_unavailable({
-            model: unavailableModel,
-          })}
-        </p>
-      )}
-      {rest.map(row)}
-      {draft?.recorded && (
-        <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
-          {m.sessions_chat_settings_last_session()}
-        </p>
-      )}
-    </>
-  );
-}
-
-/**
- * "label — value ›": opens the setting's values; waits while the agent has
- * not confirmed a change, and only shows the value while the runtime does
- * not drive the session.
- */
-function SettingRow({
-  label,
-  setting,
-  canChange,
-  waiting,
-  autoFocus,
-  onOpen,
-}: {
-  label: string;
-  setting: SessionSetting;
-  canChange: boolean;
-  waiting: boolean;
-  autoFocus: boolean;
-  onOpen: () => void;
-}) {
-  const value = currentOptionName(setting);
-  if (!canChange) return <SettingsStaticRow label={label} meta={value} />;
-  return (
-    <SettingsRow
-      label={label}
-      meta={value}
-      pending={waiting}
-      right={
-        waiting ? (
-          <Loader2 className="animate-spin text-muted-foreground" />
-        ) : undefined
-      }
-      autoFocus={autoFocus}
-      onClick={onOpen}
-    />
-  );
-}
-
-/**
- * The screen of a setting's values: each with the agent's full
- * description, the confirmed one checked and highlighted first; the model
- * has a search from five models.
- */
-function SettingValues({
-  label,
-  setting,
-  search,
-  onChoose,
-}: {
-  label: string;
-  setting: SessionSetting;
-  search: boolean;
-  onChoose: (value: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [highlighted, setHighlighted] = useState(setting.currentValue);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    // Without a search the list takes the keys itself.
-    if (!search) root.current?.focus();
-  }, [search]);
-  const options = filterOptions(setting.options, query);
-  return (
-    <Command
-      ref={root}
-      tabIndex={-1}
-      shouldFilter={false}
-      value={highlighted}
-      onValueChange={setHighlighted}
-      label={label}
-      className="h-auto min-h-0 rounded-none! bg-transparent p-0 outline-none"
-    >
-      {search && (
-        <CommandInput
-          autoFocus
-          value={query}
-          onValueChange={setQuery}
-          placeholder={m.sessions_chat_model_search()}
-          aria-label={m.sessions_chat_model_search()}
-        />
-      )}
-      <CommandList className="max-h-none min-h-0 p-1">
-        <CommandEmpty>{m.sessions_chat_model_search_empty()}</CommandEmpty>
-        {options.map((option) => (
-          <CommandItem
-            key={option.value}
-            value={option.value}
-            data-checked={option.value === setting.currentValue}
-            onSelect={() => onChoose(option.value)}
-            className="items-start"
-          >
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="break-words">{option.name}</span>
-              {option.description && (
-                <span className="text-xs break-words text-muted-foreground">
-                  {option.description}
-                </span>
-              )}
-            </span>
-          </CommandItem>
-        ))}
-      </CommandList>
-    </Command>
-  );
-}
-
-function Note({ children }: { children: ReactNode }) {
-  return (
-    <p className="px-2 py-1.5 text-[13px] text-muted-foreground">{children}</p>
-  );
-}
-
-export function AgentRecovery({
-  readiness,
-  recovery,
-}: {
-  readiness: Exclude<
-    DraftAgentState,
-    { state: "idle" } | { state: "connecting" }
-  >;
-  recovery: AgentRecoveryActions;
-}) {
-  let text: string;
-  let signIn = false;
-  let retry = false;
-  if (readiness.state === "failed") {
-    text = m.settings_agents_state_failed_to_start({
-      message: readiness.message,
-    });
-    retry = true;
-  } else {
-    const check = readiness.check;
-    switch (check.state) {
-      case "auth_required":
-        text = m.settings_agents_state_sign_in();
-        signIn = true;
-        break;
-      case "unavailable":
-        text = unavailableText(check.reason);
-        break;
-      case "failed_to_start":
-        text = m.settings_agents_state_failed_to_start({
-          message: check.message,
-        });
-        retry = true;
-        break;
-      case "ready":
-        return null;
-    }
-  }
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm break-words">{text}</p>
-      <div className="flex flex-wrap gap-2">
-        {signIn && recovery.onSignIn && (
-          <Button size="sm" onClick={recovery.onSignIn}>
-            {m.settings_agents_action_sign_in()}
-          </Button>
-        )}
-        {retry && (
-          <Button size="sm" variant="outline" onClick={recovery.onRetry}>
-            <RotateCw data-icon="inline-start" />
-            {m.sessions_chat_agent_retry()}
-          </Button>
-        )}
-        <Button size="sm" variant="outline" onClick={recovery.onOpenSettings}>
-          {m.sessions_chat_agent_open_settings()}
-        </Button>
-      </div>
-    </div>
   );
 }

@@ -27,7 +27,7 @@ import { signInAgent, type AgentSessionKeyDto } from "../api/chat";
 import type { ComposerFocusRequest } from "../hooks/use-composer-focus";
 import { useSessionOpening } from "../hooks/use-session-opening";
 import type { ChatSessionState, ChatUnavailableReason } from "../model/interface";
-import { AgentRecovery } from "./agent-button";
+import { AgentRecovery } from "./agent-recovery";
 import { ChatDropSurface } from "./chat-drop-surface";
 import { SessionChat } from "./session-chat";
 import * as m from "@/paraglide/messages.js";

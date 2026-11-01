@@ -3,7 +3,7 @@ import { useAgentAdapterDictionary } from "@/features/agent-adapters";
 import { Button } from "@/components/ui/button";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import type { ChatUnavailableReason } from "../model/interface";
-import { unavailableText } from "./agent-button";
+import { unavailableText } from "./agent-recovery";
 import * as m from "@/paraglide/messages.js";
 
 /**
