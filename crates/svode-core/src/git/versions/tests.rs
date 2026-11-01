@@ -171,7 +171,7 @@ async fn each_fact_of_the_closed_set_is_recognized() {
         },
         ChangeFact::PageMoved {
             title: "Roadmap Q4".into(),
-            folder: "Planning".into(),
+            folder: Some("Planning".into()),
         },
         ChangeFact::PageCreated {
             title: "Fresh idea".into(),
@@ -323,11 +323,21 @@ async fn a_group_without_facts_gets_the_general_wording() {
         headers.contains(&"Plain: edit page".to_string()),
         "{headers:?}"
     );
+    // A repository root without a name in its config has no place: the
+    // directory of the clone never names it (DF-283).
+    assert!(headers.contains(&"Reorder".to_string()), "{headers:?}");
     let root_name = root.file_name().unwrap().to_string_lossy();
     assert!(
-        headers.contains(&format!("{root_name}: reorder")),
+        headers.iter().all(|header| !header.contains(&*root_name)),
         "{headers:?}"
     );
+
+    // The root is named by the name of the Project.
+    write(root, ".svode/config.json", "{\"name\":\"QA Project\"}\n");
+    commit_all(root, "Name").await;
+    write(root, ".svode/order.json", "{\"\":[\"c\"]}\n");
+    let named = self::headers(&planned(root, EN).await);
+    assert_eq!(named, ["QA Project: reorder"]);
 }
 
 #[tokio::test]
@@ -790,7 +800,7 @@ fn an_operation_names_its_page_and_its_links() {
             "Root",
             ChangeFact::PageMoved {
                 title: "Roadmap Q4".into(),
-                folder: "Планирование".into(),
+                folder: Some("Планирование".into()),
             },
         )],
         4,

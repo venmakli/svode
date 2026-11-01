@@ -102,7 +102,16 @@ pub fn compose(group: &GroupFacts, language: MessageLanguage) -> VersionMessage 
     }
     if places.len() > MIXED_PLACES {
         return VersionMessage {
-            header: t.mixed(places[0], places.len() - 1, group),
+            header: t.mixed(
+                // A repository root without a name does not lead.
+                places
+                    .iter()
+                    .copied()
+                    .find(|place| **place != Place::None)
+                    .unwrap_or(places[0]),
+                places.len() - 1,
+                group,
+            ),
             body: body(),
         };
     }
@@ -228,12 +237,22 @@ impl Templates {
             ChangeFact::PageCreated { title } => format!("create {}", q(title)),
             ChangeFact::PageDeleted { title } if ru => format!("удалена {}", q(title)),
             ChangeFact::PageDeleted { title } => format!("delete {}", q(title)),
-            ChangeFact::PageMoved { title, folder } if ru => {
-                format!("перемещена {} в {}", q(title), q(folder))
-            }
-            ChangeFact::PageMoved { title, folder } => {
-                format!("move {} to {}", q(title), q(folder))
-            }
+            ChangeFact::PageMoved {
+                title,
+                folder: Some(folder),
+            } if ru => format!("перемещена {} в {}", q(title), q(folder)),
+            ChangeFact::PageMoved {
+                title,
+                folder: Some(folder),
+            } => format!("move {} to {}", q(title), q(folder)),
+            ChangeFact::PageMoved {
+                title,
+                folder: None,
+            } if ru => format!("перемещена {}", q(title)),
+            ChangeFact::PageMoved {
+                title,
+                folder: None,
+            } => format!("move {}", q(title)),
             ChangeFact::PageRenamed { from, to } if ru => {
                 format!("переименована {} в {}", q(from), q(to))
             }
@@ -524,8 +543,10 @@ impl Templates {
 
     /// "<first place> and N more sections: edit M pages".
     fn mixed(&self, first: &Place, others: usize, group: &GroupFacts) -> String {
-        let name = self.place(first).unwrap_or_default();
         let counted = self.counted_files(group.pages, group.files);
+        let Some(name) = self.place(first) else {
+            return capitalized(&counted);
+        };
         if self.ru() {
             format!(
                 "{name} и ещё {others} {}: {counted}",

@@ -14,6 +14,8 @@ mod facts;
 mod group;
 mod message;
 #[cfg(test)]
+mod places_tests;
+#[cfg(test)]
 mod tests;
 pub mod turns;
 #[cfg(test)]

@@ -1,7 +1,9 @@
 //! Facts of a version group (Stage 11 1.G): the closed set Svode recognizes
 //! in its own formats, the place the message starts with and the names it
 //! takes from Page and Collection titles rather than file names. The Page
-//! and Collection modules tell what changed in their sources.
+//! and Collection modules tell what changed in their sources. The root of
+//! the Project and of a Space is named by its `.svode/config.json`, never by
+//! the directory a clone lies in on the device (DF-283).
 
 use std::path::Path;
 
@@ -22,7 +24,9 @@ pub enum ChangeFact {
     },
     PageMoved {
         title: String,
-        folder: String,
+        /// The folder it moved to; `None` for a repository root without a
+        /// name.
+        folder: Option<String>,
     },
     PageRenamed {
         from: String,
@@ -133,7 +137,7 @@ pub(crate) fn facts_of(repo: &Path, group: &VersionGroup, sources: &Sources) -> 
         .filter(|change| is_page(&change.path))
         .count();
     let mut facts = GroupFacts {
-        place: Place::Named(names.folder(&group.owner)),
+        place: names.place(&group.owner),
         facts: Vec::new(),
         links: 0,
         general: General::Files,
@@ -170,15 +174,12 @@ pub(crate) fn facts_of(repo: &Path, group: &VersionGroup, sources: &Sources) -> 
             }
         }
         GroupKind::Fields => {
-            facts.place = Place::Named(names.folder(&group.owner));
+            facts.place = names.place(&group.owner);
             facts.general = General::Entries;
             for change in &group.changes {
                 let old = PageVersion::read(sources.head(&change.path).unwrap_or_default());
                 let new = PageVersion::read(&sources.work(&change.path).unwrap_or_default());
-                let record = new
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| file_title(&change.path));
+                let record = names.titled(new.title.clone(), &change.path);
                 for field in field_changes(&old, &new) {
                     facts.facts.push(PlacedFact {
                         place: facts.place.clone(),
@@ -193,7 +194,9 @@ pub(crate) fn facts_of(repo: &Path, group: &VersionGroup, sources: &Sources) -> 
             }
         }
         GroupKind::Schema => {
-            facts.place = Place::Collection(names.folder(&group.owner));
+            facts.place = names
+                .folder(&group.owner)
+                .map_or(Place::None, Place::Collection);
             facts.general = General::Schema;
             let schema = join(&group.owner, "schema.yaml");
             if group.changes.iter().any(|change| change.path == schema) {
@@ -247,11 +250,7 @@ pub(crate) fn facts_of(repo: &Path, group: &VersionGroup, sources: &Sources) -> 
             }
         }
         GroupKind::Folder => {
-            if group
-                .changes
-                .iter()
-                .all(|change| change.path.ends_with(".svode/order.json"))
-            {
+            if only_order(group) {
                 facts.general = General::Order;
             }
         }
@@ -310,14 +309,17 @@ fn operation_facts(names: &Names, group: &VersionGroup, facts: &mut GroupFacts) 
         .filter(|path| path.ends_with("/README.md"))
         .map(|path| parent(path).to_string())
         .collect::<Vec<_>>();
-    facts.place = Place::Named(
-        names.folder(
-            entity_files
-                .first()
-                .map(|path| entity_parent(path))
-                .unwrap_or(&group.owner),
-        ),
+    // Without an entity the owner is the first file the group claimed, such
+    // as the order of a folder a reorder rewrote: the place is its folder.
+    facts.place = names.place(
+        entity_files
+            .first()
+            .map(|path| entity_parent(path))
+            .unwrap_or_else(|| file_folder(&group.owner)),
     );
+    if fact.is_none() && only_order(group) {
+        facts.general = General::Order;
+    }
     if let Some(fact) = fact {
         facts.facts.push(PlacedFact {
             place: facts.place.clone(),
@@ -354,8 +356,8 @@ fn page_facts(names: &Names, change: &PathChange) -> Vec<ChangeFact> {
             let new_source = names.sources.work(path);
             let old = PageVersion::read(old_source.unwrap_or_default());
             let new = PageVersion::read(new_source.as_deref().unwrap_or_default());
-            let old_title = old.title.clone().unwrap_or_else(|| file_title(from_path));
-            let new_title = new.title.clone().unwrap_or_else(|| file_title(path));
+            let old_title = names.titled(old.title.clone(), from_path);
+            let new_title = names.titled(new.title.clone(), path);
             let mut facts = Vec::new();
             if parent(from_path) != parent(path) {
                 facts.push(ChangeFact::PageMoved {
@@ -447,14 +449,34 @@ fn join(dir: &str, name: &str) -> String {
     }
 }
 
-/// A Page's name from its file: the folder of a README, the stem otherwise.
-fn file_title(path: &str) -> String {
-    let file = path.rsplit('/').next().unwrap_or(path);
-    if file.eq_ignore_ascii_case("README.md") {
-        let dir = parent(path);
-        return dir.rsplit('/').next().unwrap_or(dir).to_string();
+/// Whether every change of the group is the order of a folder.
+fn only_order(group: &VersionGroup) -> bool {
+    group
+        .changes
+        .iter()
+        .all(|change| change.path.ends_with(".svode/order.json"))
+}
+
+/// The folder a file belongs to: the one owning its `.svode` directory for a
+/// Svode service file, its parent otherwise.
+fn file_folder(path: &str) -> &str {
+    let dir = parent(path);
+    if dir == ".svode" {
+        ""
+    } else {
+        dir.strip_suffix("/.svode").unwrap_or(dir)
     }
-    file.strip_suffix(".md").unwrap_or(file).to_string()
+}
+
+fn is_readme(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|file| file.eq_ignore_ascii_case("README.md"))
+}
+
+/// The last segment of a folder path.
+fn segment(dir: &str) -> String {
+    dir.rsplit('/').next().unwrap_or(dir).to_string()
 }
 
 fn in_sensitive_collection(repo: &Path, path: &str) -> bool {
@@ -489,36 +511,67 @@ impl Names<'_> {
                 .map(str::to_string)
                 .or_else(|| self.sources.work(path))
         };
-        let title = source
-            .and_then(|source| PageVersion::read(&source).title)
-            .unwrap_or_else(|| file_title(path));
-        if title.is_empty() {
-            self.root_name()
-        } else {
-            title
-        }
+        self.titled(
+            source.and_then(|source| PageVersion::read(&source).title),
+            path,
+        )
     }
 
-    /// The title of a folder: its README's, or its name.
-    fn folder(&self, dir: &str) -> String {
-        let readme = readme_of(dir);
-        let source = self
-            .sources
-            .work(&readme)
-            .or_else(|| self.sources.head(&readme).map(str::to_string));
-        if let Some(title) = source.and_then(|source| PageVersion::read(&source).title) {
+    /// A Page's `title`, or for a missing or empty one the name of its file:
+    /// the stem, and for a README the name of its folder by
+    /// [`Names::folder`] without the README itself (DF-283 R2).
+    fn titled(&self, title: Option<String>, path: &str) -> String {
+        if let Some(title) = title.filter(|title| !title.trim().is_empty()) {
             return title;
         }
-        if dir.is_empty() {
-            return self.root_name();
+        if is_readme(path) {
+            let dir = parent(path);
+            return self
+                .root(dir)
+                .flatten()
+                .or_else(|| (!dir.is_empty()).then(|| segment(dir)))
+                .unwrap_or_else(|| "README".to_string());
         }
-        dir.rsplit('/').next().unwrap_or(dir).to_string()
+        let file = path.rsplit('/').next().unwrap_or(path);
+        file.strip_suffix(".md").unwrap_or(file).to_string()
     }
 
-    fn root_name(&self) -> String {
-        self.repo
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
+    /// The place a folder names: none for a repository root without a name.
+    fn place(&self, dir: &str) -> Place {
+        self.folder(dir).map_or(Place::None, Place::Named)
+    }
+
+    /// The name of a folder (DF-283 R1): the `name` of the Project or Space
+    /// whose root it is, otherwise its README's `title` or its name in the
+    /// tree. A repository root without a readable `name` has none; the root of
+    /// an Inline Space without one is named as its folder.
+    fn folder(&self, dir: &str) -> Option<String> {
+        if let Some(root) = self.root(dir) {
+            return root.or_else(|| (!dir.is_empty()).then(|| segment(dir)));
+        }
+        let readme = readme_of(dir);
+        let title = self
+            .sources
+            .work(&readme)
+            .or_else(|| self.sources.head(&readme).map(str::to_string))
+            .and_then(|source| PageVersion::read(&source).title)
+            .filter(|title| !title.trim().is_empty());
+        Some(title.unwrap_or_else(|| segment(dir)))
+    }
+
+    /// For the root of the repository or of an Inline Space in it, the
+    /// `name` of its `.svode/config.json` if it reads; `None` for any other
+    /// folder. The directory of the repository on the device never names it.
+    fn root(&self, dir: &str) -> Option<Option<String>> {
+        let root = self.repo.join(dir);
+        if !dir.is_empty() && !root.join(".svode").join("config.json").is_file() {
+            return None;
+        }
+        Some(
+            crate::space_config::read(&root)
+                .ok()
+                .map(|config| config.name)
+                .filter(|name| !name.trim().is_empty()),
+        )
     }
 }
