@@ -3,7 +3,9 @@ import { act, useEffect } from "react";
 import { MarkdownPlugin } from "@platejs/markdown";
 import { NodeApi, type Descendant, type TElement } from "platejs";
 import { createPlateEditor, type PlateEditor } from "platejs/react";
+import { toast } from "sonner";
 import type { Page, PageSourceConflict } from "@/features/page";
+import { gitSaveErrorDescription, gitSaveErrorFromError } from "@/features/git";
 import {
   refreshGitSpaceStatus,
   registerPageSaveOwner,
@@ -22,7 +24,11 @@ import { deserializeEditorMarkdownInsertion } from "../model/markdown-io";
 import { loadProgrammaticEditorValue } from "../model/programmatic-editor-load";
 import { useEditorStore } from "../model";
 import { EditorKit } from "../plate/editor-kit";
-import { useEditorDocumentWriter } from "./use-editor-document-writer";
+import {
+  useEditorDocumentWriter,
+  type CommitFailurePresentation,
+} from "./use-editor-document-writer";
+import * as m from "@/paraglide/messages.js";
 
 const SPACE = "/space";
 
@@ -42,7 +48,18 @@ function page(path: string, body: string, version: string): Page {
 
 async function harness(path: string, body: string, markerSize = 7) {
   const dom = await createTestDom();
-  const disk = { body, version: "v1", readFails: false, dirty: false };
+  const disk = {
+    body,
+    version: "v1",
+    readFails: false,
+    dirty: false,
+    /** What the next commits fail with; the written file stays uncommitted. */
+    commitError: null as unknown,
+    /** What the next writes fail with. */
+    writeError: null as unknown,
+  };
+  /** Errors the Page was handed to block saving, as `recoverSourceWriteError`. */
+  const writeBlocks: unknown[] = [];
   const writes: WriteCall[] = [];
   const commits: { command: string; paths: string[] }[] = [];
   const versionChoices: string[] = [];
@@ -62,10 +79,15 @@ async function harness(path: string, body: string, markerSize = 7) {
         paths: (args as { filePaths?: string[]; filePath?: string })
           .filePaths ?? [input.filePath],
       });
+      if (disk.commitError) {
+        disk.dirty = true;
+        throw disk.commitError;
+      }
       disk.dirty = false;
       return { files: [] };
     }
     if (command === "write_page_body") {
+      if (disk.writeError) throw disk.writeError;
       if (input.sourceVersion !== disk.version) throw { kind: "source_stale" };
       writes.push({
         content: input.content,
@@ -126,6 +148,11 @@ async function harness(path: string, body: string, markerSize = 7) {
       saveScopeTree: [],
       spacePath: SPACE,
       readOnly: false,
+      onWriteAccessError: async (error) => {
+        writeBlocks.push(error);
+        return true;
+      },
+      saveFailureShown: () => writeBlocks.length > 0,
     });
     useEffect(() => {
       writerRef.current = writer;
@@ -173,6 +200,7 @@ async function harness(path: string, body: string, markerSize = 7) {
     conflicts,
     versionChoices,
     disk,
+    writeBlocks,
     markerSizeReads,
     reads: () => reads,
     /** Marks the edited value as a draft whose autosave is not due yet. */
@@ -186,11 +214,14 @@ async function harness(path: string, body: string, markerSize = 7) {
     },
     reconcile: () =>
       act(() => writerRef.current!.reconcileExternalChange(path)),
-    /** ⌘S of the Page. */
-    commitPage: () => commit((writer) => writer.handleSave()),
-    /** ⇧⌘S of the Page, or the area commit "Changes" sends to its owner. */
-    commitArea: (scope?: GitSaveScope) =>
-      commit((writer) => writer.handleSaveAll(scope)),
+    /** The commit "Changes" sends to the Page, or ⌘S with `"notify"`. */
+    commitPage: (commitFailure?: CommitFailurePresentation) =>
+      commit((writer) => writer.handleSave(commitFailure)),
+    /** The area commit "Changes" sends to its owner, or ⇧⌘S with `"notify"`. */
+    commitArea: (
+      scope?: GitSaveScope,
+      commitFailure?: CommitFailurePresentation,
+    ) => commit((writer) => writer.handleSaveAll(scope, commitFailure)),
     cleanup: async () => {
       clearNativeMocks();
       await dom.dispose();
@@ -615,6 +646,166 @@ test("after writing my text the next explicit commit commits the editor text", a
       command: "git_commit_paths",
       paths: [path],
     });
+  } finally {
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+    await view.cleanup();
+  }
+});
+
+const hookRefusal = {
+  kind: "git_save_failed",
+  repository: "QA Project",
+  stage: "commit",
+  cause: "hook",
+  reason: "command_failed",
+  exitCode: 1,
+  pathCount: 0,
+  pathSample: null,
+};
+
+/** Toasts shown while `run` ran, by title and description. */
+async function toastsDuring(run: () => Promise<unknown>) {
+  const before = toast.getToasts().length;
+  await run();
+  return toast
+    .getToasts()
+    .slice(before)
+    .map((item) => ({
+      type: "type" in item ? item.type : undefined,
+      title: "title" in item ? item.title : undefined,
+      description: "description" in item ? item.description : undefined,
+    }));
+}
+
+const hookToast = {
+  type: "error",
+  title: gitSaveErrorDescription(gitSaveErrorFromError(hookRefusal)),
+  description: undefined,
+};
+
+test("the ⌘S toast of a hook refusal names the repository, the commit stage and the hook", () => {
+  expect(hookToast.title).toBe(
+    `QA Project: ${m.git_save_stage_commit()} ${m.git_failure_cause_hook()} ${m.git_save_cause_exit_code({ code: "1" })}`,
+  );
+});
+
+test("⌘S whose commit a hook refuses after the write keeps the Page saved, names the refusal once and commits again on the next ⌘S", async () => {
+  const path = "pages/hook-refused.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    appendToBlock(view.editor, "Middle", " edited");
+    useEditorStore.getState().markUnsaved(SPACE, path);
+    view.disk.commitError = hookRefusal;
+    let refusal: GitCommitRefusal | null = null;
+    const shown = await toastsDuring(async () => {
+      refusal = await view.commitPage("notify");
+    });
+    expect(refusal).toBeNull();
+    expect(view.writes.length).toBe(1);
+    expect(view.writes[0].content.includes("Middle edited")).toBe(true);
+    expect(view.commits).toEqual([
+      { command: "git_commit_file", paths: [path] },
+    ]);
+    // Saving is not blocked, so the Page neither shows "Not saved" nor asks
+    // on leaving; one notification, without the general save failure.
+    expect(view.writeBlocks).toEqual([]);
+    expect(shown).toEqual([hookToast]);
+
+    // The write cleared the draft and the file stays uncommitted in Git
+    // status: the next ⌘S commits it again.
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+    view.disk.commitError = null;
+    const retried = await toastsDuring(() => view.commitPage("notify"));
+    expect(view.commits).toEqual([
+      { command: "git_commit_file", paths: [path] },
+      { command: "git_commit_file", paths: [path] },
+    ]);
+    expect(retried).toEqual([]);
+    expect(view.writeBlocks).toEqual([]);
+  } finally {
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+    await view.cleanup();
+  }
+});
+
+test("⇧⌘S whose commit a hook refuses after the write keeps the Page saved and shows only the refusal", async () => {
+  const path = "pages/hook-refused-area.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    appendToBlock(view.editor, "Middle", " edited");
+    useEditorStore.getState().markUnsaved(SPACE, path);
+    view.disk.commitError = hookRefusal;
+    const shown = await toastsDuring(() =>
+      view.commitArea(undefined, "notify"),
+    );
+    expect(view.writes.length).toBe(1);
+    expect(view.commits).toEqual([
+      { command: "git_commit_paths", paths: [path] },
+    ]);
+    expect(view.writeBlocks).toEqual([]);
+    expect(shown).toEqual([hookToast]);
+
+    // Nothing left to write: ⇧⌘S only commits, and names a refusal the same.
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+    const commitOnly = await toastsDuring(() =>
+      view.commitArea(undefined, "notify"),
+    );
+    expect(view.writes.length).toBe(1);
+    expect(view.commits.length).toBe(2);
+    expect(commitOnly).toEqual([hookToast]);
+    expect(view.writeBlocks).toEqual([]);
+  } finally {
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+    await view.cleanup();
+  }
+});
+
+test('a commit "Changes" sends to the Page throws a refusal after the write to it, without blocking the Page or a toast', async () => {
+  const path = "pages/hook-refused-changes.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    appendToBlock(view.editor, "Middle", " edited");
+    useEditorStore.getState().markUnsaved(SPACE, path);
+    view.disk.commitError = hookRefusal;
+    let thrown: unknown = null;
+    const shown = await toastsDuring(async () => {
+      try {
+        await view.commitPage();
+      } catch (error) {
+        thrown = error;
+      }
+    });
+    expect(thrown).toEqual(hookRefusal);
+    expect(view.writes.length).toBe(1);
+    expect(view.writeBlocks).toEqual([]);
+    expect(shown).toEqual([]);
+  } finally {
+    useEditorStore.getState().clearUnsaved(SPACE, path);
+    await view.cleanup();
+  }
+});
+
+test("⌘S whose write fails blocks saving as before and commits nothing", async () => {
+  const path = "pages/write-failed.md";
+  const view = await harness(path, "Status: ok\n\nMiddle\n");
+  try {
+    appendToBlock(view.editor, "Middle", " edited");
+    useEditorStore.getState().markUnsaved(SPACE, path);
+    const writeError = { kind: "io", message: "disk full" };
+    view.disk.writeError = writeError;
+    let thrown: unknown = null;
+    const shown = await toastsDuring(async () => {
+      try {
+        await view.commitPage("notify");
+      } catch (error) {
+        thrown = error;
+      }
+    });
+    expect(thrown).toEqual(writeError);
+    expect(view.writeBlocks).toEqual([writeError]);
+    expect(view.commits).toEqual([]);
+    // The Page presents the block; the writer adds no notification.
+    expect(shown).toEqual([]);
   } finally {
     useEditorStore.getState().clearUnsaved(SPACE, path);
     await view.cleanup();

@@ -65,6 +65,8 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
   let activeContentPath: string | null = "page.md";
   let rootSpaces: { id: string; path: string }[] = [];
   const saves = { commits: 0, refusals: [] as string[] };
+  /** What the next commits of a save shortcut fail with, and the notices. */
+  const commitFailure = { error: null as unknown, notified: [] as unknown[] };
   mock.module("@tanstack/react-router", () => ({
     useNavigate: () => () => calls.navigate++,
   }));
@@ -86,8 +88,11 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
     ...gitAppShell,
     commitSaveScopeAndMaybeSync: async () => {
       saves.commits++;
+      if (commitFailure.error) throw commitFailure.error;
       return null;
     },
+    notifyGitSaveFailure: (error: unknown) =>
+      commitFailure.notified.push(error),
     notifyGitCommitRefusal: (refusal: { title: string }) =>
       saves.refusals.push(refusal.title),
     dirtyPathsForGitSaveScope: () => [],
@@ -329,6 +334,29 @@ if (process.env.SVODE_LETTER_DOM !== "1") {
       expect(saves).toEqual({ commits: 1, refusals: ["Plan"] });
     } finally {
       release();
+      activeContentPath = "page.md";
+      rootSpaces = [];
+    }
+  });
+  test("⇧⌘S of a Space screen names a refused commit in a notification", async () => {
+    activeContentPath = null;
+    rootSpaces = [{ id: "root", path: "/project" }];
+    const refusal = { kind: "git_save_failed", stage: "commit", cause: "hook" };
+    commitFailure.error = refusal;
+    const commitsBefore = saves.commits;
+    try {
+      await act(async () => {
+        root.render(<Shell />);
+      });
+      await act(async () => {
+        fire("KeyS", "s", true, { shiftKey: true });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(saves.commits).toBe(commitsBefore + 1);
+      expect(commitFailure.notified).toEqual([refusal]);
+    } finally {
+      commitFailure.error = null;
+      commitFailure.notified.length = 0;
       activeContentPath = "page.md";
       rootSpaces = [];
     }

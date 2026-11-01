@@ -27,6 +27,7 @@ import {
   getGitSpaceStatus,
   gitSaveShortcutLabel,
   notifyGitCommitRefusal,
+  notifyGitSaveFailure,
   type GitSaveScope,
   type GitSaveScopeLabel,
 } from "@/features/git/app-shell";
@@ -177,7 +178,7 @@ export function useKeyboardShortcuts() {
             scope,
             [],
             activeRootPath ?? undefined,
-          ).catch(console.error);
+          ).catch(notifyGitSaveFailure);
         } else if (saveRoute === "actors") {
           const request = {
             projectPath: activeRootPath ?? activeScopeSpace.path,

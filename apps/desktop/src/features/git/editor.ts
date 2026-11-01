@@ -25,7 +25,10 @@ export {
   registerPageSaveOwner,
   type GitCommitRefusal,
 } from "./model/page-save-owner";
-export { notifyGitCommitRefusal } from "./effects/git-notifications";
+export {
+  notifyGitCommitRefusal,
+  notifyGitSaveFailure,
+} from "./effects/git-notifications";
 export {
   dirtyPathsForGitSaveScope,
   gitSaveShortcutLabel,

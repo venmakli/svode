@@ -20,10 +20,12 @@ import {
   gitSaveShortcutLabel,
   gitStatusHasDirtyPath,
   getGitSpaceStatus,
+  notifyGitSaveFailure,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
   selfPathsForGitSaveScope,
   type GitCommitRefusal,
+  type GitCommitResult,
   type GitSaveScope,
   type GitSaveScopeLabel,
   type GitSaveScopeTreeNode,
@@ -58,6 +60,18 @@ const STALE_REBASE_ATTEMPTS = 2;
 
 interface MutableRef<T> {
   current: T;
+}
+
+/**
+ * Who presents a commit refused after the save wrote the Page: the save
+ * shortcut of the surface in a notification, or the caller it is thrown to
+ * ("Changes"). Either way the written Page counts as saved.
+ */
+export type CommitFailurePresentation = "notify" | "throw";
+
+/** A commit that failed after the write went through. */
+interface CommitFailure {
+  error: unknown;
 }
 
 interface UseEditorDocumentWriterInput {
@@ -100,9 +114,18 @@ interface UseEditorDocumentWriterInput {
 }
 
 interface UseEditorDocumentWriterResult {
-  /** An explicit commit of the Page; a refusal is returned before any write. */
-  handleSave: () => Promise<GitCommitRefusal | null>;
-  handleSaveAll: (scope?: GitSaveScope) => Promise<GitCommitRefusal | null>;
+  /**
+   * An explicit commit of the Page; a refusal is returned before any write.
+   * A failed write blocks saving and throws; a failed commit is presented as
+   * `commitFailure` says (thrown by default).
+   */
+  handleSave: (
+    commitFailure?: CommitFailurePresentation,
+  ) => Promise<GitCommitRefusal | null>;
+  handleSaveAll: (
+    scope?: GitSaveScope,
+    commitFailure?: CommitFailurePresentation,
+  ) => Promise<GitCommitRefusal | null>;
   /** True while a draft waits for the user's choice in a source conflict. */
   hasSourceConflict: () => boolean;
   scheduleAutoSave: () => void;
@@ -484,98 +507,127 @@ export function useEditorDocumentWriter({
     spacePath,
   ]);
 
-  const saveCurrentSurface = useCallback(async () => {
-    if (!currentDocument) return;
-    const result = await performWrite(true);
-    if (!result) return;
-    resumeAutoSave();
-
-    applySavedDocumentResult(currentDocument);
-    const status = getGitSpaceStatus(spacePath);
-    if (status?.hasConflicts) {
+  /** The commit after a write: its failure is returned, not thrown. */
+  const commitWritten = useCallback(
+    async (
+      commit: () => Promise<GitCommitResult | null>,
+    ): Promise<CommitFailure | null> => {
+      let committed: GitCommitResult | null;
       try {
-        await continueGitResolve(
+        committed = await commit();
+      } catch (error) {
+        return { error };
+      }
+      clearCommittedMarkers(committed);
+      return null;
+    },
+    [clearCommittedMarkers],
+  );
+
+  /** Writes the Page, then commits it; only a failed write throws. */
+  const saveCurrentSurface =
+    useCallback(async (): Promise<CommitFailure | null> => {
+      if (!currentDocument) return null;
+      const result = await performWrite(true);
+      if (!result) return null;
+      resumeAutoSave();
+
+      applySavedDocumentResult(currentDocument);
+      const status = getGitSpaceStatus(spacePath);
+      if (status?.hasConflicts) {
+        try {
+          await continueGitResolve(
+            spacePath,
+            currentDocument,
+            titleRef.current || currentDocument,
+          );
+        } catch (error) {
+          console.error("git merge resolution failed:", error);
+          toast.error(m.git_sync_failed());
+        }
+        return null;
+      }
+      return commitWritten(() =>
+        commitFileAndMaybeSync(
           spacePath,
           currentDocument,
-          titleRef.current || currentDocument,
-        );
-      } catch (error) {
-        console.error("git merge resolution failed:", error);
-        toast.error(m.git_sync_failed());
-      }
-      return;
-    }
-    clearCommittedMarkers(
-      await commitFileAndMaybeSync(
-        spacePath,
-        currentDocument,
-        projectPath ?? undefined,
-      ),
-    );
-  }, [
-    applySavedDocumentResult,
-    clearCommittedMarkers,
-    currentDocument,
-    performWrite,
-    projectPath,
-    resumeAutoSave,
-    spacePath,
-    titleRef,
-  ]);
-
-  const handleSave = useCallback(async () => {
-    if (!editor || !currentDocument || !spacePath) return null;
-
-    const status = getGitSpaceStatus(spacePath);
-    const currentSurfaceDirty =
-      useEditorStore.getState().hasUnsaved(spacePath, currentDocument) ||
-      gitStatusHasDirtyPath(status, currentDocument);
-    if (!currentSurfaceDirty) {
-      showCurrentSurfaceCleanFeedback(
-        status,
-        resolveGitSaveAllScope({
-          activePath: currentDocument,
-          tree: saveScopeTree,
-        }),
-        currentDocument,
+          projectPath ?? undefined,
+        ),
       );
-      return null;
-    }
-    const refusal = explicitCommitRefusal(spacePath, {
-      kind: "file",
-      path: currentDocument,
-      label: "page",
-    });
-    if (refusal) return refusal;
+    }, [
+      applySavedDocumentResult,
+      commitWritten,
+      currentDocument,
+      performWrite,
+      projectPath,
+      resumeAutoSave,
+      spacePath,
+      titleRef,
+    ]);
 
-    cancelDebounce();
-    try {
-      await saveCurrentSurface();
-      return null;
-    } catch (error) {
-      if (
-        onWriteAccessError &&
-        (await onWriteAccessError(error, saveCurrentSurface))
-      ) {
+  const handleSave = useCallback(
+    async (commitFailure: CommitFailurePresentation = "throw") => {
+      if (!editor || !currentDocument || !spacePath) return null;
+
+      const status = getGitSpaceStatus(spacePath);
+      const currentSurfaceDirty =
+        useEditorStore.getState().hasUnsaved(spacePath, currentDocument) ||
+        gitStatusHasDirtyPath(status, currentDocument);
+      if (!currentSurfaceDirty) {
+        showCurrentSurfaceCleanFeedback(
+          status,
+          resolveGitSaveAllScope({
+            activePath: currentDocument,
+            tree: saveScopeTree,
+          }),
+          currentDocument,
+        );
+        return null;
+      }
+      const refusal = explicitCommitRefusal(spacePath, {
+        kind: "file",
+        path: currentDocument,
+        label: "page",
+      });
+      if (refusal) return refusal;
+
+      cancelDebounce();
+      let failure: CommitFailure | null;
+      try {
+        failure = await saveCurrentSurface();
+      } catch (error) {
+        if (
+          onWriteAccessError &&
+          (await onWriteAccessError(error, async () =>
+            notifyCommitFailure(await saveCurrentSurface()),
+          ))
+        ) {
+          throw error;
+        }
+        console.error("Failed to save document:", error);
+        if (!saveFailureShown?.()) toast.error(m.editor_error_save());
         throw error;
       }
-      console.error("Failed to save document:", error);
-      if (!saveFailureShown?.()) toast.error(m.editor_error_save());
-      throw error;
-    }
-  }, [
-    cancelDebounce,
-    currentDocument,
-    editor,
-    onWriteAccessError,
-    saveCurrentSurface,
-    saveFailureShown,
-    saveScopeTree,
-    spacePath,
-  ]);
+      presentCommitFailure(failure, commitFailure);
+      return null;
+    },
+    [
+      cancelDebounce,
+      currentDocument,
+      editor,
+      onWriteAccessError,
+      saveCurrentSurface,
+      saveFailureShown,
+      saveScopeTree,
+      spacePath,
+    ],
+  );
 
   const handleSaveAll = useCallback(
-    async (explicitScope?: GitSaveScope) => {
+    async (
+      explicitScope?: GitSaveScope,
+      commitFailure: CommitFailurePresentation = "throw",
+    ) => {
       if (!spacePath) return null;
       const saveAllScope =
         explicitScope ??
@@ -587,61 +639,58 @@ export function useEditorDocumentWriter({
       if (refusal) return refusal;
       cancelDebounce();
 
-      if (!editor || !currentDocument) {
-        await commitSaveScopeAndMaybeSync(
+      const commitScope = (extraPaths: string[]) => () =>
+        commitSaveScopeAndMaybeSync(
           spacePath,
           saveAllScope,
-          [],
+          extraPaths,
           projectPath ?? undefined,
-        ).then(clearCommittedMarkers);
+        );
+
+      if (
+        !editor ||
+        !currentDocument ||
+        !useEditorStore.getState().hasUnsaved(spacePath, currentDocument)
+      ) {
+        presentCommitFailure(
+          await commitWritten(commitScope([])),
+          commitFailure,
+        );
         return null;
       }
 
-      const isDirty = useEditorStore
-        .getState()
-        .hasUnsaved(spacePath, currentDocument);
-      if (!isDirty) {
-        await commitSaveScopeAndMaybeSync(
-          spacePath,
-          saveAllScope,
-          [],
-          projectPath ?? undefined,
-        ).then(clearCommittedMarkers);
-        return null;
-      }
-
-      const saveAll = async () => {
+      const saveAll = async (): Promise<CommitFailure | null> => {
         const result = await performWrite(true);
-        if (!result) return;
+        if (!result) return null;
         resumeAutoSave();
         applySavedDocumentResult(currentDocument, {
           cacheCurrentDocument: false,
         });
-        clearCommittedMarkers(
-          await commitSaveScopeAndMaybeSync(
-            spacePath,
-            saveAllScope,
-            [currentDocument],
-            projectPath ?? undefined,
-          ),
-        );
+        return commitWritten(commitScope([currentDocument]));
       };
+      let failure: CommitFailure | null;
       try {
-        await saveAll();
-        return null;
+        failure = await saveAll();
       } catch (err) {
-        if (onWriteAccessError && (await onWriteAccessError(err, saveAll))) {
+        if (
+          onWriteAccessError &&
+          (await onWriteAccessError(err, async () =>
+            notifyCommitFailure(await saveAll()),
+          ))
+        ) {
           throw err;
         }
         console.error("Save-all failed:", err);
         toast.error(m.editor_error_save());
         throw err;
       }
+      presentCommitFailure(failure, commitFailure);
+      return null;
     },
     [
       applySavedDocumentResult,
       cancelDebounce,
-      clearCommittedMarkers,
+      commitWritten,
       currentDocument,
       editor,
       onWriteAccessError,
@@ -662,6 +711,20 @@ export function useEditorDocumentWriter({
     reconcileExternalChange,
     scheduleAutoSave,
   };
+}
+
+/** A retry the Page runs after a failed write has no caller to throw to. */
+function notifyCommitFailure(failure: CommitFailure | null) {
+  if (failure) notifyGitSaveFailure(failure.error);
+}
+
+function presentCommitFailure(
+  failure: CommitFailure | null,
+  presentation: CommitFailurePresentation,
+) {
+  if (!failure) return;
+  if (presentation === "throw") throw failure.error;
+  notifyGitSaveFailure(failure.error);
 }
 
 function showCurrentSurfaceCleanFeedback(

@@ -1,8 +1,10 @@
 import { toast } from "sonner";
 import * as m from "@/paraglide/messages.js";
+import { gitSaveErrorFromError } from "../api/git-save-error";
 import { toGitPublicationBlock } from "../api/git-sync-error";
 import { syncStopFromResult, type GitSyncOutcome } from "../model";
 import type { GitCommitRefusal } from "../model/page-save-owner";
+import { gitSaveErrorDescription } from "../ui/git-save-error-copy";
 import {
   gitServiceMergedMessage,
   gitSyncStopTitle,
@@ -103,4 +105,16 @@ export function notifyGitCommitRefusal(refusal: GitCommitRefusal): void {
       },
     },
   );
+}
+
+/**
+ * A refused commit of a save shortcut, named by repository, stage and cause
+ * in the words of "Changes"; what the save wrote stays saved.
+ */
+export function notifyGitSaveFailure(error: unknown): void {
+  const failure = gitSaveErrorFromError(error);
+  const description = gitSaveErrorDescription(failure);
+  if (failure.outcome === "partial")
+    toast.error(m.changes_partial(), { description });
+  else toast.error(description);
 }

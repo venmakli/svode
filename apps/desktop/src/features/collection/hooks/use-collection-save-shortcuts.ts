@@ -7,6 +7,7 @@ import {
   getGitSpaceStatus,
   gitSaveShortcutLabel,
   notifyGitCommitRefusal,
+  notifyGitSaveFailure,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
   type GitSaveScope,
@@ -60,7 +61,7 @@ export function useCollectionSaveShortcuts({
           saveAllScope,
           [],
           projectPath ?? undefined,
-        ).catch(console.error);
+        ).catch(notifyGitSaveFailure);
         return;
       }
 

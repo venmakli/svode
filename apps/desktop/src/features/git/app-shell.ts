@@ -14,6 +14,7 @@ export {
   getGitSpaceStatus,
   gitSaveShortcutLabel,
   notifyGitCommitRefusal,
+  notifyGitSaveFailure,
   refreshGitSpaceStatus,
   resolveGitSaveAllScope,
   type GitSaveScope,

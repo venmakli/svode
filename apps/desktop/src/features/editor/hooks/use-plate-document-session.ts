@@ -269,13 +269,14 @@ export function usePlateDocumentSession({
     titleRef,
   ]);
 
-  // In the Page a refused commit opens the version choice right away.
+  // In the Page a refused commit opens the version choice right away; a
+  // commit that failed after the write is named in a notification.
   const saveFromShortcut = useCallback(
-    async () => (await handleSave())?.chooseVersion(),
+    async () => (await handleSave("notify"))?.chooseVersion(),
     [handleSave],
   );
   const saveAllFromShortcut = useCallback(
-    async () => (await handleSaveAll())?.chooseVersion(),
+    async () => (await handleSaveAll(undefined, "notify"))?.chooseVersion(),
     [handleSaveAll],
   );
   useEditorSaveShortcuts({

@@ -52,6 +52,8 @@ if (process.env.SVODE_COLLECTION_COMMIT_REFUSAL_DOM !== "1") {
 
   const SPACE = "/df223-space";
   const commits: string[] = [];
+  /** What the next commits fail with; the files stay uncommitted. */
+  let commitError: unknown = null;
   const refusalText =
     "Nothing was committed: the file of “Plan” changed outside Svode and your text isn't written yet. Choose a version, then try again.";
 
@@ -64,6 +66,7 @@ if (process.env.SVODE_COLLECTION_COMMIT_REFUSAL_DOM !== "1") {
           return { files: [{ path: "board/plan.md", state: "modified" }] };
         if (command.startsWith("git_commit_")) {
           commits.push(command);
+          if (commitError) throw commitError;
           return { files: [] };
         }
         return null;
@@ -133,6 +136,57 @@ if (process.env.SVODE_COLLECTION_COMMIT_REFUSAL_DOM !== "1") {
     } finally {
       release();
       // Unmounting unlistens through the mocked IPC of this DOM.
+      await dom.dispose();
+    }
+  });
+
+  test("⇧⌘S of the collection screen names a commit a hook refuses in one notification", async () => {
+    const dom = await createTestDom();
+    const { state, release } = setup();
+    state.conflicted = false;
+    commitError = {
+      kind: "git_save_failed",
+      repository: "QA Project",
+      stage: "commit",
+      cause: "hook",
+      reason: "command_failed",
+      exitCode: 1,
+      pathCount: 0,
+      pathSample: null,
+    };
+    function Collection() {
+      useCollectionSaveShortcuts({
+        readOnly: false,
+        readmePath: "board/README.md",
+        saveScopeTree: [{ path: "board/README.md", has_schema: true }],
+        spacePath: SPACE,
+      });
+      return null;
+    }
+    try {
+      await dom.render(<Collection />);
+      await act(async () => {
+        window.dispatchEvent(
+          new window.KeyboardEvent("keydown", {
+            key: "s",
+            metaKey: true,
+            shiftKey: true,
+            cancelable: true,
+          }),
+        );
+        await settle();
+      });
+      expect(commits).toEqual(["git_commit_paths"]);
+      expect(toasts.map(({ kind, message }) => ({ kind, message }))).toEqual([
+        {
+          kind: "error",
+          message:
+            "QA Project: Could not create the commit. A Git hook of the repository declined the operation. Its output is shown when you run the same Git command in a terminal. Git exit code: 1.",
+        },
+      ]);
+    } finally {
+      commitError = null;
+      release();
       await dom.dispose();
     }
   });
