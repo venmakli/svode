@@ -176,8 +176,8 @@ fn list_collections_skips_registered_child_space_dirs() {
     );
     fs::write(space.join(SCHEMA_FILE), "columns: []\nviews: []\n").unwrap();
     fs::write(
-        space.join("root-row.md"),
-        "---\nid: root-row\ntitle: Root row\ncreated: now\nupdated: now\n---\n",
+        space.join("root-item.md"),
+        "---\nid: root-item\ntitle: Root item\ncreated: now\nupdated: now\n---\n",
     )
     .unwrap();
     fs::create_dir_all(space.join("child")).unwrap();
@@ -187,8 +187,8 @@ fn list_collections_skips_registered_child_space_dirs() {
     )
     .unwrap();
     fs::write(
-        space.join("child").join("child-row.md"),
-        "---\nid: child-row\ntitle: Child row\ncreated: now\nupdated: now\n---\n",
+        space.join("child").join("child-item.md"),
+        "---\nid: child-item\ntitle: Child item\ncreated: now\nupdated: now\n---\n",
     )
     .unwrap();
 
@@ -201,7 +201,7 @@ fn list_collections_skips_registered_child_space_dirs() {
             .collect::<Vec<_>>(),
         vec!["."]
     );
-    assert_eq!(collections[0].row_count, 1);
+    assert_eq!(collections[0].item_count, 1);
 }
 
 #[test]

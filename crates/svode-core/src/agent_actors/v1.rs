@@ -55,7 +55,7 @@ struct ActorV1 {
     adapters: Vec<AgentAdapter>,
 }
 
-/// A V1 local row: `{"approvalMode": "ask" | "auto" | "full"}`.
+/// A V1 local record: `{"approvalMode": "ask" | "auto" | "full"}`.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LocalApprovalV1 {

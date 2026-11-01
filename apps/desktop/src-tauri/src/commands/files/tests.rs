@@ -742,7 +742,7 @@ async fn title_update_ignores_unrelated_broken_schemas_for_standalone_pages() {
                 std::fs::create_dir_all(root.join("Broken collection")).unwrap();
                 let schema_path = root.join("Broken collection/schema.yaml");
                 std::fs::write(&schema_path, broken_yaml).unwrap();
-                std::fs::write(root.join("Broken collection/row.md"), "untouched").unwrap();
+                std::fs::write(root.join("Broken collection/item.md"), "untouched").unwrap();
                 let path = if folder {
                     "utp/partnerships/README.md"
                 } else {
@@ -795,7 +795,7 @@ async fn title_update_ignores_unrelated_broken_schemas_for_standalone_pages() {
                 assert!(!root.join(path).exists());
                 assert_eq!(std::fs::read_to_string(&schema_path).unwrap(), broken_yaml);
                 assert_eq!(
-                    std::fs::read_to_string(root.join("Broken collection/row.md")).unwrap(),
+                    std::fs::read_to_string(root.join("Broken collection/item.md")).unwrap(),
                     "untouched"
                 );
                 if folder {
@@ -1376,14 +1376,14 @@ async fn title_update_isolates_other_spaces_and_preserves_scoped_relation_rewrit
         assert_eq!(updated.path, "Tasks/Новое имя.md");
         assert!(updated.warnings.is_empty());
         assert_eq!(std::fs::read_to_string(&child_schema).unwrap(), schema);
-        let row = store::read(child.to_str().unwrap(), "Decisions/Decision.md").unwrap();
+        let page = store::read(child.to_str().unwrap(), "Decisions/Decision.md").unwrap();
         let expected = if with_relation {
             "Новое имя.md"
         } else {
             "Page.md"
         };
         assert_eq!(
-            row.meta.extra["Task"].as_sequence().unwrap()[0].as_str(),
+            page.meta.extra["Task"].as_sequence().unwrap()[0].as_str(),
             Some(expected)
         );
     }

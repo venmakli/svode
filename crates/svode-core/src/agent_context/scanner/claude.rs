@@ -8,8 +8,8 @@ use serde::Deserialize;
 use crate::agent_adapters::{AgentAdapterKind, DirectoryWalk, SourceRegistryEnvironment};
 
 use super::super::model::{
-    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
-    InstructionReference, InstructionReferenceStatus, InstructionRow, InstructionSourceKind,
+    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionItem, InstructionOwner,
+    InstructionOwnerKind, InstructionReference, InstructionReferenceStatus, InstructionSourceKind,
     SourceHealth, SourceResolution, SourceSupport,
 };
 use super::io::{diagnostic, inspect, path_string};
@@ -218,7 +218,7 @@ pub(super) fn discover(
         .unwrap_or_else(|_| environment.claude_config_dir.clone())
         .join("CLAUDE.md");
     let mut claude_files = Vec::new();
-    let first_claude_row = result.rows.len();
+    let first_claude_item = result.items.len();
     for walked in &walk {
         for (precedence, name) in CLAUDE_NAMES.iter().enumerate() {
             let candidate = walked.directory.join(name);
@@ -246,12 +246,12 @@ pub(super) fn discover(
             );
         }
     }
-    let loaded_claude_texts = result.rows[first_claude_row..]
+    let loaded_claude_texts = result.items[first_claude_item..]
         .iter()
-        .filter_map(|row| {
-            let preview = row.preview.as_ref()?;
+        .filter_map(|item| {
+            let preview = item.preview.as_ref()?;
             let text = preview.markdown.trim();
-            (!preview.truncated && !text.is_empty()).then(|| (text.to_string(), row.path.clone()))
+            (!preview.truncated && !text.is_empty()).then(|| (text.to_string(), item.path.clone()))
         })
         .collect::<Vec<_>>();
 
@@ -352,7 +352,7 @@ fn discover_file(
             result,
         );
     }
-    result.rows.push(InstructionRow {
+    result.items.push(InstructionItem {
         id: format!("claude-code:{}", path_string(path)),
         adapter_id: Some(adapter_id),
         name: path
@@ -780,7 +780,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let environment = SourceRegistryEnvironment::for_tests(home.path().to_path_buf());
 
-        let rows = super::super::discover(
+        let items = super::super::discover(
             project.path(),
             project.path(),
             &environment,
@@ -789,15 +789,15 @@ mod tests {
         .unwrap()
         .instructions
         .into_iter()
-        .filter(|row| row.adapter_id == Some(AgentAdapterKind::ClaudeCode))
+        .filter(|item| item.adapter_id == Some(AgentAdapterKind::ClaudeCode))
         .collect::<Vec<_>>();
-        let root = rows
+        let root = items
             .iter()
-            .find(|row| row.path.ends_with("/CLAUDE.md") && !row.path.contains("/.claude/"))
+            .find(|item| item.path.ends_with("/CLAUDE.md") && !item.path.contains("/.claude/"))
             .unwrap();
-        let shadowed = rows
+        let shadowed = items
             .iter()
-            .find(|row| row.path.contains("/.claude/CLAUDE.md"))
+            .find(|item| item.path.contains("/.claude/CLAUDE.md"))
             .unwrap();
 
         assert_eq!(root.resolution, SourceResolution::Included);
@@ -850,25 +850,27 @@ mod tests {
                 .unwrap()
         }
 
-        fn rows(&self, enabled: bool) -> Vec<InstructionRow> {
+        fn items(&self, enabled: bool) -> Vec<InstructionItem> {
             self.discovery(enabled)
                 .instructions
                 .into_iter()
-                .filter(|row| row.adapter_id == Some(AgentAdapterKind::ClaudeCode))
+                .filter(|item| item.adapter_id == Some(AgentAdapterKind::ClaudeCode))
                 .collect()
         }
     }
 
-    fn find<'a>(rows: &'a [InstructionRow], path: &str) -> &'a InstructionRow {
-        rows.iter()
-            .find(|row| row.canonical_path.as_deref() == Some(path))
-            .unwrap_or_else(|| panic!("no Claude row {path} in {rows:#?}"))
+    fn find<'a>(items: &'a [InstructionItem], path: &str) -> &'a InstructionItem {
+        items
+            .iter()
+            .find(|item| item.canonical_path.as_deref() == Some(path))
+            .unwrap_or_else(|| panic!("no Claude item {path} in {items:#?}"))
     }
 
-    fn agents_md_paths(rows: &[InstructionRow]) -> Vec<&str> {
-        rows.iter()
-            .filter(|row| row.discovery.policy == InstructionDiscoveryPolicy::ClaudeAgentsMd)
-            .map(|row| row.path.as_str())
+    fn agents_md_paths(items: &[InstructionItem]) -> Vec<&str> {
+        items
+            .iter()
+            .filter(|item| item.discovery.policy == InstructionDiscoveryPolicy::ClaudeAgentsMd)
+            .map(|item| item.path.as_str())
             .collect()
     }
 
@@ -880,19 +882,19 @@ mod tests {
         let dot_agents = walk.write("work/proj/.claude/AGENTS.md", "dot agents");
         walk.write(".claude/CLAUDE.md", "personal");
 
-        let rows = walk.rows(true);
+        let items = walk.items(true);
 
         for path in [&agents, &dot_agents] {
-            let row = find(&rows, path);
-            assert_eq!(row.resolution, SourceResolution::Included);
+            let item = find(&items, path);
+            assert_eq!(item.resolution, SourceResolution::Included);
             assert_eq!(
-                row.discovery.policy,
+                item.discovery.policy,
                 InstructionDiscoveryPolicy::ClaudeAgentsMd
             );
         }
-        let personal = rows
+        let personal = items
             .iter()
-            .filter(|row| row.path.ends_with("/.claude/CLAUDE.md"))
+            .filter(|item| item.path.ends_with("/.claude/CLAUDE.md"))
             .collect::<Vec<_>>();
         assert_eq!(personal.len(), 1);
         assert_eq!(personal[0].source_kind, InstructionSourceKind::Personal);
@@ -905,9 +907,9 @@ mod tests {
         let local = walk.write("work/proj/CLAUDE.local.md", "local");
         walk.write("work/CLAUDE.md", "ancestor");
 
-        let rows = walk.rows(true);
+        let items = walk.items(true);
 
-        let shadowed = find(&rows, &agents);
+        let shadowed = find(&items, &agents);
         assert_eq!(shadowed.resolution, SourceResolution::Superseded);
         assert!(
             shadowed
@@ -917,7 +919,7 @@ mod tests {
                 .ends_with("/CLAUDE.local.md")
         );
         assert!(shadowed.references.is_empty());
-        assert_eq!(find(&rows, &local).resolution, SourceResolution::Included);
+        assert_eq!(find(&items, &local).resolution, SourceResolution::Included);
     }
 
     #[test]
@@ -928,13 +930,13 @@ mod tests {
         let ancestor_agents = walk.write("work/AGENTS.md", "ancestor agents");
 
         let enabled = walk.discovery(true);
-        let rows = enabled
+        let items = enabled
             .instructions
             .iter()
-            .filter(|row| row.adapter_id == Some(AgentAdapterKind::ClaudeCode))
+            .filter(|item| item.adapter_id == Some(AgentAdapterKind::ClaudeCode))
             .cloned()
             .collect::<Vec<_>>();
-        let above = find(&rows, &ancestor);
+        let above = find(&items, &ancestor);
         assert_eq!(above.source_kind, InstructionSourceKind::Personal);
         assert_eq!(above.resolution, SourceResolution::Included);
         assert_eq!(
@@ -943,19 +945,19 @@ mod tests {
         );
         assert!(enabled.observed_personal_paths.contains(&above.path));
         assert_eq!(
-            find(&rows, &ancestor_agents).resolution,
+            find(&items, &ancestor_agents).resolution,
             SourceResolution::Superseded
         );
         assert_eq!(
-            find(&rows, &agents).resolution,
+            find(&items, &agents).resolution,
             SourceResolution::Superseded
         );
 
-        let disabled = walk.rows(false);
+        let disabled = walk.items(false);
         assert!(
             disabled
                 .iter()
-                .all(|row| row.source_kind != InstructionSourceKind::Personal)
+                .all(|item| item.source_kind != InstructionSourceKind::Personal)
         );
         assert_eq!(
             find(&disabled, &agents).resolution,
@@ -970,14 +972,14 @@ mod tests {
         let agents = walk.write("work/proj/AGENTS.md", "agents");
         let home_dot_claude = walk.write(".claude/CLAUDE.md", "home .claude");
 
-        let rows = walk.rows(true);
+        let items = walk.items(true);
 
         assert_eq!(
-            find(&rows, &home_dot_claude).source_kind,
+            find(&items, &home_dot_claude).source_kind,
             InstructionSourceKind::Personal
         );
         assert_eq!(
-            find(&rows, &agents).superseded_by.as_deref(),
+            find(&items, &agents).superseded_by.as_deref(),
             Some(home_dot_claude.as_str())
         );
     }
@@ -992,14 +994,14 @@ mod tests {
         let claude = walk.write("work/proj/CLAUDE.md", "same text");
         let dot_agents = walk.write("work/proj/.claude/AGENTS.md", "other text");
 
-        let rows = walk.rows(true);
+        let items = walk.items(true);
 
         assert_eq!(
-            find(&rows, &agents).superseded_by.as_deref(),
+            find(&items, &agents).superseded_by.as_deref(),
             Some(claude.as_str())
         );
         assert_eq!(
-            find(&rows, &dot_agents).resolution,
+            find(&items, &dot_agents).resolution,
             SourceResolution::Included
         );
     }
@@ -1024,26 +1026,26 @@ mod tests {
                 0,
             ),
         ];
-        for (settings, agents_rows, claude_rows) in cases {
+        for (settings, agents_items, claude_items) in cases {
             let walk = Walk::new();
             walk.settings(settings);
             walk.write("work/proj/AGENTS.md", "agents");
             walk.write("work/proj/.claude/AGENTS.md", "dot agents");
             walk.write("work/proj/CLAUDE.md", "claude");
 
-            let rows = walk.rows(true);
+            let items = walk.items(true);
 
-            let included_agents = rows
+            let included_agents = items
                 .iter()
-                .filter(|row| {
-                    row.discovery.policy == InstructionDiscoveryPolicy::ClaudeAgentsMd
-                        && row.resolution == SourceResolution::Included
+                .filter(|item| {
+                    item.discovery.policy == InstructionDiscoveryPolicy::ClaudeAgentsMd
+                        && item.resolution == SourceResolution::Included
                 })
                 .count();
-            assert_eq!(included_agents, agents_rows, "{settings}");
+            assert_eq!(included_agents, agents_items, "{settings}");
             assert_eq!(
-                rows.len() - agents_md_paths(&rows).len(),
-                claude_rows,
+                items.len() - agents_md_paths(&items).len(),
+                claude_items,
                 "{settings}"
             );
         }
@@ -1055,8 +1057,8 @@ mod tests {
         walk.settings(r#"{"enabledPlugins":{"agents-md@builtin":false}}"#);
         walk.write("work/proj/AGENTS.md", "agents");
 
-        assert!(agents_md_paths(&walk.rows(true)).is_empty());
-        assert_eq!(agents_md_paths(&walk.rows(false)).len(), 1);
+        assert!(agents_md_paths(&walk.items(true)).is_empty());
+        assert_eq!(agents_md_paths(&walk.items(false)).len(), 1);
     }
 
     #[test]
@@ -1071,7 +1073,7 @@ mod tests {
             discovery
                 .instructions
                 .iter()
-                .filter(|row| row.discovery.policy == InstructionDiscoveryPolicy::ClaudeAgentsMd)
+                .filter(|item| item.discovery.policy == InstructionDiscoveryPolicy::ClaudeAgentsMd)
                 .count(),
             1
         );

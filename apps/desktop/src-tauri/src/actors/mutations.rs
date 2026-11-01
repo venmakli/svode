@@ -1662,7 +1662,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_materializes_no_commit_row_and_duplicate_is_non_writing() {
+    async fn add_materializes_no_commit_item_and_duplicate_is_non_writing() {
         let repo = init_repo("Current", "current@example.test");
         let cli = GitCli::detect().expect("git CLI");
         let snapshot = load_snapshot(&cli, repo.path(), 0)
@@ -1684,10 +1684,10 @@ mod tests {
             .expect("refreshed snapshot");
         let added = refreshed
             .catalog()
-            .rows
+            .items
             .into_iter()
-            .find(|row| row.canonical_email == "new@example.test")
-            .expect("new actor row");
+            .find(|item| item.canonical_email == "new@example.test")
+            .expect("new actor item");
         assert_eq!(added.contribution, ActorContribution::NoCommits);
         assert_eq!(added.commit_count, 0);
 
@@ -1814,16 +1814,16 @@ mod tests {
         assert!(
             refreshed
                 .catalog()
-                .rows
+                .items
                 .iter()
-                .all(|row| row.canonical_email != "old@example.test")
+                .all(|item| item.canonical_email != "old@example.test")
         );
         let target = refreshed
             .catalog()
-            .rows
+            .items
             .into_iter()
-            .find(|row| row.canonical_email == "target@example.test")
-            .expect("target row");
+            .find(|item| item.canonical_email == "target@example.test")
+            .expect("target item");
         assert_eq!(target.commit_count, 2);
         assert_eq!(
             refreshed.canonical_email("Persisted Actor", "old@example.test"),

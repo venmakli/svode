@@ -101,7 +101,7 @@ impl AgentActorMutationInput {
 /// The portable operation and its optional owner-local mode change are
 /// intentionally one domain operation. `mode: None` leaves the overlay
 /// untouched (reorder/delete), `Some(None)` clears the mode; delete removes
-/// a stale row only after the portable catalog has been published.
+/// a stale record only after the portable catalog has been published.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompoundCatalogMutation {
     pub mutation: CatalogMutation,
@@ -603,7 +603,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(read_actor_mode(d.path(), id).unwrap(), None);
-        // The untouched V1 Actor without a row keeps the `ask` equivalent.
+        // The untouched V1 Actor without a record keeps the `ask` equivalent.
         assert_eq!(
             read_actor_mode(d.path(), other).unwrap(),
             Some(codex_mode("workspace-write"))

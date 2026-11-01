@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::model::{
-    CollectionEvent, CollectionEventOrigin, EventMatch, RoutineRow, RoutineTrigger,
+    CollectionEvent, CollectionEventOrigin, EventMatch, RoutineItem, RoutineTrigger,
 };
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
@@ -428,7 +428,7 @@ async fn parent_execution(
 async fn event_routines(
     transaction: &mut Transaction<'_, Sqlite>,
     owner_path: &str,
-) -> Result<Vec<RoutineRow>, ObservationError> {
+) -> Result<Vec<RoutineItem>, ObservationError> {
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT row_json FROM routine_definitions WHERE owner_path = ? ORDER BY routine_id",
     )
@@ -688,22 +688,22 @@ mod projection_tests {
     };
     use crate::routines::{operational, storage};
 
-    fn snapshot(owner_path: &str, rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
+    fn snapshot(owner_path: &str, items: Vec<RoutineItem>) -> RoutineCatalogSnapshot {
         RoutineCatalogSnapshot {
             owner: RoutineOwnerDescriptor {
                 kind: RoutineOwnerKind::Collection,
                 space_id: "root".into(),
                 owner_path: owner_path.into(),
             },
-            routines: rows,
+            routines: items,
             diagnostics: vec![RoutineDiagnostic::new("catalog", "diagnostic")],
             catalog_fingerprint: "catalog".into(),
             refreshed_at: "2026-08-06T00:00:00Z".into(),
         }
     }
 
-    fn row(id: &str) -> RoutineRow {
-        RoutineRow {
+    fn item(id: &str) -> RoutineItem {
+        RoutineItem {
             routine_id: Some(id.into()),
             portable_id: Some("01arz3ndektsv4rrffq69g5fav".into()),
             filename: format!("{id}.md"),
@@ -767,7 +767,7 @@ mod projection_tests {
             .pool;
         operational::replace_catalog_snapshot(
             &routines_pool,
-            &snapshot("tasks", vec![row("kept")]),
+            &snapshot("tasks", vec![item("kept")]),
         )
         .await
         .unwrap();

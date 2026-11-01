@@ -303,7 +303,7 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&row.4).unwrap()["Key"],
             7
         );
-        let collection_rows = svode_core::collections::items::query_items(
+        let collection_items = svode_core::collections::items::query_items(
             &pool,
             &crate::actors::ActorCatalogState::new(),
             None,
@@ -317,7 +317,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(collection_rows.iter().any(|page| page.path == "hidden.md"));
+        assert!(collection_items.iter().any(|page| page.path == "hidden.md"));
 
         assert!(
             svode_core::index::search::search_by_title(&pool, "Hidden Needle", 10)

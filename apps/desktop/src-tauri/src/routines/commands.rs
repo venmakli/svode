@@ -495,7 +495,7 @@ mod tests {
             parser::serialize_definition(&definition, "01arz3ndektsv4rrffq69g5fav").unwrap(),
         )
         .unwrap();
-        let row = parser::discover_owner(&owner).routines.remove(0);
+        let routine = parser::discover_owner(&owner).routines.remove(0);
         let snapshot = svode_core::routines::observation::IndexedItemSnapshot {
             repository_path: project.to_string_lossy().into_owned(),
             collection_path: "tasks".into(),
@@ -526,8 +526,8 @@ mod tests {
             queue_key: "queue".into(),
             event_key: "event".into(),
             owner_path: "tasks".into(),
-            routine_id: row.routine_id.expect("valid routine identity"),
-            definition_fingerprint: row.execution_fingerprint,
+            routine_id: routine.routine_id.expect("valid routine identity"),
+            definition_fingerprint: routine.execution_fingerprint,
             payload_json: serde_json::to_string(&payload).unwrap(),
         };
 

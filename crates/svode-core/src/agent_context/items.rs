@@ -13,8 +13,8 @@ use crate::agent_adapters::{AgentAdapterKind, SourceRegistryEnvironment};
 use super::model::{
     AgentContextDiscovery, AgentContextSnapshotContent, ContextItem, ContextItemKind,
     ContextItemReader, ContextItemSource, ContextLocation, ContextLocationKind, ContextMcpFacts,
-    ContextPluginFacts, ContextSkillFacts, InstructionReference, InstructionRow, MarkdownPreview,
-    McpServerRow, PluginRow, PluginSwitch, SkillManifestField, SkillRejection, SkillRow,
+    ContextPluginFacts, ContextSkillFacts, InstructionItem, InstructionReference, MarkdownPreview,
+    McpServerItem, PluginItem, PluginSwitch, SkillItem, SkillManifestField, SkillRejection,
     SourceHealth, SourceLinkKind, SourceResolution, SourceSupport, UnappliedReason,
 };
 use super::scanner::skill_files;
@@ -56,19 +56,19 @@ pub(super) fn snapshot(
         discovery
             .skills
             .iter()
-            .map(|row| skill_item(row, &places, &enabled)),
+            .map(|skill| skill_item(skill, &places, &enabled)),
     );
     items.extend(
         discovery
             .plugins
             .iter()
-            .map(|row| plugin_item(row, &places, &enabled)),
+            .map(|plugin| plugin_item(plugin, &places, &enabled)),
     );
     items.extend(
         discovery
             .mcp_servers
             .iter()
-            .map(|row| mcp_item(row, &places, &enabled)),
+            .map(|server| mcp_item(server, &places, &enabled)),
     );
     items.sort_by(|left, right| {
         left.name
@@ -92,44 +92,47 @@ pub(super) fn snapshot(
 /// One item per canonical instruction file. Files only Svode recognizes are
 /// read by no agent and are not items.
 fn instruction_items(
-    rows: &[InstructionRow],
+    instructions: &[InstructionItem],
     places: &Places,
     enabled: &BTreeSet<AgentAdapterKind>,
 ) -> Vec<ContextItem> {
-    let mut groups = BTreeMap::<String, Vec<&InstructionRow>>::new();
-    for row in rows {
-        if row.support != SourceSupport::ClientNative
-            || row.adapter_id.is_none()
-            || row.preview.is_none()
+    let mut groups = BTreeMap::<String, Vec<&InstructionItem>>::new();
+    for instruction in instructions {
+        if instruction.support != SourceSupport::ClientNative
+            || instruction.adapter_id.is_none()
+            || instruction.preview.is_none()
         {
             continue;
         }
-        let canonical = row
+        let canonical = instruction
             .canonical_path
             .clone()
-            .unwrap_or_else(|| row.path.clone());
-        groups.entry(canonical).or_default().push(row);
+            .unwrap_or_else(|| instruction.path.clone());
+        groups.entry(canonical).or_default().push(instruction);
     }
 
     groups
         .into_iter()
-        .filter_map(|(canonical, rows)| {
+        .filter_map(|(canonical, instructions)| {
             // Agents may read a different amount of the same file; the item
             // shows the fullest read.
-            let preview = rows
+            let preview = instructions
                 .iter()
-                .filter_map(|row| row.preview.as_ref())
+                .filter_map(|instruction| instruction.preview.as_ref())
                 .max_by_key(|preview| preview.bytes_read)?
                 .clone();
             let canonical_path = Path::new(&canonical);
-            let owner = &rows[0].owner.root;
+            let owner = &instructions[0].owner.root;
             let owner_root = if canonical_path.starts_with(owner) {
                 owner.clone()
             } else {
                 path_string(&places.repository_root)
             };
             let mut references = Vec::<InstructionReference>::new();
-            for reference in rows.iter().flat_map(|row| &row.references) {
+            for reference in instructions
+                .iter()
+                .flat_map(|instruction| &instruction.references)
+            {
                 if !references
                     .iter()
                     .any(|known| known.path == reference.path && known.status == reference.status)
@@ -140,26 +143,35 @@ fn instruction_items(
             // A path shadowed by another path to the same file does not keep
             // its agent from reading the item, e.g. `AGENTS.md` behind a
             // `CLAUDE.md` link to it.
-            let findings = rows
+            let findings = instructions
                 .iter()
-                .filter(|row| {
-                    row.superseded_by.as_ref().is_none_or(|by| {
+                .filter(|instruction| {
+                    instruction.superseded_by.as_ref().is_none_or(|by| {
                         fs::canonicalize(by).map_or(true, |by| by != canonical_path)
                     })
                 })
-                .map(|row| Finding {
-                    agent: row.adapter_id.expect("filtered to agent rows"),
-                    path: row.path.clone(),
-                    target: (row.link_kind != SourceLinkKind::Direct).then(|| canonical.clone()),
-                    link_kind: row.link_kind,
-                    superseded_by: superseded_by(row.resolution, &row.superseded_by),
+                .map(|instruction| Finding {
+                    agent: instruction
+                        .adapter_id
+                        .expect("filtered to agent instructions"),
+                    path: instruction.path.clone(),
+                    target: (instruction.link_kind != SourceLinkKind::Direct)
+                        .then(|| canonical.clone()),
+                    link_kind: instruction.link_kind,
+                    superseded_by: superseded_by(
+                        instruction.resolution,
+                        &instruction.superseded_by,
+                    ),
                     disabled: false,
                     unverified: false,
                     missing: Vec::new(),
                 })
                 .collect::<Vec<_>>();
-            let (health, health_reasons) =
-                merged_health(rows.iter().map(|row| (row.health, &row.health_reasons)));
+            let (health, health_reasons) = merged_health(
+                instructions
+                    .iter()
+                    .map(|instruction| (instruction.health, &instruction.health_reasons)),
+            );
             Some(item(
                 ItemFacts {
                     id: format!("instruction:{canonical}"),
@@ -191,49 +203,54 @@ fn instruction_items(
 }
 
 fn skill_item(
-    row: &SkillRow,
+    skill: &SkillItem,
     places: &Places,
     enabled: &BTreeSet<AgentAdapterKind>,
 ) -> ContextItem {
-    let findings = row
+    let findings = skill
         .aliases
         .iter()
         .map(|alias| Finding {
             agent: alias.adapter_id,
             path: alias.path.clone(),
-            target: (alias.link_kind != SourceLinkKind::Direct).then(|| row.canonical_path.clone()),
+            target: (alias.link_kind != SourceLinkKind::Direct)
+                .then(|| skill.canonical_path.clone()),
             link_kind: alias.link_kind,
             superseded_by: superseded_by(alias.resolution, &alias.superseded_by),
             disabled: false,
             unverified: false,
-            missing: row.missing_for(alias.adapter_id).to_vec(),
+            missing: skill.missing_for(alias.adapter_id).to_vec(),
         })
         .collect();
-    item(skill_facts(row, row.id.clone(), places), findings, enabled)
+    item(
+        skill_facts(skill, skill.id.clone(), places),
+        findings,
+        enabled,
+    )
 }
 
-fn skill_facts(row: &SkillRow, id: String, places: &Places) -> ItemFacts {
-    let canonical = Path::new(&row.canonical_path);
+fn skill_facts(skill: &SkillItem, id: String, places: &Places) -> ItemFacts {
+    let canonical = Path::new(&skill.canonical_path);
     ItemFacts {
         id,
         kind: ContextItemKind::Skill,
-        name: row.name.clone(),
-        description: row.description.clone(),
+        name: skill.name.clone(),
+        description: skill.description.clone(),
         location: places.location(canonical.parent().unwrap_or(canonical)),
-        modified_at: modified_at(Path::new(&row.path)),
-        path: row.path.clone(),
-        owner_root: row.owner.root.clone(),
-        health: row.health,
-        health_reasons: row.health_reasons.clone(),
-        preview: row.preview.clone(),
+        modified_at: modified_at(Path::new(&skill.path)),
+        path: skill.path.clone(),
+        owner_root: skill.owner.root.clone(),
+        health: skill.health,
+        health_reasons: skill.health_reasons.clone(),
+        preview: skill.preview.clone(),
         references: Vec::new(),
         skill: Some(ContextSkillFacts {
-            directory: row.canonical_path.clone(),
+            directory: skill.canonical_path.clone(),
             has_files: skill_files::has_skill_files(canonical),
-            license: row.license.clone(),
-            compatibility: row.compatibility.clone(),
-            metadata: row.metadata.clone(),
-            allowed_tools: row.allowed_tools.clone(),
+            license: skill.license.clone(),
+            compatibility: skill.compatibility.clone(),
+            metadata: skill.metadata.clone(),
+            allowed_tools: skill.allowed_tools.clone(),
         }),
         plugin: None,
         mcp: None,
@@ -242,20 +259,21 @@ fn skill_facts(row: &SkillRow, id: String, places: &Places) -> ItemFacts {
     }
 }
 
-/// A plugin with its skills and instructions as nested rows, which take its
+/// A plugin with its skills and instructions as nested items, which take its
 /// providers, sources and location.
 fn plugin_item(
-    row: &PluginRow,
+    scanned: &PluginItem,
     places: &Places,
     enabled: &BTreeSet<AgentAdapterKind>,
 ) -> ContextItem {
-    let findings = row
+    let findings = scanned
         .findings
         .iter()
         .map(|finding| Finding {
             agent: finding.adapter_id,
             path: finding.path.clone(),
-            target: (finding.link_kind != SourceLinkKind::Direct).then(|| row.directory.clone()),
+            target: (finding.link_kind != SourceLinkKind::Direct)
+                .then(|| scanned.directory.clone()),
             link_kind: finding.link_kind,
             superseded_by: finding.superseded_by.clone(),
             disabled: finding.switch == PluginSwitch::Off,
@@ -263,33 +281,33 @@ fn plugin_item(
             missing: Vec::new(),
         })
         .collect::<Vec<_>>();
-    let directory = Path::new(&row.directory);
-    let location = places.location(Path::new(&row.place));
+    let directory = Path::new(&scanned.directory);
+    let location = places.location(Path::new(&scanned.place));
     let managed_by_svode = places.managed_by_svode(directory);
     let mut plugin = item(
         ItemFacts {
-            id: row.id.clone(),
+            id: scanned.id.clone(),
             kind: ContextItemKind::Plugin,
-            name: row.name.clone(),
-            description: row.description.clone(),
+            name: scanned.name.clone(),
+            description: scanned.description.clone(),
             location: location.clone(),
-            modified_at: modified_at(Path::new(&row.path)),
-            path: row.path.clone(),
-            owner_root: row.owner_root.clone(),
-            health: row.health,
-            health_reasons: row.health_reasons.clone(),
-            preview: row.readme.clone().unwrap_or_else(empty_preview),
+            modified_at: modified_at(Path::new(&scanned.path)),
+            path: scanned.path.clone(),
+            owner_root: scanned.owner_root.clone(),
+            health: scanned.health,
+            health_reasons: scanned.health_reasons.clone(),
+            preview: scanned.readme.clone().unwrap_or_else(empty_preview),
             references: Vec::new(),
             skill: None,
             plugin: Some(ContextPluginFacts {
-                directory: row.directory.clone(),
-                composition: row.composition,
-                manifest: row.manifest.clone(),
-                counts: row.counts.clone(),
-                has_readme: row.readme.is_some(),
+                directory: scanned.directory.clone(),
+                composition: scanned.composition,
+                manifest: scanned.manifest.clone(),
+                counts: scanned.counts.clone(),
+                has_readme: scanned.readme.is_some(),
             }),
             mcp: None,
-            icon: row.icon.clone(),
+            icon: scanned.icon.clone(),
             managed_by_svode,
         },
         findings.clone(),
@@ -306,11 +324,11 @@ fn plugin_item(
     };
     // A skill takes the plugin's findings, without the agents that do not
     // load it as providers (DF-208 R7).
-    let mut components = row
+    let mut components = scanned
         .skills
         .iter()
         .map(|skill| {
-            let id = format!("{}#{}", row.id, skill.id);
+            let id = format!("{}#{}", scanned.id, skill.id);
             let findings = findings
                 .iter()
                 .map(|finding| Finding {
@@ -324,13 +342,13 @@ fn plugin_item(
             component
         })
         .collect::<Vec<_>>();
-    components.extend(row.instructions.iter().map(|instruction| {
+    components.extend(scanned.instructions.iter().map(|instruction| {
         let path = Path::new(&instruction.path);
         nested(item(
             ItemFacts {
                 id: format!(
                     "{}#instruction:{}:{}",
-                    row.id, instruction.path, instruction.name
+                    scanned.id, instruction.path, instruction.name
                 ),
                 kind: ContextItemKind::Instruction,
                 name: instruction.name.clone(),
@@ -338,7 +356,7 @@ fn plugin_item(
                 location: location.clone(),
                 modified_at: modified_at(path),
                 path: instruction.path.clone(),
-                owner_root: row.owner_root.clone(),
+                owner_root: scanned.owner_root.clone(),
                 health: SourceHealth::Normal,
                 health_reasons: Vec::new(),
                 preview: instruction.preview.clone(),
@@ -354,17 +372,17 @@ fn plugin_item(
         ))
     }));
     // A server the plugin's file declares off applies nowhere.
-    components.extend(row.mcp_servers.iter().map(|server| {
+    components.extend(scanned.mcp_servers.iter().map(|server| {
         let mut component = nested(item(
             ItemFacts {
-                id: format!("{}#mcp:{}:{}", row.id, server.path, server.name),
+                id: format!("{}#mcp:{}:{}", scanned.id, server.path, server.name),
                 kind: ContextItemKind::McpServer,
                 name: server.name.clone(),
-                description: row.description.clone(),
+                description: scanned.description.clone(),
                 location: location.clone(),
                 modified_at: modified_at(Path::new(&server.path)),
                 path: server.path.clone(),
-                owner_root: row.owner_root.clone(),
+                owner_root: scanned.owner_root.clone(),
                 health: if server.problems.is_empty() {
                     SourceHealth::Normal
                 } else {
@@ -395,17 +413,17 @@ fn plugin_item(
 /// One declaration of an MCP server: it lies in its config file, which it
 /// opens; nothing but its facts is shown.
 fn mcp_item(
-    row: &McpServerRow,
+    server: &McpServerItem,
     places: &Places,
     enabled: &BTreeSet<AgentAdapterKind>,
 ) -> ContextItem {
-    let findings = row
+    let findings = server
         .findings
         .iter()
         .map(|finding| Finding {
             agent: finding.adapter_id,
             path: finding.path.clone(),
-            target: (finding.link_kind != SourceLinkKind::Direct).then(|| row.path.clone()),
+            target: (finding.link_kind != SourceLinkKind::Direct).then(|| server.path.clone()),
             link_kind: finding.link_kind,
             superseded_by: finding.superseded_by.clone(),
             disabled: finding.disabled,
@@ -413,26 +431,26 @@ fn mcp_item(
             missing: Vec::new(),
         })
         .collect();
-    let path = Path::new(&row.path);
+    let path = Path::new(&server.path);
     item(
         ItemFacts {
-            id: row.id.clone(),
+            id: server.id.clone(),
             kind: ContextItemKind::McpServer,
-            name: row.name.clone(),
+            name: server.name.clone(),
             description: None,
             location: places.location(path),
             modified_at: modified_at(path),
-            path: row.path.clone(),
+            path: server.path.clone(),
             owner_root: path_string(path.parent().unwrap_or(path)),
-            health: row.health,
-            health_reasons: row.health_reasons.clone(),
+            health: server.health,
+            health_reasons: server.health_reasons.clone(),
             preview: empty_preview(),
             references: Vec::new(),
             skill: None,
             plugin: None,
-            mcp: Some(row.facts.clone()),
+            mcp: Some(server.facts.clone()),
             icon: None,
-            managed_by_svode: places.managed_by_svode(path) || places.svode_command(&row.facts),
+            managed_by_svode: places.managed_by_svode(path) || places.svode_command(&server.facts),
         },
         findings,
         enabled,
@@ -607,15 +625,15 @@ fn superseded_by(resolution: SourceResolution, by: &Option<String>) -> Option<St
 }
 
 fn merged_health<'a>(
-    rows: impl Iterator<Item = (SourceHealth, &'a Vec<String>)>,
+    items: impl Iterator<Item = (SourceHealth, &'a Vec<String>)>,
 ) -> (SourceHealth, Vec<String>) {
     let mut health = SourceHealth::Normal;
     let mut reasons = Vec::<String>::new();
-    for (row_health, row_reasons) in rows {
-        if row_health == SourceHealth::Degraded {
+    for (item_health, item_reasons) in items {
+        if item_health == SourceHealth::Degraded {
             health = SourceHealth::Degraded;
         }
-        for reason in row_reasons {
+        for reason in item_reasons {
             if !reasons.contains(reason) {
                 reasons.push(reason.clone());
             }
@@ -1172,7 +1190,7 @@ mod tests {
         assert!(item.idle_readers.contains(&CURSOR));
         assert_eq!(item.health, SourceHealth::Degraded);
         assert!(item.health_reasons.is_empty());
-        // The row explains itself; the feature-wide set does not repeat it.
+        // The item explains itself; the feature-wide set does not repeat it.
         assert!(scanned.diagnostics.iter().all(|diagnostic| {
             !diagnostic
                 .path
@@ -1218,7 +1236,7 @@ mod tests {
     }
 
     #[test]
-    fn a_skill_every_finding_agent_loads_is_a_normal_row_without_a_description() {
+    fn a_skill_every_finding_agent_loads_is_a_normal_item_without_a_description() {
         let fixture = Fixture::new();
         let manifest = fixture.write(
             fixture.project.path(),
@@ -1244,7 +1262,7 @@ mod tests {
         let directory = fixture.project.path().join("kit");
         let skill = |name: &str, description: Option<&str>| {
             let canonical = directory.join("skills").join(name);
-            SkillRow {
+            SkillItem {
                 id: format!("skill:{}", path_string(&canonical)),
                 name: name.to_string(),
                 description: description.map(str::to_string),
@@ -1291,7 +1309,7 @@ mod tests {
             repository_root: project,
             instructions: Vec::new(),
             skills: Vec::new(),
-            plugins: vec![PluginRow {
+            plugins: vec![PluginItem {
                 id: format!("plugin:{}", path_string(&directory)),
                 name: "kit".to_string(),
                 description: None,

@@ -1,7 +1,7 @@
 //! A plugin as its folder and manifest declare it (Stage 10 `05`,
 //! «Плагины»): the manifest fields the "Context" shows, its icon and
 //! `README.md`, and its components — skills, instructions and MCP servers as
-//! rows, the other kinds as counts. Only allowlisted manifest fields are
+//! items, the other kinds as counts. Only allowlisted manifest fields are
 //! kept: a manifest may declare MCP servers with secrets, whose fields are
 //! allowlisted too.
 
@@ -16,7 +16,7 @@ use crate::agent_adapters::{AgentAdapterKind, PluginManifestRule, PluginScheme};
 use super::super::model::{
     AgentContextDiagnostic, InstructionOwner, MarkdownPreview, PluginComponentCount,
     PluginComponentKind, PluginComposition, PluginInstruction, PluginManifestFacts,
-    PluginMcpServer, SkillRow,
+    PluginMcpServer, SkillItem,
 };
 use super::io::{diagnostic, inspect, path_string, read_config_text};
 use super::mcp_config::{self, McpDeclaration};
@@ -52,7 +52,7 @@ pub(super) struct PluginFolder {
     pub default_enabled: Option<bool>,
     pub icon: Option<String>,
     pub readme: Option<MarkdownPreview>,
-    pub skills: Vec<SkillRow>,
+    pub skills: Vec<SkillItem>,
     pub instructions: Vec<PluginInstruction>,
     pub mcp_servers: Vec<PluginMcpServer>,
     pub counts: Vec<PluginComponentCount>,

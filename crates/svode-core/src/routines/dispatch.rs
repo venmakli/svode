@@ -97,10 +97,10 @@ pub fn select_dispatch_candidate(
     request: &RoutineDispatchRequest<'_>,
 ) -> RoutineDispatchSelection {
     let routine_id = request.routine_id();
-    let Some(row) = snapshot
+    let Some(item) = snapshot
         .routines
         .iter()
-        .find(|row| row.routine_id.as_deref() == Some(routine_id))
+        .find(|item| item.routine_id.as_deref() == Some(routine_id))
     else {
         let code = match request {
             RoutineDispatchRequest::Manual {
@@ -115,35 +115,35 @@ pub fn select_dispatch_candidate(
         expected_fingerprint: Some(expected_fingerprint),
         ..
     } = request
-        && *expected_fingerprint != row.fingerprint
+        && *expected_fingerprint != item.fingerprint
     {
         return RoutineDispatchSelection::Blocked {
             code: RoutineDispatchBlockedCode::FingerprintConflict,
             message: "routine definition changed after it was read".to_string(),
-            current_fingerprint: Some(row.fingerprint.clone()),
+            current_fingerprint: Some(item.fingerprint.clone()),
         };
     }
     if let RoutineDispatchRequest::Event {
         definition_fingerprint,
         ..
     } = request
-        && *definition_fingerprint != row.execution_fingerprint
+        && *definition_fingerprint != item.execution_fingerprint
     {
         return blocked(
             RoutineDispatchBlockedCode::InvalidRoutine,
             "queued event definition is stale",
         );
     }
-    let Some(definition) = row.definition.clone() else {
+    let Some(definition) = item.definition.clone() else {
         return blocked(
             RoutineDispatchBlockedCode::InvalidRoutine,
             "routine definition is invalid and cannot be launched",
         );
     };
-    if !row.diagnostics.is_empty() {
+    if !item.diagnostics.is_empty() {
         return blocked(
             RoutineDispatchBlockedCode::InvalidRoutine,
-            row.diagnostics
+            item.diagnostics
                 .first()
                 .map(|diagnostic| diagnostic.message.as_str())
                 .unwrap_or("routine definition is invalid"),
@@ -171,8 +171,8 @@ pub fn select_dispatch_candidate(
     };
     RoutineDispatchSelection::Ready(Box::new(RoutineDispatchCandidate {
         routine_id: routine_id.to_string(),
-        name: row.name.clone(),
-        execution_fingerprint: row.execution_fingerprint.clone(),
+        name: item.name.clone(),
+        execution_fingerprint: item.execution_fingerprint.clone(),
         definition,
         executor,
     }))
@@ -194,12 +194,12 @@ pub fn schedule_candidates(snapshot: &RoutineCatalogSnapshot) -> Vec<RoutineSche
     snapshot
         .routines
         .iter()
-        .filter_map(|row| {
-            let routine_id = row.routine_id.as_deref()?;
-            if !row.diagnostics.is_empty() {
+        .filter_map(|item| {
+            let routine_id = item.routine_id.as_deref()?;
+            if !item.diagnostics.is_empty() {
                 return None;
             }
-            let definition = row
+            let definition = item
                 .definition
                 .as_ref()
                 .filter(|definition| definition.enabled == Some(true))?;
@@ -213,7 +213,7 @@ pub fn schedule_candidates(snapshot: &RoutineCatalogSnapshot) -> Vec<RoutineSche
             };
             Some(RoutineScheduleCandidate {
                 routine_id: routine_id.to_string(),
-                execution_fingerprint: row.execution_fingerprint.clone(),
+                execution_fingerprint: item.execution_fingerprint.clone(),
                 cron: cron.clone(),
                 time_basis: time_basis.clone(),
                 missed_runs: *missed_runs,
@@ -254,8 +254,8 @@ fn fnv1a(value: &str) -> u64 {
 mod tests {
     use super::*;
     use crate::routines::model::{
-        CollectionEvent, RoutineActionTarget, RoutineDiagnostic, RoutineOwnerDescriptor,
-        RoutineOwnerKind, RoutineRow,
+        CollectionEvent, RoutineActionTarget, RoutineDiagnostic, RoutineItem,
+        RoutineOwnerDescriptor, RoutineOwnerKind,
     };
     use std::collections::BTreeMap;
 
@@ -287,8 +287,8 @@ mod tests {
         }
     }
 
-    fn row(id: &str, definition: Option<RoutineDefinition>) -> RoutineRow {
-        RoutineRow {
+    fn item(id: &str, definition: Option<RoutineDefinition>) -> RoutineItem {
+        RoutineItem {
             routine_id: Some(id.into()),
             portable_id: Some("01arz3ndektsv4rrffq69g5fav".into()),
             filename: format!("{id}.md"),
@@ -313,14 +313,14 @@ mod tests {
         }
     }
 
-    fn snapshot(rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
+    fn snapshot(items: Vec<RoutineItem>) -> RoutineCatalogSnapshot {
         RoutineCatalogSnapshot {
             owner: RoutineOwnerDescriptor {
                 kind: RoutineOwnerKind::Collection,
                 space_id: "root".into(),
                 owner_path: "tasks".into(),
             },
-            routines: rows,
+            routines: items,
             diagnostics: Vec::new(),
             catalog_fingerprint: "catalog".into(),
             refreshed_at: "2026-08-06T00:00:00Z".into(),
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn manual_dispatch_distinguishes_missing_routine_from_stale_fingerprint() {
-        let catalog = snapshot(vec![row(
+        let catalog = snapshot(vec![item(
             "one",
             Some(definition(RoutineTrigger::Manual, run_agent(), None)),
         )]);
@@ -381,14 +381,14 @@ mod tests {
 
     #[test]
     fn invalid_definitions_and_diagnostics_block_before_the_trigger_rule() {
-        let mut diagnosed = row(
+        let mut diagnosed = item(
             "one",
             Some(definition(RoutineTrigger::Manual, run_agent(), None)),
         );
         diagnosed
             .diagnostics
             .push(RoutineDiagnostic::new("routine_invalid", "broken executor"));
-        let catalog = snapshot(vec![row("two", None), diagnosed]);
+        let catalog = snapshot(vec![item("two", None), diagnosed]);
 
         let RoutineDispatchSelection::Blocked { message, .. } = select_dispatch_candidate(
             &catalog,
@@ -424,15 +424,15 @@ mod tests {
             match_: None,
         };
         let catalog = snapshot(vec![
-            row(
+            item(
                 "manual",
                 Some(definition(RoutineTrigger::Manual, run_agent(), None)),
             ),
-            row(
+            item(
                 "event",
                 Some(definition(event_trigger.clone(), run_agent(), Some(true))),
             ),
-            row(
+            item(
                 "paused-event",
                 Some(definition(event_trigger, run_agent(), Some(false))),
             ),
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn update_properties_runs_only_from_a_collection_event() {
-        let catalog = snapshot(vec![row(
+        let catalog = snapshot(vec![item(
             "one",
             Some(definition(
                 RoutineTrigger::Event {
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn manual_update_properties_is_unsupported_even_for_a_manual_trigger() {
-        let catalog = snapshot(vec![row(
+        let catalog = snapshot(vec![item(
             "one",
             Some(definition(
                 RoutineTrigger::Manual,
@@ -559,34 +559,34 @@ mod tests {
             time_basis: RoutineTimeBasis::Local,
             missed_runs: MissedRuns::RunOnce,
         };
-        let mut diagnosed = row(
+        let mut diagnosed = item(
             "diagnosed",
             Some(definition(schedule.clone(), run_agent(), Some(true))),
         );
         diagnosed
             .diagnostics
             .push(RoutineDiagnostic::new("routine_invalid", "broken"));
-        let mut anonymous = row(
+        let mut anonymous = item(
             "anonymous",
             Some(definition(schedule.clone(), run_agent(), Some(true))),
         );
         anonymous.routine_id = None;
         let catalog = snapshot(vec![
-            row(
+            item(
                 "enabled",
                 Some(definition(schedule.clone(), run_agent(), Some(true))),
             ),
-            row(
+            item(
                 "paused",
                 Some(definition(schedule.clone(), run_agent(), Some(false))),
             ),
-            row(
+            item(
                 "manual",
                 Some(definition(RoutineTrigger::Manual, run_agent(), Some(true))),
             ),
             diagnosed,
             anonymous,
-            row("invalid", None),
+            item("invalid", None),
         ]);
 
         assert_eq!(

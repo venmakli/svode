@@ -7,8 +7,8 @@ use serde::Deserialize;
 use crate::agent_adapters::{AgentAdapterKind, SourceRegistryEnvironment};
 
 use super::super::model::{
-    AgentContextDiagnostic, InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner,
-    InstructionOwnerKind, InstructionRow, InstructionSourceKind, SourceHealth, SourceResolution,
+    AgentContextDiagnostic, InstructionDiscovery, InstructionDiscoveryPolicy, InstructionItem,
+    InstructionOwner, InstructionOwnerKind, InstructionSourceKind, SourceHealth, SourceResolution,
     SourceSupport,
 };
 use super::DiscoveryResult;
@@ -91,7 +91,7 @@ pub(super) fn discover(
         result
             .observed_project_paths
             .extend(candidates.iter().map(|path| path_string(path)));
-        let before = result.rows.len();
+        let before = result.items.len();
         discover_group(
             &candidates,
             repository_root,
@@ -106,9 +106,9 @@ pub(super) fn discover(
             false,
             &mut result,
         );
-        for row in &mut result.rows[before..] {
-            if row.resolution == SourceResolution::Selected {
-                apply_active_budget(row, &mut active_budget, &mut result.diagnostics);
+        for item in &mut result.items[before..] {
+            if item.resolution == SourceResolution::Selected {
+                apply_active_budget(item, &mut active_budget, &mut result.diagnostics);
             }
         }
     }
@@ -159,7 +159,7 @@ fn discover_group(
             continue;
         }
         let effective = selected == Some(precedence);
-        result.rows.push(instruction_row(
+        result.items.push(instruction_item(
             path,
             source,
             source_kind,
@@ -183,7 +183,7 @@ fn discover_group(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn instruction_row(
+fn instruction_item(
     path: &Path,
     source: InspectedSource,
     source_kind: InstructionSourceKind,
@@ -194,8 +194,8 @@ fn instruction_row(
     resolution: SourceResolution,
     superseded_by: Option<String>,
     health_reasons: Vec<String>,
-) -> InstructionRow {
-    InstructionRow {
+) -> InstructionItem {
+    InstructionItem {
         id: format!("codex:{}", path_string(path)),
         adapter_id: Some(AgentAdapterKind::Codex),
         name: path
@@ -227,11 +227,11 @@ fn instruction_row(
 }
 
 fn apply_active_budget(
-    row: &mut InstructionRow,
+    item: &mut InstructionItem,
     remaining: &mut usize,
     diagnostics: &mut Vec<AgentContextDiagnostic>,
 ) {
-    let Some(preview) = &mut row.preview else {
+    let Some(preview) = &mut item.preview else {
         return;
     };
     if preview.bytes_read <= *remaining {
@@ -245,13 +245,13 @@ fn apply_active_budget(
     *remaining = 0;
     let message = "Codex active project instruction chain exceeded project_doc_max_bytes";
     diagnostics.push(diagnostic(
-        Path::new(&row.path),
-        row.adapter_id,
+        Path::new(&item.path),
+        item.adapter_id,
         "codex_project_doc_limit",
         message.to_string(),
     ));
-    row.health = SourceHealth::Degraded;
-    row.health_reasons.push(message.to_string());
+    item.health = SourceHealth::Degraded;
+    item.health_reasons.push(message.to_string());
 }
 
 fn floor_char_boundary(value: &str, requested: usize) -> usize {
@@ -400,18 +400,18 @@ mod tests {
             &environment,
             true,
         );
-        let project_rows = result
-            .rows
+        let project_items = result
+            .items
             .iter()
-            .filter(|row| row.source_kind == InstructionSourceKind::Project)
+            .filter(|item| item.source_kind == InstructionSourceKind::Project)
             .collect::<Vec<_>>();
 
-        assert_eq!(project_rows.len(), 3);
-        assert_eq!(project_rows[0].resolution, SourceResolution::Selected);
+        assert_eq!(project_items.len(), 3);
+        assert_eq!(project_items[0].resolution, SourceResolution::Selected);
         assert!(
-            project_rows[1..]
+            project_items[1..]
                 .iter()
-                .all(|row| row.resolution == SourceResolution::Superseded)
+                .all(|item| item.resolution == SourceResolution::Superseded)
         );
     }
 
@@ -431,20 +431,20 @@ mod tests {
             &environment,
             true,
         );
-        let project_rows = result
-            .rows
+        let project_items = result
+            .items
             .iter()
-            .filter(|row| row.source_kind == InstructionSourceKind::Project)
+            .filter(|item| item.source_kind == InstructionSourceKind::Project)
             .collect::<Vec<_>>();
 
-        assert_eq!(project_rows.len(), 2);
-        assert_eq!(project_rows[0].resolution, SourceResolution::Selected);
-        assert_eq!(project_rows[0].preview.as_ref().unwrap().markdown, "");
-        assert_eq!(project_rows[0].health, SourceHealth::Normal);
-        assert_eq!(project_rows[1].resolution, SourceResolution::Superseded);
+        assert_eq!(project_items.len(), 2);
+        assert_eq!(project_items[0].resolution, SourceResolution::Selected);
+        assert_eq!(project_items[0].preview.as_ref().unwrap().markdown, "");
+        assert_eq!(project_items[0].health, SourceHealth::Normal);
+        assert_eq!(project_items[1].resolution, SourceResolution::Superseded);
     }
 
-    fn personal_rows(home: &Path) -> DiscoveryResult {
+    fn personal_items(home: &Path) -> DiscoveryResult {
         let project = TempDir::new().unwrap();
         std::fs::create_dir(project.path().join(".git")).unwrap();
         let environment = SourceRegistryEnvironment::for_tests(home.to_path_buf());
@@ -464,11 +464,11 @@ mod tests {
         std::fs::write(home.path().join(".codex/AGENTS.override.md"), " \n").unwrap();
         std::fs::write(home.path().join(".codex/AGENTS.md"), "home").unwrap();
 
-        let result = personal_rows(home.path());
+        let result = personal_items(home.path());
 
-        assert_eq!(result.rows.len(), 1);
-        assert!(result.rows[0].path.ends_with("/.codex/AGENTS.md"));
-        assert_eq!(result.rows[0].resolution, SourceResolution::Selected);
+        assert_eq!(result.items.len(), 1);
+        assert!(result.items[0].path.ends_with("/.codex/AGENTS.md"));
+        assert_eq!(result.items[0].resolution, SourceResolution::Selected);
     }
 
     #[test]
@@ -478,12 +478,12 @@ mod tests {
         std::fs::write(home.path().join(".codex/AGENTS.override.md"), "override").unwrap();
         std::fs::write(home.path().join(".codex/AGENTS.md"), "home").unwrap();
 
-        let result = personal_rows(home.path());
+        let result = personal_items(home.path());
 
         let agents = result
-            .rows
+            .items
             .iter()
-            .find(|row| row.path.ends_with("/.codex/AGENTS.md"))
+            .find(|item| item.path.ends_with("/.codex/AGENTS.md"))
             .unwrap();
         assert_eq!(agents.resolution, SourceResolution::Superseded);
         assert!(
@@ -505,7 +505,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = personal_rows(home.path());
+        let result = personal_items(home.path());
 
         let diagnostic = result
             .diagnostics

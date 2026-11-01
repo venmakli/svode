@@ -68,7 +68,7 @@ fn in_knowledge(alias: &SkillDiscoveryAlias) -> bool {
 }
 
 /// Prepared, target-specific Agent Context projection. This is called only by
-/// existing index write paths; Knowledge reads consume the materialized rows.
+/// existing index write paths; Knowledge reads consume the materialized items.
 pub async fn target_knowledge_projection(
     project_root: &Path,
     target_root: &Path,
@@ -106,7 +106,7 @@ fn normalize_project_snapshot(
             target_root.display()
         ))
     })?;
-    let mut rows = BTreeMap::<(String, String, String), Accumulator>::new();
+    let mut items = BTreeMap::<(String, String, String), Accumulator>::new();
 
     for instruction in &content.instructions {
         if instruction
@@ -139,7 +139,7 @@ fn normalize_project_snapshot(
             "agent_instruction".to_string(),
             source_path.clone(),
         );
-        let row = rows.entry(key).or_insert_with(|| Accumulator {
+        let item = items.entry(key).or_insert_with(|| Accumulator {
             owner_scope: owner_scope.to_string(),
             kind: "agent_instruction".to_string(),
             source_path: source_path.clone(),
@@ -158,20 +158,20 @@ fn normalize_project_snapshot(
             truncated: preview.truncated,
         });
         if let Some(alias) = safe_alias_file(owner_root, &instruction.path) {
-            row.aliases.insert(alias);
+            item.aliases.insert(alias);
         }
-        row.support.insert(enum_value(&instruction.support));
-        row.resolution.insert(enum_value(&instruction.resolution));
-        row.health.insert(enum_value(&instruction.health));
-        row.health_reasons
+        item.support.insert(enum_value(&instruction.support));
+        item.resolution.insert(enum_value(&instruction.resolution));
+        item.health.insert(enum_value(&instruction.health));
+        item.health_reasons
             .extend(instruction.health_reasons.iter().cloned());
-        row.effective_applicability |= instruction.support
+        item.effective_applicability |= instruction.support
             == super::model::SourceSupport::ClientNative
             && matches!(
                 instruction.resolution,
                 super::model::SourceResolution::Selected | super::model::SourceResolution::Included
             );
-        row.discovery.insert(format!(
+        item.discovery.insert(format!(
             "{}:{}:{}:{}",
             instruction
                 .adapter_id
@@ -181,7 +181,7 @@ fn normalize_project_snapshot(
             instruction.discovery.directory_depth,
             instruction.discovery.precedence
         ));
-        row.truncated |= preview.truncated;
+        item.truncated |= preview.truncated;
         for reference in &instruction.references {
             let Some(canonical_reference) = reference.canonical_path.as_deref() else {
                 continue;
@@ -189,7 +189,8 @@ fn normalize_project_snapshot(
             let Some(path) = safe_relative_file(owner_root, canonical_reference) else {
                 continue;
             };
-            row.references.insert((path, enum_value(&reference.status)));
+            item.references
+                .insert((path, enum_value(&reference.status)));
         }
     }
 
@@ -223,7 +224,7 @@ fn normalize_project_snapshot(
             "skill".to_string(),
             source_path.clone(),
         );
-        let row = rows.entry(key).or_insert_with(|| Accumulator {
+        let item = items.entry(key).or_insert_with(|| Accumulator {
             owner_scope: owner_scope.to_string(),
             kind: "skill".to_string(),
             source_path: source_path.clone(),
@@ -245,30 +246,30 @@ fn normalize_project_snapshot(
             if let Some(path) =
                 safe_alias_path(owner_root, &Path::new(&alias.path).join("SKILL.md"))
             {
-                row.aliases.insert(path);
+                item.aliases.insert(path);
             }
-            row.support.insert(enum_value(&alias.support));
-            row.resolution.insert(enum_value(&alias.resolution));
-            row.effective_applicability |= alias.support
+            item.support.insert(enum_value(&alias.support));
+            item.resolution.insert(enum_value(&alias.resolution));
+            item.effective_applicability |= alias.support
                 == super::model::SourceSupport::ClientNative
                 && matches!(
                     alias.resolution,
                     super::model::SourceResolution::Selected
                         | super::model::SourceResolution::Included
                 );
-            row.discovery.insert(format!(
+            item.discovery.insert(format!(
                 "{}:{}:{}",
                 alias.adapter_id.as_str(),
                 enum_value(&alias.discovery_kind),
                 enum_value(&alias.link_kind)
             ));
         }
-        row.health.insert(enum_value(&skill.health));
-        row.health_reasons
+        item.health.insert(enum_value(&skill.health));
+        item.health_reasons
             .extend(skill.health_reasons.iter().cloned());
     }
 
-    Ok(rows.into_values().map(Accumulator::finish).collect())
+    Ok(items.into_values().map(Accumulator::finish).collect())
 }
 
 struct Accumulator {
@@ -377,7 +378,7 @@ mod tests {
     use super::*;
     use crate::agent_adapters::AgentAdapterKind;
     use crate::agent_context::model::{
-        InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionRow,
+        InstructionDiscovery, InstructionDiscoveryPolicy, InstructionItem, InstructionOwner,
         MarkdownPreview, SourceHealth, SourceLinkKind, SourceResolution, SourceSupport,
     };
     use std::fs;
@@ -397,7 +398,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         fs::write(temp.path().join("AGENTS.md"), "project").unwrap();
         let canonical = temp.path().join("AGENTS.md").canonicalize().unwrap();
-        let row = |adapter_id, source_kind| InstructionRow {
+        let item = |adapter_id, source_kind| InstructionItem {
             id: format!("{adapter_id:?}"),
             adapter_id,
             name: "AGENTS.md".to_string(),
@@ -431,15 +432,15 @@ mod tests {
             target_root: temp.path().to_string_lossy().to_string(),
             repository_root: temp.path().to_string_lossy().to_string(),
             instructions: vec![
-                row(
+                item(
                     Some(AgentAdapterKind::Codex),
                     InstructionSourceKind::Project,
                 ),
-                row(
+                item(
                     Some(AgentAdapterKind::ClaudeCode),
                     InstructionSourceKind::Project,
                 ),
-                row(
+                item(
                     Some(AgentAdapterKind::Codex),
                     InstructionSourceKind::Personal,
                 ),
@@ -462,12 +463,12 @@ mod tests {
         superseded.effective_applicability = false;
         assert!(!superseded.is_effectively_applicable());
 
-        let mut native_superseded = row(
+        let mut native_superseded = item(
             Some(AgentAdapterKind::Codex),
             InstructionSourceKind::Project,
         );
         native_superseded.resolution = SourceResolution::Superseded;
-        let mut recognized = row(None, InstructionSourceKind::Recognized);
+        let mut recognized = item(None, InstructionSourceKind::Recognized);
         recognized.support = SourceSupport::SvodeRecognized;
         recognized.resolution = SourceResolution::Included;
         let mixed = AgentContextDiscovery {

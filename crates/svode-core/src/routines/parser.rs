@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::model::{
     CollectionEvent, EventMatch, MissedRuns, ResolvedRoutineOwner, RoutineAction,
-    RoutineActionTarget, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic,
-    RoutineNameConflictProjection, RoutineOwnerKind, RoutineRow, RoutineTimeBasis, RoutineTrigger,
+    RoutineActionTarget, RoutineCatalogSnapshot, RoutineDefinition, RoutineDiagnostic, RoutineItem,
+    RoutineNameConflictProjection, RoutineOwnerKind, RoutineTimeBasis, RoutineTrigger,
 };
 
 pub const MAX_ROUTINE_BYTES: u64 = 1024 * 1024;
@@ -723,37 +723,37 @@ pub fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnapshot {
     let mut routines = scan
         .files
         .into_iter()
-        .map(|file| row_from_file(owner, file))
+        .map(|file| item_from_file(owner, file))
         .collect::<Vec<_>>();
     let id_counts = routines
         .iter()
-        .filter_map(|row| row.portable_id.clone())
+        .filter_map(|item| item.portable_id.clone())
         .fold(HashMap::<String, usize>::new(), |mut counts, id| {
             *counts.entry(id).or_default() += 1;
             counts
         });
-    for row in &mut routines {
-        if row
+    for item in &mut routines {
+        if item
             .portable_id
             .as_deref()
             .is_some_and(|id| id_counts.get(id).copied().unwrap_or_default() > 1)
         {
-            row.routine_id = None;
-            row.diagnostics.push(
+            item.routine_id = None;
+            item.diagnostics.push(
                 RoutineDiagnostic::new(
                     "routine_id_duplicate",
                     "id must be unique inside the exact Routine owner",
                 )
                 .field("id")
-                .path(row.path.clone()),
+                .path(item.path.clone()),
             );
         }
     }
     let name_groups = routines.iter().enumerate().fold(
         BTreeMap::<String, Vec<usize>>::new(),
-        |mut groups, (index, row)| {
+        |mut groups, (index, item)| {
             groups
-                .entry(crate::page::naming::display_name_key(&row.name))
+                .entry(crate::page::naming::display_name_key(&item.name))
                 .or_default()
                 .push(index);
             groups
@@ -785,7 +785,7 @@ pub fn discover_owner(owner: &ResolvedRoutineOwner) -> RoutineCatalogSnapshot {
     }
 }
 
-fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> RoutineRow {
+fn item_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> RoutineItem {
     let routine_id = file
         .parsed
         .portable_id
@@ -822,7 +822,7 @@ fn row_from_file(owner: &ResolvedRoutineOwner, file: DiscoveredRoutineFile) -> R
                 )
             })
             .unwrap_or((None, None, None, None, None, None));
-    RoutineRow {
+    RoutineItem {
         routine_id,
         portable_id: file.parsed.portable_id,
         filename: file.filename,
@@ -974,14 +974,14 @@ fn is_lowercase_ulid(value: &str) -> bool {
         && ulid::Ulid::from_string(&value.to_ascii_uppercase()).is_ok()
 }
 
-pub fn catalog_fingerprint(rows: &[RoutineRow], diagnostics: &[RoutineDiagnostic]) -> String {
+pub fn catalog_fingerprint(items: &[RoutineItem], diagnostics: &[RoutineDiagnostic]) -> String {
     let mut value = String::new();
-    for row in rows {
-        value.push_str(row.routine_id.as_deref().unwrap_or_default());
+    for item in items {
+        value.push_str(item.routine_id.as_deref().unwrap_or_default());
         value.push('\0');
-        value.push_str(&row.path);
+        value.push_str(&item.path);
         value.push('\0');
-        value.push_str(&row.fingerprint);
+        value.push_str(&item.fingerprint);
         value.push('\0');
     }
     for diagnostic in diagnostics {
@@ -1230,9 +1230,9 @@ mod tests {
         fs::write(routines.join("first.md"), valid_manual()).unwrap();
 
         let first = discover_owner(&owner(temp.path()));
-        let first_row = &first.routines[0];
-        assert!(first_row.routine_id.is_some());
-        let routine_id = first_row.routine_id.clone();
+        let first_item = &first.routines[0];
+        assert!(first_item.routine_id.is_some());
+        let routine_id = first_item.routine_id.clone();
         fs::rename(routines.join("first.md"), routines.join("renamed.md")).unwrap();
         let renamed = discover_owner(&owner(temp.path()));
         assert_eq!(renamed.routines[0].routine_id, routine_id);
@@ -1243,12 +1243,12 @@ mod tests {
             duplicate
                 .routines
                 .iter()
-                .all(|row| row.routine_id.is_none())
+                .all(|item| item.routine_id.is_none())
         );
-        assert!(duplicate.routines.iter().all(|row| {
-            row.diagnostics.iter().any(|diagnostic| {
+        assert!(duplicate.routines.iter().all(|item| {
+            item.diagnostics.iter().any(|diagnostic| {
                 diagnostic.code == "routine_id_duplicate"
-                    && diagnostic.path.as_deref() == Some(row.path.as_str())
+                    && diagnostic.path.as_deref() == Some(item.path.as_str())
             })
         }));
     }
@@ -1267,11 +1267,11 @@ mod tests {
 
         let conflicted = discover_owner(&owner(temp.path()));
         assert_eq!(conflicted.routines.len(), 2);
-        assert!(conflicted.routines.iter().all(|row| {
-            row.routine_id.is_some()
-                && row.name_conflict.as_ref().is_some_and(|conflict| {
+        assert!(conflicted.routines.iter().all(|item| {
+            item.routine_id.is_some()
+                && item.name_conflict.as_ref().is_some_and(|conflict| {
                     conflict.conflicting_paths.len() == 1
-                        && conflict.conflicting_paths[0] != row.path
+                        && conflict.conflicting_paths[0] != item.path
                 })
         }));
         let first_identity = conflicted.routines[0].routine_id.clone();
@@ -1289,7 +1289,7 @@ mod tests {
             recovered
                 .routines
                 .iter()
-                .all(|row| row.name_conflict.is_none())
+                .all(|item| item.name_conflict.is_none())
         );
         assert_eq!(recovered.routines[0].routine_id, first_identity);
         assert_eq!(recovered.routines[0].execution_fingerprint, first_execution);

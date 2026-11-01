@@ -82,7 +82,7 @@ pub struct ActorCatalogDiagnostic {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ActorCatalogRow {
+pub struct ActorCatalogItem {
     pub canonical_email: String,
     pub display_name: String,
     pub contribution: ActorContribution,
@@ -99,7 +99,8 @@ pub struct ActorCatalogRow {
 pub struct ActorCatalog {
     pub repository_id: String,
     pub generation: u64,
-    pub rows: Vec<ActorCatalogRow>,
+    #[serde(rename = "rows")]
+    pub items: Vec<ActorCatalogItem>,
     pub diagnostics: Vec<ActorCatalogDiagnostic>,
     pub shallow: bool,
 }
@@ -186,7 +187,7 @@ struct ActorAlias {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
-struct ActorRow {
+struct ActorItem {
     candidate: ActorCandidate,
     available_years: Vec<i32>,
     aliases: Vec<ActorAlias>,
@@ -199,7 +200,7 @@ struct ActorRow {
 pub struct ActorSnapshot {
     repository_id: String,
     generation: u64,
-    rows: Vec<ActorRow>,
+    items: Vec<ActorItem>,
     mailmap: MailmapDocument,
     diagnostics: Vec<MailmapDiagnostic>,
     shallow: bool,
@@ -207,21 +208,24 @@ pub struct ActorSnapshot {
 
 impl ActorSnapshot {
     fn content_equivalent(&self, other: &Self) -> bool {
-        self.rows == other.rows
+        self.items == other.items
             && self.mailmap.rules == other.mailmap.rules
             && self.diagnostics == other.diagnostics
             && self.shallow == other.shallow
     }
 
     pub fn candidates(&self) -> Vec<ActorCandidate> {
-        self.rows.iter().map(|row| row.candidate.clone()).collect()
+        self.items
+            .iter()
+            .map(|item| item.candidate.clone())
+            .collect()
     }
 
     pub fn current_email(&self) -> Option<&str> {
-        self.rows
+        self.items
             .iter()
-            .find(|row| row.is_current)
-            .map(|row| row.candidate.email.as_str())
+            .find(|item| item.is_current)
+            .map(|item| item.candidate.email.as_str())
     }
 
     #[allow(dead_code)]
@@ -232,10 +236,10 @@ impl ActorSnapshot {
     pub fn equivalent_emails(&self, email: &str) -> Vec<String> {
         let normalized = normalize_email(email);
         let canonical = self.mailmap.resolve("", &normalized).email;
-        let Some(row) = self
-            .rows
+        let Some(item) = self
+            .items
             .iter()
-            .find(|row| row.candidate.email == canonical)
+            .find(|item| item.candidate.email == canonical)
         else {
             return (!normalized.is_empty())
                 .then_some(normalized)
@@ -243,8 +247,8 @@ impl ActorSnapshot {
                 .collect();
         };
 
-        let mut equivalents = HashSet::from([row.candidate.email.clone()]);
-        equivalents.extend(row.candidate.alias_emails.iter().cloned());
+        let mut equivalents = HashSet::from([item.candidate.email.clone()]);
+        equivalents.extend(item.candidate.alias_emails.iter().cloned());
         let mut equivalents: Vec<_> = equivalents.into_iter().collect();
         equivalents.sort();
         equivalents
@@ -254,26 +258,26 @@ impl ActorSnapshot {
         ActorCatalog {
             repository_id: self.repository_id.clone(),
             generation: self.generation,
-            rows: self
-                .rows
+            items: self
+                .items
                 .iter()
-                .map(|row| ActorCatalogRow {
-                    canonical_email: row.candidate.email.clone(),
-                    display_name: row.candidate.name.clone(),
-                    contribution: if row.candidate.commit_count == 0 {
+                .map(|item| ActorCatalogItem {
+                    canonical_email: item.candidate.email.clone(),
+                    display_name: item.candidate.name.clone(),
+                    contribution: if item.candidate.commit_count == 0 {
                         ActorContribution::NoCommits
                     } else {
                         ActorContribution::Contributor
                     },
-                    commit_count: row.candidate.commit_count,
-                    last_commit_at: row.candidate.last_commit_at,
-                    last_activity_date: row
+                    commit_count: item.candidate.commit_count,
+                    last_commit_at: item.candidate.last_commit_at,
+                    last_activity_date: item
                         .candidate
                         .last_commit_at
                         .and_then(local_date_for_timestamp)
                         .map(|date| date.format("%Y-%m-%d").to_string()),
-                    available_years: row.available_years.clone(),
-                    aliases: row
+                    available_years: item.available_years.clone(),
+                    aliases: item
                         .aliases
                         .iter()
                         .map(|alias| ActorCatalogAlias {
@@ -282,7 +286,7 @@ impl ActorSnapshot {
                             line: alias.line,
                         })
                         .collect(),
-                    sources: row
+                    sources: item
                         .sources
                         .iter()
                         .map(|source| ActorCatalogSource {
@@ -326,18 +330,18 @@ impl ActorSnapshot {
 
     pub fn mutation_actor(&self, email: &str) -> Option<MutationActor> {
         let email = normalize_email(email);
-        let row = self.rows.iter().find(|row| {
-            row.candidate.email == email || row.aliases.iter().any(|alias| alias.email == email)
+        let item = self.items.iter().find(|item| {
+            item.candidate.email == email || item.aliases.iter().any(|alias| alias.email == email)
         })?;
         Some(MutationActor {
-            canonical_email: row.candidate.email.clone(),
-            display_name: row.candidate.name.clone(),
-            aliases: row
+            canonical_email: item.candidate.email.clone(),
+            display_name: item.candidate.name.clone(),
+            aliases: item
                 .aliases
                 .iter()
                 .map(|alias| (alias.name.clone(), alias.email.clone()))
                 .collect(),
-            is_current: row.is_current,
+            is_current: item.is_current,
         })
     }
 
@@ -505,10 +509,10 @@ impl ActorCatalogState {
         let repository = resolve_repository(cli, space_path).await?;
         let snapshot = self.snapshot_at_repository(cli, &repository).await?;
         let canonical_email = normalize_email(canonical_email);
-        let row = snapshot
-            .rows
+        let item = snapshot
+            .items
             .iter()
-            .find(|row| row.candidate.email == canonical_email)
+            .find(|item| item.candidate.email == canonical_email)
             .ok_or_else(|| {
                 ActorError::FileNotFound(format!(
                     "actor {canonical_email:?} is not present in repository catalog"
@@ -517,10 +521,13 @@ impl ActorCatalogState {
 
         let today = Local::now().date_naive();
         let selected_year = selected_year.unwrap_or_else(|| {
-            if row.available_years.contains(&today.year()) {
+            if item.available_years.contains(&today.year()) {
                 today.year()
             } else {
-                row.available_years.first().copied().unwrap_or(today.year())
+                item.available_years
+                    .first()
+                    .copied()
+                    .unwrap_or(today.year())
             }
         });
         let (range_start, range_end_exclusive) = activity_year_range(selected_year, today)?;
@@ -588,7 +595,14 @@ impl ActorCatalogState {
             }
         };
 
-        project_activity(&snapshot, row, &key, &activity, selected_day, cursor_offset)
+        project_activity(
+            &snapshot,
+            item,
+            &key,
+            &activity,
+            selected_day,
+            cursor_offset,
+        )
     }
 
     fn cached(&self, repository: &Path) -> Result<Option<Arc<ActorSnapshot>>, ActorError> {
@@ -1064,7 +1078,7 @@ fn validate_activity_cursor(
 
 fn project_activity(
     snapshot: &ActorSnapshot,
-    row: &ActorRow,
+    item: &ActorItem,
     key: &ActivityCacheKey,
     activity: &ActorActivityYear,
     selected_day: Option<NaiveDate>,
@@ -1132,7 +1146,7 @@ fn project_activity(
         repository_id: snapshot.repository_id.clone(),
         generation: snapshot.generation,
         canonical_email: key.canonical_email.clone(),
-        available_years: row.available_years.clone(),
+        available_years: item.available_years.clone(),
         selected_year: key.year,
         range_start: activity.range_start.format("%Y-%m-%d").to_string(),
         range_end_exclusive: activity.range_end_exclusive.format("%Y-%m-%d").to_string(),
@@ -1182,9 +1196,9 @@ pub async fn load_snapshot(
     detect_custom_mailmap_sources(cli, repository, &mut mailmap).await?;
     let shallow = is_shallow_repository(cli, repository).await?;
 
-    let mut rows: HashMap<String, ActorRowBuilder> = HashMap::new();
+    let mut items: HashMap<String, ActorItemBuilder> = HashMap::new();
     for rule in &mailmap.rules {
-        materialize_declaration(&mut rows, rule);
+        materialize_declaration(&mut items, rule);
     }
 
     let history = load_actor_history(cli, repository).await?;
@@ -1205,30 +1219,32 @@ pub async fn load_snapshot(
         if identity.email.is_empty() {
             continue;
         }
-        rows.entry(identity.email.clone())
-            .or_insert_with(|| ActorRowBuilder::new(&identity))
+        items
+            .entry(identity.email.clone())
+            .or_insert_with(|| ActorItemBuilder::new(&identity))
             .add_history(&identity, raw_name, raw_email, timestamp);
     }
 
     if let Some(current) = current_git_identity(cli, repository).await? {
         let resolved = mailmap.resolve(&current.name, &current.email);
         if !resolved.email.is_empty() {
-            rows.entry(resolved.email.clone())
-                .or_insert_with(|| ActorRowBuilder::new(&resolved))
+            items
+                .entry(resolved.email.clone())
+                .or_insert_with(|| ActorItemBuilder::new(&resolved))
                 .add_current(&resolved, &current);
         }
     }
 
-    let current_email = rows.iter().find_map(|(email, row)| {
-        row.is_current
+    let current_email = items.iter().find_map(|(email, item)| {
+        item.is_current
             .then_some(email.as_str())
             .map(ToOwned::to_owned)
     });
-    let mut rows: Vec<_> = rows
+    let mut items: Vec<_> = items
         .into_values()
-        .map(|row| row.finish(current_email.as_deref(), &mailmap))
+        .map(|item| item.finish(current_email.as_deref(), &mailmap))
         .collect();
-    rows.sort_by(|left, right| {
+    items.sort_by(|left, right| {
         right
             .candidate
             .last_commit_at
@@ -1245,7 +1261,7 @@ pub async fn load_snapshot(
     Ok(ActorSnapshot {
         repository_id: opaque_repository_id(repository),
         generation,
-        rows,
+        items,
         diagnostics: mailmap.diagnostics.clone(),
         mailmap,
         shallow,
@@ -1363,17 +1379,17 @@ async fn git_config_value(
     Ok((!value.is_empty()).then_some(value))
 }
 
-fn materialize_declaration(rows: &mut HashMap<String, ActorRowBuilder>, rule: &MailmapRule) {
-    let row = rows
+fn materialize_declaration(items: &mut HashMap<String, ActorItemBuilder>, rule: &MailmapRule) {
+    let item = items
         .entry(rule.canonical.email.clone())
-        .or_insert_with(|| ActorRowBuilder::new(&rule.canonical));
-    row.prefer_name(&rule.canonical.name);
-    row.add_alias(
+        .or_insert_with(|| ActorItemBuilder::new(&rule.canonical));
+    item.prefer_name(&rule.canonical.name);
+    item.add_alias(
         rule.alias_name.as_deref(),
         &rule.alias_email,
         Some(rule.line),
     );
-    row.add_source(
+    item.add_source(
         ActorSourceKind::Mailmap,
         &rule.canonical.name,
         &rule.canonical.email,
@@ -1381,7 +1397,7 @@ fn materialize_declaration(rows: &mut HashMap<String, ActorRowBuilder>, rule: &M
     );
 }
 
-struct ActorRowBuilder {
+struct ActorItemBuilder {
     email: String,
     name: String,
     last_commit_at: Option<i64>,
@@ -1392,7 +1408,7 @@ struct ActorRowBuilder {
     is_current: bool,
 }
 
-impl ActorRowBuilder {
+impl ActorItemBuilder {
     fn new(identity: &Identity) -> Self {
         Self {
             email: identity.email.clone(),
@@ -1489,7 +1505,7 @@ impl ActorRowBuilder {
         });
     }
 
-    fn finish(self, current_email: Option<&str>, mailmap: &MailmapDocument) -> ActorRow {
+    fn finish(self, current_email: Option<&str>, mailmap: &MailmapDocument) -> ActorItem {
         let mut available_years: Vec<_> = self.available_years.into_iter().collect();
         available_years.sort_unstable_by(|left, right| right.cmp(left));
         let mut alias_emails: Vec<_> = self
@@ -1503,7 +1519,7 @@ impl ActorRowBuilder {
             .into_iter()
             .collect();
         alias_emails.sort();
-        ActorRow {
+        ActorItem {
             candidate: ActorCandidate {
                 is_me: current_email == Some(self.email.as_str()),
                 email: self.email,
@@ -1637,7 +1653,7 @@ mod tests {
             .expect("catalog")
             .catalog();
         assert_eq!(
-            catalog.rows[0].available_years,
+            catalog.items[0].available_years,
             vec![current_year, past_year]
         );
         let current = state
@@ -1764,7 +1780,7 @@ exec '{git}' "$@"
             updated
                 .candidates()
                 .iter()
-                .any(|row| row.email == "concurrent@example.test" && row.commit_count == 1)
+                .any(|item| item.email == "concurrent@example.test" && item.commit_count == 1)
         );
         svode_testkit::write_executable(
             &script,
@@ -1858,7 +1874,7 @@ exec '{}' "$@"
                 .unwrap()
                 .candidates()
                 .iter()
-                .all(|row| row.email != "external@example.test")
+                .all(|item| item.email != "external@example.test")
         );
     }
 
@@ -1974,7 +1990,7 @@ exec '{}' "$@"
     }
 
     #[tokio::test]
-    async fn canonical_declarations_and_aliases_share_one_row() {
+    async fn canonical_declarations_and_aliases_share_one_item() {
         let repo = init_repo("Commit Name", "old@example.test");
         commit(repo.path(), "one.txt", "one", "one");
         commit(repo.path(), "two.txt", "two", "two");
@@ -2005,7 +2021,7 @@ exec '{}' "$@"
             "new@example.test"
         );
         assert_eq!(
-            snapshot.rows[0]
+            snapshot.items[0]
                 .sources
                 .iter()
                 .filter(|source| source.kind == ActorSourceKind::History)
@@ -2073,27 +2089,27 @@ exec '{}' "$@"
         );
         assert_eq!(catalog.generation, 1);
         assert!(!catalog.shallow);
-        assert_eq!(catalog.rows.len(), 1);
-        let row = &catalog.rows[0];
-        assert_eq!(row.canonical_email, "canonical@example.test");
-        assert_eq!(row.display_name, "Canonical");
-        assert_eq!(row.contribution, ActorContribution::Contributor);
-        assert_eq!(row.commit_count, 1);
-        assert!(row.last_commit_at.is_some());
-        assert!(row.last_activity_date.is_some());
-        assert!(row.aliases.iter().any(|alias| {
+        assert_eq!(catalog.items.len(), 1);
+        let item = &catalog.items[0];
+        assert_eq!(item.canonical_email, "canonical@example.test");
+        assert_eq!(item.display_name, "Canonical");
+        assert_eq!(item.contribution, ActorContribution::Contributor);
+        assert_eq!(item.commit_count, 1);
+        assert!(item.last_commit_at.is_some());
+        assert!(item.last_activity_date.is_some());
+        assert!(item.aliases.iter().any(|alias| {
             alias.name.is_none() && alias.email == "alias@example.test" && alias.line == Some(1)
         }));
-        assert!(row.sources.iter().any(|source| {
+        assert!(item.sources.iter().any(|source| {
             source.kind == ActorCatalogSourceKind::History
                 && source.name == "Alias Name"
                 && source.email == "alias@example.test"
         }));
-        assert!(row.sources.iter().any(|source| {
+        assert!(item.sources.iter().any(|source| {
             source.kind == ActorCatalogSourceKind::CurrentGitIdentity
                 && source.email == "alias@example.test"
         }));
-        assert!(row.sources.iter().any(|source| {
+        assert!(item.sources.iter().any(|source| {
             source.kind == ActorCatalogSourceKind::Mailmap
                 && source.email == "canonical@example.test"
                 && source.line == Some(1)
@@ -2107,9 +2123,9 @@ exec '{}' "$@"
         assert!(catalog.diagnostics[0].blocking);
 
         let serialized = serde_json::to_value(&catalog).expect("serialize catalog");
-        let serialized_row = serialized["rows"][0].as_object().expect("serialized row");
-        assert!(!serialized_row.contains_key("isCurrent"));
-        assert!(!serialized_row.contains_key("isMe"));
+        let serialized_item = serialized["rows"][0].as_object().expect("serialized item");
+        assert!(!serialized_item.contains_key("isCurrent"));
+        assert!(!serialized_item.contains_key("isMe"));
     }
 
     #[test]

@@ -76,9 +76,9 @@ async fn core_relation_reads_source_and_index_without_desktop_runtime() {
     assert_eq!(
         collections
             .iter()
-            .find(|row| row.path == "tasks")
+            .find(|collection| collection.path == "tasks")
             .unwrap()
-            .row_count,
+            .item_count,
         1
     );
     let backlinks = query_relation_backlinks(space_string, "people/alice.md", None, None).unwrap();

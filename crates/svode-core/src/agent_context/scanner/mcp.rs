@@ -1,5 +1,5 @@
 //! MCP servers of the agents (Stage 10 `05`, «MCP-сервер»): the configs each
-//! policy declares, one row per declaration in one file, and whether each
+//! policy declares, one item per declaration in one file, and whether each
 //! agent that reads the file takes the server — by its precedence of one
 //! name and the switches of its configs. Servers are never started.
 
@@ -12,7 +12,7 @@ use crate::agent_adapters::{
     McpProjectKey, McpSourceRule, SkillPlace, SourceRegistryEnvironment,
 };
 
-use super::super::model::{McpFinding, McpServerRow, SourceHealth, SourceLinkKind};
+use super::super::model::{McpFinding, McpServerItem, SourceHealth, SourceLinkKind};
 use super::io::{diagnostic, path_string};
 use super::mcp_config::{self, McpConfig, McpDeclaration, McpSyntax};
 use super::{DiscoveryResult, TargetPlaces, claude, cursor, grok, pi, qwen};
@@ -27,7 +27,7 @@ struct Candidate {
 /// One server an agent reads, in the agent's order.
 struct Occurrence {
     name: String,
-    row: String,
+    item: String,
     /// The declared switch, when the agent honours it.
     switch: Option<bool>,
     complete: bool,
@@ -47,8 +47,8 @@ pub(super) fn discover(
         target: places.target_root.clone(),
     };
     let mut configs = BTreeMap::<(PathBuf, McpSyntax), Option<McpConfig>>::new();
-    let mut rows = BTreeMap::<String, McpServerRow>::new();
-    // Rows that declare neither a command nor a URL, until a merge of their
+    let mut items = BTreeMap::<String, McpServerItem>::new();
+    // Items that declare neither a command nor a URL, until a merge of their
     // name supplies one.
     let mut incomplete = BTreeMap::<String, (PathBuf, String)>::new();
 
@@ -107,8 +107,8 @@ pub(super) fn discover(
                         .iter()
                         .any(|declaration| declaration.problem.is_some());
                 for declaration in declarations {
-                    let id = row_id(&canonical, project.map(|project| &project.key), declaration);
-                    let row = rows.entry(id.clone()).or_insert_with(|| {
+                    let id = item_id(&canonical, project.map(|project| &project.key), declaration);
+                    let item = items.entry(id.clone()).or_insert_with(|| {
                         if let Some(problem) = declaration
                             .problem
                             .as_ref()
@@ -116,7 +116,7 @@ pub(super) fn discover(
                         {
                             incomplete.insert(id.clone(), (canonical.clone(), problem.clone()));
                         }
-                        new_row(id.clone(), &canonical, project.is_some(), declaration)
+                        new_item(id.clone(), &canonical, project.is_some(), declaration)
                     });
                     if ignored {
                         let reason = format!(
@@ -124,20 +124,20 @@ pub(super) fn discover(
                             agent.display_name(),
                             canonical.display()
                         );
-                        if !row.health_reasons.contains(&reason) {
-                            row.health = SourceHealth::Degraded;
-                            row.health_reasons.push(reason);
+                        if !item.health_reasons.contains(&reason) {
+                            item.health = SourceHealth::Degraded;
+                            item.health_reasons.push(reason);
                         }
                         continue;
                     }
-                    if row
+                    if item
                         .findings
                         .iter()
                         .any(|finding| finding.adapter_id == agent)
                     {
                         continue;
                     }
-                    row.findings.push(McpFinding {
+                    item.findings.push(McpFinding {
                         adapter_id: agent,
                         path: path_string(&candidate.path),
                         link_kind,
@@ -146,7 +146,7 @@ pub(super) fn discover(
                     });
                     order.push(Occurrence {
                         name: declaration.name.clone(),
-                        row: id,
+                        item: id,
                         switch: declaration.switch.filter(|_| rule.entry_switch),
                         complete: !declaration.incomplete,
                     });
@@ -169,11 +169,11 @@ pub(super) fn discover(
         for occurrence in &order {
             let winner = winners
                 .get(&occurrence.name)
-                .filter(|winner| **winner != occurrence.row)
-                .and_then(|winner| rows.get(*winner))
+                .filter(|winner| **winner != occurrence.item)
+                .and_then(|winner| items.get(*winner))
                 .map(|winner| winner.path.clone());
-            let Some(finding) = rows.get_mut(&occurrence.row).and_then(|row| {
-                row.findings
+            let Some(finding) = items.get_mut(&occurrence.item).and_then(|item| {
+                item.findings
                     .iter_mut()
                     .find(|finding| finding.adapter_id == agent)
             }) else {
@@ -183,7 +183,7 @@ pub(super) fn discover(
             if let Some((switches, complete)) = &merged {
                 finding.disabled = switches.get(occurrence.name.as_str()) == Some(&false);
                 if complete.contains(occurrence.name.as_str()) {
-                    incomplete.remove(&occurrence.row);
+                    incomplete.remove(&occurrence.item);
                 }
             }
             if turned_off.turns_off(&occurrence.name) {
@@ -193,19 +193,19 @@ pub(super) fn discover(
     }
 
     for (id, (file, problem)) in incomplete {
-        let Some(row) = rows.get_mut(&id) else {
+        let Some(item) = items.get_mut(&id) else {
             continue;
         };
-        row.health = SourceHealth::Degraded;
-        row.health_reasons.push(problem.clone());
+        item.health = SourceHealth::Degraded;
+        item.health_reasons.push(problem.clone());
         result.diagnostics.push(diagnostic(
             &file,
-            row.findings.first().map(|finding| finding.adapter_id),
+            item.findings.first().map(|finding| finding.adapter_id),
             "mcp_server_invalid",
             format!("{problem} in {}", file.display()),
         ));
     }
-    result.mcp_servers = rows.into_values().collect();
+    result.mcp_servers = items.into_values().collect();
     result.mcp_servers.sort_by(|left, right| {
         left.name
             .to_lowercase()
@@ -339,7 +339,7 @@ fn resolve(
 
 /// One declaration in one file: a `projects` entry of the global config of
 /// Claude Code is a declaration of its own.
-fn row_id(file: &Path, project: Option<&PathBuf>, declaration: &McpDeclaration) -> String {
+fn item_id(file: &Path, project: Option<&PathBuf>, declaration: &McpDeclaration) -> String {
     match project {
         Some(project) => format!(
             "mcp:{}#projects:{}#{}",
@@ -351,15 +351,15 @@ fn row_id(file: &Path, project: Option<&PathBuf>, declaration: &McpDeclaration) 
     }
 }
 
-fn new_row(
+fn new_item(
     id: String,
     file: &Path,
     project_only: bool,
     declaration: &McpDeclaration,
-) -> McpServerRow {
+) -> McpServerItem {
     let mut facts = declaration.facts.clone();
     facts.project_only = project_only;
-    McpServerRow {
+    McpServerItem {
         id,
         name: declaration.name.clone(),
         path: path_string(file),
@@ -381,7 +381,7 @@ fn new_row(
     }
 }
 
-/// The row each name of an agent takes, by its precedence.
+/// The item each name of an agent takes, by its precedence.
 fn winners(precedence: McpPrecedence, order: &[Occurrence]) -> BTreeMap<String, &str> {
     let mut winners = BTreeMap::new();
     for occurrence in order {
@@ -390,10 +390,10 @@ fn winners(precedence: McpPrecedence, order: &[Occurrence]) -> BTreeMap<String, 
             McpPrecedence::FirstWinsByName => {
                 winners
                     .entry(occurrence.name.clone())
-                    .or_insert(occurrence.row.as_str());
+                    .or_insert(occurrence.item.as_str());
             }
             McpPrecedence::LastWinsByName => {
-                winners.insert(occurrence.name.clone(), occurrence.row.as_str());
+                winners.insert(occurrence.name.clone(), occurrence.item.as_str());
             }
         }
     }
@@ -568,7 +568,7 @@ mod tests {
 }"#;
 
     #[test]
-    fn the_claude_global_config_is_one_row_per_declaration_for_claude_and_grok() {
+    fn the_claude_global_config_is_one_item_per_declaration_for_claude_and_grok() {
         let fixture = Fixture::new();
         let root = fixture.root();
         fixture.write(
@@ -691,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn the_svode_integration_is_a_row_per_agent_config_managed_by_svode() {
+    fn the_svode_integration_is_an_item_per_agent_config_managed_by_svode() {
         let fixture = Fixture::new();
         let home = fixture.home();
         let launcher = home.join(".svode/bin/svode-mcp");
@@ -718,12 +718,12 @@ mod tests {
 
         let servers = fixture.servers(&[Codex, QwenCode, KimiCode, Pi, Opencode]);
 
-        let rows = servers
+        let items = servers
             .iter()
             .map(|item| (item.location.path.clone(), item.providers.clone()))
             .collect::<Vec<_>>();
         assert_eq!(
-            rows,
+            items,
             vec![
                 (".codex/config.toml".to_string(), vec![Codex]),
                 (".config/opencode/opencode.json".to_string(), vec![Opencode]),

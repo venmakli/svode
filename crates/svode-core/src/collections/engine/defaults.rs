@@ -469,7 +469,7 @@ fn sorted_collection_markdown_files_for_unique_id(
     collection_path: &str,
 ) -> Result<Vec<PathBuf>, CollectionError> {
     let order = crate::content_tree::read_order(Path::new(space));
-    let mut rows = Vec::new();
+    let mut items = Vec::new();
     for file in collection_markdown_files(space, collection_path)? {
         let rel = copy_rel_from_abs(Path::new(space), &file);
         let parent = item_parent_dir(&rel);
@@ -491,16 +491,16 @@ fn sorted_collection_markdown_files_for_unique_id(
             })
             .unwrap_or_default()
             .to_lowercase();
-        rows.push((file, parent, order_index, title, rel));
+        items.push((file, parent, order_index, title, rel));
     }
-    rows.sort_by(|a, b| {
+    items.sort_by(|a, b| {
         a.1.cmp(&b.1)
             .then_with(|| a.2.is_none().cmp(&b.2.is_none()))
             .then_with(|| a.2.unwrap_or(usize::MAX).cmp(&b.2.unwrap_or(usize::MAX)))
             .then_with(|| a.3.cmp(&b.3))
             .then_with(|| a.4.cmp(&b.4))
     });
-    Ok(rows.into_iter().map(|row| row.0).collect())
+    Ok(items.into_iter().map(|item| item.0).collect())
 }
 
 fn markdown_files_in_tree(space: &Path, rel_path: &str) -> Result<Vec<PathBuf>, CollectionError> {

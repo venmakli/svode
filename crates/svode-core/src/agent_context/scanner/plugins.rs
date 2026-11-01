@@ -1,5 +1,5 @@
 //! Plugins and extensions of the agents (Stage 10 `05`, «Плагины»): the
-//! sources each policy declares, one row per canonical plugin, and whether
+//! sources each policy declares, one item per canonical plugin, and whether
 //! each agent that finds it has it on by its own config.
 
 use std::cmp::Ordering;
@@ -14,8 +14,8 @@ use crate::agent_adapters::{
 };
 
 use super::super::model::{
-    InstructionOwner, InstructionOwnerKind, PluginFinding, PluginRow, PluginSwitch, SkillRejection,
-    SkillScope, SourceHealth, SourceLinkKind,
+    InstructionOwner, InstructionOwnerKind, PluginFinding, PluginItem, PluginSwitch,
+    SkillRejection, SkillScope, SourceHealth, SourceLinkKind,
 };
 use super::io::{diagnostic, path_string};
 use super::plugin_folder::{self, FolderRule, PluginFolder};
@@ -55,7 +55,7 @@ impl Candidate {
 
 /// One plugin while its findings are collected.
 struct Collected {
-    row: PluginRow,
+    item: PluginItem,
     default_enabled: Option<bool>,
 }
 
@@ -115,13 +115,13 @@ pub(super) fn discover(
                 let id = candidate
                     .id
                     .clone()
-                    .unwrap_or_else(|| collected.row.name.clone());
+                    .unwrap_or_else(|| collected.item.name.clone());
                 let switch = plugin_switch(
                     agent,
                     rule,
                     &candidate,
                     &id,
-                    &collected.row.name,
+                    &collected.item.name,
                     collected.default_enabled,
                     places,
                     environment,
@@ -135,20 +135,20 @@ pub(super) fn discover(
                     PluginPrecedence::Coexist => None,
                     PluginPrecedence::FirstWinsByName => {
                         let winner = first_by_name
-                            .entry((agent, collected.row.name.clone()))
+                            .entry((agent, collected.item.name.clone()))
                             .or_insert_with(|| path.clone());
                         (*winner != path).then(|| winner.clone())
                     }
                 };
                 if collected
-                    .row
+                    .item
                     .findings
                     .iter()
                     .any(|finding| finding.adapter_id == agent && finding.path == path)
                 {
                     continue;
                 }
-                collected.row.findings.push(PluginFinding {
+                collected.item.findings.push(PluginFinding {
                     adapter_id: agent,
                     scope: if candidate.inside {
                         SkillScope::Project
@@ -167,9 +167,9 @@ pub(super) fn discover(
         .into_values()
         .flatten()
         .map(|collected| {
-            let mut row = collected.row;
-            apply_skill_rules(&mut row, adapters, &mut result);
-            row
+            let mut item = collected.item;
+            apply_skill_rules(&mut item, adapters, &mut result);
+            item
         })
         .collect();
     result.plugins.sort_by(|left, right| {
@@ -530,17 +530,17 @@ fn resolve(
 /// load it (DF-208 R7). One that no agent of the plugin loads is a failure
 /// of the plugin, reported for each of them.
 fn apply_skill_rules(
-    row: &mut PluginRow,
+    item: &mut PluginItem,
     adapters: &[AgentSourcePolicy],
     result: &mut DiscoveryResult,
 ) {
-    let agents = row
+    let agents = item
         .findings
         .iter()
         .map(|finding| finding.adapter_id)
         .collect::<BTreeSet<_>>();
     let mut kept = Vec::new();
-    for mut skill in std::mem::take(&mut row.skills) {
+    for mut skill in std::mem::take(&mut item.skills) {
         skill.rejections = adapters
             .iter()
             .filter(|adapter| agents.contains(&adapter.id))
@@ -563,16 +563,16 @@ fn apply_skill_rules(
         let manifest = PathBuf::from(&skill.path);
         for rejection in &skill.rejections {
             let (code, message) = skills::rejection_failure(&manifest, &rejection.missing);
-            if !row.health_reasons.contains(&message) {
-                row.health_reasons.push(message.clone());
+            if !item.health_reasons.contains(&message) {
+                item.health_reasons.push(message.clone());
             }
             result
                 .diagnostics
                 .push(diagnostic(&manifest, Some(rejection.agent), code, message));
         }
-        row.health = SourceHealth::Degraded;
+        item.health = SourceHealth::Degraded;
     }
-    row.skills = kept;
+    item.skills = kept;
 }
 
 fn read_plugin(
@@ -644,7 +644,7 @@ fn read_plugin(
         problems,
     } = folder;
     Some(Collected {
-        row: PluginRow {
+        item: PluginItem {
             id: format!("plugin:{}", path_string(&directory)),
             name,
             description,
@@ -887,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn a_claude_skills_dir_plugin_is_one_row_with_its_skills_as_components() {
+    fn a_claude_skills_dir_plugin_is_one_item_with_its_skills_as_components() {
         let fixture = Fixture::new();
         let kit = fixture.project.path().join(".claude/skills/kit");
         fixture.write(
@@ -941,7 +941,7 @@ mod tests {
                 (PluginComponentKind::Hooks, 3),
             ]
         );
-        // The plugin's skill is no skill row of its own.
+        // The plugin's skill is no skill item of its own.
         assert!(top_level_skills(&items).is_empty());
         assert!(!format!("{items:?}").contains("secret-token"));
 
@@ -1057,7 +1057,7 @@ mod tests {
     }
 
     #[test]
-    fn a_claude_marketplace_plugin_found_by_cursor_and_grok_is_one_row() {
+    fn a_claude_marketplace_plugin_found_by_cursor_and_grok_is_one_item() {
         let fixture = Fixture::new();
         claude_marketplace(&fixture);
         let home = fixture.home();

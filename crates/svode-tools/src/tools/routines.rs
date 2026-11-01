@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use svode_core::git::state::GitRuntime;
 use svode_core::routines::model::{
     ResolvedRoutineOwner, RoutineCatalogSnapshot, RoutineDefinition, RoutineDispatchBlockedCode,
-    RoutineDispatchResult, RoutineOwnerInputKind, RoutineRow,
+    RoutineDispatchResult, RoutineItem, RoutineOwnerInputKind,
 };
 use svode_core::routines::service::{
     self, ManagedRoutineMutationResult, RoutineMutationContext, RoutineMutationHost,
@@ -254,10 +254,10 @@ pub(crate) async fn get_routine(
 ) -> Result<ToolCallResult, ToolError> {
     let owner = resolve_routine_owner(target, &args.space_id, args.collection_path.as_deref())?;
     let (snapshot, authority) = read_owner(host, &owner).await?;
-    let row = find_routine(&snapshot, &args.routine_id)?;
+    let item = find_routine(&snapshot, &args.routine_id)?;
     Ok(ToolCallResult::ok(
         format!("Read routine {} for the explicit owner.", args.routine_id),
-        detail_payload(&snapshot, row, authority),
+        detail_payload(&snapshot, item, authority),
     ))
 }
 
@@ -545,15 +545,15 @@ async fn mutation_result(
                     "authorityDiagnostics": authority.diagnostics,
                 }),
                 MutationKind::Create | MutationKind::Update => {
-                    let row = find_routine(&snapshot, &routine_id)?;
+                    let item = find_routine(&snapshot, &routine_id)?;
                     json!({
                         "owner": snapshot.owner,
                         "routineId": routine_id,
-                        "path": row.path,
-                        "fingerprint": row.fingerprint,
+                        "path": item.path,
+                        "fingerprint": item.fingerprint,
                         "catalogFingerprint": snapshot.catalog_fingerprint,
                         "changedPaths": changed_paths,
-                        "detail": detail_payload(&snapshot, row, authority),
+                        "detail": detail_payload(&snapshot, item, authority),
                         "warnings": warnings,
                     })
                 }
@@ -730,64 +730,64 @@ fn list_payload(
     })
 }
 
-fn summary_payload(row: &RoutineRow) -> Value {
+fn summary_payload(item: &RoutineItem) -> Value {
     json!({
-        "routineId": row.routine_id,
-        "filename": row.filename,
-        "path": row.path,
-        "name": row.name,
-        "nameConflict": row.name_conflict,
-        "description": row.description,
-        "triggerType": row.trigger_type,
-        "triggerSummary": row.trigger_summary,
-        "actionType": row.action_type,
-        "actionSummary": row.action_summary,
-        "executor": row.executor,
-        "enabled": row.enabled,
-        "valid": row.routine_id.is_some() && row.definition.is_some() && row.diagnostics.is_empty(),
-        "fingerprint": row.fingerprint,
-        "diagnostics": row.diagnostics,
-        "lastRunAt": row.last_run_at,
-        "lastRunOrigin": row.last_run_origin,
-        "nextRunAt": row.next_run_at,
+        "routineId": item.routine_id,
+        "filename": item.filename,
+        "path": item.path,
+        "name": item.name,
+        "nameConflict": item.name_conflict,
+        "description": item.description,
+        "triggerType": item.trigger_type,
+        "triggerSummary": item.trigger_summary,
+        "actionType": item.action_type,
+        "actionSummary": item.action_summary,
+        "executor": item.executor,
+        "enabled": item.enabled,
+        "valid": item.routine_id.is_some() && item.definition.is_some() && item.diagnostics.is_empty(),
+        "fingerprint": item.fingerprint,
+        "diagnostics": item.diagnostics,
+        "lastRunAt": item.last_run_at,
+        "lastRunOrigin": item.last_run_origin,
+        "nextRunAt": item.next_run_at,
     })
 }
 
 fn detail_payload(
     snapshot: &RoutineCatalogSnapshot,
-    row: &RoutineRow,
+    item: &RoutineItem,
     authority: AuthorityProjection,
 ) -> Value {
     json!({
         "owner": snapshot.owner,
         "catalogFingerprint": snapshot.catalog_fingerprint,
         "refreshedAt": snapshot.refreshed_at,
-        "routineId": row.routine_id,
-        "filename": row.filename,
-        "path": row.path,
-        "name": row.name,
-        "nameConflict": row.name_conflict,
-        "description": row.description,
-        "definition": row.definition,
-        "fingerprint": row.fingerprint,
-        "valid": row.routine_id.is_some() && row.definition.is_some() && row.diagnostics.is_empty(),
-        "diagnostics": row.diagnostics,
+        "routineId": item.routine_id,
+        "filename": item.filename,
+        "path": item.path,
+        "name": item.name,
+        "nameConflict": item.name_conflict,
+        "description": item.description,
+        "definition": item.definition,
+        "fingerprint": item.fingerprint,
+        "valid": item.routine_id.is_some() && item.definition.is_some() && item.diagnostics.is_empty(),
+        "diagnostics": item.diagnostics,
         "automaticAuthorityEnabled": authority.enabled,
         "authorityDiagnostics": authority.diagnostics,
-        "lastRunAt": row.last_run_at,
-        "lastRunOrigin": row.last_run_origin,
-        "nextRunAt": row.next_run_at,
+        "lastRunAt": item.last_run_at,
+        "lastRunOrigin": item.last_run_origin,
+        "nextRunAt": item.next_run_at,
     })
 }
 
 fn find_routine<'a>(
     snapshot: &'a RoutineCatalogSnapshot,
     routine_id: &str,
-) -> Result<&'a RoutineRow, ToolError> {
+) -> Result<&'a RoutineItem, ToolError> {
     snapshot
         .routines
         .iter()
-        .find(|row| row.routine_id.as_deref() == Some(routine_id))
+        .find(|item| item.routine_id.as_deref() == Some(routine_id))
         .ok_or_else(|| {
             ToolError::new(
                 "ROUTINE_NOT_FOUND",
@@ -806,7 +806,7 @@ mod tests {
         RoutineRunOrigin, RoutineTrigger, RoutineTriggerType,
     };
 
-    fn row(id: &str, body: Option<&str>) -> RoutineRow {
+    fn item(id: &str, body: Option<&str>) -> RoutineItem {
         let definition = body.map(|body| RoutineDefinition {
             name: Some(id.into()),
             description: Some("description".into()),
@@ -817,7 +817,7 @@ mod tests {
             },
             body: body.into(),
         });
-        RoutineRow {
+        RoutineItem {
             routine_id: body.map(|_| id.into()),
             portable_id: body.map(|_| "01arz3ndektsv4rrffq69g5fav".into()),
             filename: format!("{id}.md"),
@@ -855,14 +855,14 @@ mod tests {
         }
     }
 
-    fn snapshot(rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
+    fn snapshot(items: Vec<RoutineItem>) -> RoutineCatalogSnapshot {
         RoutineCatalogSnapshot {
             owner: RoutineOwnerDescriptor {
                 kind: RoutineOwnerKind::Project,
                 space_id: "root".into(),
                 owner_path: ".".into(),
             },
-            routines: rows,
+            routines: items,
             diagnostics: Vec::new(),
             catalog_fingerprint: "catalog".into(),
             refreshed_at: "2026-08-20T00:00:00Z".into(),
@@ -1140,11 +1140,11 @@ mod tests {
 
     #[test]
     fn pagination_defaults_and_clamps_to_the_public_bound() {
-        let rows = (0..205)
-            .map(|index| row(&format!("routine-{index}"), Some("body")))
+        let items = (0..205)
+            .map(|index| item(&format!("routine-{index}"), Some("body")))
             .collect::<Vec<_>>();
         let defaults = list_payload(
-            &snapshot(rows.clone()),
+            &snapshot(items.clone()),
             authority_projection(Ok(false)),
             None,
             None,
@@ -1152,7 +1152,7 @@ mod tests {
         assert_eq!(defaults["limit"], 50);
         assert_eq!(defaults["offset"], 0);
         let minimum = list_payload(
-            &snapshot(rows.clone()),
+            &snapshot(items.clone()),
             authority_projection(Ok(false)),
             Some(0),
             Some(-1),
@@ -1161,7 +1161,7 @@ mod tests {
         assert_eq!(minimum["offset"], 0);
 
         let payload = list_payload(
-            &snapshot(rows),
+            &snapshot(items),
             authority_projection(Ok(false)),
             Some(500),
             Some(5),
@@ -1176,28 +1176,28 @@ mod tests {
     fn list_is_bodyless_and_keeps_valid_and_malformed_siblings_visible() {
         let payload = list_payload(
             &snapshot(vec![
-                row("valid", Some("secret body")),
-                row("invalid", None),
+                item("valid", Some("secret body")),
+                item("invalid", None),
             ]),
             authority_projection(Ok(true)),
             None,
             None,
         );
-        let rows = payload["routines"].as_array().unwrap();
-        assert_eq!(rows.len(), 2);
-        assert!(rows[0].get("definition").is_none());
-        assert!(!rows[0].to_string().contains("secret body"));
-        assert_eq!(rows[0]["valid"], true);
-        assert_eq!(rows[1]["valid"], false);
-        assert_eq!(rows[1]["routineId"], Value::Null);
+        let items = payload["routines"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items[0].get("definition").is_none());
+        assert!(!items[0].to_string().contains("secret body"));
+        assert_eq!(items[0]["valid"], true);
+        assert_eq!(items[1]["valid"], false);
+        assert_eq!(items[1]["routineId"], Value::Null);
         assert_eq!(payload["automaticAuthorityEnabled"], true);
     }
 
     #[test]
     fn detail_preserves_normalized_body_and_unknown_id_has_stable_error() {
-        let snapshot = snapshot(vec![row("valid", Some("# Normalized body\n"))]);
-        let row = find_routine(&snapshot, "valid").unwrap();
-        let payload = detail_payload(&snapshot, row, authority_projection(Ok(false)));
+        let snapshot = snapshot(vec![item("valid", Some("# Normalized body\n"))]);
+        let item = find_routine(&snapshot, "valid").unwrap();
+        let payload = detail_payload(&snapshot, item, authority_projection(Ok(false)));
         assert_eq!(payload["definition"]["body"], "# Normalized body\n");
         assert_eq!(payload["automaticAuthorityEnabled"], false);
 

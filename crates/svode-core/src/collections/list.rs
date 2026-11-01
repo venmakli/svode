@@ -17,7 +17,8 @@ const SCHEMA_FILE: &str = "schema.yaml";
 pub struct CollectionInfo {
     pub path: String,
     pub title: String,
-    pub row_count: usize,
+    #[serde(rename = "rowCount")]
+    pub item_count: usize,
     pub nested: bool,
 }
 
@@ -35,7 +36,7 @@ pub fn list_collections(space: &str) -> Result<Vec<CollectionInfo>, CollectionEr
                     .and_then(|name| name.to_str())
                     .unwrap_or("Collection"),
             ),
-            row_count: collection_markdown_files(space, ".")?.len(),
+            item_count: collection_markdown_files(space, ".")?.len(),
             nested: false,
         });
     }
@@ -75,7 +76,7 @@ fn collect_collections(
                 .to_string_lossy()
                 .replace('\\', "/");
             let title = collection_title(&path, &name);
-            let row_count = collection_markdown_files(&space.to_string_lossy(), &rel)?.len();
+            let item_count = collection_markdown_files(&space.to_string_lossy(), &rel)?.len();
             let nested = find_collection_root_by_location(
                 space,
                 &format!("{}/README.md", normalize_rel_path(&rel)),
@@ -84,7 +85,7 @@ fn collect_collections(
             out.push(CollectionInfo {
                 path: rel.clone(),
                 title,
-                row_count,
+                item_count,
                 nested,
             });
         }

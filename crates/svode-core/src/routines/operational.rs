@@ -57,12 +57,12 @@ pub async fn replace_catalog_snapshot(
     let rows = snapshot
         .routines
         .iter()
-        .filter_map(|row| {
-            row.routine_id.as_ref().map(|routine_id| {
+        .filter_map(|item| {
+            item.routine_id.as_ref().map(|routine_id| {
                 Ok(DefinitionRow {
                     routine_id: routine_id.clone(),
-                    fingerprint: row.execution_fingerprint.clone(),
-                    row_json: serde_json::to_string(row)?,
+                    fingerprint: item.execution_fingerprint.clone(),
+                    row_json: serde_json::to_string(item)?,
                 })
             })
         })
@@ -612,7 +612,7 @@ mod tests {
 
     use super::*;
     use crate::routines::model::{
-        RoutineDiagnostic, RoutineLiveEvidence, RoutineOwnerDescriptor, RoutineRow,
+        RoutineDiagnostic, RoutineItem, RoutineLiveEvidence, RoutineOwnerDescriptor,
         RoutineTerminalChoice,
     };
     use crate::routines::storage;
@@ -621,22 +621,22 @@ mod tests {
         storage::open_pool(path, false).await.unwrap().pool
     }
 
-    fn snapshot(owner_path: &str, rows: Vec<RoutineRow>) -> RoutineCatalogSnapshot {
+    fn snapshot(owner_path: &str, items: Vec<RoutineItem>) -> RoutineCatalogSnapshot {
         RoutineCatalogSnapshot {
             owner: RoutineOwnerDescriptor {
                 kind: RoutineOwnerKind::Collection,
                 space_id: "root".into(),
                 owner_path: owner_path.into(),
             },
-            routines: rows,
+            routines: items,
             diagnostics: vec![RoutineDiagnostic::new("catalog", "diagnostic")],
             catalog_fingerprint: "catalog".into(),
             refreshed_at: "2026-08-06T00:00:00Z".into(),
         }
     }
 
-    fn row(id: &str) -> RoutineRow {
-        RoutineRow {
+    fn item(id: &str) -> RoutineItem {
+        RoutineItem {
             routine_id: Some(id.into()),
             portable_id: Some("01arz3ndektsv4rrffq69g5fav".into()),
             filename: format!("{id}.md"),
@@ -666,7 +666,11 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .map(|row| serde_json::from_str::<RoutineRow>(&row).unwrap().routine_id)
+            .map(|row| {
+                serde_json::from_str::<RoutineItem>(&row)
+                    .unwrap()
+                    .routine_id
+            })
             .collect()
     }
 
@@ -675,16 +679,16 @@ mod tests {
         let temp = tempdir().unwrap();
         let pool = routines_pool(&temp.path().join("routines.db")).await;
 
-        replace_catalog_snapshot(&pool, &snapshot("tasks", vec![row("one"), row("two")]))
+        replace_catalog_snapshot(&pool, &snapshot("tasks", vec![item("one"), item("two")]))
             .await
             .unwrap();
-        replace_catalog_snapshot(&pool, &snapshot("notes", vec![row("sibling")]))
+        replace_catalog_snapshot(&pool, &snapshot("notes", vec![item("sibling")]))
             .await
             .unwrap();
-        let mut invalid = row("invalid");
+        let mut invalid = item("invalid");
         invalid.routine_id = None;
         invalid.portable_id = None;
-        replace_catalog_snapshot(&pool, &snapshot("tasks", vec![row("current"), invalid]))
+        replace_catalog_snapshot(&pool, &snapshot("tasks", vec![item("current"), invalid]))
             .await
             .unwrap();
 

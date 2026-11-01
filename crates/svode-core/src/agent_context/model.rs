@@ -104,7 +104,7 @@ pub enum InstructionReferenceStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InstructionRow {
+pub struct InstructionItem {
     pub id: String,
     pub adapter_id: Option<AgentAdapterKind>,
     pub name: String,
@@ -205,7 +205,7 @@ pub struct SkillRejection {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SkillRow {
+pub struct SkillItem {
     pub id: String,
     /// `name` of the frontmatter, else the skill folder or the flat file
     /// without `.md`.
@@ -230,7 +230,7 @@ pub struct SkillRow {
     pub rejections: Vec<SkillRejection>,
 }
 
-impl SkillRow {
+impl SkillItem {
     /// What `agent` requires and the file lacks; empty when it loads the
     /// skill.
     pub fn missing_for(&self, agent: AgentAdapterKind) -> &[SkillManifestField] {
@@ -284,10 +284,10 @@ pub struct AgentContextDiscovery {
     pub project_root: String,
     pub target_root: String,
     pub repository_root: String,
-    pub instructions: Vec<InstructionRow>,
-    pub skills: Vec<SkillRow>,
-    pub plugins: Vec<PluginRow>,
-    pub mcp_servers: Vec<McpServerRow>,
+    pub instructions: Vec<InstructionItem>,
+    pub skills: Vec<SkillItem>,
+    pub plugins: Vec<PluginItem>,
+    pub mcp_servers: Vec<McpServerItem>,
     pub diagnostics: Vec<AgentContextDiagnostic>,
     pub observed_project_paths: Vec<String>,
     pub observed_personal_paths: Vec<String>,
@@ -302,7 +302,7 @@ pub enum PluginComposition {
     Code,
 }
 
-/// A kind of plugin component that is no row of the "Context".
+/// A kind of plugin component that is no item of the "Context".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginComponentKind {
@@ -376,11 +376,11 @@ pub struct PluginInstruction {
 /// One plugin, whichever agents and paths find it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PluginRow {
+pub struct PluginItem {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    /// The file the row opens: the manifest, the module, or the config that
+    /// The file the item opens: the manifest, the module, or the config that
     /// declares the plugin.
     pub path: String,
     /// The canonical plugin folder, or the file of a plugin without one.
@@ -394,7 +394,7 @@ pub struct PluginRow {
     pub icon: Option<String>,
     /// `README.md` in the plugin folder.
     pub readme: Option<MarkdownPreview>,
-    pub skills: Vec<SkillRow>,
+    pub skills: Vec<SkillItem>,
     pub instructions: Vec<PluginInstruction>,
     pub mcp_servers: Vec<PluginMcpServer>,
     pub counts: Vec<PluginComponentCount>,
@@ -448,7 +448,7 @@ pub struct McpFinding {
 /// read the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpServerRow {
+pub struct McpServerItem {
     pub id: String,
     pub name: String,
     /// The canonical config file that declares it.
@@ -546,7 +546,7 @@ pub struct ContextSkillFacts {
     pub allowed_tools: Option<String>,
 }
 
-/// Facts of a plugin: its folder, manifest and components that are no rows.
+/// Facts of a plugin: its folder, manifest and components that are no items.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextPluginFacts {
@@ -558,7 +558,7 @@ pub struct ContextPluginFacts {
     pub has_readme: bool,
 }
 
-/// One canonical source of the target's context: one row of the "Context"
+/// One canonical source of the target's context: one item of the "Context"
 /// collection, whichever agents and paths find it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -593,7 +593,7 @@ pub struct ContextItem {
     pub skill: Option<ContextSkillFacts>,
     pub plugin: Option<ContextPluginFacts>,
     pub mcp: Option<ContextMcpFacts>,
-    /// The nested rows of a plugin: its skills, instructions and MCP
+    /// The nested items of a plugin: its skills, instructions and MCP
     /// servers, with the plugin's providers and sources.
     pub components: Vec<ContextItem>,
     /// The image the source declares, as a data URI.

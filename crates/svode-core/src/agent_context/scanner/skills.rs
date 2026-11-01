@@ -10,9 +10,9 @@ use crate::agent_adapters::{
 
 use super::super::model::{
     DiagnosticSeverity, InstructionOwner, InstructionOwnerKind, MarkdownPreview,
-    SkillDiscoveryAlias, SkillDiscoveryKind, SkillLinkKind, SkillManifestField, SkillMetadataLeaf,
-    SkillMetadataValue, SkillRejection, SkillRow, SkillScope, SkillValidationStatus, SourceHealth,
-    SourceResolution, SourceSupport,
+    SkillDiscoveryAlias, SkillDiscoveryKind, SkillItem, SkillLinkKind, SkillManifestField,
+    SkillMetadataLeaf, SkillMetadataValue, SkillRejection, SkillScope, SkillValidationStatus,
+    SourceHealth, SourceResolution, SourceSupport,
 };
 use super::io::{diagnostic, path_string};
 use super::{DiscoveryResult, TargetPlaces, grok};
@@ -122,7 +122,7 @@ struct Scan<'a> {
     allowed_boundaries: Vec<PathBuf>,
     personal_owner_boundaries: Vec<CanonicalOwnerBoundary>,
     parsed_cache: BTreeMap<PathBuf, Result<ParsedSkill, SkillFailure>>,
-    rows: BTreeMap<PathBuf, SkillRow>,
+    items: BTreeMap<PathBuf, SkillItem>,
     registrations: Vec<Registration>,
     result: DiscoveryResult,
 }
@@ -204,7 +204,7 @@ pub(super) fn discover(
         allowed_boundaries,
         personal_owner_boundaries,
         parsed_cache: BTreeMap::new(),
-        rows: BTreeMap::new(),
+        items: BTreeMap::new(),
         registrations: Vec::new(),
         result,
     };
@@ -213,7 +213,7 @@ pub(super) fn discover(
         scan.scan_root(root);
     }
     let Scan {
-        mut rows,
+        mut items,
         registrations,
         mut result,
         ..
@@ -226,33 +226,33 @@ pub(super) fn discover(
         })
         .map(|adapter| adapter.id)
         .collect::<BTreeSet<_>>();
-    apply_personal_shadowing(&mut rows, &personal_shadows_project, &registrations);
-    apply_registration_precedence(&mut rows, adapters, &registrations);
-    let mut skills = rows.into_values().collect::<Vec<_>>();
+    apply_personal_shadowing(&mut items, &personal_shadows_project, &registrations);
+    apply_registration_precedence(&mut items, adapters, &registrations);
+    let mut skills = items.into_values().collect::<Vec<_>>();
     grok::apply_ignore(&mut skills, grok);
-    // A skill no agent that finds it loads is no row: each of them reports
+    // A skill no agent that finds it loads is no item: each of them reports
     // what the file lacks (DF-208 R2).
-    skills.retain(|row| {
-        if row
+    skills.retain(|item| {
+        if item
             .aliases
             .iter()
-            .any(|alias| row.missing_for(alias.adapter_id).is_empty())
+            .any(|alias| item.missing_for(alias.adapter_id).is_empty())
         {
             return true;
         }
-        for alias in &row.aliases {
-            let manifest = if row.path == row.canonical_path {
+        for alias in &item.aliases {
+            let manifest = if item.path == item.canonical_path {
                 PathBuf::from(&alias.path)
             } else {
                 Path::new(&alias.path).join("SKILL.md")
             };
-            let (code, message) = rejection_failure(&manifest, row.missing_for(alias.adapter_id));
+            let (code, message) = rejection_failure(&manifest, item.missing_for(alias.adapter_id));
             push_failure(&mut result, alias.adapter_id, &manifest, code, message);
         }
         false
     });
-    for row in &mut skills {
-        row.aliases.sort_by(|left, right| {
+    for item in &mut skills {
+        item.aliases.sort_by(|left, right| {
             left.adapter_id
                 .cmp(&right.adapter_id)
                 .then_with(|| skill_scope_order(left.scope).cmp(&skill_scope_order(right.scope)))
@@ -262,15 +262,15 @@ pub(super) fn discover(
                         .cmp(&discovery_kind_order(right.discovery_kind))
                 })
         });
-        row.aliases.dedup();
-        for warning in &row.warnings {
+        item.aliases.dedup();
+        for warning in &item.warnings {
             result
                 .diagnostics
                 .push(super::super::model::AgentContextDiagnostic {
                     code: "skill_manifest_warning".to_string(),
                     severity: DiagnosticSeverity::Warning,
                     message: warning.clone(),
-                    path: Some(row.path.clone()),
+                    path: Some(item.path.clone()),
                     adapter_id: None,
                 });
         }
@@ -719,8 +719,8 @@ impl Scan<'_> {
         }
     }
 
-    /// A skill the root's agent finds by `entry`: a new row for its canonical
-    /// source or one more path of an existing row.
+    /// A skill the root's agent finds by `entry`: a new item for its canonical
+    /// source or one more path of an existing item.
     fn register(
         &mut self,
         root: &RootSpec<'_>,
@@ -793,18 +793,18 @@ impl Scan<'_> {
                 nearness: root.nearness,
             });
         }
-        let row = self
-            .rows
+        let item = self
+            .items
             .entry(canonical_entry.clone())
-            .or_insert_with(|| skill_row(parsed, &canonical_entry, owner));
-        row.aliases.push(alias);
+            .or_insert_with(|| skill_item(parsed, &canonical_entry, owner));
+        item.aliases.push(alias);
         if !missing.is_empty()
-            && row
+            && item
                 .rejections
                 .iter()
                 .all(|rejection| rejection.agent != root.adapter.id)
         {
-            row.rejections.push(SkillRejection {
+            item.rejections.push(SkillRejection {
                 agent: root.adapter.id,
                 missing,
             });
@@ -872,15 +872,15 @@ fn canonical_skill_owner(
         .map(|boundary| boundary.owner.clone())
 }
 
-/// A skill a plugin brings: its row without discovery paths, which are the
+/// A skill a plugin brings: its item without discovery paths, which are the
 /// plugin's, and without rejections, which the agents of the plugin decide.
 /// A failure is a diagnostic code and message.
 pub(super) fn plugin_skill(
     canonical_entry: &Path,
     owner: &InstructionOwner,
-) -> Result<SkillRow, (&'static str, String)> {
+) -> Result<SkillItem, (&'static str, String)> {
     let parsed = parse_skill(canonical_entry).map_err(|failure| (failure.code, failure.message))?;
-    Ok(skill_row(parsed, canonical_entry, owner.clone()))
+    Ok(skill_item(parsed, canonical_entry, owner.clone()))
 }
 
 /// The diagnostic of a skill whose file lacks what an agent requires.
@@ -919,8 +919,8 @@ pub(super) fn rejection_failure(
     )
 }
 
-fn skill_row(parsed: ParsedSkill, canonical_entry: &Path, owner: InstructionOwner) -> SkillRow {
-    SkillRow {
+fn skill_item(parsed: ParsedSkill, canonical_entry: &Path, owner: InstructionOwner) -> SkillItem {
+    SkillItem {
         id: format!("skill:{}", path_string(canonical_entry)),
         name: parsed.name.unwrap_or(parsed.place_name),
         description: parsed.description,
@@ -1359,7 +1359,7 @@ fn valid_skill_name(name: &str) -> bool {
 /// A personal skill shadows a project skill the agent knows under the same
 /// name.
 fn apply_personal_shadowing(
-    rows: &mut BTreeMap<PathBuf, SkillRow>,
+    items: &mut BTreeMap<PathBuf, SkillItem>,
     adapters: &BTreeSet<AgentAdapterKind>,
     registrations: &[Registration],
 ) {
@@ -1379,10 +1379,10 @@ fn apply_personal_shadowing(
         else {
             continue;
         };
-        let Some(row) = rows.get_mut(&registration.canonical) else {
+        let Some(item) = items.get_mut(&registration.canonical) else {
             continue;
         };
-        for alias in &mut row.aliases {
+        for alias in &mut item.aliases {
             if alias.adapter_id == registration.agent && alias.path == registration.path {
                 alias.resolution = SourceResolution::Superseded;
                 alias.superseded_by = Some(personal.clone());
@@ -1394,7 +1394,7 @@ fn apply_personal_shadowing(
 /// For agents where one skill of a key wins, every other path the agent
 /// registers with that key is shadowed by the winner's path.
 fn apply_registration_precedence(
-    rows: &mut BTreeMap<PathBuf, SkillRow>,
+    items: &mut BTreeMap<PathBuf, SkillItem>,
     adapters: &[AgentSourcePolicy],
     registrations: &[Registration],
 ) {
@@ -1409,8 +1409,8 @@ fn apply_registration_precedence(
             .iter()
             .filter(|registration| registration.agent == adapter.id)
             .filter_map(|registration| {
-                let row = rows.get(&registration.canonical)?;
-                Some((skill_key(key, row, registration), registration))
+                let item = items.get(&registration.canonical)?;
+                Some((skill_key(key, item, registration), registration))
             })
             .collect::<Vec<_>>();
         if nearest {
@@ -1436,10 +1436,10 @@ fn apply_registration_precedence(
             })
             .collect::<Vec<_>>();
         for (canonical, path, winner) in shadowed {
-            let Some(row) = rows.get_mut(&canonical) else {
+            let Some(item) = items.get_mut(&canonical) else {
                 continue;
             };
-            for alias in &mut row.aliases {
+            for alias in &mut item.aliases {
                 if alias.adapter_id == adapter.id && alias.path == path {
                     alias.resolution = SourceResolution::Superseded;
                     alias.superseded_by = Some(winner.clone());
@@ -1449,14 +1449,14 @@ fn apply_registration_precedence(
     }
 }
 
-fn skill_key(key: SkillKey, row: &SkillRow, registration: &Registration) -> String {
+fn skill_key(key: SkillKey, item: &SkillItem, registration: &Registration) -> String {
     let path = registration.path.as_str();
     match key {
         SkillKey::Name => registration.name.clone(),
         SkillKey::NameIgnoringCase => registration.name.to_lowercase(),
         SkillKey::PathId => {
             let path = Path::new(path);
-            let id = if row.path == row.canonical_path {
+            let id = if item.path == item.canonical_path {
                 path.file_stem()
             } else {
                 path.file_name()
@@ -1539,8 +1539,8 @@ mod tests {
 
     /// Paths of Codex and Claude Code: the agents of later policies read
     /// the same roots and add their own.
-    fn codex_and_claude(row: &SkillRow) -> Vec<&SkillDiscoveryAlias> {
-        row.aliases
+    fn codex_and_claude(item: &SkillItem) -> Vec<&SkillDiscoveryAlias> {
+        item.aliases
             .iter()
             .filter(|alias| {
                 matches!(
@@ -1578,15 +1578,13 @@ mod tests {
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
 
         assert_eq!(snapshot.skills.len(), 3);
-        assert!(
-            snapshot.skills.iter().any(|row| {
-                row.name == "valid" && row.validation == SkillValidationStatus::Valid
-            })
-        );
+        assert!(snapshot.skills.iter().any(|item| {
+            item.name == "valid" && item.validation == SkillValidationStatus::Valid
+        }));
         let valid = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "valid")
+            .find(|item| item.name == "valid")
             .unwrap();
         assert_eq!(valid.license.as_deref(), Some("MIT"));
         assert_eq!(valid.compatibility.as_deref(), Some("Cross-client"));
@@ -1596,13 +1594,13 @@ mod tests {
         );
         assert_eq!(valid.allowed_tools.as_deref(), Some("Read"));
         assert_eq!(valid.preview.markdown, "# Valid\nbody\n");
-        assert!(snapshot.skills.iter().any(|row| {
-            row.name == "Warning" && row.validation == SkillValidationStatus::Warning
+        assert!(snapshot.skills.iter().any(|item| {
+            item.name == "Warning" && item.validation == SkillValidationStatus::Warning
         }));
         let warning = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "Warning")
+            .find(|item| item.name == "Warning")
             .unwrap();
         assert_eq!(warning.health, SourceHealth::Degraded);
         assert_eq!(warning.health_reasons, warning.warnings);
@@ -1610,7 +1608,7 @@ mod tests {
         let undescribed = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "missing-description")
+            .find(|item| item.name == "missing-description")
             .unwrap();
         assert_eq!(undescribed.description, None);
         assert_eq!(undescribed.health, SourceHealth::Normal);
@@ -1653,7 +1651,7 @@ mod tests {
         let shaped = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "shaped")
+            .find(|item| item.name == "shaped")
             .unwrap();
         assert_eq!(shaped.validation, SkillValidationStatus::Valid);
         assert_eq!(shaped.health, SourceHealth::Normal);
@@ -1687,7 +1685,7 @@ mod tests {
         let deep = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "deep")
+            .find(|item| item.name == "deep")
             .unwrap();
         assert_eq!(deep.health, SourceHealth::Degraded);
         let metadata = deep.metadata.as_ref().unwrap();
@@ -1716,7 +1714,7 @@ mod tests {
         let mixed = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "mixed")
+            .find(|item| item.name == "mixed")
             .unwrap();
 
         assert_eq!(mixed.license.as_deref(), Some("MIT"));
@@ -1789,18 +1787,18 @@ mod tests {
         );
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
-        let shared_rows = snapshot
+        let shared_items = snapshot
             .skills
             .iter()
-            .filter(|row| row.name == "shared")
+            .filter(|item| item.name == "shared")
             .collect::<Vec<_>>();
 
-        assert_eq!(shared_rows.len(), 2);
-        assert!(shared_rows.iter().any(|row| {
-            row.aliases
+        assert_eq!(shared_items.len(), 2);
+        assert!(shared_items.iter().any(|item| {
+            item.aliases
                 .iter()
                 .any(|alias| alias.adapter_id == AgentAdapterKind::Codex)
-                && row
+                && item
                     .aliases
                     .iter()
                     .any(|alias| alias.adapter_id == AgentAdapterKind::ClaudeCode)
@@ -1808,7 +1806,7 @@ mod tests {
         let personal = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "personal")
+            .find(|item| item.name == "personal")
             .unwrap();
         assert_eq!(codex_and_claude(personal).len(), 1);
         assert!(
@@ -1844,18 +1842,18 @@ mod tests {
         symlink(&personal_source, project_root.join("personal-link")).unwrap();
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
-        let row = snapshot
+        let item = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "personal-only")
+            .find(|item| item.name == "personal-only")
             .unwrap();
 
-        assert_eq!(codex_and_claude(row).len(), 1);
-        assert_eq!(codex_and_claude(row)[0].scope, SkillScope::Project);
-        assert_eq!(row.owner.kind, InstructionOwnerKind::ClientConfiguration);
-        assert_eq!(row.owner.root, path_string(&personal_root));
+        assert_eq!(codex_and_claude(item).len(), 1);
+        assert_eq!(codex_and_claude(item)[0].scope, SkillScope::Project);
+        assert_eq!(item.owner.kind, InstructionOwnerKind::ClientConfiguration);
+        assert_eq!(item.owner.root, path_string(&personal_root));
         assert!(
-            Path::new(&row.path).starts_with(Path::new(&row.owner.root).canonicalize().unwrap())
+            Path::new(&item.path).starts_with(Path::new(&item.owner.root).canonicalize().unwrap())
         );
     }
 
@@ -1876,20 +1874,20 @@ mod tests {
         symlink(&project_source, personal_root.join("project-link")).unwrap();
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
-        let row = snapshot
+        let item = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "project-only")
+            .find(|item| item.name == "project-only")
             .unwrap();
 
-        assert_eq!(codex_and_claude(row).len(), 1);
-        assert_eq!(codex_and_claude(row)[0].scope, SkillScope::Personal);
-        assert_eq!(row.owner.kind, InstructionOwnerKind::TargetSpace);
+        assert_eq!(codex_and_claude(item).len(), 1);
+        assert_eq!(codex_and_claude(item)[0].scope, SkillScope::Personal);
+        assert_eq!(item.owner.kind, InstructionOwnerKind::TargetSpace);
         assert_eq!(
-            row.owner.root,
+            item.owner.root,
             path_string(&project.path().canonicalize().unwrap())
         );
-        assert!(Path::new(&row.path).starts_with(Path::new(&row.owner.root)));
+        assert!(Path::new(&item.path).starts_with(Path::new(&item.owner.root)));
     }
 
     #[cfg(unix)]
@@ -1904,19 +1902,19 @@ mod tests {
         symlink(&source_root, project.path().join(".claude/skills")).unwrap();
 
         let snapshot = scan(project.path(), project.path(), &environment).unwrap();
-        let row = snapshot
+        let item = snapshot
             .skills
             .iter()
-            .find(|row| row.name == "review")
+            .find(|item| item.name == "review")
             .unwrap();
 
-        assert_eq!(codex_and_claude(row).len(), 1);
-        assert!(codex_and_claude(row).iter().any(|alias| {
+        assert_eq!(codex_and_claude(item).len(), 1);
+        assert!(codex_and_claude(item).iter().any(|alias| {
             alias.scope == SkillScope::Project
                 && alias.link_kind == SkillLinkKind::DirectoryAlias
                 && alias.resolution == SourceResolution::Included
         }));
-        assert_eq!(row.health, SourceHealth::Normal);
+        assert_eq!(item.health, SourceHealth::Normal);
     }
 
     #[test]
@@ -1939,14 +1937,14 @@ mod tests {
         let review = snapshot
             .skills
             .iter()
-            .filter(|row| row.name == "review")
+            .filter(|item| item.name == "review")
             .collect::<Vec<_>>();
 
         assert_eq!(review.len(), 2);
-        assert!(review.iter().any(|row| row.aliases.iter().any(|alias| {
+        assert!(review.iter().any(|item| item.aliases.iter().any(|alias| {
             alias.scope == SkillScope::Project && alias.resolution == SourceResolution::Superseded
         })));
-        assert!(review.iter().any(|row| row.aliases.iter().any(|alias| {
+        assert!(review.iter().any(|item| item.aliases.iter().any(|alias| {
             alias.scope == SkillScope::Personal && alias.resolution == SourceResolution::Included
         })));
     }
@@ -2064,15 +2062,15 @@ mod tests {
         let payload = snapshot
             .skills
             .iter()
-            .find(|row| row.description.as_deref() == Some("Svode payload"))
-            .expect("payload skill row");
+            .find(|item| item.description.as_deref() == Some("Svode payload"))
+            .expect("payload skill item");
         assert!(payload.canonical_path.contains("runtimes/desktop-1"));
         assert_eq!(
             payload.owner.kind,
             InstructionOwnerKind::ClientConfiguration
         );
         assert_eq!(payload.owner.root, path_string(&home.path().join(".svode")));
-        // Claude Code reads it through its plugin, a plugin row of its own.
+        // Claude Code reads it through its plugin, a plugin item of its own.
         assert_eq!(codex_and_claude(payload).len(), 1);
         assert!(payload.aliases.iter().any(|alias| {
             alias.adapter_id == AgentAdapterKind::Codex
@@ -2083,8 +2081,8 @@ mod tests {
         let project_svode = snapshot
             .skills
             .iter()
-            .find(|row| row.description.as_deref() == Some("Project"))
-            .expect("project skill row");
+            .find(|item| item.description.as_deref() == Some("Project"))
+            .expect("project skill item");
         assert!(
             codex_and_claude(project_svode)
                 .iter()
@@ -2094,8 +2092,8 @@ mod tests {
             snapshot
                 .skills
                 .iter()
-                .filter(|row| row.name == "synced-skill")
-                .all(|row| codex_and_claude(row).is_empty())
+                .filter(|item| item.name == "synced-skill")
+                .all(|item| codex_and_claude(item).is_empty())
         );
     }
 
@@ -2193,7 +2191,7 @@ mod tests {
             let mut found = discovery
                 .skills
                 .iter()
-                .flat_map(|row| &row.aliases)
+                .flat_map(|item| &item.aliases)
                 .filter(|alias| alias.adapter_id == agent)
                 .map(|alias| {
                     (
@@ -2260,13 +2258,13 @@ mod tests {
         let above = enabled
             .skills
             .iter()
-            .find(|row| row.name == "above")
+            .find(|item| item.name == "above")
             .unwrap();
         assert_eq!(above.aliases[0].scope, SkillScope::Personal);
         let notes = enabled
             .skills
             .iter()
-            .find(|row| row.name == "notes")
+            .find(|item| item.name == "notes")
             .unwrap();
         assert_eq!(notes.path, notes.canonical_path);
         assert!(notes.path.ends_with("notes.md"));
@@ -2305,7 +2303,7 @@ mod tests {
         let nested = enabled
             .skills
             .iter()
-            .find(|row| row.name == "nested")
+            .find(|item| item.name == "nested")
             .unwrap();
         assert!(
             nested
@@ -2483,8 +2481,8 @@ mod tests {
                     forms.push((true, name.clone(), root.join(format!("{name}.md"))));
                 }
                 for (flat, name, path) in forms {
-                    let row = discovery.skills.iter().find(|row| {
-                        row.aliases
+                    let item = discovery.skills.iter().find(|item| {
+                        item.aliases
                             .iter()
                             .any(|alias| Path::new(&alias.path) == path)
                     });
@@ -2499,13 +2497,13 @@ mod tests {
                             && diagnostic.path.as_deref() == Some(path_string(&manifest).as_str())
                     });
                     if loads(agent, flat, case) {
-                        let row = row.unwrap_or_else(|| panic!("{agent:?} {case:?} flat={flat}"));
-                        // Without `name` the row is its folder or file.
-                        assert_eq!(row.name, name, "{agent:?} {case:?}");
-                        assert!(row.rejections.is_empty(), "{agent:?} {case:?}");
+                        let item = item.unwrap_or_else(|| panic!("{agent:?} {case:?} flat={flat}"));
+                        // Without `name` the item is its folder or file.
+                        assert_eq!(item.name, name, "{agent:?} {case:?}");
+                        assert!(item.rejections.is_empty(), "{agent:?} {case:?}");
                         assert!(!reported, "{agent:?} {case:?} flat={flat}");
                     } else {
-                        assert!(row.is_none(), "{agent:?} {case:?} flat={flat}");
+                        assert!(item.is_none(), "{agent:?} {case:?} flat={flat}");
                         assert!(reported, "{agent:?} {case:?} flat={flat}");
                     }
                 }
@@ -2554,8 +2552,8 @@ mod tests {
                 ("work/repo/.pi/skills/second.md", Superseded),
             ])
         );
-        // The rows keep their own names.
-        assert!(discovery.skills.iter().any(|row| row.name == "second"));
+        // The items keep their own names.
+        assert!(discovery.skills.iter().any(|item| item.name == "second"));
         assert_eq!(
             fixture.found_by(&discovery, AgentAdapterKind::KimiCode),
             found(&[
@@ -2601,7 +2599,7 @@ mod tests {
         let project = discovery
             .skills
             .iter()
-            .find(|row| row.path.contains("work/repo/.agents"))
+            .find(|item| item.path.contains("work/repo/.agents"))
             .unwrap();
         assert_eq!(
             project.missing_for(AgentAdapterKind::QwenCode),
@@ -2724,7 +2722,7 @@ mod tests {
         snapshot
             .skills
             .iter()
-            .filter(|row| row.name == name)
+            .filter(|item| item.name == name)
             .flat_map(codex_and_claude)
             .map(|alias| alias.discovery_kind)
             .collect()
@@ -2860,7 +2858,7 @@ mod tests {
         let claude_paths = snapshot
             .skills
             .iter()
-            .filter(|row| row.name == "review")
+            .filter(|item| item.name == "review")
             .flat_map(codex_and_claude)
             .map(|alias| alias.path.clone())
             .collect::<Vec<_>>();

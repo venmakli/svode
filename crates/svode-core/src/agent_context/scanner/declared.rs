@@ -11,8 +11,8 @@ use crate::agent_adapters::{
 use crate::content_tree::policy::{TreeIgnorePolicy, TreePathKind};
 
 use super::super::model::{
-    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
-    InstructionRow, InstructionSourceKind, SourceHealth, SourceResolution, SourceSupport,
+    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionItem, InstructionOwner,
+    InstructionOwnerKind, InstructionSourceKind, SourceHealth, SourceResolution, SourceSupport,
 };
 use super::io::{inspect, path_string};
 use super::{DiscoveryResult, TargetPlaces, WalkDirectory};
@@ -56,8 +56,8 @@ pub(super) fn discover(
         .symlink_metadata()
         .is_ok()
         .then(|| TreeIgnorePolicy::system_only(&places.repository_root));
-    // The rows of each group of alternative rules, rule by rule.
-    let mut alternatives = BTreeMap::<usize, Vec<Vec<InstructionRow>>>::new();
+    // The items of each group of alternative rules, rule by rule.
+    let mut alternatives = BTreeMap::<usize, Vec<Vec<InstructionItem>>>::new();
     for rule in &declared.rules {
         if rule
             .switch
@@ -135,15 +135,15 @@ pub(super) fn discover(
         }
         match rule.alternatives {
             Some(group) => {
-                let rows = std::mem::take(&mut rule_result.rows);
-                alternatives.entry(group).or_default().push(rows);
+                let items = std::mem::take(&mut rule_result.items);
+                alternatives.entry(group).or_default().push(items);
                 result.append(rule_result);
             }
             None => result.append(rule_result),
         }
     }
     for rules in alternatives.into_values() {
-        result.rows.extend(resolve_alternatives(rules));
+        result.items.extend(resolve_alternatives(rules));
     }
     for slot in &declared.slots {
         let candidates = slot
@@ -286,7 +286,7 @@ fn read_group(agent: AgentAdapterKind, group: Group, result: &mut DiscoveryResul
             _ => (SourceResolution::Superseded, selected_path.clone()),
         };
         let path = path_string(&candidate.path);
-        result.rows.push(InstructionRow {
+        result.items.push(InstructionItem {
             id: format!("{}:{path}", agent.as_str()),
             adapter_id: Some(agent),
             name: candidate
@@ -322,34 +322,34 @@ fn read_group(agent: AgentAdapterKind, group: Group, result: &mut DiscoveryResul
 /// The agent loads the first of the alternative rules that yields a
 /// non-empty file. Files of the other rules are shadowed by that rule's
 /// first loaded file; an empty file it selected loads nothing and is no
-/// row, though it still shadows the files after it.
-fn resolve_alternatives(rules: Vec<Vec<InstructionRow>>) -> Vec<InstructionRow> {
-    let applied = |row: &InstructionRow| row.resolution != SourceResolution::Superseded;
-    let loaded = |row: &InstructionRow| {
-        applied(row)
-            && row
+/// item, though it still shadows the files after it.
+fn resolve_alternatives(rules: Vec<Vec<InstructionItem>>) -> Vec<InstructionItem> {
+    let applied = |item: &InstructionItem| item.resolution != SourceResolution::Superseded;
+    let loaded = |item: &InstructionItem| {
+        applied(item)
+            && item
                 .preview
                 .as_ref()
                 .is_some_and(|preview| !preview.markdown.trim().is_empty())
     };
-    let winner = rules.iter().position(|rows| rows.iter().any(&loaded));
+    let winner = rules.iter().position(|items| items.iter().any(&loaded));
     let winner_path = winner.and_then(|index| {
         rules[index]
             .iter()
-            .find(|row| loaded(row))
-            .map(|row| row.path.clone())
+            .find(|item| loaded(item))
+            .map(|item| item.path.clone())
     });
     let mut resolved = Vec::new();
-    for (index, rows) in rules.into_iter().enumerate() {
-        for mut row in rows {
-            if applied(&row) && !loaded(&row) {
+    for (index, items) in rules.into_iter().enumerate() {
+        for mut item in items {
+            if applied(&item) && !loaded(&item) {
                 continue;
             }
-            if winner != Some(index) && applied(&row) {
-                row.resolution = SourceResolution::Superseded;
-                row.superseded_by = winner_path.clone();
+            if winner != Some(index) && applied(&item) {
+                item.resolution = SourceResolution::Superseded;
+                item.superseded_by = winner_path.clone();
             }
-            resolved.push(row);
+            resolved.push(item);
         }
     }
     resolved
@@ -421,15 +421,15 @@ mod tests {
             let mut read = discovery
                 .instructions
                 .iter()
-                .filter(|row| row.adapter_id == Some(agent))
-                .map(|row| {
+                .filter(|item| item.adapter_id == Some(agent))
+                .map(|item| {
                     (
-                        std::path::Path::new(&row.path)
+                        std::path::Path::new(&item.path)
                             .strip_prefix(self.home())
                             .unwrap()
                             .to_string_lossy()
                             .into_owned(),
-                        row.resolution,
+                        item.resolution,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -482,7 +482,7 @@ mod tests {
         let above = enabled
             .instructions
             .iter()
-            .find(|row| row.path.ends_with("work/AGENTS.md"))
+            .find(|item| item.path.ends_with("work/AGENTS.md"))
             .unwrap();
         assert_eq!(above.source_kind, InstructionSourceKind::Personal);
     }
@@ -525,7 +525,7 @@ mod tests {
         let shadowed = enabled
             .instructions
             .iter()
-            .find(|row| row.adapter_id == Some(Pi) && row.path.ends_with("repo/CLAUDE.md"))
+            .find(|item| item.adapter_id == Some(Pi) && item.path.ends_with("repo/CLAUDE.md"))
             .unwrap();
         assert!(
             shadowed
@@ -676,8 +676,9 @@ mod tests {
             ])
         );
         // Codex reads the empty file that Kimi Code skips.
-        assert!(enabled.instructions.iter().any(|row| {
-            row.adapter_id == Some(AgentAdapterKind::Codex) && row.path.ends_with("docs/AGENTS.md")
+        assert!(enabled.instructions.iter().any(|item| {
+            item.adapter_id == Some(AgentAdapterKind::Codex)
+                && item.path.ends_with("docs/AGENTS.md")
         }));
     }
 

@@ -1535,7 +1535,7 @@ views: []
 }
 
 #[test]
-fn add_unique_id_materializes_existing_rows_and_sets_next() {
+fn add_unique_id_materializes_existing_items_and_sets_next() {
     let tmp = TempDir::new().unwrap();
     let space = tmp.path();
     fs::create_dir_all(space.join("tasks")).unwrap();

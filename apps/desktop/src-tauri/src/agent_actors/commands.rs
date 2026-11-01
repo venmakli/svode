@@ -198,7 +198,7 @@ pub async fn agent_actors_get(
         })
         .collect();
     Ok(AgentActorsReadResult {
-        resolution: read_rows(resolution),
+        resolution: read_items(resolution),
         owner_fingerprints,
         bindable_agents: agent_labels(AgentAdapterRegistry.identities(), Vec::new()),
     })
@@ -206,7 +206,7 @@ pub async fn agent_actors_get(
 
 /// The actors with their effective device modes. The device translates the
 /// V1 approval modes of each owner once, here or at the owner's first write.
-fn read_rows(resolution: AgentActorResolution) -> AgentActorsReadResolution {
+fn read_items(resolution: AgentActorResolution) -> AgentActorsReadResolution {
     let mut modes = HashMap::<String, HashMap<String, ActorMode>>::new();
     let actors = resolution
         .actors
@@ -913,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn read_rows_carry_the_effective_device_mode_and_translate_v1_once() {
+    fn read_items_carry_the_effective_device_mode_and_translate_v1_once() {
         let owner = tempdir().unwrap();
         fs::create_dir_all(owner.path().join(".svode")).unwrap();
         let codex = "01arz3ndektsv4rrffq69g5fav";
@@ -932,18 +932,18 @@ mod tests {
         )
         .unwrap();
 
-        let rows = read_rows(resolve_space_catalogs(owner.path(), owner.path()));
-        assert_eq!(rows.actors.len(), 1);
-        let row = serde_json::to_value(&rows.actors[0]).unwrap();
+        let items = read_items(resolve_space_catalogs(owner.path(), owner.path()));
+        assert_eq!(items.actors.len(), 1);
+        let item = serde_json::to_value(&items.actors[0]).unwrap();
         assert_eq!(
-            row["actor"]["binding"],
+            item["actor"]["binding"],
             serde_json::json!({"agent": "codex", "settings": []})
         );
         assert_eq!(
-            row["mode"],
+            item["mode"],
             serde_json::json!({"agent": "codex", "setting": "mode", "value": "agent"})
         );
-        assert!(row.get("approvalMode").is_none());
+        assert!(item.get("approvalMode").is_none());
         let local: serde_json::Value = serde_json::from_slice(
             &fs::read(svode_core::agent_actors::local_path(owner.path())).unwrap(),
         )
@@ -964,8 +964,8 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let rows = read_rows(resolve_space_catalogs(owner.path(), owner.path()));
-        assert_eq!(rows.actors[0].mode, None);
+        let items = read_items(resolve_space_catalogs(owner.path(), owner.path()));
+        assert_eq!(items.actors[0].mode, None);
     }
 
     #[test]

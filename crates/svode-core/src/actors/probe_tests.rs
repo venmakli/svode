@@ -182,15 +182,15 @@ async fn lookalikes_remain_in_catalog_and_paginated_activity() {
     git(&cli, repo.path(), &["update-ref", "refs/heads/probe", &oid]).await;
     let state = ActorCatalogState::new();
     let snapshot = state.snapshot(&cli, repo.path()).await.unwrap();
-    let row = snapshot
+    let item = snapshot
         .catalog()
-        .rows
+        .items
         .into_iter()
-        .find(|row| row.canonical_email == SERVICE_EMAIL)
+        .find(|item| item.canonical_email == SERVICE_EMAIL)
         .unwrap();
-    assert_eq!(row.commit_count, expected.len() as u64);
-    assert_eq!(row.available_years, vec![2023]);
-    assert_eq!(row.last_commit_at, Some(TIME));
+    assert_eq!(item.commit_count, expected.len() as u64);
+    assert_eq!(item.available_years, vec![2023]);
+    assert_eq!(item.last_commit_at, Some(TIME));
     let mut page = activity(&state, &cli, repo.path(), SERVICE_EMAIL).await;
     assert_eq!(page.commit_count, expected.len() as u64);
     assert_eq!(
@@ -298,17 +298,17 @@ async fn mailmap_current_identity_and_zero_commit_activity_survive_probe_filter(
     )
     .unwrap();
     let declared = state.snapshot(&cli, repo.path()).await.unwrap();
-    let row = declared
+    let item = declared
         .catalog()
-        .rows
+        .items
         .into_iter()
-        .find(|row| row.canonical_email == SERVICE_EMAIL)
+        .find(|item| item.canonical_email == SERVICE_EMAIL)
         .unwrap();
-    assert_eq!(row.commit_count, 0);
-    assert!(row.available_years.is_empty());
-    assert_eq!(row.last_commit_at, None);
+    assert_eq!(item.commit_count, 0);
+    assert!(item.available_years.is_empty());
+    assert_eq!(item.last_commit_at, None);
     assert!(
-        row.sources
+        item.sources
             .iter()
             .all(|source| source.kind != ActorCatalogSourceKind::History)
     );
@@ -325,7 +325,7 @@ async fn mailmap_current_identity_and_zero_commit_activity_survive_probe_filter(
         current
             .candidates()
             .iter()
-            .find(|row| row.email == SERVICE_EMAIL)
+            .find(|item| item.email == SERVICE_EMAIL)
             .unwrap()
             .commit_count,
         0
@@ -340,7 +340,7 @@ async fn mailmap_current_identity_and_zero_commit_activity_survive_probe_filter(
     assert_eq!(
         real.candidates()
             .iter()
-            .find(|row| row.email == SERVICE_EMAIL)
+            .find(|item| item.email == SERVICE_EMAIL)
             .unwrap()
             .commit_count,
         1
@@ -360,16 +360,16 @@ async fn probe_only_refresh_is_equivalent_and_corrects_polluted_snapshot() {
             &state.snapshot(&cli, repo.path()).await.unwrap()
         ));
     }
-    // Model the already-published pre-fix row without persisting or rewriting Git data.
+    // Model the already-published pre-fix item without persisting or rewriting Git data.
     let repository = fs::canonicalize(repo.path()).unwrap();
     let mut polluted = (*clean).clone();
     let identity = Identity {
         name: SERVICE_NAME.into(),
         email: SERVICE_EMAIL.into(),
     };
-    let mut row = ActorRowBuilder::new(&identity);
-    row.add_history(&identity, SERVICE_NAME, SERVICE_EMAIL, Some(TIME));
-    polluted.rows.push(row.finish(None, &polluted.mailmap));
+    let mut item = ActorItemBuilder::new(&identity);
+    item.add_history(&identity, SERVICE_NAME, SERVICE_EMAIL, Some(TIME));
+    polluted.items.push(item.finish(None, &polluted.mailmap));
     state
         .snapshots
         .lock()

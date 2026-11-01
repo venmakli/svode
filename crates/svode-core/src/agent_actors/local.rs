@@ -5,7 +5,7 @@
 //! A mode chosen for another agent than the Actor's binding has now is not
 //! effective, and the participant's agent has no Actor mode: it runs with
 //! the mode of the device's default agent. A device translates the V1
-//! `approvalMode` rows of an owner once; afterwards a missing mode is the
+//! `approvalMode` records of an owner once; afterwards a missing mode is the
 //! agent's native default.
 
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use crate::agent_adapters::AgentId;
 use crate::routines::local::{self as local_config, LocalConfig, LocalConfigError};
 
 const AGENT_ACTORS_KEY: &str = "agentActors";
-/// Marks the owner's local rows as V2 on this device, so the V1 translation
+/// Marks the owner's local records as V2 on this device, so the V1 translation
 /// never runs twice.
 const LOCAL_VERSION_KEY: &str = "agentActorsLocalVersion";
 const LOCAL_VERSION: u64 = 2;
@@ -35,7 +35,7 @@ pub struct ActorMode {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LocalRow {
+struct LocalActorRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mode: Option<ActorMode>,
 }
@@ -51,13 +51,13 @@ impl From<LocalConfigError> for CatalogError {
 
 /// The effective modes of the Actors of `owner` on this device, by actor
 /// id: only a mode chosen for the agent of the Actor's binding. Before the
-/// device translated the owner's V1 rows, the translation is computed
+/// device translated the owner's V1 records, the translation is computed
 /// without being written.
 pub fn read_actor_modes(owner: &Path) -> Result<HashMap<String, ActorMode>, CatalogError> {
     let read = read_catalog_versioned(owner)?;
     let local = local_config::read(owner)?;
-    let rows = stored_or_translated(&local, &read.catalog, read.file_version)?;
-    Ok(effective(rows, &read.catalog))
+    let records = stored_or_translated(&local, &read.catalog, read.file_version)?;
+    Ok(effective(records, &read.catalog))
 }
 
 /// The effective mode of one Actor of `owner` on this device.
@@ -65,9 +65,9 @@ pub fn read_actor_mode(owner: &Path, actor_id: &str) -> Result<Option<ActorMode>
     Ok(read_actor_modes(owner)?.remove(actor_id))
 }
 
-/// Writes the one-time translation of the owner's V1 `approvalMode` rows
+/// Writes the one-time translation of the owner's V1 `approvalMode` records
 /// into modes if this device has not written it yet: each Actor gets the
-/// equivalent of its strategy for the agent of its binding, a missing row
+/// equivalent of its strategy for the agent of its binding, a missing record
 /// of a V1 catalog meant `ask`, an agent without an equivalent gets no mode.
 /// Returns whether it wrote. Nothing is written while the catalog cannot be
 /// read.
@@ -80,19 +80,19 @@ pub fn translate_local_modes(owner: &Path) -> Result<bool, CatalogError> {
         if is_translated(local) {
             return Ok(false);
         }
-        let rows = stored_or_translated(local, &read.catalog, read.file_version)?;
-        write_rows(local, rows);
+        let records = stored_or_translated(local, &read.catalog, read.file_version)?;
+        write_records(local, records);
         Ok(true)
     })
 }
 
-/// The stored mode row of one Actor after the translation, whether or not
+/// The stored mode record of one Actor after the translation, whether or not
 /// it is effective; a compound catalog write restores it if publishing the
 /// catalog fails.
 pub fn stored_mode(owner: &Path, actor_id: &str) -> Result<Option<ActorMode>, CatalogError> {
     translate_local_modes(owner)?;
     let local = local_config::read(owner)?;
-    Ok(stored_rows(&local)?.remove(actor_id))
+    Ok(stored_records(&local)?.remove(actor_id))
 }
 
 /// Stores or clears the mode of one Actor without checking the catalog: the
@@ -104,16 +104,16 @@ pub fn store_mode(
 ) -> Result<(), CatalogError> {
     translate_local_modes(owner)?;
     local_config::mutate_with(owner, |local| -> Result<(), CatalogError> {
-        let mut rows = stored_rows(local)?;
+        let mut records = stored_records(local)?;
         match mode {
             Some(mode) => {
-                rows.insert(actor_id.to_string(), mode.clone());
+                records.insert(actor_id.to_string(), mode.clone());
             }
             None => {
-                rows.remove(actor_id);
+                records.remove(actor_id);
             }
         }
-        write_rows(local, rows);
+        write_records(local, records);
         Ok(())
     })
 }
@@ -163,7 +163,7 @@ fn is_translated(local: &LocalConfig) -> bool {
         == Some(LOCAL_VERSION)
 }
 
-fn rows_object(
+fn records_object(
     local: &LocalConfig,
 ) -> Result<Option<&serde_json::Map<String, serde_json::Value>>, CatalogError> {
     match local.extensions.get(AGENT_ACTORS_KEY) {
@@ -175,12 +175,12 @@ fn rows_object(
     }
 }
 
-fn stored_rows(local: &LocalConfig) -> Result<HashMap<String, ActorMode>, CatalogError> {
+fn stored_records(local: &LocalConfig) -> Result<HashMap<String, ActorMode>, CatalogError> {
     let mut modes = HashMap::new();
-    for (id, value) in rows_object(local)?.into_iter().flatten() {
-        let row: LocalRow = serde_json::from_value(value.clone())
+    for (id, value) in records_object(local)?.into_iter().flatten() {
+        let record: LocalActorRecord = serde_json::from_value(value.clone())
             .map_err(|e| CatalogError::Invalid(format!("local mode of agent:{id}: {e}")))?;
-        if let Some(mode) = row.mode {
+        if let Some(mode) = record.mode {
             modes.insert(id.clone(), mode);
         }
     }
@@ -193,12 +193,12 @@ fn stored_or_translated(
     catalog_file_version: u32,
 ) -> Result<HashMap<String, ActorMode>, CatalogError> {
     if is_translated(local) {
-        return stored_rows(local);
+        return stored_records(local);
     }
-    let rows = rows_object(local)?;
+    let records = records_object(local)?;
     let mut modes = HashMap::new();
     for actor in &catalog.actors {
-        let approval = match rows.and_then(|rows| rows.get(&actor.id)) {
+        let approval = match records.and_then(|records| records.get(&actor.id)) {
             Some(value) => {
                 serde_json::from_value::<LocalApprovalV1>(value.clone())
                     .map_err(|e| {
@@ -206,8 +206,8 @@ fn stored_or_translated(
                     })?
                     .approval_mode
             }
-            // A V1 Actor without a row ran with `ask`; an Actor of a V2
-            // catalog without a row never had a mode on this device.
+            // A V1 Actor without a record ran with `ask`; an Actor of a V2
+            // catalog without a record never had a mode on this device.
             None if catalog_file_version == 1 => ApprovalMode::Ask,
             None => continue,
         };
@@ -219,28 +219,28 @@ fn stored_or_translated(
 }
 
 fn effective(
-    mut rows: HashMap<String, ActorMode>,
+    mut records: HashMap<String, ActorMode>,
     catalog: &AgentActorCatalog,
 ) -> HashMap<String, ActorMode> {
     catalog
         .actors
         .iter()
         .filter_map(|actor| {
-            mode_for_binding(&actor.binding, rows.remove(&actor.id))
+            mode_for_binding(&actor.binding, records.remove(&actor.id))
                 .map(|mode| (actor.id.clone(), mode))
         })
         .collect()
 }
 
-fn write_rows(local: &mut LocalConfig, rows: HashMap<String, ActorMode>) {
-    let mut rows = rows.into_iter().collect::<Vec<_>>();
-    rows.sort_by(|left, right| left.0.cmp(&right.0));
-    let object = rows
+fn write_records(local: &mut LocalConfig, records: HashMap<String, ActorMode>) {
+    let mut records = records.into_iter().collect::<Vec<_>>();
+    records.sort_by(|left, right| left.0.cmp(&right.0));
+    let object = records
         .into_iter()
         .map(|(id, mode)| {
             (
                 id,
-                serde_json::to_value(LocalRow { mode: Some(mode) }).expect("local row"),
+                serde_json::to_value(LocalActorRecord { mode: Some(mode) }).expect("local record"),
             )
         })
         .collect::<serde_json::Map<_, _>>();
@@ -320,7 +320,7 @@ mod tests {
                     ids[0]: {"approvalMode": "full"},
                     ids[1]: {"approvalMode": "auto"},
                     ids[2]: {"approvalMode": "auto"},
-                    // ids[3] has no row: it ran with `ask`.
+                    // ids[3] has no record: it ran with `ask`.
                     ids[4]: {"approvalMode": "full"},
                     ids[5]: {"approvalMode": "full"},
                     ids[6]: {"approvalMode": "ask"},
@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn a_v2_actor_without_a_row_has_no_mode_before_the_translation() {
+    fn a_v2_actor_without_a_record_has_no_mode_before_the_translation() {
         let d = tempdir().unwrap();
         write_raw(
             d.path(),
@@ -472,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_v1_row_blocks_the_translation_without_writing() {
+    fn an_unreadable_v1_record_blocks_the_translation_without_writing() {
         let d = tempdir().unwrap();
         write_raw(
             d.path(),

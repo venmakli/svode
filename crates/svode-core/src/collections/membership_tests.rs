@@ -178,13 +178,13 @@ fn traversed_members(space: &str) -> Vec<String> {
     paths
 }
 
-fn row_count(space: &str) -> usize {
+fn item_count(space: &str) -> usize {
     list_collections(space)
         .unwrap()
         .into_iter()
         .find(|collection| collection.path == "tasks")
         .unwrap()
-        .row_count
+        .item_count
 }
 
 fn write_relation(space: &str, target: &str) -> Result<(), super::CollectionError> {
@@ -275,7 +275,7 @@ async fn deep_pages_without_the_flag_are_plain_pages_for_every_membership_path()
     );
 
     assert_eq!(traversed_members(space), DIRECT);
-    assert_eq!(row_count(space), 2);
+    assert_eq!(item_count(space), 2);
     let pool = index_pool(root).await;
     assert_eq!(indexed_members(&pool, "tasks").await, DIRECT);
     assert_eq!(
@@ -328,7 +328,7 @@ async fn nested_items_keeps_deep_pages_of_the_same_schema_as_items() {
         .collect::<Vec<_>>();
     all.sort_unstable();
     assert_eq!(traversed_members(space), all);
-    assert_eq!(row_count(space), 6);
+    assert_eq!(item_count(space), 6);
     let pool = index_pool(root).await;
     assert_eq!(indexed_members(&pool, "tasks").await, all);
     assert_eq!(queried_members(&pool, space, true).await, all);

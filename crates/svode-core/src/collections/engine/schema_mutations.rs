@@ -179,7 +179,7 @@ pub fn change_schema_type_with_warnings_and_project(
             } else {
                 (None, None)
             };
-        let mut unconverted_relation_rows = 0usize;
+        let mut unconverted_relation_items = 0usize;
         for file in &files {
             mutate_frontmatter(file, |meta| {
                 if let Some((index, _, value)) = meta.extra.shift_remove_full(column_name) {
@@ -202,7 +202,7 @@ pub fn change_schema_type_with_warnings_and_project(
                         }
                         if let Some(extra) = extra {
                             meta.extra.insert(extra_field.to_string(), extra);
-                            unconverted_relation_rows += 1;
+                            unconverted_relation_items += 1;
                         }
                     } else if collect_options {
                         if let Some(converted) = convert_value_collecting_options(
@@ -229,11 +229,11 @@ pub fn change_schema_type_with_warnings_and_project(
             })?;
         }
         if let Some(field) = unconverted_relation_field {
-            if unconverted_relation_rows > 0 {
+            if unconverted_relation_items > 0 {
                 warnings.push(SchemaMutationWarning {
                     code: "relation_unconverted_values".to_string(),
                     field,
-                    count: unconverted_relation_rows,
+                    count: unconverted_relation_items,
                 });
             }
         }

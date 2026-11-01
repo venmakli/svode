@@ -240,7 +240,7 @@ mod tests {
             fetched
                 .candidates()
                 .iter()
-                .any(|row| row.email == "fetched@example.test")
+                .any(|item| item.email == "fetched@example.test")
         );
         git(&child, &["pack-refs", "--all", "--prune"]);
         wait();

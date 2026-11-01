@@ -14,7 +14,7 @@ use crate::agent_adapters::{
     SkillRootRule, SourceRegistryEnvironment, SourceSwitch,
 };
 
-use super::super::model::{SkillDiscoveryKind, SkillRow};
+use super::super::model::{SkillDiscoveryKind, SkillItem};
 use super::DiscoveryResult;
 use super::io::{diagnostic, path_string};
 
@@ -247,7 +247,7 @@ pub(super) fn apply_skill_paths(policy: &mut AgentSourcePolicy, config: &Config)
 }
 
 /// Hides the skills under `[skills] ignore` from Grok Build.
-pub(super) fn apply_ignore(skills: &mut Vec<SkillRow>, config: &Config) {
+pub(super) fn apply_ignore(skills: &mut Vec<SkillItem>, config: &Config) {
     if config.ignored_paths.is_empty() {
         return;
     }
@@ -257,13 +257,13 @@ pub(super) fn apply_ignore(skills: &mut Vec<SkillRow>, config: &Config) {
         .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
         .collect::<Vec<_>>();
     let hidden = |path: &Path| ignored.iter().any(|ignored| path.starts_with(ignored));
-    for row in skills.iter_mut() {
-        let canonical_hidden = hidden(Path::new(&row.canonical_path));
-        row.aliases.retain(|alias| {
+    for item in skills.iter_mut() {
+        let canonical_hidden = hidden(Path::new(&item.canonical_path));
+        item.aliases.retain(|alias| {
             alias.adapter_id != AGENT || !(canonical_hidden || hidden(Path::new(&alias.path)))
         });
     }
-    skills.retain(|row| !row.aliases.is_empty());
+    skills.retain(|item| !item.aliases.is_empty());
 }
 
 #[cfg(test)]

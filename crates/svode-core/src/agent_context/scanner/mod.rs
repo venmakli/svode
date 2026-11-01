@@ -26,9 +26,9 @@ use crate::agent_adapters::{
 
 use super::model::{
     AgentContextDiagnostic, AgentContextDiscovery, AgentContextSnapshotContent,
-    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionOwner, InstructionOwnerKind,
-    InstructionRow, InstructionSourceKind, McpServerRow, PluginRow, SkillRow, SourceHealth,
-    SourceResolution, SourceSupport,
+    InstructionDiscovery, InstructionDiscoveryPolicy, InstructionItem, InstructionOwner,
+    InstructionOwnerKind, InstructionSourceKind, McpServerItem, PluginItem, SkillItem,
+    SourceHealth, SourceResolution, SourceSupport,
 };
 use io::{inspect, path_string};
 
@@ -37,10 +37,10 @@ const DEFAULT_PREVIEW_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Default)]
 pub(super) struct DiscoveryResult {
-    rows: Vec<InstructionRow>,
-    skills: Vec<SkillRow>,
-    plugins: Vec<PluginRow>,
-    mcp_servers: Vec<McpServerRow>,
+    items: Vec<InstructionItem>,
+    skills: Vec<SkillItem>,
+    plugins: Vec<PluginItem>,
+    mcp_servers: Vec<McpServerItem>,
     diagnostics: Vec<AgentContextDiagnostic>,
     observed_project_paths: Vec<String>,
     observed_personal_paths: Vec<String>,
@@ -48,7 +48,7 @@ pub(super) struct DiscoveryResult {
 
 impl DiscoveryResult {
     fn append(&mut self, mut other: Self) {
-        self.rows.append(&mut other.rows);
+        self.items.append(&mut other.items);
         self.skills.append(&mut other.skills);
         self.plugins.append(&mut other.plugins);
         self.mcp_servers.append(&mut other.mcp_servers);
@@ -158,9 +158,9 @@ pub fn discover(
         &grok,
     ));
 
-    result.rows.sort_by(|left, right| {
-        row_sort_key(left)
-            .cmp(&row_sort_key(right))
+    result.items.sort_by(|left, right| {
+        item_sort_key(left)
+            .cmp(&item_sort_key(right))
             .then_with(|| left.path.cmp(&right.path))
     });
     result.diagnostics.sort_by(|left, right| {
@@ -187,7 +187,7 @@ pub fn discover(
         project_root: path_string(&project_root),
         target_root: path_string(&target_root),
         repository_root: path_string(&repository_root),
-        instructions: result.rows,
+        instructions: result.items,
         skills: result.skills,
         plugins: result.plugins,
         mcp_servers: result.mcp_servers,
@@ -325,7 +325,7 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
             if source.preview.is_none() {
                 continue;
             }
-            result.rows.push(InstructionRow {
+            result.items.push(InstructionItem {
                 id: format!("recognized:{}", path_string(&path)),
                 adapter_id: None,
                 name: (*filename).to_string(),
@@ -355,7 +355,7 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
         let Some(preview) = source.preview else {
             continue;
         };
-        result.rows.push(InstructionRow {
+        result.items.push(InstructionItem {
             id: format!("recognized:{}", path_string(&path)),
             adapter_id: None,
             name: (*filename).to_string(),
@@ -384,11 +384,11 @@ fn discover_recognized(target_root: &Path) -> DiscoveryResult {
     result
 }
 
-fn row_sort_key(row: &InstructionRow) -> (&str, u8, usize, usize) {
-    let adapter = row
+fn item_sort_key(item: &InstructionItem) -> (&str, u8, usize, usize) {
+    let adapter = item
         .adapter_id
         .map_or("recognized", AgentAdapterKind::as_str);
-    let source = match row.source_kind {
+    let source = match item.source_kind {
         InstructionSourceKind::Personal => 0,
         InstructionSourceKind::Project => 1,
         InstructionSourceKind::Recognized => 2,
@@ -396,8 +396,8 @@ fn row_sort_key(row: &InstructionRow) -> (&str, u8, usize, usize) {
     (
         adapter,
         source,
-        row.discovery.directory_depth,
-        row.discovery.precedence,
+        item.discovery.directory_depth,
+        item.discovery.precedence,
     )
 }
 
@@ -455,11 +455,11 @@ mod tests {
             snapshot
                 .instructions
                 .iter()
-                .filter(|row| {
-                    row.adapter_id == Some(AgentAdapterKind::Codex)
-                        && row.source_kind == InstructionSourceKind::Project
+                .filter(|item| {
+                    item.adapter_id == Some(AgentAdapterKind::Codex)
+                        && item.source_kind == InstructionSourceKind::Project
                 })
-                .map(|row| row.path.clone())
+                .map(|item| item.path.clone())
                 .collect::<Vec<_>>()
         };
 
@@ -509,7 +509,7 @@ mod tests {
         let recognized = snapshot
             .instructions
             .iter()
-            .filter(|row| row.adapter_id.is_none())
+            .filter(|item| item.adapter_id.is_none())
             .collect::<Vec<_>>();
 
         assert_eq!(recognized.len(), 1);
@@ -520,7 +520,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn unsafe_alias_is_diagnostic_and_does_not_break_other_adapter_rows() {
+    fn unsafe_alias_is_diagnostic_and_does_not_break_other_adapter_items() {
         use std::os::unix::fs::symlink;
 
         let project = TempDir::new().unwrap();
@@ -537,7 +537,7 @@ mod tests {
         let claude = snapshot
             .instructions
             .iter()
-            .find(|row| row.adapter_id == Some(AgentAdapterKind::ClaudeCode))
+            .find(|item| item.adapter_id == Some(AgentAdapterKind::ClaudeCode))
             .unwrap();
 
         assert_eq!(claude.health, SourceHealth::Normal);
@@ -545,7 +545,7 @@ mod tests {
             snapshot
                 .instructions
                 .iter()
-                .all(|row| row.path != path_string(&project.path().join("AGENTS.md")))
+                .all(|item| item.path != path_string(&project.path().join("AGENTS.md")))
         );
         assert!(
             snapshot

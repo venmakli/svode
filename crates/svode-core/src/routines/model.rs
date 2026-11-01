@@ -938,7 +938,7 @@ pub struct RoutineNameConflict {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct RoutineRow {
+pub struct RoutineItem {
     pub routine_id: Option<String>,
     #[serde(skip)]
     pub portable_id: Option<String>,
@@ -977,7 +977,7 @@ pub enum RoutineRunOrigin {
 #[serde(rename_all = "camelCase")]
 pub struct RoutineCatalogSnapshot {
     pub owner: RoutineOwnerDescriptor,
-    pub routines: Vec<RoutineRow>,
+    pub routines: Vec<RoutineItem>,
     pub diagnostics: Vec<RoutineDiagnostic>,
     pub catalog_fingerprint: String,
     pub refreshed_at: String,

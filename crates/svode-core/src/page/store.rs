@@ -2413,9 +2413,9 @@ mod tests {
         convert_page_to_nested_collection(tmp.path(), &head.path).unwrap();
         assert_eq!(head.path, "Καλημέρα κόσμε/README.md");
 
-        let row = create(ws, Some("Καλημέρα κόσμε"), "مرحبا بالعالم").unwrap();
-        assert_eq!(row.path, "Καλημέρα κόσμε/مرحبا بالعالم.md");
-        assert!(row.warnings.is_empty());
+        let page = create(ws, Some("Καλημέρα κόσμε"), "مرحبا بالعالم").unwrap();
+        assert_eq!(page.path, "Καλημέρα κόσμε/مرحبا بالعالم.md");
+        assert!(page.warnings.is_empty());
     }
 
     #[test]
@@ -2876,7 +2876,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_rows_use_the_same_name_scope_and_unique_allocators() {
+    fn collection_items_use_the_same_name_scope_and_unique_allocators() {
         let tmp = TempDir::new().unwrap();
         let space = tmp.path().to_string_lossy();
         fs::create_dir(tmp.path().join("collection")).unwrap();

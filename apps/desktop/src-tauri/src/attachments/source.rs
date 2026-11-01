@@ -677,11 +677,14 @@ mod tests {
         ] {
             fs::write(root.join(path), body).unwrap();
         }
-        let rows = scan_mixed_children(&root.join("app"), "app", false)
+        let items = scan_mixed_children(&root.join("app"), "app", false)
             .unwrap()
             .0;
         assert_eq!(
-            rows.iter().map(|row| row.path.as_str()).collect::<Vec<_>>(),
+            items
+                .iter()
+                .map(|item| item.path.as_str())
+                .collect::<Vec<_>>(),
             vec![
                 "app/collection",
                 "app/nested",
@@ -717,15 +720,15 @@ mod tests {
         let routed = scan_mixed_children(&root.join("app"), "app", true)
             .unwrap()
             .0;
-        assert!(!routed.iter().any(|row| row.kind == AttachmentKind::Page));
-        assert!(routed.iter().any(|row| row.path == "app/photo.png"));
-        assert!(routed.iter().any(|row| row.path == "app/nested"));
+        assert!(!routed.iter().any(|item| item.kind == AttachmentKind::Page));
+        assert!(routed.iter().any(|item| item.path == "app/photo.png"));
+        assert!(routed.iter().any(|item| item.path == "app/nested"));
         assert!(
             scan_mixed_children(&root.join("app"), "app", false)
                 .unwrap()
                 .0
                 .iter()
-                .any(|row| row.path == "app/notes.md")
+                .any(|item| item.path == "app/notes.md")
         );
     }
 
@@ -871,41 +874,44 @@ mod tests {
             }
         }
         fs::write(root.join("leaf.md"), "---\nicon: '  '\n---\n").unwrap();
-        let (rows, diagnostics) = scan_direct_children(root, ".").unwrap();
+        let (items, diagnostics) = scan_direct_children(root, ".").unwrap();
         assert!(diagnostics.is_empty());
-        assert_eq!(rows.len(), 8);
-        let page = rows
+        assert_eq!(items.len(), 8);
+        let page = items
             .iter()
-            .find(|row| row.path == "page-app/readme.md")
+            .find(|item| item.path == "page-app/readme.md")
             .unwrap();
         assert_eq!(page.kind, AttachmentKind::Page);
         assert!(page.has_app);
         assert_eq!(page.content_path.as_deref(), Some("page-app/readme.md"));
         assert_eq!(page.owner_path.as_deref(), Some("page-app"));
         assert_eq!(page.icon.as_deref(), Some("🌱"));
-        let collection = rows
+        let collection = items
             .iter()
-            .find(|row| row.path == "collection-app/readme.md")
+            .find(|item| item.path == "collection-app/readme.md")
             .unwrap();
         assert_eq!(collection.kind, AttachmentKind::Collection);
         assert!(collection.has_app);
-        let missing = rows.iter().find(|row| row.path == "missing-head").unwrap();
+        let missing = items
+            .iter()
+            .find(|item| item.path == "missing-head")
+            .unwrap();
         assert_eq!(missing.kind, AttachmentKind::Collection);
         assert!(missing.content_path.is_none());
         assert_eq!(missing.source_path, "missing-head/schema.yaml");
-        let app = rows.iter().find(|row| row.path == "app").unwrap();
+        let app = items.iter().find(|item| item.path == "app").unwrap();
         assert_eq!(app.kind, AttachmentKind::App);
         assert!(app.content_path.is_none());
         assert_eq!(app.source_path, "app/app.yaml");
-        assert!(rows.iter().all(|row| row.size_bytes.is_none()));
-        let generation = snapshot_generation(&rows, &diagnostics).unwrap();
-        let mut changed = rows.clone();
+        assert!(items.iter().all(|item| item.size_bytes.is_none()));
+        let generation = snapshot_generation(&items, &diagnostics).unwrap();
+        let mut changed = items.clone();
         changed[0].icon = Some("✨".into());
         assert_ne!(
             generation,
             snapshot_generation(&changed, &diagnostics).unwrap()
         );
-        changed = rows.clone();
+        changed = items.clone();
         changed[0].has_app = !changed[0].has_app;
         assert_ne!(
             generation,
@@ -914,7 +920,7 @@ mod tests {
         assert_ne!(
             generation,
             snapshot_generation(
-                &rows,
+                &items,
                 &[AttachmentSourceDiagnostic {
                     code: "metadata_unavailable",
                     path: "gone".into()
@@ -924,17 +930,17 @@ mod tests {
         );
         for schema in ["columns: []", "invalid: ["] {
             fs::write(root.join("schema.yaml"), schema).unwrap();
-            let (rows, _) = scan_direct_children(root, ".").unwrap();
-            assert_eq!(rows.len(), 3);
-            assert!(rows.iter().all(|row| row.content_path.is_none()));
+            let (items, _) = scan_direct_children(root, ".").unwrap();
+            assert_eq!(items.len(), 3);
+            assert!(items.iter().all(|item| item.content_path.is_none()));
         }
         fs::remove_file(root.join("schema.yaml")).unwrap();
         assert_eq!(scan_direct_children(root, ".").unwrap().0.len(), 8);
         fs::write(root.join("app/readme.md"), "---\ninvalid: [\n---\n").unwrap();
-        let (rows, _) = scan_direct_children(root, ".").unwrap();
-        let app = rows
+        let (items, _) = scan_direct_children(root, ".").unwrap();
+        let app = items
             .iter()
-            .find(|row| row.owner_path.as_deref() == Some("app"))
+            .find(|item| item.owner_path.as_deref() == Some("app"))
             .unwrap();
         assert_eq!(app.kind, AttachmentKind::Page);
         assert_eq!(app.display_name, "app");
@@ -944,7 +950,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn linked_markers_heads_and_directories_never_become_rows() {
+    fn linked_markers_heads_and_directories_never_become_items() {
         use std::os::unix::fs::symlink;
         let temp = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
@@ -1153,8 +1159,8 @@ mod tests {
             fs::write(root.join(path), body).unwrap();
         }
         let owner = resolve_attachment_owner(root, None, Some("page")).unwrap();
-        let root_rows = list_registered_owner(owner.clone()).await.unwrap();
-        assert_eq!(root_rows.items.len(), 1);
+        let root_listing = list_registered_owner(owner.clone()).await.unwrap();
+        assert_eq!(root_listing.items.len(), 1);
         let collection = list_attachment_branch(owner.clone(), "page/collection")
             .await
             .unwrap();
@@ -1164,13 +1170,13 @@ mod tests {
             collection
                 .items
                 .iter()
-                .any(|row| row.kind == AttachmentKind::Page)
+                .any(|item| item.kind == AttachmentKind::Page)
         );
         assert!(
             collection
                 .items
                 .iter()
-                .any(|row| row.kind == AttachmentKind::Directory)
+                .any(|item| item.kind == AttachmentKind::Directory)
         );
         let directory = list_attachment_branch(owner.clone(), "page/collection/directory")
             .await
@@ -1180,13 +1186,13 @@ mod tests {
             directory
                 .items
                 .iter()
-                .any(|row| row.kind == AttachmentKind::App)
+                .any(|item| item.kind == AttachmentKind::App)
         );
         assert!(
             directory
                 .items
                 .iter()
-                .all(|row| !row.path.ends_with("AGENTS.md"))
+                .all(|item| !item.path.ends_with("AGENTS.md"))
         );
         assert!(
             list_attachment_branch(owner.clone(), "sibling")
