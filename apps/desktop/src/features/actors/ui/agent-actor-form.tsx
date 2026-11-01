@@ -1,83 +1,50 @@
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import * as m from "@/paraglide/messages.js";
 
-import {
-  bindingAgent,
-  validateAgentActorDraft,
-  withBindingAgent,
-} from "../model/agent-actor-draft";
+import type { AgentActorBindingEditor } from "../hooks/use-agent-actor-binding";
+import { validateAgentActorDraft } from "../model/agent-actor-draft";
 import type { AgentActorDraftValidation } from "../model/agent-actor-draft";
-import type {
-  AgentActorAdapterDiagnostic,
-  AgentActorAgentOption,
-  AgentActorDraft,
-  AgentAdapterId,
-} from "../model/agent-actor-types";
+import type { AgentActorDraft } from "../model/agent-actor-types";
+import { AgentActorBindingField } from "./agent-actor-binding-field";
 
-import { agentActorBindingLabel } from "./agent-actor-copy";
-import { AgentAdapterCard } from "./agent-adapter-card";
+export type AgentActorFormSection = "identity" | "agent";
 
-export type AgentActorFormSection = "identity" | "adapters";
-
-const ALL_SECTIONS: readonly AgentActorFormSection[] = ["identity", "adapters"];
-/** The Select value of a binding that is not one of the offered agents. */
-const CURRENT_BINDING = "__current_binding__";
+const ALL_SECTIONS: readonly AgentActorFormSection[] = ["identity", "agent"];
 
 export function AgentActorForm({
-  agents,
-  diagnostics,
+  binding,
   draft,
   formId,
-  pendingAdapter,
   readOnly = false,
   sections = ALL_SECTIONS,
   showValidation = true,
   validation,
   onChange,
-  onCheck,
+  onOpenAgentSettings,
   onSubmit,
   validateOnSubmit = true,
 }: {
-  agents: readonly AgentActorAgentOption[];
-  diagnostics: Readonly<
-    Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>
-  >;
+  binding: AgentActorBindingEditor;
   draft: AgentActorDraft;
   formId: string;
-  pendingAdapter: AgentAdapterId | null;
   readOnly?: boolean;
   sections?: readonly AgentActorFormSection[];
   showValidation?: boolean;
   validation?: AgentActorDraftValidation;
   onChange(draft: AgentActorDraft): void;
-  onCheck(adapter: AgentAdapterId): void;
+  onOpenAgentSettings(): void;
   onSubmit(): void;
   validateOnSubmit?: boolean;
 }) {
   const errors = validation ?? validateAgentActorDraft(draft);
-  const agent = bindingAgent(draft.binding);
-  const offered =
-    agent !== null && agents.some((option) => option.id === agent);
-  const label = agentActorBindingLabel(draft.binding, agents);
 
   return (
     <form
@@ -129,68 +96,21 @@ export function AgentActorForm({
         </FieldGroup>
       ) : null}
 
-      {sections.includes("adapters") ? (
-        <FieldSet
-          data-agent-actor-focus="adapters"
-          data-invalid={showValidation && Boolean(errors.binding)}
-          tabIndex={-1}
-        >
-          {sections.length > 1 ? (
-            <FieldLegend>{m.agent_actors_agent_label()}</FieldLegend>
-          ) : null}
-          <Field>
-            <FieldLabel htmlFor={`${formId}-agent`}>
-              {m.agent_actors_agent_label()}
-            </FieldLabel>
-            <Select
-              disabled={readOnly}
-              value={agent !== null && offered ? agent : CURRENT_BINDING}
-              onValueChange={(value) => {
-                if (value !== CURRENT_BINDING) {
-                  onChange(withBindingAgent(draft, value));
-                }
-              }}
-            >
-              <SelectTrigger id={`${formId}-agent`} className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {offered ? null : (
-                    <SelectItem value={CURRENT_BINDING} disabled>
-                      {label}
-                    </SelectItem>
-                  )}
-                  {agents.map((option) => (
-                    <SelectItem key={option.id} value={option.id}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          {agent !== null && offered ? (
-            <AgentAdapterCard
-              agent={agent}
-              checkDisabled={pendingAdapter !== null}
-              diagnostic={diagnostics[agent]}
-              label={label}
-              pending={pendingAdapter === agent}
-              readOnly={readOnly}
-              onCheck={() => onCheck(agent)}
-            />
-          ) : agent !== null ? (
-            <Alert variant="destructive" data-agent-adapter-unknown>
-              <AlertDescription>
-                {m.agent_actors_adapter_unknown()}
-              </AlertDescription>
-            </Alert>
-          ) : null}
+      {sections.includes("agent") ? (
+        <Field data-invalid={showValidation && Boolean(errors.binding)}>
+          <FieldLabel htmlFor={`${formId}-agent`}>
+            {m.agent_actors_agent_label()}
+          </FieldLabel>
+          <AgentActorBindingField
+            binding={binding}
+            id={`${formId}-agent`}
+            invalid={showValidation && Boolean(errors.binding)}
+            onOpenAgentSettings={onOpenAgentSettings}
+          />
           {showValidation && errors.binding ? (
             <FieldError>{m.agent_actors_binding_required()}</FieldError>
           ) : null}
-        </FieldSet>
+        </Field>
       ) : null}
     </form>
   );

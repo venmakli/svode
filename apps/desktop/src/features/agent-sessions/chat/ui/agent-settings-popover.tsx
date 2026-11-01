@@ -69,6 +69,13 @@ export interface AgentSettingsChoice {
    * agent no longer declares in a row of its own.
    */
   staleValues?: SettingValue[];
+  /**
+   * Values the host keeps that cannot be checked now, as an Actor's binding
+   * while its agent declared nothing (Stage 11 `03`, without variants):
+   * each shows as it is, beside the recovery or the note why there is no
+   * choice, and cannot change.
+   */
+  keptValues?: SettingValue[];
 }
 
 /**
@@ -452,9 +459,12 @@ function SettingRows({
     !(readiness.state === "checked" && readiness.check.state === "ready")
   ) {
     return (
-      <div className="p-2">
-        <AgentRecovery readiness={readiness} recovery={choice.recovery} />
-      </div>
+      <>
+        <div className="p-2">
+          <AgentRecovery readiness={readiness} recovery={choice.recovery} />
+        </div>
+        <KeptValues values={choice.keptValues} />
+      </>
     );
   }
   if (
@@ -526,6 +536,7 @@ function SettingRows({
           {staleNote(value.setting)}
         </div>
       ))}
+      <KeptValues values={choice?.keptValues} />
       {choice?.recorded && (
         <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
           {m.sessions_chat_settings_last_session()}
@@ -639,6 +650,17 @@ function SettingValues({
       </CommandList>
     </Command>
   );
+}
+
+/** Kept values as they are, each under its setting's id. */
+function KeptValues({ values }: { values: SettingValue[] | undefined }) {
+  return values?.map((value) => (
+    <SettingsStaticRow
+      key={value.setting}
+      label={value.setting}
+      meta={value.value}
+    />
+  ));
 }
 
 function Note({ children }: { children: ReactNode }) {

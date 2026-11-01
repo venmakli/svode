@@ -11,45 +11,44 @@ import {
   repositoryAccessPrimaryActionLabel,
   type RepositoryAccessPreflightController,
 } from "@/features/git";
+import type { ChatAgents } from "@/features/agent-sessions/agent-settings-popover";
 import * as m from "@/paraglide/messages.js";
 
+import { useAgentActorBinding } from "../hooks/use-agent-actor-binding";
 import {
   areAgentActorDraftsEqual,
-  cloneBinding,
+  cloneAgentActorDraft,
   firstInvalidAgentActorCreateStep,
   validateAgentActorDraft,
   type AgentActorCreateStep,
 } from "../model/agent-actor-draft";
 import type {
-  AgentActorAdapterDiagnostic,
   AgentActorAgentOption,
   AgentActorDraft,
-  AgentAdapterId,
 } from "../model/agent-actor-types";
 import { AgentActorCreateReview } from "./agent-actor-create-review";
 import { AgentActorForm, type AgentActorFormSection } from "./agent-actor-form";
 
 const CREATE_STEPS: readonly AgentActorCreateStep[] = [
   "identity",
-  "adapters",
+  "agent",
   "review",
 ];
 
 interface AgentActorEditorDialogProps {
   accessRecovery: RepositoryAccessPreflightController;
   agents: readonly AgentActorAgentOption[];
-  diagnostics: Readonly<
-    Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>
-  >;
   draft: AgentActorDraft | null;
   failure: string | null;
+  /** How the chat offers the agents; null while they are read. */
+  offers: ChatAgents | null;
   pending: boolean;
-  pendingAdapter: AgentAdapterId | null;
   readOnly?: boolean;
   requesting: boolean;
   onChange(draft: AgentActorDraft): void;
-  onCheck(adapter: AgentAdapterId): void;
   onClose(): void;
+  onOpenAgentSettings(): void;
+  onRecheckOffers(): void;
   onSave(): void;
 }
 
@@ -61,19 +60,30 @@ export function AgentActorEditorDialog(props: AgentActorEditorDialogProps) {
 function AgentActorCreateJourney({
   accessRecovery,
   agents,
-  diagnostics,
   draft,
   failure,
+  offers,
   pending,
-  pendingAdapter,
   readOnly = false,
   requesting,
   onChange,
-  onCheck,
   onClose,
+  onOpenAgentSettings,
+  onRecheckOffers,
   onSave,
 }: Omit<AgentActorEditorDialogProps, "draft"> & { draft: AgentActorDraft }) {
-  const [initialDraft] = useState(() => cloneDraft(draft));
+  const [initialDraft] = useState(() => cloneAgentActorDraft(draft));
+  // The agent's draft session runs in the Space of the catalog while the
+  // journey is open, through every step.
+  const binding = useAgentActorBinding({
+    agents,
+    cwd: draft.ownerPath,
+    draft,
+    editable: !readOnly,
+    offers,
+    onChange,
+    onRecheck: onRecheckOffers,
+  });
   const submitRequestedRef = useRef(false);
   const [step, setStep] = useState<AgentActorCreateStep>("identity");
   const [focusRequest, setFocusRequest] =
@@ -137,8 +147,8 @@ function AgentActorCreateJourney({
       focusInvalid("identity");
       return;
     }
-    if (step === "adapters" && validation.binding) {
-      focusInvalid("adapters");
+    if (step === "agent" && validation.binding) {
+      focusInvalid("agent");
       return;
     }
     const next = CREATE_STEPS[stepIndex + 1];
@@ -225,7 +235,7 @@ function AgentActorCreateJourney({
       {step === "review" ? (
         <div className="flex flex-col gap-4">
           <AgentActorCreateReview
-            agents={agents}
+            binding={binding}
             draft={draft}
             onEdit={(target) => moveTo(target, "control")}
           />
@@ -240,18 +250,16 @@ function AgentActorCreateJourney({
         </div>
       ) : (
         <AgentActorForm
-          agents={agents}
-          diagnostics={diagnostics}
+          binding={binding}
           draft={draft}
           formId="agent-actor-create-form"
-          pendingAdapter={pendingAdapter}
           readOnly={readOnly}
           sections={[step as AgentActorFormSection]}
           showValidation={attemptedSteps.has(step)}
           validation={validation}
           validateOnSubmit={false}
           onChange={onChange}
-          onCheck={onCheck}
+          onOpenAgentSettings={onOpenAgentSettings}
           onSubmit={continueFromStep}
         />
       )}
@@ -261,7 +269,7 @@ function AgentActorCreateJourney({
 
 function createStepLabel(step: AgentActorCreateStep) {
   if (step === "identity") return m.agent_actors_step_identity();
-  if (step === "adapters") return m.agent_actors_agent_label();
+  if (step === "agent") return m.agent_actors_agent_label();
   return m.agent_actors_step_review();
 }
 
@@ -272,12 +280,4 @@ function getAgentActorControlFocusTarget(
   return step === "review"
     ? null
     : content.querySelector<HTMLElement>(`[data-agent-actor-focus="${step}"]`);
-}
-
-function cloneDraft(draft: AgentActorDraft): AgentActorDraft {
-  return {
-    ...draft,
-    binding: cloneBinding(draft.binding),
-    mode: draft.mode ? { ...draft.mode } : null,
-  };
 }

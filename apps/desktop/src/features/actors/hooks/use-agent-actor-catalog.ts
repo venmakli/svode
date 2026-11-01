@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SingleFlightRefreshCoordinator } from "@/shared/lib/single-flight-refresh-coordinator";
 
 import {
-  diagnoseAgentActorAdapter,
   listenAgentActorCatalogInvalidated,
   loadAgentActors,
 } from "../api/agent-actors-api";
@@ -13,28 +12,13 @@ import {
   publishAgentActorCatalogSnapshot,
   type AgentActorCatalogState,
 } from "../model/agent-actor-catalog-state";
-import { resolveAgentActorRuntimeStatus } from "../model/agent-actor-draft";
-import type {
-  AgentActorAdapterDiagnostic,
-  AgentActorCatalogSnapshot,
-  AgentAdapterId,
-} from "../model/agent-actor-types";
+import type { AgentActorCatalogSnapshot } from "../model/agent-actor-types";
 
 const agentActorRefreshDebounceMs = 120;
 
 interface ScopedAgentActorCatalogState {
   sourceKey: string;
   value: AgentActorCatalogState;
-}
-
-interface ScopedAgentActorDiagnostics {
-  sourceKey: string;
-  value: Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>;
-}
-
-interface ScopedPendingAdapter {
-  sourceKey: string;
-  value: AgentAdapterId | null;
 }
 
 export function useAgentActorCatalog(
@@ -56,24 +40,6 @@ export function useAgentActorCatalog(
         : { phase: "initial" },
     [scopedState, sourceKey],
   );
-  const [scopedDiagnostics, setScopedDiagnostics] =
-    useState<ScopedAgentActorDiagnostics>({
-      sourceKey,
-      value: {},
-    });
-  const diagnostics = useMemo(
-    () =>
-      scopedDiagnostics.sourceKey === sourceKey ? scopedDiagnostics.value : {},
-    [scopedDiagnostics, sourceKey],
-  );
-  const [scopedPendingAdapter, setScopedPendingAdapter] =
-    useState<ScopedPendingAdapter>({ sourceKey, value: null });
-  const pendingAdapter =
-    scopedPendingAdapter.sourceKey === sourceKey
-      ? scopedPendingAdapter.value
-      : null;
-  const activeSourceKeyRef = useRef(sourceKey);
-  activeSourceKeyRef.current = sourceKey;
   const coordinatorRef =
     useRef<SingleFlightRefreshCoordinator<AgentActorCatalogSnapshot> | null>(
       null,
@@ -135,58 +101,6 @@ export function useAgentActorCatalog(
     };
   }, [launchSpacePath, projectPath, sourceKey]);
 
-  const diagnose = useCallback(
-    async (adapter: AgentAdapterId) => {
-      if (pendingAdapter) return null;
-      setScopedPendingAdapter({ sourceKey, value: adapter });
-      try {
-        const diagnostic = await diagnoseAgentActorAdapter(
-          launchSpacePath,
-          adapter,
-        );
-        if (activeSourceKeyRef.current !== sourceKey) return diagnostic;
-        setScopedDiagnostics((current) => ({
-          sourceKey,
-          value: {
-            ...(current.sourceKey === sourceKey ? current.value : {}),
-            [adapter]: diagnostic,
-          },
-        }));
-        return diagnostic;
-      } finally {
-        setScopedPendingAdapter((current) =>
-          current.sourceKey === sourceKey
-            ? { sourceKey, value: null }
-            : current,
-        );
-      }
-    },
-    [launchSpacePath, pendingAdapter, sourceKey],
-  );
-
-  const projectedState = useMemo<AgentActorCatalogState>(() => {
-    if (state.phase !== "ready") return state;
-    const known = new Set(state.snapshot.agents.map((agent) => agent.id));
-    const rows = state.snapshot.rows.map((row) =>
-      Object.freeze({
-        ...row,
-        runtimeStatus: resolveAgentActorRuntimeStatus({
-          binding: row.binding,
-          diagnostics,
-          known:
-            row.binding.kind === "participant" || known.has(row.binding.agent),
-        }),
-      }),
-    );
-    return {
-      ...state,
-      snapshot: Object.freeze({
-        ...state.snapshot,
-        rows: Object.freeze(rows),
-      }),
-    };
-  }, [diagnostics, state]);
-
   const refresh = useCallback(async () => {
     setScopedState((current) => ({
       sourceKey,
@@ -197,13 +111,7 @@ export function useAgentActorCatalog(
     await coordinatorRef.current?.retry();
   }, [sourceKey]);
 
-  return {
-    diagnose,
-    diagnostics,
-    pendingAdapter,
-    refresh,
-    state: projectedState,
-  };
+  return { refresh, state };
 }
 
 function errorMessage(error: unknown): string {

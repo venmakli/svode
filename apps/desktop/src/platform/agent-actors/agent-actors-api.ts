@@ -55,16 +55,6 @@ export interface AgentActorCatalogInvalidatedEventDto {
   ownerPath: string;
 }
 
-export interface AgentActorAdapterDiagnosticDto {
-  adapter: AgentAdapterIdDto;
-  status: "ready" | "missing" | "unauthenticated" | "unknown";
-  executablePath: string | null;
-  version: string | null;
-  authenticated: boolean | null;
-  code: string | null;
-  message: string | null;
-}
-
 export interface AgentActorRoutineReferenceDto {
   routineId: string;
   path: string;
@@ -89,7 +79,9 @@ export type AgentActorMutationInputDto =
       actor: AgentActorDto;
       mode: AgentActorModeDto | null;
     }
-  | { kind: "delete"; actorId: string };
+  | { kind: "delete"; actorId: string }
+  /** The local-only change of an existing Actor's device mode. */
+  | { kind: "set_mode"; actorId: string; mode: AgentActorModeDto | null };
 
 export type AgentActorPersistenceOutcomeDto =
   | { status: "committed" | "clean" }
@@ -154,16 +146,6 @@ export function listenAgentActorCatalogInvalidated(
   return listen<AgentActorCatalogInvalidatedEventDto>(
     "agent-actors:invalidated",
     handler,
-  );
-}
-
-export function diagnoseAgentActorAdapter(
-  targetSpacePath: string,
-  adapter: AgentAdapterIdDto,
-) {
-  return invokeCommand<AgentActorAdapterDiagnosticDto>(
-    "agent_actors_diagnose_adapter",
-    { adapter, targetSpacePath },
   );
 }
 

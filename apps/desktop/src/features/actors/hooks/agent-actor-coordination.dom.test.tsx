@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 
+import type { ChatAgents } from "@/features/agent-sessions/agent-settings-popover";
 import type {
   CollectionDetailController,
   CollectionDetailRequest,
@@ -26,7 +27,6 @@ const actor: AgentActorRow = {
   name: "Documentation Agent",
   ownerLabel: "repo",
   ownerPath: "/repo",
-  runtimeStatus: "unchecked",
 };
 const actorRows: readonly AgentActorRow[] = [actor];
 
@@ -221,9 +221,9 @@ test("an open read-only Detail follows its agent, closes once it is gone and lea
       '["/repo","01arz3ndektsv4rrffq69g5fav"]',
     );
 
-    // A new diagnostic and an external change of the agent show in place.
+    // New offers of the agents and an external change of the agent show in place.
     const opened = shown();
-    await click("[data-publish-diagnostic]");
+    await click("[data-publish-offers]");
     expect(shown() === opened).toBe(false);
     await click("[data-rename-agent]");
     expect(titleOf(shown()).includes("Docs Agent")).toBe(true);
@@ -237,7 +237,7 @@ test("an open read-only Detail follows its agent, closes once it is gone and lea
     // removal do not replace or close it.
     const formTitle = titleOf(form);
     await click("[data-rename-agent]");
-    await click("[data-publish-diagnostic]");
+    await click("[data-publish-offers]");
     expect(shown()?.layout).toBe("form");
     expect(titleOf(shown())).toBe(formTitle);
     await click("[data-remove-agent]");
@@ -265,7 +265,7 @@ test("an open read-only Detail follows its agent, closes once it is gone and lea
       await detailController.close();
     });
     const opens = openCount;
-    await click("[data-publish-diagnostic]");
+    await click("[data-publish-offers]");
     await click("[data-rename-agent]");
     expect(shown()).toBe(null);
     expect(openCount).toBe(opens);
@@ -333,14 +333,14 @@ function DetailHarness({
     applyMutation: () => undefined,
     agents: [],
     detailController,
-    diagnose: () => undefined,
-    diagnostics: {},
     editSession,
     instanceKey: "actors:space:root",
     mutationPending: false,
-    pendingAdapter: null,
+    offers: null,
     rows: actorRows,
     setEditSession,
+    onOpenAgentSettings: () => undefined,
+    onRecheckOffers: () => undefined,
   });
   return (
     <button
@@ -356,7 +356,7 @@ function ReadOnlyDetailHarness({
 }: {
   detailController: CollectionDetailController;
 }) {
-  const [diagnostics, setDiagnostics] = useState({});
+  const [offers, setOffers] = useState<ChatAgents | null>(null);
   const [rows, setRows] = useState<readonly AgentActorRow[]>([actor]);
   const [renames, setRenames] = useState(0);
   const [editSession, setEditSession] = useState<AgentActorEditSession | null>(
@@ -371,14 +371,14 @@ function ReadOnlyDetailHarness({
     applyMutation: () => undefined,
     agents: [],
     detailController,
-    diagnose: () => undefined,
-    diagnostics,
     editSession,
     instanceKey: "actors:space:root",
     mutationPending: false,
-    pendingAdapter: null,
+    offers,
     rows,
     setEditSession,
+    onOpenAgentSettings: () => undefined,
+    onRecheckOffers: () => undefined,
   });
   const rename = () => {
     const name = renames === 0 ? "Docs Agent" : `Docs Agent ${renames + 1}`;
@@ -412,19 +412,19 @@ function ReadOnlyDetailHarness({
       />
       <button
         type="button"
-        data-publish-diagnostic
+        data-publish-offers
         onClick={() =>
-          setDiagnostics((current) => ({
-            ...current,
-            codex: {
-              adapter: "codex" as const,
-              authenticated: false,
-              code: "adapter_unauthenticated",
-              executablePath: "/bin/codex",
-              message: `diagnostic-${Object.keys(current).length}`,
-              status: "unauthenticated" as const,
-              version: "1",
-            },
+          setOffers((current) => ({
+            agents: [
+              {
+                agent: "codex",
+                name: "Codex",
+                offer:
+                  current?.agents[0]?.offer.state === "available"
+                    ? { state: "sign_in_required" }
+                    : { state: "available" },
+              },
+            ],
           }))
         }
       />

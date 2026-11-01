@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import {
-  cloneBinding,
+  cloneAgentActorDraft,
   createAgentActorDraft,
 } from "../model/agent-actor-draft";
 import type {
@@ -63,7 +63,7 @@ if (!isolatedDialogDomProcess) {
 
       await clickButton(harness.dom, "Fill name");
       await clickButton(harness.dom, "Continue");
-      expect(currentStep(harness.dom)).toBe("adapters");
+      expect(currentStep(harness.dom)).toBe("agent");
       expect(
         harness.dom.window.document.querySelector(
           '[data-collection-create-flow="agent-actor"] legend',
@@ -110,41 +110,38 @@ if (!isolatedDialogDomProcess) {
     }
   });
 
-  test("the agent step holds one binding and Review names its agent without approval modes", async () => {
+  test("the agent step goes on only with a chosen agent and Review names the binding without approval mode variants", async () => {
     const initial = createAgentActorDraft("/repo/docs");
     initial.name = "Documentation Agent";
-    initial.binding = {
-      agent: "claude-code",
-      kind: "agent",
-      settings: [{ setting: "model", value: "sonnet" }],
-    };
-    initial.mode = { agent: "claude-code", setting: "mode", value: "plan" };
     const harness = await renderHarness({ initial });
     try {
       await clickButton(harness.dom, "Continue");
-      expect(currentStep(harness.dom)).toBe("adapters");
+      expect(currentStep(harness.dom)).toBe("agent");
       const document = harness.dom.window.document;
-      expect(document.querySelectorAll("[data-agent-adapter]").length).toBe(1);
-      expect(
-        document.querySelector('[data-agent-adapter="claude-code"]') === null,
-      ).toBe(false);
+      const binding = document.querySelector<HTMLElement>(
+        "button[data-agent-actor-binding]",
+      )!;
+      expect(binding.textContent).toBe("Choose an agent");
       expect(
         document.querySelectorAll('[data-slot="select-trigger"]').length,
-      ).toBe(1);
-      expect(
-        /Make primary|Remove|Model|Effort/.test(
-          document.body.textContent ?? "",
-        ),
-      ).toBe(false);
+      ).toBe(0);
+      await clickButton(harness.dom, "Continue");
+      expect(currentStep(harness.dom)).toBe("agent");
+      expect(binding.getAttribute("aria-invalid")).toBe("true");
+      expect(document.activeElement).toBe(binding);
+      expect(document.body.textContent?.includes("Choose an agent.")).toBe(
+        true,
+      );
 
+      await clickButton(harness.dom, "Choose participant");
       await clickButton(harness.dom, "Continue");
       expect(currentStep(harness.dom)).toBe("review");
       const review = document.querySelector("[data-agent-actor-review]")!;
       expect(textOf(harness.dom, "[data-agent-actor-binding]")).toBe(
-        "Claude Code",
+        "Participant's agent",
       );
       expect(
-        /Device-local|Full access|Ask|Primary/.test(review.textContent ?? ""),
+        /Full access|Ask|Primary|Fallback/.test(review.textContent ?? ""),
       ).toBe(false);
     } finally {
       await harness.cleanup();
@@ -303,20 +300,32 @@ function JourneyHarness({
       >
         Fill name
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          setDraft((current) =>
+            current
+              ? { ...current, binding: { kind: "participant" } }
+              : current,
+          )
+        }
+      >
+        Choose participant
+      </button>
       <span data-save-count>{saveCount}</span>
       <span data-close-count>{closeCount}</span>
       <span data-draft-open>{draft ? "open" : "closed"}</span>
       <Editor
         accessRecovery={accessRecovery}
         agents={agents}
-        diagnostics={{}}
         draft={draft}
         failure={failure}
+        offers={null}
         pending={pending}
-        pendingAdapter={null}
         requesting={false}
         onChange={setDraft}
-        onCheck={() => undefined}
+        onOpenAgentSettings={() => undefined}
+        onRecheckOffers={() => undefined}
         onClose={() => {
           setCloseCount((count) => count + 1);
           setDraft(null);
@@ -351,7 +360,7 @@ function JourneyHarness({
 }
 
 async function renderHarness({
-  initial = createAgentActorDraft("/repo/docs"),
+  initial = participantDraft(),
   saveMode,
   startOpen = true,
 }: {
@@ -362,17 +371,16 @@ async function renderHarness({
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
   const calls: string[] = [];
-  if (saveMode === "access") {
-    mockNativeIpc(
-      (command) => {
-        calls.push(command);
-        if (command === "repository_access_get") return accessSnapshot();
-        if (command === "repository_access_verify") return accessSnapshot();
-        throw new Error(`Unexpected command: ${command}`);
-      },
-      { shouldMockEvents: true },
-    );
-  }
+  mockNativeIpc(
+    (command) => {
+      calls.push(command);
+      if (command === "repository_access_get") return accessSnapshot();
+      if (command === "repository_access_verify") return accessSnapshot();
+      if (command === "agent_adapters_list_identities") return [];
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
   dom.window.document
     .querySelector<HTMLButtonElement>("#external-create")
     ?.focus();
@@ -398,7 +406,7 @@ async function renderHarness({
         root.unmount();
         await nextTurn();
       });
-      if (saveMode === "access") clearNativeMocks();
+      clearNativeMocks();
       restoreGlobals();
       dom.window.close();
     },
@@ -412,8 +420,14 @@ async function navigateToReview(dom: JSDOM) {
   expect(currentStep(dom)).toBe("review");
 }
 
-function validDraft() {
+function participantDraft() {
   const draft = createAgentActorDraft("/repo/docs");
+  draft.binding = { kind: "participant" };
+  return draft;
+}
+
+function validDraft() {
+  const draft = participantDraft();
   draft.name = "Documentation Agent";
   return draft;
 }
@@ -431,7 +445,7 @@ function accessSnapshot() {
 }
 
 function cloneDraft(draft: AgentActorDraft): AgentActorDraft {
-  return { ...draft, binding: cloneBinding(draft.binding) };
+  return cloneAgentActorDraft(draft);
 }
 
 function currentStep(dom: JSDOM) {

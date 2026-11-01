@@ -51,6 +51,7 @@ test("Actors refreshes both catalogs from owner events without access probes", a
       }
       if (command === "actors_get_catalog") return catalogSnapshot(1);
       if (command === "actors_refresh_catalog") return catalogSnapshot(2);
+      if (command === "agent_default_get") return null;
       throw new Error(`Unexpected command: ${command}`);
     },
     { shouldMockEvents: true },
@@ -68,7 +69,11 @@ test("Actors refreshes both catalogs from owner events without access probes", a
     await act(async () => {
       root.render(
         <TooltipProvider>
-          <ActorsSurface owner={owner} presentation="full" />
+          <ActorsSurface
+            owner={owner}
+            presentation="full"
+            onOpenAgentSettings={() => undefined}
+          />
         </TooltipProvider>,
       );
       await nextTurn();
@@ -122,7 +127,12 @@ test("Actors refreshes both catalogs from owner events without access probes", a
     await act(async () => {
       root.render(
         <TooltipProvider>
-          <ActorsSurface readOnly owner={owner} presentation="full" />
+          <ActorsSurface
+            readOnly
+            owner={owner}
+            presentation="full"
+            onOpenAgentSettings={() => undefined}
+          />
         </TooltipProvider>,
       );
       await nextTurn();
@@ -168,7 +178,18 @@ test("an Agent Actor the open request addresses opens in the agents presentation
         };
       }
       if (command === "actors_get_catalog") return catalogSnapshot(1);
-      if (command === "agent_adapters_list_identities") return [];
+      if (command === "agent_adapters_list_identities") {
+        return [{ id: "codex", displayName: "Codex" }];
+      }
+      if (command === "agent_default_get") return null;
+      if (command === "agent_setup_chat_agents") {
+        return {
+          agents: [
+            { agent: "codex", name: "Codex", offer: { state: "available" } },
+          ],
+        };
+      }
+      if (command === "agent_runtime_last_declarations") return [];
       throw new Error(`Unexpected command: ${command}`);
     },
     { shouldMockEvents: true },
@@ -192,6 +213,7 @@ test("an Agent Actor the open request addresses opens in the agents presentation
             owner={owner}
             openItem={openItem}
             presentation="full"
+            onOpenAgentSettings={() => undefined}
           />
         </TooltipProvider>,
       );
@@ -199,11 +221,20 @@ test("an Agent Actor the open request addresses opens in the agents presentation
       await nextTurn();
     });
     expect(consumed).toBe(1);
-    expect(
-      dom.window.document.querySelector(
-        '[data-collection-presentation="agents"]',
-      ) === null,
-    ).toBe(false);
+    const agents = dom.window.document.querySelector(
+      '[data-collection-presentation="agents"]',
+    );
+    expect(agents === null).toBe(false);
+    // The Agent shows its agent and its readiness on this device.
+    await act(async () => {
+      await nextTurn();
+      await nextTurn();
+    });
+    const row = Array.from(
+      dom.window.document.querySelectorAll("[data-collection-row]"),
+    ).find((candidate) => candidate.textContent?.includes("Reviewer"));
+    expect(row?.textContent?.includes("Codex")).toBe(true);
+    expect(row?.textContent?.includes("Ready")).toBe(true);
   } finally {
     await act(async () => root.unmount());
     clearNativeMocks();

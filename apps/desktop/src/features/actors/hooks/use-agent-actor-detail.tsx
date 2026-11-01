@@ -19,16 +19,15 @@ import {
   RepositoryAccessPrimaryButton,
   type RepositoryAccessPreflightController,
 } from "@/features/git";
+import type { ChatAgents } from "@/features/agent-sessions/agent-settings-popover";
 import { AgentAvatar } from "@/features/identity";
 import * as m from "@/paraglide/messages.js";
 
 import { createAgentActorDraft } from "../model/agent-actor-draft";
 import type {
-  AgentActorAdapterDiagnostic,
   AgentActorAgentOption,
   AgentActorDraft,
   AgentActorRow,
-  AgentAdapterId,
 } from "../model/agent-actor-types";
 import { AgentActorDetail } from "../ui/agent-actor-detail";
 import { agentActorRowId } from "../ui/agent-actors-presentation";
@@ -39,15 +38,15 @@ export function useAgentActorDetail({
   agents,
   applyMutation,
   detailController,
-  diagnose,
-  diagnostics,
   editSession,
   instanceKey,
   mutationPending,
+  offers,
   readOnly = false,
-  pendingAdapter,
   rows,
   setEditSession,
+  onOpenAgentSettings,
+  onRecheckOffers,
 }: {
   accessRecovery?: RepositoryAccessPreflightController;
   applyMutation(
@@ -57,30 +56,29 @@ export function useAgentActorDetail({
   ): void | Promise<void>;
   agents: readonly AgentActorAgentOption[];
   detailController: CollectionDetailController | null;
-  diagnose(adapter: AgentAdapterId): void;
-  diagnostics: Readonly<
-    Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>
-  >;
   editSession: AgentActorEditSession | null;
   instanceKey: string;
   mutationPending: boolean;
+  /** How the chat offers the agents; null while they are read. */
+  offers: ChatAgents | null;
   readOnly?: boolean;
-  pendingAdapter: AgentAdapterId | null;
   /** The agents of the ready catalog; null until it is read. */
   rows: readonly AgentActorRow[] | null;
   setEditSession: Dispatch<SetStateAction<AgentActorEditSession | null>>;
+  onOpenAgentSettings(): void;
+  onRecheckOffers(): void;
 }): CollectionDetailRowBinding<AgentActorRow> {
   const createReadOnlyDetail = useCallback(
     (row: AgentActorRow): CollectionDetailContent => ({
       content: (
         <AgentActorDetail
           agents={agents}
-          diagnostics={diagnostics}
           draft={createAgentActorDraft(row.ownerPath, row)}
           editMode={false}
-          pendingAdapter={pendingAdapter}
+          offers={offers}
           onChange={() => undefined}
-          onCheck={diagnose}
+          onOpenAgentSettings={onOpenAgentSettings}
+          onRecheckOffers={onRecheckOffers}
           onSave={() => undefined}
         />
       ),
@@ -89,7 +87,7 @@ export function useAgentActorDetail({
       ),
       title: detailTitle(row),
     }),
-    [agents, diagnose, diagnostics, pendingAdapter],
+    [agents, offers, onOpenAgentSettings, onRecheckOffers],
   );
   const findRow = useMemo(
     () =>
@@ -137,10 +135,9 @@ export function useAgentActorDetail({
           <div className="flex min-w-0 flex-col gap-4">
             <AgentActorDetail
               agents={agents}
-              diagnostics={diagnostics}
               draft={editSession.draft}
               editMode={!readOnly}
-              pendingAdapter={pendingAdapter}
+              offers={offers}
               onChange={(draft) =>
                 setEditSession((current) => {
                   if (!current) return current;
@@ -148,14 +145,11 @@ export function useAgentActorDetail({
                   return { ...current, draft };
                 })
               }
-              onCheck={diagnose}
-              onSave={() => {
+              onOpenAgentSettings={onOpenAgentSettings}
+              onRecheckOffers={onRecheckOffers}
+              onSave={(draft) => {
                 if (readOnly) return;
-                void applyMutation(
-                  "update",
-                  editSession.row.ownerPath,
-                  editSession.draft,
-                );
+                void applyMutation("update", editSession.row.ownerPath, draft);
               }}
             />
             {accessBlocked ? (
@@ -223,12 +217,12 @@ export function useAgentActorDetail({
     applyMutation,
     detail,
     detailController,
-    diagnose,
-    diagnostics,
     editSession,
     instanceKey,
     mutationPending,
-    pendingAdapter,
+    offers,
+    onOpenAgentSettings,
+    onRecheckOffers,
     readOnly,
     setEditSession,
   ]);

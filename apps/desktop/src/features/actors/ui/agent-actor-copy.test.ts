@@ -2,67 +2,62 @@ import { expect, test } from "bun:test";
 
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 
-import type { AgentActorAdapterDiagnostic } from "../model/agent-actor-types";
 import {
-  agentActorBindingLabel,
-  agentActorDiagnosticStatus,
-  agentActorDiagnosticSummary,
+  AGENT_ACTOR_READINESS,
+  agentActorAgentLabel,
+  agentActorModeLabel,
+  agentActorReadinessLabel,
 } from "./agent-actor-copy";
 
-const agents = [{ id: "codex", label: "Codex" }];
+const label = (agent: string) => (agent === "codex" ? "Codex" : agent);
+const facts = { bindable: true, model: null, mode: null, readiness: null };
 
-test("Agent Actor semantic copy follows locale without backend presentation strings", async () => {
+test("Agent Actor copy follows the locale", async () => {
   const originalLocale = getLocale();
   try {
-    await setLocale("en", { reload: false });
-    expect(
-      String(agentActorBindingLabel({ kind: "participant" }, agents)),
-    ).toBe("Participant's agent");
-
     await setLocale("ru", { reload: false });
     const copy = [
-      agentActorBindingLabel({ kind: "participant" }, agents),
-      agentActorDiagnosticStatus(undefined),
-      agentActorDiagnosticStatus(diagnostic("ready")),
-      agentActorDiagnosticStatus(diagnostic("missing")),
-      agentActorDiagnosticSummary(diagnostic("missing")) ?? "",
-      agentActorDiagnosticSummary(diagnostic("unauthenticated")) ?? "",
-      agentActorDiagnosticSummary(diagnostic("unknown")) ?? "",
+      agentActorAgentLabel({ kind: "participant" }, facts, label),
+      agentActorModeLabel({ ...facts, mode: { kind: "agent_default" } }),
+      ...AGENT_ACTOR_READINESS.map(agentActorReadinessLabel),
     ].join(" ");
-
     expect(copy.includes("Агент участника")).toBe(true);
-    expect(copy.includes("Клиент не найден")).toBe(true);
-    expect(/Participant|Ready|Missing/.test(copy)).toBe(false);
+    expect(copy.includes("По умолчанию агента")).toBe(true);
+    expect(copy.includes("Агент по умолчанию не выбран")).toBe(true);
+    expect(copy.includes("Значение больше не объявляется")).toBe(true);
+    expect(/Participant|Ready|Not installed/.test(copy)).toBe(false);
   } finally {
     await setLocale(originalLocale, { reload: false });
   }
 });
 
-test("a binding is named by its agent, an unknown id as it is, or the participant's agent", () => {
-  expect(
-    agentActorBindingLabel(
-      { agent: "codex", kind: "agent", settings: [] },
-      agents,
-    ),
-  ).toBe("Codex");
-  expect(
-    agentActorBindingLabel(
-      { agent: "future-agent", kind: "agent", settings: [] },
-      agents,
-    ),
-  ).toBe("future-agent");
+test("the Agent of a binding is its agent with the model, an unknown id as it is, or the participant's agent", async () => {
+  const originalLocale = getLocale();
+  try {
+    await setLocale("en", { reload: false });
+    const codex = { agent: "codex", kind: "agent" as const, settings: [] };
+    expect(agentActorAgentLabel(codex, facts, label)).toBe("Codex");
+    expect(
+      agentActorAgentLabel(codex, { ...facts, model: "GPT-6 Sol" }, label),
+    ).toBe("Codex · GPT-6 Sol");
+    expect(
+      agentActorAgentLabel(
+        { agent: "custom-mine", kind: "agent", settings: [] },
+        { ...facts, bindable: false },
+        label,
+      ),
+    ).toBe("custom-mine");
+    expect(agentActorAgentLabel({ kind: "participant" }, facts, label)).toBe(
+      "Participant's agent",
+    );
+    expect(agentActorModeLabel(facts)).toBeNull();
+    expect(
+      agentActorModeLabel({
+        ...facts,
+        mode: { kind: "value", name: "Auto review" },
+      }),
+    ).toBe("Auto review");
+  } finally {
+    await setLocale(originalLocale, { reload: false });
+  }
 });
-
-function diagnostic(
-  status: AgentActorAdapterDiagnostic["status"],
-): AgentActorAdapterDiagnostic {
-  return {
-    adapter: "codex",
-    authenticated: status === "ready" ? true : null,
-    code: status === "ready" ? null : `adapter_${status}`,
-    executablePath: status === "missing" ? null : "/bin/codex",
-    message: status === "ready" ? null : "raw client detail",
-    status,
-    version: status === "missing" ? null : "1.0",
-  };
-}

@@ -9,23 +9,23 @@ import {
 } from "@/components/ui/card";
 import * as m from "@/paraglide/messages.js";
 
+import type { AgentActorBindingEditor } from "../hooks/use-agent-actor-binding";
 import { actorOwnerLabel } from "../model/agent-actor-draft";
 import type { AgentActorCreateStep } from "../model/agent-actor-draft";
-import type {
-  AgentActorAgentOption,
-  AgentActorDraft,
-} from "../model/agent-actor-types";
-import { agentActorBindingLabel } from "./agent-actor-copy";
+import type { AgentActorDraft } from "../model/agent-actor-types";
+import { AgentActorBindingSummary } from "./agent-actor-binding-field";
 
 export function AgentActorCreateReview({
-  agents,
+  binding,
   draft,
   onEdit,
 }: {
-  agents: readonly AgentActorAgentOption[];
+  binding: AgentActorBindingEditor;
   draft: AgentActorDraft;
   onEdit(step: Exclude<AgentActorCreateStep, "review">): void;
 }) {
+  const modeSetting = binding.modeSetting;
+  const mode = draft.mode;
   return (
     <div className="flex flex-col gap-3" data-agent-actor-review>
       <ReviewCard
@@ -54,11 +54,31 @@ export function AgentActorCreateReview({
       <ReviewCard
         description={m.agent_actors_review_adapters_description()}
         title={m.agent_actors_agent_label()}
-        onEdit={() => onEdit("adapters")}
+        onEdit={() => onEdit("agent")}
       >
-        <p className="text-sm font-medium" data-agent-actor-binding>
-          {agentActorBindingLabel(draft.binding, agents)}
-        </p>
+        <div className="flex flex-col gap-2 text-sm">
+          <p
+            className="flex min-w-0 items-center gap-1.5 font-medium [&_svg]:size-4 [&_svg]:shrink-0"
+            data-agent-actor-binding
+          >
+            <AgentActorBindingSummary binding={binding} />
+          </p>
+          {modeSetting && !binding.participant ? (
+            <dl>
+              <ReviewValue
+                label={modeSetting.name}
+                value={
+                  mode
+                    ? (modeSetting.options.find(
+                        (option) => option.value === mode.value,
+                      )?.name ?? mode.value)
+                    : m.agent_actors_mode_agent_default()
+                }
+                note={m.agent_actors_on_this_device()}
+              />
+            </dl>
+          ) : null}
+        </div>
       </ReviewCard>
     </div>
   );
@@ -91,11 +111,22 @@ function ReviewCard({
   );
 }
 
-function ReviewValue({ label, value }: { label: string; value: string }) {
+function ReviewValue({
+  label,
+  note,
+  value,
+}: {
+  label: string;
+  note?: string;
+  value: string;
+}) {
   return (
     <div className="grid gap-0.5">
       <dt className="font-medium">{label}</dt>
-      <dd className="text-muted-foreground">{value}</dd>
+      <dd className="text-muted-foreground">
+        {value}
+        {note ? <span className="block text-xs">{note}</span> : null}
+      </dd>
     </div>
   );
 }

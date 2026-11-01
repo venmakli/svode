@@ -49,10 +49,13 @@ export function ActorsSurface({
   openItem,
   readOnly = false,
   repositoryOwnerName,
+  onOpenAgentSettings,
   onOpenRepositorySettings,
 }: ScopeSurfaceRenderContext & {
   readOnly?: boolean;
   repositoryOwnerName?: string;
+  /** Opens the agent settings, as "Configure agents…" of a binding. */
+  onOpenAgentSettings(): void;
   onOpenRepositorySettings?: (repositoryPath: string) => void;
 }) {
   const { refresh, replaceSnapshot, state } = useActorCatalog(owner.spacePath);
@@ -79,6 +82,7 @@ export function ActorsSurface({
     instanceKey,
     owner,
     readOnly,
+    onOpenAgentSettings,
     onOpenRepositorySettings,
   });
   const catalogRows = useMemo(
@@ -216,6 +220,7 @@ export function ActorsSurface({
   const agentActorsPresentation = createAgentActorsPresentation({
     actions: agentActors.actions,
     agents,
+    facts: agentActors.facts,
     inheritedVisible: agentActors.inheritedVisible,
     onActivate: agentActors.detail.activation({
       instanceKey,

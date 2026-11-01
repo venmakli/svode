@@ -1,24 +1,23 @@
 import type {
-  AgentActorAdapterDiagnostic,
   AgentActorBinding,
   AgentActorDraft,
   AgentActorRow,
-  AgentActorRuntimeStatus,
 } from "./agent-actor-types";
 
-export type AgentActorCreateStep = "identity" | "adapters" | "review";
+export type AgentActorCreateStep = "identity" | "agent" | "review";
 
 export interface AgentActorDraftValidation {
   binding: "binding_required" | null;
   name: "name_required" | null;
 }
 
+/** A new draft starts without an agent; an edit draft keeps the Actor's. */
 export function createAgentActorDraft(
   ownerPath: string,
   row?: AgentActorRow,
 ): AgentActorDraft {
   return {
-    binding: row ? cloneBinding(row.binding) : agentBinding("codex"),
+    binding: row ? cloneBinding(row.binding) : null,
     description: row?.description ?? "",
     id: row?.id ?? null,
     mode: row?.mode ? { ...row.mode } : null,
@@ -38,9 +37,17 @@ export function cloneBinding(binding: AgentActorBinding): AgentActorBinding {
     : { kind: "participant" };
 }
 
-/** The agent of a binding; `null` for the participant's agent. */
-export function bindingAgent(binding: AgentActorBinding): string | null {
-  return binding.kind === "agent" ? binding.agent : null;
+export function cloneAgentActorDraft(draft: AgentActorDraft): AgentActorDraft {
+  return {
+    ...draft,
+    binding: draft.binding ? cloneBinding(draft.binding) : null,
+    mode: draft.mode ? { ...draft.mode } : null,
+  };
+}
+
+/** The agent of a binding; `null` for the participant's agent or none. */
+export function bindingAgent(binding: AgentActorBinding | null): string | null {
+  return binding?.kind === "agent" ? binding.agent : null;
 }
 
 /**
@@ -55,12 +62,66 @@ export function withBindingAgent(
   return { ...draft, binding: agentBinding(agent), mode: null };
 }
 
+/**
+ * Bind the draft to the participant's agent, which runs with the default
+ * agent of the device and its mode: no values and no device mode.
+ */
+export function withParticipantBinding(
+  draft: AgentActorDraft,
+): AgentActorDraft {
+  if (draft.binding?.kind === "participant") return draft;
+  return { ...draft, binding: { kind: "participant" }, mode: null };
+}
+
+/**
+ * The draft without the binding's values of `settings`: the values of a
+ * setting the agent declares in category `mode` never go to the catalog.
+ */
+export function withoutBindingSettings(
+  draft: AgentActorDraft,
+  settings: readonly string[],
+): AgentActorDraft {
+  const binding = draft.binding;
+  if (
+    binding?.kind !== "agent" ||
+    !binding.settings.some((value) => settings.includes(value.setting))
+  ) {
+    return draft;
+  }
+  return {
+    ...draft,
+    binding: {
+      ...binding,
+      settings: binding.settings.filter(
+        (value) => !settings.includes(value.setting),
+      ),
+    },
+  };
+}
+
+/**
+ * Whether the draft changes nothing of the Actor in the catalog: a change
+ * of the device mode alone is a local-only write.
+ */
+export function isAgentActorPortableUnchanged(
+  draft: AgentActorDraft,
+  row: AgentActorRow,
+): boolean {
+  return (
+    draft.id === row.id &&
+    draft.name.trim() === row.name &&
+    (draft.description.trim() || null) === row.description &&
+    JSON.stringify(draft.binding) === JSON.stringify(row.binding)
+  );
+}
+
 export function validateAgentActorDraft(
   draft: AgentActorDraft,
 ): AgentActorDraftValidation {
   return {
     binding:
-      draft.binding.kind === "agent" && !draft.binding.agent
+      draft.binding === null ||
+      (draft.binding.kind === "agent" && !draft.binding.agent)
         ? "binding_required"
         : null,
     name: draft.name.trim().length === 0 ? "name_required" : null,
@@ -71,7 +132,7 @@ export function firstInvalidAgentActorCreateStep(
   validation: AgentActorDraftValidation,
 ): AgentActorCreateStep | null {
   if (validation.name) return "identity";
-  if (validation.binding) return "adapters";
+  if (validation.binding) return "agent";
   return null;
 }
 
@@ -99,37 +160,6 @@ export function compareAgentActorsByDefault(
     left.ownerPath.localeCompare(right.ownerPath) ||
     left.id.localeCompare(right.id)
   );
-}
-
-/**
- * An agent found without a sign-in status command: the launch itself finds
- * whether the user is signed in, so its binding can run.
- */
-export function isAgentActorFoundWithoutSignInStatus(
-  diagnostic: AgentActorAdapterDiagnostic | undefined,
-): boolean {
-  return (
-    diagnostic?.status === "unknown" &&
-    diagnostic.code === "auth_status_unavailable"
-  );
-}
-
-export function resolveAgentActorRuntimeStatus({
-  binding,
-  diagnostics,
-  known,
-}: {
-  binding: AgentActorBinding;
-  diagnostics: Readonly<Partial<Record<string, AgentActorAdapterDiagnostic>>>;
-  /** Whether this version knows the agent of a concrete binding. */
-  known: boolean;
-}): AgentActorRuntimeStatus {
-  if (binding.kind === "participant") return "unchecked";
-  if (!known) return "attention";
-  const diagnostic = diagnostics[binding.agent];
-  if (isAgentActorFoundWithoutSignInStatus(diagnostic)) return "ready";
-  if (!diagnostic || diagnostic.status === "unknown") return "unchecked";
-  return diagnostic.status === "ready" ? "ready" : "attention";
 }
 
 export function actorOwnerLabel(path: string): string {

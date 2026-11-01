@@ -15,7 +15,10 @@ import {
   actorPersistenceNeedsAttention,
   actorRootPointerDescription,
 } from "../lib/persistence-feedback";
-import { createAgentActorDraft } from "../model/agent-actor-draft";
+import {
+  createAgentActorDraft,
+  isAgentActorPortableUnchanged,
+} from "../model/agent-actor-draft";
 import type {
   AgentActorCatalogSnapshot,
   AgentActorDeleteReferenceState,
@@ -128,7 +131,15 @@ export function useAgentActorMutations({
         const mutation =
           kind === "delete"
             ? ({ kind, actorId: (draftOrRow as AgentActorRow).id } as const)
-            : await portableMutation(kind, draftOrRow as AgentActorDraft);
+            : await draftMutation(
+                kind,
+                draftOrRow as AgentActorDraft,
+                snapshot.rows.find(
+                  (row) =>
+                    row.ownerPath === targetOwnerPath &&
+                    row.id === (draftOrRow as AgentActorDraft).id,
+                ),
+              );
         const result = await mutateAgentActor({
           expectedFingerprint: fingerprint,
           mutation,
@@ -194,10 +205,26 @@ export function useAgentActorMutations({
   };
 }
 
-async function portableMutation(
+/**
+ * The write of a draft: a change of the device mode alone is local-only
+ * and leaves the catalog and Git as they are (Stage 11 `03`).
+ */
+async function draftMutation(
   kind: "create" | "update",
   draft: AgentActorDraft,
+  current: AgentActorRow | undefined,
 ) {
+  if (
+    kind === "update" &&
+    current &&
+    isAgentActorPortableUnchanged(draft, current)
+  ) {
+    return {
+      kind: "set_mode",
+      actorId: current.id,
+      mode: toAgentActorModeDto(draft.mode),
+    } as const;
+  }
   const id = draft.id ?? (await createAgentActorId());
   return {
     kind,

@@ -10,11 +10,7 @@ use crate::AppError;
 use crate::git::GitState;
 use crate::git::access::{RepositoryAccessState, access_store_path};
 use crate::git::require_cli;
-use crate::process::path_env::ProcessPath;
 use crate::space::types::SpaceGitType;
-use svode_agents::registry::{
-    AdapterDiagnostic, AdapterRuntimeRegistry, AdapterTarget, SystemRuntimeCommandRunner,
-};
 use svode_core::agent_actors::local::{
     ActorMode, read_actor_modes, set_actor_mode, translate_local_modes,
 };
@@ -22,9 +18,7 @@ use svode_core::agent_actors::{
     AgentActor, AgentActorCatalogDiagnostic, AgentActorResolution, CatalogError, catalog_path,
     inherited_root, read_catalog, resolve_space_catalogs,
 };
-use svode_core::agent_adapters::{
-    AgentAdapterIdentity, AgentAdapterKind, AgentAdapterRegistry, AgentId,
-};
+use svode_core::agent_adapters::{AgentAdapterIdentity, AgentAdapterRegistry, AgentId};
 use svode_core::git::autocommit::{
     AutocommitService, ExactPathPersistenceOutcome, GuardedExactPathPlan,
 };
@@ -248,26 +242,6 @@ fn owner_modes(owner: &Path) -> HashMap<String, ActorMode> {
         );
         HashMap::new()
     })
-}
-
-#[tauri::command]
-pub async fn agent_actors_diagnose_adapter(
-    target_space_path: String,
-    adapter: AgentAdapterKind,
-) -> Result<AdapterDiagnostic, AppError> {
-    let target = canonical_space_path(Path::new(&target_space_path))?;
-    crate::space::config::read_space_config(&target)?;
-    let search_path = ProcessPath::session();
-    Ok(AdapterRuntimeRegistry
-        .diagnose(
-            adapter,
-            &AdapterTarget {
-                cwd: target,
-                search_path: search_path.get().await.map(ToOwned::to_owned),
-            },
-            &SystemRuntimeCommandRunner,
-        )
-        .await)
 }
 
 /// An agent's id and the name every surface labels it with.
@@ -904,6 +878,7 @@ fn catalog_relative_path(repository: &Path, owner: &Path) -> Result<String, AppE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use svode_core::agent_adapters::AgentAdapterKind;
 
     #[test]
     fn custom_agents_are_labelled_after_the_registry_agents() {

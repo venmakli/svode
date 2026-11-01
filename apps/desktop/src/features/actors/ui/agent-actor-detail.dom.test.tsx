@@ -7,12 +7,12 @@ import { JSDOM } from "jsdom";
 
 import { getLocale, setLocale } from "@/paraglide/runtime.js";
 
+import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
+
 import type {
-  AgentActorAdapterDiagnostic,
   AgentActorAgentOption,
   AgentActorBinding,
   AgentActorDraft,
-  AgentAdapterId,
 } from "../model/agent-actor-types";
 
 const agents: readonly AgentActorAgentOption[] = [
@@ -43,72 +43,57 @@ if (!isolatedDetailDomProcess) {
     expect(child.status).toBe(0);
   });
 } else {
-  test("read-only Detail shows the one binding agent with its status and check, without approval modes", async () => {
+  test("read-only Detail shows the one binding row without adapter cards, checks or approval mode variants", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
-    const checks: AgentAdapterId[] = [];
-    const harness = await renderDetail({
-      diagnostics: { codex: diagnostic("codex", "ready") },
-      draft: draft(codexBinding()),
-      onCheck: (adapter) => checks.push(adapter),
-    });
+    const harness = await renderDetail({ draft: draft(codexBinding()) });
     try {
       const detail = textOf(harness.dom, "[data-agent-actor-read-only-detail]");
       expect(
-        harness.dom.window.document.querySelector("[data-agent-actor-access]"),
-      ).toBeNull();
-      expect(
-        /Full access|Ask|Primary|Fallback|gpt-6\.1-sol|Model/.test(detail),
-      ).toBe(false);
-      expect(
         harness.dom.window.document.querySelectorAll("[data-agent-adapter]")
           .length,
-      ).toBe(1);
-      expect(
-        textOf(harness.dom, '[data-agent-adapter="codex"]').includes("Ready"),
-      ).toBe(true);
-      await clickButton(harness.dom, "Check Codex");
-      expect(checks).toEqual(["codex"]);
+      ).toBe(0);
+      expect(/Full access|Ask|Primary|Fallback|Check/.test(detail)).toBe(false);
+      // The last declarations name the model.
+      expect(textOf(harness.dom, "[data-agent-actor-binding]")).toBe(
+        "GPT-6.1 Sol",
+      );
+      expect(harness.commands.includes("agent_runtime_hold_draft")).toBe(false);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
     }
   });
 
-  test("the participant's agent is named without a check", async () => {
+  test("the participant's agent is named in the locale", async () => {
     const originalLocale = getLocale();
     await setLocale("ru", { reload: false });
     const harness = await renderDetail({
-      diagnostics: {},
       draft: draft({ kind: "participant" }),
     });
     try {
       expect(textOf(harness.dom, "[data-agent-actor-binding]")).toBe(
         "Агент участника",
       );
-      expect(
-        harness.dom.window.document.querySelector("[data-agent-adapter]"),
-      ).toBeNull();
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
     }
   });
 
-  test("a binding of an agent this build does not know is shown unavailable with its reason", async () => {
+  test("a binding this version cannot bind is shown unavailable with its reason", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     const harness = await renderDetail({
-      diagnostics: {},
-      draft: draft({ agent: "future-agent", kind: "agent", settings: [] }),
+      draft: draft({ agent: "custom-mine", kind: "agent", settings: [] }),
     });
     try {
       expect(textOf(harness.dom, "[data-agent-actor-binding]")).toBe(
-        "future-agent",
+        "custom-mine",
       );
       expect(
         textOf(harness.dom, "[data-agent-adapter-unknown]").includes(
-          "not part of this version of Svode",
+          "cannot bind this agent",
         ),
       ).toBe(true);
     } finally {
@@ -117,11 +102,10 @@ if (!isolatedDetailDomProcess) {
     }
   });
 
-  test("the edit form offers only the agent, keeping its values and mode as they are", async () => {
+  test("the edit form has the name, the description and the binding row, without a Select of the agent, model or effort", async () => {
     const originalLocale = getLocale();
     await setLocale("en", { reload: false });
     const harness = await renderDetail({
-      diagnostics: {},
       draft: draft(codexBinding()),
       editMode: true,
     });
@@ -129,12 +113,14 @@ if (!isolatedDetailDomProcess) {
       const document = harness.dom.window.document;
       expect(
         document.querySelectorAll('[data-slot="select-trigger"]').length,
-      ).toBe(1);
+      ).toBe(0);
       const labels = Array.from(
         document.querySelectorAll('[data-slot="field-label"]'),
       ).map((label) => label.textContent?.trim());
       expect(labels).toEqual(["Name", "Description", "Agent"]);
-      expect(document.body.textContent?.includes("Approval")).toBe(false);
+      expect(
+        document.querySelector("button[data-agent-actor-binding]") === null,
+      ).toBe(false);
     } finally {
       await harness.cleanup();
       await setLocale(originalLocale, { reload: false });
@@ -143,37 +129,59 @@ if (!isolatedDetailDomProcess) {
 }
 
 async function renderDetail({
-  diagnostics,
   draft: value,
   editMode = false,
-  onCheck = () => undefined,
-  pendingAdapter = null,
 }: {
-  diagnostics: Readonly<
-    Partial<Record<AgentAdapterId, AgentActorAdapterDiagnostic>>
-  >;
   draft: AgentActorDraft;
   editMode?: boolean;
-  onCheck?(adapter: AgentAdapterId): void;
-  pendingAdapter?: AgentAdapterId | null;
 }) {
   const dom = createDom();
   const restoreGlobals = installDomGlobals(dom);
+  const commands: string[] = [];
+  mockNativeIpc(
+    (command, args) => {
+      commands.push(command);
+      if (command === "agent_adapters_list_identities") {
+        return agents.map((agent) => ({
+          id: agent.id,
+          displayName: agent.label,
+        }));
+      }
+      if (command === "agent_default_get") return null;
+      if (command === "agent_runtime_last_declarations") {
+        return (args as { agent: string }).agent === "codex"
+          ? [codexDeclaration()]
+          : [];
+      }
+      if (command === "agent_runtime_hold_draft") {
+        return {
+          hold: 1,
+          check: { state: "auth_required", message: "" },
+          session: null,
+          keepsValuesUntilSend: false,
+        };
+      }
+      if (command === "agent_runtime_release_draft") return null;
+      throw new Error(`Unexpected command: ${command}`);
+    },
+    { shouldMockEvents: true },
+  );
   const root = createRoot(dom.window.document.getElementById("app")!);
   const { AgentActorDetail } = await import("./agent-actor-detail");
   await act(async () => {
     root.render(
       <AgentActorDetail
         agents={agents}
-        diagnostics={diagnostics}
         draft={value}
         editMode={editMode}
-        pendingAdapter={pendingAdapter}
+        offers={null}
         onChange={() => undefined}
-        onCheck={onCheck}
+        onOpenAgentSettings={() => undefined}
+        onRecheckOffers={() => undefined}
         onSave={() => undefined}
       />,
     );
+    await nextTurn();
     await nextTurn();
   });
   return {
@@ -182,10 +190,33 @@ async function renderDetail({
         root.unmount();
         await nextTurn();
       });
+      clearNativeMocks();
       restoreGlobals();
       dom.window.close();
     },
+    commands,
     dom,
+  };
+}
+
+function codexDeclaration() {
+  return {
+    agent: "codex",
+    model: "gpt-6.1-sol",
+    declaredAt: 1,
+    agentVersion: "0.163.0",
+    settings: [
+      {
+        id: "model",
+        name: "Model",
+        description: null,
+        category: "model",
+        currentValue: "gpt-6.1-sol",
+        options: [
+          { value: "gpt-6.1-sol", name: "GPT-6.1 Sol", description: null },
+        ],
+      },
+    ],
   };
 }
 
@@ -208,41 +239,6 @@ function draft(binding: AgentActorBinding): AgentActorDraft {
   };
 }
 
-function diagnostic(
-  adapter: AgentAdapterId,
-  status: AgentActorAdapterDiagnostic["status"],
-  message: string | null = null,
-): AgentActorAdapterDiagnostic {
-  return {
-    adapter,
-    authenticated:
-      status === "ready" ? true : status === "unauthenticated" ? false : null,
-    code: status === "ready" ? null : `adapter_${status}`,
-    executablePath: status === "missing" ? null : `/bin/${adapter}`,
-    message,
-    status,
-    version: status === "missing" ? null : "1.0",
-  };
-}
-
-function findButton(dom: JSDOM, ariaLabel: string) {
-  const button = dom.window.document.querySelector<HTMLButtonElement>(
-    `button[aria-label="${ariaLabel}"]`,
-  );
-  if (!button) throw new Error(`Button not found: ${ariaLabel}`);
-  return button;
-}
-
-async function clickButton(dom: JSDOM, ariaLabel: string) {
-  const button = findButton(dom, ariaLabel);
-  await act(async () => {
-    button.dispatchEvent(
-      new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
-    );
-    await nextTurn();
-  });
-}
-
 function textOf(dom: JSDOM, selector: string) {
   return dom.window.document.querySelector(selector)?.textContent ?? "";
 }
@@ -261,6 +257,8 @@ function nextTurn() {
 function installDomGlobals(dom: JSDOM) {
   const values: Record<string, unknown> = {
     DocumentFragment: dom.window.DocumentFragment,
+    MutationObserver: dom.window.MutationObserver,
+    SVGElement: dom.window.SVGElement,
     CustomEvent: dom.window.CustomEvent,
     Element: dom.window.Element,
     Event: dom.window.Event,

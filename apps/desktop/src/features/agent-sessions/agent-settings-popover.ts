@@ -27,4 +27,13 @@ export {
   useDefaultAgent,
   type DefaultAgentState,
 } from "./chat/hooks/use-default-agent";
-export type { ChatAgent, DefaultAgent } from "./chat/model/agents";
+export type { ChatAgent, ChatAgents, DefaultAgent } from "./chat/model/agents";
+// What an agent declared last on this device, for hosts that name values
+// without the popover, as the properties of the Agents collection.
+export { useLastAgentDeclarations } from "./chat/hooks/use-agent-declarations";
+export {
+  declaredSettings,
+  withKeptValue,
+  type AgentDeclaration,
+  type DeclaredSettings,
+} from "./chat/model/declared-settings";

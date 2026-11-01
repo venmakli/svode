@@ -1,6 +1,5 @@
 /** An agent id from the registry; a catalog may hold one this build does not know. */
 export type AgentAdapterId = string;
-export type AgentActorRuntimeStatus = "ready" | "attention" | "unchecked";
 
 /** A value of one setting as the agent names the setting and the value. */
 export interface AgentActorSetting {
@@ -39,7 +38,6 @@ export interface AgentActorRow {
   name: string;
   ownerLabel: string;
   ownerPath: string;
-  runtimeStatus: AgentActorRuntimeStatus;
 }
 
 export interface AgentActorCatalogDiagnostic {
@@ -54,16 +52,6 @@ export interface AgentActorAgentOption {
   label: string;
 }
 
-export interface AgentActorAdapterDiagnostic {
-  adapter: AgentAdapterId;
-  authenticated: boolean | null;
-  code: string | null;
-  executablePath: string | null;
-  message: string | null;
-  status: "ready" | "missing" | "unauthenticated" | "unknown";
-  version: string | null;
-}
-
 export interface AgentActorCatalogSnapshot {
   agents: readonly AgentActorAgentOption[];
   diagnostics: readonly AgentActorCatalogDiagnostic[];
@@ -73,7 +61,8 @@ export interface AgentActorCatalogSnapshot {
 }
 
 export interface AgentActorDraft {
-  binding: AgentActorBinding;
+  /** Null until an agent or the participant's agent is chosen. */
+  binding: AgentActorBinding | null;
   description: string;
   id: string | null;
   /** Kept as it is until the binding editor edits it. */

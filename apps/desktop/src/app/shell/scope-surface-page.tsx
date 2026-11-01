@@ -147,6 +147,7 @@ export function ScopeSurfacePage({
             {...context}
             readOnly={readOnly}
             repositoryOwnerName={fallbackTitle}
+            onOpenAgentSettings={openProvidersSettings}
             onOpenRepositorySettings={openRepositorySettings}
           />
         ),

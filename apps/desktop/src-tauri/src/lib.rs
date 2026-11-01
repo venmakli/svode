@@ -245,7 +245,6 @@ pub fn run() {
             agent_actors::commands::agent_actors_get,
             agent_actors::commands::agent_actors_mutate,
             agent_actors::commands::agent_actors_generate_id,
-            agent_actors::commands::agent_actors_diagnose_adapter,
             agent_actors::commands::agent_actors_get_catalog_save_review,
             agent_actors::commands::agent_actors_save_catalog,
             agent_actors::commands::agent_actors_preview_delete_references,

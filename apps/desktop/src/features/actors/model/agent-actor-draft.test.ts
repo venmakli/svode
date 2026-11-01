@@ -5,9 +5,11 @@ import {
   compareAgentActorsByDefault,
   createAgentActorDraft,
   firstInvalidAgentActorCreateStep,
-  resolveAgentActorRuntimeStatus,
+  isAgentActorPortableUnchanged,
   validateAgentActorDraft,
   withBindingAgent,
+  withoutBindingSettings,
+  withParticipantBinding,
 } from "./agent-actor-draft";
 import type { AgentActorRow } from "./agent-actor-types";
 
@@ -28,13 +30,12 @@ function row(name: string, inherited: boolean): AgentActorRow {
     name,
     ownerLabel: inherited ? "root" : "space",
     ownerPath: inherited ? "/repo" : "/repo/space",
-    runtimeStatus: "unchecked",
   };
 }
 
-test("agent actor draft starts artifact-free with one default binding", () => {
+test("agent actor draft starts artifact-free without an agent", () => {
   expect(createAgentActorDraft("/repo/space")).toEqual({
-    binding: { agent: "codex", kind: "agent", settings: [] },
+    binding: null,
     description: "",
     id: null,
     mode: null,
@@ -66,15 +67,57 @@ test("changing the agent drops the values and the mode of the previous agent", (
   });
   expect(claude.mode).toBeNull();
   expect(areAgentActorDraftsEqual(draft, claude)).toBe(false);
+  const participant = withParticipantBinding(draft);
+  expect(participant.binding).toEqual({ kind: "participant" });
+  expect(participant.mode).toBeNull();
+  expect(withParticipantBinding(participant)).toBe(participant);
 });
 
-test("agent actor draft requires a name", () => {
+test("a value of the mode's setting never goes to the catalog", () => {
+  const draft = createAgentActorDraft("/repo/space", row("Docs", false));
+  draft.binding = {
+    agent: "codex",
+    kind: "agent",
+    settings: [
+      { setting: "model", value: "gpt-6.1-sol" },
+      { setting: "mode", value: "agent-full-access" },
+    ],
+  };
+  expect(withoutBindingSettings(draft, ["mode"]).binding).toEqual({
+    agent: "codex",
+    kind: "agent",
+    settings: [{ setting: "model", value: "gpt-6.1-sol" }],
+  });
+  expect(withoutBindingSettings(draft, ["effort"])).toBe(draft);
+});
+
+test("a change of the device mode alone leaves the catalog as it is", () => {
+  const actor = row("Docs", false);
+  const draft = createAgentActorDraft("/repo/space", actor);
+  draft.mode = { agent: "codex", setting: "mode", value: "read-only" };
+  expect(isAgentActorPortableUnchanged(draft, actor)).toBe(true);
+  expect(
+    isAgentActorPortableUnchanged({ ...draft, name: "Docs 2" }, actor),
+  ).toBe(false);
+  expect(
+    isAgentActorPortableUnchanged(withBindingAgent(draft, "hermes"), actor),
+  ).toBe(false);
+});
+
+test("agent actor draft requires a name and an agent", () => {
   const draft = createAgentActorDraft("/repo");
   draft.name = "  ";
   const validation = validateAgentActorDraft(draft);
-  expect(validation).toEqual({ binding: null, name: "name_required" });
+  expect(validation).toEqual({
+    binding: "binding_required",
+    name: "name_required",
+  });
   expect(firstInvalidAgentActorCreateStep(validation)).toBe("identity");
   draft.name = "Docs";
+  expect(firstInvalidAgentActorCreateStep(validateAgentActorDraft(draft))).toBe(
+    "agent",
+  );
+  draft.binding = { agent: "codex", kind: "agent", settings: [] };
   expect(validateAgentActorDraft(draft)).toEqual({
     binding: null,
     name: null,
@@ -83,74 +126,6 @@ test("agent actor draft requires a name", () => {
     validateAgentActorDraft({ ...draft, binding: { kind: "participant" } })
       .binding,
   ).toBeNull();
-});
-
-test("runtime status follows the diagnostic of the binding's agent", () => {
-  const binding = { agent: "codex", kind: "agent" as const, settings: [] };
-  const ready = {
-    adapter: "codex",
-    authenticated: true,
-    code: null,
-    executablePath: "/bin/codex",
-    message: null,
-    status: "ready" as const,
-    version: "1",
-  };
-  expect(
-    resolveAgentActorRuntimeStatus({ binding, diagnostics: {}, known: true }),
-  ).toBe("unchecked");
-  expect(
-    resolveAgentActorRuntimeStatus({
-      binding,
-      diagnostics: { codex: ready },
-      known: true,
-    }),
-  ).toBe("ready");
-  expect(
-    resolveAgentActorRuntimeStatus({
-      binding,
-      diagnostics: { codex: { ...ready, status: "missing" } },
-      known: true,
-    }),
-  ).toBe("attention");
-  // An agent this version does not know needs another agent.
-  expect(
-    resolveAgentActorRuntimeStatus({ binding, diagnostics: {}, known: false }),
-  ).toBe("attention");
-  expect(
-    resolveAgentActorRuntimeStatus({
-      binding: { kind: "participant" },
-      diagnostics: {},
-      known: true,
-    }),
-  ).toBe("unchecked");
-});
-
-test("an agent found without a sign-in status command is ready", () => {
-  const hermes = {
-    adapter: "hermes",
-    authenticated: null,
-    code: "auth_status_unavailable",
-    executablePath: "/bin/hermes",
-    message: null,
-    status: "unknown" as const,
-    version: "2026.9.24",
-  };
-  const binding = { agent: "hermes", kind: "agent" as const, settings: [] };
-  expect(
-    resolveAgentActorRuntimeStatus({
-      binding,
-      diagnostics: { hermes },
-      known: true,
-    }),
-  ).toBe("ready");
-  expect(
-    resolveAgentActorRuntimeStatus({
-      binding,
-      diagnostics: { hermes: { ...hermes, code: "version_failed" } },
-      known: true,
-    }),
-  ).toBe("unchecked");
 });
 
 test("default order keeps own actors ahead of inherited actors", () => {

@@ -1,5 +1,6 @@
+import { lastAgentDeclarations } from "@/platform/agent-runtime/agent-runtime-api";
+import { signInAgent } from "@/platform/agent-setup/agent-setup-api";
 import {
-  diagnoseAgentActorAdapter as diagnoseAgentActorAdapterCommand,
   generateAgentActorId,
   getAgentActorCatalogSaveReview,
   getAgentActors,
@@ -19,7 +20,6 @@ import {
   type AgentActorOptionCatalog,
 } from "../model/agent-actor-reference";
 import type {
-  AgentActorAdapterDiagnostic,
   AgentActorBinding,
   AgentActorCatalogSnapshot,
   AgentActorMode,
@@ -57,7 +57,6 @@ export async function loadAgentActors(
           name: actor.name,
           ownerLabel: actorOwnerLabel(ownerPath),
           ownerPath,
-          runtimeStatus: "unchecked" as const,
         }),
       ),
     ),
@@ -92,11 +91,14 @@ export async function loadAgentActorOptions(
   });
 }
 
-export function diagnoseAgentActorAdapter(
-  launchSpacePath: string,
-  adapter: AgentAdapterId,
-): Promise<AgentActorAdapterDiagnostic> {
-  return diagnoseAgentActorAdapterCommand(launchSpacePath, adapter);
+/** Opens the terminal of the agent's own sign-in command; resolves to its id. */
+export async function signInBindingAgent(agent: AgentAdapterId) {
+  return (await signInAgent(agent)).ptyId;
+}
+
+/** What `agent` declared last on this device, per model; none when unreadable. */
+export function loadAgentDeclarations(agent: AgentAdapterId) {
+  return lastAgentDeclarations(agent).catch(() => []);
 }
 
 export async function createAgentActorId(): Promise<string> {
@@ -151,7 +153,7 @@ export { getAgentActorCatalogSaveReview, saveAgentActorCatalog };
 export type { AgentActorCatalogSaveReviewDto };
 
 export function toAgentActorMutationActor(input: {
-  binding: AgentActorBinding;
+  binding: AgentActorBinding | null;
   description: string;
   id: string;
   name: string;
@@ -181,7 +183,8 @@ function normalizeBinding(binding: AgentActorBindingDto): AgentActorBinding {
   });
 }
 
-function toBindingDto(binding: AgentActorBinding): AgentActorBindingDto {
+function toBindingDto(binding: AgentActorBinding | null): AgentActorBindingDto {
+  if (!binding) throw new Error("An Agent Actor needs a binding");
   if (binding.kind === "participant") return { participant: true };
   return {
     agent: binding.agent,
