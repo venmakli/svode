@@ -5,20 +5,19 @@
 //! The editor shows only the text after the frontmatter through Markdown IO:
 //! read and written as Markdown, YAML lines lose escapes, indents and line
 //! breaks (Evidence E4). The places come from the same reading of marker
-//! lines as a text file in conflict ([`super::conflict_file::places`]); a
-//! place that takes the closing `---` and the start of the text belongs to
-//! the frontmatter as a whole. A place that is not told apart leaves the
-//! version of a side for the whole file.
+//! lines as a text file in conflict ([`super::conflict_file::places`]), and
+//! so does the rule of which places lie in the frontmatter
+//! ([`super::conflict_file::frontmatter_places`]); a place that takes the
+//! closing `---` and the start of the text belongs to the frontmatter as a
+//! whole. A place that is not told apart leaves the version of a side for
+//! the whole file.
 
 use serde::Serialize;
 
 use super::conflict_file::{
-    self, Line, MAX_TEXT, Places, ResolutionFinding, Side, Split, UnclearReason,
+    self, FrontmatterPlaces, Line, MAX_TEXT, Places, ResolutionFinding, Side, Split, UnclearReason,
 };
-use super::conflict_kind::markers_in_frontmatter;
 use super::markers;
-
-const DELIMITER: &[u8] = b"---";
 
 /// The frontmatter of a Page in conflict and the text after it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -62,47 +61,18 @@ struct Frontmatter {
 impl Frontmatter {
     /// The frontmatter of `content` with conflict markers of `size` in it.
     fn read(content: &[u8], size: usize) -> Option<Self> {
-        if !markers_in_frontmatter(content, size) {
-            return None;
-        }
         let lines = conflict_file::split_lines(content, size);
         let (splits, _) = conflict_file::find_splits(&lines);
-        let delimiter = |index: usize| {
-            let line = &lines[index];
-            &content[line.start..line.content_end] == DELIMITER
-        };
-        // A conflict from the first line holds the opening `---` in its sides.
-        let mut opened = delimiter(0);
-        let mut index = usize::from(opened);
-        let mut blocks = Vec::new();
-        let mut reaches_text = false;
-        while index < lines.len() {
-            if let Some(at) = splits.iter().position(|split| split.lt == index) {
-                let split = splits[at];
-                blocks.push(at);
-                let delimiters =
-                    |from: usize, to: usize| (from + 1..to).filter(|line| delimiter(*line)).count();
-                let closing = if opened { 1 } else { 2 };
-                index = split.gt + 1;
-                if delimiters(split.lt, split.bar.unwrap_or(split.eq)) >= closing
-                    || delimiters(split.eq, split.gt) >= closing
-                {
-                    reaches_text = true;
-                    break;
-                }
-                opened = true;
-                continue;
-            }
-            index += 1;
-            if delimiter(index - 1) {
-                break;
-            }
-        }
+        let FrontmatterPlaces {
+            blocks,
+            end_line,
+            reaches_text,
+        } = conflict_file::frontmatter_places(content, &lines, &splits)?;
         Some(Self {
             lines,
             splits,
             blocks,
-            end_line: index,
+            end_line,
             reaches_text,
         })
     }

@@ -335,6 +335,87 @@ pub fn places(content: &[u8], size: usize) -> Places {
     }
 }
 
+/// The line that opens and closes the frontmatter of a Page.
+const FRONTMATTER_DELIMITER: &[u8] = b"---";
+
+/// The places of a Page that lie in its frontmatter.
+pub(super) struct FrontmatterPlaces {
+    /// Indices into the blocks of the file of those in the frontmatter.
+    pub(super) blocks: Vec<usize>,
+    /// Index of the first line after the frontmatter.
+    pub(super) end_line: usize,
+    /// A place takes the closing `---` and the start of the text.
+    pub(super) reaches_text: bool,
+}
+
+/// The places among `splits` of the Page `content` read as `lines` that
+/// lie in its frontmatter: a block that opens before the closing `---`,
+/// including one that takes the closing `---` and the start of the text, and
+/// one from the first line whose side opens with `---`. `None` when the Page
+/// has no frontmatter or no `<` marker line stands in it; a `<` line that
+/// folds into no block leaves the places empty.
+pub(super) fn frontmatter_places(
+    content: &[u8],
+    lines: &[Line],
+    splits: &[Split],
+) -> Option<FrontmatterPlaces> {
+    let delimiter = |index: usize| {
+        lines
+            .get(index)
+            .is_some_and(|line| &content[line.start..line.content_end] == FRONTMATTER_DELIMITER)
+    };
+    let mut opened = delimiter(0);
+    if !opened {
+        // A conflict from the first line holds the opening `---` in a side.
+        let first = splits.first().filter(|split| split.lt == 0)?;
+        if !delimiter(1) && !delimiter(first.eq + 1) {
+            return None;
+        }
+    }
+    let mut index = usize::from(opened);
+    let mut blocks = Vec::new();
+    let mut reaches_text = false;
+    while index < lines.len() {
+        if let Some(at) = splits.iter().position(|split| split.lt == index) {
+            let split = splits[at];
+            blocks.push(at);
+            let delimiters =
+                |from: usize, to: usize| (from + 1..to).filter(|line| delimiter(*line)).count();
+            let closing = if opened { 1 } else { 2 };
+            index = split.gt + 1;
+            if delimiters(split.lt, split.bar.unwrap_or(split.eq)) >= closing
+                || delimiters(split.eq, split.gt) >= closing
+            {
+                reaches_text = true;
+                break;
+            }
+            opened = true;
+            continue;
+        }
+        index += 1;
+        if delimiter(index - 1) {
+            break;
+        }
+    }
+    if blocks.is_empty() && !lines[..index].iter().any(|line| line.kind == Some(b'<')) {
+        return None;
+    }
+    Some(FrontmatterPlaces {
+        blocks,
+        end_line: index,
+        reaches_text,
+    })
+}
+
+/// Whether a conflict place of the Page `content` with markers of `size`
+/// lies in its frontmatter ([`frontmatter_places`]): the conflict is in the
+/// properties of the Page, otherwise in its text.
+pub fn places_in_frontmatter(content: &[u8], size: usize) -> bool {
+    let lines = split_lines(content, size);
+    let (splits, _) = find_splits(&lines);
+    frontmatter_places(content, &lines, &splits).is_some()
+}
+
 /// Whether the marker lines of block `index` of `splits` allow another
 /// split: a `<` line before its sides, a second `|` line in the `diff3`
 /// style, a second `=` line, or a `>` line after it before the next block.

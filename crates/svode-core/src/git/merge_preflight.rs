@@ -133,7 +133,8 @@ async fn merge_in_memory(
             fact(facts.entry(path.as_str()).or_default());
         }
     }
-    // Where the markers of a merged Page stand tells its text from its properties.
+    // A conflict place in the frontmatter of a merged Page tells its
+    // properties from its text, by the rule of the unresolved paths.
     let pages: Vec<String> = left
         .iter()
         .filter(|conflict| {
@@ -156,7 +157,7 @@ async fn merge_in_memory(
             .get(page)
             .copied()
             .unwrap_or(markers::DEFAULT_MARKER_SIZE);
-        if complete && conflict_kind::markers_in_frontmatter(&content, size) {
+        if complete && super::conflict_file::places_in_frontmatter(&content, size) {
             facts.entry(page.as_str()).or_default().frontmatter = true;
         }
     }

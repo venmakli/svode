@@ -2,7 +2,8 @@
 //! «Конфликт с правками коллег» of the in-memory preflight (1.B) and for the
 //! unresolved paths of a merge. A kind follows the index stages of the path
 //! and whether Git merged it as text, not its extension; a Page is told
-//! apart by where its conflict markers stand.
+//! apart by where the places of the merge of its stages stand, not by its
+//! working file.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -13,11 +14,10 @@ use super::GitError;
 use super::cli::GitCli;
 use super::markers;
 use super::service_merge::{self, ConflictedPath, StageEntry};
+use super::stage_merge::{self, ConflictStyle};
 
 /// Git decides a side is binary by a NUL byte among its first bytes.
 const BINARY_PROBE: usize = 8000;
-/// A merged Page larger than this is not read for the place of its markers.
-const MAX_PAGE: usize = 4 * 1024 * 1024;
 /// The first line of a Git LFS pointer file.
 pub(crate) const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 
@@ -89,7 +89,7 @@ pub struct KindFacts {
     /// The path takes part in a rename conflict:
     /// [`ConflictKind::RenameRename`] or [`ConflictKind::RenameDelete`].
     pub rename: Option<ConflictKind>,
-    /// Conflict markers of the merged Page stand in its frontmatter.
+    /// A conflict place of the merged Page lies in its frontmatter.
     pub frontmatter: bool,
 }
 
@@ -123,8 +123,10 @@ pub fn classify(conflict: &ConflictedPath, facts: KindFacts) -> ConflictKind {
 /// side that the merge base lacks is the renamed side of a rename/delete
 /// conflict (known only while a merge is in progress); a side Git does not
 /// merge as text — a NUL byte among its first bytes, an LFS pointer or the
-/// `merge` attribute unset — makes the path binary; where the markers of a
-/// Page stand in its working file tells its properties from its text.
+/// `merge` attribute unset — makes the path binary; a conflict place in the
+/// frontmatter of a Page merged again from its index stages with the marker
+/// size of its path tells its properties from its text, whatever its working
+/// file holds now.
 pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, GitError> {
     let conflicts = service_merge::index_conflicts(cli, repo).await?;
     if conflicts.is_empty() {
@@ -169,8 +171,10 @@ pub async fn unresolved(cli: &GitCli, repo: &Path) -> Result<Vec<PathConflict>, 
         let Some(size) = sizes.get(&conflict.path) else {
             continue;
         };
-        if let Some(content) = read_page(&repo.join(&conflict.path))? {
-            facts.frontmatter = markers_in_frontmatter(&content, *size);
+        if let Some(merged) =
+            stage_merge::merge_stages(cli, repo, conflict, *size, ConflictStyle::Merge).await?
+        {
+            facts.frontmatter = super::conflict_file::places_in_frontmatter(&merged, *size);
         }
     }
     let kinds: Vec<PathConflict> = conflicts
@@ -456,55 +460,14 @@ async fn binary_side(
     Ok(false)
 }
 
-/// The working file of a Page, `None` when it is gone or too large to read.
-fn read_page(file: &Path) -> Result<Option<Vec<u8>>, GitError> {
-    match std::fs::metadata(file) {
-        Ok(meta) if meta.len() as usize > MAX_PAGE => return Ok(None),
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    }
-    match std::fs::read(file) {
-        Ok(content) => Ok(Some(content)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-    }
-}
-
-/// Whether a conflict marker of `size` in the merged `content` of a Page
-/// opens before the end of its frontmatter: the conflict is in the
-/// properties, including a conflict that spans the closing `---` and the
-/// start of the text.
-pub fn markers_in_frontmatter(content: &[u8], size: usize) -> bool {
-    let mut lines = content.split(|byte| *byte == b'\n').map(|line| {
-        // As Git reads lines: a `\r` belongs to the line ending only before `\n`.
-        line.strip_suffix(b"\r").unwrap_or(line)
-    });
-    let opens = |line: &[u8]| {
-        line.len() >= size
-            && line[..size].iter().all(|byte| *byte == b'<')
-            && line.get(size).is_none_or(|next| *next == b' ')
-    };
-    match lines.next() {
-        Some(b"---") => {}
-        // A conflict from the first line that holds the opening `---`.
-        Some(first) if opens(first) => return lines.next() == Some(b"---"),
-        _ => return false,
-    }
-    for line in lines {
-        if opens(line) {
-            return true;
-        }
-        if line == b"---" {
-            return false;
-        }
-    }
-    false
-}
+#[cfg(all(test, unix))]
+#[path = "conflict_kind_tests.rs"]
+mod stage_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::conflict_file::places_in_frontmatter;
 
     fn entry(mode: &str) -> Option<StageEntry> {
         Some(StageEntry {
@@ -584,25 +547,40 @@ mod tests {
     fn a_marker_before_the_closing_line_is_in_the_properties() {
         let properties =
             b"---\n<<<<<<< ours\ntitle: A\n=======\ntitle: B\n>>>>>>> theirs\n---\nText\n";
-        assert!(markers_in_frontmatter(properties, 7));
+        assert!(places_in_frontmatter(properties, 7));
         let text = b"---\ntitle: A\n---\n<<<<<<< ours\nA\n=======\nB\n>>>>>>> theirs\n";
-        assert!(!markers_in_frontmatter(text, 7));
+        assert!(!places_in_frontmatter(text, 7));
         // A conflict spanning the closing line and the start of the text.
         let spanning = b"---\ntitle: A\n<<<<<<< ours\n---\nA\n=======\n---\nB\n>>>>>>> theirs\n";
-        assert!(markers_in_frontmatter(spanning, 7));
+        assert!(places_in_frontmatter(spanning, 7));
         // CRLF line endings and the marker size of the path.
         let crlf =
             b"---\r\n<<<<<<<<<< ours\r\na: 1\r\n==========\r\na: 2\r\n>>>>>>>>>> theirs\r\n---\r\n";
-        assert!(markers_in_frontmatter(crlf, 10));
-        assert!(!markers_in_frontmatter(crlf, 7));
+        assert!(places_in_frontmatter(crlf, 10));
+        assert!(!places_in_frontmatter(crlf, 7));
         // No frontmatter: every conflict is in the text.
-        assert!(!markers_in_frontmatter(
+        assert!(!places_in_frontmatter(
             b"<<<<<<< ours\nA\n=======\nB\n>>>>>>> theirs\n",
             7
         ));
         // A conflict from the first line over the opening `---`.
-        assert!(markers_in_frontmatter(
+        assert!(places_in_frontmatter(
             b"<<<<<<< ours\n---\ntitle: A\n---\n=======\nB\n>>>>>>> theirs\n",
+            7
+        ));
+        // Only the incoming side of a conflict from the first line opens one.
+        assert!(places_in_frontmatter(
+            b"<<<<<<< ours\nHello\n=======\n---\ntitle: B\n---\nHello\n>>>>>>> theirs\n",
+            7
+        ));
+        // A `<` line in the frontmatter that folds into no block.
+        assert!(places_in_frontmatter(
+            b"---\ntitle: A\n<<<<<<< ours\nnote: x\n---\nText\n",
+            7
+        ));
+        // A conflict place after the frontmatter that starts with `---` text.
+        assert!(!places_in_frontmatter(
+            b"---\ntitle: A\n---\n<<<<<<< ours\n---\nA\n=======\nB\n>>>>>>> theirs\n",
             7
         ));
     }
