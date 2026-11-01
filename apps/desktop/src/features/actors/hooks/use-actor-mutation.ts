@@ -16,7 +16,8 @@ type ActorMutationPendingPhase = "preview" | "apply" | null;
 interface UseActorMutationOptions {
   projectPath: string;
   spacePath: string;
-  onApplied(result: AppliedActorMutationResult): void;
+  /** `source` is the canonical email the merge or edit started from. */
+  onApplied(result: AppliedActorMutationResult, source: string | null): void;
   onDuplicate(canonicalEmail: string): void;
   onAccessBlocked?(
     continueIntent: () => void | Promise<void>,
@@ -125,7 +126,12 @@ export function useActorMutation({
     try {
       const result = await applyActorMutation(projectPath, spacePath, review);
       if (result.status === "applied") {
-        onApplied(result);
+        onApplied(
+          result,
+          "sourceCanonicalEmail" in review.action
+            ? review.action.sourceCanonicalEmail
+            : null,
+        );
         reset();
       } else if (result.status === "duplicate") {
         setDuplicateEmail(result.canonicalEmail);

@@ -9,20 +9,26 @@ import {
   type ActiveContentSelection,
 } from "@/features/artifact";
 import {
+  navigationKeyId,
   pathNavigationKey,
   spaceNavigationKey,
+  useNavigationItemDisplay,
   type NavigationItem,
 } from "@/features/navigation";
 import { useSpace } from "@/features/space";
+import { itemNavigationKey } from "./item-navigation";
 import { useShellStore } from "./model";
 
 /**
  * The one object of the main area as navigation sees it. A Space is its main
- * page; an artifact carries a title from its path until its source is read.
+ * page; an artifact carries a title from its path until its source is read;
+ * an item of a fixed Collection expanded over its owner carries the name its
+ * screen shows, empty until its source is read (`shown`).
  */
 export type MainAreaObject =
   | { kind: "space"; item: NavigationItem }
   | { kind: "artifact"; item: NavigationItem }
+  | { kind: "item"; item: NavigationItem; shown: boolean }
   | {
       kind: "session";
       item: NavigationItem;
@@ -44,6 +50,19 @@ export function useMainAreaObject(): MainAreaObject | null {
   const rootId = useSpace((state) => state.activeRootId);
   const rootName = useSpace((state) => state.activeRootName);
   const spaces = useSpace((state) => state.spaces);
+  const itemKey =
+    mainSurface === "content" &&
+    selection?.kind === "scope-owner" &&
+    selection.request.intent.kind === "item"
+      ? itemNavigationKey(
+          selection.request.owner,
+          selection.request.intent.item,
+          rootId,
+        )
+      : null;
+  const itemDisplay = useNavigationItemDisplay(
+    itemKey ? navigationKeyId(itemKey) : "",
+  );
 
   if (mainSurface === "session") {
     if (!sessionTarget || !session) return null;
@@ -55,6 +74,13 @@ export function useMainAreaObject(): MainAreaObject | null {
     };
   }
   if (mainSurface !== "content" || !selection) return null;
+  if (itemKey) {
+    return {
+      kind: "item",
+      item: { key: itemKey, title: itemDisplay?.title ?? "" },
+      shown: itemDisplay !== undefined,
+    };
+  }
   const spaceName = (spaceId: string | null) =>
     (spaceId && spaceId !== rootId
       ? spaces.find((space) => space.id === spaceId)?.name

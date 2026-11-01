@@ -166,6 +166,43 @@ test("active sessions not kept follow the kept objects, earlier activity first",
   ]);
 });
 
+test("an expanded item is temporary once its screen shows it, until pinned or kept", () => {
+  const key = {
+    kind: "routine" as const,
+    spaceId: "docs",
+    ownerKind: "space" as const,
+    ownerPath: ".",
+    routineId: "daily",
+  };
+  const shown: MainAreaObject = {
+    kind: "item",
+    item: { key, title: "Daily" },
+    shown: true,
+  };
+  const temporary = (input: Partial<typeof none>) =>
+    composeNow({ ...none, ...input }).find((row) => row.kind === "temporary");
+
+  expect(temporary({ mainObject: shown, described: shown.item })).toEqual({
+    kind: "temporary",
+    temporary: { item: shown.item, keepItem: shown.item, session: null },
+  });
+  expect(temporary({ mainObject: shown, described: null })).toBe(undefined);
+  expect(
+    temporary({
+      mainObject: shown,
+      described: shown.item,
+      kept: [{ key, title: "Daily" }],
+    }),
+  ).toBe(undefined);
+  expect(
+    temporary({
+      mainObject: shown,
+      described: shown.item,
+      pinned: [{ key, title: "Daily" }],
+    }),
+  ).toBe(undefined);
+});
+
 test("the main area artifact is temporary until it is pinned or kept", () => {
   const object: MainAreaObject = {
     kind: "artifact",

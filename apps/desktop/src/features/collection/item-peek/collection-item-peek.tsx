@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { UserEditScope } from "@/features/navigation";
 import { cn } from "@/shared/lib/utils";
 import { PeekSheet } from "@/shared/ui/peek-sheet";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
@@ -20,12 +21,14 @@ import type {
  * owner's source draws it in place, without opening it again or passing its
  * guard, so scroll, tabs and focus stay. While the source is not ready the
  * shown version stays; once the ready source has no such item the peek closes
- * and focus returns to the item's row or the fallback.
+ * and focus returns to the item's row or the fallback. Edits in the peek are
+ * not edits of the main area object.
  */
 export function CollectionItemPeek<Target, Item>({
   peek,
   find,
   render,
+  expand,
 }: {
   peek: CollectionItemPeekController<Target>;
   /**
@@ -35,6 +38,11 @@ export function CollectionItemPeek<Target, Item>({
    */
   find(target: Target): Item | null | undefined;
   render(item: Item, target: Target): CollectionItemPeekScreen;
+  /**
+   * "Expand" of a target that opens in the main area, which passes the
+   * guards of the peek and the main area; null for a target that does not.
+   */
+  expand?(target: Target): (() => void) | null;
 }) {
   const { target, sessionKey } = peek;
   const found = target === null ? null : find(target);
@@ -76,7 +84,13 @@ export function CollectionItemPeek<Target, Item>({
         <CollectionItemPeekScreenGuard peek={peek} screen={screen} />
       ) : null}
       {screen ? (
-        <CollectionItemPeekFrame screen={screen} onClose={() => void close()} />
+        <UserEditScope mainArea={false}>
+          <CollectionItemPeekFrame
+            screen={screen}
+            onExpand={target !== null ? (expand?.(target) ?? null) : null}
+            onClose={() => void close()}
+          />
+        </UserEditScope>
       ) : null}
     </PeekSheet>
   );
@@ -107,9 +121,11 @@ function CollectionItemPeekScreenGuard<Target>({
 
 function CollectionItemPeekFrame({
   screen,
+  onExpand,
   onClose,
 }: {
   screen: CollectionItemPeekScreen;
+  onExpand: (() => void) | null;
   onClose(): void;
 }) {
   if (screen.layout === "surface") {
@@ -129,6 +145,7 @@ function CollectionItemPeekFrame({
         menu={screen.menu}
         viewTools={screen.tools}
         openWith={screen.openWith}
+        onExpand={onExpand}
         onClose={onClose}
       />
       <ScrollArea

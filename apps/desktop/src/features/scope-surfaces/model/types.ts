@@ -41,6 +41,50 @@ export interface ScopeSurfaceRenderContext {
   presentation: ScopePresentation;
   /** An item the open request addressed in this surface, until consumed. */
   openItem?: ScopeOpenItem;
+  /**
+   * The item of this surface expanded as the main area object: the surface
+   * shows the screen of that item instead of its Collection.
+   */
+  mainItem?: ScopeMainItem;
+  /** "Expand" of an item in the surface's peek: the item opens in the main area. */
+  onExpandItem?: (item: ScopeItemRef) => void;
+}
+
+/**
+ * An item of a fixed Collection of an owner, by its id in its surface:
+ * a person or an Agent Actor also names its presentation.
+ */
+export interface ScopeItemRef {
+  surfaceId: ScopeSurfaceId;
+  itemId: string;
+  presentationId?: string;
+}
+
+/** The parts of an expanded item's screen the main top bar shows. */
+export interface ScopeMainItemTopBar {
+  /** Icon and name of the item, the last breadcrumb. */
+  identity: { icon: ReactNode; name: string };
+  info?: ReactNode;
+  menu?: ReactNode;
+  tools?: ReactNode;
+  openWith?: ReactNode;
+}
+
+/**
+ * The main area host of an expanded item. The surface gives the screen of
+ * the item; the host puts its top bar parts after the breadcrumbs of the
+ * owner and the surface, guards leaving it and closes it once it is gone.
+ */
+export interface ScopeMainItem {
+  item: ScopeItemRef;
+  renderTopBar(parts: ScopeMainItemTopBar): ReactNode;
+  /** Adds a guard every navigation away from the main area passes. */
+  registerNavigationGuard(guard: () => Promise<boolean>): () => void;
+  /**
+   * The ready source has no such item: it leaves Now and Pinned, and the
+   * main area closes.
+   */
+  onGone(): void;
 }
 
 export interface ScopeOpenItem {
@@ -62,4 +106,6 @@ export interface ScopeSurfaceContribution {
 
 export type ScopeOpenIntent =
   | { kind: "default" }
-  | { kind: "target"; surfaceId: ScopeSurfaceId; itemId?: string };
+  | { kind: "target"; surfaceId: ScopeSurfaceId; itemId?: string }
+  /** The item expanded as the main area object instead of its owner. */
+  | { kind: "item"; item: ScopeItemRef };

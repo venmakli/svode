@@ -19,7 +19,11 @@
 //! source:
 //! an available target refreshes its display snapshot, an unreadable source
 //! keeps it as unavailable, and only a target whose absence a successful read
-//! confirms is dropped. Sessions are resolved by the frontend catalog.
+//! confirms is dropped. Sessions are resolved by the frontend catalog, items
+//! of fixed Collections by their domain once their Space is ready.
+//!
+//! A read skips an entry whose key kind this build does not know and keeps
+//! the rest of the file; the version stays.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -60,7 +64,12 @@ fn path_change_in_flight(project: &Path) -> bool {
 /// Typed identity of an object in the navigation state. Artifacts are keyed
 /// by their registered Space (`None` for the Project root) and normalized
 /// repo-relative path; a session by its canonical id, or by its launch id
-/// until the catalog knows the canonical one.
+/// until the catalog knows the canonical one. An item of a fixed Collection
+/// is keyed by its identity at the owner of its domain, in the Space whose
+/// Collection shows it: a Routine by its owner and the id of its definition,
+/// an Agent Actor by its id, a person by the canonical email in the
+/// repository of the Space, an item of the "Context" by the stable id the
+/// scanner gives it in the Space.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum NavigationKey {
@@ -97,7 +106,42 @@ pub enum NavigationKey {
     Session { session_id: String },
     #[serde(rename_all = "camelCase")]
     SessionLaunch { launch_id: String },
+    Routine(NavigationRoutine),
+    #[serde(rename_all = "camelCase")]
+    AgentActor {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        space_id: Option<String>,
+        actor_id: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Person {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        space_id: Option<String>,
+        email: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    ContextItem {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        space_id: Option<String>,
+        item_id: String,
+    },
 }
+
+/// The `kind` of every key this build reads. A read skips an entry of any
+/// other kind, written by a newer build, and keeps the rest of the file.
+const KNOWN_KEY_KINDS: &[&str] = &[
+    "space",
+    "page",
+    "collection",
+    "attachment",
+    "app",
+    "session",
+    "sessionLaunch",
+    "routine",
+    "agentActor",
+    "person",
+    "contextItem",
+];
 
 impl NavigationKey {
     /// Registered Space id and repo-relative path of an artifact key.
@@ -107,6 +151,18 @@ impl NavigationKey {
             | Self::Collection { space_id, path }
             | Self::Attachment { space_id, path }
             | Self::App { space_id, path } => Some((space_id.as_deref(), path)),
+            _ => None,
+        }
+    }
+
+    /// Registered Space id of an item of a fixed Collection; its domain, not
+    /// Desktop, resolves the item itself.
+    fn item_space(&self) -> Option<Option<&str>> {
+        match self {
+            Self::Routine(NavigationRoutine { space_id, .. })
+            | Self::AgentActor { space_id, .. }
+            | Self::Person { space_id, .. }
+            | Self::ContextItem { space_id, .. } => Some(space_id.as_deref()),
             _ => None,
         }
     }
@@ -189,6 +245,34 @@ impl NavigationKey {
             Self::SessionLaunch { launch_id } => Self::SessionLaunch {
                 launch_id: id(launch_id, "launch id")?,
             },
+            Self::Routine(routine) => Self::Routine(NavigationRoutine {
+                owner_path: match routine.owner_kind {
+                    RoutineOwnerKind::Collection => path(routine.owner_path)?,
+                    RoutineOwnerKind::Project | RoutineOwnerKind::Space => {
+                        if routine.owner_path != "." {
+                            return Err(AppError::General(format!(
+                                "Invalid navigation Routine owner: {}",
+                                routine.owner_path
+                            )));
+                        }
+                        routine.owner_path
+                    }
+                },
+                routine_id: id(routine.routine_id, "Routine id")?,
+                ..routine
+            }),
+            Self::AgentActor { space_id, actor_id } => Self::AgentActor {
+                space_id,
+                actor_id: id(actor_id, "Agent Actor id")?,
+            },
+            Self::Person { space_id, email } => Self::Person {
+                space_id,
+                email: id(email, "email")?,
+            },
+            Self::ContextItem { space_id, item_id } => Self::ContextItem {
+                space_id,
+                item_id: id(item_id, "Context item id")?,
+            },
         })
     }
 }
@@ -255,9 +339,9 @@ struct SpaceExpansion {
 #[serde(rename_all = "camelCase")]
 struct NavigationFile {
     version: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "known_items")]
     pinned: Vec<NavigationItem>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "known_items")]
     kept: Vec<NavigationItem>,
     #[serde(default)]
     expanded: Vec<SpaceExpansion>,
@@ -270,6 +354,24 @@ impl NavigationFile {
             ..Self::default()
         }
     }
+}
+
+/// The entries whose key kind this build knows; an entry of a known kind
+/// that does not parse still fails the file.
+fn known_items<'de, D>(deserializer: D) -> Result<Vec<NavigationItem>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<serde_json::Value>::deserialize(deserializer)?
+        .into_iter()
+        .filter(|entry| {
+            entry
+                .pointer("/key/kind")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|kind| KNOWN_KEY_KINDS.contains(&kind))
+        })
+        .map(|entry| serde_json::from_value(entry).map_err(serde::de::Error::custom))
+        .collect()
 }
 
 fn file_path(project: &Path) -> PathBuf {
@@ -676,8 +778,11 @@ fn owner(root: &Path, path: &str) -> Resolution {
 }
 
 /// Resolves navigation items in place and returns what the frontend shows.
-/// Sessions are left to the frontend catalog. While an in-app path change is
-/// in flight, a missing target stays as unavailable.
+/// Sessions are left to the frontend catalog, items of fixed Collections to
+/// their domain once their Space is ready: Desktop only drops an item of a
+/// Space that is gone and marks one of an unreadable Space unavailable.
+/// While an in-app path change is in flight, a missing target stays as
+/// unavailable.
 fn resolve_items(sources: &mut Sources, items: &mut Vec<NavigationItem>) -> Vec<ResolvedItem> {
     let drop_missing = !path_change_in_flight(sources.project);
     let mut shown = Vec::with_capacity(items.len());
@@ -692,6 +797,20 @@ fn resolve_items(sources: &mut Sources, items: &mut Vec<NavigationItem>) -> Vec<
                 return true;
             }
             NavigationKey::Space { space_id } => sources.space(space_id.as_deref()),
+            key if key.item_space().is_some() => {
+                let space_id = key.item_space().flatten().map(str::to_string);
+                let available = match sources.space_root(space_id.as_deref()) {
+                    Ok(_) => None,
+                    Err(Resolution::Missing) if drop_missing => return false,
+                    Err(_) => Some(false),
+                };
+                shown.push(ResolvedItem {
+                    item: item.clone(),
+                    available,
+                    open_path: None,
+                });
+                return true;
+            }
             key => sources.artifact(key),
         };
         let (available, open_path) = match resolution {
@@ -774,14 +893,24 @@ pub fn path_change(space: &str) -> PathChange {
 }
 
 /// Moves the keys of the artifact at `from` and of everything under it to
-/// `to`; the moved targets take the form they have now. Returns whether the
-/// navigation state changed.
+/// `to`, with the Routines of the Collections among them; the moved targets
+/// take the form they have now. Returns whether the navigation state
+/// changed.
 fn retarget(space: &Path, from: &str, to: &str) -> Result<bool, AppError> {
     let (project, space_id) = space_target(space)?;
     let (from, to) = (key_path(from), key_path(to));
     mutate(&project, |file| {
         let before = file.clone();
         for item in file.pinned.iter_mut().chain(file.kept.iter_mut()) {
+            // The Routines of a Collection follow its folder.
+            if let NavigationKey::Routine(routine) = &mut item.key
+                && routine.owner_kind == RoutineOwnerKind::Collection
+                && routine.space_id == space_id
+                && let Some(moved) = remap(&routine.owner_path, &from, &to)
+            {
+                routine.owner_path = moved;
+                continue;
+            }
             if item
                 .key
                 .artifact()
@@ -794,6 +923,40 @@ fn retarget(space: &Path, from: &str, to: &str) -> Result<bool, AppError> {
             {
                 *path = moved;
             }
+        }
+        resolved(&project, file);
+        Ok(*file != before)
+    })
+}
+
+/// Moves the keys of the person at canonical email `from` in `space` to
+/// `to`, as a merge or an edit of the person changed it. A person pinned or
+/// kept twice afterwards stays once, pinned before kept. Returns whether the
+/// navigation state changed.
+fn rekey_person(space: &Path, from: &str, to: &str) -> Result<bool, AppError> {
+    let (project, space_id) = space_target(space)?;
+    mutate(&project, |file| {
+        let before = file.clone();
+        for item in file.pinned.iter_mut().chain(file.kept.iter_mut()) {
+            if let NavigationKey::Person {
+                space_id: key_space,
+                email,
+            } = &mut item.key
+                && *key_space == space_id
+                && email == from
+            {
+                *email = to.to_string();
+            }
+        }
+        let mut seen: Vec<NavigationKey> = Vec::new();
+        for items in [&mut file.pinned, &mut file.kept] {
+            items.retain(|item| {
+                if seen.iter().any(|key| key.same_target(&item.key)) {
+                    return false;
+                }
+                seen.push(item.key.clone());
+                true
+            });
         }
         resolved(&project, file);
         Ok(*file != before)
@@ -828,6 +991,12 @@ fn notify(app: &AppHandle, changed: Result<bool, AppError>) {
 /// Navigation is recoverable UI state, so a failure never fails the change.
 pub fn artifact_moved(app: &AppHandle, space: &str, from: &str, to: &str) {
     notify(app, retarget(Path::new(space), from, to));
+}
+
+/// Keeps a pinned or kept person on an in-app change of its canonical email
+/// in the repository of `space`.
+pub fn person_renamed(app: &AppHandle, space: &Path, from: &str, to: &str) {
+    notify(app, rekey_person(space, from, to));
 }
 
 /// Drops the pinned and kept items an in-app deletion removed; the read of
@@ -1884,5 +2053,330 @@ mod tests {
             )
             .unwrap()
         );
+    }
+
+    fn item(key: NavigationKey, title: &str) -> NavigationItem {
+        artifact(key, title)
+    }
+
+    fn collection_routine(space_id: Option<&str>, owner_path: &str, id: &str) -> NavigationKey {
+        NavigationKey::Routine(NavigationRoutine {
+            space_id: space_id.map(str::to_string),
+            owner_kind: RoutineOwnerKind::Collection,
+            owner_path: owner_path.into(),
+            routine_id: id.into(),
+        })
+    }
+
+    fn person(space_id: Option<&str>, email: &str) -> NavigationKey {
+        NavigationKey::Person {
+            space_id: space_id.map(str::to_string),
+            email: email.into(),
+        }
+    }
+
+    /// One key of each item kind, in the root and in the child Space.
+    fn item_keys() -> Vec<NavigationKey> {
+        vec![
+            NavigationKey::Routine(NavigationRoutine {
+                space_id: None,
+                owner_kind: RoutineOwnerKind::Project,
+                owner_path: ".".into(),
+                routine_id: "daily".into(),
+            }),
+            collection_routine(Some("child-id"), "tasks", "weekly"),
+            NavigationKey::AgentActor {
+                space_id: Some("child-id".into()),
+                actor_id: "reviewer".into(),
+            },
+            person(None, "ann@example.com"),
+            NavigationKey::ContextItem {
+                space_id: Some("child-id".into()),
+                item_id: "skill:review".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn every_key_kind_is_known_to_the_read() {
+        let keys = [
+            NavigationKey::Space { space_id: None },
+            child_page("a.md"),
+            NavigationKey::Collection {
+                space_id: None,
+                path: "c".into(),
+            },
+            NavigationKey::Attachment {
+                space_id: None,
+                path: "a.pdf".into(),
+            },
+            NavigationKey::App {
+                space_id: None,
+                path: "app".into(),
+            },
+            session_key("codex:a"),
+            NavigationKey::SessionLaunch {
+                launch_id: "l".into(),
+            },
+        ]
+        .into_iter()
+        .chain(item_keys());
+        let mut kinds = keys
+            .map(|key| serde_json::to_value(key).unwrap()["kind"].clone())
+            .map(|kind| kind.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        kinds.dedup();
+        assert_eq!(kinds, KNOWN_KEY_KINDS);
+    }
+
+    #[test]
+    fn item_keys_survive_reread_and_leave_items_to_their_domain() {
+        let project = project();
+        for key in item_keys() {
+            pin(project.path(), item(key, "Snapshot")).unwrap();
+        }
+        let state = read_state(project.path());
+        assert_eq!(
+            shown(&state),
+            item_keys()
+                .into_iter()
+                .map(|key| (key, "Snapshot".to_string(), None))
+                .collect::<Vec<_>>()
+        );
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file_path(project.path())).unwrap())
+                .unwrap();
+        assert_eq!(
+            file["pinned"][0]["key"],
+            serde_json::json!({
+                "kind": "routine",
+                "ownerKind": "project",
+                "ownerPath": ".",
+                "routineId": "daily"
+            })
+        );
+        assert_eq!(
+            file["pinned"][2]["key"],
+            serde_json::json!({ "kind": "agentActor", "spaceId": "child-id", "actorId": "reviewer" })
+        );
+        assert_eq!(
+            file["pinned"][3]["key"],
+            serde_json::json!({ "kind": "person", "email": "ann@example.com" })
+        );
+        assert_eq!(
+            file["pinned"][4]["key"],
+            serde_json::json!({ "kind": "contextItem", "spaceId": "child-id", "itemId": "skill:review" })
+        );
+
+        // An item of a missing Space stays unavailable.
+        std::fs::rename(project.path().join("child"), project.path().join("moved-away")).unwrap();
+        let unavailable = read_state(project.path())
+            .pinned
+            .iter()
+            .map(|pinned| pinned.available)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unavailable,
+            vec![None, Some(false), Some(false), None, Some(false)]
+        );
+
+        // An item of a Space that is no longer registered is gone.
+        std::fs::write(
+            project.path().join(".svode/config.json"),
+            serde_json::json!({ "name": "Project", "spaces": [] }).to_string(),
+        )
+        .unwrap();
+        let keys = read_state(project.path())
+            .pinned
+            .into_iter()
+            .map(|pinned| pinned.item.key)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec![item_keys()[0].clone(), item_keys()[3].clone()]);
+    }
+
+    #[test]
+    fn item_keys_are_validated() {
+        let project = project();
+        for key in [
+            NavigationKey::Routine(NavigationRoutine {
+                space_id: None,
+                owner_kind: RoutineOwnerKind::Space,
+                owner_path: "tasks".into(),
+                routine_id: "daily".into(),
+            }),
+            collection_routine(None, "../tasks", "daily"),
+            collection_routine(None, "tasks", " "),
+            NavigationKey::AgentActor {
+                space_id: None,
+                actor_id: "".into(),
+            },
+            person(None, " "),
+            NavigationKey::ContextItem {
+                space_id: None,
+                item_id: "".into(),
+            },
+        ] {
+            assert!(pin(project.path(), item(key, "Bad")).is_err());
+        }
+        let state = pin(
+            project.path(),
+            item(collection_routine(None, "/tasks/", "daily"), "Daily"),
+        )
+        .unwrap();
+        assert_eq!(
+            state.pinned[0].item.key,
+            collection_routine(None, "tasks", "daily")
+        );
+    }
+
+    #[test]
+    fn entries_of_unknown_key_kinds_are_skipped_and_the_rest_reads_as_before() {
+        let project = project();
+        write(project.path(), "notes.md", &page("Notes"));
+        let page_entry = serde_json::json!({ "key": { "kind": "page", "path": "notes.md" }, "title": "Notes" });
+        let session_entry = serde_json::json!({ "key": { "kind": "session", "sessionId": "codex:a" }, "title": "Chat" });
+        let launch_entry = serde_json::json!({
+            "key": { "kind": "sessionLaunch", "launchId": "l1" },
+            "title": "Daily",
+            "routine": { "ownerKind": "project", "ownerPath": ".", "routineId": "daily" }
+        });
+        std::fs::write(
+            file_path(project.path()),
+            serde_json::json!({
+                "version": VERSION,
+                "pinned": [
+                    { "key": { "kind": "board", "boardId": "b1" }, "title": "Board" },
+                    page_entry,
+                ],
+                "kept": [
+                    session_entry,
+                    { "key": { "kind": "future", "id": 1 }, "title": "Future", "extra": true },
+                    launch_entry,
+                ],
+                "expanded": [{ "paths": ["notes"] }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let state = read_state(project.path());
+        assert_eq!(state.pinned.len(), 1);
+        assert_eq!(state.pinned[0].item.title, "Notes");
+        assert_eq!(
+            state
+                .kept
+                .iter()
+                .map(|kept| kept.item.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Chat", "Daily"]
+        );
+        assert_eq!(expanded_paths(project.path()).unwrap(), vec!["notes"]);
+
+        // A write keeps the version and the values of the known keys.
+        keep(project.path(), item(item_keys()[3].clone(), "Ann"), None).unwrap();
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file_path(project.path())).unwrap())
+                .unwrap();
+        assert_eq!(file["version"], serde_json::json!(VERSION));
+        assert_eq!(file["pinned"], serde_json::json!([page_entry]));
+        assert_eq!(file["kept"][0], session_entry);
+        assert_eq!(file["kept"][1], launch_entry);
+        assert_eq!(
+            file["kept"][2]["key"],
+            serde_json::json!({ "kind": "person", "email": "ann@example.com" })
+        );
+
+        // An entry of a known kind that does not parse still fails the file.
+        std::fs::write(
+            file_path(project.path()),
+            serde_json::json!({
+                "version": VERSION,
+                "pinned": [page_entry, { "key": { "kind": "page" }, "title": "No path" }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(read_state(project.path()), NavigationState::default());
+    }
+
+    #[test]
+    fn routines_of_a_collection_follow_its_in_app_move() {
+        let project = project();
+        let child = project.path().join("child");
+        write(&child, "tasks/README.md", &page("Tasks"));
+        write(&child, "tasks/schema.yaml", "fields: []\n");
+        for key in [
+            collection_routine(Some("child-id"), "tasks", "weekly"),
+            collection_routine(Some("child-id"), "tasks/inner", "nested"),
+            collection_routine(None, "tasks", "root"),
+            collection_routine(Some("child-id"), "tasks-old", "other"),
+        ] {
+            pin(project.path(), item(key, "Routine")).unwrap();
+        }
+
+        std::fs::create_dir_all(child.join("archive")).unwrap();
+        std::fs::rename(child.join("tasks"), child.join("archive/tasks")).unwrap();
+        assert!(retarget(&child, "tasks/README.md", "archive/tasks/README.md").unwrap());
+
+        let keys = read_state(project.path())
+            .pinned
+            .into_iter()
+            .map(|pinned| pinned.item.key)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec![
+                collection_routine(Some("child-id"), "archive/tasks", "weekly"),
+                collection_routine(Some("child-id"), "archive/tasks/inner", "nested"),
+                collection_routine(None, "tasks", "root"),
+                collection_routine(Some("child-id"), "tasks-old", "other"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_new_canonical_email_moves_the_person_keys_of_its_space() {
+        let project = project();
+        let child = project.path().join("child");
+        pin(
+            project.path(),
+            item(person(Some("child-id"), "old@example.com"), "Ann"),
+        )
+        .unwrap();
+        pin(project.path(), item(person(None, "old@example.com"), "Ann")).unwrap();
+        keep(
+            project.path(),
+            item(person(Some("child-id"), "new@example.com"), "Ann"),
+            None,
+        )
+        .unwrap();
+        keep(
+            project.path(),
+            item(person(Some("child-id"), "bob@example.com"), "Bob"),
+            None,
+        )
+        .unwrap();
+
+        assert!(rekey_person(&child, "old@example.com", "new@example.com").unwrap());
+        let state = read_state(project.path());
+        let keys = |items: &[ResolvedItem]| {
+            items
+                .iter()
+                .map(|resolved| resolved.item.key.clone())
+                .collect::<Vec<_>>()
+        };
+        // The merged person stays once, pinned; another Space keeps its own.
+        assert_eq!(
+            keys(&state.pinned),
+            vec![
+                person(Some("child-id"), "new@example.com"),
+                person(None, "old@example.com"),
+            ]
+        );
+        assert_eq!(
+            keys(&state.kept),
+            vec![person(Some("child-id"), "bob@example.com")]
+        );
+        assert!(!rekey_person(&child, "old@example.com", "new@example.com").unwrap());
     }
 }

@@ -44,7 +44,7 @@ pub enum WindowOpenIntent {
 pub enum ProjectWindowRequest {
     Focus,
     NewChat,
-    Open { item: NavigationItem },
+    Open { item: Box<NavigationItem> },
     Search,
 }
 

@@ -130,7 +130,10 @@ export function WindowHeader() {
 
   // Home without an active project shows no project chrome.
   const projectShown = activeRootPath !== null;
-  const showBreadcrumbs = projectShown && mainSurface === "content";
+  // A surface that publishes its own breadcrumbs, such as an expanded item,
+  // replaces those of the selection.
+  const showBreadcrumbs =
+    projectShown && mainSurface === "content" && !contribution?.breadcrumbs;
   // Git sync shows the repository of the open object: a session's own
   // Space, the active Space for everything else.
   const repositoryPath = sessionChanges?.spacePath ?? activeSpacePath;

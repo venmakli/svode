@@ -367,4 +367,46 @@ if (process.env.SVODE_MAIN_BREADCRUMBS_DOM !== "1") {
     );
     expect(texts()).toEqual(["Session"]);
   });
+
+  test("an expanded item follows its owner's path and the tab, which open past the guards", async () => {
+    await reset();
+    setProject([space("docs", "Docs", "📚")]);
+    // The owner is a Collection of the Space.
+    useSpaceStore.setState({
+      fileTrees: {
+        root: tree("Alpha"),
+        docs: [{ ...tree("Docs alpha")[0], has_schema: true }],
+      },
+    });
+    const tabs: string[] = [];
+    await render(
+      <SpaceBreadcrumbs
+        home={false}
+        spacePath="/project/docs"
+        path="a"
+        links={[
+          {
+            key: "surface:routines",
+            label: "Routines",
+            icon: <span>R</span>,
+            onOpen: () => tabs.push("routines"),
+          },
+        ]}
+        current={<span data-current>Daily</span>}
+        onBeforeNavigation={guard}
+      />,
+    );
+    expect(texts()).toEqual(["📚Docs", "🅰️Docs alpha", "RRoutines", "Daily"]);
+    // The owner opens past the guards, as a breadcrumb of a Page does.
+    await click(items()[1].querySelector("button")!);
+    expect(calls.guard).toBe(1);
+    const selection = artifact.getActiveContentSelection().selection;
+    expect(
+      selection?.kind === "scope-owner" ? selection.request.owner : null,
+    ).toEqual({ kind: "collection", path: "a", spaceId: "docs" });
+    // The tab breadcrumb hands its opening to the surface.
+    await click(items()[2].querySelector("button")!);
+    expect(tabs).toEqual(["routines"]);
+    expect(items()[3].querySelector("button")).toBe(null);
+  });
 }

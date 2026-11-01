@@ -140,6 +140,7 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
     kind: string;
     item: { key: Key; title: string };
     session?: Session;
+    shown?: boolean;
   } | null = null;
   let shell = {
     mainSurface: "content",
@@ -261,6 +262,28 @@ if (process.env.SVODE_WORKING_SET_DOM !== "1") {
       for (const listener of editListeners) listener({ kind: "edit" });
     });
     expect(keptIds()).toEqual([]);
+  });
+
+  test("an edit in the main area keeps an expanded item once its screen shows it", async () => {
+    kept.length = 0;
+    const item = {
+      key: { kind: "routine", sessionId: "daily" },
+      title: "Daily",
+    };
+    const edit = async () =>
+      act(async () => {
+        for (const listener of editListeners) listener({ kind: "edit" });
+      });
+    mainObject = { kind: "item", item: { ...item, title: "" }, shown: false };
+    await act(async () => root.render(<Host />));
+    await edit();
+    expect(kept).toEqual([]);
+    mainObject = { kind: "item", item, shown: true };
+    await act(async () => root.render(<Host />));
+    await edit();
+    expect(kept).toEqual([item]);
+    mainObject = null;
+    await act(async () => root.render(<Host />));
   });
 
   test("⌘W on Home closes the object for a new chat with its project", async () => {

@@ -8,12 +8,16 @@ import {
   useCollectionState,
   type CollectionInstance,
 } from "@/features/collection";
-import { CollectionItemPeek } from "@/features/collection/app-shell";
+import {
+  CollectionItemMain,
+  CollectionItemPeek,
+} from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import { useAppLocale } from "@/features/settings";
 
 import { useAgentContext } from "../hooks/use-agent-context";
 import { useAgentContextPeek } from "../hooks/use-agent-context-peek";
+import type { AgentContextPeekTarget } from "../model/detail-items";
 import type { AgentContextItem } from "../model/types";
 import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
 import { AgentContextDiagnosticsDialog } from "./agent-context-diagnostics-dialog";
@@ -26,6 +30,8 @@ import {
 import { createAgentContextItemProperties } from "./item-properties";
 
 export function AgentContextSurface({
+  mainItem,
+  onExpandItem,
   onOpenProviders,
   owner,
 }: ScopeSurfaceRenderContext & {
@@ -134,6 +140,38 @@ export function AgentContextSurface({
     );
   }
 
+  const expand = (target: AgentContextPeekTarget) =>
+    target.kind === "item" && onExpandItem
+      ? () => onExpandItem({ surfaceId: "context", itemId: target.itemId })
+      : null;
+  // A plugin's components and a skill's files open in the peek over the
+  // screen, in the main area as in the Collection.
+  const peekElement = (
+    <CollectionItemPeek
+      peek={contextPeek.peek}
+      find={contextPeek.find}
+      render={contextPeek.render}
+      expand={expand}
+    />
+  );
+
+  if (mainItem) {
+    return (
+      <div
+        className="flex min-h-full flex-col"
+        data-agent-context-surface={owner.ownerKey}
+      >
+        <CollectionItemMain
+          main={mainItem}
+          target={{ kind: "item", instanceKey, itemId: mainItem.item.itemId }}
+          find={contextPeek.find}
+          render={contextPeek.render}
+        />
+        {peekElement}
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -150,11 +188,7 @@ export function AgentContextSurface({
         instance={instance}
         state={collectionState}
       />
-      <CollectionItemPeek
-        peek={contextPeek.peek}
-        find={contextPeek.find}
-        render={contextPeek.render}
-      />
+      {peekElement}
     </div>
   );
 }

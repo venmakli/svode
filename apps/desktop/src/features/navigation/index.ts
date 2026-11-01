@@ -22,18 +22,31 @@ export {
   useSignalUserEdit,
 } from "./hooks/use-signal-user-edit";
 export {
+  agentActorNavigationKey,
+  contextItemNavigationKey,
+  isNavigationItemKey,
   pathNavigationKey,
+  personNavigationKey,
+  routineNavigationKey,
   navigationKeyId,
   navigationKeyPath,
   navigationRoutineId,
   sameNavigationKey,
   spaceNavigationKey,
+  type NavigationItemKey,
+  type NavigationItemKeyKind,
   type NavigationPathKeyKind,
   type NavigationItem,
   type NavigationKey,
   type NavigationResolvedItem,
 } from "./model/keys";
 export { describeNavigationItem } from "./api/navigation";
+export {
+  publishNavigationItemDisplays,
+  useNavigationItemDisplay,
+  type NavigationItemDisplay,
+  type NavigationItemSource,
+} from "./model/item-display";
 export { subscribeUserEdits, type UserEdit } from "./model/user-edit-signal";
 export { NavigationSidebarGroup } from "./ui/navigation-sidebar-group";
 export { NavigationSidebarItem } from "./ui/navigation-sidebar-item";

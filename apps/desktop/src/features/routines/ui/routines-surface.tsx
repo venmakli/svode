@@ -16,6 +16,8 @@ import { RoutineAutomaticConsentNotice } from "./routine-automatic-consent-notic
 export function RoutinesSurface({
   owner,
   openItem,
+  mainItem,
+  onExpandItem,
   readOnly,
   onOpenAgentActor,
   onOpenAgentSettings,
@@ -32,8 +34,30 @@ export function RoutinesSurface({
     onOpenSession,
     readOnly,
     openItem,
-    { onOpenAgentActor, onOpenAgentSettings },
+    { mainItem, onExpandItem, onOpenAgentActor, onOpenAgentSettings },
   );
+  const unavailable = (
+    <div className="px-6 py-3">
+      <Alert variant="destructive">
+        <AlertTriangle />
+        <AlertDescription>
+          {controller.collectionState.phase === "blocking_error"
+            ? controller.collectionState.diagnostics.join(" ")
+            : m.routines_catalog_unavailable()}
+        </AlertDescription>
+      </Alert>
+    </div>
+  );
+  if (controller.main) {
+    return (
+      <div className="flex min-h-full flex-col" data-routines-surface>
+        {controller.collectionState.phase === "blocking_error"
+          ? unavailable
+          : controller.main}
+        {controller.overlays}
+      </div>
+    );
+  }
   const body =
     controller.collectionState.phase === "ready" ? (
       <CollectionHost
@@ -68,16 +92,7 @@ export function RoutinesSurface({
         state={controller.collectionState}
       />
     ) : (
-      <div className="px-6 py-3">
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertDescription>
-            {controller.collectionState.phase === "blocking_error"
-              ? controller.collectionState.diagnostics.join(" ")
-              : m.routines_catalog_unavailable()}
-          </AlertDescription>
-        </Alert>
-      </div>
+      unavailable
     );
 
   return (

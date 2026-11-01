@@ -9,6 +9,7 @@ export { filePreferenceKey } from "./model/preference-key";
 export { revealInFileManagerLabel } from "./model/reveal-label";
 export { ExternalAppIcon } from "./ui/external-app-icon";
 export { ExternalOpenButton } from "./ui/external-open-button";
+export { ExternalOpenGroupHost } from "./ui/external-open-group-host";
 export { OpenWithControl } from "./ui/open-with-control";
 export { useExternalOpen } from "./hooks/use-external-open";
 export { useExternalOpenGroup } from "./hooks/use-external-open-group";

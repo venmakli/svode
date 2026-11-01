@@ -12,6 +12,27 @@ export type NavigationPathKeyKind = Extract<
   NavigationKey,
   { path: string }
 >["kind"];
+/** The kinds of keys of items of fixed Collections, which their domain resolves. */
+export type NavigationItemKeyKind =
+  | "routine"
+  | "agentActor"
+  | "person"
+  | "contextItem";
+export type NavigationItemKey = Extract<
+  NavigationKey,
+  { kind: NavigationItemKeyKind }
+>;
+
+export function isNavigationItemKey(
+  key: NavigationKey,
+): key is NavigationItemKey {
+  return (
+    key.kind === "routine" ||
+    key.kind === "agentActor" ||
+    key.kind === "person" ||
+    key.kind === "contextItem"
+  );
+}
 
 /**
  * Stable identity string of a key, equal for keys that address one object.
@@ -25,6 +46,30 @@ export function navigationKeyId(key: NavigationKey): string {
       return JSON.stringify([key.kind, key.sessionId]);
     case "sessionLaunch":
       return JSON.stringify([key.kind, key.launchId]);
+    case "routine":
+      return JSON.stringify([
+        "item",
+        key.kind,
+        key.spaceId ?? null,
+        key.ownerPath,
+        key.routineId,
+      ]);
+    case "agentActor":
+      return JSON.stringify([
+        "item",
+        key.kind,
+        key.spaceId ?? null,
+        key.actorId,
+      ]);
+    case "person":
+      return JSON.stringify(["item", key.kind, key.spaceId ?? null, key.email]);
+    case "contextItem":
+      return JSON.stringify([
+        "item",
+        key.kind,
+        key.spaceId ?? null,
+        key.itemId,
+      ]);
     default:
       return JSON.stringify(["artifact", key.spaceId ?? null, key.path]);
   }
@@ -94,4 +139,51 @@ export function pathNavigationKey(
     ...keySpaceId(spaceId, rootSpaceId),
     path: kind === "attachment" ? path : navigationKeyPath(path),
   };
+}
+
+/**
+ * A Routine by its owner and the id of its definition: the Project root or
+ * a Space at owner path ".", a Collection by its folder.
+ */
+export function routineNavigationKey(
+  spaceId: string | null | undefined,
+  ownerPath: string,
+  routineId: string,
+  rootSpaceId: string | null,
+): NavigationKey {
+  const space = keySpaceId(spaceId, rootSpaceId);
+  return {
+    kind: "routine",
+    ...space,
+    ownerKind:
+      ownerPath !== "." ? "collection" : space.spaceId ? "space" : "project",
+    ownerPath,
+    routineId,
+  };
+}
+
+export function agentActorNavigationKey(
+  spaceId: string | null | undefined,
+  actorId: string,
+  rootSpaceId: string | null,
+): NavigationKey {
+  return { kind: "agentActor", ...keySpaceId(spaceId, rootSpaceId), actorId };
+}
+
+/** A person by the canonical email in the repository of the Space. */
+export function personNavigationKey(
+  spaceId: string | null | undefined,
+  email: string,
+  rootSpaceId: string | null,
+): NavigationKey {
+  return { kind: "person", ...keySpaceId(spaceId, rootSpaceId), email };
+}
+
+/** An item of the "Context" by the stable id the scanner gives it in the Space. */
+export function contextItemNavigationKey(
+  spaceId: string | null | undefined,
+  itemId: string,
+  rootSpaceId: string | null,
+): NavigationKey {
+  return { kind: "contextItem", ...keySpaceId(spaceId, rootSpaceId), itemId };
 }

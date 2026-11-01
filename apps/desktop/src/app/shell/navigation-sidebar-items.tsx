@@ -1,27 +1,38 @@
 import { useCallback } from "react";
 import {
+  Bot,
   Box,
   Database,
   File,
   FileText,
   FolderClosed,
+  ListChecks,
   PanelsTopLeft,
+  Sparkles,
+  UserRound,
 } from "lucide-react";
 import { openArtifact, openScopeOwner } from "@/features/artifact";
 import {
   NavigationSidebarItem,
+  isNavigationItemKey,
+  navigationKeyId,
+  useNavigationItemDisplay,
   type NavigationKey,
   type NavigationResolvedItem,
 } from "@/features/navigation";
 import { openPage } from "@/features/page/navigation";
 import { getSpaceSnapshot, useSpace } from "@/features/space";
+import { itemNavigationTarget } from "./item-navigation";
 
 interface NavigationOpenProps {
   onActivateContent: () => void;
   onBeforeNavigation: () => Promise<boolean>;
 }
 
-/** An artifact or Space row of a sidebar navigation section. */
+/**
+ * An artifact, Space or item row of a sidebar navigation section; an item of
+ * a fixed Collection shows the last name its domain gave it.
+ */
 export function NavigationArtifactItem({
   item,
   active,
@@ -48,10 +59,13 @@ export function NavigationArtifactItem({
   const openProjectSpaceName = useNavigationSpaceName(item.key);
   const spaceName =
     givenSpaceName === undefined ? openProjectSpaceName : givenSpaceName;
+  const display = useNavigationItemDisplay(
+    isNavigationItemKey(item.key) ? navigationKeyId(item.key) : "",
+  );
   return (
     <NavigationSidebarItem
-      title={item.title}
-      icon={<NavigationArtifactIcon item={item} />}
+      title={display?.title ?? item.title}
+      icon={display?.icon ?? <NavigationArtifactIcon item={item} />}
       tooltip={spaceName ? <span>{spaceName}</span> : null}
       active={active}
       unavailable={item.available === false}
@@ -78,6 +92,14 @@ function NavigationArtifactIcon({ item }: { item: NavigationResolvedItem }) {
       return <PanelsTopLeft />;
     case "attachment":
       return <File />;
+    case "routine":
+      return <ListChecks />;
+    case "agentActor":
+      return <Bot />;
+    case "person":
+      return <UserRound />;
+    case "contextItem":
+      return <Sparkles />;
     default:
       return <FileText />;
   }
@@ -94,10 +116,11 @@ function useNavigationSpaceName(key: NavigationKey): string | null {
 }
 
 /**
- * Opens an artifact or Space of the sidebar as the main area object, as the
- * tree does: after the navigation guard, in its Space, without revealing it
- * in the tree. The open project is read when it opens, so a project that has
- * just become active opens its own artifact.
+ * Opens an artifact, Space or item of the sidebar as the main area object,
+ * as the tree does: after the navigation guard, in its Space, without
+ * revealing it in the tree; an item opens expanded over its owner. The open
+ * project is read when it opens, so a project that has just become active
+ * opens its own artifact.
  */
 export function useOpenNavigationArtifact({
   onActivateContent,
@@ -122,6 +145,14 @@ export function useOpenNavigationArtifact({
       }
       if (key.kind === "space") {
         openScopeOwner({ kind: "space", spaceId }, { fromSidebar: true });
+        return;
+      }
+      if (isNavigationItemKey(key)) {
+        const target = itemNavigationTarget(key, activeRootId);
+        openScopeOwner(target.owner, {
+          fromSidebar: true,
+          scopeOpenIntent: { kind: "item", item: target.item },
+        });
         return;
       }
       const path = item.openPath ?? key.path;

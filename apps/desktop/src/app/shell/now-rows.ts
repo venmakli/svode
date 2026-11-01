@@ -53,9 +53,16 @@ export function useActiveProjectNow(): {
   const sessions = useListedAgentSessions() ?? NO_SESSIONS;
   const readProject = useAgentSessionsReadProject();
   const mainObject = useMainAreaObject();
-  const described = useDescribedNavigationItem(
+  const describedArtifact = useDescribedNavigationItem(
     mainObject?.kind === "artifact" ? mainObject.item : null,
   );
+  // An item is described by its screen once that found it.
+  const described =
+    mainObject?.kind === "item"
+      ? mainObject.shown
+        ? mainObject.item
+        : null
+      : describedArtifact;
   const rows = useNowRows(
     { pinned, kept, activeSessions, sessions, mainObject, described },
     readProject !== null && readProject === projectPath,

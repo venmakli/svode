@@ -6,10 +6,16 @@ import {
   type CollectionInstance,
 } from "@/features/collection";
 import {
+  CollectionItemMain,
   CollectionItemPeek,
   useCollectionItemPeek,
 } from "@/features/collection/app-shell";
-import type { ScopeOpenItem, ScopeOwnerRef } from "@/features/scope-surfaces";
+import type {
+  ScopeItemRef,
+  ScopeMainItem,
+  ScopeOpenItem,
+  ScopeOwnerRef,
+} from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
@@ -43,6 +49,9 @@ export function useRoutinesController(
   host: {
     onOpenAgentActor?(target: RoutineAgentActorTarget): void;
     onOpenAgentSettings?(): void;
+    /** The Routine expanded as the main area object, by its Routine id. */
+    mainItem?: ScopeMainItem;
+    onExpandItem?(item: ScopeItemRef): void;
   } = {},
 ) {
   const routineOwner = useMemo<RoutineOwnerInput>(
@@ -79,7 +88,8 @@ export function useRoutinesController(
     items: state.phase === "ready" ? state.snapshot.items : [],
   });
   const dispatch = useRoutineDispatch({ onOpenSession, owner: routineOwner });
-  const { onOpenAgentActor, onOpenAgentSettings } = host;
+  const { mainItem, onExpandItem, onOpenAgentActor, onOpenAgentSettings } =
+    host;
   const recovery = useMemo<RoutineLaunchRecoveryActions>(
     () => ({
       onOpenAgentActor: onOpenAgentActor
@@ -254,13 +264,42 @@ export function useRoutinesController(
     stateScope: "session",
   };
   const collectionState = useCollectionState(instance);
+  const catalogItems = state.phase === "ready" ? state.snapshot.items : null;
+  // A Routine is expanded by the id of its definition; one without a
+  // readable id has no identity to show in the main area.
+  const expand = (itemId: string) => {
+    const routineId = catalogItems?.find(
+      (candidate) => candidate.id === itemId,
+    )?.routineId;
+    return routineId && onExpandItem
+      ? () => onExpandItem({ surfaceId: "routines", itemId: routineId })
+      : null;
+  };
+  const editedItem = mutations.editSession?.item ?? null;
+  const main = mainItem ? (
+    <CollectionItemMain
+      main={mainItem}
+      target={mainItem.item.itemId}
+      find={(routineId: string) => {
+        if (!catalogItems) return null;
+        return (
+          catalogItems.find((candidate) => candidate.routineId === routineId) ??
+          (editedItem?.routineId === routineId ? editedItem : undefined)
+        );
+      }}
+      render={(item) => routinePeek.render(item, presentation)}
+    />
+  ) : null;
   const overlays = (
     <>
-      <CollectionItemPeek
-        peek={peek}
-        find={routinePeek.find}
-        render={(item) => routinePeek.render(item, presentation)}
-      />
+      {mainItem ? null : (
+        <CollectionItemPeek
+          peek={peek}
+          find={routinePeek.find}
+          render={(item) => routinePeek.render(item, presentation)}
+          expand={expand}
+        />
+      )}
       {create.session ? (
         <RoutineCreateDialog
           automaticAuthority={create.session.automaticAuthority}
@@ -297,6 +336,7 @@ export function useRoutinesController(
     automaticConsent,
     collectionState,
     instance,
+    main,
     overlays,
     storageRecovery,
   };

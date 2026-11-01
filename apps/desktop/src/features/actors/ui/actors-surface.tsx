@@ -11,6 +11,7 @@ import {
   type CollectionPresentationState,
 } from "@/features/collection";
 import {
+  CollectionItemMain,
   CollectionItemPeek,
   useCollectionItemPeek,
 } from "@/features/collection/app-shell";
@@ -20,6 +21,7 @@ import {
   type RepositoryAccessRequest,
   type RepositoryAccessTarget,
 } from "@/features/git";
+import { useSignalUserEdit } from "@/features/navigation";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
@@ -52,6 +54,8 @@ import { CatalogRetryButton } from "./catalog-retry-button";
 export function ActorsSurface({
   owner,
   openItem,
+  mainItem,
+  onExpandItem,
   readOnly = false,
   repositoryOwnerName,
   onOpenAgentSettings,
@@ -98,15 +102,37 @@ export function ActorsSurface({
     snapshot: state.phase === "ready" ? state.snapshot : null,
     spacePath: owner.spacePath,
   });
+  // A person the main area shows follows a new canonical email of its own:
+  // Desktop moves its navigation keys, and the main area opens it again.
+  const [followedEmail, setFollowedEmail] = useState<{
+    from: string;
+    to: string;
+  } | null>(null);
+  const signalUserEdit = useSignalUserEdit();
   const onApplied = useCallback(
-    (result: AppliedActorMutationResult) => {
+    (result: AppliedActorMutationResult, source: string | null) => {
+      const shown =
+        mainItem?.item.presentationId === "humans"
+          ? mainItem.item.itemId
+          : null;
+      if (shown !== null && source === shown) {
+        signalUserEdit();
+        if (result.canonicalEmail !== shown) {
+          setFollowedEmail({ from: shown, to: result.canonicalEmail });
+          onExpandItem?.({
+            surfaceId: "actors",
+            presentationId: "humans",
+            itemId: result.canonicalEmail,
+          });
+        }
+      }
       replaceSnapshot(result.catalog);
       setFocusItemId(result.canonicalEmail);
       // A merge or a new canonical email may leave the open person gone.
       void closePeek();
       showActorMutationOutcome(result);
     },
-    [closePeek, replaceSnapshot],
+    [closePeek, mainItem, onExpandItem, replaceSnapshot, signalUserEdit],
   );
   const onDuplicate = useCallback(
     (canonicalEmail: string) => {
@@ -262,29 +288,8 @@ export function ActorsSurface({
     openPeek({ presentationId: "agents", itemId: agentActorItemId(item) });
   }, [agentActorItems, openItem, openPeek, setActivePresentationId]);
 
-  const body =
-    collectionState.phase === "blocking_error" ? (
-      <div className="px-6 py-3">
-        <Alert variant="destructive">
-          <AlertTriangle />
-          <AlertDescription className="flex flex-col gap-1">
-            {collectionState.diagnostics.map((diagnostic) => (
-              <span key={diagnostic}>{diagnostic}</span>
-            ))}
-          </AlertDescription>
-        </Alert>
-      </div>
-    ) : (
-      <CollectionHost instance={instance} state={collectionState} />
-    );
-
-  return (
-    <div
-      ref={surfaceRef}
-      className="flex min-h-0 flex-1 flex-col"
-      data-actors-surface
-    >
-      {body}
+  const dialogs = (
+    <>
       <RepositoryAccessPreflightDialog recovery={accessRecovery} />
       <ActorMutationDialog
         accessRecovery={accessRecovery}
@@ -314,6 +319,103 @@ export function ActorsSurface({
         onConfirm={() => void mailmapSave.confirm()}
       />
       {agentActors.overlays}
+    </>
+  );
+  const expand = (target: ActorPeekTarget) => {
+    if (!onExpandItem) return null;
+    if (target.presentationId === "humans") {
+      return () =>
+        onExpandItem({
+          surfaceId: "actors",
+          presentationId: "humans",
+          itemId: target.itemId,
+        });
+    }
+    const agent = agentActorItems?.find(
+      (candidate) => agentActorItemId(candidate) === target.itemId,
+    );
+    return agent
+      ? () =>
+          onExpandItem({
+            surfaceId: "actors",
+            presentationId: "agents",
+            itemId: agent.id,
+          })
+      : null;
+  };
+  const renderItem = (
+    item: ActorCatalogItem | AgentActorItem,
+    target: ActorPeekTarget,
+  ) =>
+    target.presentationId === "humans"
+      ? humanPeek.render(item as ActorCatalogItem, presentation)
+      : agentActors.peek.render(
+          item as AgentActorItem,
+          agentActorsPresentation,
+        );
+  const mainTarget: ActorPeekTarget | null = mainItem
+    ? {
+        presentationId:
+          mainItem.item.presentationId === "agents" ? "agents" : "humans",
+        itemId:
+          followedEmail?.from === mainItem.item.itemId
+            ? followedEmail.to
+            : mainItem.item.itemId,
+      }
+    : null;
+  if (mainItem && mainTarget && collectionState.phase !== "blocking_error") {
+    return (
+      <div
+        ref={surfaceRef}
+        className="flex min-h-full flex-col"
+        data-actors-surface
+      >
+        <CollectionItemMain<ActorPeekTarget, ActorCatalogItem | AgentActorItem>
+          main={mainItem}
+          target={mainTarget}
+          find={(target) => {
+            if (target.presentationId === "humans") {
+              return humanPeek.find(target.itemId);
+            }
+            if (!agentActorItems) return null;
+            const agent = agentActorItems.find(
+              (candidate) => candidate.id === target.itemId,
+            );
+            return agent
+              ? agentActors.peek.find(agentActorItemId(agent))
+              : undefined;
+          }}
+          render={renderItem}
+        />
+        {dialogs}
+      </div>
+    );
+  }
+
+  const body =
+    collectionState.phase === "blocking_error" ? (
+      <div className="px-6 py-3">
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertDescription className="flex flex-col gap-1">
+            {collectionState.diagnostics.map((diagnostic) => (
+              <span key={diagnostic}>{diagnostic}</span>
+            ))}
+          </AlertDescription>
+        </Alert>
+      </div>
+    ) : (
+      <CollectionHost instance={instance} state={collectionState} />
+    );
+
+  return (
+    <div
+      ref={surfaceRef}
+      className="flex min-h-0 flex-1 flex-col"
+      data-actors-surface
+    >
+      {body}
+      {dialogs}
       <CollectionItemPeek<ActorPeekTarget, ActorCatalogItem | AgentActorItem>
         peek={peek}
         find={(target) =>
@@ -321,14 +423,8 @@ export function ActorsSurface({
             ? humanPeek.find(target.itemId)
             : agentActors.peek.find(target.itemId)
         }
-        render={(item, target) =>
-          target.presentationId === "humans"
-            ? humanPeek.render(item as ActorCatalogItem, presentation)
-            : agentActors.peek.render(
-                item as AgentActorItem,
-                agentActorsPresentation,
-              )
-        }
+        render={renderItem}
+        expand={expand}
       />
     </div>
   );

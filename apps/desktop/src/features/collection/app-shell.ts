@@ -1,6 +1,7 @@
 export { collectionShortcuts } from "./model/shortcuts";
 export { calendarScopes } from "./model/calendar-utils";
 export { CollectionItemPeek } from "./item-peek/collection-item-peek";
+export { CollectionItemMain } from "./item-peek/collection-item-main";
 export { useCollectionItemPeek } from "./item-peek/use-collection-item-peek";
 export { CollectionItemActionsMenu } from "./item-peek/item-actions-menu";
 export { CollectionItemInfo } from "./item-peek/item-info";

@@ -56,20 +56,39 @@ export function useMainBreadcrumbs(home: boolean) {
   };
 }
 
-/** The project and Space before an object of the Space at `spacePath`. */
-export function useSpaceBreadcrumbPrefix(home: boolean, spacePath: string) {
+/**
+ * The project and Space before an object of the Space at `spacePath`, then
+ * the path to the object's owner in that Space when there is one.
+ */
+export function useSpaceBreadcrumbPrefix(
+  home: boolean,
+  spacePath: string,
+  path: string | null = null,
+) {
   const state = useSpaceStore();
   const space =
     spacePath === state.activeRootPath
       ? null
       : (state.spaces.find((candidate) => candidate.path === spacePath) ??
         null);
+  const project = breadcrumbProject(state);
+  const treeId = space?.id ?? state.activeRootId;
+  if (path) {
+    return {
+      ...buildMainBreadcrumbs({
+        home,
+        project,
+        space,
+        path,
+        tree: treeId ? (state.fileTrees[treeId] ?? []) : [],
+      }),
+      spaceChoices: breadcrumbSpaceChoices(state.spaces),
+    };
+  }
+  const crumbs = buildBreadcrumbPrefix({ home, project, space });
   return {
-    crumbs: buildBreadcrumbPrefix({
-      home,
-      project: breadcrumbProject(state),
-      space,
-    }),
+    crumbs,
+    prefixLength: crumbs.length,
     spaceChoices: breadcrumbSpaceChoices(state.spaces),
   };
 }

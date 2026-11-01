@@ -1,5 +1,6 @@
 export { EmptyProjectState } from "./ui/empty-project-state";
 export { MainBreadcrumbs, SpaceBreadcrumbs } from "./ui/main-breadcrumbs";
+export type { BreadcrumbLinkItem } from "./ui/main-breadcrumbs";
 export { SpaceFileWatcher } from "./ui/space-file-watcher";
 export { SpaceConfigRecheck } from "./ui/space-config-recheck";
 export { SPACE_CONFIG_PATH } from "./ui/space-config-alert";

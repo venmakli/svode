@@ -1,4 +1,6 @@
 import { useCallback, useRef, useState } from "react";
+
+import { useSignalUserEdit } from "@/features/navigation";
 import { toast } from "sonner";
 
 import * as m from "@/paraglide/messages.js";
@@ -64,6 +66,8 @@ export function useAgentActorMutations({
   const deletePreviewRequestRef = useRef(0);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // An edit of an Agent the main area shows keeps it in Now.
+  const signalUserEdit = useSignalUserEdit();
 
   const openCreate = useCallback((ownerPath: string) => {
     setFailure(null);
@@ -152,6 +156,7 @@ export function useAgentActorMutations({
           return;
         }
         showMutationOutcome(result, () => saveCatalog(targetOwnerPath));
+        if (kind === "update") signalUserEdit();
         setCreateDraft(null);
         setDeleteActor(null);
         setDeleteReferences({ phase: "idle" });
@@ -174,7 +179,15 @@ export function useAgentActorMutations({
         setPending(false);
       }
     },
-    [editSession, projectPath, refresh, saveCatalog, snapshot, onAccessDenied],
+    [
+      editSession,
+      projectPath,
+      refresh,
+      saveCatalog,
+      signalUserEdit,
+      snapshot,
+      onAccessDenied,
+    ],
   );
 
   return {

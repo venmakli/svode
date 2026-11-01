@@ -101,7 +101,8 @@ function messagedSession(
 
 /**
  * Keeps the objects that the edit signal reports: the temporary main area
- * artifact on a user edit of the main area, a created artifact once the
+ * artifact or expanded item on a user edit of the main area, a created
+ * artifact once the
  * main area shows it, and a session whose chat message the runtime
  * accepted once the catalogue lists it. Mount once in app composition.
  */
@@ -128,7 +129,12 @@ export function useKeepEditedObjects() {
       subscribeUserEdits((edit) => {
         const current = objectRef.current;
         if (edit.kind === "edit") {
-          if (current?.kind === "artifact") keepItem(current.item);
+          if (
+            current?.kind === "artifact" ||
+            (current?.kind === "item" && current.shown)
+          ) {
+            keepItem(current.item);
+          }
           return;
         }
         if (edit.kind === "message") {

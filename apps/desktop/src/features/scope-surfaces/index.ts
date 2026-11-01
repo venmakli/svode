@@ -22,6 +22,9 @@ export { ScopeSurfaceUnavailable } from "./ui/scope-surface-unavailable";
 export { ScopeOwnerFactsError } from "./ui/scope-owner-facts-error";
 export type {
   ScopeCapability,
+  ScopeItemRef,
+  ScopeMainItem,
+  ScopeMainItemTopBar,
   ScopeOpenIntent,
   ScopeOpenItem,
   ScopeOwnerKey,

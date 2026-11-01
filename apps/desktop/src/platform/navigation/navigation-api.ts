@@ -4,7 +4,11 @@ import { listen, type UnlistenFn } from "@/platform/native/events";
 /** Desktop moved or dropped items after an in-app change of artifact paths. */
 const NAVIGATION_CHANGED_EVENT = "navigation:changed";
 
-/** Artifacts are keyed by registered Space id; no `spaceId` is the Project root. */
+/**
+ * Artifacts are keyed by registered Space id; no `spaceId` is the Project
+ * root. An item of a fixed Collection is keyed by its identity at its owner,
+ * in the Space whose Collection shows it.
+ */
 export type NavigationKeyDto =
   | { kind: "space"; spaceId?: string }
   | {
@@ -13,7 +17,11 @@ export type NavigationKeyDto =
       path: string;
     }
   | { kind: "session"; sessionId: string }
-  | { kind: "sessionLaunch"; launchId: string };
+  | { kind: "sessionLaunch"; launchId: string }
+  | ({ kind: "routine" } & NavigationRoutineDto)
+  | { kind: "agentActor"; spaceId?: string; actorId: string }
+  | { kind: "person"; spaceId?: string; email: string }
+  | { kind: "contextItem"; spaceId?: string; itemId: string };
 
 export interface NavigationItemDto {
   key: NavigationKeyDto;
@@ -31,7 +39,8 @@ export interface NavigationRoutineDto {
 
 /**
  * A pinned or kept item as resolved by Desktop. `available` is absent for
- * sessions, which the session catalog resolves; `openPath` is the path an
+ * sessions, which the session catalog resolves, and for items of a ready
+ * Space, which their domain resolves; `openPath` is the path an
  * available artifact opens by; `routine` is the Routine whose launch kept a
  * session, which only Desktop records.
  */

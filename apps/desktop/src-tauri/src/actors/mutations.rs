@@ -447,6 +447,18 @@ pub async fn apply(
             actor_catalog.mark_repository_dirty(&repository)?;
             let snapshot = actor_catalog.load_and_publish(&cli, &repository).await?;
             crate::actors::emit_published(app, &repository, snapshot.generation());
+            if let ActorMutationAction::Merge {
+                source_canonical_email: source,
+                ..
+            }
+            | ActorMutationAction::Edit {
+                source_canonical_email: source,
+                ..
+            } = &review.action
+                && *source != plan.canonical_email
+            {
+                crate::navigation::person_renamed(app, space_path, source, &plan.canonical_email);
+            }
             Ok(ActorMutationApplyResult::Applied {
                 canonical_email: plan.canonical_email,
                 catalog: snapshot.catalog(),

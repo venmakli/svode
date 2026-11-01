@@ -93,7 +93,10 @@ if (process.env.SVODE_COLLECTION_ITEM_PEEK_DOM !== "1") {
 
   async function setup(
     initial: readonly Item[],
-    options: { guard?: () => boolean | Promise<boolean> } = {},
+    options: {
+      guard?: () => boolean | Promise<boolean>;
+      expand?: (id: string) => (() => void) | null;
+    } = {},
   ) {
     const { TooltipProvider } = await import("@/components/ui/tooltip");
     const { defineCollectionPresentation } =
@@ -164,6 +167,7 @@ if (process.env.SVODE_COLLECTION_ITEM_PEEK_DOM !== "1") {
             ),
             tools: <button type="button">Run {item.name}</button>,
           })}
+          expand={options.expand}
         />
       );
     }
@@ -292,6 +296,29 @@ if (process.env.SVODE_COLLECTION_ITEM_PEEK_DOM !== "1") {
     await settle();
     expect(doc.querySelector("[data-collection-item-peek]")).toBeNull();
     expect(doc.activeElement?.id).toBe("row-ada");
+    await env.unmount();
+  });
+
+  test("Expand is in the top bar of an item that opens in the main area only", async () => {
+    const expanded: string[] = [];
+    const env = await setup(
+      [
+        { id: "ada", name: "Ada" },
+        { id: "grace", name: "Grace" },
+      ],
+      {
+        expand: (id) => (id === "ada" ? () => expanded.push(id) : null),
+      },
+    );
+    const expandButton = () =>
+      topBar()?.querySelector<HTMLButtonElement>('[aria-label="Expand"]') ??
+      null;
+    await env.open("ada");
+    await act(async () => expandButton()!.click());
+    expect(expanded).toEqual(["ada"]);
+    await env.open("grace", false);
+    expect(identity()).toBe("Grace");
+    expect(expandButton()).toBeNull();
     await env.unmount();
   });
 }

@@ -33,11 +33,13 @@ import { useOpenPage } from "@/features/page/navigation";
 import {
   ScopeSurfaceHost,
   type PeekNavigationGuard,
+  type ScopeMainItem,
   type ScopeOpenIntent,
   type ScopeOwnerRef,
   type ScopePresentation,
 } from "@/features/scope-surfaces";
 import type { Page } from "@/features/page";
+import { UserEditScope } from "@/features/navigation";
 import { useSpace } from "@/features/space";
 import { createScopeSurfaceContributions } from "./scope-surface-contributions";
 import { useShellStore } from "./model";
@@ -47,6 +49,7 @@ import { ScopeOwnerActions } from "./scope-owner-actions";
 import { scopeOwnerNavigationItem } from "./scope-owner-navigation";
 import { useOpenAgentActor } from "./open-agent-actor";
 import { useOpenSessionRoutine } from "./open-session-routine";
+import { ScopeItemMain, useExpandScopeItem } from "./scope-item-main";
 
 export interface ScopeOwnerIdentity {
   title: string;
@@ -126,6 +129,7 @@ export function ScopeSurfacePage({
   );
   const openSessionRoutine = useOpenSessionRoutine();
   const openAgentActor = useOpenAgentActor();
+  const expandItem = useExpandScopeItem(owner);
   // A session opened from the routine detail is its child peek.
   const openRoutineSession = useCallback(
     ({ sessionId, launchId }: { sessionId: string; launchId: string }) =>
@@ -142,28 +146,37 @@ export function ScopeSurfacePage({
       createScopeSurfaceContributions({
         ...createScopeContentRenderers({ readOnly, name: fallbackTitle }),
         actors: (context) => (
-          <ActorsSurface
-            {...context}
-            readOnly={readOnly}
-            repositoryOwnerName={fallbackTitle}
-            onOpenAgentSettings={openProvidersSettings}
-            onOpenRepositorySettings={openRepositorySettings}
-          />
+          <FixedCollectionEditScope mainItem={context.mainItem}>
+            <ActorsSurface
+              {...context}
+              readOnly={readOnly}
+              repositoryOwnerName={fallbackTitle}
+              onExpandItem={expandItem}
+              onOpenAgentSettings={openProvidersSettings}
+              onOpenRepositorySettings={openRepositorySettings}
+            />
+          </FixedCollectionEditScope>
         ),
         context: (context) => (
-          <AgentContextSurface
-            {...context}
-            onOpenProviders={openProvidersSettings}
-          />
+          <FixedCollectionEditScope mainItem={context.mainItem}>
+            <AgentContextSurface
+              {...context}
+              onExpandItem={expandItem}
+              onOpenProviders={openProvidersSettings}
+            />
+          </FixedCollectionEditScope>
         ),
         routines: (context) => (
-          <RoutinesSurface
-            {...context}
-            readOnly={readOnly}
-            onOpenAgentActor={openAgentActor}
-            onOpenAgentSettings={openProvidersSettings}
-            onOpenSession={openRoutineSession}
-          />
+          <FixedCollectionEditScope mainItem={context.mainItem}>
+            <RoutinesSurface
+              {...context}
+              readOnly={readOnly}
+              onExpandItem={expandItem}
+              onOpenAgentActor={openAgentActor}
+              onOpenAgentSettings={openProvidersSettings}
+              onOpenSession={openRoutineSession}
+            />
+          </FixedCollectionEditScope>
         ),
         sessions: (context) => (
           <AgentSessionsSurface
@@ -191,6 +204,7 @@ export function ScopeSurfacePage({
       }),
     [
       collectionRouteState,
+      expandItem,
       fallbackTitle,
       openAgentActor,
       openProvidersSettings,
@@ -294,6 +308,10 @@ function ScopePageSurfaceHost({
     handoff.hostPath = pagePath;
     onContentPathChange?.(pagePath);
   }, [pagePath, readmePath, onContentPathChange]);
+  const mainItem =
+    props.presentation === "full" && props.openIntent?.kind === "item"
+      ? props.openIntent.item
+      : null;
   const identityTitle = detail.page?.meta.title || detail.fallbackTitle;
   const identityIcon =
     (detail.metadataDrafts.get("icon")?.value as string | undefined) ??
@@ -307,8 +325,9 @@ function ScopePageSurfaceHost({
       registerNavigationGuard?.((action) => pageSurface.prepareToLeave(action)),
     [pageSurface, registerNavigationGuard],
   );
+  // An expanded item has the top bar of its own screen.
   usePublishMainHeader(
-    props.presentation === "full"
+    props.presentation === "full" && !mainItem
       ? {
           changes: {
             kind:
@@ -331,6 +350,19 @@ function ScopePageSurfaceHost({
     () => createContributions(pageSurface.readOnly),
     [createContributions, pageSurface.readOnly],
   );
+  if (mainItem) {
+    return (
+      <ScopeItemMain
+        owner={props.owner}
+        item={mainItem}
+        surface={contributions.find(
+          (contribution) =>
+            contribution.id === mainItem.surfaceId &&
+            contribution.appliesTo(props.owner),
+        )}
+      />
+    );
+  }
   return (
     <ScopeSurfaceHost
       {...props}
@@ -361,5 +393,23 @@ function ScopePageSurfaceHost({
       )}
       prepareForSurfaceChange={() => pageSurface.prepareForNavigation()}
     />
+  );
+}
+
+/**
+ * Actions in a tab of a fixed Collection do not keep the main area object in
+ * Now; edits of an item expanded as the main area object do.
+ */
+function FixedCollectionEditScope({
+  mainItem,
+  children,
+}: {
+  mainItem: ScopeMainItem | undefined;
+  children: ReactNode;
+}) {
+  return mainItem ? (
+    children
+  ) : (
+    <UserEditScope mainArea={false}>{children}</UserEditScope>
   );
 }

@@ -59,23 +59,44 @@ export function MainBreadcrumbs({ home, ...navigation }: BreadcrumbsProps) {
   );
 }
 
+/** A breadcrumb a surface adds after the path, such as the tab of an owner. */
+export interface BreadcrumbLinkItem {
+  key: string;
+  label: string;
+  icon: ReactNode;
+  onOpen(): void;
+}
+
 /**
- * The project and Space prefix of an object of the Space at `spacePath`,
- * followed by `current`, the object itself.
+ * The project and Space prefix of an object of the Space at `spacePath`, the
+ * path to its owner (`path`) and the surface's own `links`, followed by
+ * `current`, the object itself.
  */
 export function SpaceBreadcrumbs({
   home,
   spacePath,
+  path = null,
+  links = [],
   current,
   ...navigation
-}: BreadcrumbsProps & { spacePath: string; current: ReactNode }) {
-  const { crumbs, spaceChoices } = useSpaceBreadcrumbPrefix(home, spacePath);
+}: BreadcrumbsProps & {
+  spacePath: string;
+  path?: string | null;
+  links?: readonly BreadcrumbLinkItem[];
+  current: ReactNode;
+}) {
+  const { crumbs, prefixLength, spaceChoices } = useSpaceBreadcrumbPrefix(
+    home,
+    spacePath,
+    path,
+  );
   return (
     <BreadcrumbTrail
       crumbs={crumbs}
-      prefixLength={crumbs.length}
+      prefixLength={prefixLength}
       spaceChoices={spaceChoices}
       navigation={navigation}
+      links={links}
       current={current}
     />
   );
@@ -86,12 +107,14 @@ function BreadcrumbTrail({
   prefixLength,
   spaceChoices,
   navigation,
+  links = [],
   current,
 }: {
   crumbs: MainBreadcrumb[];
   prefixLength: number;
   spaceChoices: SpaceInfo[];
   navigation: BreadcrumbNavigationProps;
+  links?: readonly BreadcrumbLinkItem[];
   current?: ReactNode;
 }) {
   const open = useBreadcrumbNavigation(navigation);
@@ -132,9 +155,35 @@ function BreadcrumbTrail({
               )}
             </Fragment>
           ))}
+          {links.map((link, index) => (
+            <Fragment key={link.key}>
+              {(items.length > 0 || index > 0) && (
+                <BreadcrumbSeparator className="shrink-0" />
+              )}
+              <BreadcrumbItem className="min-w-5 shrink-[100]">
+                <BreadcrumbLink asChild>
+                  <button
+                    type="button"
+                    className={crumbClassName}
+                    onClick={link.onOpen}
+                  >
+                    <span
+                      className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground [&_svg]:size-4"
+                      aria-hidden
+                    >
+                      {link.icon}
+                    </span>
+                    <span className="truncate">{link.label}</span>
+                  </button>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+            </Fragment>
+          ))}
           {current && (
             <>
-              {items.length > 0 && <BreadcrumbSeparator className="shrink-0" />}
+              {items.length + links.length > 0 && (
+                <BreadcrumbSeparator className="shrink-0" />
+              )}
               <BreadcrumbItem className="min-w-0">{current}</BreadcrumbItem>
             </>
           )}

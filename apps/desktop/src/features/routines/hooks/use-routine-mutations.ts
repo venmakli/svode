@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
+import { useSignalUserEdit } from "@/features/navigation";
+
 import {
   deleteRoutine,
   updateRoutine,
@@ -44,6 +46,8 @@ export function useRoutineMutations({
   const [error, setError] = useState<string | null>(null);
   const [authoritativeNameConflictPath, setAuthoritativeNameConflictPath] =
     useState<string | null>(null);
+  // An edit of a Routine the main area shows keeps it in Now.
+  const signalUserEdit = useSignalUserEdit();
   const optimisticNameConflictPath = editSession
     ? findRoutineNameConflictPath(
         editSession.draft.name,
@@ -129,6 +133,7 @@ export function useRoutineMutations({
         }
         setAuthoritativeNameConflictPath(null);
         replaceSnapshot(result.snapshot);
+        signalUserEdit();
         if (result.warnings.length > 0) {
           toast.warning(m.routines_update_applied_warning(), {
             description: result.warnings
@@ -147,7 +152,14 @@ export function useRoutineMutations({
         setPending(false);
       }
     },
-    [handleFailure, onDetailInvalidated, owner, replaceSnapshot, items],
+    [
+      handleFailure,
+      onDetailInvalidated,
+      owner,
+      replaceSnapshot,
+      items,
+      signalUserEdit,
+    ],
   );
 
   const submitDelete = useCallback(async () => {
