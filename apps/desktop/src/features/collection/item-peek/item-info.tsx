@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/tooltip";
 
 /** One line of the details: a path, its link target and a note under it. */
-export interface CollectionDetailInfoRow {
+export interface CollectionItemInfoRow {
   key: string;
   path: string;
   /** The target of a link or alias, shown as "path → target". */
@@ -25,22 +25,22 @@ export interface CollectionDetailInfoRow {
   detail?: ReactNode;
 }
 
-export interface CollectionDetailInfoGroup {
+export interface CollectionItemInfoGroup {
   key: string;
   label: string;
-  rows: readonly CollectionDetailInfoRow[];
+  rows: readonly CollectionItemInfoRow[];
 }
 
 /**
- * ⓘ of a fixed Collection item next to the identity of the peek top bar:
+ * ⓘ of a Collection item next to the identity of the peek top bar:
  * secondary origin facts on request instead of a block in the content.
  * Empty groups are not shown; without any group there is no ⓘ.
  */
-export function CollectionDetailInfo({
+export function CollectionItemInfo({
   groups,
   title,
 }: {
-  groups: readonly CollectionDetailInfoGroup[];
+  groups: readonly CollectionItemInfoGroup[];
   title: string;
 }) {
   const visibleGroups = groups.filter((group) => group.rows.length > 0);
@@ -56,7 +56,7 @@ export function CollectionDetailInfo({
               size="icon-sm"
               variant="ghost"
               aria-label={title}
-              data-collection-detail-info-trigger
+              data-collection-item-info-trigger
             >
               <Info />
             </Button>
@@ -68,7 +68,7 @@ export function CollectionDetailInfo({
       <PopoverContent
         align="start"
         className="max-h-(--radix-popover-content-available-height) w-[28rem] max-w-[calc(100vw-2rem)] overflow-y-auto"
-        data-collection-detail-info
+        data-collection-item-info
       >
         <PopoverHeader>
           <PopoverTitle>{title}</PopoverTitle>
@@ -77,7 +77,7 @@ export function CollectionDetailInfo({
           <section
             key={group.key}
             className="flex min-w-0 flex-col gap-1.5"
-            data-collection-detail-info-group={group.key}
+            data-collection-item-info-group={group.key}
           >
             <h3 className="text-xs font-medium text-muted-foreground">
               {group.label}

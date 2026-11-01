@@ -1,8 +1,39 @@
-import type { AgentContextItem } from "./types";
+import type { AgentContextItem, AgentContextSkillFile } from "./types";
 
 /** The items of a plugin's «Компоненты», opened in the peek of the plugin. */
 export function agentContextPluginComponentsKey(pluginId: string): string {
   return `agent-context-plugin:${pluginId}`;
+}
+
+/** An item of the "Context" or a plugin's component, under its instance. */
+export interface AgentContextItemSelection {
+  instanceKey: string;
+  itemId: string;
+}
+
+/**
+ * What the peek of the "Context" shows: an item, or a file of a skill opened
+ * in its place.
+ */
+export type AgentContextPeekTarget =
+  | ({ kind: "item" } & AgentContextItemSelection)
+  | {
+      kind: "file";
+      file: AgentContextSkillFile;
+      skill: AgentContextItemSelection;
+    };
+
+export function agentContextPeekIdentity(
+  target: AgentContextPeekTarget,
+): string {
+  return target.kind === "item"
+    ? JSON.stringify(["item", target.instanceKey, target.itemId])
+    : JSON.stringify([
+        "file",
+        target.skill.instanceKey,
+        target.skill.itemId,
+        target.file.path,
+      ]);
 }
 
 /**
@@ -13,7 +44,7 @@ export function agentContextPluginComponentsKey(pluginId: string): string {
 export function findAgentContextDetailItem(
   items: readonly AgentContextItem[],
   instanceKey: string,
-  selection: { instanceKey: string; itemId: string },
+  selection: AgentContextItemSelection,
 ): AgentContextItem | undefined {
   if (selection.instanceKey === instanceKey) {
     for (const item of items) {

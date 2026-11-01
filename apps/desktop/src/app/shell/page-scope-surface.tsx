@@ -6,7 +6,6 @@ import {
   usePageDetailContext,
   usePageSurfaceSession,
 } from "@/features/page/scope-surface";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
 import {
   ScopeSurfaceHost,
   hasScopeCapability,
@@ -29,7 +28,6 @@ export function PageScopeSurface({
   const { selection } = useActiveContentSelection();
   const pageSurface = usePageSurfaceSession();
   const detail = usePageDetailContext();
-  const detailController = useCollectionDetailController();
   const [ownerKeys, setOwnerKeys] = useState({
     current: owner.ownerKey,
     previous: owner.ownerKey,
@@ -74,12 +72,11 @@ export function PageScopeSurface({
           : undefined
       }
       previousOwnerKey={ownerKeys.previous}
-      prepareForSurfaceChange={async (currentSurfaceId) => {
-        if (!(await detailController.close())) return false;
-        return currentSurfaceId === "readme"
+      prepareForSurfaceChange={async (currentSurfaceId) =>
+        currentSurfaceId === "readme"
           ? pageSurface.prepareForNavigation()
-          : true;
-      }}
+          : true
+      }
     />
   );
 }

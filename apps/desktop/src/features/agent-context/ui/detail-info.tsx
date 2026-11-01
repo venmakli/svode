@@ -1,6 +1,6 @@
 import {
-  CollectionDetailInfo,
-  type CollectionDetailInfoGroup,
+  CollectionItemInfo,
+  type CollectionItemInfoGroup,
 } from "@/features/collection/app-shell";
 import {
   AgentIcon,
@@ -23,7 +23,7 @@ import { agentContextMissingFieldsText } from "./skill-rejection-text";
  */
 export function AgentContextItemInfo({ item }: { item: AgentContextItem }) {
   const agents = useAgentAdapterDictionary();
-  const groups: CollectionDetailInfoGroup[] = [
+  const groups: CollectionItemInfoGroup[] = [
     {
       key: "sources",
       label: m.agent_context_info_sources(),
@@ -47,7 +47,7 @@ export function AgentContextItemInfo({ item }: { item: AgentContextItem }) {
     });
   }
   return (
-    <CollectionDetailInfo
+    <CollectionItemInfo
       groups={groups}
       title={
         item.kind === "skill"

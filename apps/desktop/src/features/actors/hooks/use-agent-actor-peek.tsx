@@ -1,18 +1,17 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import { LoaderCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import type { CollectionPresentationRuntime } from "@/features/collection";
 import {
-  useCollectionDetailItemBinding,
-  type CollectionDetailContent,
-  type CollectionDetailController,
-  type CollectionDetailItemBinding,
+  CollectionItemActionsMenu,
+  type CollectionItemPeekController,
+  type CollectionItemPeekScreen,
 } from "@/features/collection/app-shell";
 import {
   RepositoryAccessInlineRecovery,
@@ -23,6 +22,7 @@ import type { ChatAgents } from "@/features/agent-sessions/agent-settings-popove
 import { AgentAvatar } from "@/features/identity";
 import * as m from "@/paraglide/messages.js";
 
+import type { ActorPeekTarget } from "../model/actor-peek";
 import { createAgentActorDraft } from "../model/agent-actor-draft";
 import type {
   AgentActorAgentOption,
@@ -33,15 +33,19 @@ import { AgentActorDetail } from "../ui/agent-actor-detail";
 import { agentActorItemId } from "../ui/agent-actors-presentation";
 import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
-export function useAgentActorDetail({
+/**
+ * The screen of an Agent Actor in the peek of the Actors: avatar, name and
+ * description, its item actions in ⋯; its editing form while an edit
+ * session of it is open.
+ */
+export function useAgentActorPeek({
   accessRecovery,
   agents,
   applyMutation,
-  detailController,
   editSession,
-  instanceKey,
   mutationPending,
   offers,
+  peek,
   readOnly = false,
   items,
   setEditSession,
@@ -55,64 +59,92 @@ export function useAgentActorDetail({
     draft: AgentActorDraft,
   ): void | Promise<void>;
   agents: readonly AgentActorAgentOption[];
-  detailController: CollectionDetailController | null;
   editSession: AgentActorEditSession | null;
-  instanceKey: string;
   mutationPending: boolean;
   /** How the chat offers the agents; null while they are read. */
   offers: ChatAgents | null;
+  peek: CollectionItemPeekController<ActorPeekTarget>;
   readOnly?: boolean;
   /** The agents of the ready catalog; null until it is read. */
   items: readonly AgentActorItem[] | null;
   setEditSession: Dispatch<SetStateAction<AgentActorEditSession | null>>;
   onOpenAgentSettings(): void;
   onRecheckOffers(): void;
-}): CollectionDetailItemBinding<AgentActorItem> {
-  const createReadOnlyDetail = useCallback(
-    (item: AgentActorItem): CollectionDetailContent => ({
-      content: (
-        <AgentActorDetail
-          agents={agents}
-          draft={createAgentActorDraft(item.ownerPath, item)}
-          editMode={false}
-          offers={offers}
-          onChange={() => undefined}
-          onOpenAgentSettings={onOpenAgentSettings}
-          onRecheckOffers={onRecheckOffers}
-          onSave={() => undefined}
-        />
-      ),
-      description: (
-        <span className="sr-only">{m.agent_actors_detail_description()}</span>
-      ),
-      title: detailTitle(item),
-    }),
-    [agents, offers, onOpenAgentSettings, onRecheckOffers],
+}) {
+  // An open form keeps its draft even when its Agent leaves the catalog.
+  const editedItem = editSession?.item ?? null;
+  const find = useCallback(
+    (itemId: string) => {
+      if (!items) return null;
+      const item = items.find(
+        (candidate) => agentActorItemId(candidate) === itemId,
+      );
+      if (item) return item;
+      return editedItem && agentActorItemId(editedItem) === itemId
+        ? editedItem
+        : undefined;
+    },
+    [editedItem, items],
   );
-  const findItem = useMemo(
-    () =>
-      items
-        ? (selection: { itemId: string }) =>
-            items.find((item) => agentActorItemId(item) === selection.itemId)
-        : null,
-    [items],
-  );
-  const detail = useCollectionDetailItemBinding({
-    controller: detailController,
-    createContent: createReadOnlyDetail,
-    findItem,
-  });
 
+  // "Edit" of an Agent opens its form in the peek of the Agent.
+  const editedItemId = editedItem ? agentActorItemId(editedItem) : null;
+  const { open, target } = peek;
+  const shownItemId =
+    target?.presentationId === "agents" ? target.itemId : null;
   useEffect(() => {
-    if (!editSession || !detailController) return;
-    const selection = detailSelection(instanceKey, editSession.item);
-    const session = editSession;
-    const accessBlocked =
-      Boolean(accessRecovery?.open) &&
-      accessRecovery?.pending?.placement === "inline" &&
-      accessRecovery.pending?.intentKey === "agent-actor-update-apply";
-    void detailController
-      .open({
+    if (editedItemId !== null && shownItemId !== editedItemId) {
+      open({ presentationId: "agents", itemId: editedItemId });
+    }
+  }, [editedItemId, open, shownItemId]);
+
+  const render = useCallback(
+    (
+      item: AgentActorItem,
+      presentation: CollectionPresentationRuntime,
+    ): CollectionItemPeekScreen => {
+      const identity = {
+        icon: <AgentAvatar shape="square" size="sm" />,
+        name: item.name,
+      };
+      const session =
+        editSession &&
+        agentActorItemId(editSession.item) === agentActorItemId(item)
+          ? editSession
+          : null;
+      if (!session) {
+        return {
+          content: (
+            <AgentActorDetail
+              agents={agents}
+              draft={createAgentActorDraft(item.ownerPath, item)}
+              editMode={false}
+              offers={offers}
+              onChange={() => undefined}
+              onOpenAgentSettings={onOpenAgentSettings}
+              onRecheckOffers={onRecheckOffers}
+              onSave={() => undefined}
+            />
+          ),
+          header: {
+            description: item.description || undefined,
+            icon: <AgentAvatar shape="square" size="lg" />,
+            title: item.name,
+          },
+          identity,
+          menu: (
+            <CollectionItemActionsMenu
+              item={item}
+              presentation={presentation}
+            />
+          ),
+        };
+      }
+      const accessBlocked =
+        Boolean(accessRecovery?.open) &&
+        accessRecovery?.pending?.placement === "inline" &&
+        accessRecovery.pending?.intentKey === "agent-actor-update-apply";
+      return {
         canClose: async () => {
           if (accessBlocked) {
             accessRecovery?.close();
@@ -120,22 +152,20 @@ export function useAgentActorDetail({
           }
           // The Tauri dialog plugin makes window.confirm resolve asynchronously.
           if (
-            editSession.guard.dirty &&
+            session.guard.dirty &&
             !(await window.confirm(m.agent_actors_discard_confirm()))
           ) {
             return false;
           }
-          editSession.guard.dirty = false;
-          setEditSession((current) =>
-            current === editSession ? null : current,
-          );
+          session.guard.dirty = false;
+          setEditSession((current) => (current === session ? null : current));
           return true;
         },
         content: (
           <div className="flex min-w-0 flex-col gap-4">
             <AgentActorDetail
               agents={agents}
-              draft={editSession.draft}
+              draft={session.draft}
               editMode={!readOnly}
               offers={offers}
               onChange={(draft) =>
@@ -149,7 +179,7 @@ export function useAgentActorDetail({
               onRecheckOffers={onRecheckOffers}
               onSave={(draft) => {
                 if (readOnly) return;
-                void applyMutation("update", editSession.item.ownerPath, draft);
+                void applyMutation("update", session.item.ownerPath, draft);
               }}
             />
             {accessBlocked ? (
@@ -157,10 +187,7 @@ export function useAgentActorDetail({
             ) : null}
           </div>
         ),
-        description: (
-          <span className="sr-only">{m.agent_actors_edit_description()}</span>
-        ),
-        footerActions: (
+        footer: (
           <div className="flex w-full justify-end gap-2">
             <Button
               type="button"
@@ -172,9 +199,8 @@ export function useAgentActorDetail({
                   return;
                 }
                 accessRecovery?.close();
-                editSession.guard.dirty = false;
+                session.guard.dirty = false;
                 setEditSession(null);
-                void detail.open(editSession.item, selection);
               }}
             >
               {accessBlocked
@@ -186,7 +212,7 @@ export function useAgentActorDetail({
             ) : (
               <Button
                 type="submit"
-                form={`agent-actor-detail-${editSession.draft.id}`}
+                form={`agent-actor-detail-${session.draft.id}`}
                 disabled={mutationPending || readOnly}
               >
                 {mutationPending ? (
@@ -202,57 +228,23 @@ export function useAgentActorDetail({
             )}
           </div>
         ),
+        identity,
         layout: "form",
-        selection,
-        title: detailTitle(editSession.item),
-      })
-      .then((opened) => {
-        if (!opened) {
-          setEditSession((current) => (current === session ? null : current));
-        }
-      });
-  }, [
-    accessRecovery,
-    agents,
-    applyMutation,
-    detail,
-    detailController,
-    editSession,
-    instanceKey,
-    mutationPending,
-    offers,
-    onOpenAgentSettings,
-    onRecheckOffers,
-    readOnly,
-    setEditSession,
-  ]);
-
-  return detail;
-}
-
-function detailSelection(instanceKey: string, item: AgentActorItem) {
-  return {
-    instanceKey,
-    presentationId: "agents",
-    itemId: agentActorItemId(item),
-  };
-}
-
-function detailTitle(item: AgentActorItem) {
-  return (
-    <span className="flex min-w-0 items-center gap-3">
-      <AgentAvatar shape="square" size="lg" />
-      <span className="flex min-w-0 flex-col text-left">
-        <span className="truncate">{item.name}</span>
-        {item.description ? (
-          <span className="truncate text-sm font-normal text-muted-foreground">
-            {item.description}
-          </span>
-        ) : null}
-        <span className="truncate text-sm font-normal text-muted-foreground">
-          {m.agent_actors_owner({ owner: item.ownerLabel })}
-        </span>
-      </span>
-    </span>
+      };
+    },
+    [
+      accessRecovery,
+      agents,
+      applyMutation,
+      editSession,
+      mutationPending,
+      offers,
+      onOpenAgentSettings,
+      onRecheckOffers,
+      readOnly,
+      setEditSession,
+    ],
   );
+
+  return { find, render };
 }

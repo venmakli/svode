@@ -1,25 +1,20 @@
 export { collectionShortcuts } from "./model/shortcuts";
 export { calendarScopes } from "./model/calendar-utils";
-export {
-  CollectionDetailPeekHost,
-  useCollectionDetailController,
-} from "./detail-peek/detail-peek";
-export { useCollectionDetailItemBinding } from "./detail-peek/detail-item-binding";
-export type { CollectionDetailItemBinding } from "./detail-peek/detail-item-binding";
-export { CollectionDetailHeader } from "./detail-peek/detail-header";
-export { CollectionDetailInfo } from "./detail-peek/detail-info";
+export { CollectionItemPeek } from "./item-peek/collection-item-peek";
+export { useCollectionItemPeek } from "./item-peek/use-collection-item-peek";
+export { CollectionItemActionsMenu } from "./item-peek/item-actions-menu";
+export { CollectionItemInfo } from "./item-peek/item-info";
 export type {
-  CollectionDetailInfoGroup,
-  CollectionDetailInfoRow,
-} from "./detail-peek/detail-info";
+  CollectionItemInfoGroup,
+  CollectionItemInfoRow,
+} from "./item-peek/item-info";
+export type {
+  CollectionItemPeekController,
+  CollectionItemPeekFocus,
+  CollectionItemPeekHeader,
+  CollectionItemPeekScreen,
+} from "./item-peek/types";
 export type { CalendarScope } from "./model/calendar-types";
-export type {
-  CollectionDetailContent,
-  CollectionDetailController,
-  CollectionDetailFocusOptions,
-  CollectionDetailRequest,
-  CollectionDetailSelection,
-} from "./detail-peek/types";
 export type {
   CollectionPeekSurfaceState,
   CollectionRouteState,

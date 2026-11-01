@@ -4,11 +4,12 @@ import type {
   CollectionActionState,
   CollectionPresentationState,
 } from "@/features/collection";
-import type { CollectionDetailController } from "@/features/collection/app-shell";
+import type { CollectionItemPeekController } from "@/features/collection/app-shell";
 import { RepositoryAccessPreflightDialog } from "@/features/git";
 import type { ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
+import type { ActorPeekTarget } from "../model/actor-peek";
 import type {
   AgentActorAgentOption,
   AgentActorItem,
@@ -19,7 +20,7 @@ import {
 } from "./use-agent-actor-access-coordinator";
 import { useAgentActorCatalog } from "./use-agent-actor-catalog";
 import { useAgentActorCatalogSave } from "./use-agent-actor-catalog-save";
-import { useAgentActorDetail } from "./use-agent-actor-detail";
+import { useAgentActorPeek } from "./use-agent-actor-peek";
 import { useAgentActorFacts } from "./use-agent-actor-facts";
 import {
   useAgentActorMutations,
@@ -33,16 +34,14 @@ import { CatalogRetryButton } from "../ui/catalog-retry-button";
 const NO_AGENTS: readonly AgentActorAgentOption[] = [];
 
 export function useAgentActorsController({
-  detailController,
-  instanceKey,
   owner,
+  peek,
   readOnly,
   onOpenAgentSettings,
   onOpenRepositorySettings,
 }: {
-  detailController: CollectionDetailController | null;
-  instanceKey: string;
   owner: ScopeOwnerRef;
+  peek: CollectionItemPeekController<ActorPeekTarget>;
   readOnly: boolean;
   onOpenAgentSettings(): void;
   onOpenRepositorySettings?: (repositoryPath: string) => void;
@@ -76,7 +75,6 @@ export function useAgentActorsController({
     [openCatalogSaveReview],
   );
   const mutations = useAgentActorMutations({
-    detailController,
     onAccessDenied: handleMutationAccessDenied,
     projectPath: owner.projectPath,
     refresh: catalog.refresh,
@@ -129,15 +127,14 @@ export function useAgentActorsController({
   });
   const requestAccess = accessCoordinator.request;
 
-  const detail = useAgentActorDetail({
+  const agentPeek = useAgentActorPeek({
     accessRecovery: accessCoordinator.recovery,
     applyMutation,
     agents: snapshot?.agents ?? NO_AGENTS,
-    detailController,
     editSession,
-    instanceKey,
     mutationPending,
     offers: agentFacts.offers,
+    peek,
     readOnly,
     items: snapshot?.items ?? null,
     setEditSession,
@@ -341,7 +338,7 @@ export function useAgentActorsController({
     facts: agentFacts.facts,
     inheritedVisible: snapshot?.items.some((item) => item.inherited) ?? false,
     overlays,
-    detail,
+    peek: agentPeek,
     presentationState,
   };
 }

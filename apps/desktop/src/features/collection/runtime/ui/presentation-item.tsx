@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 
 import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,12 +21,12 @@ import { runCollectionCallback } from "../lib/interaction";
 import type {
   CollectionInteractionError,
   CollectionPresentationDescriptor,
-  CollectionItemActionDescriptor,
 } from "../model/types";
 import { CollectionPropertyControl } from "./property-renderers";
 import {
   CollectionItemActionsContextMenu,
   CollectionItemActionsDropdownMenu,
+  visibleItemActions,
 } from "./item-actions";
 
 interface CollectionPresentationItemProps {
@@ -91,34 +84,12 @@ export function CollectionPresentationItem({
     [descriptor.id, instanceKey, onInteractionError, itemId],
   );
 
-  // The menu of an open detail follows its item with the actions the
-  // presentation has then.
-  const latestActions = useRef({
-    actions: descriptor.itemActions,
-    reportError,
-  });
-  useEffect(() => {
-    latestActions.current = { actions: descriptor.itemActions, reportError };
-  }, [descriptor.itemActions, reportError]);
-  const itemActionsMenu = useCallback((version: unknown) => {
-    const { actions, reportError: report } = latestActions.current;
-    const visible = visibleItemActions(actions, version);
-    return visible.length > 0 ? (
-      <CollectionItemActionsDropdownMenu
-        actions={visible}
-        item={version}
-        onRejected={(targetId, message) => report("action", targetId, message)}
-      />
-    ) : undefined;
-  }, []);
-
   const activate = useCallback(async () => {
     if (!descriptor.onActivate) return;
 
     setActivationError(null);
     const result = await runCollectionCallback(async () => {
       await descriptor.onActivate?.(item, {
-        actions: itemActionsMenu,
         fallbackFocus: activationFocusFallback,
         returnFocus: () => document.getElementById(focusTargetId),
         itemId,
@@ -135,7 +106,6 @@ export function CollectionPresentationItem({
     focusTargetId,
     reportError,
     item,
-    itemActionsMenu,
     itemId,
   ]);
 
@@ -449,17 +419,4 @@ export function CollectionPresentationItem({
       onOpen={activationEnabled ? () => void activate() : undefined}
     />
   );
-}
-
-function visibleItemActions(
-  actions: readonly CollectionItemActionDescriptor<unknown>[] | undefined,
-  item: unknown,
-) {
-  return (actions ?? []).filter((action) => {
-    try {
-      return action.isVisible?.(item) ?? true;
-    } catch {
-      return true;
-    }
-  });
 }

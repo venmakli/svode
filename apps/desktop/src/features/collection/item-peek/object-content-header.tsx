@@ -1,24 +1,21 @@
 import type { ReactNode } from "react";
 
 /**
- * The read-only header of a fixed Collection item below the peek top bar, in
- * the view of the page header: icon, name and a short description from the
- * item's source.
+ * The content header of an object screen below the top bar, in the view of
+ * the page header: the icon from the object's source or the fallback of its
+ * kind, the name and a short description under it.
  */
-export function CollectionDetailHeader({
+export function ObjectContentHeader({
   description,
   icon,
   title,
 }: {
-  description?: string | null;
+  description?: ReactNode;
   icon: ReactNode;
   title: string;
 }) {
   return (
-    <div
-      className="flex min-w-0 items-start gap-3"
-      data-collection-detail-header
-    >
+    <div className="flex min-w-0 items-start gap-3" data-object-content-header>
       <span
         className="flex size-9 shrink-0 items-center justify-center text-muted-foreground [&_svg]:size-6"
         aria-hidden

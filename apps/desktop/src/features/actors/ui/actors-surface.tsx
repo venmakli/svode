@@ -10,7 +10,10 @@ import {
   type CollectionInstance,
   type CollectionPresentationState,
 } from "@/features/collection";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
+import {
+  CollectionItemPeek,
+  useCollectionItemPeek,
+} from "@/features/collection/app-shell";
 import {
   RepositoryAccessPreflightDialog,
   useRepositoryAccessPreflight,
@@ -21,10 +24,12 @@ import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
 import { useActorCatalog } from "../hooks/use-actor-catalog";
-import { useActorDetail } from "../hooks/use-actor-detail";
+import { useActorPeek } from "../hooks/use-actor-peek";
 import { useActorMailmapSave } from "../hooks/use-actor-mailmap-save";
 import { useActorMutation } from "../hooks/use-actor-mutation";
 import { useAgentActorsController } from "../hooks/use-agent-actors-controller";
+import { actorPeekIdentity, type ActorPeekTarget } from "../model/actor-peek";
+import type { AgentActorItem } from "../model/agent-actor-types";
 import type { ActorCatalogState } from "../model/catalog-state";
 import type {
   ActorMutationIntent,
@@ -73,14 +78,14 @@ export function ActorsSurface({
     }),
     [onOpenRepositorySettings, owner.spacePath, repositoryOwnerName],
   );
-  const detailController = useCollectionDetailController();
+  const peek = useCollectionItemPeek<ActorPeekTarget>(actorPeekIdentity);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const instanceKey = `actors:${owner.ownerKey}`;
+  const { close: closePeek, open: openPeek } = peek;
   const agentActors = useAgentActorsController({
-    detailController,
-    instanceKey,
     owner,
+    peek,
     readOnly,
     onOpenAgentSettings,
     onOpenRepositorySettings,
@@ -89,8 +94,7 @@ export function ActorsSurface({
     () => (state.phase === "ready" ? state.snapshot.items : []),
     [state],
   );
-  const humanDetail = useActorDetail({
-    controller: detailController,
+  const humanPeek = useActorPeek({
     snapshot: state.phase === "ready" ? state.snapshot : null,
     spacePath: owner.spacePath,
   });
@@ -98,10 +102,11 @@ export function ActorsSurface({
     (result: AppliedActorMutationResult) => {
       replaceSnapshot(result.catalog);
       setFocusItemId(result.canonicalEmail);
-      void detailController?.close();
+      // A merge or a new canonical email may leave the open person gone.
+      void closePeek();
       showActorMutationOutcome(result);
     },
-    [detailController, replaceSnapshot],
+    [closePeek, replaceSnapshot],
   );
   const onDuplicate = useCallback(
     (canonicalEmail: string) => {
@@ -110,13 +115,9 @@ export function ActorsSurface({
       );
       setFocusItemId(canonicalEmail);
       if (!actor) return;
-      void humanDetail.open(actor, {
-        instanceKey,
-        presentationId: "humans",
-        itemId: actor.canonicalEmail,
-      });
+      openPeek({ presentationId: "humans", itemId: actor.canonicalEmail });
     },
-    [catalogItems, humanDetail, instanceKey],
+    [catalogItems, openPeek],
   );
   const mutation = useActorMutation({
     onAccessBlocked: (continueIntent) =>
@@ -213,10 +214,10 @@ export function ActorsSurface({
       onEdit: (source) => requestMutationIntent({ kind: "edit", source }),
       onMerge: (source) => requestMutationIntent({ kind: "merge", source }),
     },
-    onActivate: humanDetail.activation({
-      instanceKey,
+    onActivate: peek.activation((_item: ActorCatalogItem, context) => ({
       presentationId: "humans",
-    }),
+      itemId: context.itemId,
+    })),
     state: presentationState,
   });
   const agentActorsPresentation = createAgentActorsPresentation({
@@ -224,10 +225,10 @@ export function ActorsSurface({
     agents,
     facts: agentActors.facts,
     inheritedVisible: agentActors.inheritedVisible,
-    onActivate: agentActors.detail.activation({
-      instanceKey,
+    onActivate: peek.activation((_item: AgentActorItem, context) => ({
       presentationId: "agents",
-    }),
+      itemId: context.itemId,
+    })),
     state: agentActors.presentationState,
   });
   const instance: CollectionInstance = {
@@ -243,7 +244,6 @@ export function ActorsSurface({
     agentActors.presentationState.phase === "ready"
       ? agentActors.presentationState.items
       : null;
-  const openAgentActorDetail = agentActors.detail.open;
   const setActivePresentationId =
     collectionState.phase === "ready"
       ? collectionState.setActivePresentationId
@@ -259,18 +259,8 @@ export function ActorsSurface({
     );
     if (!item) return;
     setActivePresentationId("agents");
-    void openAgentActorDetail(item, {
-      instanceKey,
-      presentationId: "agents",
-      itemId: agentActorItemId(item),
-    });
-  }, [
-    agentActorItems,
-    instanceKey,
-    openAgentActorDetail,
-    openItem,
-    setActivePresentationId,
-  ]);
+    openPeek({ presentationId: "agents", itemId: agentActorItemId(item) });
+  }, [agentActorItems, openItem, openPeek, setActivePresentationId]);
 
   const body =
     collectionState.phase === "blocking_error" ? (
@@ -324,6 +314,22 @@ export function ActorsSurface({
         onConfirm={() => void mailmapSave.confirm()}
       />
       {agentActors.overlays}
+      <CollectionItemPeek<ActorPeekTarget, ActorCatalogItem | AgentActorItem>
+        peek={peek}
+        find={(target) =>
+          target.presentationId === "humans"
+            ? humanPeek.find(target.itemId)
+            : agentActors.peek.find(target.itemId)
+        }
+        render={(item, target) =>
+          target.presentationId === "humans"
+            ? humanPeek.render(item as ActorCatalogItem, presentation)
+            : agentActors.peek.render(
+                item as AgentActorItem,
+                agentActorsPresentation,
+              )
+        }
+      />
     </div>
   );
 }

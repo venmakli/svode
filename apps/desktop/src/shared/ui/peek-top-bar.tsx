@@ -69,7 +69,10 @@ export function PeekTopBar({
   );
 }
 
-/** The object of a peek: its icon or fallback and its name, not a link. */
+/**
+ * The object of a peek: its icon, avatar or fallback and its name, not a
+ * link.
+ */
 export function PeekIdentity({
   icon,
   name,
@@ -80,7 +83,7 @@ export function PeekIdentity({
   return (
     <div data-peek-identity className="flex min-w-0 items-center gap-2 px-1">
       <span
-        className="flex size-4 shrink-0 items-center justify-center leading-none text-muted-foreground [&_svg]:size-4"
+        className="flex size-4 shrink-0 items-center justify-center leading-none text-muted-foreground [&_svg]:size-4 [&_[data-slot=avatar]]:size-5!"
         aria-hidden
       >
         {icon}

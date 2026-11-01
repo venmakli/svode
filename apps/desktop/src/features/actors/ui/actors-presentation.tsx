@@ -5,9 +5,13 @@ import {
   type CollectionActionState,
   type CollectionActivationContext,
   type CollectionPresentationDescriptor,
+  type CollectionPresentationRuntime,
   type CollectionPresentationState,
 } from "@/features/collection";
-import type { CollectionDetailContent } from "@/features/collection/app-shell";
+import {
+  CollectionItemActionsMenu,
+  type CollectionItemPeekScreen,
+} from "@/features/collection/app-shell";
 import {
   defineComputedCollectionProperty,
   defineOwnerDefinedCollectionProperty,
@@ -157,11 +161,16 @@ interface ActorPresentationMutationActions {
   onEdit(item: ActorCatalogItem): void;
 }
 
-export function createActorDetailRequest(
+/**
+ * The screen of a person: avatar and name, the canonical email as the
+ * description, the merge and edit actions in ⋯ and the activity profile.
+ */
+export function createActorScreen(
   item: ActorCatalogItem,
+  presentation: CollectionPresentationRuntime,
   spacePath: string,
   catalogGeneration = 0,
-): CollectionDetailContent {
+): CollectionItemPeekScreen {
   return {
     content: (
       <ActorDetail
@@ -170,20 +179,16 @@ export function createActorDetailRequest(
         spacePath={spacePath}
       />
     ),
-    description: (
-      <span className="sr-only">{m.actors_detail_description()}</span>
-    ),
-    title: (
-      <span className="flex min-w-0 items-center gap-3">
-        <ActorAvatar actor={item} size="lg" />
-        <span className="flex min-w-0 flex-col text-left">
-          <span className="truncate">{item.displayName}</span>
-          <span className="truncate text-sm font-normal text-muted-foreground">
-            {item.canonicalEmail}
-          </span>
-        </span>
-      </span>
-    ),
+    header: {
+      description: item.canonicalEmail,
+      icon: <ActorAvatar actor={item} size="lg" />,
+      title: item.displayName,
+    },
+    identity: {
+      icon: <ActorAvatar actor={item} size="sm" />,
+      name: item.displayName,
+    },
+    menu: <CollectionItemActionsMenu item={item} presentation={presentation} />,
   };
 }
 

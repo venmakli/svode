@@ -300,3 +300,17 @@ export function CollectionItemActionsDropdownMenu({
     </DropdownMenu>
   );
 }
+
+/** The actions of an item its owner shows for it now. */
+export function visibleItemActions(
+  actions: readonly CollectionItemActionDescriptor<unknown>[] | undefined,
+  item: unknown,
+) {
+  return (actions ?? []).filter((action) => {
+    try {
+      return action.isVisible?.(item) ?? true;
+    } catch {
+      return true;
+    }
+  });
+}

@@ -8,12 +8,13 @@ import {
   useCollectionState,
   type CollectionInstance,
 } from "@/features/collection";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
+import { CollectionItemPeek } from "@/features/collection/app-shell";
 import type { ScopeSurfaceRenderContext } from "@/features/scope-surfaces";
 import { useAppLocale } from "@/features/settings";
 
 import { useAgentContext } from "../hooks/use-agent-context";
-import { useAgentContextItemDetail } from "../hooks/use-agent-context-item-detail";
+import { useAgentContextPeek } from "../hooks/use-agent-context-peek";
+import type { AgentContextItem } from "../model/types";
 import { buildAgentContextDiagnosticReadModel } from "../model/diagnostics";
 import { AgentContextDiagnosticsDialog } from "./agent-context-diagnostics-dialog";
 import { toAgentContextPresentationState } from "./agent-context-presentation-state";
@@ -40,7 +41,6 @@ export function AgentContextSurface({
   // Properties and the presets built on them carry their labels: a
   // language change rebuilds them.
   const { locale } = useAppLocale();
-  const detailController = useCollectionDetailController();
   // Plugins of "All" whose components are shown, for the session.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -68,13 +68,13 @@ export function AgentContextSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- labels follow the locale
     [agents, locale, onOpenProviders],
   );
-  const detail = useAgentContextItemDetail({
-    controller: detailController,
+  const contextPeek = useAgentContextPeek({
     instanceKey,
     onOpenProviders,
     properties,
     snapshot: state.phase === "ready" ? state.snapshot : null,
   });
+  const { activation } = contextPeek.peek;
   const presentations = useMemo(
     () =>
       AGENT_CONTEXT_PRESETS.map((id) =>
@@ -83,7 +83,11 @@ export function AgentContextSurface({
             ? { expansion: { expanded, onToggle: togglePlugin } }
             : {}),
           id,
-          onActivate: detail.activation({ instanceKey, presentationId: id }),
+          onActivate: activation((_item: AgentContextItem, context) => ({
+            instanceKey,
+            itemId: context.itemId,
+            kind: "item",
+          })),
           properties,
           state: toAgentContextPresentationState(
             state,
@@ -94,7 +98,7 @@ export function AgentContextSurface({
         }),
       ),
     [
-      detail,
+      activation,
       expanded,
       instanceKey,
       onOpenProviders,
@@ -145,6 +149,11 @@ export function AgentContextSurface({
         }
         instance={instance}
         state={collectionState}
+      />
+      <CollectionItemPeek
+        peek={contextPeek.peek}
+        find={contextPeek.find}
+        render={contextPeek.render}
       />
     </div>
   );

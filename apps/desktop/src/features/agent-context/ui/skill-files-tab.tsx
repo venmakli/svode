@@ -1,9 +1,8 @@
 import { AttachmentsFolderTable } from "@/features/attachments";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
+import type { CollectionItemPeekFocus } from "@/features/collection/app-shell";
 
 import { useSkillFilesFolder } from "../hooks/use-skill-files";
-import type { AgentContextItem } from "../model/types";
-import { createSkillFileDetailContent } from "./skill-file-detail";
+import type { AgentContextItem, AgentContextSkillFile } from "../model/types";
 
 /**
  * The skill's «Вложения»: its folder in the Attachments Table. A file opens
@@ -11,10 +10,11 @@ import { createSkillFileDetailContent } from "./skill-file-detail";
  */
 export function AgentContextSkillFilesTab({
   item,
+  onOpenFile,
 }: {
   item: AgentContextItem;
+  onOpenFile(file: AgentContextSkillFile, focus: CollectionItemPeekFocus): void;
 }) {
-  const controller = useCollectionDetailController();
   const { fileOf, folder } = useSkillFilesFolder(item);
 
   return (
@@ -23,25 +23,10 @@ export function AgentContextSkillFilesTab({
       onOpenFile={(attachment, context) => {
         const file = fileOf(attachment);
         if (!file) return;
-        const selection = {
-          instanceKey: `agent-context-skill:${item.id}`,
-          presentationId: "files",
-          itemId: file.path,
-        };
-        void controller.open(
-          {
-            ...createSkillFileDetailContent({
-              file,
-              item,
-              onClose: () => void controller.close(selection),
-            }),
-            selection,
-          },
-          {
-            fallbackFocus: context.fallbackFocus,
-            returnFocus: context.returnFocus,
-          },
-        );
+        onOpenFile(file, {
+          fallbackFocus: context.fallbackFocus,
+          returnFocus: context.returnFocus,
+        });
       }}
     />
   );

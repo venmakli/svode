@@ -80,7 +80,9 @@ export function createRoutinesPresentationDescriptor({
   const getExecutorLabel = (item: RoutineItem) => {
     const executor = getExecutor(item);
     return executor
-      ? agentActorReferenceLabel(resolveAgentActorReference(executors, executor))
+      ? agentActorReferenceLabel(
+          resolveAgentActorReference(executors, executor),
+        )
       : null;
   };
   const properties: readonly CollectionPropertyDefinition<RoutineItem>[] = [
@@ -349,26 +351,18 @@ function RoutineRetryButton({
   );
 }
 
-export function routineDetailTitle(item: RoutineItem) {
+/** The icon of a Routine on its screen: its trigger, or a problem. */
+export function routineScreenIcon(item: RoutineItem) {
   return (
-    <span className="flex min-w-0 items-center gap-3">
-      <RoutineTriggerIcon
-        item={item}
-        className={
-          item.valid ? "size-6 text-muted-foreground" : "size-6 text-destructive"
-        }
-      />
-      <span className="flex min-w-0 flex-col text-left">
-        <span className="truncate">{item.name}</span>
-        <span className="truncate text-sm font-normal text-muted-foreground">
-          {routineSecondaryDescription(item)}
-        </span>
-      </span>
-    </span>
+    <RoutineTriggerIcon
+      item={item}
+      className={item.valid ? undefined : "text-destructive"}
+    />
   );
 }
 
-function routineSecondaryDescription(item: RoutineItem) {
+/** The description under a Routine's name; its file without one. */
+export function routineSecondaryDescription(item: RoutineItem) {
   if (!item.nameConflict) return item.description || item.filename;
   const description = item.description
     ? `${item.description} · ${item.definitionPath}`

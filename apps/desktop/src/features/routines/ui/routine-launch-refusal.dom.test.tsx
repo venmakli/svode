@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
@@ -8,8 +8,12 @@ import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import { loadAgentAdapterIdentities } from "@/features/agent-adapters";
 
 import { RoutineLaunchRefusedError } from "../model/launch-refusal";
-import type { RoutineLaunchRefusal, RoutineItem } from "../model/types";
-import { RoutineDetailActions } from "./routine-detail-actions";
+import type {
+  RoutineLaunchRecoveryActions,
+  RoutineLaunchRefusal,
+  RoutineItem,
+} from "../model/types";
+import { RoutineRunError, RoutineRunTool } from "./routine-run-tool";
 import { RoutineDetailView } from "./routine-detail-view";
 
 const ACTOR = "01arz3ndektsv4rrffq69g5fav";
@@ -76,6 +80,54 @@ function refusedRun(refusal: RoutineLaunchRefusal): RoutineItem {
   };
 }
 
+/** "Run now" in the top bar and its failure in the screen, as the owner keeps it. */
+function RunHarness({
+  item,
+  recovery,
+  onRun,
+}: {
+  item: RoutineItem;
+  recovery: RoutineLaunchRecoveryActions;
+  onRun(item: RoutineItem): Promise<void>;
+}) {
+  const [failure, setFailure] = useState<{
+    message: string;
+    refusal: RoutineLaunchRefusal | null;
+  } | null>(null);
+  const runState = failure
+    ? ({ message: failure.message, status: "error" } as const)
+    : ({ status: "idle" } as const);
+  return (
+    <>
+      <RoutineRunError
+        item={item}
+        recovery={recovery}
+        runRefusal={failure?.refusal ?? null}
+        runState={runState}
+      />
+      <RoutineRunTool
+        item={item}
+        runState={runState}
+        onOpenSession={() => undefined}
+        onRun={async (target) => {
+          try {
+            await onRun(target);
+          } catch (cause) {
+            setFailure({
+              message: cause instanceof Error ? cause.message : "failed",
+              refusal:
+                cause instanceof RoutineLaunchRefusedError
+                  ? cause.refusal
+                  : null,
+            });
+            throw cause;
+          }
+        }}
+      />
+    </>
+  );
+}
+
 async function withDom(body: (container: HTMLElement) => Promise<void>) {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
@@ -113,14 +165,12 @@ test("a manual run refused for a value names it and opens the Agent Actor's edit
     const root = createRoot(container);
     await settle(() =>
       root.render(
-        <RoutineDetailActions
+        <RunHarness
           recovery={{
             onOpenAgentActor: (actorId) => opened.push(actorId),
             onOpenAgentSettings: () => opened.push("settings"),
           }}
           item={routine}
-          runState={{ status: "idle" }}
-          onOpenSession={() => undefined}
           onRun={async () => {
             throw new RoutineLaunchRefusedError("refused", staleModel);
           }}
@@ -140,19 +190,17 @@ test("a manual run refused for a value names it and opens the Agent Actor's edit
   });
 });
 
-test("a manual run refused at readiness keeps its reason when the detail opens again", async () => {
+test("a manual run refused at readiness keeps its reason when the Routine opens again", async () => {
   await withDom(async (container) => {
     const opened: string[] = [];
     const root = createRoot(container);
     await settle(() =>
       root.render(
-        <RoutineDetailActions
+        <RoutineRunError
           recovery={{ onOpenAgentSettings: () => opened.push("settings") }}
           item={routine}
           runRefusal={noDefaultAgent}
           runState={{ message: "refused", status: "error" }}
-          onOpenSession={() => undefined}
-          onRun={async () => undefined}
         />,
       ),
     );
@@ -205,11 +253,9 @@ test("the last run shows why its launch was refused, with no session to open", a
     const root = createRoot(container);
     await settle(() =>
       root.render(
-        <RoutineDetailActions
+        <RunHarness
           recovery={recovery}
           item={refusedRun(staleModel)}
-          runState={{ status: "idle" }}
-          onOpenSession={() => undefined}
           onRun={async () => undefined}
         />,
       ),

@@ -13,11 +13,18 @@ import {
   type CollectionPresentationRuntime,
   type CollectionStateController,
 } from "@/features/collection";
-import type {
-  CollectionDetailContent,
-  CollectionDetailRequest,
-} from "@/features/collection/app-shell";
 import type { CollectionPropertyDefinition } from "@/features/properties";
+
+/** What an owner shows for an activated item of its presentation. */
+interface ItemContent {
+  content: ReactNode;
+  description: string;
+  title: string;
+}
+
+interface ItemRequest extends ItemContent {
+  selection: { instanceKey: string; presentationId: string; itemId: string };
+}
 
 interface ActorItem {
   canonicalEmail: string;
@@ -202,13 +209,13 @@ function createProjectAggregateFixture(
   api: ActorOwnerFixtureApi,
   routing: ProjectActorRouting,
 ): {
-  detailRequests: CollectionDetailRequest[];
+  itemRequests: ItemRequest[];
   descriptor: CollectionPresentationDescriptor<ProjectActorItem>;
   instance: CollectionInstance;
   presentation: CollectionPresentationRuntime;
   items: readonly ProjectActorItem[];
 } {
-  const detail = createRecordingDetailController();
+  const detail = createRecordingItemOpener();
   const instanceKey = "fixture:project-wide";
   const snapshots = api.listScopeSnapshots({
     limitPerScope: 2,
@@ -344,7 +351,7 @@ function createProjectAggregateFixture(
   };
   return {
     descriptor,
-    detailRequests: detail.requests,
+    itemRequests: detail.requests,
     instance,
     presentation,
     items,
@@ -364,13 +371,13 @@ function createProjectFixture() {
 }
 
 function createLocalFixture(): {
-  detailRequests: CollectionDetailRequest[];
+  itemRequests: ItemRequest[];
   descriptor: CollectionPresentationDescriptor<ActorItem>;
   instance: CollectionInstance;
   presentation: CollectionPresentationRuntime;
   item: ActorItem;
 } {
-  const detail = createRecordingDetailController();
+  const detail = createRecordingItemOpener();
   const instanceKey = "fixture:scope-local";
   const item: ActorItem = {
     canonicalEmail: "ilya@example.com",
@@ -408,7 +415,7 @@ function createLocalFixture(): {
   });
   return {
     descriptor,
-    detailRequests: detail.requests,
+    itemRequests: detail.requests,
     instance: {
       defaultPresentationId: descriptor.id,
       instanceKey,
@@ -420,13 +427,13 @@ function createLocalFixture(): {
   };
 }
 
-/** Records the detail an owner opens for an item of its presentation. */
-function createRecordingDetailController() {
-  const requests: CollectionDetailRequest[] = [];
+/** Records what an owner opens for an item of its presentation. */
+function createRecordingItemOpener() {
+  const requests: ItemRequest[] = [];
   return {
     activation:
       <Item,>(
-        createContent: (item: Item) => CollectionDetailContent,
+        createContent: (item: Item) => ItemContent,
         instanceKey: string,
         presentationId: string,
       ) =>
@@ -524,7 +531,7 @@ test("project aggregate owns dedupe, grouping, provenance, and target routing", 
       target: owner.targets.child,
     },
   ]);
-  expect(aggregate.detailRequests.map((request) => request.selection)).toEqual([
+  expect(aggregate.itemRequests.map((request) => request.selection)).toEqual([
     {
       instanceKey: aggregate.instance.instanceKey,
       presentationId: aggregate.descriptor.id,
@@ -551,7 +558,7 @@ test("scope-local and project instances retain the same shell and detail seam", 
     itemId: aggregate.items[0]!.itemId,
   });
   expect(
-    [...local.detailRequests, ...aggregate.detailRequests].map(
+    [...local.itemRequests, ...aggregate.itemRequests].map(
       (request) => request.selection.instanceKey,
     ),
   ).toEqual([local.instance.instanceKey, aggregate.instance.instanceKey]);

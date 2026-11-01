@@ -31,7 +31,6 @@ import {
   TerminalPanelToggle,
   useNewSpaceTerminal,
 } from "@/features/terminal";
-import { CollectionDetailPeekHost } from "@/features/collection/app-shell";
 import { setActiveContentShown } from "@/features/artifact";
 import { useSpace, useSpaceActions } from "@/features/space";
 import { SpaceConfigChanges } from "./space-config-changes";
@@ -42,10 +41,7 @@ import {
   SpaceFileWatcher,
   SpaceSidebar,
 } from "@/features/space/app-shell";
-import {
-  SpaceGitWatcher,
-  useAppGitFocus,
-} from "@/features/git/app-shell";
+import { SpaceGitWatcher, useAppGitFocus } from "@/features/git/app-shell";
 import { useGlobalIdentity } from "@/features/identity";
 import {
   UserEditScope,
@@ -244,7 +240,6 @@ function MainLayoutRuntime({ view }: { view: ShellView }) {
             onOpenAppSettings={openAppSettings}
           />
           <AgentSessionCatalogHost projectPath={activeRootPath} />
-          <CollectionDetailPeekHost />
           <AgentSessionPeekHost />
           {view === "home" && <HomeEntry />}
         </ChatChangesWindowProvider>
@@ -455,9 +450,7 @@ function ShellMainInset({
 }) {
   const openSessionRoutine = useOpenSessionRoutine();
   const mainSessionTarget = useShellStore((state) => state.mainSessionTarget);
-  const mainSessionOpening = useShellStore(
-    (state) => state.mainSessionOpening,
-  );
+  const mainSessionOpening = useShellStore((state) => state.mainSessionOpening);
   const mainSessionDraft = useShellStore((state) => state.mainSessionDraft);
   const openAppSettings = useShellStore((state) => state.openAppSettings);
   const showStartedSession = useShowStartedSessionInMainArea();

@@ -29,7 +29,6 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   let unmounts = 0;
   let flushBody: () => Promise<void> = async () => {};
   let convert: (path: string) => void = () => {};
-  let allowCollectionNavigation = true;
   let appBroken = false;
   const lifecycle: string[] = [];
   type Props = Record<string, unknown>;
@@ -174,13 +173,6 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         </div>
       ) : null,
   }));
-  mock.module("@/features/collection/detail-peek/detail-peek", () => ({
-    CollectionDetailPeekHost: () => null,
-    useCollectionDetailController: () => ({
-      close: async () => allowCollectionNavigation,
-      open: async () => true,
-    }),
-  }));
   mock.module("./app-with-variables", () => ({
     AppWithVariables: function App({
       owner,
@@ -256,7 +248,6 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
     mounts = 0;
     unmounts = 0;
     lifecycle.length = 0;
-    allowCollectionNavigation = true;
     flushBody = async () => {};
     let hasApp = folder;
     let ownerFactReads = 0;
@@ -621,10 +612,6 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
         f.dom.window.document.querySelector('[aria-busy="true"]'),
       ).toBeNull();
       flushBody = async () => {};
-      allowCollectionNavigation = false;
-      await clickTab(f.dom, 1);
-      expect(tabs(f.dom)[0]?.getAttribute("aria-selected")).toBe("true");
-      allowCollectionNavigation = true;
       await clickTab(f.dom, 1);
       expect(tabs(f.dom)[1]?.getAttribute("aria-selected")).toBe("true");
       expect(mounts).toBe(1);

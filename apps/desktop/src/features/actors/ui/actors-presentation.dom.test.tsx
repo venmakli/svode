@@ -1,27 +1,19 @@
 import { expect, test } from "bun:test";
 import { act, useMemo } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 
 import {
   EMPTY_COLLECTION_QUERY,
   CollectionPresentationShell,
+  type CollectionActivationContext,
 } from "@/features/collection";
-import {
-  useCollectionDetailItemBinding,
-  type CollectionDetailController,
-  type CollectionDetailRequest,
-} from "@/features/collection/app-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { clearNativeMocks, mockNativeIpc } from "@/platform/native/testing";
 
 import type { ActorCatalogItem } from "../model/types";
 import { ActorDetail } from "./actor-detail";
-import {
-  createActorDetailRequest,
-  createActorsPresentation,
-} from "./actors-presentation";
+import { createActorsPresentation } from "./actors-presentation";
 
 const actor: ActorCatalogItem = {
   aliases: [],
@@ -42,26 +34,20 @@ const actor: ActorCatalogItem = {
   ],
 };
 
-test("actors rows open in the real DOM and use shared row and detail action seams", async () => {
+test("actors rows open in the real DOM and use the shared row action seam", async () => {
   const dom = new JSDOM(
     "<!doctype html><html><body><div id=app></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/" },
   );
   const restoreGlobals = installDomGlobals(dom);
-  const requests: CollectionDetailRequest[] = [];
-  const controller = {
-    close: async () => true,
-    open: async (request: CollectionDetailRequest) => {
-      requests.push(request);
-      return true;
-    },
-    update: async () => false,
-  };
+  const requests: CollectionActivationContext[] = [];
   const root = createRoot(dom.window.document.getElementById("app")!);
 
   try {
     await act(async () => {
-      root.render(<HumansShell controller={controller} />);
+      root.render(
+        <HumansShell onActivate={(context) => requests.push(context)} />,
+      );
     });
 
     const row = dom.window.document.querySelector<HTMLElement>(
@@ -80,11 +66,7 @@ test("actors rows open in the real DOM and use shared row and detail action seam
       );
     });
     expect(requests.length).toBe(1);
-
-    const detailActions = renderToStaticMarkup(
-      <>{requests[0]?.headerActions}</>,
-    );
-    expect(detailActions.includes('aria-label="Row actions"')).toBe(true);
+    expect(requests[0]?.itemId).toBe("ada@example.test");
 
     for (const key of ["Enter", " "]) {
       await act(async () => {
@@ -114,29 +96,18 @@ test("actors rows open in the real DOM and use shared row and detail action seam
   }
 });
 
-const createHumanDetail = (item: ActorCatalogItem) =>
-  createActorDetailRequest(item, "/repo");
-
 function HumansShell({
-  controller,
+  onActivate,
 }: {
-  controller: CollectionDetailController;
+  onActivate(context: CollectionActivationContext): void;
 }) {
-  const detail = useCollectionDetailItemBinding({
-    controller,
-    createContent: createHumanDetail,
-    findItem: null,
-  });
   const presentation = useMemo(
     () =>
       createActorsPresentation({
-        onActivate: detail.activation({
-          instanceKey: "actors:space:root",
-          presentationId: "humans",
-        }),
+        onActivate: (_item, context) => onActivate(context),
         state: { phase: "ready", items: [actor] },
       }),
-    [detail],
+    [onActivate],
   );
   return (
     <CollectionPresentationShell

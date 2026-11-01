@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
+import { PeekSheet } from "@/shared/ui/peek-sheet";
 import { keepLayerOpenOnEscape } from "@/shared/lib/escape-key";
 import { pageNavigationItem, type Page } from "@/features/page";
 import { useSpace } from "@/features/space";
@@ -47,74 +46,59 @@ export function PagePeekSheet(props: PagePeekSheetProps) {
     navigation.dismiss();
     props.onOpenChange(false);
   };
-  usePeekStackEntry(Boolean(target), () => void leave(() => close(), "close"));
   return (
-    <Sheet
+    <PeekSheet
       open={Boolean(target)}
-      onOpenChange={(open) => {
-        if (!open) void leave(() => close(), "close");
+      title={target?.page.meta.title ?? m.collection_open_in_peek()}
+      onRequestClose={() => void leave(() => close(), "close")}
+      onEscapeKeyDown={(event) => {
+        // Esc in the title cancels its edit and keeps the peek open.
+        if (
+          event.target instanceof HTMLElement &&
+          event.target.matches("[data-page-title-input]:not([readonly])")
+        )
+          keepLayerOpenOnEscape(event);
       }}
     >
-      <SheetContent
-        side="right"
-        showCloseButton={false}
-        overlayClassName="bg-black/25 backdrop-blur-none supports-backdrop-filter:backdrop-blur-none"
-        className="gap-0 p-0 pt-2 pb-6 data-[side=right]:sm:max-w-none"
-        style={{ width: "min(1120px, max(720px, 66vw), 94vw)" }}
-        onEscapeKeyDown={(event) => {
-          // Esc in the title cancels its edit and keeps the peek open.
-          if (
-            event.target instanceof HTMLElement &&
-            event.target.matches("[data-page-title-input]:not([readonly])")
-          )
-            keepLayerOpenOnEscape(event);
-        }}
-      >
-        <SheetTitle className="sr-only">
-          {target?.page.meta.title ?? m.collection_open_in_peek()}
-        </SheetTitle>
-        {target
-          ? props.renderPeek({
-              path: target.page.path,
-              spacePath,
-              spaceId,
-              projectPath,
-              sessionKey: navigation.sessionKey,
-              onContentPathChange: (path) =>
-                navigation.adoptIdentity(`${spacePath}:${path}`),
-              fallbackTitle: target.page.meta.title,
-              registerNavigationGuard,
-              dismiss: close,
-              metadataBefore: target.template ? (
-                <Badge variant="secondary">
-                  {m.collection_template_badge()}
-                </Badge>
-              ) : null,
-              renderHeaderActions: (page, readOnly) => (
-                <>
-                  <PagePeekActions
-                    {...props}
-                    page={page}
-                    readOnly={readOnly}
-                    spacePath={spacePath}
-                    spaceId={spaceId}
-                    projectPath={projectPath}
-                    template={target.template}
-                  />
-                  {target.focusTitle && page.path === target.page.path ? (
-                    <PeekTitleFocus />
-                  ) : null}
-                </>
-              ),
-              onExpand: (openFull) =>
-                void leave(async () => {
-                  if (await openFull()) close();
-                }, "expand"),
-              onClose: () => void leave(() => close(), "close"),
-            })
-          : null}
-      </SheetContent>
-    </Sheet>
+      {target
+        ? props.renderPeek({
+            path: target.page.path,
+            spacePath,
+            spaceId,
+            projectPath,
+            sessionKey: navigation.sessionKey,
+            onContentPathChange: (path) =>
+              navigation.adoptIdentity(`${spacePath}:${path}`),
+            fallbackTitle: target.page.meta.title,
+            registerNavigationGuard,
+            dismiss: close,
+            metadataBefore: target.template ? (
+              <Badge variant="secondary">{m.collection_template_badge()}</Badge>
+            ) : null,
+            renderHeaderActions: (page, readOnly) => (
+              <>
+                <PagePeekActions
+                  {...props}
+                  page={page}
+                  readOnly={readOnly}
+                  spacePath={spacePath}
+                  spaceId={spaceId}
+                  projectPath={projectPath}
+                  template={target.template}
+                />
+                {target.focusTitle && page.path === target.page.path ? (
+                  <PeekTitleFocus />
+                ) : null}
+              </>
+            ),
+            onExpand: (openFull) =>
+              void leave(async () => {
+                if (await openFull()) close();
+              }, "expand"),
+            onClose: () => void leave(() => close(), "close"),
+          })
+        : null}
+    </PeekSheet>
   );
 }
 

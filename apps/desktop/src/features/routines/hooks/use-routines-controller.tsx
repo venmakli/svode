@@ -5,7 +5,10 @@ import {
   type CollectionActionState,
   type CollectionInstance,
 } from "@/features/collection";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
+import {
+  CollectionItemPeek,
+  useCollectionItemPeek,
+} from "@/features/collection/app-shell";
 import type { ScopeOpenItem, ScopeOwnerRef } from "@/features/scope-surfaces";
 import * as m from "@/paraglide/messages.js";
 
@@ -26,7 +29,7 @@ import {
 import { useRoutineCatalog } from "./use-routine-catalog";
 import { useRoutineAutomaticConsent } from "./use-routine-automatic-consent";
 import { useRoutineCreateJourney } from "./use-routine-create-journey";
-import { useRoutineDetail } from "./use-routine-detail";
+import { useRoutinePeek } from "./use-routine-peek";
 import { useRoutineDispatch } from "./use-routine-dispatch";
 import { useRoutineExecutors } from "./use-routine-executors";
 import { useRoutineMutations } from "./use-routine-mutations";
@@ -62,11 +65,12 @@ export function useRoutinesController(
     retryAutomaticConsent: automaticConsent.retry,
   });
   const executors = useRoutineExecutors(owner.projectPath, owner.spacePath);
-  const detailController = useCollectionDetailController();
+  const peek = useCollectionItemPeek<string>(routinePeekIdentity);
   const instanceKey = `routines:${owner.ownerKey}`;
+  const { close: closePeek, open: openPeek } = peek;
   const onDetailInvalidated = useCallback(async () => {
-    await detailController?.close();
-  }, [detailController]);
+    await closePeek();
+  }, [closePeek]);
   const mutations = useRoutineMutations({
     onDetailInvalidated,
     owner: routineOwner,
@@ -85,12 +89,10 @@ export function useRoutinesController(
     }),
     [onOpenAgentActor, onOpenAgentSettings, owner.spaceId],
   );
-  const detail = useRoutineDetail({
+  const routinePeek = useRoutinePeek({
     applyUpdate: mutations.applyUpdate,
-    detailController,
     editSession: mutations.editSession,
     executors: executors.state,
-    instanceKey,
     mutationError: mutations.error,
     nameError: mutations.nameError,
     getRunRefusal: dispatch.getRunRefusal,
@@ -98,6 +100,7 @@ export function useRoutinesController(
     onOpenSession: dispatch.openLastSession,
     onRun: dispatch.run,
     owner: routineOwner,
+    peek,
     pending: mutations.pending,
     readOnly,
     recovery,
@@ -117,13 +120,9 @@ export function useRoutinesController(
     }) => {
       if (!sameRoutineOwner(createdOwner, routineOwner)) return;
       replaceSnapshot(snapshot);
-      await detail.open(item, {
-        instanceKey,
-        presentationId: "all",
-        itemId: item.id,
-      });
+      openPeek(item.id);
     },
-    [detail, instanceKey, replaceSnapshot, routineOwner],
+    [openPeek, replaceSnapshot, routineOwner],
   );
   // A Routine addressed by the open request opens once the catalog is read.
   useEffect(() => {
@@ -133,12 +132,8 @@ export function useRoutinesController(
       (candidate) => candidate.routineId === openItem.id,
     );
     if (!item) return;
-    void detail.open(item, {
-      instanceKey,
-      presentationId: "all",
-      itemId: item.id,
-    });
-  }, [detail, instanceKey, openItem, state]);
+    openPeek(item.id);
+  }, [openItem, openPeek, state]);
   const create = useRoutineCreateJourney({ onApplied: onRoutineCreated });
   const createExecutorOwner = create.session?.owner ?? routineOwner;
   const useDetachedCreateExecutors = Boolean(
@@ -249,7 +244,7 @@ export function useRoutinesController(
   const presentation = createRoutinesPresentation({
     actions,
     executors: executors.state,
-    onActivate: detail.activation({ instanceKey, presentationId: "all" }),
+    onActivate: peek.activation((_item, context) => context.itemId),
     state: toRoutinePresentationState(state, () => void refresh()),
   });
   const instance: CollectionInstance = {
@@ -261,6 +256,11 @@ export function useRoutinesController(
   const collectionState = useCollectionState(instance);
   const overlays = (
     <>
+      <CollectionItemPeek
+        peek={peek}
+        find={routinePeek.find}
+        render={(item) => routinePeek.render(item, presentation)}
+      />
       {create.session ? (
         <RoutineCreateDialog
           automaticAuthority={create.session.automaticAuthority}
@@ -300,6 +300,10 @@ export function useRoutinesController(
     overlays,
     storageRecovery,
   };
+}
+
+function routinePeekIdentity(itemId: string) {
+  return itemId;
 }
 
 function sameRoutineOwner(left: RoutineOwnerInput, right: RoutineOwnerInput) {

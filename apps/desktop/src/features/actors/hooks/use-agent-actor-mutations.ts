@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import type { CollectionDetailController } from "@/features/collection/app-shell";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -40,14 +39,12 @@ export interface AgentActorMutationAccessContext {
 }
 
 export function useAgentActorMutations({
-  detailController,
   projectPath,
   refresh,
   saveCatalog,
   snapshot,
   onAccessDenied,
 }: {
-  detailController: CollectionDetailController | null;
   projectPath: string;
   refresh(): void | Promise<void>;
   saveCatalog(ownerPath: string): void;
@@ -159,8 +156,8 @@ export function useAgentActorMutations({
         setDeleteActor(null);
         setDeleteReferences({ phase: "idle" });
         if (editSession) editSession.guard.dirty = false;
+        // An edited Agent shows again in its peek; a deleted one closes it.
         setEditSession(null);
-        await detailController?.close();
         await refresh();
       } catch (error) {
         if (
@@ -177,15 +174,7 @@ export function useAgentActorMutations({
         setPending(false);
       }
     },
-    [
-      detailController,
-      editSession,
-      projectPath,
-      refresh,
-      saveCatalog,
-      snapshot,
-      onAccessDenied,
-    ],
+    [editSession, projectPath, refresh, saveCatalog, snapshot, onAccessDenied],
   );
 
   return {

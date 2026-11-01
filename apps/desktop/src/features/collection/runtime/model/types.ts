@@ -125,11 +125,6 @@ export interface CollectionPresentationDescriptor<Item> {
 
 export interface CollectionActivationContext {
   itemId: string;
-  /**
-   * The item actions menu of the presentation for a version of the activated
-   * item, from its current actions; nothing when none is visible.
-   */
-  actions?(item: unknown): ReactNode;
   returnFocus?(): HTMLElement | null;
   fallbackFocus?(): HTMLElement | null;
 }

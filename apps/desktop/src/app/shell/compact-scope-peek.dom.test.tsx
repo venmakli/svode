@@ -31,7 +31,6 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   let flushBody: () => Promise<void> = async () => {};
   let discardBody: () => Promise<void> = async () => {};
   let _convert: (path: string) => void = () => {};
-  const allowCollectionNavigation = true;
   const appBroken = false;
   let headerBroken = false;
   const lifecycle: string[] = [];
@@ -128,13 +127,6 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   }));
   mock.module("@/features/content-actions/ui/content-delete-dialog", () => ({
     ContentDeleteDialog: () => null,
-  }));
-  mock.module("@/features/collection/detail-peek/detail-peek", () => ({
-    CollectionDetailPeekHost: () => null,
-    useCollectionDetailController: () => ({
-      close: async () => allowCollectionNavigation,
-      open: async () => true,
-    }),
   }));
   mock.module("./app-with-variables", () => ({
     AppWithVariables: function App({

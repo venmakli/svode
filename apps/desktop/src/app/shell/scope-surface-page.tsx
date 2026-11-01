@@ -12,7 +12,6 @@ import { usePublishMainHeader } from "./main-header-contribution";
 import { AgentSessionsSurface } from "@/features/agent-sessions";
 import { ActorsSurface } from "@/features/actors";
 import { RoutinesSurface } from "@/features/routines";
-import { useCollectionDetailController } from "@/features/collection/app-shell";
 import {
   CollectionViewsSurface,
   type CollectionViewsSurfaceProps,
@@ -276,7 +275,6 @@ function ScopePageSurfaceHost({
   registerNavigationGuard?: (guard: PeekNavigationGuard) => () => void;
 }) {
   const pageSurface = usePageSurfaceSession();
-  const detailController = useCollectionDetailController();
   const detail = usePageDetailContext();
   const activeRootId = useSpace((state) => state.activeRootId);
   const pagePath = detail.page?.path ?? null;
@@ -361,10 +359,7 @@ function ScopePageSurfaceHost({
           }
         />
       )}
-      prepareForSurfaceChange={async () => {
-        if (!(await detailController.close())) return false;
-        return pageSurface.prepareForNavigation();
-      }}
+      prepareForSurfaceChange={() => pageSurface.prepareForNavigation()}
     />
   );
 }

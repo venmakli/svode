@@ -60,7 +60,21 @@ export function useRoutineDispatch({
         current?.routineId === item.id ? null : current,
       );
       try {
-        const result = await dispatchManualRoutine(owner, item);
+        let result: Awaited<ReturnType<typeof dispatchManualRoutine>>;
+        try {
+          result = await dispatchManualRoutine(owner, item);
+        } catch (cause) {
+          // The open Routine shows why its run failed, as a refused one.
+          setLastError({
+            message:
+              cause instanceof Error && cause.message
+                ? cause.message
+                : m.routines_dispatch_failed(),
+            refusal: null,
+            routineId: item.id,
+          });
+          throw cause;
+        }
         if (result.status === "blocked" || result.status === "failed") {
           const refusal = result.refusal;
           const message = refusal

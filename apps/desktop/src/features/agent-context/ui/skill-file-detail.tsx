@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { CollectionDetailContent } from "@/features/collection/app-shell";
+import type { CollectionItemPeekScreen } from "@/features/collection/app-shell";
 import * as m from "@/paraglide/messages.js";
 import {
   MarkdownReader,
@@ -35,11 +35,11 @@ const MediaSurface = lazy(async () => ({
 const fileReaderPolicy: MarkdownReaderPolicy = {};
 
 /**
- * The peek of a file of a skill, only to view it, wherever it lies: Markdown
- * in the reader, documents and media in their own viewers. "Open with" opens
- * the file inside the skill owner's root.
+ * The screen of a file of a skill, only to view it, wherever it lies:
+ * Markdown in the reader, documents and media in their own viewers. "Open
+ * with" opens the file inside the skill owner's root.
  */
-export function createSkillFileDetailContent({
+export function createSkillFileScreen({
   file,
   item,
   onClose,
@@ -47,21 +47,16 @@ export function createSkillFileDetailContent({
   file: AgentContextSkillFile;
   item: AgentContextItem;
   onClose(): void;
-}): CollectionDetailContent {
+}): CollectionItemPeekScreen {
   const openTarget = {
     canonicalArtifactPath: file.canonicalPath,
     ownerRoot: item.ownerPath,
   };
-  const description = m.agent_context_skill_file_description({
-    skill: item.name,
-  });
   if (file.kind === "markdown") {
     return {
       content: <SkillMarkdownFile itemId={item.id} path={file.path} />,
-      description,
       identity: { icon: <FileText />, name: file.name },
       openWith: <AgentContextArtifactOpenWith {...openTarget} />,
-      title: file.name,
     };
   }
   const externalOpen = agentContextArtifactExternalOpenTarget(openTarget);
@@ -91,9 +86,8 @@ export function createSkillFileDetailContent({
         )}
       </Suspense>
     ),
-    description,
+    identity: { icon: <FileText />, name: file.name },
     layout: "surface",
-    title: file.name,
   };
 }
 

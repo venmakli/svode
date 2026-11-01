@@ -604,7 +604,6 @@ if (process.env.SVODE_AGENT_ACTOR_BINDING_DOM !== "1") {
     draft: Partial<AgentActorDraft>;
   }) {
     const mutations = useAgentActorMutations({
-      detailController: null,
       projectPath: "/repo",
       refresh: () => undefined,
       saveCatalog: () => undefined,

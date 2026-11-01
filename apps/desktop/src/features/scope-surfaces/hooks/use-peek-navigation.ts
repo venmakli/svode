@@ -60,6 +60,7 @@ export function usePeekNavigation<T>(
     },
     [prepare],
   );
+  const dismiss = useCallback(() => setTarget(null), []);
   const requestedIdentity = requested ? identity(requested) : null;
   const currentIdentity = target ? identity(target) : null;
   useEffect(() => {
@@ -91,7 +92,7 @@ export function usePeekNavigation<T>(
     sessionKey: String(sessionKey),
     leave,
     registerNavigationGuard,
-    dismiss: () => setTarget(null),
+    dismiss,
     adoptIdentity: (value: string) => {
       adoptedIdentity.current = value;
     },

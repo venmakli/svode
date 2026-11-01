@@ -5,7 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 
 import { ContextMenuItem } from "@/components/ui/context-menu";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
+import { CollectionItemActionsMenu } from "../../item-peek/item-actions-menu";
 import { CollectionItemMenuProvider } from "../../ui/item-context-menu";
 import { CollectionListRowContent } from "../../ui/list/list-row";
 import { CollectionPresentationGalleryCard } from "../../ui/presentation-gallery-card";
@@ -90,10 +92,6 @@ test("structured Collection rows activate from the row and keyboard, preserve ne
       );
     });
     expect(activations.length).toBe(1);
-    const headerActions = renderToStaticMarkup(
-      <>{activations[0]?.actions?.({ id: "ada", name: "Ada" })}</>,
-    );
-    expect(headerActions.includes('aria-label="Row actions"')).toBe(true);
     expect(row.querySelector('[aria-label="Row actions"]')).toBeNull();
 
     await act(async () => {
@@ -131,13 +129,7 @@ test("structured Collection rows activate from the row and keyboard, preserve ne
   }
 });
 
-test("the item actions of an activation follow the item version and the current actions of the presentation", async () => {
-  const dom = new JSDOM(
-    "<!doctype html><html><body><div id=app></div></body></html>",
-    { pretendToBeVisual: true, url: "http://localhost/" },
-  );
-  const restoreGlobals = installDomGlobals(dom);
-  const activations: CollectionActivationContext[] = [];
+test("⋯ of an open item follows the item version and the current actions of the presentation", () => {
   const present = (
     itemActions: CollectionPresentationDescriptor<Item>["itemActions"],
   ) =>
@@ -151,70 +143,37 @@ test("the item actions of an activation follow the item version and the current 
           kind: "list",
           visibleProperties: [],
         },
-        onActivate: (_item, context) => {
-          activations.push(context);
-        },
         properties: [],
         query: {},
         itemActions,
       },
       state: { phase: "ready", items: [{ id: "ada", name: "Ada" }] },
     });
-  const render = (
-    presentation: ReturnType<typeof defineCollectionPresentation<Item>>,
-  ) => (
-    <CollectionPresentationShell
-      instanceKey="people:test"
-      presentation={presentation}
-      query={EMPTY_COLLECTION_QUERY}
-      onQueryChange={() => undefined}
-    />
-  );
-  const root = createRoot(dom.window.document.getElementById("app")!);
-
-  try {
-    await act(async () => {
-      root.render(
-        render(
-          present([
-            {
-              getState: () => ({ status: "idle" }),
-              id: "edit",
-              isVisible: (item) => item.name !== "Archived",
-              label: "Edit row",
-              run: () => undefined,
-            },
-          ]),
-        ),
-      );
-    });
-    const title = Array.from(
-      dom.window.document.querySelectorAll<HTMLElement>(
-        '[data-collection-row="ada"] span',
-      ),
-    ).find((element) => element.textContent === "Ada")!;
-    await act(async () => {
-      title.dispatchEvent(
-        new dom.window.MouseEvent("click", { bubbles: true }),
-      );
-    });
-    const actions = activations[0]!.actions!;
-    expect(
-      renderToStaticMarkup(<>{actions({ id: "ada", name: "Ada" })}</>).includes(
-        'aria-label="Row actions"',
-      ),
-    ).toBe(true);
-    expect(actions({ id: "ada", name: "Archived" })).toBe(undefined);
-
-    await act(async () => {
-      root.render(render(present([])));
-    });
-    expect(actions({ id: "ada", name: "Ada" })).toBe(undefined);
-  } finally {
-    await act(async () => root.unmount());
-    restoreGlobals();
-    dom.window.close();
-  }
+  const presentation = present([
+    {
+      getState: () => ({ status: "idle" }),
+      id: "edit",
+      isVisible: (item) => item.name !== "Archived",
+      label: "Edit row",
+      run: () => undefined,
+    },
+  ]);
+  const menu = (
+    item: Item,
+    current: ReturnType<typeof defineCollectionPresentation<Item>>,
+  ) =>
+    renderToStaticMarkup(
+      <TooltipProvider>
+        <CollectionItemActionsMenu item={item} presentation={current} />
+      </TooltipProvider>,
+    );
+  expect(
+    menu({ id: "ada", name: "Ada" }, presentation).includes(
+      'aria-label="Row actions"',
+    ),
+  ).toBe(true);
+  expect(menu({ id: "ada", name: "Archived" }, presentation)).toBe("");
+  expect(menu({ id: "ada", name: "Ada" }, present([]))).toBe("");
 });
 
 test("neutral Table preserves row focus, activation, and nested action boundaries", async () => {

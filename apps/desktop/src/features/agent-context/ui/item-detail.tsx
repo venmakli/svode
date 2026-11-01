@@ -3,10 +3,9 @@ import { Braces } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 
-import {
-  CollectionDetailHeader,
-  type CollectionDetailContent,
-  type CollectionDetailItemBinding,
+import type {
+  CollectionItemPeekController,
+  CollectionItemPeekScreen,
 } from "@/features/collection/app-shell";
 import {
   CollectionPropertyPanel,
@@ -20,6 +19,10 @@ import {
   type MarkdownReaderPolicy,
 } from "@/shared/ui/markdown-reader";
 
+import type {
+  AgentContextItemSelection,
+  AgentContextPeekTarget,
+} from "../model/detail-items";
 import { agentContextMcpCommandText } from "../model/mcp-server";
 import {
   skillMetadataObjectLines,
@@ -54,40 +57,47 @@ const AgentContextSkillFilesTab = lazy(async () => ({
   default: (await import("./skill-files-tab")).AgentContextSkillFilesTab,
 }));
 
-export interface AgentContextDetailOptions {
-  /** Opens a plugin's components in the same peek, following the "Context". */
-  detail: CollectionDetailItemBinding<AgentContextItem>;
+export interface AgentContextItemScreenOptions {
+  /** Opens a plugin's components and a skill's files in the same peek. */
+  peek: CollectionItemPeekController<AgentContextPeekTarget>;
+  /** The item as the peek shows it, under the instance it was opened in. */
+  selection: AgentContextItemSelection;
   /** Opens App Settings "Providers", which manages the Svode integration. */
   onOpenProviders?: () => void;
 }
 
 /**
- * The peek of an item: identity, ⓘ and "Open with" in the top bar; the
- * panel shows every property but the name, which the identity already says.
+ * The screen of an item: identity, ⓘ and "Open with" in the top bar; a
+ * skill, a plugin and an MCP server have a page-like header, an instruction
+ * has none, since it would only repeat the identity. The panel shows every
+ * property but the name, which the identity already says.
  */
-export function createAgentContextItemDetailContent(
+export function createAgentContextItemScreen(
   item: AgentContextItem,
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[],
-  options: AgentContextDetailOptions,
-): CollectionDetailContent {
+  options: AgentContextItemScreenOptions,
+): CollectionItemPeekScreen {
+  const icon = <AgentContextItemIcon item={item} />;
   return {
     content: (
       <AgentContextItemDetail
-        detail={options.detail}
         item={item}
         onOpenProviders={options.onOpenProviders}
+        peek={options.peek}
         properties={properties.filter((property) => property.key !== "name")}
+        selection={options.selection}
         tableProperties={properties}
       />
     ),
-    description:
+    header:
       item.kind === "instruction"
-        ? m.agent_context_detail_description()
-        : (agentContextItemDescription(item) ?? ""),
-    identity: {
-      icon: <AgentContextItemIcon item={item} />,
-      name: item.name,
-    },
+        ? undefined
+        : {
+            description: agentContextItemDescription(item),
+            icon,
+            title: item.name,
+          },
+    identity: { icon, name: item.name },
     info: <AgentContextItemInfo item={item} />,
     openWith: (
       <AgentContextArtifactOpenWith
@@ -95,26 +105,27 @@ export function createAgentContextItemDetailContent(
         ownerRoot={item.ownerPath}
       />
     ),
-    title: item.name,
   };
 }
 
 /**
- * A skill and a plugin have a page-like header and their content in tabs;
- * an instruction starts with its panel, and its text follows without tabs;
- * an MCP server ends with its panel.
+ * A skill and a plugin have their content in tabs; an instruction starts
+ * with its panel, and its text follows without tabs; an MCP server ends
+ * with its panel.
  */
 function AgentContextItemDetail({
-  detail,
   item,
   onOpenProviders,
+  peek,
   properties,
+  selection,
   tableProperties,
 }: {
-  detail: CollectionDetailItemBinding<AgentContextItem>;
   item: AgentContextItem;
   onOpenProviders?: () => void;
+  peek: CollectionItemPeekController<AgentContextPeekTarget>;
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
+  selection: AgentContextItemSelection;
   tableProperties: readonly CollectionPropertyDefinition<AgentContextItem>[];
 }) {
   const factGroups: CollectionPropertyFactGroup[] = [];
@@ -131,13 +142,6 @@ function AgentContextItemDetail({
       className="flex min-w-0 flex-col gap-4"
       data-agent-context-item-detail={item.kind}
     >
-      {item.kind !== "instruction" ? (
-        <CollectionDetailHeader
-          description={agentContextItemDescription(item)}
-          icon={<AgentContextItemIcon item={item} />}
-          title={item.name}
-        />
-      ) : null}
       <CollectionPropertyPanel
         factGroups={factGroups}
         properties={properties}
@@ -157,7 +161,7 @@ function AgentContextItemDetail({
               label: m.agent_context_tab_description(),
             },
             {
-              content: pluginComponentsContent(item, tableProperties, detail),
+              content: pluginComponentsContent(item, tableProperties, peek),
               id: "components",
               label: m.agent_context_tab_components(),
             },
@@ -179,7 +183,12 @@ function AgentContextItemDetail({
             {
               content: item.skill?.hasFiles ? (
                 <Suspense fallback={<Skeleton className="mx-6 mt-2 h-24" />}>
-                  <AgentContextSkillFilesTab item={item} />
+                  <AgentContextSkillFilesTab
+                    item={item}
+                    onOpenFile={(file, focus) =>
+                      peek.open({ file, kind: "file", skill: selection }, focus)
+                    }
+                  />
                 </Suspense>
               ) : null,
               id: "files",
@@ -210,7 +219,7 @@ function ItemBody({ item }: { item: AgentContextItem }) {
 function pluginComponentsContent(
   item: AgentContextItem,
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[],
-  detail: CollectionDetailItemBinding<AgentContextItem>,
+  peek: CollectionItemPeekController<AgentContextPeekTarget>,
 ) {
   if (!item.plugin) return null;
   if (item.plugin.composition === "code") {
@@ -221,8 +230,8 @@ function pluginComponentsContent(
   }
   return (
     <AgentContextPluginComponentsTab
-      detail={detail}
       item={item}
+      peek={peek}
       properties={properties}
     />
   );

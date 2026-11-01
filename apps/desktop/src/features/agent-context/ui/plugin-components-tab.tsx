@@ -5,11 +5,14 @@ import {
   useCollectionState,
   type CollectionInstance,
 } from "@/features/collection";
-import type { CollectionDetailItemBinding } from "@/features/collection/app-shell";
+import type { CollectionItemPeekController } from "@/features/collection/app-shell";
 import type { CollectionPropertyDefinition } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
-import { agentContextPluginComponentsKey } from "../model/detail-items";
+import {
+  agentContextPluginComponentsKey,
+  type AgentContextPeekTarget,
+} from "../model/detail-items";
 import type {
   AgentContextItem,
   AgentContextPluginComponentKind,
@@ -23,27 +26,29 @@ import { createAgentContextPresentation } from "./context-presentations";
  * is no item. A plugin whose code defines its components says so instead.
  */
 export function AgentContextPluginComponentsTab({
-  detail,
   item,
+  peek,
   properties,
 }: {
-  detail: CollectionDetailItemBinding<AgentContextItem>;
   item: AgentContextItem;
+  peek: CollectionItemPeekController<AgentContextPeekTarget>;
   properties: readonly CollectionPropertyDefinition<AgentContextItem>[];
 }) {
   const instanceKey = agentContextPluginComponentsKey(item.id);
+  const { activation } = peek;
   const presentation = useMemo(
     () =>
       createAgentContextPresentation({
         id: "all",
-        onActivate: detail.activation({
+        onActivate: activation((_component: AgentContextItem, context) => ({
           instanceKey,
-          presentationId: "components",
-        }),
+          itemId: context.itemId,
+          kind: "item",
+        })),
         properties,
         state: { phase: "ready", items: item.components },
       }),
-    [detail, instanceKey, item.components, properties],
+    [activation, instanceKey, item.components, properties],
   );
   const instance = useMemo<CollectionInstance>(
     () => ({

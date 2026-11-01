@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect } from "react";
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import {
-  useCollectionDetailItemBinding,
-  type CollectionDetailContent,
-  type CollectionDetailController,
-  type CollectionDetailItemBinding,
+  CollectionItemActionsMenu,
+  type CollectionItemPeekController,
+  type CollectionItemPeekScreen,
 } from "@/features/collection/app-shell";
-import type { CollectionActionState } from "@/features/collection";
+import type {
+  CollectionActionState,
+  CollectionPresentationRuntime,
+} from "@/features/collection";
 import * as m from "@/paraglide/messages.js";
 
 import type { RoutineOwnerInput } from "../api/routines-api";
@@ -22,16 +24,22 @@ import type {
 } from "../model/types";
 import { RoutineDefinitionForm } from "../ui/routine-definition-form";
 import { RoutineDetailView } from "../ui/routine-detail-view";
-import { RoutineDetailActions } from "../ui/routine-detail-actions";
-import { routineDetailTitle } from "../ui/routines-presentation";
+import { RoutineRunError, RoutineRunTool } from "../ui/routine-run-tool";
+import {
+  routineScreenIcon,
+  routineSecondaryDescription,
+} from "../ui/routines-presentation";
 import type { RoutineEditSession } from "./use-routine-mutations";
 
-export function useRoutineDetail({
+/**
+ * The screen of a Routine in the peek of the Routines, by its item id: the
+ * read-only Routine with "Run now" among its tools and its item actions in
+ * ⋯, or its editing form while an edit session of it is open.
+ */
+export function useRoutinePeek({
   applyUpdate,
-  detailController,
   editSession,
   executors,
-  instanceKey,
   mutationError,
   nameError,
   getRunRefusal,
@@ -39,6 +47,7 @@ export function useRoutineDetail({
   onOpenSession,
   onRun,
   owner,
+  peek,
   pending,
   readOnly,
   recovery,
@@ -50,10 +59,8 @@ export function useRoutineDetail({
     item: RoutineItem,
     definition: RoutineDefinition,
   ): Promise<RoutineItem | null>;
-  detailController: CollectionDetailController | null;
   editSession: RoutineEditSession | null;
   executors: AgentActorOptionsState;
-  instanceKey: string;
   mutationError: string | null;
   nameError: string | null;
   getRunRefusal(item: RoutineItem): RoutineLaunchRefusal | null;
@@ -61,6 +68,7 @@ export function useRoutineDetail({
   onOpenSession(item: RoutineItem): void;
   onRun(item: RoutineItem): Promise<void>;
   owner: RoutineOwnerInput;
+  peek: CollectionItemPeekController<string>;
   pending: boolean;
   readOnly: boolean;
   recovery: RoutineLaunchRecoveryActions;
@@ -73,60 +81,76 @@ export function useRoutineDetail({
       | null
       | ((current: RoutineEditSession | null) => RoutineEditSession | null),
   ): void;
-}): CollectionDetailItemBinding<RoutineItem> {
-  const createReadOnlyDetail = useCallback(
-    (item: RoutineItem): CollectionDetailContent => ({
-      content: (
-        <RoutineDetailView
-          executors={executors}
-          recovery={recovery}
-          item={item}
-        />
-      ),
-      description: (
-        <span className="sr-only">{m.routines_detail_description()}</span>
-      ),
-      footerActions: (
-        <RoutineDetailActions
-          recovery={recovery}
-          item={item}
-          runRefusal={getRunRefusal(item)}
-          runState={getRunState(item)}
-          onOpenSession={onOpenSession}
-          onRun={onRun}
-        />
-      ),
-      title: routineDetailTitle(item),
-    }),
-    [executors, getRunRefusal, getRunState, onOpenSession, onRun, recovery],
-  );
+}) {
   // A Routine without a readable id is listed as `invalid:<path>`, so its
-  // detail closes as a Routine that is gone.
-  const findItem = useMemo(
-    () =>
-      items
-        ? (selection: { itemId: string }) =>
-            items.find((item) => item.id === selection.itemId)
-        : null,
-    [items],
+  // peek closes as a Routine that is gone. An open form keeps its draft even
+  // when its Routine leaves the catalog.
+  const editedItem = editSession?.item ?? null;
+  const find = useCallback(
+    (itemId: string) => {
+      if (!items) return null;
+      const item = items.find((candidate) => candidate.id === itemId);
+      return item ?? (editedItem?.id === itemId ? editedItem : undefined);
+    },
+    [editedItem, items],
   );
-  const detail = useCollectionDetailItemBinding({
-    controller: detailController,
-    createContent: createReadOnlyDetail,
-    findItem,
-  });
 
+  // "Edit" of a Routine opens its form in the peek of the Routine.
+  const editedItemId = editedItem?.id ?? null;
+  const { open, target } = peek;
   useEffect(() => {
-    if (!editSession || !detailController) return;
-    const session = editSession;
-    const formId = `routine-detail-${session.item.id}`;
-    const selection = {
-      instanceKey,
-      presentationId: "all",
-      itemId: session.item.id,
-    };
-    void detailController
-      .open({
+    if (editedItemId !== null && target !== editedItemId) open(editedItemId);
+  }, [editedItemId, open, target]);
+
+  const render = useCallback(
+    (
+      item: RoutineItem,
+      presentation: CollectionPresentationRuntime,
+    ): CollectionItemPeekScreen => {
+      const identity = { icon: routineScreenIcon(item), name: item.name };
+      const session = editSession?.item.id === item.id ? editSession : null;
+      if (!session) {
+        const runState = getRunState(item);
+        return {
+          content: (
+            <>
+              <RoutineRunError
+                item={item}
+                recovery={recovery}
+                runRefusal={getRunRefusal(item)}
+                runState={runState}
+              />
+              <RoutineDetailView
+                executors={executors}
+                recovery={recovery}
+                item={item}
+              />
+            </>
+          ),
+          header: {
+            description: routineSecondaryDescription(item),
+            icon: identity.icon,
+            title: item.name,
+          },
+          identity,
+          menu: (
+            <CollectionItemActionsMenu
+              item={item}
+              presentation={presentation}
+            />
+          ),
+          tools: (
+            <RoutineRunTool
+              item={item}
+              runState={runState}
+              onOpenSession={onOpenSession}
+              onRun={onRun}
+            />
+          ),
+        };
+      }
+      const formId = `routine-detail-${item.id}`;
+      return {
         canClose: async () => {
           // The Tauri dialog plugin makes window.confirm resolve asynchronously.
           if (
@@ -164,18 +188,16 @@ export function useRoutineDetail({
                     );
                     if (!updated) return;
                     session.guard.dirty = false;
-                    setEditSession(null);
-                    await detail.open(updated, selection);
+                    setEditSession((current) =>
+                      current === session ? null : current,
+                    );
                   })();
                 }}
               />
             </fieldset>
           </div>
         ),
-        description: (
-          <span className="sr-only">{m.routines_edit_description()}</span>
-        ),
-        footerActions: (
+        footer: (
           <div className="flex w-full justify-end gap-2">
             <Button
               type="button"
@@ -184,7 +206,6 @@ export function useRoutineDetail({
               onClick={() => {
                 session.guard.dirty = false;
                 setEditSession(null);
-                void detail.open(session.item, selection);
               }}
             >
               {m.routines_cancel()}
@@ -200,37 +221,31 @@ export function useRoutineDetail({
             </Button>
           </div>
         ),
+        identity: {
+          icon: identity.icon,
+          name: session.draft.name || item.name,
+        },
         layout: "form",
-        selection,
-        title: routineDetailTitle({
-          ...session.item,
-          description: session.draft.description,
-          name: session.draft.name,
-        }),
-      })
-      .then((opened) => {
-        if (!opened) {
-          setEditSession((current) => (current === session ? null : current));
-        }
-      });
-  }, [
-    applyUpdate,
-    detail,
-    detailController,
-    editSession,
-    executors,
-    instanceKey,
-    mutationError,
-    nameError,
-    getRunState,
-    onOpenSession,
-    onRun,
-    owner.ownerKind,
-    pending,
-    readOnly,
-    onEditChange,
-    setEditSession,
-  ]);
+      };
+    },
+    [
+      applyUpdate,
+      editSession,
+      executors,
+      getRunRefusal,
+      getRunState,
+      mutationError,
+      nameError,
+      onEditChange,
+      onOpenSession,
+      onRun,
+      owner.ownerKind,
+      pending,
+      readOnly,
+      recovery,
+      setEditSession,
+    ],
+  );
 
-  return detail;
+  return { find, render };
 }
