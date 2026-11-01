@@ -19,8 +19,8 @@ use crate::space::app_variables::{
 };
 use crate::space::settings::AppSettingsState;
 use svode_core::apps::manifest::{
-    AppManifestDiagnostic, AppProcessRuntime, AppRuntimeType, ResolvedAppOwner, ValidatedRuntime,
-    read_and_validate_manifest, resolve_app_owner,
+    APP_MANIFEST_NAME, AppManifestDiagnostic, AppProcessRuntime, AppRuntimeType, ResolvedAppOwner,
+    ValidatedRuntime, read_and_validate_manifest, resolve_app_owner,
 };
 use svode_core::system_path;
 
@@ -209,7 +209,13 @@ pub(crate) async fn app_manifest_inspect(
                     }],
                 });
             }
-            let (token, viewport_url) = source_state.issue(canonical_root, &entry).await?;
+            let (token, viewport_url) = source_state
+                .issue(
+                    canonical_root,
+                    owner.owner_path.join(APP_MANIFEST_NAME),
+                    &entry,
+                )
+                .await?;
             Ok(AppManifestInspection::Ready {
                 owner_directory,
                 runtime_type: AppRuntimeType::Static,

@@ -1,5 +1,6 @@
 import { openAppOwnerDirectory, openAppUrlInBrowser } from "../api/app-api";
 import { useAppSession } from "../hooks/use-app-session";
+import { useAppSourceReload } from "../hooks/use-app-source-reload";
 import type { AppOwner, AppSession } from "../model/types";
 import {
   AppLoadingState,
@@ -25,10 +26,12 @@ export function AppSurface({
     owner,
     variablesOpen,
   );
+  const sourceRevision = useAppSourceReload(session);
 
   return (
     <AppViewport
       session={session}
+      sourceRevision={sourceRevision}
       onRetry={retry}
       onRestart={restart}
       onStop={stop}
@@ -42,6 +45,7 @@ export function AppSurface({
 
 export function AppViewport({
   session,
+  sourceRevision = 0,
   onRetry,
   onRestart,
   onStop,
@@ -51,6 +55,7 @@ export function AppViewport({
   onVariables,
 }: {
   session: AppSession;
+  sourceRevision?: number;
   onRetry(): void;
   onRestart(): void;
   onStop(): void;
@@ -157,6 +162,7 @@ export function AppViewport({
     <ReadyAppViewport
       key={session.viewportUrl}
       session={session}
+      sourceRevision={sourceRevision}
       onRestart={onRestart}
       onStop={onStop}
       onRerunSetup={onRerunSetup}

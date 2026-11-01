@@ -8,6 +8,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::agent_context::AgentContextState;
+use crate::apps::{APP_SOURCE_CHANGED_EVENT, AppSourceState};
 use crate::error::AppError;
 use crate::files::tree::{child_folder_names, has_direct_schema};
 use crate::index::update::IndexUpdateState;
@@ -258,9 +259,23 @@ fn process_published_events(
     let space_root = Path::new(space);
     let policy = TreeIgnorePolicy::from_space_root(space_root);
     let skip_dirs = child_folder_names(space_root);
+    // Open static Apps reload from their public roots, git-ignored files
+    // included, so their check comes before any tree filtering.
+    let app_sources = app.state::<AppSourceState>();
+    let canonical_space_root = app_sources
+        .is_serving()
+        .then(|| std::fs::canonicalize(space_root).ok())
+        .flatten();
+    let mut changed_app_sources = BTreeSet::new();
     for event in events.iter().filter(|event| changes_files(event)) {
         for (path_index, path) in event.paths.iter().enumerate() {
             let event_kind = event_kind_for_path(event, path_index);
+            if let Some(canonical_space_root) = &canonical_space_root {
+                changed_app_sources.extend(app_sources.sources_changed_by(
+                    &canonical_event_path(space_root, canonical_space_root, path),
+                    event_kind_is_folder(&event_kind),
+                ));
+            }
             if let Some(source) = svode_core::page::entry::replaced_by_staged_copy(path) {
                 replaced_in_place.insert(source);
             }
@@ -371,6 +386,13 @@ fn process_published_events(
                 "schema.yaml".to_string(),
                 AttachmentInvalidationKind::Boundary,
             );
+    }
+
+    for capability_token in changed_app_sources {
+        let _ = app.emit(
+            APP_SOURCE_CHANGED_EVENT,
+            serde_json::json!({ "capabilityToken": capability_token }),
+        );
     }
 
     emit_attachment_invalidations(
@@ -884,6 +906,15 @@ fn agent_context_observed_path(space_root: &Path, path: &Path) -> Option<String>
     (standard || recognized_root || exact_config || skill_path).then_some(normalized)
 }
 
+/// The event path under the canonical Space root, whichever of the two
+/// spellings of the root the backend reported it with.
+fn canonical_event_path(space_root: &Path, canonical_space_root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(space_root).map_or_else(
+        |_| path.to_path_buf(),
+        |relative| canonical_space_root.join(relative),
+    )
+}
+
 fn relative_watched_path(space_root: &Path, path: &Path) -> Option<String> {
     path.strip_prefix(space_root)
         .ok()
@@ -1166,6 +1197,31 @@ mod tests {
         assert_eq!(
             agent_actor_owner_for_path(root, Path::new("/project/docs/.svode/agent-actors.json")),
             Some(PathBuf::from("/project/docs"))
+        );
+    }
+
+    #[test]
+    fn event_paths_reach_the_canonical_space_root() {
+        let canonical = Path::new("/private/var/space");
+        assert_eq!(
+            canonical_event_path(
+                Path::new("/var/space"),
+                canonical,
+                Path::new("/var/space/app/a.json")
+            ),
+            canonical.join("app/a.json")
+        );
+        assert_eq!(
+            canonical_event_path(canonical, canonical, &canonical.join("app/a.json")),
+            canonical.join("app/a.json")
+        );
+        assert_eq!(
+            canonical_event_path(
+                Path::new("/var/space"),
+                canonical,
+                &canonical.join("app/a.json")
+            ),
+            canonical.join("app/a.json")
         );
     }
 

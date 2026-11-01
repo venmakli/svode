@@ -170,6 +170,16 @@ export function listenAppManifestChanges(
   });
 }
 
+// A file of the static App source behind `capabilityToken` changed.
+export function listenAppSourceChanges(
+  capabilityToken: string,
+  onChange: () => void,
+): Promise<() => void> {
+  return listen<{ capabilityToken: string }>("app:source-changed", (event) => {
+    if (event.payload.capabilityToken === capabilityToken) onChange();
+  });
+}
+
 export function listenAppVariablesChanged(
   onChange: () => void,
 ): Promise<() => void> {

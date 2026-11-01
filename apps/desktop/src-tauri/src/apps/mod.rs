@@ -5,4 +5,4 @@ pub(crate) mod process_runtime;
 pub(crate) mod static_server;
 
 pub(crate) use process_runtime::AppProcessState;
-pub(crate) use static_server::AppSourceState;
+pub(crate) use static_server::{APP_SOURCE_CHANGED_EVENT, AppSourceState};

@@ -13,12 +13,17 @@ use ulid::Ulid;
 
 use crate::repo_path::{RootMode, normalize_repo_relative};
 
+/// A file of a served static source changed; the payload names its token.
+pub(crate) const APP_SOURCE_CHANGED_EVENT: &str = "app:source-changed";
+
 const MAX_REQUEST_HEAD_BYTES: usize = 16 * 1024;
 const MAX_CONNECTIONS: usize = 32;
 const REQUEST_HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct StaticAppServer {
     shutdown: Option<oneshot::Sender<()>>,
+    public_root: PathBuf,
+    manifest: PathBuf,
 }
 
 pub(crate) struct AppSourceState {
@@ -32,9 +37,12 @@ impl AppSourceState {
         }
     }
 
+    /// `public_root` is canonical; `manifest` is the owner's `app.yaml`,
+    /// which its own inspection handles even inside `public_root`.
     pub(crate) async fn issue(
         &self,
         public_root: PathBuf,
+        manifest: PathBuf,
         entry: &str,
     ) -> std::io::Result<(String, String)> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -48,6 +56,8 @@ impl AppSourceState {
                 token.clone(),
                 StaticAppServer {
                     shutdown: Some(shutdown),
+                    public_root: public_root.clone(),
+                    manifest,
                 },
             );
 
@@ -76,6 +86,37 @@ impl AppSourceState {
         }
     }
 
+    pub(crate) fn is_serving(&self) -> bool {
+        !self
+            .servers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_empty()
+    }
+
+    /// Tokens of the served sources whose files a change of `path` may
+    /// alter: a regular file inside the canonical public root, or a path
+    /// that is gone and was not a directory. Git ignore plays no part; Git
+    /// metadata and the manifest are not App source.
+    pub(crate) fn sources_changed_by(&self, path: &Path, removed_directory: bool) -> Vec<String> {
+        let servers = self
+            .servers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        servers
+            .iter()
+            .filter(|(_, server)| {
+                is_source_change(
+                    &server.public_root,
+                    &server.manifest,
+                    path,
+                    removed_directory,
+                )
+            })
+            .map(|(token, _)| token.clone())
+            .collect()
+    }
+
     #[cfg(test)]
     fn contains(&self, token: &str) -> bool {
         self.servers
@@ -96,6 +137,27 @@ impl Drop for AppSourceState {
                 let _ = shutdown.send(());
             }
         }
+    }
+}
+
+fn is_source_change(
+    public_root: &Path,
+    manifest: &Path,
+    path: &Path,
+    removed_directory: bool,
+) -> bool {
+    let Ok(relative) = path.strip_prefix(public_root) else {
+        return false;
+    };
+    if relative.as_os_str().is_empty()
+        || path == manifest
+        || relative.components().any(|part| part.as_os_str() == ".git")
+    {
+        return false;
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata.is_file(),
+        Err(_) => !removed_directory,
     }
 }
 
@@ -373,6 +435,128 @@ mod tests {
         assert!(percent_decode("%FF").is_none());
     }
 
+    fn observe(state: &AppSourceState, token: &str, public_root: &Path, manifest: &Path) {
+        state.servers.lock().unwrap().insert(
+            token.to_string(),
+            StaticAppServer {
+                shutdown: None,
+                public_root: public_root.to_path_buf(),
+                manifest: manifest.to_path_buf(),
+            },
+        );
+    }
+
+    #[test]
+    fn source_changes_are_regular_files_inside_the_public_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = fs::canonicalize(temp.path()).unwrap();
+        let root = owner.join("graphify-out");
+        fs::create_dir_all(root.join("data/nested")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(owner.join(".gitignore"), "graphify-out/\n").unwrap();
+        fs::write(owner.join("app.yaml"), "runtime: static").unwrap();
+        fs::write(owner.join("notes.md"), "outside").unwrap();
+        fs::write(root.join("graph.html"), "entry").unwrap();
+        fs::write(root.join("data/nested/graph.json"), "{}").unwrap();
+        fs::write(root.join(".git/HEAD"), "ref").unwrap();
+        let state = AppSourceState::new();
+        assert!(!state.is_serving());
+        observe(&state, "graph", &root, &owner.join("app.yaml"));
+        assert!(state.is_serving());
+
+        // Git ignore does not hide the files the App serves.
+        assert_eq!(
+            state.sources_changed_by(&root.join("graph.html"), false),
+            ["graph"]
+        );
+        assert_eq!(
+            state.sources_changed_by(&root.join("data/nested/graph.json"), false),
+            ["graph"]
+        );
+        // A removed file is gone and still a change; a removed directory is not.
+        assert_eq!(
+            state.sources_changed_by(&root.join("old.json"), false),
+            ["graph"]
+        );
+        assert!(state.sources_changed_by(&root.join("old"), true).is_empty());
+        assert!(
+            state
+                .sources_changed_by(&root.join("data"), false)
+                .is_empty()
+        );
+        assert!(state.sources_changed_by(&root, false).is_empty());
+        assert!(
+            state
+                .sources_changed_by(&root.join(".git/HEAD"), false)
+                .is_empty()
+        );
+        assert!(
+            state
+                .sources_changed_by(&owner.join("notes.md"), false)
+                .is_empty()
+        );
+        assert!(
+            state
+                .sources_changed_by(&owner.join("app.yaml"), false)
+                .is_empty()
+        );
+        assert!(
+            state
+                .sources_changed_by(&owner.join("graphify-out-old/graph.html"), false)
+                .is_empty()
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(owner.join("notes.md"), root.join("linked.md")).unwrap();
+            assert!(
+                state
+                    .sources_changed_by(&root.join("linked.md"), false)
+                    .is_empty()
+            );
+        }
+
+        state.revoke("graph");
+        assert!(!state.is_serving());
+        assert!(
+            state
+                .sources_changed_by(&root.join("graph.html"), false)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn manifest_inside_a_root_public_root_is_not_a_source_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let owner = fs::canonicalize(temp.path()).unwrap();
+        let nested = owner.join("dashboard");
+        fs::create_dir_all(&nested).unwrap();
+        for directory in [&owner, &nested] {
+            fs::write(directory.join("app.yaml"), "runtime: static").unwrap();
+            fs::write(directory.join("index.html"), "entry").unwrap();
+        }
+        let state = AppSourceState::new();
+        observe(&state, "space", &owner, &owner.join("app.yaml"));
+        observe(&state, "dashboard", &nested, &nested.join("app.yaml"));
+
+        assert!(
+            state
+                .sources_changed_by(&owner.join("app.yaml"), false)
+                .is_empty()
+        );
+        assert_eq!(
+            state.sources_changed_by(&owner.join("index.html"), false),
+            ["space"]
+        );
+        // The nested manifest is a file the outer App serves.
+        assert_eq!(
+            state.sources_changed_by(&nested.join("app.yaml"), false),
+            ["space"]
+        );
+        let mut both = state.sources_changed_by(&nested.join("index.html"), false);
+        both.sort();
+        assert_eq!(both, ["dashboard", "space"]);
+    }
+
     #[test]
     fn server_capability_has_explicit_lifecycle() {
         let state = AppSourceState::new();
@@ -382,6 +566,8 @@ mod tests {
             token.clone(),
             StaticAppServer {
                 shutdown: Some(shutdown),
+                public_root: PathBuf::from("/public"),
+                manifest: PathBuf::from("/app.yaml"),
             },
         );
         assert!(state.contains(&token));

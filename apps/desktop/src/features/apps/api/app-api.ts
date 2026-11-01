@@ -3,6 +3,7 @@ import {
   inspectAppManifest as inspectAppManifestDto,
   listenAppManifestChanges as listenAppManifestChangesDto,
   listenAppProcessChanges as listenAppProcessChangesDto,
+  listenAppSourceChanges as listenAppSourceChangesDto,
   listenAppVariablesChanged as listenAppVariablesChangedDto,
   openAppOwnerDirectory as openAppOwnerDirectoryDto,
   openAppUrlInBrowser as openAppUrlInBrowserDto,
@@ -38,6 +39,13 @@ export function listenAppProcessChanges(
   onChange: (ownerDirectory: string) => void,
 ): Promise<() => void> {
   return listenAppProcessChangesDto(onChange);
+}
+
+export function listenAppSourceChanges(
+  capabilityToken: string,
+  onChange: () => void,
+): Promise<() => void> {
+  return listenAppSourceChangesDto(capabilityToken, onChange);
 }
 
 export function listenAppVariablesChanged(onChange: () => void) {

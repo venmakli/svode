@@ -19,6 +19,7 @@ import * as m from "@/paraglide/messages.js";
 
 export function ReadyAppViewport({
   session,
+  sourceRevision = 0,
   onRestart,
   onStop,
   onRerunSetup,
@@ -27,6 +28,9 @@ export function ReadyAppViewport({
   onVariables,
 }: {
   session: Extract<AppSession, { status: "ready" }>;
+  // Changed files of a static App recreate the iframe like Reload, without
+  // covering it with the loading state.
+  sourceRevision?: number;
   onRestart(): void;
   onStop(): void;
   onRerunSetup(): void;
@@ -64,7 +68,7 @@ export function ReadyAppViewport({
   return (
     <div className="relative h-full min-h-[20rem] w-full overflow-hidden bg-background">
       <iframe
-        key={`${session.viewportUrl}:${frameKey}`}
+        key={`${session.viewportUrl}:${frameKey}:${sourceRevision}`}
         className="h-full w-full border-0 bg-background"
         src={session.viewportUrl}
         title={m.app_viewport_title()}
