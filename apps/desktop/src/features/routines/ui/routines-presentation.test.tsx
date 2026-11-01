@@ -15,7 +15,11 @@ import {
 import { resolveStandardPropertyColumn } from "@/features/properties";
 import { PropertyValue } from "@/features/properties/display";
 
-import type { RoutineItem, RoutineOwnership } from "../model/types";
+import type {
+  RoutineItem,
+  RoutineLaunchRecoveryActions,
+  RoutineOwnership,
+} from "../model/types";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
 import { RoutineCreateReview } from "./routine-create-review";
 import { RoutineDetailView } from "./routine-detail-view";
@@ -172,6 +176,42 @@ function actions(calls: string[]): RoutinePresentationActions {
   };
 }
 
+/** The Routine's properties and instruction, as its screen shows them. */
+function RoutineDetailTestView({
+  executors,
+  item,
+  recovery,
+}: {
+  executors: AgentActorOptionsState;
+  item: RoutineItem;
+  recovery?: RoutineLaunchRecoveryActions;
+}) {
+  const idle = { status: "idle" } as const;
+  return (
+    <RoutineDetailView
+      item={item}
+      presentation={createRoutinesPresentation({
+        actions: {
+          createState: idle,
+          getDeleteState: () => idle,
+          getEditState: () => idle,
+          getEnabledState: () => idle,
+          getRunState: () => idle,
+          onAdd: () => undefined,
+          onDelete: () => undefined,
+          onEdit: () => undefined,
+          onEnabledChange: async () => undefined,
+          onRun: async () => undefined,
+        },
+        executors,
+        ownership: { collection: null, space: "Project" },
+        recovery,
+        state: { items: [item], phase: "ready" },
+      })}
+    />
+  );
+}
+
 test("routines expose one fixed All list with the complete fixed schema", () => {
   const descriptor = createRoutinesPresentationDescriptor({
     ownership: PROJECT_OWNERSHIP,
@@ -190,10 +230,10 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
     "trigger",
     "action",
     "executor",
-    "last-run",
-    "next-run",
     "enabled",
     "state",
+    "last-run",
+    "next-run",
   ]);
   expect(
     descriptor.properties.find((property) => property.key === "executor")
@@ -356,13 +396,13 @@ test("the hidden Space and Collection of Routines are read-only and still filter
 
 test("routine detail hides technical paths when valid and preserves exact recovery paths when invalid", () => {
   const valid = renderToStaticMarkup(
-    <RoutineDetailView executors={executors} item={review} />,
+    <RoutineDetailTestView executors={executors} item={review} />,
   );
   expect(valid.includes(review.definitionPath)).toBe(false);
 
   const invalidPath = ".routines/broken.md";
   const invalid = renderToStaticMarkup(
-    <RoutineDetailView
+    <RoutineDetailTestView
       executors={executors}
       item={{
         ...review,
@@ -396,7 +436,7 @@ test("schedule properties and detail stay compact without time-basis annotations
   );
 
   const fixed = renderToStaticMarkup(
-    <RoutineDetailView
+    <RoutineDetailTestView
       executors={executors}
       item={{ ...scheduled, nextRunAt: "2026-08-27T02:00:00Z" }}
     />,
@@ -405,7 +445,7 @@ test("schedule properties and detail stay compact without time-basis annotations
   expect(fixed.includes("Asia/Novosibirsk")).toBe(false);
 
   const local = renderToStaticMarkup(
-    <RoutineDetailView
+    <RoutineDetailTestView
       executors={executors}
       item={{
         ...scheduled,
@@ -452,7 +492,7 @@ test("duplicate-name items conditionally expose their current path and remain us
   const normalMarkup = renderToStaticMarkup(<>{normalDescription}</>);
   const conflictMarkup = renderToStaticMarkup(<>{conflictDescription}</>);
   const detailMarkup = renderToStaticMarkup(
-    <RoutineDetailView executors={executors} item={conflictItem} />,
+    <RoutineDetailTestView executors={executors} item={conflictItem} />,
   );
 
   expect(normalMarkup.includes(review.definitionPath)).toBe(false);
@@ -752,7 +792,9 @@ test("executor surfaces show the agent name and never a raw id while resolved or
     );
   };
   const detail = (state: AgentActorOptionsState) =>
-    renderToStaticMarkup(<RoutineDetailView executors={state} item={review} />);
+    renderToStaticMarkup(
+      <RoutineDetailTestView executors={state} item={review} />,
+    );
   const empty: AgentActorOptionsState = { ...executors, options: [] };
 
   const resolvedCell = executorCell(executors);
@@ -833,7 +875,7 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   ).toBe(true);
 });
 
-test("routine detail presents an unavailable executor in its value instead of a definition alert", () => {
+test("routine detail presents an unavailable executor in its value and its reason in Status instead of a definition alert", () => {
   const ref = "agent:01arz3ndektsv4rrffq69g5fav";
   const message = `executor ${ref} is not available in the effective Agent Actors catalog`;
   const unavailable: RoutineItem = {
@@ -851,15 +893,17 @@ test("routine detail presents an unavailable executor in its value instead of a 
   const empty: AgentActorOptionsState = { ...executors, options: [] };
 
   const missing = renderToStaticMarkup(
-    <RoutineDetailView executors={empty} item={unavailable} />,
+    <RoutineDetailTestView executors={empty} item={unavailable} />,
   );
   expect(missing.includes('data-agent-actor-reference="missing"')).toBe(true);
   expect(missing.includes(ref)).toBe(true);
-  expect(missing.includes(message)).toBe(false);
-  expect(missing.includes("This definition needs attention")).toBe(false);
+  // The reason is in "Status", not in an alert above the properties.
+  expect(missing.includes("data-collection-state-problems")).toBe(true);
+  expect(missing.includes(message)).toBe(true);
+  expect(missing.includes('role="alert"')).toBe(false);
 
   const ambiguous = renderToStaticMarkup(
-    <RoutineDetailView
+    <RoutineDetailTestView
       executors={{ ...empty, ambiguous: [ref] }}
       item={unavailable}
     />,
@@ -867,10 +911,10 @@ test("routine detail presents an unavailable executor in its value instead of a 
   expect(ambiguous.includes('data-agent-actor-reference="ambiguous"')).toBe(
     true,
   );
-  expect(ambiguous.includes(message)).toBe(false);
+  expect(ambiguous.includes("data-collection-state-problems")).toBe(true);
 
   const broken = renderToStaticMarkup(
-    <RoutineDetailView
+    <RoutineDetailTestView
       executors={empty}
       item={{
         ...unavailable,
@@ -886,8 +930,9 @@ test("routine detail presents an unavailable executor in its value instead of a 
       }}
     />,
   );
-  expect(broken.includes("This definition needs attention")).toBe(true);
+  expect(broken.includes("Has problems")).toBe(true);
   expect(broken.includes("trigger is invalid")).toBe(true);
+  expect(broken.includes('role="alert"')).toBe(false);
 });
 
 test("executor column is an agent actor filtered by reference and sorted by name", () => {

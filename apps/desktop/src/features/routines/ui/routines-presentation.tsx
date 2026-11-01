@@ -30,8 +30,16 @@ import {
 import type {
   RoutineCatalogState,
   RoutineItem,
+  RoutineLaunchRecoveryActions,
   RoutineOwnership,
 } from "../model/types";
+import {
+  RoutineExecutorDetail,
+  RoutineLastRunDetail,
+  RoutineNextRunDetail,
+  RoutineTriggerDetail,
+} from "./routine-property-values";
+import { routineNextRunCopy } from "./routine-schedule-copy";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
@@ -52,12 +60,14 @@ export function createRoutinesPresentation({
   executors,
   onActivate,
   ownership,
+  recovery,
   state,
 }: {
   actions: RoutinePresentationActions;
   executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
   ownership: RoutineOwnership;
+  recovery?: RoutineLaunchRecoveryActions;
   state: CollectionPresentationState<RoutineItem>;
 }) {
   return defineCollectionPresentation({
@@ -65,6 +75,7 @@ export function createRoutinesPresentation({
       actions,
       executors,
       onActivate,
+      recovery,
       items: state.phase === "ready" ? state.items : [],
       ownership,
     }),
@@ -76,12 +87,15 @@ export function createRoutinesPresentationDescriptor({
   actions,
   executors,
   onActivate,
+  recovery = {},
   items,
   ownership,
 }: {
   actions: RoutinePresentationActions;
   executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
+  /** Recovery of a refused last run on the Routine's screen. */
+  recovery?: RoutineLaunchRecoveryActions;
   items: readonly RoutineItem[];
   /** The one owner of the set's Routines. */
   ownership: RoutineOwnership;
@@ -124,6 +138,12 @@ export function createRoutinesPresentationDescriptor({
         filter: { kind: "standard" },
         sort: { kind: "standard" },
       },
+      display: {
+        renderDetail: (value, item) =>
+          typeof value === "string" ? (
+            <RoutineTriggerDetail item={item} label={value} />
+          ) : null,
+      },
       featureId: "routines",
       getValue: (item) => routineTriggerTypeLabel(item),
       key: "trigger",
@@ -163,6 +183,12 @@ export function createRoutinesPresentationDescriptor({
           filter: { kind: "standard" },
           sort: { kind: "standard" },
         },
+        display: {
+          renderDetail: (value) =>
+            typeof value === "string" ? (
+              <RoutineExecutorDetail executors={executors} reference={value} />
+            ) : null,
+        },
         featureId: "routines",
         getValue: getExecutor,
         key: "executor",
@@ -174,28 +200,6 @@ export function createRoutinesPresentationDescriptor({
         items.flatMap((item) => getExecutor(item) ?? []),
       ),
     },
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "routines",
-      getValue: (item) => item.lastRunAt,
-      key: "last-run",
-      label: m.routines_field_last_run(),
-      standard: { display: "medium", type: "date" },
-    }),
-    defineComputedCollectionProperty({
-      capabilities: {
-        filter: { kind: "standard" },
-        sort: { kind: "standard" },
-      },
-      featureId: "routines",
-      getValue: (item) => item.nextRunAt,
-      key: "next-run",
-      label: m.routines_field_next_run(),
-      standard: { display: "medium", type: "date" },
-    }),
     {
       ...defineOwnerDefinedCollectionProperty({
         capabilities: {
@@ -224,6 +228,40 @@ export function createRoutinesPresentationDescriptor({
           : { status: "hidden" },
     },
     defineStateCollectionProperty({ getProblems: routineProblems }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      display: {
+        renderDetail: (_value, item) =>
+          item.lastRunAt ? (
+            <RoutineLastRunDetail item={item} recovery={recovery} />
+          ) : null,
+      },
+      featureId: "routines",
+      getValue: (item) => item.lastRunAt,
+      key: "last-run",
+      label: m.routines_field_last_run(),
+      standard: { display: "medium", type: "date" },
+    }),
+    defineComputedCollectionProperty({
+      capabilities: {
+        filter: { kind: "standard" },
+        sort: { kind: "standard" },
+      },
+      display: {
+        renderDetail: (_value, item) =>
+          routineNextRunCopy(item) ? (
+            <RoutineNextRunDetail item={item} />
+          ) : null,
+      },
+      featureId: "routines",
+      getValue: (item) => item.nextRunAt,
+      key: "next-run",
+      label: m.routines_field_next_run(),
+      standard: { display: "medium", type: "date" },
+    }),
   ];
 
   return {

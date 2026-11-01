@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import type { CollectionPresentationRuntime } from "@/features/collection";
 import {
   CollectionItemActionsMenu,
+  CollectionItemProperties,
   type CollectionItemPeekController,
   type CollectionItemPeekScreen,
 } from "@/features/collection/app-shell";
@@ -35,7 +36,9 @@ import type { AgentActorEditSession } from "./use-agent-actor-mutations";
 
 /**
  * The screen of an Agent Actor in the peek of the Actors: avatar, name and
- * description, its item actions in ⋯; its editing form while an edit
+ * description, its item actions in ⋯ and its properties in the property
+ * panel, followed by its binding row, whose popover keeps
+ * the recovery of the binding's agent; its editing form while an edit
  * session of it is open.
  */
 export function useAgentActorPeek({
@@ -115,16 +118,22 @@ export function useAgentActorPeek({
       if (!session) {
         return {
           content: (
-            <AgentActorDetail
-              agents={agents}
-              draft={createAgentActorDraft(item.ownerPath, item)}
-              editMode={false}
-              offers={offers}
-              onChange={() => undefined}
-              onOpenAgentSettings={onOpenAgentSettings}
-              onRecheckOffers={onRecheckOffers}
-              onSave={() => undefined}
-            />
+            <>
+              <CollectionItemProperties
+                item={item}
+                presentation={presentation}
+              />
+              <AgentActorDetail
+                agents={agents}
+                draft={createAgentActorDraft(item.ownerPath, item)}
+                editMode={false}
+                offers={offers}
+                onChange={() => undefined}
+                onOpenAgentSettings={onOpenAgentSettings}
+                onRecheckOffers={onRecheckOffers}
+                onSave={() => undefined}
+              />
+            </>
           ),
           header: {
             description: item.description || undefined,

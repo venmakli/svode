@@ -115,6 +115,12 @@ export function CollectionPropertyControl({
           density={density}
           onChange={async (nextValue: unknown) => {
             if (localPendingRef.current) return;
+            const problem = edit.validate?.(nextValue, item) ?? null;
+            if (problem) {
+              setLocalError(problem);
+              onRejected(property.key, problem);
+              return;
+            }
             localPendingRef.current = true;
             setLocalPending(true);
             setLocalError(null);

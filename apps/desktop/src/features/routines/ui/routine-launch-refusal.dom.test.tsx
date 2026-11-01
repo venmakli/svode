@@ -15,6 +15,7 @@ import type {
 } from "../model/types";
 import { RoutineRunError, RoutineRunTool } from "./routine-run-tool";
 import { RoutineDetailView } from "./routine-detail-view";
+import { createRoutinesPresentation } from "./routines-presentation";
 
 const ACTOR = "01arz3ndektsv4rrffq69g5fav";
 const executors: AgentActorOptionsState = {
@@ -156,6 +157,42 @@ function button(container: HTMLElement, label: string) {
   return found;
 }
 
+/** The Routine's properties and instruction, as its screen shows them. */
+function RoutineDetailTestView({
+  executors,
+  item,
+  recovery,
+}: {
+  executors: AgentActorOptionsState;
+  item: RoutineItem;
+  recovery?: RoutineLaunchRecoveryActions;
+}) {
+  const idle = { status: "idle" } as const;
+  return (
+    <RoutineDetailView
+      item={item}
+      presentation={createRoutinesPresentation({
+        actions: {
+          createState: idle,
+          getDeleteState: () => idle,
+          getEditState: () => idle,
+          getEnabledState: () => idle,
+          getRunState: () => idle,
+          onAdd: () => undefined,
+          onDelete: () => undefined,
+          onEdit: () => undefined,
+          onEnabledChange: async () => undefined,
+          onRun: async () => undefined,
+        },
+        executors,
+        ownership: { collection: null, space: "Project" },
+        recovery,
+        state: { items: [item], phase: "ready" },
+      })}
+    />
+  );
+}
+
 test("a manual run refused for a value names it and opens the Agent Actor's editor", async () => {
   await loadAgentAdapterIdentities(async () => [
     { displayName: "Codex", id: "codex" },
@@ -227,7 +264,7 @@ test("the last run shows why its launch was refused, with no session to open", a
     onOpenAgentSettings: () => opened.push("settings"),
   };
   const markup = renderToStaticMarkup(
-    <RoutineDetailView
+    <RoutineDetailTestView
       executors={executors}
       recovery={recovery}
       item={refusedRun(staleModel)}
@@ -241,7 +278,7 @@ test("the last run shows why its launch was refused, with no session to open", a
   expect(markup.includes("Open Agent")).toBe(true);
   expect(
     renderToStaticMarkup(
-      <RoutineDetailView
+      <RoutineDetailTestView
         executors={executors}
         recovery={recovery}
         item={refusedRun(noDefaultAgent)}

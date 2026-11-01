@@ -50,9 +50,13 @@ export function CollectionPropertyValue({
     property.semantics.kind === "custom"
       ? property.semantics
       : property.semantics.display;
-  if (display) {
-    if (context === "cell") return display.render(value, item);
-    const rendered = (display.renderDetail ?? display.render)(value, item);
+  const render =
+    context === "cell"
+      ? display?.render
+      : (display?.renderDetail ?? display?.render);
+  if (render) {
+    if (context === "cell") return render(value, item);
+    const rendered = render(value, item);
     // An empty custom value reads like an empty standard one.
     return rendered === null ||
       rendered === undefined ||

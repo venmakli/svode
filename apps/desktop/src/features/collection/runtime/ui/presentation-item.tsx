@@ -8,6 +8,7 @@ import {
   CollectionInlineDiagnostic,
   CollectionPropertyValue,
 } from "@/features/properties/display";
+import { isCellEditableCollectionProperty } from "@/features/properties";
 import * as m from "@/paraglide/messages.js";
 
 import {
@@ -184,7 +185,7 @@ export function CollectionPresentationItem({
           const property = descriptor.properties.find(
             (candidate) => candidate.key === propertyKey,
           );
-          const value = property?.capabilities?.edit
+          const value = isCellEditableCollectionProperty(property)
             ? renderContext.renderPropertyControl(
                 propertyKey,
                 layout.density === "compact" ? "compact" : "default",
@@ -253,7 +254,7 @@ export function CollectionPresentationItem({
           const primaryActivator =
             propertyKey === layout.primaryProperty &&
             activationEnabled &&
-            !property?.capabilities?.edit;
+            !isCellEditableCollectionProperty(property);
           return (
             <TableCell
               key={propertyKey}
@@ -320,8 +321,11 @@ export function CollectionPresentationItem({
         key={propertyKey}
         className="max-w-44"
       >
-        {descriptor.properties.find((property) => property.key === propertyKey)
-          ?.capabilities?.edit
+        {isCellEditableCollectionProperty(
+          descriptor.properties.find(
+            (property) => property.key === propertyKey,
+          ),
+        )
           ? renderContext.renderPropertyControl(
               propertyKey,
               layout.density === "compact" ? "compact" : "default",
@@ -375,8 +379,9 @@ export function CollectionPresentationItem({
   const layout = descriptor.layout;
   const properties = layout.visibleProperties.map((propertyKey) => (
     <CollectionPresentationPropertyItem key={propertyKey}>
-      {descriptor.properties.find((property) => property.key === propertyKey)
-        ?.capabilities?.edit
+      {isCellEditableCollectionProperty(
+        descriptor.properties.find((property) => property.key === propertyKey),
+      )
         ? renderContext.renderPropertyControl(
             propertyKey,
             layout.density === "compact" ? "compact" : "default",

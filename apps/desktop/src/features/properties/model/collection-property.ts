@@ -39,7 +39,8 @@ export type CollectionStandardPropertySemantics = Omit<Column, "name">;
  * without it the standard display of the type draws the value.
  */
 export interface CollectionPropertyDisplay<Item> {
-  render(value: unknown, item: Item): ReactNode;
+  /** The value in a cell; the standard display of the type without it. */
+  render?(value: unknown, item: Item): ReactNode;
   /** The value in the item's detail when it differs from the cell. */
   renderDetail?(value: unknown, item: Item): ReactNode;
 }
@@ -85,10 +86,37 @@ export type CollectionPropertySortSemantics<Item> =
       compare(left: Item, right: Item): number;
     };
 
+/**
+ * The editing of a property its owner declares. The owner writes: `update`
+ * saves one value of one item and rejects with the reason it was not saved,
+ * such as a refused write or a version conflict, after which the item shows
+ * its values from disk. The owner serializes the writes of one item.
+ */
 export interface CollectionPropertyEdit<Item> {
   getState(item: Item): CollectionPropertyActionState;
   showDisabledReason?: boolean;
   update(item: Item, value: unknown): void | Promise<void>;
+  /** Why a value cannot be saved, checked before `update`; null when it can. */
+  validate?(value: unknown, item: Item): string | null;
+  /**
+   * A composite value edited in a popover of the property panel and saved
+   * whole when the popover closes; a cell shows such a value read-only.
+   */
+  popover?: CollectionPropertyPopoverEditor<Item>;
+}
+
+/** The editor of a composite property inside its popover. */
+export interface CollectionPropertyPopoverEditor<Item> {
+  render(input: CollectionPropertyPopoverEditorInput<Item>): ReactNode;
+}
+
+export interface CollectionPropertyPopoverEditorInput<Item> {
+  item: Item;
+  /** The value being edited; the saved value when the popover opened. */
+  draft: unknown;
+  /** Why the draft cannot be saved, shown below the editor; null when it can. */
+  problem: string | null;
+  onDraftChange(draft: unknown): void;
 }
 
 export interface CollectionPropertyCapabilities<Item> {
@@ -210,6 +238,14 @@ export function defineDomainSpecificCollectionProperty<Item>({
       ? { kind: "custom", render, renderDetail }
       : { kind: "custom", render },
   };
+}
+
+/** A property its cell edits with the control of its type. */
+export function isCellEditableCollectionProperty<Item>(
+  property: CollectionPropertyDefinition<Item> | undefined,
+): boolean {
+  const edit = property?.capabilities?.edit;
+  return Boolean(edit && !edit.popover);
 }
 
 export function resolveStandardPropertyColumn<Item>(

@@ -1,156 +1,72 @@
-import type { ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import {
-  AgentActorReferenceValue,
-  resolveAgentActorReference,
-  type AgentActorOptionsState,
-} from "@/features/actors/agent-reference";
+import type { CollectionPresentationRuntime } from "@/features/collection";
+import { CollectionItemProperties } from "@/features/collection/app-shell";
 import { ControlledMarkdownEditor } from "@/features/editor";
 import * as m from "@/paraglide/messages.js";
-import { getLocale } from "@/paraglide/runtime.js";
 
-import {
-  routineActionSummary,
-  routineDefinitionDiagnostics,
-  routineTriggerSummary,
-} from "../model/routine-values";
-import { routineAgentActorId } from "../model/launch-refusal";
-import type { RoutineLaunchRecoveryActions, RoutineItem } from "../model/types";
-import { RoutineDiagnostics } from "./routine-diagnostics";
-import { RoutineLaunchRefusalNotice } from "./routine-launch-refusal";
-import {
-  routineNextRunCopy,
-  routineScheduleSummary,
-} from "./routine-schedule-copy";
+import { routineDefinitionDiagnostics } from "../model/routine-values";
+import type { RoutineItem } from "../model/types";
 
+/**
+ * The properties and the instruction of a Routine on its screen. Its
+ * problems are in "Status"; a Routine that cannot be read shows its
+ * definition file instead of the instruction.
+ */
 export function RoutineDetailView({
-  executors,
-  recovery = {},
   item,
+  presentation,
 }: {
-  executors: AgentActorOptionsState;
-  recovery?: RoutineLaunchRecoveryActions;
   item: RoutineItem;
+  presentation: CollectionPresentationRuntime;
 }) {
-  if (
-    !item.definition ||
-    item.routineId === null ||
-    routineDefinitionDiagnostics(item).length > 0
-  ) {
-    return (
-      <div className="flex flex-col gap-4">
-        <RoutineNameConflictNotice item={item} />
-        <RoutineDiagnostics diagnostics={item.diagnostics} />
-        <DetailValue label={m.routines_definition_path_label()}>
-          {item.definitionPath}
-        </DetailValue>
-      </div>
-    );
-  }
-
-  const nextRunCopy = routineNextRunCopy(item);
+  const readable =
+    item.definition !== null &&
+    item.routineId !== null &&
+    routineDefinitionDiagnostics(item).length === 0;
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-w-0 flex-col gap-5">
       <RoutineNameConflictNotice item={item} />
-      <div className="grid gap-4 sm:grid-cols-2">
-        <DetailValue label={m.routines_field_trigger()}>
-          <Badge variant="secondary">
-            {item.definition.trigger.type === "schedule"
-              ? routineScheduleSummary(item.definition.trigger)
-              : routineTriggerSummary(item)}
-          </Badge>
-        </DetailValue>
-        <DetailValue label={m.routines_field_action()}>
-          <Badge variant="secondary">{routineActionSummary(item)}</Badge>
-        </DetailValue>
-        <DetailValue label={m.routines_field_enabled()}>
-          {item.definition.trigger.type === "manual"
-            ? m.routines_not_applicable()
-            : item.definition.enabled
-              ? m.routines_enabled_yes()
-              : m.routines_enabled_no()}
-        </DetailValue>
-        <DetailValue label={m.routines_field_executor()}>
-          {item.definition.action.type === "run_agent" ? (
-            <RoutineExecutorValue
-              executors={executors}
-              reference={item.definition.action.executor}
-            />
-          ) : (
-            m.routines_not_applicable()
-          )}
-        </DetailValue>
-        {item.lastRunAt ? (
-          <DetailValue label={m.routines_field_last_run()}>
-            <span className="flex flex-wrap items-center gap-2">
-              <time dateTime={item.lastRunAt}>
-                {formatRoutineRunDate(item.lastRunAt)}
-              </time>
-              {item.lastRunOrigin === "remote" ? (
-                <Badge variant="outline">{m.routines_last_run_remote()}</Badge>
-              ) : null}
-            </span>
-            {item.lastRun?.refusal ? (
-              <span className="mt-1 flex text-destructive">
-                <RoutineLaunchRefusalNotice
-                  actorId={routineAgentActorId(item)}
-                  recovery={recovery}
-                  refusal={item.lastRun.refusal}
-                />
-              </span>
-            ) : null}
-          </DetailValue>
-        ) : null}
-        {nextRunCopy ? (
-          <DetailValue label={m.routines_field_next_run()}>
-            <time dateTime={item.nextRunAt ?? undefined}>{nextRunCopy}</time>
-          </DetailValue>
-        ) : null}
-      </div>
-      <Separator />
-      <DetailValue
-        label={
-          item.definition.action.type === "run_agent"
-            ? m.routines_instruction_label()
-            : m.routines_rule_description_label()
+      <CollectionItemProperties
+        factGroups={
+          readable
+            ? []
+            : [
+                {
+                  facts: [
+                    {
+                      key: "definition-path",
+                      label: m.routines_definition_path_label(),
+                      value: { kind: "path", path: item.definitionPath },
+                    },
+                  ],
+                  key: "definition",
+                  label: "",
+                },
+              ]
         }
-      >
-        <ControlledMarkdownEditor
-          key={item.fingerprint}
-          disabled
-          value={item.definition.body}
-          placeholder={m.routines_instruction_empty()}
-          onChange={() => undefined}
-        />
-      </DetailValue>
-    </div>
-  );
-}
-
-function RoutineExecutorValue({
-  executors,
-  reference,
-}: {
-  executors: AgentActorOptionsState;
-  reference: string;
-}) {
-  const resolved = resolveAgentActorReference(executors, reference);
-  const recovery =
-    resolved.status === "missing" || resolved.status === "ambiguous";
-  return (
-    <span className="flex min-w-0 flex-col gap-1">
-      <AgentActorReferenceValue reference={resolved} />
-      {recovery ? (
-        <span className="break-all text-xs text-muted-foreground">
-          {reference}
-        </span>
+        item={item}
+        presentation={presentation}
+      />
+      {readable && item.definition ? (
+        <section className="flex min-w-0 flex-col gap-1.5">
+          <h3 className="text-xs font-medium text-muted-foreground">
+            {item.definition.action.type === "run_agent"
+              ? m.routines_instruction_label()
+              : m.routines_rule_description_label()}
+          </h3>
+          <ControlledMarkdownEditor
+            key={item.fingerprint}
+            disabled
+            value={item.definition.body}
+            placeholder={m.routines_instruction_empty()}
+            onChange={() => undefined}
+          />
+        </section>
       ) : null}
-    </span>
+    </div>
   );
 }
 
@@ -164,29 +80,5 @@ function RoutineNameConflictNotice({ item }: { item: RoutineItem }) {
         {m.routines_name_conflict_detail({ path: item.definitionPath })}
       </AlertDescription>
     </Alert>
-  );
-}
-
-function formatRoutineRunDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(getLocale(), {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function DetailValue({
-  children,
-  label,
-}: {
-  children: ReactNode;
-  label: string;
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="min-w-0 break-words text-sm">{children}</div>
-    </div>
   );
 }

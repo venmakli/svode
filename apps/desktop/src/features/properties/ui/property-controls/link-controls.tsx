@@ -6,22 +6,19 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  fallbackUrlTitle,
-  normalizeUrlValue,
-} from "../../lib/url";
+import { fallbackUrlTitle, normalizeUrlValue } from "../../lib/url";
 import {
   copyPropertyValue,
   openPropertyExternal,
 } from "../../api/property-actions";
-import {
-  isValidEmail,
-  isValidPhone,
-  isValidUrl,
-  valueToString,
-} from "../../lib/utils";
+import { isValidEmail, isValidPhone, isValidUrl } from "../../lib/utils";
 import * as m from "@/paraglide/messages.js";
-import { deferStateUpdate, IconAction, useAutoOpen } from "./common";
+import {
+  deferStateUpdate,
+  IconAction,
+  useAutoOpen,
+  usePropertyTextDraft,
+} from "./common";
 import type { PropertyControlProps } from "./types";
 
 export function UrlControl({
@@ -112,27 +109,26 @@ export function EmailControl({
   invalid,
   disabled,
   autoOpen,
+  placeholder,
   onChange,
 }: Pick<
   PropertyControlProps,
-  "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
+  "value" | "invalid" | "disabled" | "autoOpen" | "placeholder" | "onChange"
 >) {
-  const [draft, setDraft] = useState(valueToString(value));
-  useEffect(
-    () => deferStateUpdate(() => setDraft(valueToString(value))),
-    [value],
+  const { draft, inputProps } = usePropertyTextDraft(
+    value,
+    (next) => void onChange(next || null),
   );
   const warning = invalid || !isValidEmail(draft);
   return (
     <div className="group/control relative">
       <Input
+        {...inputProps}
         autoFocus={autoOpen}
         type="email"
-        value={draft}
         disabled={disabled}
+        placeholder={placeholder}
         aria-invalid={warning || undefined}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => void onChange(draft || null)}
         className="pr-16"
       />
       <div className="absolute top-1/2 right-1 flex -translate-y-1/2 opacity-0 group-focus-within/control:opacity-100 group-hover/control:opacity-100">
@@ -160,27 +156,26 @@ export function PhoneControl({
   invalid,
   disabled,
   autoOpen,
+  placeholder,
   onChange,
 }: Pick<
   PropertyControlProps,
-  "value" | "invalid" | "disabled" | "autoOpen" | "onChange"
+  "value" | "invalid" | "disabled" | "autoOpen" | "placeholder" | "onChange"
 >) {
-  const [draft, setDraft] = useState(valueToString(value));
-  useEffect(
-    () => deferStateUpdate(() => setDraft(valueToString(value))),
-    [value],
+  const { draft, inputProps } = usePropertyTextDraft(
+    value,
+    (next) => void onChange(next || null),
   );
   const warning = invalid || !isValidPhone(draft);
   return (
     <div className="group/control relative">
       <Input
+        {...inputProps}
         autoFocus={autoOpen}
         type="tel"
-        value={draft}
         disabled={disabled}
+        placeholder={placeholder}
         aria-invalid={warning || undefined}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => void onChange(draft || null)}
         className="pr-16"
       />
       <div className="absolute top-1/2 right-1 flex -translate-y-1/2 opacity-0 group-focus-within/control:opacity-100 group-hover/control:opacity-100">

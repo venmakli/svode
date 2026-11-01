@@ -47,6 +47,8 @@ export type {
   CollectionPropertyFilterSemantics,
   CollectionPropertyOrigin,
   CollectionPropertyOwner,
+  CollectionPropertyPopoverEditor,
+  CollectionPropertyPopoverEditorInput,
   CollectionPropertySortSemantics,
   CollectionPropertyValueSemantics,
   CollectionStandardPropertySemantics,
@@ -66,6 +68,7 @@ export {
   defineDomainSpecificCollectionProperty,
   defineOwnerDefinedCollectionProperty,
   defineSchemaBackedCollectionProperty,
+  isCellEditableCollectionProperty,
   resolveStandardPropertyColumn,
 } from "./model/collection-property";
 export {

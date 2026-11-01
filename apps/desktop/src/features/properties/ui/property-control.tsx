@@ -33,6 +33,7 @@ export function PropertyControl({
   relationContext,
   relationPresentation,
   accessibilityLabel,
+  placeholder,
   density,
   onRequestActors,
   onChange,
@@ -45,6 +46,7 @@ export function PropertyControl({
         <NumberControl
           column={column}
           value={value}
+          placeholder={placeholder}
           invalid={invalid}
           disabled={disabled}
           autoOpen={autoOpen}
@@ -161,6 +163,7 @@ export function PropertyControl({
       return (
         <EmailControl
           value={value}
+          placeholder={placeholder}
           invalid={invalid}
           disabled={disabled}
           autoOpen={autoOpen}
@@ -171,6 +174,7 @@ export function PropertyControl({
       return (
         <PhoneControl
           value={value}
+          placeholder={placeholder}
           invalid={invalid}
           disabled={disabled}
           autoOpen={autoOpen}
@@ -182,6 +186,7 @@ export function PropertyControl({
       return (
         <TextControl
           value={value}
+          placeholder={placeholder}
           invalid={invalid}
           disabled={disabled}
           onChange={onChange}

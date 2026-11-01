@@ -32,9 +32,10 @@ import {
 import type { RoutineEditSession } from "./use-routine-mutations";
 
 /**
- * The screen of a Routine in the peek of the Routines, by its item id: the
- * read-only Routine with "Run now" among its tools and its item actions in
- * ⋯, or its editing form while an edit session of it is open.
+ * The screen of a Routine in the peek of the Routines, by its item id: its
+ * properties in the property panel, where "Enabled" is edited, and its
+ * instruction, with "Run now" among its tools and its item actions in ⋯; or
+ * its editing form while an edit session of it is open.
  */
 export function useRoutinePeek({
   applyUpdate,
@@ -120,11 +121,7 @@ export function useRoutinePeek({
                 runRefusal={getRunRefusal(item)}
                 runState={runState}
               />
-              <RoutineDetailView
-                executors={executors}
-                recovery={recovery}
-                item={item}
-              />
+              <RoutineDetailView item={item} presentation={presentation} />
             </>
           ),
           header: {

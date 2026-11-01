@@ -1,7 +1,7 @@
 import type { ActorCatalogItem } from "../model/types";
 import { ActorActivityProfile } from "./actor-activity-profile";
-import { ActorGitIdentities } from "./actor-git-identities";
 
+/** The body of a person's screen: the activity profile. */
 export function ActorDetail({
   actor,
   catalogGeneration = 0,
@@ -21,7 +21,6 @@ export function ActorDetail({
         actor={actor}
         spacePath={spacePath}
       />
-      <ActorGitIdentities actor={actor} />
     </div>
   );
 }

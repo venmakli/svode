@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 import { Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -9,36 +9,33 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { copyPropertyValue } from "../../api/property-actions";
-import { colorStyle, valueToString } from "../../lib/utils";
+import { colorStyle } from "../../lib/utils";
 import type { Column } from "../../model/types";
 import * as m from "@/paraglide/messages.js";
-import { deferStateUpdate, IconAction } from "./common";
+import { IconAction, usePropertyTextDraft } from "./common";
 import type { PropertyControlProps } from "./types";
 
 export function TextControl({
   value,
   invalid,
   disabled,
+  placeholder,
   onChange,
-}: Pick<PropertyControlProps, "value" | "invalid" | "disabled" | "onChange">) {
-  const [draft, setDraft] = useState(valueToString(value));
-  useEffect(
-    () => deferStateUpdate(() => setDraft(valueToString(value))),
-    [value],
+}: Pick<
+  PropertyControlProps,
+  "value" | "invalid" | "disabled" | "placeholder" | "onChange"
+>) {
+  const { draft, inputProps } = usePropertyTextDraft(
+    value,
+    (next) => void onChange(next || null),
   );
   return (
     <div className="group/control relative">
       <Input
-        value={draft}
+        {...inputProps}
         disabled={disabled}
+        placeholder={placeholder}
         aria-invalid={invalid || undefined}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => void onChange(draft || null)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.currentTarget.blur();
-          }
-        }}
         className="pr-8"
       />
       <IconAction
@@ -58,13 +55,12 @@ export function NumberControl({
   value,
   invalid,
   disabled,
+  placeholder,
   onChange,
 }: PropertyControlProps) {
   const display = column.display ?? "number";
-  const [draft, setDraft] = useState(valueToString(value));
-  useEffect(
-    () => deferStateUpdate(() => setDraft(valueToString(value))),
-    [value],
+  const { draft, inputProps } = usePropertyTextDraft(value, (next) =>
+    commitNumber(next, onChange),
   );
   const numeric = typeof value === "number" ? value : Number(draft);
   const min = column.min ?? 0;
@@ -83,11 +79,10 @@ export function NumberControl({
           <TooltipTrigger asChild>
             <div className="flex min-w-0 items-center gap-2">
               <InlineNumberInput
-                draft={draft}
+                inputProps={inputProps}
                 invalid={invalid}
                 disabled={disabled}
-                onDraftChange={setDraft}
-                onCommit={() => commitNumber(draft, onChange)}
+                placeholder={placeholder}
               />
               {display === "bar" ? (
                 <Progress
@@ -115,11 +110,10 @@ export function NumberControl({
     return (
       <div className="flex items-center gap-2">
         <InlineNumberInput
-          draft={draft}
+          inputProps={inputProps}
           invalid={invalid}
           disabled={disabled}
-          onDraftChange={setDraft}
-          onCommit={() => commitNumber(draft, onChange)}
+          placeholder={placeholder}
         />
         <span className="w-14 shrink-0 text-right text-sm text-muted-foreground">
           {Number.isFinite(percent) ? `${Math.round(percent)}%` : ""}
@@ -130,41 +124,32 @@ export function NumberControl({
 
   return (
     <InlineNumberInput
-      draft={draft}
+      inputProps={inputProps}
       invalid={invalid}
       disabled={disabled}
-      onDraftChange={setDraft}
-      onCommit={() => commitNumber(draft, onChange)}
+      placeholder={placeholder}
     />
   );
 }
 
 function InlineNumberInput({
-  draft,
+  inputProps,
   invalid,
   disabled,
-  onDraftChange,
-  onCommit,
+  placeholder,
 }: {
-  draft: string;
+  inputProps: ReturnType<typeof usePropertyTextDraft>["inputProps"];
   invalid?: boolean;
   disabled?: boolean;
-  onDraftChange: (value: string) => void;
-  onCommit: () => void;
+  placeholder?: string;
 }) {
   return (
     <Input
+      {...inputProps}
       type="number"
-      value={draft}
       disabled={disabled}
+      placeholder={placeholder}
       aria-invalid={invalid || undefined}
-      onChange={(event) => onDraftChange(event.target.value)}
-      onBlur={onCommit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.currentTarget.blur();
-        }
-      }}
       className="min-w-20"
     />
   );

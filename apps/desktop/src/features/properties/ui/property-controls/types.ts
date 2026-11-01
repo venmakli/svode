@@ -14,6 +14,8 @@ export interface PropertyControlProps {
   relationContext?: RelationContext;
   relationPresentation?: "default" | "table";
   accessibilityLabel?: string;
+  /** The hint of an empty typed field. */
+  placeholder?: string;
   density?: "default" | "compact";
   onRequestActors?: (allTime: boolean) => Promise<ActorCandidate[]>;
   onChange: (value: unknown) => void | Promise<void>;

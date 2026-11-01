@@ -10,6 +10,7 @@ import {
 } from "@/features/collection";
 import {
   CollectionItemActionsMenu,
+  CollectionItemProperties,
   type CollectionItemPeekScreen,
 } from "@/features/collection/app-shell";
 import {
@@ -24,6 +25,7 @@ import { compareActorsByDefault } from "../model/actor-values";
 import type { ActorCatalogItem } from "../model/types";
 import { ActorAvatar } from "./actor-avatar";
 import { ActorDetail } from "./actor-detail";
+import { actorGitIdentityFacts } from "./actor-git-identity-facts";
 import { CatalogRetryButton } from "./catalog-retry-button";
 
 export function createActorsPresentation({
@@ -165,7 +167,8 @@ interface ActorPresentationMutationActions {
 
 /**
  * The screen of a person: avatar and name, the canonical email as the
- * description, the merge and edit actions in ⋯ and the activity profile.
+ * description, the merge and edit actions in ⋯, the properties with the Git
+ * identities and the activity profile.
  */
 export function createActorScreen(
   item: ActorCatalogItem,
@@ -175,11 +178,18 @@ export function createActorScreen(
 ): CollectionItemPeekScreen {
   return {
     content: (
-      <ActorDetail
-        actor={item}
-        catalogGeneration={catalogGeneration}
-        spacePath={spacePath}
-      />
+      <>
+        <CollectionItemProperties
+          factGroups={[actorGitIdentityFacts(item)]}
+          item={item}
+          presentation={presentation}
+        />
+        <ActorDetail
+          actor={item}
+          catalogGeneration={catalogGeneration}
+          spacePath={spacePath}
+        />
+      </>
     ),
     header: {
       description: item.canonicalEmail,

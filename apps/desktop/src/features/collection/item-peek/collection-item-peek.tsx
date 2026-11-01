@@ -5,6 +5,7 @@ import { UserEditScope } from "@/features/navigation";
 import { cn } from "@/shared/lib/utils";
 import { PeekSheet } from "@/shared/ui/peek-sheet";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
+import { keepsCollectionPropertyEditorOnEscape } from "@/features/properties/panel";
 
 import { ObjectContentHeader } from "./object-content-header";
 import type {
@@ -76,6 +77,12 @@ export function CollectionItemPeek<Target, Item>({
       title={screen?.identity.name ?? ""}
       onRequestClose={() => void close()}
       data-collection-item-peek
+      onEscapeKeyDown={(event) => {
+        // Escape first cancels an open edit of a property.
+        if (keepsCollectionPropertyEditorOnEscape(event.target)) {
+          event.preventDefault();
+        }
+      }}
       onCloseAutoFocus={(event) => {
         if (focusItemPeekTarget(closeFocus)) event.preventDefault();
       }}

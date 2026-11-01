@@ -247,15 +247,10 @@ export function useRoutinesController(
     onEnabledChange: async (item, enabled) => {
       if (readOnly) throw new Error(m.repository_work_status_read_only());
       if (!item.definition || item.definition.trigger.type === "manual") return;
-      const updated = await mutations.applyUpdate(
-        item,
-        {
-          ...item.definition,
-          enabled,
-        },
-        { materializeFilename: false },
-      );
-      if (!updated) throw new Error(m.routines_mutation_blocked());
+      await mutations.writeProperty(item, (definition) => ({
+        ...definition,
+        enabled,
+      }));
     },
     onRun: async (item) => {
       if (readOnly) {
@@ -269,6 +264,7 @@ export function useRoutinesController(
   const presentation = createRoutinesPresentation({
     actions,
     executors: executors.state,
+    recovery,
     onActivate: peek.activation((_item, context) => context.itemId),
     ownership,
     state: toRoutinePresentationState(state, () => void refresh()),

@@ -92,7 +92,7 @@ function validateProperty<Item>(
   if (
     (capabilities?.filter?.kind === "standard" ||
       capabilities?.sort?.kind === "standard" ||
-      capabilities?.edit) &&
+      (capabilities?.edit && !capabilities.edit.popover)) &&
     semantics.kind !== "standard"
   ) {
     diagnostics.push(

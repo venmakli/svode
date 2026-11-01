@@ -4,6 +4,7 @@ import { Folder, SquareTerminal, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+import { isEmptyValue } from "../lib/utils";
 import {
   resolveStandardPropertyColumn,
   type CollectionPropertyDefinition,
@@ -17,13 +18,20 @@ import {
   CollectionPropertyValue,
   readCollectionPropertyApplicability,
 } from "./collection-property-value";
+import {
+  CollectionPropertyEditor,
+  readCollectionPropertyEditState,
+} from "./collection-property-editor";
 import { PROPERTY_TYPE_ICONS } from "./property-type-meta";
 
 /**
- * Read-only properties of one item of a fixed Collection, built from the same
- * property definitions as its Table and List columns, followed by the item's
- * facts under their group labels. Empty facts and groups are not shown, nor
- * "Name", which the item's header already says.
+ * The properties of one item, built from the same property definitions as
+ * the columns of its Collection in their order, followed by the item's facts
+ * under their group labels. "Name" is not repeated: the content header says
+ * it. A hidden property is not shown, nor an empty read-only property or
+ * fact; an empty editable property shows its hint. A property its owner
+ * declared editable is edited here with the control of its cell, see
+ * `CollectionPropertyEditor`.
  */
 export function CollectionPropertyPanel<Item>({
   factGroups = [],
@@ -36,11 +44,7 @@ export function CollectionPropertyPanel<Item>({
 }) {
   const visibleProperties = properties.filter(
     (property) =>
-      property.common !== "title" &&
-      readCollectionPropertyApplicability(
-        property as CollectionPropertyDefinition<unknown>,
-        item,
-      ).status !== "hidden",
+      property.common !== "title" && panelRowKind(property, item) !== null,
   );
   const visibleGroups = factGroups
     .map((group) => ({
@@ -59,6 +63,7 @@ export function CollectionPropertyPanel<Item>({
     >
       {visibleProperties.map((property) => {
         const column = resolveStandardPropertyColumn(property);
+        const edit = property.capabilities?.edit;
         return (
           <PanelRow
             key={`property:${property.key}`}
@@ -66,11 +71,20 @@ export function CollectionPropertyPanel<Item>({
             label={property.label}
             rowAttributes={{ "data-collection-panel-property": property.key }}
           >
-            <CollectionPropertyValue
-              context="detail"
-              property={property as CollectionPropertyDefinition<unknown>}
-              item={item}
-            />
+            {edit && panelRowKind(property, item) === "edit" ? (
+              <CollectionPropertyEditor
+                column={column}
+                edit={edit}
+                item={item}
+                property={property}
+              />
+            ) : (
+              <CollectionPropertyValue
+                context="detail"
+                property={property as CollectionPropertyDefinition<unknown>}
+                item={item}
+              />
+            )}
           </PanelRow>
         );
       })}
@@ -98,6 +112,60 @@ export function CollectionPropertyPanel<Item>({
       ))}
     </div>
   );
+}
+
+/**
+ * How the panel shows a property of the item: editable where its owner
+ * declared editing, as a value otherwise; null when it is not shown.
+ */
+function panelRowKind<Item>(
+  property: CollectionPropertyDefinition<Item>,
+  item: Item,
+): "edit" | "value" | null {
+  const applicability = readCollectionPropertyApplicability(
+    property as CollectionPropertyDefinition<unknown>,
+    item,
+  );
+  if (applicability.status === "hidden") return null;
+  if (applicability.status === "unavailable") return "value";
+  const edit = property.capabilities?.edit;
+  const hasEditor = Boolean(
+    edit && (edit.popover || resolveStandardPropertyColumn(property)),
+  );
+  // An empty property shows its hint only while it can be edited.
+  if (
+    hasEditor &&
+    readCollectionPropertyEditState(edit!, item).status !== "disabled"
+  ) {
+    return "edit";
+  }
+  if (isEmptyPanelValue(property, item)) return null;
+  return hasEditor ? "edit" : "value";
+}
+
+function isEmptyPanelValue<Item>(
+  property: CollectionPropertyDefinition<Item>,
+  item: Item,
+): boolean {
+  try {
+    const value = property.getValue(item);
+    const display =
+      property.semantics.kind === "custom"
+        ? property.semantics
+        : property.semantics.display;
+    // The owner's render decides, as it may show more than the value.
+    const render = display?.renderDetail ?? display?.render;
+    if (!render) return isEmptyValue(value);
+    const rendered = render(value, item);
+    return (
+      rendered === null ||
+      rendered === undefined ||
+      rendered === false ||
+      rendered === ""
+    );
+  } catch {
+    return false;
+  }
 }
 
 function PanelRow({

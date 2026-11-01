@@ -5,3 +5,4 @@ export type {
   CollectionPropertyFactGroup,
   CollectionPropertyFactValue,
 } from "./model/collection-property-fact";
+export { keepsCollectionPropertyEditorOnEscape } from "./ui/collection-property-editor";

@@ -222,8 +222,10 @@ test("singleton and query-empty actors reuse list keyboard, menu, and detail sea
   expect(detailMarkup.includes('aria-label="Row actions"')).toBe(true);
   expect(detailMarkup.includes("ada@example.test")).toBe(true);
   expect(detailMarkup.includes("Loading activity")).toBe(true);
+  // Properties and the Git identities facts are in the property panel.
+  expect(detailMarkup.includes("data-collection-property-panel")).toBe(true);
   expect(detailMarkup.includes("Git identities")).toBe(true);
-  expect(detailMarkup.includes("Has commits")).toBe(false);
+  expect(detailMarkup.includes("Has commits")).toBe(true);
   expect(detailMarkup.includes("Commits: 4")).toBe(false);
   expect(detailMarkup.includes('data-slot="separator"')).toBe(false);
 });

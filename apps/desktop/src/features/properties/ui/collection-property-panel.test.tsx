@@ -51,7 +51,10 @@ const hidden = defineDomainSpecificCollectionProperty<Item>({
 
 test("the panel renders the property definitions in order with their type icons", () => {
   const html = renderToStaticMarkup(
-    <CollectionPropertyPanel properties={[name, state, hidden]} item={item} />,
+    <CollectionPropertyPanel
+      properties={[name, state, hidden]}
+      item={{ ...item, problems: ["Name mismatch"] }}
+    />,
   );
 
   expect(html.includes("data-collection-property-panel")).toBe(true);
@@ -61,9 +64,18 @@ test("the panel renders the property definitions in order with their type icons"
   ).toBe(true);
   expect(html.includes(">review<")).toBe(true);
   expect(html.includes("lucide-type")).toBe(true);
-  // A hidden property has no row; an empty custom value reads as "-".
+  // A hidden property has no row.
   expect(html.includes('data-collection-panel-property="hidden"')).toBe(false);
-  expect(html.includes(">-<")).toBe(true);
+});
+
+test("an empty read-only property is not shown", () => {
+  const html = renderToStaticMarkup(
+    <CollectionPropertyPanel
+      properties={[name, state]}
+      item={{ ...item, name: "" }}
+    />,
+  );
+  expect(html).toBe("");
 });
 
 test("a custom property shows its detail render in the panel and its render in a cell", () => {

@@ -111,6 +111,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
       };
       return <div data-columns={result.schema.columns.length} />;
     },
+    keepsCollectionPropertyEditorOnEscape: () => false,
   }));
   mock.module("@/features/page/ui/page-identity-header", () => ({
     PageIdentityHeader: (props: {

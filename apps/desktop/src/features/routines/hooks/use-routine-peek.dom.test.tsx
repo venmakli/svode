@@ -134,6 +134,7 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     const { useRoutinePeek } = await import("./use-routine-peek");
     const controls: Controls = {};
     const saved: RoutineItem[] = [];
+    const enabledWrites: boolean[] = [];
 
     function Harness() {
       const [items, setItems] = useState<readonly RoutineItem[] | null>([
@@ -196,7 +197,16 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
               guard: { dirty: false },
               item,
             }),
-          onEnabledChange: async () => undefined,
+          onEnabledChange: async (item, enabled) => {
+            enabledWrites.push(enabled);
+            setItems([
+              {
+                ...item,
+                definition: { ...item.definition!, enabled },
+                fingerprint: `${item.fingerprint}:enabled`,
+              },
+            ]);
+          },
           onRun: async () => undefined,
         },
         executors,
@@ -227,7 +237,7 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
         </TooltipProvider>,
       );
     });
-    return { controls, root, saved };
+    return { controls, enabledWrites, root, saved };
   }
 
   async function run(action: () => unknown) {
@@ -350,6 +360,43 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     expect(peekOpen()).toBeNull();
     await act(async () => root.unmount());
   }, 30000);
+
+  test("a Routine shows its properties in the property panel, where Enabled is switched and saved at once, with ⋯ in place", async () => {
+    const { controls, enabledWrites, root } = await setup();
+    const scheduled: RoutineItem = {
+      ...routine,
+      definition: {
+        ...routine.definition!,
+        trigger: {
+          cron: "0 9 * * *",
+          missedRuns: "skip",
+          timeBasis: { mode: "local" },
+          type: "schedule",
+        },
+      },
+    };
+    await run(() => controls.setItems!([scheduled]));
+    await run(() => controls.peek!.open(scheduled.id));
+    const panel = doc.querySelector("[data-collection-property-panel]");
+    expect(panel === null).toBe(false);
+    expect(
+      [...panel!.querySelectorAll("[data-collection-panel-property]")].map(
+        (row) => row.getAttribute("data-collection-panel-property"),
+      ),
+    ).toEqual(["space", "trigger", "action", "executor", "enabled"]);
+    // "Name" is the header's; the empty run dates are not shown.
+    expect(panel!.textContent?.includes("Daily summary")).toBe(false);
+    const toggle = () =>
+      doc.querySelector<HTMLButtonElement>(
+        '[data-collection-property-editor="enabled"] [role="switch"]',
+      )!;
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    await run(() => toggle().click());
+    expect(enabledWrites).toEqual([true]);
+    expect(toggle().getAttribute("aria-checked")).toBe("true");
+    expect(menu() === null).toBe(false);
+    await act(async () => root.unmount());
+  });
 
   test("Edit of a closed Routine opens its form in the peek", async () => {
     const { controls, root } = await setup();
