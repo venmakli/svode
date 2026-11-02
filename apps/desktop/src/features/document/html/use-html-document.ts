@@ -189,6 +189,7 @@ export function useHtmlSource(
     state: HtmlSourceState;
   } | null>(null);
   const generation = source?.generation ?? null;
+  const encoding = source?.encoding;
   const tooLarge =
     refused || (source !== null && source.sizeBytes > HTML_SOURCE_LIMIT_BYTES);
 
@@ -200,7 +201,7 @@ export function useHtmlSource(
         if (cancelled) return;
         setRead({
           generation,
-          state: { phase: "ready", text: new TextDecoder().decode(bytes) },
+          state: { phase: "ready", text: decodeSource(bytes, encoding) },
         });
       },
       () => {
@@ -210,12 +211,24 @@ export function useHtmlSource(
     return () => {
       cancelled = true;
     };
-  }, [generation, stableTarget, tooLarge]);
+  }, [encoding, generation, stableTarget, tooLarge]);
 
   if (tooLarge) return { phase: "too_large" } satisfies HtmlSourceState;
   return read !== null && read.generation === generation
     ? read.state
     : ({ phase: "loading" } satisfies HtmlSourceState);
+}
+
+/**
+ * The text in the encoding its page is served with (Stage 11 `06` H2); a
+ * label the Encoding Standard does not know reads as UTF-8.
+ */
+function decodeSource(bytes: Uint8Array, encoding: string | undefined) {
+  try {
+    return new TextDecoder(encoding ?? "utf-8").decode(bytes);
+  } catch {
+    return new TextDecoder().decode(bytes);
+  }
 }
 
 /** The theme Svode shows now, as the class on the document element. */

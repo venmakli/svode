@@ -55,6 +55,8 @@ export interface DocumentSourceDescriptor {
   generation: string;
   /** RFC 3339 UTC modification time of the file. */
   modifiedAt: string;
+  /** The encoding of an HTML file's text, as its page is served. */
+  encoding?: string;
 }
 
 export type DocumentFailureKind =

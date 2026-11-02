@@ -88,6 +88,10 @@ pub(crate) struct DocumentSourceDescriptor {
     pub generation: String,
     /// RFC 3339 UTC modification time of the file.
     pub modified_at: String,
+    /// The encoding of an HTML file's text, as its page is served
+    /// (Stage 11 `06` H2); absent for other formats.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -204,7 +208,7 @@ fn resolve_document_source(
             actual_bytes: metadata.len(),
         });
     }
-    let descriptor = descriptor_from_metadata(format, &metadata)?;
+    let descriptor = with_text_encoding(descriptor_from_metadata(format, &metadata)?, &canonical)?;
     Ok(ResolvedDocumentSource {
         path: canonical,
         descriptor,
@@ -263,7 +267,7 @@ pub(crate) fn inspect_local_document_source(
             actual_bytes: metadata.len(),
         });
     }
-    let descriptor = descriptor_from_metadata(format, &metadata)?;
+    let descriptor = with_text_encoding(descriptor_from_metadata(format, &metadata)?, &canonical)?;
     Ok(ResolvedDocumentSource {
         path: canonical,
         descriptor,
@@ -307,6 +311,17 @@ fn read_resolved_source(
     Ok(bytes)
 }
 
+/// An HTML file names the encoding of its text.
+fn with_text_encoding(
+    mut descriptor: DocumentSourceDescriptor,
+    path: &Path,
+) -> Result<DocumentSourceDescriptor, DocumentSourceError> {
+    if descriptor.format == DocumentFormat::Html {
+        descriptor.encoding = Some(super::html::html_source_encoding(path)?);
+    }
+    Ok(descriptor)
+}
+
 fn descriptor_from_metadata(
     format: DocumentFormat,
     metadata: &fs::Metadata,
@@ -330,6 +345,7 @@ fn descriptor_from_metadata(
             .collect(),
         modified_at: DateTime::<Utc>::from(modified_time)
             .to_rfc3339_opts(SecondsFormat::Secs, true),
+        encoding: None,
     })
 }
 
@@ -416,6 +432,13 @@ mod tests {
             read_document_source(temp.path(), None, "guide.pdf", &descriptor.generation).unwrap();
         assert_eq!(bytes, b"%PDF fixture");
         assert_eq!(descriptor.format, DocumentFormat::Pdf);
+        // Only an HTML file names an encoding.
+        assert!(
+            serde_json::to_value(&descriptor)
+                .unwrap()
+                .get("encoding")
+                .is_none()
+        );
     }
 
     #[test]
@@ -430,6 +453,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(descriptor.format).unwrap(),
             serde_json::json!("html")
+        );
+        assert_eq!(
+            serde_json::to_value(&descriptor).unwrap()["encoding"],
+            serde_json::json!("utf-8")
         );
         assert_eq!(
             read_document_source(temp.path(), None, "report.HTM", &descriptor.generation).unwrap(),

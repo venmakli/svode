@@ -4,6 +4,7 @@
 //! Apps.
 
 use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, UNIX_EPOCH};
@@ -354,17 +355,67 @@ pub(crate) struct RenderedEntry {
 }
 
 pub(crate) fn render_entry(bytes: &[u8], theme: HtmlTheme) -> RenderedEntry {
-    if let Some(text) = decode_utf16_with_bom(bytes) {
-        return render_content(text.as_bytes(), "utf-8".to_string(), theme);
+    match EntryEncoding::of(bytes) {
+        EntryEncoding::Utf16 { little_endian } => {
+            let text = decode_utf16(&bytes[2..], little_endian);
+            render_content(text.as_bytes(), "utf-8".to_string(), theme)
+        }
+        EntryEncoding::Utf8Bom => {
+            render_content(&bytes[UTF8_BOM.len()..], "utf-8".to_string(), theme)
+        }
+        EntryEncoding::Declared(charset) => render_content(bytes, charset, theme),
     }
-    match bytes.strip_prefix(UTF8_BOM) {
-        Some(content) => render_content(content, "utf-8".to_string(), theme),
-        None => render_content(
-            bytes,
-            declared_charset(bytes).unwrap_or_else(|| "utf-8".to_string()),
-            theme,
-        ),
+}
+
+/// The encoding of an HTML file as its entry is served (Stage 11 `06` H2):
+/// a BOM, else the charset a `<meta>` of the first kilobyte declares, else
+/// UTF-8.
+enum EntryEncoding {
+    Utf16 { little_endian: bool },
+    Utf8Bom,
+    Declared(String),
+}
+
+impl EntryEncoding {
+    fn of(bytes: &[u8]) -> Self {
+        match bytes {
+            [0xFF, 0xFE, ..] => Self::Utf16 {
+                little_endian: true,
+            },
+            [0xFE, 0xFF, ..] => Self::Utf16 {
+                little_endian: false,
+            },
+            _ if bytes.starts_with(UTF8_BOM) => Self::Utf8Bom,
+            _ => Self::Declared(declared_charset(bytes).unwrap_or_else(|| "utf-8".to_string())),
+        }
     }
+
+    /// The label of the encoding, as the Encoding Standard names it.
+    fn label(self) -> String {
+        match self {
+            Self::Utf16 {
+                little_endian: true,
+            } => "utf-16le".to_string(),
+            Self::Utf16 {
+                little_endian: false,
+            } => "utf-16be".to_string(),
+            Self::Utf8Bom => "utf-8".to_string(),
+            Self::Declared(charset) => charset,
+        }
+    }
+}
+
+/// The encoding of the HTML file at `path`, by its first kilobyte, for the
+/// text of «Исходник»: the one its page is served with.
+pub(crate) fn html_source_encoding(path: &Path) -> Result<String, DocumentSourceError> {
+    let mut prefix = Vec::with_capacity(CHARSET_PRESCAN_BYTES);
+    File::open(path)
+        .and_then(|file| {
+            file.take(CHARSET_PRESCAN_BYTES as u64)
+                .read_to_end(&mut prefix)
+        })
+        .map_err(map_io_error)?;
+    Ok(EntryEncoding::of(&prefix).label())
 }
 
 fn render_content(content: &[u8], charset: String, theme: HtmlTheme) -> RenderedEntry {
@@ -496,12 +547,7 @@ fn charset_in_tag(tag: &[u8]) -> Option<String> {
     None
 }
 
-fn decode_utf16_with_bom(bytes: &[u8]) -> Option<String> {
-    let (little_endian, content) = match bytes {
-        [0xFF, 0xFE, rest @ ..] => (true, rest),
-        [0xFE, 0xFF, rest @ ..] => (false, rest),
-        _ => return None,
-    };
+fn decode_utf16(content: &[u8], little_endian: bool) -> String {
     let units = content.chunks_exact(2).map(|pair| {
         if little_endian {
             u16::from_le_bytes([pair[0], pair[1]])
@@ -509,11 +555,9 @@ fn decode_utf16_with_bom(bytes: &[u8]) -> Option<String> {
             u16::from_be_bytes([pair[0], pair[1]])
         }
     });
-    Some(
-        char::decode_utf16(units)
-            .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect(),
-    )
+    char::decode_utf16(units)
+        .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect()
 }
 
 #[cfg(test)]
@@ -873,6 +917,45 @@ mod tests {
             ("<html data-theme=\"dark\"><p>Привет", "utf-8")
         );
         assert_eq!(render_entry(b"<p>", HtmlTheme::Light).charset, "utf-8");
+    }
+
+    #[test]
+    fn the_source_is_read_in_the_encoding_of_its_page() {
+        let temp = tempfile::tempdir().unwrap();
+        let encoding = |name: &str, bytes: &[u8]| {
+            let path = temp.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            html_source_encoding(&path).unwrap()
+        };
+        assert_eq!(
+            encoding(
+                "cp1251.html",
+                b"<!doctype html><meta charset=\"windows-1251\"><title>\xcf\xf0\xe8</title>"
+            ),
+            "windows-1251"
+        );
+        let utf16: Vec<u8> = [0xFE, 0xFF]
+            .into_iter()
+            .chain("<p>Привет".encode_utf16().flat_map(u16::to_be_bytes))
+            .collect();
+        assert_eq!(encoding("utf16be.html", &utf16), "utf-16be");
+        assert_eq!(encoding("utf16le.html", b"\xFF\xFE<\x00p\x00"), "utf-16le");
+        assert_eq!(
+            encoding("bom.html", b"\xEF\xBB\xBF<meta charset=koi8-r>"),
+            "utf-8"
+        );
+        assert_eq!(encoding("plain.html", b"<p>"), "utf-8");
+        // Only the first kilobyte declares it, as the page is served.
+        let late = [
+            vec![b' '; CHARSET_PRESCAN_BYTES],
+            b"<meta charset=koi8-r>".to_vec(),
+        ]
+        .concat();
+        assert_eq!(encoding("late.html", &late), "utf-8");
+        assert!(matches!(
+            html_source_encoding(&temp.path().join("gone.html")),
+            Err(DocumentSourceError::SourceMissing)
+        ));
     }
 
     #[test]

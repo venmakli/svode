@@ -74,6 +74,9 @@ if (process.env.SVODE_HTML_DOCUMENT_DOM !== "1") {
     generation: string;
     /** Holds `html_document_serve` until it resolves. */
     serveGate: Promise<void> | null;
+    /** The file as it is on disk, and the encoding Rust names for it. */
+    sourceBytes: Uint8Array;
+    encoding: string | undefined;
   }
   let fixture: Fixture;
   let calls: Array<{ command: string; args: Record<string, unknown> }>;
@@ -86,6 +89,8 @@ if (process.env.SVODE_HTML_DOCUMENT_DOM !== "1") {
       sizeBytes: SOURCE.length,
       generation: "g1",
       serveGate: null,
+      sourceBytes: new TextEncoder().encode(SOURCE),
+      encoding: "utf-8",
       ...overrides,
     };
     calls = [];
@@ -117,9 +122,10 @@ if (process.env.SVODE_HTML_DOCUMENT_DOM !== "1") {
               sizeBytes: fixture.sizeBytes,
               generation: fixture.generation,
               modifiedAt: "2026-11-02T10:00:00Z",
+              encoding: fixture.encoding,
             };
           case "document_read_source":
-            return new TextEncoder().encode(SOURCE);
+            return fixture.sourceBytes;
           case "document_list_external_apps":
             return [];
           case "html_document_set_theme":
@@ -363,6 +369,44 @@ if (process.env.SVODE_HTML_DOCUMENT_DOM !== "1") {
     ).toBe(true);
     expect(commands("document_read_source").length).toBe(0);
     await large.unmount();
+  });
+
+  test("shows the source in the encoding of its page", async () => {
+    const text = "<title>Привет</title>";
+    const utf16 = new Uint8Array([
+      0xff,
+      0xfe,
+      ...[...text].flatMap((char) => {
+        const unit = char.charCodeAt(0);
+        return [unit & 0xff, unit >> 8];
+      }),
+    ]);
+    const cp1251 = new Uint8Array([
+      ...new TextEncoder().encode("<title>"),
+      0xcf,
+      0xf0,
+      0xe8,
+      0xe2,
+      0xe5,
+      0xf2,
+      ...new TextEncoder().encode("</title>"),
+    ]);
+    for (const [encoding, bytes] of [
+      ["windows-1251", cp1251],
+      ["utf-16le", utf16],
+      // A label the Encoding Standard does not know reads as UTF-8.
+      ["x-unknown", new TextEncoder().encode(text)],
+    ] as const) {
+      reset({ encoding, sourceBytes: bytes, sizeBytes: bytes.length });
+      const view = await render();
+      await act(async () => button("Source")!.click());
+      await act(settle);
+      expect([
+        encoding,
+        doc.querySelector("[data-source-file]")?.textContent,
+      ]).toEqual([encoding, text]);
+      await view.unmount();
+    }
   });
 
   test("names every refusal and keeps Open with", async () => {
