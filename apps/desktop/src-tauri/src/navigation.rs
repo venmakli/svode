@@ -103,9 +103,13 @@ pub enum NavigationKey {
         path: String,
     },
     #[serde(rename_all = "camelCase")]
-    Session { session_id: String },
+    Session {
+        session_id: String,
+    },
     #[serde(rename_all = "camelCase")]
-    SessionLaunch { launch_id: String },
+    SessionLaunch {
+        launch_id: String,
+    },
     Routine(NavigationRoutine),
     #[serde(rename_all = "camelCase")]
     AgentActor {
@@ -2169,7 +2173,11 @@ mod tests {
         );
 
         // An item of a missing Space stays unavailable.
-        std::fs::rename(project.path().join("child"), project.path().join("moved-away")).unwrap();
+        std::fs::rename(
+            project.path().join("child"),
+            project.path().join("moved-away"),
+        )
+        .unwrap();
         let unavailable = read_state(project.path())
             .pinned
             .iter()
@@ -2233,7 +2241,8 @@ mod tests {
     fn entries_of_unknown_key_kinds_are_skipped_and_the_rest_reads_as_before() {
         let project = project();
         write(project.path(), "notes.md", &page("Notes"));
-        let page_entry = serde_json::json!({ "key": { "kind": "page", "path": "notes.md" }, "title": "Notes" });
+        let page_entry =
+            serde_json::json!({ "key": { "kind": "page", "path": "notes.md" }, "title": "Notes" });
         let session_entry = serde_json::json!({ "key": { "kind": "session", "sessionId": "codex:a" }, "title": "Chat" });
         let launch_entry = serde_json::json!({
             "key": { "kind": "sessionLaunch", "launchId": "l1" },
