@@ -96,6 +96,7 @@ if (process.env.SVODE_PAGE_SCOPE_TEST !== "1") {
   mock.module("@/features/document", () => ({
     probeDocumentTarget: () => ({ status: "no_match" }),
     htmlDocumentApp: async () => null,
+    isHtmlDocumentPath: (path: string) => /\.html?$/i.test(path),
     localHtmlDocumentFile: () => null,
   }));
   mock.module("@/features/media", () => ({
