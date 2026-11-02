@@ -164,3 +164,54 @@ export function listenHtmlDocumentChanges(
     },
   );
 }
+
+/** The App directory, relative to its Space, whose files include the HTML file; null outside Apps. */
+export function findHtmlDocumentApp(
+  input: DocumentSourceInputDto,
+): Promise<string | null> {
+  return invokeCommand<string | null>("html_document_app_directory", {
+    ...input,
+  });
+}
+
+/** The facts of a local HTML file outside the project. */
+export function inspectLocalHtmlDocument(
+  path: string,
+): Promise<DocumentSourceDescriptorDto> {
+  return invokeCommand<DocumentSourceDescriptorDto>(
+    "html_document_local_inspect",
+    { path },
+  );
+}
+
+export async function readLocalHtmlDocument(
+  path: string,
+  expectedGeneration: string,
+): Promise<Uint8Array> {
+  const response = await invokeCommand<ArrayBuffer | Uint8Array>(
+    "html_document_local_read",
+    { path, expectedGeneration },
+  );
+  return response instanceof Uint8Array ? response : new Uint8Array(response);
+}
+
+export function listLocalHtmlDocumentExternalApps(
+  path: string,
+): Promise<ExternalAppDto[]> {
+  return invokeCommand<ExternalAppDto[]>(
+    "html_document_local_list_external_apps",
+    { path },
+  );
+}
+
+/** Opens a local HTML file in `appId`, or in the OS default application for `null`. */
+export function openLocalHtmlDocumentExternal(
+  path: string,
+  appId: string | null,
+): Promise<void> {
+  return invokeCommand("html_document_local_open_external", { path, appId });
+}
+
+export function revealLocalHtmlDocumentExternal(path: string): Promise<void> {
+  return invokeCommand("html_document_local_reveal_external", { path });
+}

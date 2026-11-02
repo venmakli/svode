@@ -8,25 +8,20 @@ import {
 import {
   ChatAttachmentOpenerContext,
   ChatHeldMediaOpenerContext,
-  chatAttachmentKind,
   chatMediaFile,
   locateChatAttachment,
   type ChatAttachment,
   type ChatAttachmentLocation,
 } from "@/features/agent-sessions";
 import { ChangesControl, fileChangesTarget } from "@/features/changes";
+import { htmlDocumentApp, localHtmlDocumentFile } from "@/features/document";
+import type { LocalDocumentFile } from "@/features/document/app-shell";
 import { usePeekNavigation } from "@/features/scope-surfaces";
 import type { HeldMedia, LocalMediaFile } from "@/features/media/app-shell";
 import { useSpace } from "@/features/space";
 import { openPath } from "@/platform/native/shell";
-import {
-  AUDIO_EXTS,
-  DOCUMENT_EXTS,
-  IMAGE_EXTS,
-  VIDEO_EXTS,
-} from "@/platform/upload/media-types";
 import { usePeekStackEntry } from "@/shared/hooks/use-peek-stack-entry";
-import { isNetworkPath } from "@/shared/lib/local-paths";
+import { chatAttachmentRoute, htmlRoute } from "./chat-attachment-route";
 import { CompactScopePeek } from "./compact-scope-peek";
 
 const DocumentSurface = lazy(async () => ({
@@ -46,32 +41,19 @@ type AttachmentPeekTarget =
     }
   /** A media file outside the project, only to view it (DF-233 R2). */
   | { kind: "local-media"; attachment: ChatAttachment; file: LocalMediaFile }
+  /** An HTML file outside the project, only to view it (Stage 11 `06` H1). */
+  | {
+      kind: "local-document";
+      attachment: ChatAttachment;
+      file: LocalDocumentFile;
+    }
   /** Media of the chat without a file, or an image by its address (R2). */
   | { kind: "held-media"; media: HeldMedia };
 
-const MEDIA_EXTENSIONS = new Set<string>([
-  ...IMAGE_EXTS,
-  ...VIDEO_EXTS,
-  ...AUDIO_EXTS,
-]);
-const DOCUMENT_EXTENSIONS = new Set<string>(DOCUMENT_EXTS);
-
-function viewerKind(attachment: ChatAttachment): ArtifactRegistryKind | null {
-  if (chatAttachmentKind(attachment.path) === "page") return "page";
-  const dot = attachment.path.lastIndexOf(".");
-  const extension = dot >= 0 ? attachment.path.slice(dot).toLowerCase() : "";
-  if (MEDIA_EXTENSIONS.has(extension)) return "media";
-  if (DOCUMENT_EXTENSIONS.has(extension)) return "document";
-  return null;
-}
-
 /**
- * Opens the attachment badges of the chat (Stage 10 `04`, DF-233 R1): a page
- * or a file of the project in a peek over the chat — over the session peek as
- * its child —, an image, a video or an audio outside the project, a pasted
- * image too, in the same peek with the media viewer, and anything else in its
- * system app. A network path is never shown. Media the chat holds without a
- * file opens in the same peek too.
+ * Opens the attachment badges of the chat by `chatAttachmentRoute`: a peek
+ * over the chat — over the session peek as its child — or the system app.
+ * Media the chat holds without a file opens in the same peek too.
  */
 export function ChatAttachmentPeekProvider({
   children,
@@ -83,34 +65,60 @@ export function ChatAttachmentPeekProvider({
   const spaces = useSpace((state) => state.spaces);
   const activeRootId = useSpace((state) => state.activeRootId);
 
+  const projectPath = rootSpaces.find(
+    (space) => space.id === activeRootId,
+  )?.path;
   const open = useCallback(
-    (attachment: ChatAttachment) => {
+    async (attachment: ChatAttachment) => {
       const location = locateChatAttachment(attachment.path, [
         ...rootSpaces,
         ...spaces,
       ]);
-      const kind = viewerKind(attachment);
-      if (location && kind) {
-        setTarget({
-          kind,
-          attachment,
-          location,
-          registeredSpaceId:
-            location.spaceId === activeRootId ? null : location.spaceId,
-        });
-        return;
+      let route = chatAttachmentRoute(attachment.path, location);
+      if (route.kind === "html") {
+        const registeredSpaceId =
+          route.location.spaceId === activeRootId
+            ? null
+            : route.location.spaceId;
+        const app = await htmlDocumentApp({
+          projectPath: projectPath ?? route.location.spacePath,
+          spaceId: registeredSpaceId,
+          path: route.location.path,
+        }).catch(() => null);
+        route = htmlRoute(route.location, app);
       }
-      if (kind === "media" && !isNetworkPath(attachment.path)) {
-        setTarget({
-          kind: "local-media",
-          attachment,
-          file: chatMediaFile(attachment.path),
-        });
-        return;
+      switch (route.kind) {
+        case "html":
+        case "system":
+          void openPath(attachment.path);
+          return;
+        case "local-media":
+          setTarget({
+            kind: "local-media",
+            attachment,
+            file: chatMediaFile(attachment.path),
+          });
+          return;
+        case "local-document":
+          setTarget({
+            kind: "local-document",
+            attachment,
+            file: localHtmlDocumentFile(attachment.path),
+          });
+          return;
+        default:
+          setTarget({
+            kind: route.kind,
+            attachment,
+            location: route.location,
+            registeredSpaceId:
+              route.location.spaceId === activeRootId
+                ? null
+                : route.location.spaceId,
+          });
       }
-      void openPath(attachment.path);
     },
-    [activeRootId, rootSpaces, spaces],
+    [activeRootId, projectPath, rootSpaces, spaces],
   );
 
   const openHeld = useCallback(
@@ -119,14 +127,14 @@ export function ChatAttachmentPeekProvider({
   );
 
   return (
-    <ChatAttachmentOpenerContext.Provider value={open}>
+    <ChatAttachmentOpenerContext.Provider
+      value={(attachment) => void open(attachment)}
+    >
       <ChatHeldMediaOpenerContext.Provider value={openHeld}>
         {children}
         <ChatAttachmentPeek
           target={target}
-          projectPath={
-            rootSpaces.find((space) => space.id === activeRootId)?.path
-          }
+          projectPath={projectPath}
           onClose={() => setTarget(null)}
         />
       </ChatHeldMediaOpenerContext.Provider>
@@ -199,6 +207,10 @@ function ChatAttachmentPeek({
         ) : target?.kind === "local-media" ? (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>
             <MediaSurface file={target.file} onClose={close} />
+          </Suspense>
+        ) : target?.kind === "local-document" ? (
+          <Suspense fallback={<Skeleton className="m-6 h-48" />}>
+            <DocumentSurface file={target.file} onClose={close} />
           </Suspense>
         ) : target?.kind === "held-media" ? (
           <Suspense fallback={<Skeleton className="m-6 h-48" />}>

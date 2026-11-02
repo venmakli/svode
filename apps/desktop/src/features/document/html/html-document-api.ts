@@ -1,5 +1,12 @@
+import { filePreferenceKey } from "@/features/external-open";
 import {
+  findHtmlDocumentApp,
+  inspectLocalHtmlDocument,
   listenHtmlDocumentChanges,
+  listLocalHtmlDocumentExternalApps,
+  openLocalHtmlDocumentExternal,
+  readLocalHtmlDocument,
+  revealLocalHtmlDocumentExternal,
   revokeHtmlDocument,
   serveHtmlDocument,
   setHtmlDocumentTheme,
@@ -9,7 +16,7 @@ import {
   type HtmlThemeDto,
 } from "@/platform/document/document-api";
 
-import type { DocumentTarget } from "../model/types";
+import type { DocumentTarget, LocalDocumentFile } from "../model/types";
 
 export type HtmlTheme = HtmlThemeDto;
 export type HtmlDocumentServing = HtmlDocumentServingDto;
@@ -89,4 +96,36 @@ function servingSource(target: DocumentTarget): HtmlDocumentSourceDto {
         spaceId: target.spaceId,
         targetPath: target.path,
       };
+}
+
+/**
+ * The App directory, relative to its Space, whose files include the HTML
+ * file at `path`: such a file opens its App. Null outside Apps.
+ */
+export function htmlDocumentApp(input: {
+  projectPath: string;
+  spaceId: string | null;
+  path: string;
+}): Promise<string | null> {
+  return findHtmlDocumentApp({
+    projectPath: input.projectPath,
+    spaceId: input.spaceId,
+    targetPath: input.path,
+  });
+}
+
+/** An HTML file outside the project by its absolute path, only to view it. */
+export function localHtmlDocumentFile(path: string): LocalDocumentFile {
+  return {
+    path,
+    inspect: () => inspectLocalHtmlDocument(path),
+    read: (expectedGeneration) =>
+      readLocalHtmlDocument(path, expectedGeneration),
+    externalOpen: {
+      preferenceKey: filePreferenceKey(path),
+      listApps: () => listLocalHtmlDocumentExternalApps(path),
+      open: (appId) => openLocalHtmlDocumentExternal(path, appId),
+      reveal: () => revealLocalHtmlDocumentExternal(path),
+    },
+  };
 }

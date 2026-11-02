@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use super::source::{DocumentSourceError, map_io_error, reject_registered_space_boundary};
 use crate::attachments::source::resolve_registered_owner;
-use crate::repo_path::{RootMode, normalize_repo_relative};
+use crate::repo_path::{RootMode, normalize_repo_relative, repo_relative_from_base};
 use svode_core::system_path;
 
 /// The largest HTML file shown.
@@ -156,6 +156,49 @@ pub(crate) fn resolve_html_document(
         size_bytes: metadata.len(),
         modified_at: DateTime::<Utc>::from(modified).to_rfc3339_opts(SecondsFormat::Secs, true),
     })
+}
+
+/// The directory, relative to its Space, of the App whose files include the
+/// HTML file at `target_path` (Stage 11 `06` H1): a link to it opens the App,
+/// not a Document. None outside Apps.
+pub(crate) fn html_app_directory(
+    project_path: &Path,
+    space_id: Option<&str>,
+    target_path: &str,
+) -> Result<Option<String>, DocumentSourceError> {
+    let owner = resolve_registered_owner(project_path, space_id)
+        .map_err(|_| DocumentSourceError::PathUnresolved)?;
+    let normalized = normalize_repo_relative(target_path, RootMode::Reject)
+        .map_err(|_| DocumentSourceError::PathUnresolved)?;
+    require_html_extension(Path::new(&normalized))?;
+    let candidate = owner.space_path.join(&normalized);
+    let Some(directory) = candidate.parent() else {
+        return Ok(None);
+    };
+    svode_core::attachments::format::app_directory(&owner.space_path, directory)
+        .map(|app| {
+            repo_relative_from_base(&owner.space_path, app, RootMode::Allow)
+                .map_err(|_| DocumentSourceError::PathUnresolved)
+        })
+        .transpose()
+}
+
+/// A local HTML file by its absolute path, outside the project: the only
+/// local files the chat shows as Documents; other files open in their
+/// system application.
+pub(crate) fn resolve_local_html(path: &Path) -> Result<PathBuf, DocumentSourceError> {
+    if !path.is_absolute() || system_path::is_network_path(&path.to_string_lossy()) {
+        return Err(DocumentSourceError::PathUnresolved);
+    }
+    require_html_extension(path)?;
+    let metadata = fs::symlink_metadata(path).map_err(map_io_error)?;
+    if metadata.file_type().is_symlink() {
+        return Err(DocumentSourceError::Symlink);
+    }
+    if !metadata.is_file() {
+        return Err(DocumentSourceError::PathUnresolved);
+    }
+    fs::canonicalize(path).map_err(map_io_error)
 }
 
 fn require_html_extension(path: &Path) -> Result<(), DocumentSourceError> {
@@ -679,6 +722,59 @@ mod tests {
                 )),
                 "symlink"
             );
+        }
+    }
+
+    #[test]
+    fn an_html_file_of_an_app_names_its_app_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = fs::canonicalize(temp.path()).unwrap().join("project");
+        write_project(&project);
+        fs::create_dir_all(project.join("tools/dash/public")).unwrap();
+        fs::create_dir_all(project.join("reports")).unwrap();
+        fs::write(project.join("tools/dash/app.yaml"), "runtime: static").unwrap();
+        let app = |path: &str| html_app_directory(&project, None, path).unwrap();
+
+        assert_eq!(
+            app("tools/dash/public/index.html").as_deref(),
+            Some("tools/dash")
+        );
+        assert_eq!(app("tools/dash/page.HTM").as_deref(), Some("tools/dash"));
+        assert_eq!(app("reports/report.html"), None);
+        assert_eq!(app("report.html"), None);
+        assert!(html_app_directory(&project, None, "tools/dash/notes.pdf").is_err());
+        assert!(html_app_directory(&project, None, "../outside.html").is_err());
+    }
+
+    #[test]
+    fn a_local_html_file_is_resolved_by_its_absolute_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        fs::write(base.join("page.html"), "<p>").unwrap();
+        fs::write(base.join("guide.pdf"), "%PDF").unwrap();
+        let reason = |path: &Path| {
+            serde_json::to_value(resolve_local_html(path).unwrap_err()).unwrap()["kind"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        assert_eq!(
+            resolve_local_html(&base.join("page.html")).unwrap(),
+            base.join("page.html")
+        );
+        // Other local files open in their system application.
+        assert_eq!(reason(&base.join("guide.pdf")), "unsupported_format");
+        assert_eq!(reason(Path::new("page.html")), "path_unresolved");
+        assert_eq!(
+            reason(Path::new("//server/share/page.html")),
+            "path_unresolved"
+        );
+        assert_eq!(reason(&base.join("missing.html")), "source_missing");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(base.join("page.html"), base.join("linked.html")).unwrap();
+            assert_eq!(reason(&base.join("linked.html")), "symlink");
         }
     }
 

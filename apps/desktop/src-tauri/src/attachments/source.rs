@@ -528,8 +528,8 @@ fn scan_mixed_children(
     Ok((items, diagnostics))
 }
 
+pub(crate) use svode_core::attachments::format::classify_binary_path;
 use svode_core::attachments::format::{classify_attachment_file, is_html_path, is_inside_app};
-pub(crate) use svode_core::attachments::format::{classify_binary_extension, classify_binary_path};
 
 /// `inside_app`: `directory` is an App directory or lies inside one.
 fn has_mixed_child_hint(directory: &Path, inside_app: bool) -> bool {
@@ -662,6 +662,7 @@ mod tests {
     use super::*;
     use crate::space::config::write_space_config;
     use crate::space::types::{SpaceConfig, SpaceRef};
+    use svode_core::attachments::format::classify_binary_extension;
 
     #[tokio::test]
     async fn app_semantic_children_share_hints_routing_and_branch_guards() {

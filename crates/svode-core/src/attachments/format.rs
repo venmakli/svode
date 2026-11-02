@@ -45,13 +45,20 @@ pub fn classify_attachment_file(
 /// Whether `directory` or one of its ancestors up to and including
 /// `space_root` holds a regular `app.yaml`: its files are those of an App.
 pub fn is_inside_app(space_root: &Path, directory: &Path) -> bool {
+    app_directory(space_root, directory).is_some()
+}
+
+/// The nearest of `directory` and its ancestors up to and including
+/// `space_root` that holds a regular `app.yaml`: the App whose files lie
+/// in `directory`.
+pub fn app_directory<'a>(space_root: &Path, directory: &'a Path) -> Option<&'a Path> {
     if !directory.starts_with(space_root) {
-        return false;
+        return None;
     }
     directory
         .ancestors()
         .take_while(|ancestor| ancestor.starts_with(space_root))
-        .any(|ancestor| {
+        .find(|ancestor| {
             std::fs::symlink_metadata(ancestor.join("app.yaml"))
                 .is_ok_and(|metadata| metadata.is_file())
         })
@@ -182,6 +189,10 @@ mod tests {
         assert!(is_inside_app(space, &app));
         assert!(is_inside_app(space, &app.join("public")));
         assert!(is_inside_app(space, &app.join("public/assets")));
+        assert_eq!(
+            app_directory(space, &app.join("public/assets")),
+            Some(app.as_path())
+        );
         assert!(!is_inside_app(space, &space.join("reports")));
         assert!(!is_inside_app(space, space));
         // An `app.yaml` above the Space does not count.
@@ -192,5 +203,10 @@ mod tests {
 
         std::fs::write(space.join("app.yaml"), "runtime: static").unwrap();
         assert!(is_inside_app(space, &space.join("reports")));
+        // The nearest App owns its files.
+        assert_eq!(
+            app_directory(space, &app.join("public")),
+            Some(app.as_path())
+        );
     }
 }

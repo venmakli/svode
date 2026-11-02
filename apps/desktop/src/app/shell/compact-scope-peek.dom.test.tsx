@@ -87,6 +87,8 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   }));
   mock.module("@/features/document", () => ({
     probeDocumentTarget: () => ({ status: "no_match" }),
+    htmlDocumentApp: async () => null,
+    localHtmlDocumentFile: () => null,
   }));
   mock.module("@/features/media", () => ({
     formatMediaBytes: (value: number) => `${value} B`,
