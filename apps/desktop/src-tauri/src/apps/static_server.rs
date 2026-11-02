@@ -167,6 +167,11 @@ async fn run_server(
     entry: String,
     mut shutdown: oneshot::Receiver<()>,
 ) {
+    // DNS rebinding guard: only the authority this source is served at.
+    let Ok(authority) = listener.local_addr().map(|address| address.to_string()) else {
+        return;
+    };
+    let authority = Arc::new(authority);
     let public_root = Arc::new(public_root);
     let entry = Arc::new(entry);
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
@@ -182,9 +187,10 @@ async fn run_server(
                 };
                 let public_root = Arc::clone(&public_root);
                 let entry = Arc::clone(&entry);
+                let authority = Arc::clone(&authority);
                 tauri::async_runtime::spawn(async move {
                     let _permit = permit;
-                    let _ = serve_connection(stream, &public_root, &entry).await;
+                    let _ = serve_connection(stream, &authority, &public_root, &entry).await;
                 });
             }
         }
@@ -193,6 +199,7 @@ async fn run_server(
 
 async fn serve_connection(
     mut stream: TcpStream,
+    authority: &str,
     public_root: &Path,
     entry: &str,
 ) -> std::io::Result<()> {
@@ -201,6 +208,11 @@ async fn serve_connection(
         Ok(Err(failure)) => return write_failure(&mut stream, failure).await,
         Err(_) => return write_failure(&mut stream, HttpFailure::RequestTimeout).await,
     };
+    match request.host.as_deref() {
+        Some(host) if host == authority => {}
+        Some(_) => return write_failure(&mut stream, HttpFailure::MisdirectedRequest).await,
+        None => return write_failure(&mut stream, HttpFailure::BadRequest).await,
+    }
     let source = match resolve_source(public_root, entry, &request.target) {
         Ok(source) => source,
         Err(failure) => return write_failure(&mut stream, failure).await,
@@ -227,6 +239,7 @@ enum RequestMethod {
 struct StaticRequest {
     method: RequestMethod,
     target: String,
+    host: Option<String>,
 }
 
 async fn read_request(stream: &mut TcpStream) -> Result<StaticRequest, HttpFailure> {
@@ -253,8 +266,8 @@ async fn read_request(stream: &mut TcpStream) -> Result<StaticRequest, HttpFailu
     }
 
     let head = std::str::from_utf8(&request).map_err(|_| HttpFailure::BadRequest)?;
-    let mut parts = head
-        .lines()
+    let mut lines = head.lines();
+    let mut parts = lines
         .next()
         .ok_or(HttpFailure::BadRequest)?
         .split_ascii_whitespace();
@@ -269,9 +282,23 @@ async fn read_request(stream: &mut TcpStream) -> Result<StaticRequest, HttpFailu
     if parts.next().is_some() || !matches!(version, "HTTP/1.0" | "HTTP/1.1") {
         return Err(HttpFailure::BadRequest);
     }
+    let mut host = None;
+    for line in lines.take_while(|line| !line.is_empty()) {
+        let Some((name, value)) = line.split_once(':') else {
+            return Err(HttpFailure::BadRequest);
+        };
+        if name.eq_ignore_ascii_case("host")
+            && host
+                .replace(value.trim_matches([' ', '\t']).to_string())
+                .is_some()
+        {
+            return Err(HttpFailure::BadRequest);
+        }
+    }
     Ok(StaticRequest {
         method,
         target: target.to_string(),
+        host,
     })
 }
 
@@ -302,6 +329,7 @@ enum HttpFailure {
     BadRequest,
     NotFound,
     MethodNotAllowed,
+    MisdirectedRequest,
     HeaderTooLarge,
     RequestTimeout,
 }
@@ -311,6 +339,7 @@ async fn write_failure(stream: &mut TcpStream, failure: HttpFailure) -> std::io:
         HttpFailure::BadRequest => ("400 Bad Request", "Bad Request"),
         HttpFailure::NotFound => ("404 Not Found", "Not Found"),
         HttpFailure::MethodNotAllowed => ("405 Method Not Allowed", "Method Not Allowed"),
+        HttpFailure::MisdirectedRequest => ("421 Misdirected Request", "Misdirected Request"),
         HttpFailure::HeaderTooLarge => (
             "431 Request Header Fields Too Large",
             "Request Header Fields Too Large",
@@ -423,6 +452,89 @@ mod tests {
                 Err(HttpFailure::NotFound)
             ));
         }
+    }
+
+    async fn exchange(port: u16, head: &str) -> String {
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        stream.write_all(head.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        response
+    }
+
+    fn request(path: &str, host: Option<&str>) -> String {
+        let host = host.map_or(String::new(), |host| format!("Host: {host}\r\n"));
+        format!("GET {path} HTTP/1.1\r\n{host}Accept: */*\r\n\r\n")
+    }
+
+    fn status(response: &str) -> &str {
+        response.lines().next().unwrap_or_default()
+    }
+
+    #[test]
+    fn server_answers_only_the_host_of_its_own_address() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap().join("public");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("index.html"), "entry").unwrap();
+        fs::write(temp.path().join("secret.txt"), "secret").unwrap();
+        let state = AppSourceState::new();
+
+        tauri::async_runtime::block_on(async {
+            let (token, url) = state
+                .issue(root.clone(), temp.path().join("app.yaml"), "index.html")
+                .await
+                .unwrap();
+            let port = tauri::Url::parse(&url).unwrap().port().unwrap();
+            let own = format!("127.0.0.1:{port}");
+            let other_port = format!("127.0.0.1:{}", port.checked_add(1).unwrap_or(port - 1));
+
+            let served = exchange(port, &request("/", Some(&own))).await;
+            assert_eq!(status(&served), "HTTP/1.1 200 OK");
+            assert!(served.ends_with("\r\n\r\nentry"));
+            let head = exchange(port, &request("/", Some(&own)).replacen("GET", "HEAD", 1)).await;
+            assert_eq!(status(&head), "HTTP/1.1 200 OK");
+            assert!(head.ends_with("\r\n\r\n"));
+            // Header names are case-insensitive and the value may carry spaces.
+            let lowercase =
+                exchange(port, &format!("GET / HTTP/1.1\r\nhost:  {own} \r\n\r\n")).await;
+            assert_eq!(status(&lowercase), "HTTP/1.1 200 OK");
+
+            for host in [
+                format!("localhost:{port}"),
+                "example.com".to_string(),
+                format!("example.com:{port}"),
+                other_port,
+                "127.0.0.1".to_string(),
+            ] {
+                // A refused host learns nothing about the path: the missing
+                // file, the escape and the served entry all get the same 421.
+                for path in ["/", "/index.html", "/missing.html", "/%2e%2e/secret.txt"] {
+                    let refused = exchange(port, &request(path, Some(&host))).await;
+                    assert_eq!(
+                        status(&refused),
+                        "HTTP/1.1 421 Misdirected Request",
+                        "{host} {path}"
+                    );
+                    assert!(!refused.contains("entry") && !refused.contains("secret"));
+                }
+            }
+            for path in ["/", "/missing.html", "/%2e%2e/secret.txt"] {
+                let missing = exchange(port, &request(path, None)).await;
+                assert_eq!(status(&missing), "HTTP/1.1 400 Bad Request", "{path}");
+                assert!(!missing.contains("entry"));
+            }
+            let duplicate = exchange(
+                port,
+                &format!("GET / HTTP/1.1\r\nHost: {own}\r\nHost: {own}\r\n\r\n"),
+            )
+            .await;
+            assert_eq!(status(&duplicate), "HTTP/1.1 400 Bad Request");
+
+            state.revoke(&token);
+        });
     }
 
     #[test]

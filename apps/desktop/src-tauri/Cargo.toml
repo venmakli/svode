@@ -10,7 +10,7 @@ name = "svode_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 tempfile = "3"
@@ -25,11 +25,11 @@ svode-install = { path = "../../../crates/svode-install" }
 svode-mcp = { path = "../../../crates/svode-mcp" }
 svode-speech = { path = "../../../crates/svode-speech", default-features = false }
 svode-tools = { path = "../../../crates/svode-tools" }
-tauri = { version = "2", features = ["protocol-asset"] }
-tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
-tauri-plugin-single-instance = "2"
+tauri = { version = "2.12.5", features = ["protocol-asset"] }
+tauri-plugin-shell = "2.6.0"
+tauri-plugin-dialog = "2.8.4"
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-single-instance = "2.5.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 jsonc-parser = { version = "0.34", features = ["serde"] }
@@ -72,8 +72,8 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSBi
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSBundle", "NSData", "NSDictionary", "NSFileManager", "NSGeometry", "NSNotification", "NSOperation", "NSString", "NSURL", "block2", "std"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-webview2-com = "0.38"
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Imaging", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Imaging", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
