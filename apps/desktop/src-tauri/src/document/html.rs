@@ -108,16 +108,7 @@ pub(crate) fn resolve_html_document(
             wide_roots.push(space_root.clone());
             (space_root.join(&normalized), Some(space_root), false)
         }
-        HtmlDocumentInput::Local { path } => {
-            // A network share is not a local file: not even resolved, since
-            // that reaches the server.
-            let path = Path::new(path);
-            if !path.is_absolute() || system_path::is_network_path(&path.to_string_lossy()) {
-                return Err(DocumentSourceError::PathUnresolved);
-            }
-            require_html_extension(path)?;
-            (path.to_path_buf(), None, true)
-        }
+        HtmlDocumentInput::Local { path } => (resolve_local_html(Path::new(path))?, None, true),
     };
 
     let metadata = fs::symlink_metadata(&candidate).map_err(map_io_error)?;
@@ -186,7 +177,8 @@ pub(crate) fn html_app_directory(
 
 /// A local HTML file by its absolute path, outside the project: the only
 /// local files the chat shows as Documents; other files open in their
-/// system application.
+/// system application. A network share is not a local file: not even
+/// resolved, since that reaches the server.
 pub(crate) fn resolve_local_html(path: &Path) -> Result<PathBuf, DocumentSourceError> {
     if !path.is_absolute() || system_path::is_network_path(&path.to_string_lossy()) {
         return Err(DocumentSourceError::PathUnresolved);
