@@ -90,17 +90,17 @@ if (process.env.SVODE_ROUTINES_STATE_DOM !== "1") {
           actions: {
             createState: idle,
             getDeleteState: () => idle,
-            getEditState: () => idle,
+            getDefinitionEditState: () => idle,
             getEnabledState: (item) =>
               item.valid ? idle : { reason: "invalid", status: "disabled" },
             getRunState: () => idle,
             onAdd: () => undefined,
             onDelete: () => undefined,
-            onEdit: () => undefined,
             onEnabledChange: async (_item, enabled) => {
               changes.push(enabled);
             },
             onRun: async () => undefined,
+            writeDefinition: async () => undefined,
           },
           executors,
           onActivate: () => undefined,

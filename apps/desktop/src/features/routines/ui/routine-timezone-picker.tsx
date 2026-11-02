@@ -93,7 +93,6 @@ export function RoutineTimezonePicker({
         aria-invalid={invalid}
         placeholder={m.routines_timezone_search()}
         className="w-full"
-        data-routine-create-focus="trigger"
       />
       <ComboboxContent>
         <ComboboxEmpty>{m.routines_timezone_empty()}</ComboboxEmpty>

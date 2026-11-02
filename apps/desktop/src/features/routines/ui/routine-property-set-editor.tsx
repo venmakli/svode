@@ -36,7 +36,6 @@ export function RoutinePropertySetEditor({
           <div key={index} className="flex items-start gap-2">
             <Input
               id={`${idPrefix}-property-${index}`}
-              data-routine-create-focus={index === 0 ? "action" : undefined}
               aria-label={m.routines_property_key_label()}
               value={property}
               onChange={(event) => {
@@ -83,8 +82,6 @@ export function RoutinePropertySetEditor({
         size="sm"
         variant="outline"
         className="self-start"
-        data-routine-create-invalid={invalid && entries.length === 0}
-        data-routine-create-focus={entries.length === 0 ? "action" : undefined}
         onClick={() => {
           let suffix = entries.length + 1;
           let key = entries.length === 0 ? "property" : `property_${suffix}`;

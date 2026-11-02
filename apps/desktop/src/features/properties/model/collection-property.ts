@@ -107,12 +107,18 @@ export interface CollectionPropertyEdit<Item> {
 
 /** The editor of a composite property inside its popover. */
 export interface CollectionPropertyPopoverEditor<Item> {
+  /**
+   * The value the editor edits, such as the whole composite value behind a
+   * label the property shows, filters and sorts by; the property's value
+   * without it. `validate` and `update` receive drafts of this value.
+   */
+  getDraft?(item: Item): unknown;
   render(input: CollectionPropertyPopoverEditorInput<Item>): ReactNode;
 }
 
 export interface CollectionPropertyPopoverEditorInput<Item> {
   item: Item;
-  /** The value being edited; the saved value when the popover opened. */
+  /** The value being edited; the saved draft when the popover opened. */
   draft: unknown;
   /** Why the draft cannot be saved, shown below the editor; null when it can. */
   problem: string | null;

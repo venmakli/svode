@@ -16,12 +16,14 @@ import { resolveStandardPropertyColumn } from "@/features/properties";
 import { PropertyValue } from "@/features/properties/display";
 
 import type {
+  RoutineDefinition,
   RoutineItem,
   RoutineLaunchRecoveryActions,
   RoutineOwnership,
 } from "../model/types";
+import { changeRoutineTrigger } from "../model/routine-draft";
+import type { RoutineTriggerDraft } from "../model/routine-property-drafts";
 import { RoutineAutomaticConsent } from "./routine-automatic-consent";
-import { RoutineCreateReview } from "./routine-create-review";
 import { RoutineDetailView } from "./routine-detail-view";
 import {
   routineScheduleSummary,
@@ -161,18 +163,20 @@ function actions(calls: string[]): RoutinePresentationActions {
   return {
     createState: { status: "idle" },
     getDeleteState: () => ({ status: "idle" }),
-    getEditState: () => ({ status: "idle" }),
+    getDefinitionEditState: () => ({ status: "idle" }),
     getEnabledState: () => ({ status: "idle" }),
     getRunState: () => ({ status: "idle" }),
-    onAdd: () => calls.push("add"),
+    onAdd: () => {
+      calls.push("add");
+    },
     onDelete: (item) => calls.push(`delete:${item.id}`),
-    onEdit: (item) => calls.push(`edit:${item.id}`),
     onEnabledChange: async (item, enabled) => {
       calls.push(`enabled:${item.id}:${enabled}`);
     },
     onRun: async (item) => {
       calls.push(`run:${item.id}`);
     },
+    writeDefinition: async () => undefined,
   };
 }
 
@@ -190,27 +194,32 @@ function RoutineDetailTestView({
 }) {
   const idle = { status: "idle" } as const;
   return (
-    <RoutineDetailView
-      item={item}
-      presentation={createRoutinesPresentation({
-        actions: {
-          createState: idle,
-          getDeleteState: () => idle,
-          getEditState: () => idle,
-          getEnabledState: () => idle,
-          getRunState: () => idle,
-          onAdd: () => undefined,
-          onDelete: () => undefined,
-          onEdit: () => undefined,
-          onEnabledChange: async () => undefined,
-          onRun: async () => undefined,
-        },
-        executors,
-        ownership,
-        recovery,
-        state: { items: [item], phase: "ready" },
-      })}
-    />
+    <TooltipProvider>
+      <RoutineDetailView
+        item={item}
+        readOnly={false}
+        registerInstructionFlush={() => undefined}
+        saveInstruction={async () => undefined}
+        presentation={createRoutinesPresentation({
+          actions: {
+            createState: idle,
+            getDeleteState: () => idle,
+            getDefinitionEditState: () => idle,
+            getEnabledState: () => idle,
+            getRunState: () => idle,
+            onAdd: () => undefined,
+            onDelete: () => undefined,
+            onEnabledChange: async () => undefined,
+            onRun: async () => undefined,
+            writeDefinition: async () => undefined,
+          },
+          executors,
+          ownership,
+          recovery,
+          state: { items: [item], phase: "ready" },
+        })}
+      />
+    </TooltipProvider>
   );
 }
 
@@ -288,7 +297,6 @@ test("routines expose one fixed All list with the complete fixed schema", () => 
   expect("refresh" in descriptor).toBe(false);
   expect(descriptor.itemActions?.map((action) => action.id)).toEqual([
     "run-routine",
-    "edit-routine",
     "delete-routine",
   ]);
   const runAction = descriptor.itemActions?.[0];
@@ -610,7 +618,6 @@ test("routines delegate create, item actions, and inline enabled edits", async (
   expect(calls).toEqual([
     "add",
     "run:routine:review",
-    "edit:routine:review",
     "delete:routine:review",
     "enabled:routine:summary:true",
   ]);
@@ -845,17 +852,6 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   expect(String(resolved).includes("Documentation Agent")).toBe(true);
   expect(String(resolved).includes('data-agent-avatar="neutral"')).toBe(true);
   expect(String(resolved).includes(ref)).toBe(false);
-  const review_ = renderToStaticMarkup(
-    <RoutineCreateReview
-      automaticAuthority={null}
-      definition={review.definition!}
-      executors={executors}
-      ownerLabel="Project"
-      onEdit={() => undefined}
-    />,
-  );
-  expect(String(review_).includes("Documentation Agent")).toBe(true);
-  expect(String(review_).includes(ref)).toBe(false);
 
   const renamed: AgentActorOptionsState = {
     ...executors,
@@ -869,19 +865,15 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   expect(loadingCell.includes("Loading agent…")).toBe(true);
   expect(loadingCell.includes('data-slot="skeleton"')).toBe(true);
   expect(loadingCell.includes(ref)).toBe(false);
-  expect(
-    String(detail(loading)).includes('data-agent-actor-reference="loading"'),
-  ).toBe(true);
+  expect(String(detail(loading)).includes("Loading agent…")).toBe(true);
   expect(String(detail(loading)).includes(ref)).toBe(false);
 
   const missingCell = executorCell(empty);
   expect(missingCell.includes("Agent not found")).toBe(true);
   expect(missingCell.includes(ref)).toBe(false);
   const missing = detail(empty);
-  expect(String(missing).includes('data-agent-actor-reference="missing"')).toBe(
-    true,
-  );
-  expect(String(missing).includes(ref)).toBe(true);
+  expect(String(missing).includes("Agent not found")).toBe(true);
+  expect(String(missing).includes(ref)).toBe(false);
 
   const ambiguousState: AgentActorOptionsState = { ...empty, ambiguous: [ref] };
   const ambiguousCell = executorCell(ambiguousState);
@@ -893,12 +885,14 @@ test("executor surfaces show the agent name and never a raw id while resolved or
   expect(ambiguousCell.includes('data-agent-avatar="destructive"')).toBe(true);
   const ambiguous = detail(ambiguousState);
   expect(
-    String(ambiguous).includes('data-agent-actor-reference="ambiguous"'),
+    String(ambiguous).includes(
+      "Agent is defined in both this space and the project",
+    ),
   ).toBe(true);
   expect(String(ambiguous).includes('data-agent-avatar="destructive"')).toBe(
     true,
   );
-  expect(String(ambiguous).includes(ref)).toBe(true);
+  expect(String(ambiguous).includes(ref)).toBe(false);
 
   const failed = detail({ ...empty, error: "catalog failed" });
   expect(String(failed).includes("Couldn’t load agent")).toBe(true);
@@ -935,8 +929,7 @@ test("routine detail presents an unavailable executor in its value and its reaso
   const missing = renderToStaticMarkup(
     <RoutineDetailTestView executors={empty} item={unavailable} />,
   );
-  expect(missing.includes('data-agent-actor-reference="missing"')).toBe(true);
-  expect(missing.includes(ref)).toBe(true);
+  expect(missing.includes("Agent not found")).toBe(true);
   // The reason is in "Status", not in an alert above the properties.
   expect(missing.includes("data-collection-state-problems")).toBe(true);
   expect(missing.includes(message)).toBe(true);
@@ -948,9 +941,9 @@ test("routine detail presents an unavailable executor in its value and its reaso
       item={unavailable}
     />,
   );
-  expect(ambiguous.includes('data-agent-actor-reference="ambiguous"')).toBe(
-    true,
-  );
+  expect(
+    ambiguous.includes("Agent is defined in both this space and the project"),
+  ).toBe(true);
   expect(ambiguous.includes("data-collection-state-problems")).toBe(true);
 
   const broken = renderToStaticMarkup(
@@ -1091,4 +1084,129 @@ test("a text query saved for the executor column resets instead of filtering wro
   });
   expect(kept.reset).toBe(false);
   expect(kept.query.filters.length).toBe(1);
+});
+
+/** The descriptor with each saved definition kept in `written`. */
+function editingDescriptor(written: RoutineDefinition[]) {
+  return createRoutinesPresentationDescriptor({
+    actions: {
+      ...actions([]),
+      writeDefinition: async (item, change) => {
+        written.push(change(item.definition!));
+      },
+    },
+    collectionOwner: true,
+    executors,
+    items: [review, scheduled, eventRoutine],
+    ownership: PROJECT_OWNERSHIP,
+  });
+}
+
+function editOf(
+  descriptor: ReturnType<typeof createRoutinesPresentationDescriptor>,
+  key: string,
+) {
+  return descriptor.properties.find((property) => property.key === key)!
+    .capabilities!.edit!;
+}
+
+test("switching the trigger to a schedule asks for consent to run automatically inside its popover; without it the trigger stays", async () => {
+  const written: RoutineDefinition[] = [];
+  const trigger = editOf(editingDescriptor(written), "trigger");
+  const saved = trigger.popover!.getDraft!(review) as RoutineTriggerDraft;
+  expect(saved.automaticConsent).toBe(false);
+  expect(trigger.validate!(saved, review)).toBeNull();
+
+  const schedule = changeRoutineTrigger(review.definition!, "schedule");
+  const draft: RoutineTriggerDraft = {
+    action: schedule.action,
+    automaticConsent: false,
+    enabled: schedule.enabled,
+    trigger: schedule.trigger,
+  };
+  expect(trigger.validate!(draft, review)).toBe("Confirm automatic runs");
+  const consented = { ...draft, automaticConsent: true };
+  expect(trigger.validate!(consented, review)).toBeNull();
+
+  // An invalid schedule is refused inside the popover before the consent.
+  expect(
+    trigger.validate!(
+      {
+        ...consented,
+        trigger: { ...schedule.trigger, cron: "0 9 *" } as typeof draft.trigger,
+      },
+      review,
+    ),
+  ).toBe("Enter a five-field cron schedule.");
+
+  await trigger.update(review, consented);
+  expect(written).toEqual([
+    {
+      ...review.definition!,
+      enabled: false,
+      trigger: schedule.trigger,
+    },
+  ]);
+
+  // Closing an unchanged popover writes nothing; editing a schedule needs
+  // no new consent.
+  await trigger.update(scheduled, trigger.popover!.getDraft!(scheduled));
+  expect(written.length).toBe(1);
+  const edited = {
+    ...(trigger.popover!.getDraft!(scheduled) as RoutineTriggerDraft),
+  };
+  edited.trigger = {
+    ...edited.trigger,
+    cron: "0 10 * * *",
+  } as typeof edited.trigger;
+  expect(trigger.validate!(edited, scheduled)).toBeNull();
+});
+
+test("the executor is an Agent Actor of the Routine's Space or root, saved at once; a Routine without one stays valid", async () => {
+  const written: RoutineDefinition[] = [];
+  const descriptor = editingDescriptor(written);
+  const executor = editOf(descriptor, "executor");
+  const property = descriptor.properties.find(
+    (candidate) => candidate.key === "executor",
+  )!;
+  expect(property.getApplicability?.(review)).toEqual({ status: "applicable" });
+  expect(
+    property.getApplicability?.({
+      ...eventRoutine,
+      definition: {
+        ...eventRoutine.definition!,
+        action: {
+          set: { Done: true },
+          target: "trigger.entry",
+          type: "update_properties",
+        },
+      },
+    }),
+  ).toEqual({ status: "hidden" });
+  expect(executor.validate!("someone@example.com", review)).toBe(
+    "The executor is an agent of this space or the project",
+  );
+  expect(executor.validate!("", review)).toBeNull();
+  expect(
+    executor.validate!("agent:01arz3ndektsv4rrffq69g5fav", review),
+  ).toBeNull();
+  await executor.update(review, "");
+  expect(written[0]?.action).toEqual({ executor: "", type: "run_agent" });
+});
+
+test("the action is chosen only for an event that leaves an item, in its popover, and an empty property set is not saved", async () => {
+  const written: RoutineDefinition[] = [];
+  const action = editOf(editingDescriptor(written), "action");
+  expect(action.getState(review).status).toBe("disabled");
+  expect(action.getState(eventRoutine).status).toBe("idle");
+  const update = {
+    set: {},
+    target: "trigger.entry" as const,
+    type: "update_properties" as const,
+  };
+  expect(action.validate!(update, eventRoutine)).toBe(
+    "Add at least one property update.",
+  );
+  await action.update(eventRoutine, { ...update, set: { Done: true } });
+  expect(written[0]?.action).toEqual({ ...update, set: { Done: true } });
 });

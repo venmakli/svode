@@ -1,9 +1,4 @@
 import { Badge } from "@/components/ui/badge";
-import {
-  AgentActorReferenceValue,
-  resolveAgentActorReference,
-  type AgentActorOptionsState,
-} from "@/features/actors/agent-reference";
 import * as m from "@/paraglide/messages.js";
 import { getLocale } from "@/paraglide/runtime.js";
 
@@ -35,29 +30,6 @@ export function RoutineTriggerDetail({
     );
   }
   return <>{label}</>;
-}
-
-/** "Executor": the Agent Actor, with its reference when it cannot be found. */
-export function RoutineExecutorDetail({
-  executors,
-  reference,
-}: {
-  executors: AgentActorOptionsState;
-  reference: string;
-}) {
-  const resolved = resolveAgentActorReference(executors, reference);
-  const recovery =
-    resolved.status === "missing" || resolved.status === "ambiguous";
-  return (
-    <span className="flex min-w-0 flex-col gap-1">
-      <AgentActorReferenceValue reference={resolved} />
-      {recovery ? (
-        <span className="break-all text-xs text-muted-foreground">
-          {reference}
-        </span>
-      ) : null}
-    </span>
-  );
 }
 
 /** "Last run": when, where, and why its launch was refused. */

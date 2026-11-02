@@ -95,7 +95,6 @@ export function RoutineScheduleFields({
           </FieldLabel>
           <Input
             id={`${idPrefix}-cron`}
-            data-routine-create-focus="trigger"
             value={trigger.cron}
             aria-invalid={issues.has("cron")}
             onChange={(event) =>

@@ -405,8 +405,10 @@ pub fn validate_definition(
     }
 
     match &definition.action {
+        // A Routine without an executor is valid; its launch is refused
+        // with `missing_executor`.
         RoutineAction::RunAgent { executor } => {
-            if !valid_executor(executor) {
+            if !executor.is_empty() && !valid_executor(executor) {
                 diagnostics.push(
                     RoutineDiagnostic::new(
                         "routine_executor_invalid",
@@ -1076,11 +1078,27 @@ mod tests {
     #[test]
     fn validates_schedule_shape_and_explicit_executor() {
         let raw = format!(
-            "---\nid: {ID}\nname: Test\ntrigger:\n  type: schedule\n  cron: '* * *'\n  timezone: local\n  missed_runs: skip\naction:\n  type: run_agent\n  executor: ''\n---\n"
+            "---\nid: {ID}\nname: Test\ntrigger:\n  type: schedule\n  cron: '* * *'\n  timezone: local\n  missed_runs: skip\naction:\n  type: run_agent\n  executor: 'actor:someone'\n---\n"
         );
         let parsed = parse_routine(&raw, "schedule.md", RoutineOwnerKind::Space);
         assert!(parsed.definition.is_some());
         assert_eq!(parsed.diagnostics.len(), 3);
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "routine_executor_invalid")
+        );
+    }
+
+    #[test]
+    fn a_routine_without_an_executor_is_valid() {
+        let raw = format!(
+            "---\nid: {ID}\nname: Draft\ntrigger:\n  type: manual\naction:\n  type: run_agent\n  executor: ''\n---\n"
+        );
+        let parsed = parse_routine(&raw, "draft.md", RoutineOwnerKind::Space);
+        assert!(parsed.definition.is_some());
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     }
 
     #[test]

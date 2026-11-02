@@ -1,141 +1,28 @@
 import { expect, test } from "bun:test";
 
-import {
-  changeRoutineAction,
-  changeRoutineEvent,
-  changeRoutineTrigger,
-} from "./routine-draft";
-import {
-  createRoutineDraft,
-  firstInvalidRoutineCreateStep,
-  isRoutineCreateStepValid,
-  normalizeRoutineCreateCandidate,
-  routineDefinitionMatchesCandidate,
-  type RoutineCreateValidationContext,
-} from "./routine-create";
+import { createRoutineDraft, defaultRoutineName } from "./routine-create";
 
-const actor = {
-  description: null,
-  label: "Documentation Agent",
-  ownerLabel: "root",
-  value: "agent:01arz3ndektsv4rrffq69g5fav" as const,
-};
-
-const executors = {
-  ambiguous: [],
-  error: null,
-  incomplete: false,
-  loading: false,
-  options: [actor],
-};
-
-const ready: RoutineCreateValidationContext = {
-  collectionOwner: true,
-  executors,
-};
-
-test("create draft remains runtime-only until all four step gates are valid", () => {
-  const draft = createRoutineDraft();
-  expect(firstInvalidRoutineCreateStep(draft, ready)).toBe("basics");
-
-  const valid = {
-    ...draft,
-    action: { executor: actor.value, type: "run_agent" as const },
-    name: "Review changes",
-  };
-  expect(isRoutineCreateStepValid("basics", valid, ready)).toBe(true);
-  expect(isRoutineCreateStepValid("trigger", valid, ready)).toBe(true);
-  expect(isRoutineCreateStepValid("action", valid, ready)).toBe(true);
-  expect(firstInvalidRoutineCreateStep(valid, ready)).toBeNull();
-});
-
-test("manual, schedule and both Collection event actions use one definition model", () => {
-  const manual = {
-    ...createRoutineDraft(),
-    action: { executor: actor.value, type: "run_agent" as const },
-    name: "Review",
-  };
-  const schedule = changeRoutineTrigger(manual, "schedule");
-  expect(firstInvalidRoutineCreateStep(schedule, ready)).toBeNull();
-  expect(normalizeRoutineCreateCandidate(schedule).enabled).toBe(false);
-
-  const event = changeRoutineTrigger(manual, "event");
-  expect(firstInvalidRoutineCreateStep(event, ready)).toBeNull();
-  const updateProperties = changeRoutineAction(event, "update_properties");
-  const validUpdate = {
-    ...updateProperties,
-    action: {
-      set: { reviewed: true },
-      target: "trigger.entry" as const,
-      type: "update_properties" as const,
-    },
-  };
-  expect(firstInvalidRoutineCreateStep(validUpdate, ready)).toBeNull();
-
-  const fieldEvent = changeRoutineEvent(event, "collection.field_changed");
-  expect(firstInvalidRoutineCreateStep(fieldEvent, ready)).toBe("trigger");
-  expect(
-    isRoutineCreateStepValid("trigger", event, {
-      ...ready,
-      collectionOwner: false,
-    }),
-  ).toBe(false);
-});
-
-test("actor loading, failure and stale selection block the action gate", () => {
-  const draft = {
-    ...createRoutineDraft(),
-    action: { executor: actor.value, type: "run_agent" as const },
-    name: "Review",
-  };
-  expect(
-    isRoutineCreateStepValid("action", draft, {
-      ...ready,
-      executors: { ...executors, loading: true },
-    }),
-  ).toBe(false);
-  expect(
-    isRoutineCreateStepValid("action", draft, {
-      ...ready,
-      executors: { ...executors, error: "catalog failed" },
-    }),
-  ).toBe(false);
-  expect(
-    isRoutineCreateStepValid("action", draft, {
-      ...ready,
-      executors: { ...executors, options: [] },
-    }),
-  ).toBe(false);
-  expect(
-    isRoutineCreateStepValid("action", draft, {
-      ...ready,
-      executors: { ...executors, ambiguous: [actor.value], options: [] },
-    }),
-  ).toBe(false);
-});
-
-test("create normalization disables automation and supports exact reconciliation", () => {
-  const schedule = changeRoutineTrigger(
-    {
-      ...createRoutineDraft(),
-      action: { executor: actor.value, type: "run_agent" },
-      name: "  Weekly review  ",
-    },
-    "schedule",
-  );
-  const candidate = normalizeRoutineCreateCandidate({
-    ...schedule,
-    description: "  Summary  ",
-    enabled: true,
+test("a new Routine is manual, runs an agent and has no executor yet", () => {
+  expect(createRoutineDraft("New routine")).toEqual({
+    action: { executor: "", type: "run_agent" },
+    body: "",
+    description: "",
+    enabled: null,
+    name: "New routine",
+    trigger: { type: "manual" },
   });
-  expect(candidate.name).toBe("Weekly review");
-  expect(candidate.description).toBe("Summary");
-  expect(candidate.enabled).toBe(false);
-  expect(routineDefinitionMatchesCandidate(candidate, schedule)).toBe(false);
+});
+
+test("the default name takes the first free number as the owner compares names", () => {
+  expect(defaultRoutineName("New routine", [])).toBe("New routine");
+  expect(defaultRoutineName("New routine", [{ name: "new  ROUTINE" }])).toBe(
+    "New routine 2",
+  );
   expect(
-    routineDefinitionMatchesCandidate(candidate, {
-      ...schedule,
-      description: "Summary",
-    }),
-  ).toBe(true);
+    defaultRoutineName(
+      "New routine",
+      [{ name: "New routine" }, { name: "New routine 2" }],
+      ["New routine 3"],
+    ),
+  ).toBe("New routine 4");
 });

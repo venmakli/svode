@@ -79,18 +79,20 @@ if (process.env.SVODE_ROUTINES_OWNERSHIP_DOM !== "1") {
             actions: {
               createState: idle,
               getDeleteState: () => idle,
-              getEditState: () => idle,
+              getDefinitionEditState: () => idle,
               getEnabledState: () => idle,
               getRunState: () => idle,
-              onAdd: () => writes.push("add"),
+              onAdd: () => {
+                writes.push("add");
+              },
               onDelete: (item) => writes.push(`delete:${item.id}`),
-              onEdit: (item) => writes.push(`edit:${item.id}`),
               onEnabledChange: async (item) => {
                 writes.push(`enabled:${item.id}`);
               },
               onRun: async (item) => {
                 writes.push(`run:${item.id}`);
               },
+              writeDefinition: async () => undefined,
             },
             executors,
             onActivate: () => undefined,

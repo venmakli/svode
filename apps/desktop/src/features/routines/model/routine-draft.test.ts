@@ -52,7 +52,7 @@ test("delete events force run_agent and field events own match config", () => {
   ).toBe("run_agent");
 });
 
-test("validation covers schedule, executor and update set", () => {
+test("validation covers schedule and update set; a Routine needs no executor", () => {
   const schedule = changeRoutineTrigger(manual, "schedule");
   const invalid = {
     ...schedule,
@@ -63,11 +63,7 @@ test("validation covers schedule, executor and update set", () => {
       timeBasis: { mode: "fixed" as const, timezone: "" },
     },
   };
-  expect([...validateRoutineDraft(invalid)]).toEqual([
-    "cron",
-    "timezone",
-    "executor",
-  ]);
+  expect([...validateRoutineDraft(invalid)]).toEqual(["cron", "timezone"]);
 
   const event = changeRoutineAction(
     changeRoutineTrigger(manual, "event"),

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { act, useState } from "react";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
@@ -169,27 +170,32 @@ function RoutineDetailTestView({
 }) {
   const idle = { status: "idle" } as const;
   return (
-    <RoutineDetailView
-      item={item}
-      presentation={createRoutinesPresentation({
-        actions: {
-          createState: idle,
-          getDeleteState: () => idle,
-          getEditState: () => idle,
-          getEnabledState: () => idle,
-          getRunState: () => idle,
-          onAdd: () => undefined,
-          onDelete: () => undefined,
-          onEdit: () => undefined,
-          onEnabledChange: async () => undefined,
-          onRun: async () => undefined,
-        },
-        executors,
-        ownership: { collection: null, space: "Project" },
-        recovery,
-        state: { items: [item], phase: "ready" },
-      })}
-    />
+    <TooltipProvider>
+      <RoutineDetailView
+        item={item}
+        readOnly={false}
+        registerInstructionFlush={() => undefined}
+        saveInstruction={async () => undefined}
+        presentation={createRoutinesPresentation({
+          actions: {
+            createState: idle,
+            getDeleteState: () => idle,
+            getDefinitionEditState: () => idle,
+            getEnabledState: () => idle,
+            getRunState: () => idle,
+            onAdd: () => undefined,
+            onDelete: () => undefined,
+            onEnabledChange: async () => undefined,
+            onRun: async () => undefined,
+            writeDefinition: async () => undefined,
+          },
+          executors,
+          ownership: { collection: null, space: "Project" },
+          recovery,
+          state: { items: [item], phase: "ready" },
+        })}
+      />
+    </TooltipProvider>
   );
 }
 

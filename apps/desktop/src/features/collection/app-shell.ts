@@ -10,6 +10,7 @@ export type {
   CollectionItemInfoGroup,
   CollectionItemInfoRow,
 } from "./item-peek/item-info";
+export type { ObjectContentHeaderEdit } from "./item-peek/object-content-header";
 export type {
   CollectionItemPeekController,
   CollectionItemPeekFocus,

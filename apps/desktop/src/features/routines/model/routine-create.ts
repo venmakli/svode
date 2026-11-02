@@ -1,118 +1,36 @@
-import {
-  resolveAgentActorReference,
-  type AgentActorOptionsState,
-} from "@/features/actors/agent-reference";
+import { routineNameKey } from "./routine-name";
+import type { RoutineDefinition, RoutineItem } from "./types";
 
-import { validateRoutineDraft } from "./routine-draft";
-import type { RoutineDefinition } from "./types";
-
-export type RoutineCreateStep = "basics" | "trigger" | "action" | "review";
-
-export const ROUTINE_CREATE_STEPS: readonly RoutineCreateStep[] = [
-  "basics",
-  "trigger",
-  "action",
-  "review",
-];
-
-export interface RoutineCreateValidationContext {
-  collectionOwner: boolean;
-  executors: AgentActorOptionsState;
-  nameAvailable?: boolean;
-}
-
-export function createRoutineDraft(): RoutineDefinition {
+/**
+ * The definition of a new Routine: a manual trigger, an agent to run with no
+ * executor chosen yet, and `name`.
+ */
+export function createRoutineDraft(name: string): RoutineDefinition {
   return {
     action: { executor: "", type: "run_agent" },
     body: "",
     description: "",
     enabled: null,
-    name: "",
+    name,
     trigger: { type: "manual" },
   };
 }
 
-export function cloneRoutineDefinition(
-  definition: RoutineDefinition,
-): RoutineDefinition {
-  return structuredClone(definition);
-}
-
-export function normalizeRoutineCreateCandidate(
-  definition: RoutineDefinition,
-): RoutineDefinition {
-  return {
-    ...cloneRoutineDefinition(definition),
-    description: definition.description.trim(),
-    enabled: definition.trigger.type === "manual" ? null : false,
-    name: definition.name.trim(),
-  };
-}
-
-export function areRoutineDefinitionsEqual(
-  left: RoutineDefinition,
-  right: RoutineDefinition,
-) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-export function isRoutineCreateStepValid(
-  step: RoutineCreateStep,
-  definition: RoutineDefinition,
-  context: RoutineCreateValidationContext,
-): boolean {
-  const issues = validateRoutineDraft(definition);
-  if (step === "basics") {
-    const nameLength = definition.name.trim().length;
-    return (
-      nameLength > 0 &&
-      nameLength <= 240 &&
-      context.nameAvailable !== false &&
-      definition.description.length <= 2_000
-    );
-  }
-  if (step === "trigger") {
-    return (
-      (context.collectionOwner || definition.trigger.type !== "event") &&
-      !issues.has("cron") &&
-      !issues.has("event_field") &&
-      !issues.has("timezone")
-    );
-  }
-  if (step === "action") {
-    if (issues.has("executor") || issues.has("set")) return false;
-    if (definition.action.type !== "run_agent") return true;
-    const { executors } = context;
-    return (
-      !executors.loading &&
-      !executors.error &&
-      resolveAgentActorReference(executors, definition.action.executor)
-        .status === "resolved"
-    );
-  }
-  return ROUTINE_CREATE_STEPS.slice(0, -1).every((candidate) =>
-    isRoutineCreateStepValid(candidate, definition, context),
+/**
+ * The first free default name of a new Routine among the owner's Routines:
+ * `base`, then `base 2`, `base 3`… compared as the owner compares names.
+ */
+export function defaultRoutineName(
+  base: string,
+  items: readonly Pick<RoutineItem, "name">[],
+  taken: readonly string[] = [],
+): string {
+  const used = new Set(
+    [...items.map((item) => item.name), ...taken].map(routineNameKey),
   );
-}
-
-export function firstInvalidRoutineCreateStep(
-  definition: RoutineDefinition,
-  context: RoutineCreateValidationContext,
-): Exclude<RoutineCreateStep, "review"> | null {
-  for (const step of ROUTINE_CREATE_STEPS.slice(0, -1)) {
-    if (!isRoutineCreateStepValid(step, definition, context)) {
-      return step as Exclude<RoutineCreateStep, "review">;
-    }
+  if (!used.has(routineNameKey(base))) return base;
+  for (let suffix = 2; ; suffix += 1) {
+    const name = `${base} ${suffix}`;
+    if (!used.has(routineNameKey(name))) return name;
   }
-  return null;
-}
-
-export function routineDefinitionMatchesCandidate(
-  definition: RoutineDefinition,
-  candidate: RoutineDefinition,
-) {
-  return areRoutineDefinitionsEqual(
-    normalizeRoutineCreateCandidate(definition),
-    normalizeRoutineCreateCandidate(candidate),
-  );
 }

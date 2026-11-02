@@ -11,7 +11,6 @@ import {
 export function useRoutineExecutors(
   projectPath: string,
   launchSpacePath: string,
-  enabled = true,
 ) {
   const [request, setRequest] = useState(0);
   const ownerKey = JSON.stringify([projectPath, launchSpacePath]);
@@ -31,7 +30,6 @@ export function useRoutineExecutors(
   });
 
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     void loadAgentActorOptions(projectPath, launchSpacePath).then(
       (catalog) => {
@@ -62,10 +60,9 @@ export function useRoutineExecutors(
     return () => {
       cancelled = true;
     };
-  }, [enabled, launchSpacePath, ownerKey, projectPath, requestKey]);
+  }, [launchSpacePath, ownerKey, projectPath, requestKey]);
 
   useEffect(() => {
-    if (!enabled) return;
     let disposed = false;
     let unlisten: (() => void) | null = null;
     void listenAgentActorCatalogInvalidated((event) => {
@@ -87,10 +84,9 @@ export function useRoutineExecutors(
       disposed = true;
       unlisten?.();
     };
-  }, [enabled, launchSpacePath, projectPath]);
+  }, [launchSpacePath, projectPath]);
 
   const state = useMemo<AgentActorOptionsState>(() => {
-    if (!enabled) return EMPTY_AGENT_ACTOR_OPTIONS;
     if (snapshot.requestKey === requestKey) {
       return {
         ...snapshot.catalog,
@@ -105,7 +101,7 @@ export function useRoutineExecutors(
       error: null,
       loading: true,
     };
-  }, [enabled, ownerKey, requestKey, snapshot]);
+  }, [ownerKey, requestKey, snapshot]);
 
   return {
     retry: () => setRequest((current) => current + 1),

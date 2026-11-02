@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   useCollectionState,
@@ -22,12 +22,11 @@ import * as m from "@/paraglide/messages.js";
 import type { RoutineOwnerInput } from "../api/routines-api";
 import type {
   RoutineAgentActorTarget,
+  RoutineCatalogSnapshot,
   RoutineLaunchRecoveryActions,
-  RoutineItem,
   RoutineOwnership,
   RoutineSessionTarget,
 } from "../model/types";
-import { RoutineCreateDialog } from "../ui/routine-create-dialog";
 import { RoutineDeleteDialog } from "../ui/routine-delete-dialog";
 import {
   createRoutinesPresentation,
@@ -36,8 +35,8 @@ import {
 } from "../ui/routines-presentation";
 import { useRoutineCatalog } from "./use-routine-catalog";
 import { useRoutineAutomaticConsent } from "./use-routine-automatic-consent";
-import { useRoutineCreateJourney } from "./use-routine-create-journey";
-import { useRoutinePeek } from "./use-routine-peek";
+import { useRoutineCreate } from "./use-routine-create";
+import { useRoutinePeek, type RoutineTitleFocus } from "./use-routine-peek";
 import { useRoutineDispatch } from "./use-routine-dispatch";
 import { useRoutineExecutors } from "./use-routine-executors";
 import { useRoutineMutations } from "./use-routine-mutations";
@@ -100,7 +99,6 @@ export function useRoutinesController(
     owner: routineOwner,
     refresh,
     replaceSnapshot,
-    items: state.phase === "ready" ? state.snapshot.items : [],
   });
   const dispatch = useRoutineDispatch({ onOpenSession, owner: routineOwner });
   const { mainItem, onExpandItem, onOpenAgentActor, onOpenAgentSettings } =
@@ -114,41 +112,41 @@ export function useRoutinesController(
     }),
     [onOpenAgentActor, onOpenAgentSettings, owner.spaceId],
   );
+  const catalogItems = state.phase === "ready" ? state.snapshot.items : null;
+  // A new Routine opens in the peek with its name focused.
+  const [titleFocus, setTitleFocus] = useState<RoutineTitleFocus | null>(null);
   const routinePeek = useRoutinePeek({
-    applyUpdate: mutations.applyUpdate,
-    editSession: mutations.editSession,
-    executors: executors.state,
-    mutationError: mutations.error,
-    nameError: mutations.nameError,
     getRunRefusal: dispatch.getRunRefusal,
     getRunState: dispatch.getRunState,
+    items: catalogItems,
     onOpenSession: dispatch.openLastSession,
     onRun: dispatch.run,
-    owner: routineOwner,
-    peek,
-    pending: mutations.pending,
     readOnly,
     recovery,
-    items: state.phase === "ready" ? state.snapshot.items : null,
-    onEditChange: mutations.changeEditDraft,
-    setEditSession: mutations.setEditSession,
+    titleFocus,
+    writeProperty: mutations.writeProperty,
   });
   const onRoutineCreated = useCallback(
-    async ({
-      owner: createdOwner,
-      item,
+    ({
+      itemId,
       snapshot,
     }: {
-      owner: RoutineOwnerInput;
-      item: RoutineItem;
-      snapshot: Parameters<typeof replaceSnapshot>[0];
+      itemId: string;
+      snapshot: RoutineCatalogSnapshot;
     }) => {
-      if (!sameRoutineOwner(createdOwner, routineOwner)) return;
       replaceSnapshot(snapshot);
-      openPeek(item.id);
+      openPeek(itemId);
+      setTitleFocus((current) => ({
+        itemId,
+        request: (current?.request ?? 0) + 1,
+      }));
     },
-    [openPeek, replaceSnapshot, routineOwner],
+    [openPeek, replaceSnapshot],
   );
+  const create = useRoutineCreate({
+    owner: routineOwner,
+    onCreated: onRoutineCreated,
+  });
   // A Routine addressed by the open request opens once the catalog is read.
   useEffect(() => {
     if (!openItem || state.phase !== "ready") return;
@@ -159,19 +157,6 @@ export function useRoutinesController(
     if (!item) return;
     openPeek(item.id);
   }, [openItem, openPeek, state]);
-  const create = useRoutineCreateJourney({ onApplied: onRoutineCreated });
-  const createExecutorOwner = create.session?.owner ?? routineOwner;
-  const useDetachedCreateExecutors = Boolean(
-    create.session && !sameRoutineOwner(create.session.owner, routineOwner),
-  );
-  const detachedCreateExecutors = useRoutineExecutors(
-    createExecutorOwner.projectPath,
-    createExecutorOwner.spacePath,
-    useDetachedCreateExecutors,
-  );
-  const createExecutors = useDetachedCreateExecutors
-    ? detachedCreateExecutors
-    : executors;
   const actionState = useMemo<CollectionActionState>(() => {
     if (mutations.pending || create.pending) return { status: "pending" };
     if (readOnly) {
@@ -197,18 +182,27 @@ export function useRoutinesController(
             reason: m.routines_invalid_identity_disabled(),
             status: "disabled",
           },
-    getEditState: (item) =>
-      !item.routineId
-        ? {
-            reason: m.routines_invalid_identity_disabled(),
-            status: "disabled",
-          }
-        : item.definition
-          ? actionState
-          : {
-              reason: m.routines_invalid_edit_disabled(),
-              status: "disabled",
-            },
+    getDefinitionEditState: (item) => {
+      if (readOnly) {
+        return {
+          reason: m.repository_work_status_read_only(),
+          status: "disabled",
+        };
+      }
+      if (!item.routineId) {
+        return {
+          reason: m.routines_invalid_identity_disabled(),
+          status: "disabled",
+        };
+      }
+      if (!item.definition) {
+        return {
+          reason: m.routines_invalid_edit_disabled(),
+          status: "disabled",
+        };
+      }
+      return { status: "idle" };
+    },
     getEnabledState: (item) =>
       item.valid && item.definition && item.definition.trigger.type !== "manual"
         ? actionState
@@ -226,23 +220,12 @@ export function useRoutinesController(
         status: "disabled",
       };
     },
-    onAdd: () => {
+    onAdd: async () => {
       if (readOnly || state.phase !== "ready") return;
-      create.open({
-        automaticAuthority:
-          automaticConsent.loading || automaticConsent.error
-            ? null
-            : automaticConsent.enabled,
-        baselineItems: state.snapshot.items,
-        owner: routineOwner,
-        ownerLabel: routineOwnerLabel(owner),
-      });
+      await create.create(state.snapshot.items);
     },
     onDelete: (item) => {
       if (!readOnly) mutations.openDelete(item);
-    },
-    onEdit: (item) => {
-      if (!readOnly) mutations.openEdit(item);
     },
     onEnabledChange: async (item, enabled) => {
       if (readOnly) throw new Error(m.repository_work_status_read_only());
@@ -260,9 +243,14 @@ export function useRoutinesController(
       }
       await dispatch.run(item);
     },
+    writeDefinition: async (item, change) => {
+      if (readOnly) throw new Error(m.repository_work_status_read_only());
+      await mutations.writeProperty(item, change);
+    },
   };
   const presentation = createRoutinesPresentation({
     actions,
+    collectionOwner: routineOwner.ownerKind === "collection_directory",
     executors: executors.state,
     recovery,
     onActivate: peek.activation((_item, context) => context.itemId),
@@ -276,7 +264,6 @@ export function useRoutinesController(
     stateScope: "session",
   };
   const collectionState = useCollectionState(instance);
-  const catalogItems = state.phase === "ready" ? state.snapshot.items : null;
   // A Routine is expanded by the id of its definition; one without a
   // readable id has no identity to show in the main area.
   const expand = (itemId: string) => {
@@ -287,16 +274,14 @@ export function useRoutinesController(
       ? () => onExpandItem({ surfaceId: "routines", itemId: routineId })
       : null;
   };
-  const editedItem = mutations.editSession?.item ?? null;
   const main = mainItem ? (
     <CollectionItemMain
       main={mainItem}
       target={mainItem.item.itemId}
       find={(routineId: string) => {
         if (!catalogItems) return null;
-        return (
-          catalogItems.find((candidate) => candidate.routineId === routineId) ??
-          (editedItem?.routineId === routineId ? editedItem : undefined)
+        return catalogItems.find(
+          (candidate) => candidate.routineId === routineId,
         );
       }}
       render={(item) => routinePeek.render(item, presentation)}
@@ -312,27 +297,6 @@ export function useRoutinesController(
           expand={expand}
         />
       )}
-      {create.session ? (
-        <RoutineCreateDialog
-          automaticAuthority={create.session.automaticAuthority}
-          collectionOwner={
-            create.session.owner.ownerKind === "collection_directory"
-          }
-          definition={create.session.draft}
-          error={create.error}
-          executors={createExecutors.state}
-          initialDefinition={create.session.initialDraft}
-          nameError={create.nameError}
-          ownerLabel={create.session.ownerLabel}
-          pending={create.pending}
-          readOnly={readOnly}
-          retryBlocked={create.retryBlocked}
-          onChange={create.change}
-          onClose={create.close}
-          onRetryExecutors={createExecutors.retry}
-          onSubmit={() => void create.submit()}
-        />
-      ) : null}
       <RoutineDeleteDialog
         error={mutations.deleteTarget ? mutations.error : null}
         pending={mutations.pending && mutations.deleteTarget !== null}
@@ -358,26 +322,6 @@ function routinePeekIdentity(itemId: string) {
   return itemId;
 }
 
-function sameRoutineOwner(left: RoutineOwnerInput, right: RoutineOwnerInput) {
-  return (
-    left.ownerKind === right.ownerKind &&
-    left.ownerPath === right.ownerPath &&
-    left.projectPath === right.projectPath &&
-    left.spaceId === right.spaceId &&
-    left.spacePath === right.spacePath
-  );
-}
-
 function folderName(path: string) {
   return path.split("/").at(-1) || path;
-}
-
-function routineOwnerLabel(owner: ScopeOwnerRef) {
-  if (owner.identityKind === "collection-directory") {
-    return m.routines_create_owner_collection({ path: owner.ownerPath });
-  }
-  if (owner.projectPath === owner.spacePath) {
-    return m.routines_create_owner_project();
-  }
-  return m.routines_create_owner_space();
 }

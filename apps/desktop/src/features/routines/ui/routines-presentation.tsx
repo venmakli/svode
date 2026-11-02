@@ -27,36 +27,61 @@ import {
   compareRoutinesByName,
   routineSearchText,
 } from "../model/routine-values";
+import {
+  applyRoutineTriggerDraft,
+  routineActionProblem,
+  routineTriggerDraft,
+  routineTriggerDraftChanges,
+  routineTriggerProblem,
+  type RoutineTriggerDraft,
+  type RoutineTriggerProblem,
+} from "../model/routine-property-drafts";
 import type {
+  RoutineAction,
   RoutineCatalogState,
+  RoutineDefinition,
   RoutineItem,
   RoutineLaunchRecoveryActions,
   RoutineOwnership,
 } from "../model/types";
 import {
-  RoutineExecutorDetail,
+  RoutineActionEditor,
+  routineActionChoosable,
+} from "./routine-action-editor";
+import {
   RoutineLastRunDetail,
   RoutineNextRunDetail,
   RoutineTriggerDetail,
 } from "./routine-property-values";
 import { routineNextRunCopy } from "./routine-schedule-copy";
+import { RoutineTriggerEditor } from "./routine-trigger-editor";
 import { RoutineTriggerIcon } from "./routine-trigger-icon";
 
 export interface RoutinePresentationActions {
   createState: CollectionActionState;
   getDeleteState(item: RoutineItem): CollectionActionState;
-  getEditState(item: RoutineItem): CollectionActionState;
+  /** Whether the properties of the Routine's definition can be edited. */
+  getDefinitionEditState(item: RoutineItem): CollectionActionState;
   getEnabledState(item: RoutineItem): CollectionActionState;
   getRunState(item: RoutineItem): CollectionActionState;
-  onAdd(): void;
+  /** Creates a Routine; rejects with the reason it was not created. */
+  onAdd(): void | Promise<void>;
   onDelete(item: RoutineItem): void;
-  onEdit(item: RoutineItem): void;
   onEnabledChange(item: RoutineItem, enabled: boolean): Promise<void>;
   onRun(item: RoutineItem): Promise<void>;
+  /**
+   * Saves one property: the definition whole with the one changed field;
+   * rejects with the reason it was not saved.
+   */
+  writeDefinition(
+    item: RoutineItem,
+    change: (definition: RoutineDefinition) => RoutineDefinition,
+  ): Promise<void>;
 }
 
 export function createRoutinesPresentation({
   actions,
+  collectionOwner,
   executors,
   onActivate,
   ownership,
@@ -64,6 +89,8 @@ export function createRoutinesPresentation({
   state,
 }: {
   actions: RoutinePresentationActions;
+  /** The owner is a Collection, whose events a Routine may wait for. */
+  collectionOwner?: boolean;
   executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
   ownership: RoutineOwnership;
@@ -73,6 +100,7 @@ export function createRoutinesPresentation({
   return defineCollectionPresentation({
     descriptor: createRoutinesPresentationDescriptor({
       actions,
+      collectionOwner,
       executors,
       onActivate,
       recovery,
@@ -85,6 +113,7 @@ export function createRoutinesPresentation({
 
 export function createRoutinesPresentationDescriptor({
   actions,
+  collectionOwner = false,
   executors,
   onActivate,
   recovery = {},
@@ -92,6 +121,8 @@ export function createRoutinesPresentationDescriptor({
   ownership,
 }: {
   actions: RoutinePresentationActions;
+  /** The owner is a Collection, whose events a Routine may wait for. */
+  collectionOwner?: boolean;
   executors: AgentActorOptionsState;
   onActivate?: CollectionPresentationDescriptor<RoutineItem>["onActivate"];
   /** Recovery of a refused last run on the Routine's screen. */
@@ -135,6 +166,49 @@ export function createRoutinesPresentationDescriptor({
     }),
     defineOwnerDefinedCollectionProperty({
       capabilities: {
+        edit: {
+          getState: actions.getDefinitionEditState,
+          popover: {
+            getDraft: (item) =>
+              item.definition ? routineTriggerDraft(item.definition) : null,
+            render: ({ draft, item, onDraftChange }) =>
+              item.definition && draft ? (
+                <RoutineTriggerEditor
+                  collectionOwner={collectionOwner}
+                  draft={draft as RoutineTriggerDraft}
+                  saved={item.definition}
+                  onChange={onDraftChange}
+                />
+              ) : null,
+          },
+          showDisabledReason: false,
+          update: async (item, value) => {
+            const draft = value as RoutineTriggerDraft;
+            if (
+              !item.definition ||
+              !routineTriggerDraftChanges(item.definition, draft)
+            ) {
+              return;
+            }
+            await actions.writeDefinition(item, (definition) => {
+              const next = applyRoutineTriggerDraft(definition, draft);
+              // The executor chosen meanwhile stays.
+              return next.action.type === "run_agent" &&
+                definition.action.type === "run_agent"
+                ? { ...next, action: definition.action }
+                : next;
+            });
+          },
+          validate: (value, item) =>
+            item.definition && value
+              ? routineTriggerProblemMessage(
+                  routineTriggerProblem(
+                    item.definition,
+                    value as RoutineTriggerDraft,
+                  ),
+                )
+              : null,
+        },
         filter: { kind: "standard" },
         sort: { kind: "standard" },
       },
@@ -159,6 +233,50 @@ export function createRoutinesPresentationDescriptor({
     }),
     defineOwnerDefinedCollectionProperty({
       capabilities: {
+        edit: {
+          // Only an event that leaves an item behind offers another action.
+          getState: (item) =>
+            item.definition && routineActionChoosable(item.definition)
+              ? actions.getDefinitionEditState(item)
+              : {
+                  reason: m.routines_run_agent_only(),
+                  status: "disabled",
+                },
+          popover: {
+            getDraft: (item) => item.definition?.action ?? null,
+            render: ({ draft, item, onDraftChange }) =>
+              item.definition && draft ? (
+                <RoutineActionEditor
+                  action={draft as RoutineAction}
+                  saved={item.definition}
+                  onChange={onDraftChange}
+                />
+              ) : null,
+          },
+          showDisabledReason: false,
+          update: async (item, value) => {
+            const action = value as RoutineAction;
+            await actions.writeDefinition(item, (definition) => ({
+              ...definition,
+              action:
+                action.type === "run_agent"
+                  ? {
+                      executor:
+                        definition.action.type === "run_agent"
+                          ? definition.action.executor
+                          : "",
+                      type: "run_agent",
+                    }
+                  : action,
+            }));
+          },
+          validate: (value, item) =>
+            item.definition &&
+            value &&
+            routineActionProblem(item.definition, value as RoutineAction)
+              ? m.routines_properties_set_required()
+              : null,
+        },
         filter: { kind: "standard" },
         sort: { kind: "standard" },
       },
@@ -180,14 +298,36 @@ export function createRoutinesPresentationDescriptor({
     {
       ...defineOwnerDefinedCollectionProperty({
         capabilities: {
+          edit: {
+            getState: (item) =>
+              executors.loading
+                ? { status: "pending" }
+                : executors.error
+                  ? { reason: executors.error, status: "disabled" }
+                  : actions.getDefinitionEditState(item),
+            showDisabledReason: false,
+            update: (item, value) =>
+              actions.writeDefinition(item, (definition) =>
+                definition.action.type === "run_agent"
+                  ? {
+                      ...definition,
+                      action: {
+                        executor: typeof value === "string" ? value : "",
+                        type: "run_agent",
+                      },
+                    }
+                  : definition,
+              ),
+            // The executor is an Agent Actor of the Routine's Space or root.
+            validate: (value) =>
+              typeof value === "string" &&
+              value !== "" &&
+              resolveAgentActorReference(executors, value).status !== "resolved"
+                ? m.routines_executor_agent_only()
+                : null,
+          },
           filter: { kind: "standard" },
           sort: { kind: "standard" },
-        },
-        display: {
-          renderDetail: (value) =>
-            typeof value === "string" ? (
-              <RoutineExecutorDetail executors={executors} reference={value} />
-            ) : null,
         },
         featureId: "routines",
         getValue: getExecutor,
@@ -197,8 +337,12 @@ export function createRoutinesPresentationDescriptor({
       }),
       actorCandidates: agentActorCandidates(
         executors,
-        items.flatMap((item) => getExecutor(item) ?? []),
+        items.flatMap((item) => getExecutor(item) || []),
       ),
+      getApplicability: (item) =>
+        item.definition?.action.type === "run_agent"
+          ? { status: "applicable" }
+          : { status: "hidden" },
     },
     {
       ...defineOwnerDefinedCollectionProperty({
@@ -328,12 +472,6 @@ export function createRoutinesPresentationDescriptor({
         run: actions.onRun,
       },
       {
-        getState: actions.getEditState,
-        id: "edit-routine",
-        label: m.routines_edit(),
-        run: actions.onEdit,
-      },
-      {
         getState: actions.getDeleteState,
         id: "delete-routine",
         label: m.routines_delete(),
@@ -349,6 +487,16 @@ export function createRoutinesPresentationDescriptor({
  */
 function routineProblems(item: RoutineItem): readonly string[] {
   return [...new Set(item.diagnostics.map((diagnostic) => diagnostic.message))];
+}
+
+function routineTriggerProblemMessage(problem: RoutineTriggerProblem | null) {
+  if (problem === "cron") return m.routines_cron_required();
+  if (problem === "timezone") return m.routines_timezone_unknown();
+  if (problem === "event_field") return m.routines_event_field_required();
+  if (problem === "automatic_consent") {
+    return m.routines_automatic_consent_required();
+  }
+  return null;
 }
 
 function routineTriggerTypeLabel(item: RoutineItem) {

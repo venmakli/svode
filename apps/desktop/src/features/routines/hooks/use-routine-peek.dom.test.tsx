@@ -2,15 +2,14 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { act, useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 
 import type { AgentActorOptionsState } from "@/features/actors/agent-reference";
 import type { CollectionActionState } from "@/features/collection";
 import type { CollectionItemPeekController } from "@/features/collection/app-shell";
 
-import type { RoutineItem } from "../model/types";
-import type { RoutineEditSession } from "./use-routine-mutations";
+import type { RoutineDefinition, RoutineItem } from "../model/types";
+import type { RoutineTitleFocus } from "./use-routine-peek";
 
 const executors: AgentActorOptionsState = {
   ambiguous: [],
@@ -82,6 +81,7 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     ShadowRoot: dom.window.ShadowRoot,
     HTMLElement: dom.window.HTMLElement,
     HTMLInputElement: dom.window.HTMLInputElement,
+    HTMLTextAreaElement: dom.window.HTMLTextAreaElement,
     HTMLFormElement: dom.window.HTMLFormElement,
     SVGElement: dom.window.SVGElement,
     DOMRect: dom.window.DOMRect,
@@ -120,9 +120,14 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
 
   interface Controls {
     peek?: CollectionItemPeekController<string>;
-    setEditSession?: (session: RoutineEditSession | null) => void;
     setItems?: (items: readonly RoutineItem[] | null) => void;
     setRunState?: (state: CollectionActionState) => void;
+    setTitleFocus?: (focus: RoutineTitleFocus | null) => void;
+  }
+
+  interface Write {
+    definition: RoutineDefinition;
+    materializeFilename: boolean;
   }
 
   async function setup() {
@@ -132,8 +137,10 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     const { createRoutinesPresentation } =
       await import("../ui/routines-presentation");
     const { useRoutinePeek } = await import("./use-routine-peek");
+    // React DOM checks for input events when it loads, after the DOM.
+    const { createRoot } = await import("react-dom/client");
     const controls: Controls = {};
-    const saved: RoutineItem[] = [];
+    const writes: Write[] = [];
     const enabledWrites: boolean[] = [];
 
     function Harness() {
@@ -143,42 +150,44 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
       const [runState, setRunState] = useState<CollectionActionState>({
         status: "idle",
       });
-      const [editSession, setEditSession] = useState<RoutineEditSession | null>(
+      const [titleFocus, setTitleFocus] = useState<RoutineTitleFocus | null>(
         null,
       );
       const peek = useCollectionItemPeek<string>((id) => id);
+      const writeProperty = async (
+        item: RoutineItem,
+        change: (definition: RoutineDefinition) => RoutineDefinition,
+        options: { materializeFilename?: boolean } = {},
+      ) => {
+        const definition = change(item.definition!);
+        writes.push({
+          definition,
+          materializeFilename: options.materializeFilename ?? false,
+        });
+        const updated: RoutineItem = {
+          ...item,
+          definition,
+          description: definition.description,
+          fingerprint: `${item.fingerprint}+`,
+          name: definition.name,
+        };
+        setItems((current) =>
+          (current ?? []).map((candidate) =>
+            candidate.id === item.id ? updated : candidate,
+          ),
+        );
+        return updated;
+      };
       const routinePeek = useRoutinePeek({
-        applyUpdate: async (item, definition) => {
-          const updated = { ...item, ...renamed(definition.name) };
-          saved.push(updated);
-          setItems([updated]);
-          return updated;
-        },
-        editSession,
-        executors,
         getRunRefusal: () => null,
         getRunState: () => runState,
-        mutationError: null,
-        nameError: null,
-        onEditChange: (draft) =>
-          setEditSession((current) =>
-            current ? { ...current, draft } : current,
-          ),
+        items,
         onOpenSession: () => undefined,
         onRun: async () => undefined,
-        owner: {
-          ownerKind: "registered_space",
-          ownerPath: "/repo",
-          projectPath: "/repo",
-          spaceId: "space:root",
-          spacePath: "/repo",
-        },
-        peek,
-        pending: false,
         readOnly: false,
         recovery: {},
-        items,
-        setEditSession,
+        titleFocus,
+        writeProperty,
       });
       const idle = { status: "idle" } as const;
       const presentation = createRoutinesPresentation({
@@ -186,17 +195,11 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
         actions: {
           createState: idle,
           getDeleteState: () => idle,
-          getEditState: () => idle,
+          getDefinitionEditState: () => idle,
           getEnabledState: () => idle,
           getRunState: () => runState,
           onAdd: () => undefined,
           onDelete: () => undefined,
-          onEdit: (item) =>
-            setEditSession({
-              draft: item.definition!,
-              guard: { dirty: false },
-              item,
-            }),
           onEnabledChange: async (item, enabled) => {
             enabledWrites.push(enabled);
             setItems([
@@ -208,6 +211,9 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
             ]);
           },
           onRun: async () => undefined,
+          writeDefinition: async (item, change) => {
+            await writeProperty(item, change);
+          },
         },
         executors,
         state: items ? { items, phase: "ready" } : { phase: "initial" },
@@ -215,9 +221,9 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
       useEffect(() => {
         Object.assign(controls, {
           peek,
-          setEditSession,
           setItems,
           setRunState,
+          setTitleFocus,
         });
       }, [peek]);
       return (
@@ -237,7 +243,7 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
         </TooltipProvider>,
       );
     });
-    return { controls, enabledWrites, root, saved };
+    return { controls, enabledWrites, root, writes };
   }
 
   async function run(action: () => unknown) {
@@ -257,9 +263,36 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     [...doc.querySelectorAll<HTMLButtonElement>("button")].find(
       (candidate) => candidate.textContent === label,
     ) ?? null;
+  const title = () =>
+    doc.querySelector<HTMLTextAreaElement>(
+      "[data-object-content-header-title]",
+    )!;
+  const titleMessage = () =>
+    doc.querySelector('[data-object-content-header-message="title"]')
+      ?.textContent ?? null;
 
-  test("a Routine opens with identity, ⋯ and Run now in the top bar, follows its item and keeps ⋯ after editing", async () => {
-    const { controls, root, saved } = await setup();
+  /** Types `value` into a text field as a user does. */
+  function type(field: HTMLTextAreaElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLTextAreaElement.prototype,
+      "value",
+    )!.set!;
+    field.focus();
+    setter.call(field, value);
+    field.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  }
+  function press(field: HTMLElement, key: string) {
+    field.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key,
+      }),
+    );
+  }
+
+  test("a Routine opens with identity, ⋯ and Run now in the top bar, its name and description in place, and follows its item", async () => {
+    const { controls, root } = await setup();
     await run(() =>
       controls.peek!.open(routine.id, {
         returnFocus: () => doc.getElementById("row"),
@@ -270,16 +303,24 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     expect(
       topBar()?.querySelector("[data-routine-run-tool]")?.textContent,
     ).toBe("Run now");
-    expect(doc.querySelector("[data-object-content-header]")?.textContent).toBe(
-      "Daily summaryReview the current owner.",
-    );
-    // No footer, no owner line.
+    expect(title().value).toBe("Daily summary");
+    expect(
+      doc.querySelector<HTMLTextAreaElement>(
+        "[data-object-content-header-description]",
+      )?.value,
+    ).toBe("Review the current owner.");
+    // No form: no footer, no Save, no owner line.
     expect(doc.querySelector(".border-t")).toBeNull();
+    expect(button("Save")).toBeNull();
+    expect(doc.querySelector("[data-routine-instruction]") === null).toBe(
+      false,
+    );
 
     // An external edit and a new run state draw in place.
     const scroll = doc.querySelector("[data-collection-item-peek-scroll]");
     await run(() => controls.setItems!([renamed("Weekly summary")]));
     expect(identity()).toBe("Weekly summary");
+    expect(title().value).toBe("Weekly summary");
     expect(doc.querySelector("[data-collection-item-peek-scroll]")).toBe(
       scroll,
     );
@@ -294,49 +335,6 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     await run(() => controls.setItems!(null));
     expect(identity()).toBe("Weekly summary");
     await run(() => controls.setItems!([renamed("Weekly summary")]));
-
-    // The edit form opens in the same peek and keeps its draft through
-    // external changes and removal.
-    await run(() =>
-      controls.setEditSession!({
-        draft: renamed("Weekly summary").definition!,
-        guard: { dirty: true },
-        item: renamed("Weekly summary"),
-      }),
-    );
-    expect(button("Save") === null).toBe(false);
-    await run(() => controls.setItems!([renamed("Monthly summary")]));
-    expect(button("Save") === null).toBe(false);
-    await run(() => controls.setItems!([]));
-    expect(button("Save") === null).toBe(false);
-    await run(() => controls.setItems!([renamed("Monthly summary")]));
-
-    // Cancel shows the current Routine with its ⋯ again.
-    await run(() => button("Cancel")!.click());
-    expect(button("Save")).toBeNull();
-    expect(identity()).toBe("Monthly summary");
-    expect(menu() === null).toBe(false);
-
-    // Save shows the saved Routine with its ⋯ in the same peek.
-    await run(() =>
-      controls.setEditSession!({
-        draft: {
-          ...renamed("Yearly summary").definition!,
-          action: {
-            set: { status: "Done" },
-            target: "trigger.entry",
-            type: "update_properties",
-          },
-        },
-        guard: { dirty: true },
-        item: renamed("Monthly summary"),
-      }),
-    );
-    await run(() => button("Save")!.click());
-    expect(saved.map((item) => item.name)).toEqual(["Yearly summary"]);
-    expect(button("Save")).toBeNull();
-    expect(identity()).toBe("Yearly summary");
-    expect(menu() === null).toBe(false);
 
     // An external delete closes the Routine and focus returns to its row.
     await run(() => controls.setItems!([]));
@@ -358,6 +356,83 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
       ]),
     );
     expect(peekOpen()).toBeNull();
+    await act(async () => root.unmount());
+  }, 30000);
+
+  test("the name is saved at once with its file renamed; a taken or empty name is refused at the name and nothing is written", async () => {
+    const { controls, root, writes } = await setup();
+    const weekly: RoutineItem = {
+      ...renamed("Weekly"),
+      definitionPath: ".routines/weekly.md",
+      filename: "weekly.md",
+      id: "routine:weekly",
+      routineId: "routine:weekly",
+    };
+    await run(() => controls.setItems!([routine, weekly]));
+    await run(() => controls.peek!.open(routine.id));
+
+    await run(() => type(title(), "weekly"));
+    await run(() => press(title(), "Enter"));
+    await run(() => title().blur());
+    expect(writes).toEqual([]);
+    expect(titleMessage()).toBe(
+      "This name is already used in this owner by .routines/weekly.md. Choose a unique name.",
+    );
+    expect(title().value).toBe("Daily summary");
+
+    await run(() => type(title(), "   "));
+    await run(() => title().blur());
+    expect(writes).toEqual([]);
+    expect(titleMessage()).toBe("Name is required");
+    expect(title().value).toBe("Daily summary");
+
+    await run(() => type(title(), "Evening summary"));
+    await run(() => press(title(), "Enter"));
+    await run(() => title().blur());
+    expect(writes.map((write) => write.definition.name)).toEqual([
+      "Evening summary",
+    ]);
+    expect(writes[0]!.materializeFilename).toBe(true);
+    expect(titleMessage()).toBeNull();
+    expect(identity()).toBe("Evening summary");
+    expect(menu() === null).toBe(false);
+
+    // The description is saved the same way.
+    const description = () =>
+      doc.querySelector<HTMLTextAreaElement>(
+        "[data-object-content-header-description]",
+      )!;
+    await run(() => type(description(), "Summarize the evening."));
+    await run(() => press(description(), "Enter"));
+    await run(() => description().blur());
+    expect(writes.at(-1)?.definition.description).toBe(
+      "Summarize the evening.",
+    );
+    expect(writes.at(-1)?.materializeFilename).toBe(false);
+
+    // Escape puts the saved name back without writing.
+    await run(() => type(title(), "Discarded"));
+    await run(() => press(title(), "Escape"));
+    expect(writes.length).toBe(2);
+    expect(title().value).toBe("Evening summary");
+    expect(peekOpen() === null).toBe(false);
+    await act(async () => root.unmount());
+  }, 30000);
+
+  test("a new Routine opens with its name focused and selected", async () => {
+    const { controls, root } = await setup();
+    await run(() => controls.peek!.open(routine.id));
+    expect(doc.activeElement === title()).toBe(false);
+    await run(() =>
+      controls.setTitleFocus!({ itemId: routine.id, request: 1 }),
+    );
+    await run(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    const focused = doc.activeElement as HTMLTextAreaElement | null;
+    expect(focused?.hasAttribute("data-object-content-header-title")).toBe(
+      true,
+    );
+    expect(focused?.selectionStart).toBe(0);
+    expect(focused?.selectionEnd).toBe("Daily summary".length);
     await act(async () => root.unmount());
   }, 30000);
 
@@ -398,20 +473,56 @@ if (process.env.SVODE_ROUTINE_PEEK_DOM !== "1") {
     await act(async () => root.unmount());
   });
 
-  test("Edit of a closed Routine opens its form in the peek", async () => {
-    const { controls, root } = await setup();
-    await run(() =>
-      controls.setEditSession!({
-        draft: routine.definition!,
-        guard: { dirty: false },
-        item: routine,
-      }),
+  test("Trigger is edited in its popover and saved whole when it closes", async () => {
+    const { controls, root, writes } = await setup();
+    const scheduled: RoutineItem = {
+      ...routine,
+      definition: {
+        ...routine.definition!,
+        trigger: {
+          cron: "0 9 * * *",
+          missedRuns: "skip",
+          timeBasis: { mode: "local" },
+          type: "schedule",
+        },
+      },
+    };
+    await run(() => controls.setItems!([scheduled]));
+    await run(() => controls.peek!.open(scheduled.id));
+    const triggerButton = () =>
+      doc.querySelector<HTMLButtonElement>(
+        '[data-collection-property-editor="trigger"] button',
+      )!;
+    await run(() => triggerButton().click());
+    const popover = doc.querySelector(
+      '[data-collection-property-popover="trigger"]',
     );
-    expect(identity()).toBe("Daily summary");
-    expect(button("Save") === null).toBe(false);
-    await run(() => button("Cancel")!.click());
-    expect(button("Save")).toBeNull();
-    expect(menu() === null).toBe(false);
+    expect(popover === null).toBe(false);
+    const time =
+      popover!.querySelector<HTMLInputElement>('input[type="time"]')!;
+    const setter = Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    await run(() => {
+      setter.call(time, "10:30");
+      time.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    // Nothing is written while the popover is open.
+    expect(writes).toEqual([]);
+    await run(() => triggerButton().click());
+    expect(
+      doc.querySelector('[data-collection-property-popover="trigger"]'),
+    ).toBeNull();
+    expect(writes.map((write) => write.definition.trigger)).toEqual([
+      {
+        cron: "30 10 * * *",
+        missedRuns: "skip",
+        timeBasis: { mode: "local" },
+        type: "schedule",
+      },
+    ]);
+    expect(peekOpen() === null).toBe(false);
     await act(async () => root.unmount());
   }, 30000);
 }

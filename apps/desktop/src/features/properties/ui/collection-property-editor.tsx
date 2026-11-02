@@ -91,7 +91,9 @@ export function CollectionPropertyEditor<Item>({
   // A saved edit of the object the main area shows keeps it in Now.
   const signalUserEdit = useSignalUserEdit();
 
-  const saved = property.getValue(item);
+  const saved = edit.popover?.getDraft
+    ? edit.popover.getDraft(item)
+    : property.getValue(item);
   const ownerState = readCollectionPropertyEditState(edit, item);
   const busy = pending || ownerState.status === "pending";
   const disabled = busy || disabledByPanel || ownerState.status === "disabled";
@@ -101,8 +103,9 @@ export function CollectionPropertyEditor<Item>({
     invalidNotice: (reason: string) => string = (reason) => reason,
   ) => {
     if (pendingRef.current || sameValue(next, saved)) return;
+    // A composite draft is checked by its owner, not as a standard value.
     const problem =
-      (column ? standardProblem(column, next) : null) ??
+      (column && !edit.popover ? standardProblem(column, next) : null) ??
       edit.validate?.(next, item) ??
       null;
     if (problem) {
@@ -250,7 +253,9 @@ function CollectionPropertyPopover<Item>({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<unknown>(null);
   const escapedRef = useRef(false);
-  const saved = property.getValue(item);
+  const saved = popover.getDraft
+    ? popover.getDraft(item)
+    : property.getValue(item);
   const problem = open ? (edit.validate?.(draft, item) ?? null) : null;
 
   return (
@@ -277,7 +282,7 @@ function CollectionPropertyPopover<Item>({
           disabled={disabled}
           className="h-auto min-h-8 w-full min-w-0 justify-start px-1.5 py-1 text-left font-normal whitespace-normal"
         >
-          {isEmptyValue(saved) ? (
+          {isEmptyValue(property.getValue(item)) ? (
             <span className="text-muted-foreground">{m.property_empty()}</span>
           ) : (
             <CollectionPropertyValue

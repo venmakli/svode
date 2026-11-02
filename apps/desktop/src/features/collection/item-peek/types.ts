@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { PeekNavigationGuard } from "@/features/scope-surfaces";
 
 import type { CollectionActivationContext } from "../runtime/model/types";
+import type { ObjectContentHeaderEdit } from "./object-content-header";
 
 /** Where focus returns once the peek closes: the item's row, else a fallback. */
 export interface CollectionItemPeekFocus {
@@ -74,4 +75,6 @@ export interface CollectionItemPeekHeader {
   icon: ReactNode;
   title: string;
   description?: ReactNode;
+  /** Inline editing of the name and the description, where the owner allows it. */
+  edit?: ObjectContentHeaderEdit;
 }

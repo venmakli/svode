@@ -72,7 +72,11 @@ if (process.env.SVODE_ROUTINE_PROPERTY_WRITES_DOM !== "1") {
       items: [item],
     }) as unknown as RoutineCatalogSnapshot;
 
-  const calls: { fingerprint: string; definition: RoutineDefinition }[] = [];
+  const calls: {
+    fingerprint: string;
+    definition: RoutineDefinition;
+    materializeFilename: boolean;
+  }[] = [];
   let respond: (
     item: RoutineItem,
     definition: RoutineDefinition,
@@ -88,8 +92,13 @@ if (process.env.SVODE_ROUTINE_PROPERTY_WRITES_DOM !== "1") {
       _owner: unknown,
       item: RoutineItem,
       next: RoutineDefinition,
+      options: { materializeFilename: boolean },
     ) => {
-      calls.push({ definition: next, fingerprint: item.fingerprint });
+      calls.push({
+        definition: next,
+        fingerprint: item.fingerprint,
+        materializeFilename: options.materializeFilename,
+      });
       return respond(item, next);
     },
   }));
@@ -115,7 +124,6 @@ if (process.env.SVODE_ROUTINE_PROPERTY_WRITES_DOM !== "1") {
     const handle: { current: Mutations | null } = { current: null };
     function Harness() {
       const mutations = useRoutineMutations({
-        items: [],
         onDetailInvalidated: () => undefined,
         owner,
         refresh,
@@ -237,6 +245,52 @@ if (process.env.SVODE_ROUTINE_PROPERTY_WRITES_DOM !== "1") {
       expect((failure as Error).message).toBe("The repository is read-only");
       expect(mutations().pending).toBe(false);
       expect(mutations().error).toBeNull();
+    } finally {
+      await dom.dispose();
+    }
+  });
+
+  test("a new name taken by another Routine of the owner is refused at the name, and renaming moves the file", async () => {
+    calls.length = 0;
+    respond = async () => ({
+      conflict: {
+        conflicts: [
+          {
+            filename: "weekly.md",
+            name: "Weekly",
+            path: ".routines/weekly.md",
+            routineId: "routine:weekly",
+          },
+        ],
+        ownerPath: ".",
+        resolvedOwnerKind: "project",
+        spaceId: "root",
+      },
+      status: "name_conflict",
+    });
+    const replaced: RoutineCatalogSnapshot[] = [];
+    const { dom, mutations } = await mountMutations({
+      refresh: async () => null,
+      replaced,
+    });
+    try {
+      let failure: unknown = null;
+      await act(async () => {
+        await mutations()
+          .writeProperty(
+            routine("fingerprint:1"),
+            (value) => ({ ...value, name: "Weekly" }),
+            { materializeFilename: true },
+          )
+          .catch((error: unknown) => {
+            failure = error;
+          });
+      });
+      expect(calls.map((call) => call.materializeFilename)).toEqual([true]);
+      expect(replaced).toEqual([]);
+      expect((failure as Error).message).toBe(
+        m.routines_name_conflict({ path: ".routines/weekly.md" }),
+      );
     } finally {
       await dom.dispose();
     }

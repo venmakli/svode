@@ -7,7 +7,10 @@ import { PeekSheet } from "@/shared/ui/peek-sheet";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { keepsCollectionPropertyEditorOnEscape } from "@/features/properties/panel";
 
-import { ObjectContentHeader } from "./object-content-header";
+import {
+  keepsObjectContentHeaderEditOnEscape,
+  ObjectContentHeader,
+} from "./object-content-header";
 import type {
   CollectionItemPeekController,
   CollectionItemPeekFocus,
@@ -78,8 +81,11 @@ export function CollectionItemPeek<Target, Item>({
       onRequestClose={() => void close()}
       data-collection-item-peek
       onEscapeKeyDown={(event) => {
-        // Escape first cancels an open edit of a property.
-        if (keepsCollectionPropertyEditorOnEscape(event.target)) {
+        // Escape first cancels an open edit of a property or the header.
+        if (
+          keepsCollectionPropertyEditorOnEscape(event.target) ||
+          keepsObjectContentHeaderEditOnEscape(event.target)
+        ) {
           event.preventDefault();
         }
       }}

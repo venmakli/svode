@@ -8,12 +8,7 @@ import type {
 } from "./types";
 import { isValidTimezone } from "./routine-time-basis";
 
-export type RoutineDraftIssue =
-  | "cron"
-  | "event_field"
-  | "executor"
-  | "set"
-  | "timezone";
+export type RoutineDraftIssue = "cron" | "event_field" | "set" | "timezone";
 
 export function changeRoutineTrigger(
   definition: RoutineDefinition,
@@ -105,13 +100,10 @@ export function validateRoutineDraft(
   ) {
     issues.add("event_field");
   }
-  if (definition.action.type === "run_agent") {
-    if (!/^agent:[0-9a-hjkmnp-tv-z]{26}$/.test(definition.action.executor)) {
-      issues.add("executor");
-    }
-  } else if (
-    Object.keys(definition.action.set).length === 0 ||
-    Object.keys(definition.action.set).some((key) => !key.trim())
+  if (
+    definition.action.type === "update_properties" &&
+    (Object.keys(definition.action.set).length === 0 ||
+      Object.keys(definition.action.set).some((key) => !key.trim()))
   ) {
     issues.add("set");
   }

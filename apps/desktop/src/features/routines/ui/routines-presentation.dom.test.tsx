@@ -77,17 +77,17 @@ test("routine enabled Switch is single-flight and does not open the item", async
   const actions: RoutinePresentationActions = {
     createState: { status: "idle" },
     getDeleteState: () => ({ status: "idle" }),
-    getEditState: () => ({ status: "idle" }),
+    getDefinitionEditState: () => ({ status: "idle" }),
     getEnabledState: () => ({ status: "idle" }),
     getRunState: () => ({ status: "idle" }),
     onAdd: () => undefined,
     onDelete: () => undefined,
-    onEdit: () => undefined,
     onEnabledChange: async (item, enabled) => {
       updates.push({ enabled, itemId: item.id });
       await updateResult;
     },
     onRun: async () => undefined,
+    writeDefinition: async () => undefined,
   };
   const presentation = createRoutinesPresentation({
     ownership: { collection: null, space: "Project" },

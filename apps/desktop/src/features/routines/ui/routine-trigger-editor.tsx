@@ -1,5 +1,10 @@
+import { useId } from "react";
+
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
+  FieldContent,
+  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -20,8 +25,14 @@ import {
   changeRoutineTrigger,
   parseRoutineValueInput,
   routineValueInput,
-  type RoutineDraftIssue,
+  validateRoutineDraft,
 } from "../model/routine-draft";
+import {
+  applyRoutineTriggerDraft,
+  routineTriggerDraft,
+  routineTriggerNeedsConsent,
+  type RoutineTriggerDraft,
+} from "../model/routine-property-drafts";
 import type {
   RoutineDefinition,
   RoutineEventType,
@@ -29,37 +40,57 @@ import type {
 } from "../model/types";
 import { RoutineScheduleFields } from "./routine-schedule-fields";
 
-export function RoutineTriggerFields({
+/**
+ * The editor of "Trigger" in its popover: the type, the schedule or the
+ * event, and the consent to run automatically once the type turns to a
+ * schedule or an event. Nothing is saved until the popover closes.
+ */
+export function RoutineTriggerEditor({
   collectionOwner,
-  definition,
-  idPrefix,
-  issues,
+  draft,
+  saved,
   onChange,
 }: {
   collectionOwner: boolean;
-  definition: RoutineDefinition;
-  idPrefix: string;
-  issues: ReadonlySet<RoutineDraftIssue>;
-  onChange(definition: RoutineDefinition): void;
+  draft: RoutineTriggerDraft;
+  /** The saved definition the popover opened with. */
+  saved: RoutineDefinition;
+  onChange(draft: RoutineTriggerDraft): void;
 }) {
+  const idPrefix = useId();
+  const definition = applyRoutineTriggerDraft(saved, draft);
+  const issues = validateRoutineDraft(definition);
+  const change = (next: RoutineDefinition) =>
+    onChange({
+      action: next.action,
+      automaticConsent:
+        next.trigger.type === definition.trigger.type
+          ? draft.automaticConsent
+          : false,
+      enabled: next.enabled,
+      trigger: next.trigger,
+    });
+  const consent = routineTriggerNeedsConsent(saved, draft);
   const trigger = definition.trigger;
   return (
     <FieldGroup>
       <Field>
-        <FieldLabel>{m.routines_trigger_label()}</FieldLabel>
+        <FieldLabel htmlFor={`${idPrefix}-type`}>
+          {m.routines_trigger_label()}
+        </FieldLabel>
         <Select
           value={definition.trigger.type}
-          onValueChange={async (value) => {
+          onValueChange={(value) => {
             if (value === definition.trigger.type) return;
-            // The Tauri dialog plugin makes window.confirm resolve asynchronously.
-            if (!(await window.confirm(m.routines_change_type_confirm())))
-              return;
-            onChange(
-              changeRoutineTrigger(definition, value as RoutineTriggerType),
+            const type = value as RoutineTriggerType;
+            change(
+              type === saved.trigger.type
+                ? applyRoutineTriggerDraft(saved, routineTriggerDraft(saved))
+                : changeRoutineTrigger(definition, type),
             );
           }}
         >
-          <SelectTrigger className="w-full" data-routine-create-focus="trigger">
+          <SelectTrigger id={`${idPrefix}-type`} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -86,7 +117,7 @@ export function RoutineTriggerFields({
           issues={issues}
           idPrefix={idPrefix}
           onChange={(nextTrigger) =>
-            onChange({ ...definition, trigger: nextTrigger })
+            change({ ...definition, trigger: nextTrigger })
           }
         />
       ) : null}
@@ -94,20 +125,19 @@ export function RoutineTriggerFields({
       {trigger.type === "event" ? (
         <>
           <Field>
-            <FieldLabel>{m.routines_event_type_label()}</FieldLabel>
+            <FieldLabel htmlFor={`${idPrefix}-event`}>
+              {m.routines_event_type_label()}
+            </FieldLabel>
             <Select
               value={trigger.event}
-              onValueChange={async (event) => {
+              onValueChange={(event) => {
                 if (event === trigger.event) return;
-                // The Tauri dialog plugin makes window.confirm resolve asynchronously.
-                if (!(await window.confirm(m.routines_change_type_confirm())))
-                  return;
-                onChange(
+                change(
                   changeRoutineEvent(definition, event as RoutineEventType),
                 );
               }}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger id={`${idPrefix}-event`} className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -133,11 +163,10 @@ export function RoutineTriggerFields({
                 </FieldLabel>
                 <Input
                   id={`${idPrefix}-event-field`}
-                  data-routine-create-focus="trigger"
                   value={trigger.match?.field ?? ""}
                   aria-invalid={issues.has("event_field")}
                   onChange={(event) =>
-                    onChange({
+                    change({
                       ...definition,
                       trigger: {
                         ...trigger,
@@ -162,7 +191,7 @@ export function RoutineTriggerFields({
                     id={`${idPrefix}-event-from`}
                     value={routineValueInput(trigger.match?.from ?? "")}
                     onChange={(event) =>
-                      onChange({
+                      change({
                         ...definition,
                         trigger: {
                           ...trigger,
@@ -184,7 +213,7 @@ export function RoutineTriggerFields({
                     id={`${idPrefix}-event-to`}
                     value={routineValueInput(trigger.match?.to ?? "")}
                     onChange={(event) =>
-                      onChange({
+                      change({
                         ...definition,
                         trigger: {
                           ...trigger,
@@ -202,6 +231,25 @@ export function RoutineTriggerFields({
             </FieldGroup>
           ) : null}
         </>
+      ) : null}
+      {consent ? (
+        <Field orientation="horizontal" data-routine-automatic-consent>
+          <Checkbox
+            id={`${idPrefix}-automatic-consent`}
+            checked={draft.automaticConsent}
+            onCheckedChange={(checked) =>
+              onChange({ ...draft, automaticConsent: checked === true })
+            }
+          />
+          <FieldContent>
+            <FieldLabel htmlFor={`${idPrefix}-automatic-consent`}>
+              {m.routines_automatic_consent_label()}
+            </FieldLabel>
+            <FieldDescription>
+              {m.routines_automatic_consent_description()}
+            </FieldDescription>
+          </FieldContent>
+        </Field>
       ) : null}
     </FieldGroup>
   );
