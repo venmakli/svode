@@ -99,19 +99,29 @@ function servingSource(target: DocumentTarget): HtmlDocumentSourceDto {
 }
 
 /**
- * The App directory, relative to its Space, whose files include the HTML
- * file at `path`: such a file opens its App. Null outside Apps.
+ * The App whose files include an HTML file of the project (Stage 11 `06`
+ * H1): an App directory of its Space, by its path in that Space, or the
+ * Space itself when it holds the `app.yaml`.
  */
-export function htmlDocumentApp(input: {
+export type HtmlDocumentApp =
+  | { kind: "app-directory"; path: string }
+  | { kind: "space" };
+
+/** The App the HTML file at `path` belongs to, which it opens; null outside Apps. */
+export async function htmlDocumentApp(input: {
   projectPath: string;
   spaceId: string | null;
   path: string;
-}): Promise<string | null> {
-  return findHtmlDocumentApp({
+}): Promise<HtmlDocumentApp | null> {
+  const directory = await findHtmlDocumentApp({
     projectPath: input.projectPath,
     spaceId: input.spaceId,
     targetPath: input.path,
   });
+  if (directory === null) return null;
+  return directory === "."
+    ? { kind: "space" }
+    : { kind: "app-directory", path: directory };
 }
 
 /** An HTML file outside the project by its absolute path, only to view it. */

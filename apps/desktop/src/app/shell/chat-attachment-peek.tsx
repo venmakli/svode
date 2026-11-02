@@ -74,21 +74,22 @@ export function ChatAttachmentPeekProvider({
         ...rootSpaces,
         ...spaces,
       ]);
-      let route = chatAttachmentRoute(attachment.path, location);
-      if (route.kind === "html") {
-        const registeredSpaceId =
-          route.location.spaceId === activeRootId
-            ? null
-            : route.location.spaceId;
-        const app = await htmlDocumentApp({
-          projectPath: projectPath ?? route.location.spacePath,
-          spaceId: registeredSpaceId,
-          path: route.location.path,
-        }).catch(() => null);
-        route = htmlRoute(route.location, app);
-      }
+      const found = chatAttachmentRoute(attachment.path, location);
+      const route =
+        found.kind === "html"
+          ? htmlRoute(
+              found.location,
+              await htmlDocumentApp({
+                projectPath: projectPath ?? found.location.spacePath,
+                spaceId:
+                  found.location.spaceId === activeRootId
+                    ? null
+                    : found.location.spaceId,
+                path: found.location.path,
+              }).catch(() => null),
+            )
+          : found;
       switch (route.kind) {
-        case "html":
         case "system":
           void openPath(attachment.path);
           return;

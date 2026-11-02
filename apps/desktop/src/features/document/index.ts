@@ -4,4 +4,5 @@ export type { DocumentTarget } from "./model/types";
 export {
   htmlDocumentApp,
   localHtmlDocumentFile,
+  type HtmlDocumentApp,
 } from "./html/html-document-api";

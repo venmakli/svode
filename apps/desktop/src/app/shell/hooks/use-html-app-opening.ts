@@ -42,12 +42,12 @@ export function useHtmlAppOpening(input: {
     })
       // The Document names a path it refuses.
       .catch(() => null)
-      .then((directory) => {
+      .then((app) => {
         if (cancelled) return;
-        if (directory === null) setDocumentKey(requestKey);
-        else if (directory === ".") openScopeOwner({ kind: "space", spaceId });
-        else
-          openScopeOwner({ kind: "app-directory", path: directory, spaceId });
+        if (app === null) setDocumentKey(requestKey);
+        else if (app.kind === "space")
+          openScopeOwner({ kind: "space", spaceId });
+        else openScopeOwner({ kind: "app-directory", path: app.path, spaceId });
       });
     return () => {
       cancelled = true;

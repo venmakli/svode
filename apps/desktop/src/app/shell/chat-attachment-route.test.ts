@@ -14,7 +14,9 @@ test("HTML of the project is asked about its App, then a Document or the App", (
     expect(htmlRoute(location, null)).toEqual({ kind: "document", location });
   }
   const page = { ...SPACE, path: "tools/dash/public/index.html" };
-  expect(htmlRoute(page, "tools/dash")).toEqual({
+  expect(
+    htmlRoute(page, { kind: "app-directory", path: "tools/dash" }),
+  ).toEqual({
     kind: "page",
     location: { ...SPACE, path: "tools/dash" },
   });

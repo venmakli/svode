@@ -210,6 +210,10 @@ if (process.env.SVODE_CHAT_HTML_PEEK_DOM !== "1") {
       closeTopPeek();
     });
     await settle();
+    expect(htmlPeek()).toBe(undefined);
+    expect(commands("html_document_revoke")).toEqual([
+      { capabilityToken: `token-${served}` },
+    ]);
     await dom.render(null);
   });
 
@@ -226,6 +230,10 @@ if (process.env.SVODE_CHAT_HTML_PEEK_DOM !== "1") {
     ]);
     expect(commands("html_document_serve")).toEqual([]);
     expect(htmlPeek()).toBe(undefined);
+    // The peek of its App owner, as the tree opens it.
+    expect(commands("get_scope_owner_facts")).toEqual([
+      { space: "/project", path: "tools/dash" },
+    ]);
     expect(commands("plugin:shell|open")).toEqual([]);
     await act(async () => {
       closeTopPeek();

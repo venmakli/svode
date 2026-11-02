@@ -9,7 +9,7 @@ import {
   IMAGE_EXTS,
   VIDEO_EXTS,
 } from "@/platform/upload/media-types";
-import { isHtmlDocumentPath } from "@/features/document";
+import { isHtmlDocumentPath, type HtmlDocumentApp } from "@/features/document";
 import { isNetworkPath } from "@/shared/lib/local-paths";
 
 /**
@@ -49,11 +49,14 @@ export function chatAttachmentRoute(
 /** An HTML file of the project: its App when it is a file of one. */
 export function htmlRoute(
   location: ChatAttachmentLocation,
-  appDirectory: string | null,
-): ChatAttachmentRoute {
-  return appDirectory === null
-    ? { kind: "document", location }
-    : { kind: "page", location: { ...location, path: appDirectory } };
+  app: HtmlDocumentApp | null,
+): Exclude<ChatAttachmentRoute, { kind: "html" }> {
+  if (app === null) return { kind: "document", location };
+  // The Space itself as the App has no peek of its own yet: its root names it.
+  return {
+    kind: "page",
+    location: { ...location, path: app.kind === "space" ? "." : app.path },
+  };
 }
 
 function viewerKind(path: string): ArtifactRegistryKind | "html" | null {
