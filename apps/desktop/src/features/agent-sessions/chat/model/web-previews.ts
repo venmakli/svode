@@ -27,13 +27,22 @@ export function webPreviewCandidates(
   );
 }
 
-/** The cards of a turn: its candidates outside `appFiles`, at most three. */
+/**
+ * The cards of a turn: its candidates outside `appFiles`, at most three. A
+ * moved file that is gone is where the move started, not a file the turn
+ * left: it gets no card and takes no place.
+ */
 export function webPreviewFiles(
   candidates: readonly ChangedFile[],
   appFiles: ReadonlySet<string>,
+  removed: ReadonlySet<string>,
 ): ChangedFile[] {
   return candidates
-    .filter((file) => !appFiles.has(file.path))
+    .filter(
+      (file) =>
+        !appFiles.has(file.path) &&
+        !(file.change === "moved" && removed.has(file.path)),
+    )
     .slice(0, WEB_PREVIEW_LIMIT);
 }
 

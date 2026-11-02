@@ -23,7 +23,8 @@ interface Resolved {
  * The «Веб-превью» cards of a finished turn (Stage 11 `06` H1), once it is
  * known which candidates are files of an App of the project and which are
  * gone. Empty until then. A file saved, restored or deleted in a Space
- * changes its Git status, which checks the cards again.
+ * changes its Git status, which checks the cards again; a moved file found
+ * gone then leaves the cards.
  */
 export function useWebPreviews(changes: TurnChanges | null): WebPreview[] {
   const rootSpaces = useSpace((state) => state.rootSpaces);
@@ -93,8 +94,10 @@ export function useWebPreviews(changes: TurnChanges | null): WebPreview[] {
   }, [activeRootId, key, known, projectPath, statusKey]);
 
   if (!key || resolved?.key !== key) return [];
-  return webPreviewFiles(candidates, resolved.appFiles).map((file) => ({
-    file,
-    removed: resolved.removed.has(file.path),
-  }));
+  return webPreviewFiles(candidates, resolved.appFiles, resolved.removed).map(
+    (file) => ({
+      file,
+      removed: resolved.removed.has(file.path),
+    }),
+  );
 }

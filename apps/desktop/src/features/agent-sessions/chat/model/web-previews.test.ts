@@ -80,7 +80,7 @@ test("the HTML files a turn changed, without deleted ones and hidden folders", (
     edit("h", [at("/p/unknown.html", null)]),
   ]);
   const candidates = webPreviewCandidates(changes, project);
-  expect(paths(webPreviewFiles(candidates, new Set()))).toEqual([
+  expect(paths(webPreviewFiles(candidates, new Set(), new Set()))).toEqual([
     "/p/report.html",
     "/p/moved/page.HTM",
     "/p/.hidden.html",
@@ -106,6 +106,7 @@ test("files of an App are left out and four files give three cards", () => {
       webPreviewFiles(
         webPreviewCandidates(changes, project),
         new Set(["/p/tools/dash/index.html"]),
+        new Set(),
       ),
     ),
   ).toEqual(["/p/one.html", "/p/two.html", "/p/three.html"]);
@@ -121,5 +122,40 @@ test("a file of the project is judged by its path in its Space", () => {
   ]);
   expect(paths(webPreviewCandidates(changes, spaces))).toEqual([
     "/home/u/.worktrees/p/report.html",
+  ]);
+});
+
+test("a moved file that is gone gets no card and takes no place; a gone written file keeps its card", () => {
+  const changes = changesOf([
+    edit("mv", [at("/p/a.html", "moved"), at("/p/b.html", "moved")], "move"),
+    edit("c", [at("/p/c.html", "created")]),
+    edit("d", [at("/p/d.html", "modified")]),
+    edit("e", [at("/p/e.html", "created")]),
+    edit("x", [at("/p/x.html", "deleted")], "delete"),
+  ]);
+  const candidates = webPreviewCandidates(changes, project);
+  expect(paths(candidates)).toEqual([
+    "/p/a.html",
+    "/p/b.html",
+    "/p/c.html",
+    "/p/d.html",
+    "/p/e.html",
+  ]);
+  // `mv a.html b.html` leaves only b.html; c.html, gone since it was
+  // written, keeps its place.
+  expect(
+    paths(
+      webPreviewFiles(
+        candidates,
+        new Set(),
+        new Set(["/p/a.html", "/p/c.html"]),
+      ),
+    ),
+  ).toEqual(["/p/b.html", "/p/c.html", "/p/d.html"]);
+  // A moved file that is still there keeps its card.
+  expect(paths(webPreviewFiles(candidates, new Set(), new Set()))).toEqual([
+    "/p/a.html",
+    "/p/b.html",
+    "/p/c.html",
   ]);
 });

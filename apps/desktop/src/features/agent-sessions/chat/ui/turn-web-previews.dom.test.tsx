@@ -40,7 +40,7 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
   const appLookups: string[] = [];
   /** The Space is itself an App: every file of it belongs to that App. */
   let spaceIsApp = false;
-  const gone = new Set(["/project/gone.html"]);
+  const gone = new Set(["/project/gone.html", "/project/old.html"]);
   /** While set, existence answers wait for it. */
   let existsGate: Promise<void> | null = null;
   const { mockNativeIpc } = await import("@/platform/native/testing");
@@ -178,7 +178,8 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
 
   /**
    * t1 draws a chart and writes six HTML files, one of them gone since and
-   * one of an App; t2 changes only Markdown; t3 runs and writes HTML.
+   * one of an App; t2 changes only Markdown; t4 moves old.html to
+   * new.html and writes three more; t3 runs and writes HTML.
    */
   function snapshot(): AgentSessionSnapshotDto {
     return {
@@ -212,6 +213,19 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
         write("w8", "t2", "/project/notes.md"),
         answer("done2", "t2", "Done: notes"),
         done("t2"),
+
+        user("t4", "Move pages"),
+        tool("mv", "t4", "move", {
+          locations: [
+            { path: "/project/old.html", change: "moved", lines: null },
+            { path: "/project/new.html", change: "moved", lines: null },
+          ],
+        }),
+        write("w10", "t4", "/project/n1.html"),
+        write("w11", "t4", "/project/n2.html"),
+        write("w12", "t4", "/project/n3.html"),
+        answer("done4", "t4", "Done: moved"),
+        done("t4"),
 
         user("t3", "More"),
         write("w9", "t3", "/project/live.html"),
@@ -316,7 +330,7 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
     try {
       await mount();
       expect(
-        turnItems("Only notes", "More").some(
+        turnItems("Only notes", "Move pages").some(
           (element) => cards(element).length > 0,
         ),
       ).toBe(false);
@@ -426,7 +440,50 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
       open();
       existsGate = null;
       gone.delete("/project/a.html");
-      useGitStore.setState({ statuses: {} });
+      await act(async () => useGitStore.setState({ statuses: {} }));
+      await unmountAll();
+    }
+  });
+
+  test("a moved file that is gone gets no card and takes no place; one gone later leaves without moving the rest", async () => {
+    try {
+      await mount();
+      const names = () =>
+        turnItems("Move pages", "More").flatMap((element) =>
+          cards(element).map((card) => card.textContent),
+        );
+      // `mv old.html new.html`: only new.html, and old.html leaves its
+      // place to n2.html.
+      expect(names()).toEqual([
+        `new.html${preview}`,
+        `n1.html${preview}`,
+        `n2.html${preview}`,
+      ]);
+
+      // new.html is moved away after the turn: its row leaves, the others
+      // keep their order and n3.html takes the free place.
+      gone.add("/project/new.html");
+      await act(async () => {
+        useGitStore.setState({
+          statuses: {
+            "/project": { files: [{ path: "new.html", state: "deleted" }] },
+          } as never,
+        });
+      });
+      await settle();
+      expect(names()).toEqual([
+        `n1.html${preview}`,
+        `n2.html${preview}`,
+        `n3.html${preview}`,
+      ]);
+      expect(
+        turnItems("Move pages", "More").flatMap((element) =>
+          cards(element).map((card) => card.getAttribute("aria-disabled")),
+        ),
+      ).toEqual(["false", "false", "false"]);
+    } finally {
+      gone.delete("/project/new.html");
+      await act(async () => useGitStore.setState({ statuses: {} }));
       await unmountAll();
     }
   });
