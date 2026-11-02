@@ -38,6 +38,11 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
     sessionId: "s1",
   };
   const appLookups: string[] = [];
+  /** The Space is itself an App: every file of it belongs to that App. */
+  let spaceIsApp = false;
+  const gone = new Set(["/project/gone.html"]);
+  /** While set, existence answers wait for it. */
+  let existsGate: Promise<void> | null = null;
   const { mockNativeIpc } = await import("@/platform/native/testing");
   mockNativeIpc((command, args) => {
     const payload = (args ?? {}) as Record<string, unknown>;
@@ -61,11 +66,15 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
     if (command === "media_revoke_source") return null;
     if (command === "html_document_app_directory") {
       appLookups.push(payload.targetPath as string);
+      if (spaceIsApp) return ".";
       return payload.targetPath === "tools/dash/index.html"
         ? "tools/dash"
         : null;
     }
-    if (command === "path_exists") return payload.path !== "/project/gone.html";
+    if (command === "path_exists") {
+      const exists = !gone.has(payload.path as string);
+      return existsGate ? existsGate.then(() => exists) : exists;
+    }
     if (command === "home_dir" || command === "plugin:path|resolve_directory") {
       return "/Users/me";
     }
@@ -89,6 +98,7 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
   const { AttachmentOpenerContext } =
     await import("../hooks/use-attachment-opener");
   const { registerRootSpace } = await import("@/features/space");
+  const { useGitStore } = await import("@/features/git");
   registerRootSpace({ id: "root", name: "Project", path: "/project" } as never);
 
   const opened: string[] = [];
@@ -343,6 +353,80 @@ if (process.env.SVODE_TURN_WEB_PREVIEWS_DOM !== "1") {
       await click(first);
       expect(opened).toEqual(["/project/a.html"]);
     } finally {
+      await unmountAll();
+    }
+  });
+
+  test("a Space that is itself an App gives its HTML files no Web preview", async () => {
+    spaceIsApp = true;
+    try {
+      await mount();
+      expect(
+        turnItems("Build the pages", "Only notes").map(describe).slice(-3),
+      ).toEqual(["Done: the pages", "gallery", "files"]);
+      expect(document.querySelector("[data-turn-web-previews]")).toBe(null);
+    } finally {
+      spaceIsApp = false;
+      await unmountAll();
+    }
+  });
+
+  test("a changed Git state of a card's file checks it again without hiding or moving the cards", async () => {
+    let open = () => {};
+    try {
+      await mount();
+      const names = () =>
+        cards(itemWith(preview)).map((card) => card.textContent);
+      const before = names();
+      const lookups = appLookups.length;
+
+      // An unrelated file changes: the cards are not checked again.
+      await act(async () => {
+        useGitStore.setState({
+          statuses: {
+            "/project": { files: [{ path: "notes.md", state: "modified" }] },
+          } as never,
+        });
+      });
+      await settle();
+      expect(appLookups.length).toBe(lookups);
+
+      // a.html is deleted: while the check runs the cards stay as they were.
+      gone.add("/project/a.html");
+      existsGate = new Promise((resolve) => {
+        open = resolve;
+      });
+      await act(async () => {
+        useGitStore.setState({
+          statuses: {
+            "/project": {
+              files: [
+                { path: "notes.md", state: "modified" },
+                { path: "a.html", state: "deleted" },
+              ],
+            },
+          } as never,
+        });
+      });
+      await settle();
+      expect(appLookups.length > lookups).toBe(true);
+      expect(names()).toEqual(before);
+      expect(cards(itemWith(preview))[0].getAttribute("aria-disabled")).toBe(
+        "false",
+      );
+
+      open();
+      existsGate = null;
+      await settle();
+      expect(names()).toEqual(before);
+      expect(cards(itemWith(preview))[0].getAttribute("aria-disabled")).toBe(
+        "true",
+      );
+    } finally {
+      open();
+      existsGate = null;
+      gone.delete("/project/a.html");
+      useGitStore.setState({ statuses: {} });
       await unmountAll();
     }
   });
