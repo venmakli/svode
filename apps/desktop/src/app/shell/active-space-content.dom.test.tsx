@@ -26,6 +26,10 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     mock: { module(path: string, factory: () => unknown): void };
   };
   const spacePath = "/space";
+  // The App directory of an HTML file, by its path; others are Documents.
+  let htmlApps: Record<string, string> = {};
+  let htmlAnswered: Promise<void> = Promise.resolve();
+  const htmlQuestions: unknown[] = [];
   let tree: unknown[] = [];
   // An unloaded root tree has no entry in the store yet.
   let treeLoaded = true;
@@ -152,6 +156,12 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
     let reads = 0;
     mockNativeIpc(
       async (command, args) => {
+        if (command === "html_document_app_directory") {
+          htmlQuestions.push(args);
+          await htmlAnswered;
+          const { targetPath } = args as { targetPath: string };
+          return htmlApps[targetPath] ?? null;
+        }
         if (command !== "get_scope_owner_facts")
           throw new Error(`Unexpected IPC: ${command}`);
         reads += 1;
@@ -613,6 +623,97 @@ if (process.env.SVODE_ACTIVE_CONTENT_TEST !== "1") {
       await vanish("Note.md");
       expect(getActiveContentSelection().selection === null).toBe(false);
     } finally {
+      await f.cleanup();
+    }
+  });
+
+  const selectedOwner = () => {
+    const selection = getActiveContentSelection().selection;
+    return selection?.kind === "scope-owner" ? selection.request.owner : null;
+  };
+
+  test("a neutral opening of an HTML file of an App opens the App; other HTML files open as Documents", async () => {
+    let answer!: () => void;
+    htmlAnswered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    htmlApps = { "tools/dash/public/index.html": "tools/dash" };
+    htmlQuestions.length = 0;
+    const f = await fixture((path) =>
+      path === "tools/dash"
+        ? {
+            identity: "appDirectory",
+            ownerPath: "tools/dash",
+            contentPath: "tools/dash/README.md",
+            hasApp: true,
+          }
+        : null,
+    );
+    try {
+      openArtifact({
+        spaceId: "root",
+        path: "tools/dash/public/index.html",
+        sourceShape: "file",
+      });
+      await f.render();
+      await f.settle();
+      // Until the answer the main area loads: no Document, no serving.
+      expect(f.query("[data-artifact]")).toBeNull();
+      expect(f.query("[data-scope-owner]")).toBeNull();
+      expect(htmlQuestions).toEqual([
+        {
+          projectPath: spacePath,
+          spaceId: null,
+          targetPath: "tools/dash/public/index.html",
+        },
+      ]);
+      await act(async () => answer());
+      await f.settle();
+      expect(selectedOwner()).toEqual({
+        kind: "app-directory",
+        path: "tools/dash",
+        spaceId: "root",
+      });
+      expect(
+        f.query("[data-scope-owner]")?.getAttribute("data-scope-owner"),
+      ).toBe("app-directory:tools/dash/README.md:app");
+      expect(f.query("[data-artifact]")).toBeNull();
+
+      openArtifact({
+        spaceId: "root",
+        path: "reports/report.html",
+        sourceShape: "file",
+      });
+      await f.render();
+      await f.settle();
+      expect(f.query("[data-artifact]")?.getAttribute("data-artifact")).toBe(
+        "reports/report.html",
+      );
+      // Other documents do not ask.
+      openArtifact({
+        spaceId: "root",
+        path: "reports/brief.pdf",
+        sourceShape: "file",
+      });
+      await f.render();
+      await f.settle();
+      expect(htmlQuestions.length).toBe(2);
+      expect(f.query("[data-artifact]")?.getAttribute("data-artifact")).toBe(
+        "reports/brief.pdf",
+      );
+      // A Space that is itself an App opens its home.
+      htmlApps = { "index.html": "." };
+      openArtifact({
+        spaceId: "root",
+        path: "index.html",
+        sourceShape: "file",
+      });
+      await f.render();
+      await f.settle();
+      expect(selectedOwner()).toEqual({ kind: "space", spaceId: "root" });
+    } finally {
+      htmlApps = {};
+      htmlAnswered = Promise.resolve();
       await f.cleanup();
     }
   });

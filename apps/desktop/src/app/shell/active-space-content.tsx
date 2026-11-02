@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
+import { useHtmlAppOpening } from "./hooks/use-html-app-opening";
 import { useSpaceScopeOwner } from "./hooks/use-space-scope-owner";
 import { useShellStore } from "./model";
 import { ScopeSurfacePage } from "./scope-surface-page";
@@ -137,6 +138,14 @@ export function ActiveSpaceContent() {
         : null,
     retainPrevious: isArtifactPathRetarget,
   });
+  // An HTML file of an App opens its App, asked before the Document shows.
+  const htmlAppPending = useHtmlAppOpening({
+    requestKey: artifactRequest?.key ?? null,
+    target: artifactRequest?.intent.target ?? null,
+    projectPath: activeRootPath,
+    spacePath: activeSpace?.status === "ready" ? activeSpace.path : null,
+    rootSpaceId: activeRootId,
+  });
   // A Collection or App whose folder is gone closes as a vanished Page does;
   // a Page closes itself, and a Collection that lost only its README stays.
   const folderOwnerGone =
@@ -186,6 +195,8 @@ export function ActiveSpaceContent() {
       ) : (
         <ContentLoadingState />
       )
+    ) : artifactRequest && htmlAppPending ? (
+      <ContentLoadingState />
     ) : artifactRequest && activeSpace && selectionSpaceId ? (
       <ArtifactSurface
         request={artifactRequest}

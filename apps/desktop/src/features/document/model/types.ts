@@ -241,6 +241,11 @@ export function documentFormatFromPath(path: string): DocumentFormat | null {
   }
 }
 
+/** Whether `path` names an HTML file: `.html` or `.htm` in any case. */
+export function isHtmlDocumentPath(path: string) {
+  return documentFormatFromPath(path) === "html";
+}
+
 export function documentHasInlinePreview(format: DocumentFormat) {
   return (
     format === "pdf" ||

@@ -9,6 +9,7 @@ import {
   IMAGE_EXTS,
   VIDEO_EXTS,
 } from "@/platform/upload/media-types";
+import { isHtmlDocumentPath } from "@/features/document";
 import { isNetworkPath } from "@/shared/lib/local-paths";
 
 /**
@@ -57,9 +58,9 @@ export function htmlRoute(
 
 function viewerKind(path: string): ArtifactRegistryKind | "html" | null {
   if (chatAttachmentKind(path) === "page") return "page";
+  if (isHtmlDocumentPath(path)) return "html";
   const dot = path.lastIndexOf(".");
   const extension = dot >= 0 ? path.slice(dot).toLowerCase() : "";
-  if (extension === ".html" || extension === ".htm") return "html";
   if (MEDIA_EXTENSIONS.has(extension)) return "media";
   if (DOCUMENT_EXTENSIONS.has(extension)) return "document";
   return null;
