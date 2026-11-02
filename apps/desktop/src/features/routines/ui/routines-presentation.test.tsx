@@ -180,10 +180,12 @@ function actions(calls: string[]): RoutinePresentationActions {
 function RoutineDetailTestView({
   executors,
   item,
+  ownership = { collection: null, space: "Project" },
   recovery,
 }: {
   executors: AgentActorOptionsState;
   item: RoutineItem;
+  ownership?: RoutineOwnership;
   recovery?: RoutineLaunchRecoveryActions;
 }) {
   const idle = { status: "idle" } as const;
@@ -204,7 +206,7 @@ function RoutineDetailTestView({
           onRun: async () => undefined,
         },
         executors,
-        ownership: { collection: null, space: "Project" },
+        ownership,
         recovery,
         state: { items: [item], phase: "ready" },
       })}
@@ -423,6 +425,44 @@ test("routine detail hides technical paths when valid and preserves exact recove
   );
   expect(invalid.includes(invalidPath)).toBe(true);
   expect(invalid.includes("id must be a lowercase ULID")).toBe(true);
+});
+
+test("the Routine's panel shows its Space always and its Collection only for a Routine of a Collection, in the order of its screen", () => {
+  const rows = (markup: string) =>
+    [...markup.matchAll(/data-collection-panel-property="([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+  const ofSpace = renderToStaticMarkup(
+    <RoutineDetailTestView
+      executors={executors}
+      item={scheduled}
+      ownership={{ collection: null, space: "Docs" }}
+    />,
+  );
+  expect(rows(ofSpace)).toEqual([
+    "space",
+    "trigger",
+    "action",
+    "executor",
+    "enabled",
+  ]);
+  const ofCollection = renderToStaticMarkup(
+    <RoutineDetailTestView
+      executors={executors}
+      item={{ ...scheduled, nextRunAt: "2026-08-27T02:00:00Z" }}
+      ownership={{ collection: "Tasks", space: "Docs" }}
+    />,
+  );
+  expect(rows(ofCollection)).toEqual([
+    "space",
+    "collection",
+    "trigger",
+    "action",
+    "executor",
+    "enabled",
+    "next-run",
+  ]);
+  expect(ofCollection.includes(">Tasks<")).toBe(true);
 });
 
 test("schedule properties and detail stay compact without time-basis annotations", () => {
