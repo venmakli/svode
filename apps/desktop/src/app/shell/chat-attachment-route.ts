@@ -20,7 +20,12 @@ import { isNetworkPath } from "@/shared/lib/local-paths";
  * anything else in its system application.
  */
 export type ChatAttachmentRoute =
-  | { kind: ArtifactRegistryKind; location: ChatAttachmentLocation }
+  | {
+      kind: ArtifactRegistryKind;
+      location: ChatAttachmentLocation;
+      /** The owner peek of an App opens on that App. */
+      surfaceId?: "app";
+    }
   | { kind: "html"; location: ChatAttachmentLocation }
   | { kind: "local-media" }
   | { kind: "local-document" }
@@ -46,16 +51,21 @@ export function chatAttachmentRoute(
   return { kind: "system" };
 }
 
-/** An HTML file of the project: its App when it is a file of one. */
+/**
+ * An HTML file of the project: the owner peek of its App, on that App, when
+ * it is a file of one — of the App directory or of a Space that is itself an
+ * App — otherwise the Document.
+ */
 export function htmlRoute(
   location: ChatAttachmentLocation,
   app: HtmlDocumentApp | null,
 ): Exclude<ChatAttachmentRoute, { kind: "html" }> {
   if (app === null) return { kind: "document", location };
-  // The Space itself as the App has no peek of its own yet: its root names it.
+  // The owner peek of the App: of its directory, or of the Space itself.
   return {
     kind: "page",
     location: { ...location, path: app.kind === "space" ? "." : app.path },
+    surfaceId: "app",
   };
 }
 

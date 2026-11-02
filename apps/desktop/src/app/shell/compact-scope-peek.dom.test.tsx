@@ -34,6 +34,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   const appBroken = false;
   let headerBroken = false;
   const lifecycle: string[] = [];
+  let htmlDocumentApp: unknown = null;
   const toasts: string[] = [];
   const record = (message: unknown) => {
     toasts.push(String(message));
@@ -87,7 +88,7 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
   }));
   mock.module("@/features/document", () => ({
     probeDocumentTarget: () => ({ status: "no_match" }),
-    htmlDocumentApp: async () => null,
+    htmlDocumentApp: async () => htmlDocumentApp,
     isHtmlDocumentPath: (path: string) => /\.html?$/i.test(path),
     localHtmlDocumentFile: () => null,
   }));
@@ -685,6 +686,131 @@ if (process.env.SVODE_COMPACT_SCOPE_TEST !== "1") {
       dom.window.close();
     }
   });
+  test("chat HTML of a Space that is itself an App opens the Peek of that Space on its App", async () => {
+    const dom = new JSDOM("<!doctype html><div id=app></div>", {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    });
+    const restore = installDomGlobals(dom);
+    const ownerFacts: string[] = [];
+    // The answer of `html_document_app_directory` for a Space that is an App.
+    htmlDocumentApp = { kind: "space" };
+    mockNativeIpc(
+      (command, args) => {
+        if (command === "repository_access_get")
+          return {
+            status: "local",
+            repositoryId: "/site",
+            generation: 1,
+            checkedAt: null,
+            expiresAt: null,
+            reason: null,
+            lastKnownStatus: null,
+          };
+        if (command === "get_scope_owner_facts") {
+          ownerFacts.push(String(args && "path" in args ? args.path : ""));
+          throw new Error("the Space root is a registered Space owner");
+        }
+        if (command === "read_page")
+          return {
+            path: "README.md",
+            body: "",
+            meta: {
+              title: "Site home",
+              icon: null,
+              created: "",
+              updated: "",
+              extra: {},
+            },
+          };
+        // Changes, schema and the like of the Space are not under test.
+        return null;
+      },
+      { shouldMockEvents: true },
+    );
+    closeActiveContent();
+    const { registerRootSpace } = await import("@/features/space");
+    const { ChatAttachmentOpenerContext } =
+      await import("@/features/agent-sessions");
+    const { ChatAttachmentPeekProvider } =
+      await import("./chat-attachment-peek");
+    const { useContext } = await import("react");
+    registerRootSpace({
+      id: "site",
+      name: "Site",
+      icon: "",
+      path: "/site",
+      status: "ready",
+      hasSchema: false,
+      hasApp: true,
+    } as SpaceInfo);
+    function Opener() {
+      const open = useContext(ChatAttachmentOpenerContext);
+      return (
+        <button
+          data-open-attachment
+          onClick={() =>
+            open?.({ path: "/site/index.html", name: "index.html" })
+          }
+        />
+      );
+    }
+    const root = createRoot(dom.window.document.getElementById("app")!);
+    try {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <ChatAttachmentPeekProvider>
+              <Opener />
+            </ChatAttachmentPeekProvider>
+          </TooltipProvider>,
+        );
+        await settle();
+      });
+      await act(async () => {
+        dom.window.document
+          .querySelector<HTMLElement>("[data-open-attachment]")!
+          .click();
+        await settle();
+      });
+      // The registered Space owner, not a broken owner of the path `.`.
+      expect(ownerFacts).toEqual([]);
+      expect(
+        dom.window.document.querySelector('[data-slot="alert"]'),
+      ).toBeNull();
+      expect(
+        dom.window.document
+          .querySelector('[data-slot="sheet-content"] [data-app]')
+          ?.getAttribute("data-app"),
+      ).toBe(".");
+      expect(identityName(dom)).toBe("Site home");
+      // Expand opens the home of the Space in main on the same App.
+      await act(async () => {
+        topBar(dom)
+          .querySelector<HTMLElement>(`[aria-label="${m.peek_expand()}"]`)!
+          .click();
+        await settle();
+      });
+      const selection = getActiveContentSelection().selection;
+      expect(
+        selection?.kind === "scope-owner" ? selection.request.owner : null,
+      ).toEqual({ kind: "space", spaceId: "site" });
+      expect(
+        selection?.kind === "scope-owner" ? selection.request.intent : null,
+      ).toEqual({ kind: "target", surfaceId: "app" });
+      expect(
+        dom.window.document.querySelector('[data-slot="sheet-content"]'),
+      ).toBeNull();
+    } finally {
+      htmlDocumentApp = null;
+      await act(async () => root.unmount());
+      closeActiveContent();
+      clearNativeMocks();
+      restore();
+      dom.window.close();
+    }
+  });
+
   test("another writer's metadata reaches an open Peek without re-creating its editor", async () => {
     const dom = new JSDOM("<!doctype html><div id=app></div>", {
       pretendToBeVisual: true,

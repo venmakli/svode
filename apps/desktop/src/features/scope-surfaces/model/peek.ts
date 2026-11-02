@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Page } from "@/features/page";
+import type { ScopeSurfaceId } from "./types";
 
 /** How the user leaves a Peek; another navigation away from it names none. */
 export type PeekLeaveAction = "close" | "expand";
@@ -10,7 +11,10 @@ export type PeekNavigationGuard = (
 ) => Promise<boolean>;
 
 export interface ScopePeekContext {
+  /** The target; `.` is the Space itself, the registered Space owner. */
   path: string;
+  /** The surface it opens on, instead of the default of its owner. */
+  surfaceId?: ScopeSurfaceId;
   spaceId: string;
   spacePath: string;
   projectPath: string;

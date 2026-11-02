@@ -38,6 +38,8 @@ type AttachmentPeekTarget =
       location: ChatAttachmentLocation;
       /** Media and documents name the project root without a Space id. */
       registeredSpaceId: string | null;
+      /** The owner peek of an App opens on that App. */
+      surfaceId?: "app";
     }
   /** A media file outside the project, only to view it (DF-233 R2). */
   | { kind: "local-media"; attachment: ChatAttachment; file: LocalMediaFile }
@@ -112,6 +114,7 @@ export function ChatAttachmentPeekProvider({
             kind: route.kind,
             attachment,
             location: route.location,
+            surfaceId: route.surfaceId,
             registeredSpaceId:
               route.location.spaceId === activeRootId
                 ? null
@@ -191,6 +194,7 @@ function ChatAttachmentPeek({
           <CompactScopePeek
             key={navigation.sessionKey}
             path={target.location.path}
+            surfaceId={target.surfaceId}
             spaceId={target.location.spaceId}
             spacePath={target.location.spacePath}
             projectPath={project}

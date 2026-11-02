@@ -19,6 +19,14 @@ test("HTML of the project is asked about its App, then a Document or the App", (
   ).toEqual({
     kind: "page",
     location: { ...SPACE, path: "tools/dash" },
+    surfaceId: "app",
+  });
+  // A Space that is itself an App: the peek of the Space, on its App.
+  const root = { ...SPACE, path: "index.html" };
+  expect(htmlRoute(root, { kind: "space" })).toEqual({
+    kind: "page",
+    location: { ...SPACE, path: "." },
+    surfaceId: "app",
   });
 });
 

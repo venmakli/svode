@@ -11,6 +11,7 @@ import type {
   CollectionRouteState,
 } from "@/features/collection/app-shell";
 import {
+  createRegisteredSpaceOwner,
   ScopeOwnerFactsError,
   ScopeSurfaceErrorBoundary,
   type ScopeOwnerRef,
@@ -18,6 +19,7 @@ import {
   type ScopeSurfaceId,
 } from "@/features/scope-surfaces";
 import { UserEditScope } from "@/features/navigation";
+import { useSpace } from "@/features/space";
 import { ChangesControl, type ChangesTarget } from "@/features/changes";
 import { PeekIdentity, PeekTopBar } from "@/shared/ui/peek-top-bar";
 import { useCollectionRouteState } from "./hooks/use-collection-route-state";
@@ -35,26 +37,59 @@ export function CompactScopePeek(props: ScopePeekContext) {
   if (pathState.input !== props.path)
     setPathState({ input: props.path, current: props.path });
   const path = pathState.input === props.path ? pathState.current : props.path;
-  const { owner, error, gone, retry } = useSpaceScopeOwner({
-    target: {
-      spaceId: props.spaceId,
-      spacePath: props.spacePath,
-      projectPath: props.projectPath,
-      path,
-    },
+  // The Space itself is its registered owner, as its home in main; content
+  // resolves its owner by its path.
+  const spaceRoot = path === ".";
+  const space = useSpace((state) =>
+    spaceRoot
+      ? [...state.rootSpaces, ...state.spaces].find(
+          (candidate) => candidate.id === props.spaceId,
+        )
+      : undefined,
+  );
+  const resolved = useSpaceScopeOwner({
+    target: spaceRoot
+      ? null
+      : {
+          spaceId: props.spaceId,
+          spacePath: props.spacePath,
+          projectPath: props.projectPath,
+          path,
+        },
     // One Peek session keeps its owner while a new path of it resolves.
     retainPrevious: true,
   });
-  // A Collection or App whose folder is gone closes its Peek; a Page closes
-  // it itself, and a Collection that lost only its README stays.
+  const spaceOwner = useMemo(
+    () =>
+      space?.status === "ready"
+        ? createRegisteredSpaceOwner({
+            spaceId: space.id,
+            spacePath: space.path,
+            projectPath: props.projectPath,
+            status: space.status,
+            hasSchema: space.hasSchema,
+            hasApp: space.hasApp,
+          })
+        : null,
+    [props.projectPath, space],
+  );
+  const { owner, error, gone, retry } = spaceRoot
+    ? { ...resolved, owner: spaceOwner, error: null, gone: !spaceOwner }
+    : resolved;
+  // A Collection, App or Space whose folder is gone closes its Peek; a Page
+  // closes it itself, and a Collection that lost only its README stays.
   const folderOwnerGone =
-    gone &&
-    (owner?.identityKind === "collection-directory" ||
-      owner?.identityKind === "app-directory");
+    spaceRoot ||
+    owner?.identityKind === "collection-directory" ||
+    owner?.identityKind === "app-directory"
+      ? gone
+      : false;
   const { dismiss } = props;
   useEffect(() => {
     if (folderOwnerGone) dismiss();
   }, [dismiss, folderOwnerGone]);
+  const fallbackTitle = spaceRoot ? space?.name : props.fallbackTitle;
+  const fallbackIcon = spaceRoot ? space?.icon || null : props.fallbackIcon;
   const [surfaceId, setSurfaceId] = useState<ScopeSurfaceId | null>(null);
   const [viewName, setViewName] = useState<string | null>(null);
   const [calendarScope, setCalendarScope] = useState<CalendarScope | null>(
@@ -73,10 +108,11 @@ export function CompactScopePeek(props: ScopePeekContext) {
   const openOwner = useOpenScopeOwner();
   const openPage = useOpenPage();
   const [identity, setIdentity] = useState<ScopeOwnerIdentity | null>(null);
-  if (owner && surfaceId === null)
-    setSurfaceId(owner.identityKind === "app-directory" ? "app" : "readme");
-  const selectedSurfaceId =
-    surfaceId ?? (owner?.identityKind === "app-directory" ? "app" : "readme");
+  const defaultSurfaceId: ScopeSurfaceId =
+    props.surfaceId ??
+    (owner?.identityKind === "app-directory" ? "app" : "readme");
+  if (owner && surfaceId === null) setSurfaceId(defaultSurfaceId);
+  const selectedSurfaceId = surfaceId ?? defaultSurfaceId;
   const openFull = async () => {
     if (
       !owner ||
@@ -85,6 +121,13 @@ export function CompactScopePeek(props: ScopePeekContext) {
     )
       return false;
     const intent = { kind: "target" as const, surfaceId: selectedSurfaceId };
+    if (owner.identityKind === "registered-space") {
+      openOwner(
+        { kind: "space", spaceId: owner.spaceId },
+        { scopeOpenIntent: intent },
+      );
+      return true;
+    }
     if (
       owner.identityKind === "collection-directory" ||
       owner.identityKind === "app-directory"
@@ -108,8 +151,8 @@ export function CompactScopePeek(props: ScopePeekContext) {
       openPage(owner.readmePath, owner.spaceId, { scopeOpenIntent: intent });
     return true;
   };
-  const identityIcon = identity?.icon ?? props.fallbackIcon;
-  const identityName = identity?.title ?? props.fallbackTitle ?? path;
+  const identityIcon = identity?.icon ?? fallbackIcon;
+  const identityName = identity?.title ?? fallbackTitle ?? path;
   const topBar = (
     <PeekTopBar
       identity={
@@ -165,14 +208,15 @@ export function CompactScopePeek(props: ScopePeekContext) {
                 surfaceId: selectedSurfaceId,
                 onSurfaceIdChange: setSurfaceId,
               }}
-              fallbackTitle={props.fallbackTitle}
-              fallbackIcon={props.fallbackIcon}
+              fallbackTitle={fallbackTitle}
+              fallbackIcon={fallbackIcon}
               metadataBefore={props.metadataBefore}
-              // Pages have no header actions here; Collections and Apps keep
-              // their owner menu.
+              // Pages and the Space have no header actions here; Collections
+              // and Apps keep their owner menu.
               headerActions={
                 owner.identityKind === "page-file" ||
-                owner.identityKind === "page-directory"
+                owner.identityKind === "page-directory" ||
+                owner.identityKind === "registered-space"
                   ? null
                   : undefined
               }
@@ -195,6 +239,15 @@ export function CompactScopePeek(props: ScopePeekContext) {
 // The scope main shows for the same owner: a Page its file or folder, a
 // Collection or App its directory.
 function ownerChangesTarget(owner: ScopeOwnerRef, name: string): ChangesTarget {
+  if (owner.identityKind === "registered-space")
+    return {
+      kind: owner.spacePath === owner.projectPath ? "project" : "space",
+      sourceShape: "directory",
+      spacePath: owner.spacePath,
+      projectPath: owner.projectPath,
+      path: owner.readmePath,
+      name,
+    };
   const page =
     owner.identityKind === "page-file" ||
     owner.identityKind === "page-directory";
@@ -210,6 +263,10 @@ function ownerChangesTarget(owner: ScopeOwnerRef, name: string): ChangesTarget {
 
 function ScopeOwnerFallbackIcon({ owner }: { owner: ScopeOwnerRef | null }) {
   if (owner?.identityKind === "collection-directory") return <Database />;
-  if (owner?.identityKind === "app-directory") return <PanelsTopLeft />;
+  if (
+    owner?.identityKind === "app-directory" ||
+    owner?.identityKind === "registered-space"
+  )
+    return <PanelsTopLeft />;
   return <FileText />;
 }
